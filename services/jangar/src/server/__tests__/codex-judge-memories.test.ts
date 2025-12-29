@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CodexEvaluationRecord, CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
-import type { PersistMemoryInput } from '../memories-store'
+import type { MemoriesStore, PersistMemoryInput } from '../memories-store'
 
 import { storePrivate } from './codex-judge-store-private'
 
@@ -12,6 +12,17 @@ const requireMock = <T>(value: T | null | undefined, label: string): T => {
     throw new Error(`${label} was not initialized`)
   }
   return value
+}
+
+const setMemoryStoreFactory = (factory?: () => MemoriesStore) => {
+  const globalWithOverride = globalThis as typeof globalThis & {
+    __codexJudgeMemoryStoreFactory?: () => MemoriesStore
+  }
+  if (factory) {
+    globalWithOverride.__codexJudgeMemoryStoreFactory = factory
+  } else {
+    delete globalWithOverride.__codexJudgeMemoryStoreFactory
+  }
 }
 
 const globalState = globalThis as typeof globalThis & {
@@ -75,6 +86,7 @@ if (!globalState.__codexJudgeStoreMock) {
     updateRunPrompt: vi.fn(),
     updateRunPrInfo: vi.fn(),
     upsertArtifacts: vi.fn(),
+    listRunsByStatus: vi.fn(),
     getRunByWorkflow: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
@@ -172,6 +184,7 @@ const store = {
   updateRunPrompt: vi.fn(),
   updateRunPrInfo: vi.fn(),
   upsertArtifacts: vi.fn(),
+  listRunsByStatus: vi.fn(),
   getRunByWorkflow: vi.fn(),
   getRunById: vi.fn(),
   listRunsByIssue: vi.fn(),
@@ -235,9 +248,14 @@ beforeEach(async () => {
   Object.assign(requireMock(globalState.__codexJudgeGithubMock, 'codex judge github mock'), github)
   Object.assign(requireMock(globalState.__codexJudgeConfigMock, 'codex judge config mock'), config)
   Object.assign(requireMock(globalState.__codexJudgeMemoryStoreMock, 'codex judge memory store mock'), memoriesStore)
+  setMemoryStoreFactory(() => memoriesStore)
   if (!__private) {
     __private = (await import('../codex-judge')).__private
   }
+})
+
+afterEach(() => {
+  setMemoryStoreFactory()
 })
 
 describe('codex-judge memory snapshots', () => {

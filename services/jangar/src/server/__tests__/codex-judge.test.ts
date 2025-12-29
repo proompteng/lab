@@ -1,5 +1,8 @@
-import { Effect } from 'effect'
+import type { CodexAppServerClient } from '@proompteng/codex'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { resetCodexClient, setCodexClientFactory } from '~/server/codex-client'
+import type { MemoriesStore, MemoryRecord } from '~/server/memories-store'
 import type { CodexEvaluationRecord, CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
 
 import { storePrivate } from './codex-judge-store-private'
@@ -11,6 +14,17 @@ const requireMock = <T>(value: T | null | undefined, label: string): T => {
     throw new Error(`${label} was not initialized`)
   }
   return value
+}
+
+const setMemoryStoreFactory = (factory?: () => MemoriesStore) => {
+  const globalWithOverride = globalThis as typeof globalThis & {
+    __codexJudgeMemoryStoreFactory?: () => MemoriesStore
+  }
+  if (factory) {
+    globalWithOverride.__codexJudgeMemoryStoreFactory = factory
+  } else {
+    delete globalWithOverride.__codexJudgeMemoryStoreFactory
+  }
 }
 
 const globalState = globalThis as typeof globalThis & {
@@ -47,8 +61,7 @@ const globalState = globalThis as typeof globalThis & {
     promptTuningWindowHours: number
     promptTuningCooldownHours: number
   }
-  __codexJudgeMemoryStoreMock?: { persist: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
-  __codexJudgeClientMock?: { runTurn: ReturnType<typeof vi.fn> }
+  __codexJudgeMemoryStoreMock?: MemoriesStore
 }
 
 if (!globalState.__codexJudgeStoreMock) {
@@ -62,6 +75,7 @@ if (!globalState.__codexJudgeStoreMock) {
     updateRunPrompt: vi.fn(),
     updateRunPrInfo: vi.fn(),
     upsertArtifacts: vi.fn(),
+    listRunsByStatus: vi.fn(),
     getRunByWorkflow: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
@@ -112,8 +126,18 @@ if (!globalState.__codexJudgeConfigMock) {
 
 if (!globalState.__codexJudgeMemoryStoreMock) {
   globalState.__codexJudgeMemoryStoreMock = {
-    persist: vi.fn(),
-    close: vi.fn(),
+    persist: vi.fn(async () => ({
+      id: 'mem-1',
+      namespace: 'default',
+      content: 'n/a',
+      summary: null,
+      tags: [],
+      metadata: {},
+      createdAt: new Date().toISOString(),
+    })),
+    retrieve: vi.fn(async () => []),
+    count: vi.fn(async () => 0),
+    close: vi.fn(async () => {}),
   }
 }
 
@@ -177,6 +201,7 @@ const harness = (() => {
       const text = judgeResponses.shift() ?? ''
       return { text }
     }),
+    stop: vi.fn(),
   }
 
   const store = {
@@ -206,6 +231,7 @@ const harness = (() => {
       }
       return run
     }),
+    listRunsByStatus: vi.fn(async () => []),
     updateReviewStatus: vi.fn(async (input: { runId: string; status: string; summary: Record<string, unknown> }) => {
       if (input.runId !== run.id) return null
       run = { ...run, reviewStatus: input.status, reviewSummary: input.summary }
@@ -330,14 +356,26 @@ const harness = (() => {
   })
 
   const memoriesStore = {
-    persist: vi.fn(async () => {}),
+    persist: vi.fn(async () => {
+      const record: MemoryRecord = {
+        id: 'mem-1',
+        namespace: 'default',
+        content: 'n/a',
+        summary: null,
+        tags: [],
+        metadata: {},
+        createdAt: new Date().toISOString(),
+      }
+      return record
+    }),
+    retrieve: vi.fn(async () => []),
+    count: vi.fn(async () => 0),
     close: vi.fn(async () => {}),
   }
 
   Object.assign(requireMock(globalState.__codexJudgeStoreMock, 'codex judge store mock'), store)
   Object.assign(requireMock(globalState.__codexJudgeGithubMock, 'codex judge github mock'), github)
   Object.assign(requireMock(globalState.__codexJudgeMemoryStoreMock, 'codex judge memory store mock'), memoriesStore)
-  globalState.__codexJudgeClientMock = codexClient
 
   const setJudgeResponses = (responses: string[]) => {
     judgeResponses.splice(0, judgeResponses.length, ...responses)
@@ -369,26 +407,21 @@ vi.mock('~/server/github-client', () => ({
   createGitHubClient: () => requireMock(globalState.__codexJudgeGithubMock, 'codex judge github mock'),
 }))
 
-vi.mock('~/server/codex-client', () => ({
-  getCodexClient: () => Effect.sync(() => requireMock(globalState.__codexJudgeClientMock, 'codex judge client mock')),
-}))
-
-vi.mock('~/server/memories-store', () => ({
-  createPostgresMemoriesStore: () =>
-    requireMock(globalState.__codexJudgeMemoryStoreMock, 'codex judge memory store mock'),
-}))
-
 const ORIGINAL_FETCH = global.fetch
 
 beforeEach(async () => {
   harness.reset()
   vi.clearAllMocks()
+  setCodexClientFactory(() => harness.codexClient as unknown as CodexAppServerClient)
+  setMemoryStoreFactory(() => harness.memoriesStore as MemoriesStore)
   if (!__private) {
     __private = (await import('../codex-judge')).__private
   }
 })
 
 afterEach(() => {
+  resetCodexClient()
+  setMemoryStoreFactory()
   global.fetch = ORIGINAL_FETCH
 })
 

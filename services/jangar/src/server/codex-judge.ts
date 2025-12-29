@@ -21,6 +21,10 @@ const store = createCodexJudgeStore()
 const config = loadCodexJudgeConfig()
 const github = createGitHubClient({ token: config.githubToken, apiBaseUrl: config.githubApiBaseUrl })
 const argo = config.argoServerUrl ? createArgoClient({ baseUrl: config.argoServerUrl }) : null
+type MemoryStoreFactory = () => ReturnType<typeof createPostgresMemoriesStore>
+const getMemoryStoreFactory = () =>
+  (globalThis as { __codexJudgeMemoryStoreFactory?: MemoryStoreFactory }).__codexJudgeMemoryStoreFactory ??
+  createPostgresMemoriesStore
 
 const scheduledRuns = new Map<string, NodeJS.Timeout>()
 const activeEvaluations = new Set<string>()
@@ -1875,7 +1879,8 @@ const sendDiscordEscalation = async (run: CodexRunRecord, reason: string) => {
 const writeMemories = async (run: CodexRunRecord, evaluation: CodexEvaluationRecord) => {
   let memoryStore: ReturnType<typeof createPostgresMemoriesStore> | null = null
   try {
-    memoryStore = createPostgresMemoriesStore()
+    const memoryStoreFactory = getMemoryStoreFactory()
+    memoryStore = memoryStoreFactory()
     const namespace = `codex:${run.repository}:${run.issueNumber}`
     const workflowTag = run.workflowName ? `workflow-${run.workflowName}` : 'workflow-unknown'
     const stageTag = run.stage ? `stage-${run.stage}` : 'stage-unknown'
