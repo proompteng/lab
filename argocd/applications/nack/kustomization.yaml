@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: nack
+helmCharts:
+  - name: nack
+    repo: https://nats-io.github.io/k8s/helm/charts
+    version: 0.31.1
+    releaseName: nack
+    namespace: nack
+    includeCRDs: true
+    valuesFile: ./values.yaml
