@@ -118,7 +118,7 @@ if (!globalState.__codexJudgeMemoryStoreMock) {
 }
 
 const harness = (() => {
-  const now = new Date('2025-12-28T00:00:00.000Z').toISOString()
+  const now = new Date().toISOString()
 
   const makeRun = (): CodexRunRecord => ({
     id: 'run-1',
@@ -300,9 +300,15 @@ const harness = (() => {
       issueComments: [],
     })),
     getPullRequestDiff: vi.fn(async () => 'diff --git a/file b/file'),
+    getRefSha: vi.fn(async () => 'sha-1'),
+    getFile: vi.fn(async (_owner: string, _repo: string, _path: string) => ({ content: '', sha: 'file-sha' })),
+    updateFile: vi.fn(async () => ({})),
+    createBranch: vi.fn(async () => ({})),
+    createPullRequest: vi.fn(async () => ({ html_url: 'https://github.com/proompteng/lab/pull/101' })),
   }
 
-  const config = {
+  const config = requireMock(globalState.__codexJudgeConfigMock, 'codex judge config mock')
+  Object.assign(config, {
     githubToken: null,
     githubApiBaseUrl: 'https://api.github.com',
     codexReviewers: [],
@@ -321,7 +327,7 @@ const harness = (() => {
     promptTuningFailureThreshold: 3,
     promptTuningWindowHours: 24,
     promptTuningCooldownHours: 6,
-  }
+  })
 
   const memoriesStore = {
     persist: vi.fn(async () => {}),
@@ -330,7 +336,6 @@ const harness = (() => {
 
   Object.assign(requireMock(globalState.__codexJudgeStoreMock, 'codex judge store mock'), store)
   Object.assign(requireMock(globalState.__codexJudgeGithubMock, 'codex judge github mock'), github)
-  Object.assign(requireMock(globalState.__codexJudgeConfigMock, 'codex judge config mock'), config)
   Object.assign(requireMock(globalState.__codexJudgeMemoryStoreMock, 'codex judge memory store mock'), memoriesStore)
   globalState.__codexJudgeClientMock = codexClient
 
@@ -470,5 +475,129 @@ resolved
     expect(harness.store.updateCiStatus).not.toHaveBeenCalled()
     expect(harness.store.updateReviewStatus).not.toHaveBeenCalled()
     expect(harness.store.updateDecision).toHaveBeenCalledWith(expect.objectContaining({ decision: 'needs_human' }))
+  })
+})
+
+describe('prompt tuning PR gating', () => {
+  beforeEach(() => {
+    harness.github.getPullRequestByHead.mockResolvedValue({
+      number: 101,
+      url: 'https://api.github.com/repos/proompteng/lab/pulls/101',
+      htmlUrl: 'https://github.com/proompteng/lab/pull/101',
+      headSha: 'sha-1',
+      headRef: 'codex/issue-2125',
+      baseRef: 'main',
+      state: 'open',
+      title: 'PR title',
+      body: null,
+      mergeableState: 'clean',
+    })
+    harness.github.getPullRequest.mockResolvedValue({
+      number: 101,
+      url: 'https://api.github.com/repos/proompteng/lab/pulls/101',
+      htmlUrl: 'https://github.com/proompteng/lab/pull/101',
+      headSha: 'sha-1',
+      headRef: 'codex/issue-2125',
+      baseRef: 'main',
+      state: 'open',
+      title: 'PR title',
+      body: null,
+      mergeableState: 'clean',
+    })
+    harness.github.getPullRequestDiff.mockResolvedValue('diff --git a/file b/file')
+    harness.github.getCheckRuns.mockResolvedValue({ status: 'success', url: 'https://ci.example.com' })
+    harness.github.getReviewSummary.mockResolvedValue({
+      status: 'approved',
+      unresolvedThreads: [],
+      requestedChanges: false,
+      issueComments: [],
+    })
+  })
+
+  afterEach(() => {
+    harness.config.promptTuningEnabled = false
+    harness.config.promptTuningRepo = null
+    harness.config.promptTuningFailureThreshold = 3
+    harness.config.promptTuningWindowHours = 24
+    harness.config.promptTuningCooldownHours = 6
+  })
+
+  it('skips prompt tuning PRs when only generic suggestions are present', async () => {
+    harness.config.promptTuningEnabled = true
+    harness.config.promptTuningRepo = 'proompteng/lab'
+    harness.config.promptTuningFailureThreshold = 1
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => '',
+      json: async () => ({}),
+    }))
+    global.fetch = fetchMock as unknown as typeof global.fetch
+
+    harness.setJudgeResponses([
+      JSON.stringify({
+        decision: 'fail',
+        confidence: 0.2,
+        requirements_coverage: [],
+        missing_items: [],
+        suggested_fixes: [],
+        next_prompt: 'Open a PR for the current branch and ensure all required checks run.',
+        prompt_tuning_suggestions: ['Tighten prompt to reduce iteration loops.'],
+        system_improvement_suggestions: ['Clarify judge gating criteria.'],
+      }),
+    ])
+
+    await requireMock(__private, 'codex judge private').evaluateRun('run-1')
+
+    expect(harness.github.createBranch).not.toHaveBeenCalled()
+    expect(harness.github.updateFile).not.toHaveBeenCalled()
+    expect(harness.github.createPullRequest).not.toHaveBeenCalled()
+  })
+
+  it('creates prompt tuning PRs when actionable suggestions are present', async () => {
+    harness.config.promptTuningEnabled = true
+    harness.config.promptTuningRepo = 'proompteng/lab'
+    harness.config.promptTuningFailureThreshold = 1
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => '',
+      json: async () => ({}),
+    }))
+    global.fetch = fetchMock as unknown as typeof global.fetch
+
+    harness.github.getRefSha.mockResolvedValue('base-sha')
+    harness.github.createBranch.mockResolvedValue({})
+    harness.github.getFile.mockImplementation(async (_owner: string, _repo: string, path: string) => {
+      if (path === 'apps/froussard/src/codex.ts') {
+        return { content: "    'Memory:',\n", sha: 'prompt-sha' }
+      }
+      return {
+        content:
+          '## Summary\n\n## Related Issues\n\n## Testing\n\n## Screenshots (if applicable)\n\n## Breaking Changes\n',
+        sha: 'template-sha',
+      }
+    })
+    harness.github.updateFile.mockResolvedValue({})
+    harness.github.createPullRequest.mockResolvedValue({ html_url: 'https://github.com/proompteng/lab/pull/1' })
+
+    harness.setJudgeResponses([
+      JSON.stringify({
+        decision: 'fail',
+        confidence: 0.4,
+        requirements_coverage: [],
+        missing_items: [],
+        suggested_fixes: [],
+        next_prompt: 'Add a regression test for the failing path and rerun CI.',
+        prompt_tuning_suggestions: ['Add a checklist for required tests before opening PRs.'],
+        system_improvement_suggestions: [],
+      }),
+    ])
+
+    await requireMock(__private, 'codex judge private').evaluateRun('run-1')
+
+    expect(harness.github.createBranch).toHaveBeenCalledTimes(1)
+    expect(harness.github.updateFile).toHaveBeenCalled()
+    expect(harness.github.createPullRequest).toHaveBeenCalledTimes(1)
   })
 })
