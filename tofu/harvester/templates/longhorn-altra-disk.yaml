@@ -1,0 +1,47 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: longhorn-disk-init-altra
+  namespace: longhorn-system
+spec:
+  template:
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: altra
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - chmod 700 /host
+          volumeMounts:
+            - name: disk
+              mountPath: /host
+      volumes:
+        - name: disk
+          hostPath:
+            path: /usr/local/longhorn-disk
+            type: DirectoryOrCreate
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: altra
+  namespace: longhorn-system
+spec:
+  allowScheduling: true
+  disks:
+    default-disk-156db111c837f5df:
+      allowScheduling: true
+      diskType: filesystem
+      path: /var/lib/harvester/defaultdisk
+      tags:
+        - nvme1
+    nvme0-disk:
+      allowScheduling: true
+      diskType: filesystem
+      path: /usr/local/longhorn-disk
+      tags:
+        - nvme0
