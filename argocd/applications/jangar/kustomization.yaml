@@ -8,7 +8,6 @@ resources:
   - discord-codex-bot-sealedsecret.yaml
   - discord-success-channel-sealedsecret.yaml
   - codex-run-complete-kafkasource.yaml
-  - consumer-jangar-agent-comms.yaml
   - clickhouse-auth.yaml
   - app-tailscale-service.yaml
   - tailscale-service.yaml
