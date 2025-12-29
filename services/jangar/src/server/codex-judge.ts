@@ -853,6 +853,19 @@ const resolveBaseTimestamp = (run: CodexRunRecord) => {
   return new Date()
 }
 
+const buildBackfillDedupeKey = (runId: string, attrs: Record<string, unknown>) => {
+  const artifact = readString(attrs.artifact)
+  const lineValue = attrs.line
+  const line =
+    typeof lineValue === 'number'
+      ? lineValue
+      : typeof lineValue === 'string'
+        ? Number.parseInt(lineValue, 10)
+        : Number.NaN
+  if (!artifact || !Number.isFinite(line)) return null
+  return `backfill:${runId}:${artifact}:${line}`
+}
+
 const extractManifestFromArtifacts = async (artifactMap: Map<string, ResolvedArtifact>) => {
   const artifact = artifactMap.get('implementation-changes')
   if (!artifact) return null
@@ -977,6 +990,7 @@ const backfillAgentMessages = async (run: CodexRunRecord, artifacts: ResolvedArt
       stage,
       content: message.content,
       attrs: message.attrs,
+      dedupeKey: buildBackfillDedupeKey(run.id, message.attrs),
     }))
 
     await agentStore.insertMessages(records)
@@ -2271,8 +2285,11 @@ export const __private = {
   evaluateRun,
   extractCommitShaFromArtifacts,
   findCommitShaInValue,
+  parseAgentMessagesFromEvents,
+  parseAgentMessagesFromLog,
   normalizeBranchRef,
   resolveCiContext,
+  buildBackfillDedupeKey,
   writeMemories,
 }
 export const handleRunComplete = async (payload: Record<string, unknown>) => {

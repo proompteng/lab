@@ -18,6 +18,7 @@ export type AgentMessageRecord = {
   stage: string | null
   content: string
   attrs: Record<string, unknown>
+  dedupeKey: string | null
   createdAt: string
 }
 
@@ -35,6 +36,7 @@ export type AgentMessageInput = {
   stage: string | null
   content: string
   attrs?: Record<string, unknown>
+  dedupeKey?: string | null
 }
 
 export type AgentMessagesStore = {
@@ -64,6 +66,12 @@ const chunk = <T>(items: T[], size: number) => {
 const normalizeAttrs = (value?: Record<string, unknown>) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   return value
+}
+
+const normalizeDedupeKey = (value?: string | null) => {
+  if (!value || typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
 }
 
 const ensureSchema = async (db: Db) => {
@@ -131,6 +139,7 @@ export const createAgentMessagesStore = (options: AgentMessagesStoreOptions = {}
         stage: message.stage,
         content: message.content,
         attrs: normalizeAttrs(message.attrs),
+        dedupe_key: normalizeDedupeKey(message.dedupeKey),
       }))
       .filter((message) => message.content.trim().length > 0)
 
@@ -138,7 +147,11 @@ export const createAgentMessagesStore = (options: AgentMessagesStoreOptions = {}
 
     let inserted = 0
     for (const batch of chunk(normalized, INSERT_BATCH_SIZE)) {
-      await db.insertInto(`${SCHEMA}.${TABLE}`).values(batch).execute()
+      await db
+        .insertInto(`${SCHEMA}.${TABLE}`)
+        .values(batch)
+        .onConflict((oc) => oc.column('dedupe_key').doNothing())
+        .execute()
       inserted += batch.length
     }
 

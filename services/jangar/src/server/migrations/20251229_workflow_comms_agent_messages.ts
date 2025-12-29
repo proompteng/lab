@@ -24,6 +24,7 @@ export const up = async (db: Kysely<Database>) => {
       stage TEXT,
       content TEXT NOT NULL,
       attrs JSONB NOT NULL DEFAULT '{}'::JSONB,
+      dedupe_key TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `.execute(db)
@@ -46,6 +47,11 @@ export const up = async (db: Kysely<Database>) => {
   await sql`
     CREATE INDEX IF NOT EXISTS workflow_agent_messages_channel_time_idx
     ON ${sql.ref(`${SCHEMA}.${TABLE}`)} (channel, timestamp);
+  `.execute(db)
+
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS workflow_agent_messages_dedupe_key_idx
+    ON ${sql.ref(`${SCHEMA}.${TABLE}`)} (dedupe_key);
   `.execute(db)
 }
 
