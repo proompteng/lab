@@ -2,6 +2,7 @@ import type { CodexAppServerClient } from '@proompteng/codex'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { resetCodexClient, setCodexClientFactory } from '~/server/codex-client'
+import { GitHubRateLimitError } from '~/server/github-client'
 import type { CodexEvaluationRecord, CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
 
 let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
@@ -527,6 +528,35 @@ describe('codex judge guardrails', () => {
     expect(harness.store.updateRunStatus).not.toHaveBeenCalled()
     expect(harness.codexClient.runTurn).not.toHaveBeenCalled()
     expect(harness.github.getPullRequestByHead).not.toHaveBeenCalled()
+  })
+
+  it('backs off when GitHub rate limits are hit', async () => {
+    const timeoutSpy = vi.spyOn(global, 'setTimeout').mockImplementation((_fn, _delay) => {
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    })
+
+    try {
+      const retryAt = Date.now() + 90_000
+      harness.github.getPullRequestByHead.mockRejectedValueOnce(
+        new GitHubRateLimitError('GitHub API 403: rate limit exceeded', {
+          status: 403,
+          retryAt,
+          remaining: 0,
+          resetAt: retryAt,
+        }),
+      )
+
+      const privateApi = await requirePrivate()
+      await privateApi.evaluateRun('run-1')
+
+      expect(timeoutSpy).toHaveBeenCalled()
+      const delay = timeoutSpy.mock.calls[0]?.[1] as number
+      expect(delay).toBeGreaterThanOrEqual(5000)
+      expect(harness.codexClient.runTurn).not.toHaveBeenCalled()
+      expect(harness.store.updateDecision).not.toHaveBeenCalled()
+    } finally {
+      timeoutSpy.mockRestore()
+    }
   })
 })
 
