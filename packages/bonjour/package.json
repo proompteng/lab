@@ -23,7 +23,8 @@
     "@opentelemetry/semantic-conventions": "^1.28.0",
     "hono": "^4.4.7",
     "pino": "^9.12.0",
-    "pino-loki": "^2.6.0"
+    "pino-loki": "^2.6.0",
+    "tslib": "^2.6.2"
   },
   "devDependencies": {
     "cdk8s": "^2.70.17",

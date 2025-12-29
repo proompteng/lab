@@ -33,12 +33,13 @@ RUN --mount=type=cache,target=/root/.cache/bun \
 
 FROM oven/bun:${BUN_VERSION}-slim AS runtime
 ENV NODE_ENV=production
-WORKDIR /opt/app
+WORKDIR /app/packages/bonjour
 
 # Copy application manifest and dependencies from the builder stage
-COPY --from=builder /app/packages/bonjour/package.json ./package.json
-COPY --from=prod-deps /app/node_modules ./node_modules
-COPY --from=builder /app/packages/bonjour/dist ./dist
+COPY --from=prod-deps /app/node_modules /app/node_modules
+COPY --from=prod-deps /app/packages/bonjour/node_modules /app/packages/bonjour/node_modules
+COPY --from=builder /app/packages/bonjour/package.json /app/packages/bonjour/package.json
+COPY --from=builder /app/packages/bonjour/dist /app/packages/bonjour/dist
 
 EXPOSE 3000
 CMD ["bun", "dist/server.js"]
