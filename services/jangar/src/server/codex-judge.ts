@@ -15,7 +15,6 @@ import {
   createCodexJudgeStore,
 } from '~/server/codex-judge-store'
 import { createGitHubClient, type PullRequest, type ReviewSummary } from '~/server/github-client'
-type MemoryStoreFactory = () => ReturnType<typeof createPostgresMemoriesStore>
 import { createPostgresMemoriesStore } from '~/server/memories-store'
 
 type MemoryStoreFactory = () => ReturnType<typeof createPostgresMemoriesStore>
@@ -37,8 +36,7 @@ const github =
 const argo =
   globalOverrides.__codexJudgeArgoMock ??
   (config.argoServerUrl ? createArgoClient({ baseUrl: config.argoServerUrl }) : null)
-const getMemoryStoreFactory = () =>
-  globalOverrides.__codexJudgeMemoryStoreFactory ?? createPostgresMemoriesStore
+const getMemoryStoreFactory = () => globalOverrides.__codexJudgeMemoryStoreFactory ?? createPostgresMemoriesStore
 
 const scheduledRuns = new Map<string, NodeJS.Timeout>()
 const activeEvaluations = new Set<string>()
@@ -1307,12 +1305,6 @@ const filterGenericSuggestions = (suggestions: string[], blocked: Set<string>) =
 
 const extractSuggestions = (payload: Record<string, unknown> | undefined, blocked: Set<string>) =>
   filterGenericSuggestions(normalizeSuggestionList(payload?.suggestions), blocked)
-
-const parseTimestampMs = (value: string | null | undefined) => {
-  if (!value) return null
-  const parsed = Date.parse(value)
-  return Number.isNaN(parsed) ? null : parsed
-}
 
 type PromptTuningRunReference = {
   runId: string
