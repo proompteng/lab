@@ -5,7 +5,7 @@ WORKDIR /workspace
 COPY --chown=gradle:gradle . .
 RUN ./gradlew clean quarkusBuild --no-daemon
 
-FROM gcr.io/distroless/java25-debian12:nonroot
+FROM gcr.io/distroless/java25:nonroot
 WORKDIR /app
 COPY --from=builder /workspace/build/quarkus-app /app/quarkus-app
 ENV PORT=8080

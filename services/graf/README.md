@@ -98,7 +98,7 @@ Run `./gradlew ktlintCheck` (the same plugin also supports `./gradlew ktlintForm
    ```bash
    bun packages/scripts/src/graf/deploy-service.ts
    ```
-The runtime image copies `build/quarkus-app` into `gcr.io/distroless/java25-debian12:nonroot` and starts `quarkus-run.jar`.
+The runtime image copies `build/quarkus-app` into `gcr.io/distroless/java25:nonroot` and starts `quarkus-run.jar`.
 
 ## Startup behavior
 
