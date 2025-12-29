@@ -37,7 +37,7 @@ const RECONCILE_STARTUP_DELAY_MS = 5_000
 const RECONCILE_INTERVAL_MS = 60_000
 const RECONCILE_BASE_DELAY_MS = 1_000
 const RECONCILE_JITTER_MS = 15_000
-const PENDING_EVALUATION_STATUSES = ['run_complete', 'judging'] as const
+const PENDING_EVALUATION_STATUSES = ['run_complete', 'judging', 'notified'] as const
 const RECONCILE_DISABLED = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
 const JSON_ONLY_REMINDER = [
   'IMPORTANT: Return a single JSON object only.',
