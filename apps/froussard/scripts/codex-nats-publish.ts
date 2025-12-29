@@ -2,8 +2,8 @@
 import { unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { Readable } from 'node:stream'
 import { createInterface } from 'node:readline'
+import { Readable } from 'node:stream'
 
 type Options = {
   kind: string
