@@ -43,5 +43,6 @@ spec:
       allowScheduling: true
       diskType: filesystem
       path: /usr/local/longhorn-disk
+      storageReserved: 536870912000
       tags:
         - nvme0
