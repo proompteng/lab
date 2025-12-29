@@ -37,7 +37,7 @@ const parseLimit = (value: string | null) => {
   return Math.min(Math.floor(parsed), 100)
 }
 
-type CodexRunsStore = Pick<CodexJudgeStore, 'getRunHistory' | 'close'>
+type CodexRunsStore = Pick<CodexJudgeStore, 'getRunHistory' | 'close' | 'ready'>
 
 export const getCodexRunsHandler = async (
   request: Request,
@@ -59,6 +59,7 @@ export const getCodexRunsHandler = async (
 
   const store = storeFactory()
   try {
+    await store.ready
     const history = await store.getRunHistory({
       repository,
       issueNumber,
