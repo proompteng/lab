@@ -66,6 +66,12 @@ export type CodexPromptTuningRecord = {
   createdAt: string
 }
 
+export type CodexPendingRun = {
+  id: string
+  status: string
+  updatedAt: string
+}
+
 export type CodexRunHistoryEntry = {
   run: CodexRunRecord
   artifacts: CodexArtifactRecord[]
@@ -169,6 +175,7 @@ export type CodexJudgeStore = {
     commitSha?: string | null,
   ) => Promise<CodexRunRecord | null>
   upsertArtifacts: (input: UpsertArtifactsInput) => Promise<CodexArtifactRecord[]>
+  listRunsByStatus: (statuses: string[]) => Promise<CodexPendingRun[]>
   getRunByWorkflow: (workflowName: string, namespace?: string | null) => Promise<CodexRunRecord | null>
   getRunById: (runId: string) => Promise<CodexRunRecord | null>
   listRunsByIssue: (repository: string, issueNumber: number, branch: string) => Promise<CodexRunRecord[]>
@@ -774,6 +781,23 @@ export const createCodexJudgeStore = (
     return updated ? rowToRun(updated as Record<string, unknown>) : null
   }
 
+  const listRunsByStatus = async (statuses: string[]): Promise<CodexPendingRun[]> => {
+    await ensureReady()
+    if (statuses.length === 0) return []
+    const rows = await db
+      .selectFrom('codex_judge.runs')
+      .select(['id', 'status', 'updated_at'])
+      .where('status', 'in', statuses)
+      .orderBy('updated_at asc')
+      .execute()
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      status: String(row.status),
+      updatedAt: String(row.updated_at),
+    }))
+  }
+
   const upsertArtifacts = async (input: UpsertArtifactsInput) => {
     await ensureReady()
     if (input.artifacts.length === 0) return []
@@ -856,6 +880,7 @@ export const createCodexJudgeStore = (
     updateRunPrompt,
     updateRunPrInfo,
     upsertArtifacts,
+    listRunsByStatus,
     getRunByWorkflow,
     getRunById,
     listRunsByIssue,
