@@ -87,6 +87,26 @@ spec:
               secretKeyRef:
                 name: nats-agents-credentials
                 key: password
+          - name: NATS_CREDS
+            valueFrom:
+              secretKeyRef:
+                name: nats-agent-creds
+                key: creds
+                optional: true
+          - name: WORKFLOW_NAME
+            value: '{{workflow.name}}'
+          - name: WORKFLOW_UID
+            value: '{{workflow.uid}}'
+          - name: WORKFLOW_NAMESPACE
+            value: '{{workflow.namespace}}'
+          - name: WORKFLOW_STAGE
+            value: implementation
+          - name: WORKFLOW_STEP
+            value: '{{pod.name}}'
+          - name: AGENT_ID
+            value: implementation
+          - name: AGENT_OUTPUT_PATH
+            value: /workspace/lab/.codex-implementation-agent.log
           - name: CODEX_GRAF_BEARER_TOKEN
             valueFrom:
               secretKeyRef:
@@ -129,8 +149,38 @@ spec:
             export OUTPUT_PATH="${IMPLEMENTATION_OUTPUT_PATH:-/workspace/lab/.codex-implementation.log}"
             export POST_TO_GITHUB=true
 
+            AGENT_LOG_PATH="${AGENT_OUTPUT_PATH:-/workspace/lab/.codex-implementation-agent.log}"
+            NATS_PUBLISHER="/usr/local/bin/codex-nats-publish"
+            NATS_TAIL_PID=""
+
+            if [[ -x "$NATS_PUBLISHER" ]]; then
+              touch "$AGENT_LOG_PATH"
+              "$NATS_PUBLISHER" --kind status --status started --content "implementation started" --publish-general || true
+              "$NATS_PUBLISHER" --kind log --log-file "$AGENT_LOG_PATH" &
+              NATS_TAIL_PID=$!
+            fi
+
+            cleanup_nats() {
+              if [[ -n "${NATS_TAIL_PID:-}" ]]; then
+                kill "$NATS_TAIL_PID" 2>/dev/null || true
+                wait "$NATS_TAIL_PID" 2>/dev/null || true
+              fi
+            }
+            trap cleanup_nats EXIT
+
             echo "Executing implementation workflow" >&2
+            set +e
             /usr/local/bin/codex-implement "$EVENT_FILE"
+            EXIT_CODE=$?
+            set -e
+
+            cleanup_nats
+
+            if [[ -x "$NATS_PUBLISHER" ]]; then
+              "$NATS_PUBLISHER" --kind status --status completed --exit-code "$EXIT_CODE" --content "implementation completed" --publish-general || true
+            fi
+
+            exit "$EXIT_CODE"
         volumeMounts:
           - name: workdir
             mountPath: /workspace
