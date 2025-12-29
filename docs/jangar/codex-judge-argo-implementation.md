@@ -11,10 +11,10 @@ This section cross-references the design/implementation plan against current cod
 | --- | --- | --- | --- | --- | --- | --- |
 | A) Argo workflow artifacts | `docs/jangar/codex-judge-argo-implementation.md` | Done | `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml` | - | - | Matches required artifact outputs; aligns with tracking doc “completed.” |
 | B) Notify wrapper | `docs/jangar/codex-judge-argo-implementation.md` | Done | `apps/froussard/src/codex/cli/codex-implement.ts` | - | - | Emits `.codex-implementation-notify.json` and POSTs `/api/codex/notify`. |
-| C) Run-complete ingest + persistence | `docs/jangar/codex-judge-argo-design.md` | Partial | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/codex-judge-store.ts`, `services/jangar/src/routes/api/codex/run-complete.tsx` | #2225 | - | Drops run-complete events missing repo/issue/head; can lose failed runs. |
-| D) Artifact retrieval + fallback | `docs/jangar/codex-judge-argo-design.md` | Partial | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/argo-client.ts` | #2226 | - | Fallback uses `.tgz` suffix and requires `artifact.url`; MinIO bucket/key paths will not work when URL is missing. |
-| E) CI gating by commit SHA | `docs/jangar/codex-judge-argo-design.md` | Partial | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/github-client.ts` | #2227 | - | Falls back to branch head when commit SHA missing; can accept stale CI. |
-| F) PR review gate (Codex) | `docs/jangar/codex-judge-argo-implementation.md` | Partial | `services/jangar/src/server/github-client.ts`, `services/jangar/src/server/codex-judge.ts` | #2228 | - | Review bypass mode can skip required gate; review parsing still sensitive to GraphQL thread details. |
+| C) Run-complete ingest + persistence | `docs/jangar/codex-judge-argo-design.md` | Partial | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/codex-judge-store.ts`, `services/jangar/src/routes/api/codex/run-complete.tsx` | #2225 | #2229 | Still drops some failed runs when metadata is missing; PR #2229 needs rebase/conflict resolution. |
+| D) Artifact retrieval + fallback | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/argo-client.ts` | - | - | Bucket/key fallback + correct workflow output names merged (#2231). |
+| E) CI gating by commit SHA | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/github-client.ts` | - | - | Commit-SHA-only gating merged (#2230). |
+| F) PR review gate (Codex) | `docs/jangar/codex-judge-argo-implementation.md` | Done | `services/jangar/src/server/github-client.ts`, `services/jangar/src/server/codex-judge.ts` | - | - | Strict review gate + summaries merged (#2232). |
 | G) Judge engine (gates + LLM) | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/codex-judge-gates.ts` | - | - | Deterministic gates + LLM judge + retries implemented. |
 | H) Rerun orchestration | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/migrations/20251229_codex_rerun_submissions.ts` | - | - | Submits to Facteur with backoff + dedupe. |
 | I) Discord notifications | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts` | - | - | Success + escalation flows implemented. |
@@ -27,9 +27,7 @@ This section cross-references the design/implementation plan against current cod
 | P) Other open PRs (unrelated to judge) | - | In progress | - | #2198 | #2203, #2221 | PR #2203 likely addresses #2198 (Oxlint). #2221 unrelated. |
 
 Untracked gaps to consider creating issues for:
-- Artifact fallback: support bucket/key download when `artifact.url` is absent and fix `.tgz` suffix assumptions.
-- CI gate: avoid branch-head fallback when commit SHA is missing; treat as infra failure or retry.
-- Review gate: align review bypass with design requirements (strict by default).
+- None noted (as of 2025-12-29).
 
 Current production context (see `docs/codex-workflow.md`):
 - Workflow template: `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
