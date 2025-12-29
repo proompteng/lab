@@ -539,9 +539,27 @@ class ForwarderApp(
         ?: order?.get("submitted_at")?.jsonPrimitive?.contentOrNull
         ?: Instant.now().toString()
 
-    val dedupKey =
+    val orderId =
       order?.get("id")?.jsonPrimitive?.contentOrNull
         ?: order?.get("client_order_id")?.jsonPrimitive?.contentOrNull
+    val eventType =
+      data["event"]?.jsonPrimitive?.contentOrNull
+        ?: data["event_type"]?.jsonPrimitive?.contentOrNull
+    val status = order?.get("status")?.jsonPrimitive?.contentOrNull
+    val eventKeyTs =
+      data["timestamp"]?.jsonPrimitive?.contentOrNull
+        ?: data["t"]?.jsonPrimitive?.contentOrNull
+        ?: order?.get("updated_at")?.jsonPrimitive?.contentOrNull
+        ?: order?.get("submitted_at")?.jsonPrimitive?.contentOrNull
+
+    val dedupKey =
+      if (orderId != null) {
+        listOfNotNull(orderId, eventType, status, eventKeyTs).joinToString(":")
+      } else if (eventKeyTs != null) {
+        "$symbol:$eventKeyTs"
+      } else {
+        null
+      }
 
     if (dedupKey != null && tradeUpdatesDedup.isDuplicate(dedupKey)) {
       metrics.recordDedup("trade_updates")
