@@ -1,3 +1,4 @@
+import type { PathOrFileDescriptor } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('node:fs', () => ({
@@ -10,8 +11,10 @@ import { buildArtifactDownloadUrl, createArgoClient, extractWorkflowArtifacts } 
 const DEFAULT_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
 const TOKEN_ENV_KEYS = ['ARGO_TOKEN', 'ARGO_SERVER_TOKEN', 'ARGO_TOKEN_FILE', 'ARGO_SERVER_TOKEN_FILE'] as const
 
+type FetchFn = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => ReturnType<typeof fetch>
+
 const setFetchMock = (body: Record<string, unknown> = {}) => {
-  const fetchMock = vi.fn(
+  const fetchMock = vi.fn<FetchFn>(
     async () =>
       ({
         ok: true,
@@ -19,7 +22,7 @@ const setFetchMock = (body: Record<string, unknown> = {}) => {
         text: async () => JSON.stringify(body),
       }) as Response,
   )
-  globalThis.fetch = fetchMock as typeof fetch
+  globalThis.fetch = fetchMock as unknown as typeof fetch
   return fetchMock
 }
 
@@ -43,6 +46,16 @@ const restoreEnv = (snapshot: Record<string, string | undefined>) => {
 let envSnapshot: Record<string, string | undefined>
 const originalFetch = globalThis.fetch
 const readFileSyncMock = vi.mocked(readFileSync)
+type FetchMock = ReturnType<typeof setFetchMock>
+type FetchCall = Parameters<FetchFn>
+
+const getFetchInit = (fetchMock: FetchMock): FetchCall[1] | undefined => {
+  const call = fetchMock.mock.calls[0] as FetchCall | undefined
+  if (!call) {
+    throw new Error('Expected fetch to be called')
+  }
+  return call[1]
+}
 
 beforeEach(() => {
   envSnapshot = snapshotEnv()
@@ -147,7 +160,7 @@ describe('createArgoClient auth headers', () => {
 
     await client.getWorkflow('argo-workflows', 'workflow-1')
 
-    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    const init = getFetchInit(fetchMock)
     expect(init?.headers).toEqual(
       expect.objectContaining({
         accept: 'application/json',
@@ -159,8 +172,8 @@ describe('createArgoClient auth headers', () => {
 
   it('adds Authorization header from ARGO_TOKEN_FILE', async () => {
     process.env.ARGO_TOKEN_FILE = '/tmp/argo-token'
-    readFileSyncMock.mockImplementation((path: string) => {
-      if (path === '/tmp/argo-token') return 'file-token'
+    readFileSyncMock.mockImplementation((path: PathOrFileDescriptor) => {
+      if (typeof path === 'string' && path === '/tmp/argo-token') return 'file-token'
       throw new Error('missing token')
     })
     const fetchMock = setFetchMock()
@@ -168,7 +181,7 @@ describe('createArgoClient auth headers', () => {
 
     await client.getWorkflow('argo-workflows', 'workflow-2')
 
-    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    const init = getFetchInit(fetchMock)
     expect(init?.headers).toEqual(
       expect.objectContaining({
         accept: 'application/json',
@@ -179,8 +192,8 @@ describe('createArgoClient auth headers', () => {
   })
 
   it('falls back to the service-account token file', async () => {
-    readFileSyncMock.mockImplementation((path: string) => {
-      if (path === DEFAULT_TOKEN_PATH) return 'sa-token'
+    readFileSyncMock.mockImplementation((path: PathOrFileDescriptor) => {
+      if (typeof path === 'string' && path === DEFAULT_TOKEN_PATH) return 'sa-token'
       throw new Error('missing token')
     })
     const fetchMock = setFetchMock()
@@ -188,7 +201,7 @@ describe('createArgoClient auth headers', () => {
 
     await client.getWorkflow('argo-workflows', 'workflow-3')
 
-    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    const init = getFetchInit(fetchMock)
     expect(init?.headers).toEqual(
       expect.objectContaining({
         accept: 'application/json',
