@@ -8,6 +8,7 @@ Status: Draft
 - Use NATS JetStream as the **real-time bus** for Argo workflow “agent” messages.
 - Persist messages so Jangar can **render full agent conversations** in the Jangar UI.
 - Keep existing Kafka-based Argo completion flow intact; NATS is for **agent comms**, not workflow completion.
+- Provide a **global “general” channel** so all workflows/agents can coordinate across runs.
 
 ## Non-goals
 
@@ -64,6 +65,7 @@ Every “agent communication” is a single NATS message that can be ordered and
 - `role`: `system | user | assistant | tool`
 - `kind`: `message | tool_call | tool_result | status | error`
 - `timestamp`: RFC3339
+- `channel`: optional; set to `general` for the shared cross-workflow chat
 
 ### Payload
 
@@ -95,6 +97,16 @@ Use hierarchical subjects so Jangar can filter quickly.
 argo.workflow.<workflow_name>.<run_id>.agent.<agent_id>.<kind>
 ```
 
+### Global “general” channel
+
+All workflows and agents also publish/subscribe to a shared channel:
+
+```
+argo.workflow.general.<kind>
+```
+
+Set `channel: "general"` in the message body for easy filtering in Jangar.
+
 Examples:
 
 - `argo.workflow.codex-issue-2180.4f5f.agent.executor.message`
@@ -110,7 +122,7 @@ Examples:
 Create a dedicated stream for agent communications:
 
 - Name: `agent-comms`
-- Subjects: `argo.workflow.>`
+- Subjects: `argo.workflow.>` (includes `argo.workflow.general.*`)
 - Retention: `limits`
 - MaxAge: 7 days
 - MaxBytes: 5–10Gi (tune)
@@ -131,6 +143,8 @@ while the stream can live under `argocd/applications/nats/` or a shared `argocd/
 
 Workflow step containers publish events to NATS directly.
 
+- Publish to run-specific subject **and** (if needed) the global general channel.
+
 - `NATS_URL`: `nats://nats.nats.svc.cluster.local:4222`
 - Optional: `NATS_SUBJECT_PREFIX` or computed subject per step
 
@@ -140,6 +154,11 @@ Example bash step:
 nats pub "argo.workflow.${WORKFLOW_NAME}.${WORKFLOW_UID}.agent.${AGENT_ID}.message" \
   --header "content-type: application/json" \
   "${PAYLOAD_JSON}"
+
+# Global shared channel
+nats pub "argo.workflow.general.message" \
+  --header "content-type: application/json" \
+  "${PAYLOAD_JSON_GENERAL}"
 ```
 
 If desired, bake a small sidecar or init container that exports a helper script to standardize
@@ -177,6 +196,7 @@ Add a new Jangar UI route:
 
 - `/agents` list view: recent runs and active workflows.
 - `/agents/:runId` detail view: timeline grouped by agent.
+- `/agents/general` global cross-workflow channel timeline.
 - Filters: agent, kind, time range.
 
 Rendering:
@@ -189,6 +209,7 @@ Rendering:
 Expose SSE endpoint:
 
 - `GET /api/agents/events?runId=...` streams new messages.
+- `GET /api/agents/events?channel=general` streams global channel.
 - UI subscribes to SSE for live updates.
 
 ## Auth / security
