@@ -2,6 +2,7 @@ import { type Migration, type MigrationProvider, Migrator, sql } from 'kysely'
 
 import type { Db } from '~/server/db'
 import * as codexJudgeTimeoutsMigration from '~/server/migrations/20251228_codex_judge_timeouts'
+import * as rerunSubmissionsMigration from '~/server/migrations/20251228_codex_rerun_submissions'
 import * as initMigration from '~/server/migrations/20251228_init'
 
 type MigrationMap = Record<string, Migration>
@@ -19,6 +20,7 @@ class StaticMigrationProvider implements MigrationProvider {
 const migrations: MigrationMap = {
   '20251228_init': initMigration,
   '20251228_codex_judge_timeouts': codexJudgeTimeoutsMigration,
+  '20251228_codex_rerun_submissions': rerunSubmissionsMigration,
 }
 
 const migrationProvider = new StaticMigrationProvider(migrations)

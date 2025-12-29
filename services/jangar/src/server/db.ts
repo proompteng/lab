@@ -256,6 +256,20 @@ type CodexJudgePromptTuning = {
   created_at: Generated<Timestamp>
 }
 
+type CodexJudgeRerunSubmissions = {
+  id: Generated<string>
+  parent_run_id: string
+  attempt: number
+  delivery_id: string
+  status: string
+  submission_attempt: Generated<number>
+  response_status: number | null
+  error: string | null
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+  submitted_at: Timestamp | null
+}
+
 export type Database = {
   'atlas.repositories': AtlasRepositories
   'atlas.file_keys': AtlasFileKeys
@@ -278,6 +292,7 @@ export type Database = {
   'codex_judge.artifacts': CodexJudgeArtifacts
   'codex_judge.evaluations': CodexJudgeEvaluations
   'codex_judge.prompt_tuning': CodexJudgePromptTuning
+  'codex_judge.rerun_submissions': CodexJudgeRerunSubmissions
 }
 
 let db: Db | null | undefined

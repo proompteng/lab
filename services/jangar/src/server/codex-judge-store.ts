@@ -74,6 +74,20 @@ export type CodexPendingRun = {
   updatedAt: string
 }
 
+export type CodexRerunSubmissionRecord = {
+  id: string
+  parentRunId: string
+  attempt: number
+  deliveryId: string
+  status: string
+  submissionAttempt: number
+  responseStatus: number | null
+  error: string | null
+  createdAt: string
+  updatedAt: string
+  submittedAt: string | null
+}
+
 export type CodexRunHistoryEntry = {
   run: CodexRunRecord
   artifacts: CodexArtifactRecord[]
@@ -162,6 +176,20 @@ export type UpsertArtifactsInput = {
   }>
 }
 
+export type ClaimRerunSubmissionInput = {
+  parentRunId: string
+  attempt: number
+  deliveryId: string
+}
+
+export type UpdateRerunSubmissionInput = {
+  id: string
+  status: string
+  responseStatus?: number | null
+  error?: string | null
+  submittedAt?: string | null
+}
+
 export type CodexJudgeStore = {
   upsertRunComplete: (input: UpsertRunCompleteInput) => Promise<CodexRunRecord>
   attachNotify: (input: AttachNotifyInput) => Promise<CodexRunRecord | null>
@@ -178,6 +206,10 @@ export type CodexJudgeStore = {
   ) => Promise<CodexRunRecord | null>
   upsertArtifacts: (input: UpsertArtifactsInput) => Promise<CodexArtifactRecord[]>
   listRunsByStatus: (statuses: string[]) => Promise<CodexPendingRun[]>
+  claimRerunSubmission: (
+    input: ClaimRerunSubmissionInput,
+  ) => Promise<{ submission: CodexRerunSubmissionRecord; shouldSubmit: boolean } | null>
+  updateRerunSubmission: (input: UpdateRerunSubmissionInput) => Promise<CodexRerunSubmissionRecord | null>
   getRunByWorkflow: (workflowName: string, namespace?: string | null) => Promise<CodexRunRecord | null>
   getRunById: (runId: string) => Promise<CodexRunRecord | null>
   listRunsByIssue: (repository: string, issueNumber: number, branch: string) => Promise<CodexRunRecord[]>
@@ -376,6 +408,20 @@ const rowToPromptTuning = (row: Record<string, unknown>): CodexPromptTuningRecor
   status: String(row.status),
   metadata: (row.metadata as Record<string, unknown>) ?? {},
   createdAt: String(row.created_at),
+})
+
+const rowToRerunSubmission = (row: Record<string, unknown>): CodexRerunSubmissionRecord => ({
+  id: String(row.id),
+  parentRunId: String(row.parent_run_id),
+  attempt: Number(row.attempt ?? 0),
+  deliveryId: String(row.delivery_id),
+  status: String(row.status),
+  submissionAttempt: Number(row.submission_attempt ?? 0),
+  responseStatus: row.response_status != null ? Number(row.response_status) : null,
+  error: row.error ? String(row.error) : null,
+  createdAt: String(row.created_at),
+  updatedAt: String(row.updated_at),
+  submittedAt: row.submitted_at ? String(row.submitted_at) : null,
 })
 
 export const createCodexJudgeStore = (
@@ -870,6 +916,89 @@ export const createCodexJudgeStore = (
     return rows
   }
 
+  const claimRerunSubmission = async (input: ClaimRerunSubmissionInput) => {
+    await ensureReady()
+    const updated = await db
+      .updateTable('codex_judge.rerun_submissions')
+      .set({
+        status: 'pending',
+        submission_attempt: sql`submission_attempt + 1`,
+        response_status: null,
+        error: null,
+        updated_at: sql`now()`,
+      })
+      .where('parent_run_id', '=', input.parentRunId)
+      .where('attempt', '=', input.attempt)
+      .where('status', 'in', ['failed', 'pending'])
+      .returningAll()
+      .executeTakeFirst()
+
+    if (updated) {
+      return { submission: rowToRerunSubmission(updated as Record<string, unknown>), shouldSubmit: true }
+    }
+
+    const inserted = await db
+      .insertInto('codex_judge.rerun_submissions')
+      .values({
+        parent_run_id: input.parentRunId,
+        attempt: input.attempt,
+        delivery_id: input.deliveryId,
+        status: 'pending',
+        submission_attempt: 1,
+      })
+      .onConflict((oc) => oc.columns(['parent_run_id', 'attempt']).doNothing())
+      .returningAll()
+      .executeTakeFirst()
+
+    if (inserted) {
+      return { submission: rowToRerunSubmission(inserted as Record<string, unknown>), shouldSubmit: true }
+    }
+
+    const existing = await db
+      .selectFrom('codex_judge.rerun_submissions')
+      .selectAll()
+      .where('parent_run_id', '=', input.parentRunId)
+      .where('attempt', '=', input.attempt)
+      .executeTakeFirst()
+
+    if (existing) {
+      return { submission: rowToRerunSubmission(existing as Record<string, unknown>), shouldSubmit: false }
+    }
+
+    const existingByDelivery = await db
+      .selectFrom('codex_judge.rerun_submissions')
+      .selectAll()
+      .where('delivery_id', '=', input.deliveryId)
+      .executeTakeFirst()
+
+    return existingByDelivery
+      ? { submission: rowToRerunSubmission(existingByDelivery as Record<string, unknown>), shouldSubmit: false }
+      : null
+  }
+
+  const updateRerunSubmission = async (input: UpdateRerunSubmissionInput) => {
+    await ensureReady()
+    const update: Record<string, unknown> = { status: input.status, updated_at: sql`now()` }
+    if (input.responseStatus !== undefined) {
+      update.response_status = input.responseStatus
+    }
+    if (input.error !== undefined) {
+      update.error = input.error
+    }
+    if (input.submittedAt !== undefined) {
+      update.submitted_at = input.submittedAt ? new Date(input.submittedAt) : null
+    }
+
+    const updated = await db
+      .updateTable('codex_judge.rerun_submissions')
+      .set(update)
+      .where('id', '=', input.id)
+      .returningAll()
+      .executeTakeFirst()
+
+    return updated ? rowToRerunSubmission(updated as Record<string, unknown>) : null
+  }
+
   const createPromptTuning = async (
     runId: string,
     prUrl: string,
@@ -905,6 +1034,8 @@ export const createCodexJudgeStore = (
     updateRunPrInfo,
     upsertArtifacts,
     listRunsByStatus,
+    claimRerunSubmission,
+    updateRerunSubmission,
     getRunByWorkflow,
     getRunById,
     listRunsByIssue,
