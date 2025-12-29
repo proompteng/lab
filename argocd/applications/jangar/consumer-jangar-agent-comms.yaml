@@ -1,0 +1,11 @@
+apiVersion: jetstream.nats.io/v1beta2
+kind: Consumer
+metadata:
+  name: jangar-agent-comms
+spec:
+  durableName: jangar-agent-comms
+  streamName: agent-comms
+  ackPolicy: explicit
+  deliverPolicy: all
+  replayPolicy: instant
+  maxAckPending: 20000

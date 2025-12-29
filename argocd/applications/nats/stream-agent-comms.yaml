@@ -1,0 +1,13 @@
+apiVersion: jetstream.nats.io/v1beta2
+kind: Stream
+metadata:
+  name: agent-comms
+spec:
+  name: agent-comms
+  subjects:
+    - argo.workflow.>
+  retention: limits
+  storage: file
+  maxAge: 168h
+  maxBytes: 10737418240
+  replicas: 3
