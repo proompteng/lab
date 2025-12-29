@@ -1,4 +1,13 @@
-import { IconBrain, IconChartCandle, IconDatabase, IconHeart, IconHome, IconList, IconRobot } from '@tabler/icons-react'
+import {
+  IconBrain,
+  IconChartCandle,
+  IconDatabase,
+  IconHeart,
+  IconHome,
+  IconList,
+  IconMessages,
+  IconRobot,
+} from '@tabler/icons-react'
 import { Link, useRouterState } from '@tanstack/react-router'
 
 import {
@@ -29,6 +38,12 @@ type AppNavItem = {
 const appNav: AppNavItem[] = [
   { to: '/', label: 'Home', icon: IconHome },
   { to: '/memories', label: 'Memories', icon: IconBrain },
+  {
+    to: '/agents',
+    label: 'Agents',
+    icon: IconMessages,
+    children: [{ to: '/agents/general', label: 'General' }],
+  },
   {
     to: '/atlas',
     label: 'Atlas',
