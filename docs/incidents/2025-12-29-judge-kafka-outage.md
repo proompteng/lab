@@ -90,13 +90,8 @@ kubectl -n argo-workflows exec eventbus-default-js-0 -c metrics -- sh -c \
 
 ```bash
 # Query run + evaluation for issue 2166
-kubectl -n jangar exec -i jangar-db-1 -- bash -lc '
-PGPASSWORD=$(kubectl -n jangar get secret jangar-db-app -o jsonpath={.data.password} | base64 -d)
-USER=$(kubectl -n jangar get secret jangar-db-app -o jsonpath={.data.username} | base64 -d)
-DB=$(kubectl -n jangar get secret jangar-db-app -o jsonpath={.data.dbname} | base64 -d)
-psql -h 127.0.0.1 -U "$USER" -d "$DB" -c \
+kubectl cnpg psql jangar-db -n jangar -- -d jangar -c \
   "select issue_number, status, updated_at from codex_judge.runs where issue_number=2166;"
-'
 ```
 
 ## What Went Well
@@ -117,4 +112,3 @@ psql -h 127.0.0.1 -U "$USER" -d "$DB" -c \
 2. Add a health check for Kafka consumer lag or empty topic when workflows complete.
 3. Add validation tests for EventSource filters against real workflow payloads.
 4. Document the recovery steps in the Kafka runbook (reference: `docs/runbooks/kafka-broker-storage-recovery.md`).
-
