@@ -147,7 +147,10 @@ class ForwarderApp(
               }
           }
         } else if (config.enableTradeUpdates) {
-          logger.warn { "trade_updates enabled but missing ALPACA_TRADE_STREAM_URL or TOPIC_TRADE_UPDATES; readiness will ignore trade updates" }
+          logger.warn {
+            "trade_updates enabled but missing ALPACA_TRADE_STREAM_URL or TOPIC_TRADE_UPDATES; " +
+              "readiness will ignore trade updates"
+          }
         }
 
         try {
@@ -469,7 +472,12 @@ class ForwarderApp(
         val stream = obj["stream"]?.jsonPrimitive?.contentOrNull ?: continue
         when (stream) {
           "authorization" -> {
-            val status = obj["data"]?.jsonObject?.get("status")?.jsonPrimitive?.contentOrNull
+            val status =
+              obj["data"]
+                ?.jsonObject
+                ?.get("status")
+                ?.jsonPrimitive
+                ?.contentOrNull
             if (status.equals("authorized", ignoreCase = true)) {
               authOk = true
               updateReady()
@@ -501,13 +509,12 @@ class ForwarderApp(
     return response.symbols
   }
 
-  private fun normalizeSymbols(symbols: List<String>): List<String> {
-    return symbols
+  private fun normalizeSymbols(symbols: List<String>): List<String> =
+    symbols
       .map { it.trim().uppercase() }
       .filter { it.isNotEmpty() }
       .filter { ownsSymbol(it) }
       .distinct()
-  }
 
   private fun ownsSymbol(symbol: String): Boolean {
     if (config.shardCount <= 1) return true
@@ -615,14 +622,15 @@ class ForwarderApp(
     val url = "${config.alpacaBaseUrl.trimEnd('/')}/v2/stocks/bars"
 
     val response: AlpacaBarsResponse =
-      httpClient.get(url) {
-        parameter("symbols", symbols.joinToString(","))
-        parameter("timeframe", "1Min")
-        parameter("limit", "100")
-        parameter("feed", config.alpacaFeed)
-        header("APCA-API-KEY-ID", config.alpacaKeyId)
-        header("APCA-API-SECRET-KEY", config.alpacaSecretKey)
-      }.body()
+      httpClient
+        .get(url) {
+          parameter("symbols", symbols.joinToString(","))
+          parameter("timeframe", "1Min")
+          parameter("limit", "100")
+          parameter("feed", config.alpacaFeed)
+          header("APCA-API-KEY-ID", config.alpacaKeyId)
+          header("APCA-API-SECRET-KEY", config.alpacaSecretKey)
+        }.body()
 
     val barsElement = response.bars ?: return emptyList()
 

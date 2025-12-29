@@ -13,12 +13,14 @@ internal class ForwarderMetrics(
   private val dedupCounters = ConcurrentHashMap<String, Counter>()
 
   private val lagSummary: DistributionSummary =
-    DistributionSummary.builder("torghut_ws_lag_ms")
+    DistributionSummary
+      .builder("torghut_ws_lag_ms")
       .publishPercentileHistogram()
       .register(registry)
 
   private val kafkaLatency: Timer =
-    Timer.builder("torghut_ws_kafka_send_latency")
+    Timer
+      .builder("torghut_ws_kafka_send_latency")
       .publishPercentileHistogram()
       .register(registry)
 
@@ -37,7 +39,8 @@ internal class ForwarderMetrics(
   fun recordDedup(channel: String) {
     dedupCounters
       .computeIfAbsent(channel) { dedupChannel ->
-        Counter.builder("torghut_ws_dedup_drops_total")
+        Counter
+          .builder("torghut_ws_dedup_drops_total")
           .tag("channel", dedupChannel)
           .register(registry)
       }.increment()
