@@ -9,7 +9,7 @@ persistence:
 defaultSettings:
   createDefaultDiskLabeledNodes: true
   storageReservedPercentageForDefaultDisk: 30
-  storageMinimalAvailablePercentage: 25
+  storageMinimalAvailablePercentage: 20
   defaultReplicaCount: 1
   replicaAutoBalance: best-effort
   replicaSoftAntiAffinity: false
