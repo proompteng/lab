@@ -20,15 +20,15 @@ config.define_string('clickhouse_local_port', usage='Local port for remote Click
 # Embeddings (memories/atlas)
 config.define_string(
     'openai_api_base_url',
-    usage='OpenAI-compatible API base URL for embeddings (default: http://127.0.0.1:11434/v1 for local Ollama)',
+    usage='OpenAI-compatible API base URL for embeddings (default: from in-cluster jangar Deployment, else http://127.0.0.1:11434/v1)',
 )
 config.define_string(
     'openai_embedding_model',
-    usage='Embedding model name (default: qwen3-embedding-saigak:0.6b)',
+    usage='Embedding model name (default: from in-cluster jangar Deployment, else qwen3-embedding-saigak:0.6b)',
 )
 config.define_string(
     'openai_embedding_dimension',
-    usage='Embedding dimension as integer string (default: 1024; must match DB vector dimension)',
+    usage='Embedding dimension as integer string (default: from in-cluster jangar Deployment, else 1024; must match DB vector dimension)',
 )
 config.define_string(
     'openai_api_key',
@@ -47,10 +47,112 @@ redis_local_port = int(cfg.get('redis_local_port', '16379'))
 nats_local_port = int(cfg.get('nats_local_port', '14222'))
 clickhouse_local_port = int(cfg.get('clickhouse_local_port', '18123'))
 
-openai_api_base_url = str(cfg.get('openai_api_base_url', 'http://127.0.0.1:11434/v1')).strip()
-openai_embedding_model = str(cfg.get('openai_embedding_model', 'qwen3-embedding-saigak:0.6b')).strip()
-openai_embedding_dimension = str(cfg.get('openai_embedding_dimension', '1024')).strip()
+def _deployment_env(namespace, deployment_name, env_name):
+        # Reads a plain env var value from a Deployment spec. Returns '' if missing.
+        py = """import json, os, subprocess, sys
+ns=os.environ.get('NS','')
+dep=os.environ.get('DEP','')
+var=os.environ.get('VAR','')
+try:
+    out=subprocess.check_output(['kubectl','-n',ns,'get','deploy',dep,'-o','json'], stderr=subprocess.DEVNULL)
+except Exception:
+    print('')
+    sys.exit(0)
+try:
+    data=json.loads(out.decode('utf-8'))
+except Exception:
+    print('')
+    sys.exit(0)
+containers=(((data.get('spec') or {}).get('template') or {}).get('spec') or {}).get('containers') or []
+for c in containers:
+    for e in (c.get('env') or []):
+        if e.get('name')==var and isinstance(e.get('value'), str):
+            print(e.get('value'))
+            sys.exit(0)
+print('')
+"""
+        return str(
+                local(
+                        ['python3', '-c', py],
+                        env={'NS': namespace, 'DEP': deployment_name, 'VAR': env_name},
+                        quiet=True,
+                )
+        ).strip()
+
+
+cluster_openai_api_base_url = _deployment_env('jangar', 'jangar', 'OPENAI_API_BASE_URL')
+cluster_openai_embedding_model = _deployment_env('jangar', 'jangar', 'OPENAI_EMBEDDING_MODEL')
+cluster_openai_embedding_dimension = _deployment_env('jangar', 'jangar', 'OPENAI_EMBEDDING_DIMENSION')
+
+openai_api_base_url = str(
+        cfg.get(
+                'openai_api_base_url',
+                cluster_openai_api_base_url if cluster_openai_api_base_url else 'http://127.0.0.1:11434/v1',
+        )
+).strip()
+openai_embedding_model = str(
+        cfg.get(
+                'openai_embedding_model',
+                cluster_openai_embedding_model if cluster_openai_embedding_model else 'qwen3-embedding-saigak:0.6b',
+        )
+).strip()
+openai_embedding_dimension = str(
+        cfg.get(
+                'openai_embedding_dimension',
+                cluster_openai_embedding_dimension if cluster_openai_embedding_dimension else '1024',
+        )
+).strip()
 openai_api_key = str(cfg.get('openai_api_key', '')).strip()
+
+def _openai_model_exists(api_base_url, model):
+        py = """import json, os, sys
+from urllib.request import Request, urlopen
+
+base=(os.environ.get('BASE','') or '').rstrip('/')
+model=os.environ.get('MODEL','')
+if not base or not model:
+    print('')
+    sys.exit(0)
+url=base + '/models'
+try:
+    req=Request(url, headers={'accept':'application/json'})
+    with urlopen(req, timeout=3) as res:
+        body=res.read().decode('utf-8', errors='ignore')
+except Exception:
+    print('')
+    sys.exit(0)
+try:
+    payload=json.loads(body)
+except Exception:
+    print('')
+    sys.exit(0)
+items=payload.get('data') or payload.get('models') or []
+if isinstance(items, list):
+    for item in items:
+        if isinstance(item, dict) and item.get('id') == model:
+            print('1')
+            sys.exit(0)
+print('')
+"""
+        return str(
+                local(
+                        ['python3', '-c', py],
+                        env={'BASE': api_base_url, 'MODEL': model},
+                        quiet=True,
+                )
+        ).strip() == '1'
+
+
+# Helpful warning when pointing at a local Ollama instance without pulling the model first.
+if (
+        openai_api_base_url.startswith('http://127.0.0.1:11434')
+        or openai_api_base_url.startswith('http://localhost:11434')
+) and openai_embedding_model:
+        if not _openai_model_exists(openai_api_base_url, openai_embedding_model):
+                warn(
+                        "Embeddings model '%s' not found at %s. If using Ollama, run: ollama pull %s (or override --openai_embedding_model)."
+                        % (openai_embedding_model, openai_api_base_url, openai_embedding_model)
+                )
 
 enable_redis = cfg.get('enable_redis', True)
 enable_nats = cfg.get('enable_nats', True)
@@ -120,7 +222,8 @@ print(urllib.parse.urlunsplit((scheme, netloc, p.path, p.query, p.fragment)))
 def _port_forward_serve_cmd(namespace, target, local_port, remote_port):
     # kubectl port-forward can exit on transient connection resets; keep retrying.
     # Bind to 127.0.0.1 to avoid IPv6/host binding surprises.
-    return 'bash -lc "set -euo pipefail; while true; do kubectl -n %s port-forward --address 127.0.0.1 %s %d:%d; echo \\\"port-forward exited; retrying in 1s...\\\" >&2; sleep 1; done"' % (
+    # NOTE: Do NOT use `set -e` here; kubectl exits non-zero on transient failures and would kill the retry loop.
+    return 'bash -lc "set -u; while true; do kubectl -n %s port-forward --address 127.0.0.1 %s %d:%d || true; echo \\\"port-forward exited; retrying in 1s...\\\" >&2; sleep 1; done"' % (
         namespace,
         target,
         local_port,

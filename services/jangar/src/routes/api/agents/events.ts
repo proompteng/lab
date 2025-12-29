@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { Duration, Effect } from 'effect'
 
 import { type AgentMessageRecord, createAgentMessagesStore } from '~/server/agent-messages-store'
 import { safeJsonStringify } from '~/server/chat-text'
@@ -64,6 +65,28 @@ const resolveWorkflowUid = async (runId: string) => {
   }
 }
 
+const resolveDbErrorStatus = (message: string) => {
+  if (
+    message.includes('DATABASE_URL') ||
+    message.includes('ECONNREFUSED') ||
+    message.includes('connect ECONNREFUSED') ||
+    message.includes('Connection terminated unexpectedly')
+  ) {
+    return 503
+  }
+  return 500
+}
+
+const looksLikeTransientDbBlip = (message: string) => {
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('econnrefused') ||
+    normalized.includes('connection terminated unexpectedly') ||
+    normalized.includes('server closed the connection unexpectedly') ||
+    normalized.includes('connection reset by peer')
+  )
+}
+
 export const getAgentEvents = async (request: Request) => {
   const url = new URL(request.url)
   const runId = url.searchParams.get('runId')?.trim() || null
@@ -99,13 +122,57 @@ export const getAgentEvents = async (request: Request) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     recordSseError('agent-events', 'store')
-    return jsonResponse({ ok: false, error: message }, message.includes('DATABASE_URL') ? 503 : 500)
+    return jsonResponse({ ok: false, error: message }, resolveDbErrorStatus(message))
   }
+
+  // Preflight the DB connection once before starting SSE.
+  // If the DB is unreachable (common when port-forward is down), return a 503 instead of a 200 SSE
+  // that immediately emits an error payload.
+  let initialRecords: AgentMessageRecord[] = []
+  let initialLastSeenAt: string | null = null
+  try {
+    const listOnce = () =>
+      store.listMessages({
+        identifiers: identifiers.size > 0 ? Array.from(identifiers) : undefined,
+        channel,
+        limit,
+      })
+
+    try {
+      initialRecords = await listOnce()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!looksLikeTransientDbBlip(message)) throw error
+
+      // Brief port-forward restart window; give it a moment and retry once.
+      await Effect.runPromise(Effect.sleep(Duration.millis(750)))
+      initialRecords = await listOnce()
+    }
+
+    for (const record of initialRecords) {
+      if (!initialLastSeenAt || record.createdAt > initialLastSeenAt) {
+        initialLastSeenAt = record.createdAt
+      }
+    }
+    if (!initialLastSeenAt) {
+      initialLastSeenAt = new Date().toISOString()
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    recordSseError('agent-events', 'initial')
+    try {
+      await store.close()
+    } catch {
+      // ignore
+    }
+    return jsonResponse({ ok: false, error: message }, resolveDbErrorStatus(message))
+  }
+
   const encoder = new TextEncoder()
   let heartbeat: ReturnType<typeof setInterval> | null = null
   let poller: ReturnType<typeof setInterval> | null = null
   let isClosed = false
-  let lastSeenAt: string | null = null
+  let lastSeenAt: string | null = initialLastSeenAt
   const seenIds = new Set<string>()
   let connectionClosed = false
 
@@ -114,6 +181,10 @@ export const getAgentEvents = async (request: Request) => {
       recordSseConnection('agent-events', 'opened')
       const push = (payload: unknown) => {
         controller.enqueue(encoder.encode(`data: ${safeJsonStringify(payload)}\n\n`))
+      }
+
+      const comment = (value: string) => {
+        controller.enqueue(encoder.encode(`: ${value.replaceAll('\n', ' ')}\n\n`))
       }
 
       const pushRecord = (record: AgentMessageRecord) => {
@@ -152,39 +223,26 @@ export const getAgentEvents = async (request: Request) => {
       }, HEARTBEAT_INTERVAL_MS)
 
       void (async () => {
-        try {
-          const records = await store.listMessages({
-            identifiers: identifiers.size > 0 ? Array.from(identifiers) : undefined,
-            channel,
-            limit,
-          })
-          records.forEach(pushRecord)
-          if (!lastSeenAt) {
-            lastSeenAt = new Date().toISOString()
-          }
+        initialRecords.forEach(pushRecord)
 
-          poller = setInterval(() => {
-            void (async () => {
-              try {
-                const next = await store.listMessages({
-                  identifiers: identifiers.size > 0 ? Array.from(identifiers) : undefined,
-                  channel,
-                  since: lastSeenAt,
-                  limit,
-                })
-                next.forEach(pushRecord)
-              } catch (error) {
-                if (!isClosed) {
-                  recordSseError('agent-events', 'poll')
-                  push({ error: error instanceof Error ? error.message : String(error) })
-                }
+        poller = setInterval(() => {
+          void (async () => {
+            try {
+              const next = await store.listMessages({
+                identifiers: identifiers.size > 0 ? Array.from(identifiers) : undefined,
+                channel,
+                since: lastSeenAt,
+                limit,
+              })
+              next.forEach(pushRecord)
+            } catch (error) {
+              if (!isClosed) {
+                recordSseError('agent-events', 'poll')
+                comment(`poll error: ${error instanceof Error ? error.message : String(error)}`)
               }
-            })()
-          }, POLL_INTERVAL_MS)
-        } catch (error) {
-          recordSseError('agent-events', 'initial')
-          push({ error: error instanceof Error ? error.message : String(error) })
-        }
+            }
+          })()
+        }, POLL_INTERVAL_MS)
       })()
     },
     cancel() {

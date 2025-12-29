@@ -5,6 +5,7 @@ import { defineConfig } from '@playwright/test'
 const port = Number.parseInt(process.env.PLAYWRIGHT_PORT ?? process.env.JANGAR_PORT ?? '3000', 10)
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://localhost:${port}`
 const configDir = dirname(fileURLToPath(import.meta.url))
+const skipWebServer = process.env.PLAYWRIGHT_SKIP_WEBSERVER === '1'
 
 export default defineConfig({
   testDir: './tests',
@@ -26,11 +27,13 @@ export default defineConfig({
     video: 'retain-on-failure',
   },
   workers: 1,
-  webServer: {
-    command: `bun --bun vite dev --host --port ${port}`,
-    url: baseURL,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-    cwd: configDir,
-  },
+  webServer: skipWebServer
+    ? undefined
+    : {
+        command: `bun --bun vite dev --host --port ${port}`,
+        url: baseURL,
+        reuseExistingServer: !process.env.CI,
+        timeout: 120_000,
+        cwd: configDir,
+      },
 })

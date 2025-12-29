@@ -320,6 +320,17 @@ export type Database = {
 let db: Db | null | undefined
 
 const DEFAULT_SSLMODE = 'require'
+const DEFAULT_CONNECT_TIMEOUT_MS = 5_000
+const DEFAULT_QUERY_TIMEOUT_MS = 20_000
+
+const parsePositiveInt = (rawValue: string | undefined, field: string, fallback: number) => {
+  if (!rawValue) return fallback
+  const parsed = Number.parseInt(rawValue, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${field} must be a positive integer`)
+  }
+  return parsed
+}
 
 const loadCaCert = (rawValue: string) => {
   if (rawValue.includes('BEGIN CERTIFICATE')) {
@@ -370,7 +381,28 @@ const createDbClient = (rawUrl: string): Db => {
   const caCertPath = process.env.PGSSLROOTCERT?.trim() || process.env.JANGAR_DB_CA_CERT?.trim()
   const ssl = resolveSslConfig(sslmode, caCertPath)
 
-  const pool = new Pool({ connectionString: url, ssl })
+  const connectionTimeoutMillis = parsePositiveInt(
+    process.env.PGCONNECT_TIMEOUT_MS?.trim(),
+    'PGCONNECT_TIMEOUT_MS',
+    DEFAULT_CONNECT_TIMEOUT_MS,
+  )
+  const queryTimeoutMillis = parsePositiveInt(
+    process.env.PGQUERY_TIMEOUT_MS?.trim(),
+    'PGQUERY_TIMEOUT_MS',
+    DEFAULT_QUERY_TIMEOUT_MS,
+  )
+
+  const pool = new Pool({
+    connectionString: url,
+    ssl,
+    keepAlive: true,
+    connectionTimeoutMillis,
+    query_timeout: queryTimeoutMillis,
+  })
+
+  pool.on('error', (error) => {
+    console.warn('[jangar] postgres pool error', error)
+  })
   return new Kysely<Database>({
     dialect: new PostgresDialect({ pool }),
   })
