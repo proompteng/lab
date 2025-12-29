@@ -215,6 +215,8 @@ const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
   workflowName: 'workflow-1',
   workflowUid: null,
   workflowNamespace: 'argo',
+  turnId: null,
+  threadId: null,
   stage: 'implementation',
   status: 'superseded',
   phase: null,
@@ -281,5 +283,76 @@ describe('codex judge superseded runs', () => {
     expect(timeoutSpy).not.toHaveBeenCalled()
 
     timeoutSpy.mockRestore()
+  })
+})
+
+describe('codex judge run-complete ingestion', () => {
+  const buildMetadataPayload = () =>
+    ({
+      data: {
+        metadata: {
+          name: 'workflow-1',
+          uid: 'workflow-uid-1',
+          namespace: 'argo',
+          labels: {
+            'codex.repository': 'owner/repo',
+            'codex.issue_number': '456',
+            'codex.head': 'codex/issue-456',
+            'codex.base': 'main',
+          },
+          annotations: {
+            'codex.turn_id': 'turn-123',
+            'codex.thread_id': 'thread-456',
+          },
+        },
+        status: {
+          phase: 'Failed',
+          startedAt: '2025-01-01T00:00:00Z',
+          finishedAt: '2025-01-01T00:05:00Z',
+        },
+        arguments: {
+          parameters: [],
+        },
+      },
+    }) as Record<string, unknown>
+
+  it('uses workflow metadata when eventBody is missing', async () => {
+    const run = buildRun({ status: 'run_complete' })
+    upsertRunComplete.mockResolvedValueOnce(run)
+    upsertArtifacts.mockResolvedValueOnce([])
+    store.getRunByWorkflow.mockResolvedValueOnce(null)
+
+    const handler = await requireHandleRunComplete()
+    await handler(buildMetadataPayload())
+
+    expect(upsertRunComplete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repository: 'owner/repo',
+        issueNumber: 456,
+        branch: 'codex/issue-456',
+        phase: 'Failed',
+        turnId: 'turn-123',
+        threadId: 'thread-456',
+        runCompletePayload: expect.objectContaining({
+          base: 'main',
+          head: 'codex/issue-456',
+          repository: 'owner/repo',
+          issueNumber: 456,
+        }),
+      }),
+    )
+  })
+
+  it('persists failed run-complete events without notify', async () => {
+    const run = buildRun({ status: 'run_complete', phase: 'Failed' })
+    upsertRunComplete.mockResolvedValueOnce(run)
+    upsertArtifacts.mockResolvedValueOnce([])
+    store.getRunByWorkflow.mockResolvedValueOnce(null)
+
+    const handler = await requireHandleRunComplete()
+    const result = await handler(buildMetadataPayload())
+
+    expect(result).toBe(run)
+    expect(upsertRunComplete).toHaveBeenCalled()
   })
 })

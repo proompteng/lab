@@ -239,6 +239,8 @@ Use the existing Postgres wiring in `services/jangar/src/server/db.ts` (jangar-d
 - Persist raw notify payload for audit.
 - Expose internal API for judge pipeline to fetch run context.
 - Decode `eventBody` from workflow arguments to recover repo/issue/head/base.
+- Fall back to workflow labels/annotations or `rawEvent` metadata when `eventBody` is missing or malformed,
+  and still persist a minimal run record for failed workflows.
 - Query Argo Workflow API for artifact outputs (or extend the sensor payload).
  - Unpack `implementation-changes` archive and read `metadata/manifest.json` for prompt/session details.
 - Add `services/jangar/src/routes/api/codex/run-complete.ts` and

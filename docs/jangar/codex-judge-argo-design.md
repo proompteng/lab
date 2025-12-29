@@ -186,6 +186,9 @@ Artifact access:
 - Ingest notify events as enrichment only.
 - Correlate runs by issue_id, workflow_name, workflow_uid, turn_id, attempt.
 - Decode workflow arguments (base64 `eventBody`) to recover repository/issue metadata.
+- If `eventBody` is missing or malformed, fall back to workflow labels/annotations or other metadata
+  (e.g., `rawEvent`) to recover repository/issue/head/base; persist a minimal run record even if
+  metadata is incomplete.
 - Query Argo Workflow API for outputs/artifact keys when needed.
 - Use notify log excerpts (output/agent/runtime/events/status) for judge context and memory snapshots; fall back to artifacts when notify is missing.
 - Wait for GitHub Actions CI status for the attempt commit SHA.
