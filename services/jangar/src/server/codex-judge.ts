@@ -62,7 +62,7 @@ const RECONCILE_STARTUP_DELAY_MS = 5_000
 const RECONCILE_INTERVAL_MS = 60_000
 const RECONCILE_BASE_DELAY_MS = 1_000
 const RECONCILE_JITTER_MS = 15_000
-const PENDING_EVALUATION_STATUSES = ['run_complete', 'judging', 'notified'] as const
+const PENDING_EVALUATION_STATUSES = ['run_complete', 'judging'] as const
 const RECONCILE_DISABLED = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
 const RERUN_SUBMISSION_BACKOFF_MS = [2_000, 7_000, 15_000]
 const JSON_ONLY_REMINDER = [
@@ -174,8 +174,16 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
   const rawData = (payload.data as Record<string, unknown> | string | undefined) ?? payload
   const data = typeof rawData === 'string' ? safeParseJson(rawData) : isRecord(rawData) ? rawData : {}
   const decodedPayload = decodeSchema(RunCompletePayloadSchema, data, {})
-  const rawMetadata = isRecord(data.metadata) ? data.metadata : (decodedPayload.metadata ?? {})
-  const rawStatus = isRecord(data.status) ? data.status : (decodedPayload.status ?? {})
+  const rawMetadata = (() => {
+    if (isRecord(data.metadata)) return data.metadata
+    if (typeof data.metadata === 'string') return safeParseJson(data.metadata)
+    return decodedPayload.metadata ?? {}
+  })()
+  const rawStatus = (() => {
+    if (isRecord(data.status)) return data.status
+    if (typeof data.status === 'string') return safeParseJson(data.status)
+    return decodedPayload.status ?? {}
+  })()
   const rawArguments = (() => {
     if (isRecord(data.arguments)) return data.arguments
     if (typeof data.arguments === 'string') return safeParseJson(data.arguments)
@@ -198,7 +206,14 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
   const issueTitle = typeof eventBody.issueTitle === 'string' ? eventBody.issueTitle : null
   const issueBody = typeof eventBody.issueBody === 'string' ? eventBody.issueBody : null
   const issueUrl = typeof eventBody.issueUrl === 'string' ? eventBody.issueUrl : null
-  const artifacts = (Array.isArray(data.artifacts) ? data.artifacts : (decodedPayload.artifacts ?? []))
+  const artifacts = (() => {
+    if (Array.isArray(data.artifacts)) return data.artifacts
+    if (typeof data.artifacts === 'string') {
+      const parsed = safeParseJson(data.artifacts)
+      return Array.isArray(parsed) ? parsed : []
+    }
+    return decodedPayload.artifacts ?? []
+  })()
     .map((artifact: unknown) => {
       const decoded = decodeSchema(ArtifactSchema, artifact, {})
       const name = decoded.name ?? ''
@@ -238,8 +253,18 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
 const parseNotifyPayload = (payload: Record<string, unknown>) => {
   const rawData = (payload.data as Record<string, unknown> | string | undefined) ?? payload
   const data = typeof rawData === 'string' ? safeParseJson(rawData) : rawData
-  const workflowName = typeof data.workflow_name === 'string' ? data.workflow_name : ''
-  const workflowNamespace = typeof data.workflow_namespace === 'string' ? data.workflow_namespace : null
+  const workflowName =
+    typeof data.workflow_name === 'string'
+      ? data.workflow_name
+      : typeof data.workflowName === 'string'
+        ? data.workflowName
+        : ''
+  const workflowNamespace =
+    typeof data.workflow_namespace === 'string'
+      ? data.workflow_namespace
+      : typeof data.workflowNamespace === 'string'
+        ? data.workflowNamespace
+        : null
   const repository = normalizeRepo(data.repository)
   const issueNumber = Number(data.issue_number ?? 0)
   const branch = typeof data.head_branch === 'string' ? data.head_branch.trim() : ''
@@ -331,9 +356,13 @@ const extractArtifactsFromPayload = (payload: Record<string, unknown> | null) =>
   if (!payload) return []
   const rawData = payload.data
   const data = typeof rawData === 'string' ? safeParseJson(rawData) : isRecord(rawData) ? rawData : payload
-  return Array.isArray((data as Record<string, unknown>).artifacts)
-    ? ((data as Record<string, unknown>).artifacts as unknown[])
-    : []
+  const artifactsValue = (data as Record<string, unknown>).artifacts
+  if (Array.isArray(artifactsValue)) return artifactsValue
+  if (typeof artifactsValue === 'string') {
+    const parsed = safeParseJson(artifactsValue)
+    return Array.isArray(parsed) ? parsed : []
+  }
+  return []
 }
 
 const extractManifestCommitShaFromPayload = (payload: Record<string, unknown> | null) => {
@@ -587,6 +616,37 @@ const fetchPullRequest = async (run: CodexRunRecord) => {
     ...pr,
     mergeableState: full.mergeableState ?? pr.mergeableState ?? null,
   }
+}
+
+const normalizeShaValue = (value: string | null | undefined) => value?.trim().toLowerCase() ?? ''
+
+const matchesCommitSha = (expected: string | null | undefined, actual: string | null | undefined) => {
+  if (!expected || !actual) return true
+  const expectedValue = normalizeShaValue(expected)
+  const actualValue = normalizeShaValue(actual)
+  if (!expectedValue || !actualValue) return true
+  return expectedValue === actualValue || expectedValue.startsWith(actualValue) || actualValue.startsWith(expectedValue)
+}
+
+const resolveExistingPrForIssue = async (run: CodexRunRecord, commitSha?: string | null) => {
+  const candidates = await store.listRunsByIssue(run.repository, run.issueNumber, null)
+  const { owner, repo } = parseRepositoryParts(run.repository)
+
+  for (const candidate of candidates) {
+    if (candidate.id === run.id) continue
+    if (!candidate.branch) continue
+    try {
+      const head = `${owner}:${candidate.branch}`
+      const pr = await github.getPullRequestByHead(owner, repo, head)
+      if (pr && matchesCommitSha(commitSha, pr.headSha)) {
+        return { pr, branch: candidate.branch }
+      }
+    } catch {
+      // ignore lookup errors and keep searching
+    }
+  }
+
+  return null
 }
 
 const fetchCiStatus = async (run: CodexRunRecord, commitSha?: string | null) => {
@@ -1086,6 +1146,94 @@ const hasWaitTimedOut = (since: string | null | undefined, maxWaitMs: number) =>
   return elapsedMs >= maxWaitMs
 }
 
+type MergeableGate = {
+  decision: 'needs_iteration' | 'needs_human'
+  reason: string
+  suggestedFix: string
+  nextPrompt: string
+  systemSuggestions?: string[]
+}
+
+type MergeableOutcome =
+  | { action: 'gate'; gate: MergeableGate }
+  | { action: 'wait'; delayMs: number }
+  | { action: 'none' }
+
+const normalizeMergeableState = (state: string | null | undefined) => {
+  if (!state) return null
+  const trimmed = state.trim().toLowerCase()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+const getMergeableOutcome = (state: string | null | undefined): MergeableOutcome => {
+  const normalized = normalizeMergeableState(state)
+  if (!normalized || normalized === 'clean') return { action: 'none' }
+  if (normalized === 'unknown') {
+    return { action: 'wait', delayMs: 5_000 }
+  }
+  if (normalized === 'dirty') {
+    return {
+      action: 'gate',
+      gate: {
+        decision: 'needs_human',
+        reason: 'merge_conflict',
+        suggestedFix: 'Resolve merge conflicts on the branch before resuming.',
+        nextPrompt: 'Resolve merge conflicts on the branch and update the PR.',
+        systemSuggestions: ['Auto-detect merge conflicts earlier and alert with targeted guidance.'],
+      },
+    }
+  }
+  if (normalized === 'behind') {
+    return {
+      action: 'gate',
+      gate: {
+        decision: 'needs_iteration',
+        reason: 'mergeable_behind',
+        suggestedFix: 'Rebase or merge the base branch into the PR branch and push updates.',
+        nextPrompt: 'Rebase the PR branch on the base branch, resolve any conflicts, and push the updated branch.',
+        systemSuggestions: ['Auto-rebase codex branches when GitHub reports mergeable_state=behind.'],
+      },
+    }
+  }
+  if (normalized === 'draft') {
+    return {
+      action: 'gate',
+      gate: {
+        decision: 'needs_iteration',
+        reason: 'mergeable_draft',
+        suggestedFix: 'Mark the PR as ready for review.',
+        nextPrompt: 'Mark the PR as ready for review and ensure required checks run.',
+        systemSuggestions: ['Auto-mark PRs ready once Codex completes and CI passes.'],
+      },
+    }
+  }
+  if (normalized === 'blocked' || normalized === 'has_hooks') {
+    return {
+      action: 'gate',
+      gate: {
+        decision: 'needs_iteration',
+        reason: 'mergeable_blocked',
+        suggestedFix: 'Satisfy required checks and required reviews; request required reviewers if needed.',
+        nextPrompt: 'Ensure required checks and reviews are satisfied, then update the PR status.',
+        systemSuggestions: ['Surface required checks/reviewers that keep PRs blocked and auto-request them.'],
+      },
+    }
+  }
+  if (normalized === 'unstable') {
+    return {
+      action: 'gate',
+      gate: {
+        decision: 'needs_iteration',
+        reason: 'mergeable_unstable',
+        suggestedFix: 'Fix failing required checks and re-run CI.',
+        nextPrompt: 'Fix failing checks and re-run CI until GitHub reports the PR as mergeable.',
+        systemSuggestions: ['Capture required check failures directly when mergeable_state=unstable.'],
+      },
+    }
+  }
+  return { action: 'none' }
+}
+
 const evaluateRun = async (runId: string) => {
   await ensureStoreReady()
   if (activeEvaluations.has(runId)) return
@@ -1095,6 +1243,14 @@ const evaluateRun = async (runId: string) => {
     const run = await store.getRunById(runId)
     if (!run) return
 
+    const repoParts = (() => {
+      try {
+        return parseRepositoryParts(run.repository)
+      } catch {
+        return null
+      }
+    })()
+
     if (isTerminalStatus(run.status) || run.status === 'superseded') return
 
     if (run.status !== 'judging') {
@@ -1102,29 +1258,29 @@ const evaluateRun = async (runId: string) => {
       if (!updated) return
     }
 
-    const pr = await fetchPullRequest(run)
+    let pr = await fetchPullRequest(run)
+    const commitShaHint = extractCommitShaFromRun(run)
+
+    if (!pr) {
+      try {
+        const existing = await resolveExistingPrForIssue(run, commitShaHint ?? run.commitSha ?? null)
+        if (existing?.pr && repoParts) {
+          const full = await github.getPullRequest(repoParts.owner, repoParts.repo, existing.pr.number)
+          pr = {
+            ...existing.pr,
+            mergeableState: full.mergeableState ?? existing.pr.mergeableState ?? null,
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to resolve existing PR for issue', error)
+      }
+    }
+
     if (pr) {
       await store.updateRunPrInfo(run.id, pr.number, pr.htmlUrl, pr.headSha)
     }
 
     await store.updateRunPrompt(run.id, run.prompt, run.nextPrompt)
-
-    if (pr?.mergeableState === 'dirty') {
-      const evaluation = await store.updateDecision({
-        runId: run.id,
-        decision: 'needs_human',
-        reasons: { error: 'merge_conflict' },
-        suggestedFixes: { fix: 'Resolve merge conflicts on the branch before resuming.' },
-        nextPrompt: 'Resolve merge conflicts on the branch and update the PR.',
-        promptTuning: {},
-        systemSuggestions: {},
-      })
-      const refreshedRun = (await store.getRunById(run.id)) ?? run
-      await writeMemories(refreshedRun, evaluation)
-      await maybeCreatePromptTuningPr(refreshedRun, 'merge_conflict', evaluation.nextPrompt ?? '', evaluation)
-      await sendDiscordEscalation(run, 'merge_conflict')
-      return
-    }
 
     const logExcerpt = extractLogExcerpt(run.notifyPayload)
     const issueTitle = (run.runCompletePayload?.issueTitle as string | undefined) ?? pr?.title ?? ''
@@ -1169,7 +1325,7 @@ const evaluateRun = async (runId: string) => {
     }
 
     const { commitSha, ci } = await resolveCiContext(run, pr)
-    if (!commitSha && !pr) {
+    if (!pr && !commitSha) {
       const evaluation = await store.updateDecision({
         runId: run.id,
         decision: 'needs_iteration',
@@ -1177,7 +1333,12 @@ const evaluateRun = async (runId: string) => {
         suggestedFixes: { fix: 'Ensure PR exists for branch before completion.' },
         nextPrompt: 'Open a PR for the current branch and ensure all required checks run.',
         promptTuning: {},
-        systemSuggestions: {},
+        systemSuggestions: {
+          suggestions: [
+            'Ensure Codex runs always open or update a PR for the issue branch.',
+            'Reuse a stable per-issue branch instead of creating new branches per attempt.',
+          ],
+        },
       })
       const refreshedRun = (await store.getRunById(run.id)) ?? run
       await writeMemories(refreshedRun, evaluation)
@@ -1203,7 +1364,12 @@ const evaluateRun = async (runId: string) => {
           suggestedFixes: { fix: 'Investigate CI delays and re-run checks if needed.' },
           nextPrompt: 'CI checks did not complete in time. Re-run CI and ensure all checks finish.',
           promptTuning: {},
-          systemSuggestions: {},
+          systemSuggestions: {
+            suggestions: [
+              'Auto-retry or cancel/requeue CI runs that exceed the timeout threshold.',
+              'Surface per-check runtime metrics to detect flaky or stuck jobs.',
+            ],
+          },
         })
         const refreshedRun = (await store.getRunById(run.id)) ?? run
         await writeMemories(refreshedRun, evaluation)
@@ -1231,6 +1397,23 @@ const evaluateRun = async (runId: string) => {
     }
 
     if (!pr) {
+      try {
+        const existing = await resolveExistingPrForIssue(run, commitSha ?? run.commitSha ?? null)
+        if (existing?.pr && repoParts) {
+          const full = await github.getPullRequest(repoParts.owner, repoParts.repo, existing.pr.number)
+          const prData = {
+            ...existing.pr,
+            mergeableState: full.mergeableState ?? existing.pr.mergeableState ?? null,
+          }
+          await store.updateRunPrInfo(run.id, prData.number, prData.htmlUrl, prData.headSha)
+          pr = prData
+        }
+      } catch (error) {
+        console.warn('Failed to resolve existing PR after CI update', error)
+      }
+    }
+
+    if (!pr) {
       const evaluation = await store.updateDecision({
         runId: run.id,
         decision: 'needs_iteration',
@@ -1238,7 +1421,12 @@ const evaluateRun = async (runId: string) => {
         suggestedFixes: { fix: 'Ensure PR exists for branch before completion.' },
         nextPrompt: 'Open a PR for the current branch and ensure all required checks run.',
         promptTuning: {},
-        systemSuggestions: {},
+        systemSuggestions: {
+          suggestions: [
+            'Ensure Codex runs always open or update a PR for the issue branch.',
+            'Reuse a stable per-issue branch instead of creating new branches per attempt.',
+          ],
+        },
       })
       const refreshedRun = (await store.getRunById(run.id)) ?? run
       await writeMemories(refreshedRun, evaluation)
@@ -1247,18 +1435,33 @@ const evaluateRun = async (runId: string) => {
     }
 
     const review = await fetchReviewStatus(run, pr.number)
+    const reviewSummary = {
+      unresolvedThreads: review.unresolvedThreads,
+      requestedChanges: review.requestedChanges,
+      issueComments: review.issueComments,
+    }
     const reviewRun =
       (await store.updateReviewStatus({
         runId: run.id,
         status: review.status,
-        summary: {
-          unresolvedThreads: review.unresolvedThreads,
-          requestedChanges: review.requestedChanges,
-          issueComments: review.issueComments,
-        },
+        summary: reviewSummary,
       })) ?? run
 
-    if (review.status === 'pending') {
+    const shouldBypassReview =
+      review.status === 'pending' &&
+      (config.reviewBypassMode === 'always' ||
+        (config.reviewBypassMode === 'timeout' &&
+          hasWaitTimedOut(reviewRun.reviewStatusUpdatedAt, config.reviewMaxWaitMs)))
+
+    if (shouldBypassReview && reviewRun.reviewStatus !== 'bypassed') {
+      await store.updateReviewStatus({
+        runId: run.id,
+        status: 'bypassed',
+        summary: reviewSummary,
+      })
+    }
+
+    if (review.status === 'pending' && !shouldBypassReview) {
       if (hasWaitTimedOut(reviewRun.reviewStatusUpdatedAt, config.reviewMaxWaitMs)) {
         const elapsedMs = getElapsedMs(reviewRun.reviewStatusUpdatedAt)
         const evaluation = await store.updateDecision({
@@ -1273,7 +1476,12 @@ const evaluateRun = async (runId: string) => {
           suggestedFixes: { fix: 'Follow up on Codex review or re-request review to unblock.' },
           nextPrompt: 'Codex review did not complete in time. Re-request review and resolve feedback.',
           promptTuning: {},
-          systemSuggestions: {},
+          systemSuggestions: {
+            suggestions: [
+              'Auto-bypass Codex review after a configurable timeout when no review arrives.',
+              'Verify Codex review bot is configured as an allowed reviewer in branch protections.',
+            ],
+          },
         })
         const refreshedRun = (await store.getRunById(run.id)) ?? run
         await writeMemories(refreshedRun, evaluation)
@@ -1303,6 +1511,37 @@ const evaluateRun = async (runId: string) => {
       return
     }
 
+    const mergeableOutcome = getMergeableOutcome(pr.mergeableState)
+    if (mergeableOutcome.action === 'wait') {
+      scheduleEvaluation(run.id, mergeableOutcome.delayMs, { reschedule: true })
+      return
+    }
+
+    if (mergeableOutcome.action === 'gate') {
+      const gate = mergeableOutcome.gate
+      const evaluation = await store.updateDecision({
+        runId: run.id,
+        decision: gate.decision,
+        reasons: { error: gate.reason, mergeable_state: pr.mergeableState ?? null },
+        suggestedFixes: { fix: gate.suggestedFix },
+        nextPrompt: gate.nextPrompt,
+        promptTuning: {},
+        systemSuggestions: gate.systemSuggestions ? { suggestions: gate.systemSuggestions } : {},
+      })
+      const refreshedRun = (await store.getRunById(run.id)) ?? run
+      await writeMemories(refreshedRun, evaluation)
+
+      if (gate.decision === 'needs_human') {
+        await maybeCreatePromptTuningPr(refreshedRun, gate.reason, evaluation.nextPrompt ?? '', evaluation)
+        await sendDiscordEscalation(run, gate.reason)
+        return
+      }
+
+      await triggerRerun(run, gate.reason, evaluation)
+      return
+    }
+
+    const reviewStatusForJudge = shouldBypassReview ? 'bypassed' : review.status
     const judgePrompt = buildJudgePrompt({
       issueTitle,
       issueBody,
@@ -1311,7 +1550,7 @@ const evaluateRun = async (runId: string) => {
       diff,
       summary: (run.notifyPayload?.last_assistant_message as string | null) ?? null,
       ciStatus: ci.status,
-      reviewStatus: review.status,
+      reviewStatus: reviewStatusForJudge,
       logExcerpt,
     })
 
@@ -1562,7 +1801,7 @@ const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: Co
   const latestRun = await store.getRunById(run.id)
   if (!latestRun || latestRun.status === 'superseded') return
 
-  const attempts = (await store.listRunsByIssue(run.repository, run.issueNumber, run.branch)).length
+  const attempts = (await store.listRunsByIssue(run.repository, run.issueNumber)).length
   const resolvedReason = resolveFailureReason(reason, evaluation) ?? UNKNOWN_FAILURE_REASON
 
   if (attempts >= config.maxAttempts) {

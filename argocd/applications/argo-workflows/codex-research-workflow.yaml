@@ -74,6 +74,8 @@ spec:
             value: '{{pod.name}}'
           - name: AGENT_ID
             value: research
+          - name: AGENT_ROLE
+            value: assistant
         command: ["/usr/local/bin/codex-bootstrap"]
         args:
           - "/bin/bash"

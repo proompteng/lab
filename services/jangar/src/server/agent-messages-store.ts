@@ -13,7 +13,7 @@ export type AgentMessageRecord = {
   agentId: string | null
   role: string
   kind: string
-  timestamp: string
+  timestamp: string | Date
   channel: string | null
   stage: string | null
   content: string
@@ -31,7 +31,7 @@ export type AgentMessageInput = {
   agentId: string | null
   role: string
   kind: string
-  timestamp: string
+  timestamp: string | Date
   channel: string | null
   stage: string | null
   content: string
@@ -42,6 +42,7 @@ export type AgentMessageInput = {
 export type AgentMessagesStore = {
   hasMessages: (input: { runId?: string | null; workflowUid?: string | null }) => Promise<boolean>
   insertMessages: (messages: AgentMessageInput[]) => Promise<number>
+  listMessages: (input: ListAgentMessagesInput) => Promise<AgentMessageRecord[]>
   close: () => Promise<void>
 }
 
@@ -53,6 +54,7 @@ type AgentMessagesStoreOptions = {
 const SCHEMA = 'workflow_comms'
 const TABLE = 'agent_messages'
 const INSERT_BATCH_SIZE = 500
+const DEFAULT_LIST_LIMIT = 500
 
 const chunk = <T>(items: T[], size: number) => {
   if (items.length <= size) return [items]
@@ -74,6 +76,14 @@ const normalizeDedupeKey = (value?: string | null) => {
   return trimmed.length > 0 ? trimmed : null
 }
 
+const normalizeTimestamp = (value: string | Date) => (value instanceof Date ? value.toISOString() : value)
+
+const normalizeLimit = (value?: number | null) => {
+  if (!value || !Number.isFinite(value)) return DEFAULT_LIST_LIMIT
+  if (value <= 0) return DEFAULT_LIST_LIMIT
+  return Math.min(Math.floor(value), 2000)
+}
+
 const ensureSchema = async (db: Db) => {
   await ensureMigrations(db)
 }
@@ -91,6 +101,51 @@ const countRows = async (db: Db, where: { runId?: string | null; workflowUid?: s
   const row = await query.executeTakeFirst()
   const count = row?.count ?? 0
   return Number(count)
+}
+
+const mapRow = (row: {
+  id: string
+  workflow_uid: string | null
+  workflow_name: string | null
+  workflow_namespace: string | null
+  run_id: string | null
+  step_id: string | null
+  agent_id: string | null
+  role: string
+  kind: string
+  timestamp: string | Date
+  channel: string | null
+  stage: string | null
+  content: string
+  attrs: Record<string, unknown>
+  dedupe_key: string | null
+  created_at: string | Date
+}): AgentMessageRecord => ({
+  id: row.id,
+  workflowUid: row.workflow_uid,
+  workflowName: row.workflow_name,
+  workflowNamespace: row.workflow_namespace,
+  runId: row.run_id,
+  stepId: row.step_id,
+  agentId: row.agent_id,
+  role: row.role,
+  kind: row.kind,
+  timestamp: normalizeTimestamp(row.timestamp),
+  channel: row.channel,
+  stage: row.stage,
+  content: row.content,
+  attrs: row.attrs ?? {},
+  dedupeKey: row.dedupe_key,
+  createdAt: normalizeTimestamp(row.created_at),
+})
+
+export type ListAgentMessagesInput = {
+  identifiers?: string[]
+  runId?: string | null
+  workflowUid?: string | null
+  channel?: string | null
+  since?: string | null
+  limit?: number
 }
 
 export const createAgentMessagesStore = (options: AgentMessagesStoreOptions = {}): AgentMessagesStore => {
@@ -158,9 +213,44 @@ export const createAgentMessagesStore = (options: AgentMessagesStoreOptions = {}
     return inserted
   }
 
+  const listMessages = async (input: ListAgentMessagesInput): Promise<AgentMessageRecord[]> => {
+    await ensureReady()
+    const { identifiers, runId, workflowUid, channel, since } = input
+    const limit = normalizeLimit(input.limit)
+    let query = db.selectFrom(`${SCHEMA}.${TABLE}`).selectAll()
+
+    if (identifiers && identifiers.length > 0) {
+      query = query.where((eb) =>
+        eb.or(
+          identifiers.map((identifier) => eb.or([eb('run_id', '=', identifier), eb('workflow_uid', '=', identifier)])),
+        ),
+      )
+    } else if (runId) {
+      query = query.where('run_id', '=', runId)
+    } else if (workflowUid) {
+      query = query.where('workflow_uid', '=', workflowUid)
+    }
+
+    if (channel) {
+      query = query.where('channel', '=', channel)
+    }
+
+    if (since) {
+      query = query.where('created_at', '>', since)
+    }
+
+    const rows = await query.orderBy('created_at', 'asc').limit(limit).execute()
+    return rows.map((row) =>
+      mapRow({
+        ...(row as typeof row & { attrs?: Record<string, unknown> }),
+        attrs: normalizeAttrs((row as { attrs?: Record<string, unknown> }).attrs),
+      }),
+    )
+  }
+
   const close = async () => {
     await db.destroy()
   }
 
-  return { hasMessages, insertMessages, close }
+  return { hasMessages, insertMessages, listMessages, close }
 }

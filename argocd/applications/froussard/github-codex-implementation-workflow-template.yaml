@@ -95,9 +95,15 @@ spec:
                 optional: true
           - name: WORKFLOW_NAME
             value: '{{workflow.name}}'
+          - name: ARGO_WORKFLOW_NAME
+            value: '{{workflow.name}}'
           - name: WORKFLOW_UID
             value: '{{workflow.uid}}'
+          - name: ARGO_WORKFLOW_UID
+            value: '{{workflow.uid}}'
           - name: WORKFLOW_NAMESPACE
+            value: '{{workflow.namespace}}'
+          - name: ARGO_WORKFLOW_NAMESPACE
             value: '{{workflow.namespace}}'
           - name: WORKFLOW_STAGE
             value: implementation
@@ -105,6 +111,8 @@ spec:
             value: '{{pod.name}}'
           - name: AGENT_ID
             value: implementation
+          - name: AGENT_ROLE
+            value: assistant
           - name: AGENT_OUTPUT_PATH
             value: /workspace/lab/.codex-implementation-agent.log
           - name: CODEX_GRAF_BEARER_TOKEN

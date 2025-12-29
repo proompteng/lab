@@ -8,7 +8,6 @@ resources:
   - discord-codex-bot-sealedsecret.yaml
   - discord-success-channel-sealedsecret.yaml
   - codex-run-complete-kafkasource.yaml
-  - consumer-jangar-agent-comms.yaml
   - clickhouse-auth.yaml
   - app-tailscale-service.yaml
   - tailscale-service.yaml
@@ -34,5 +33,5 @@ helmCharts:
 
 images:
   - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: "c9091886"
-    digest: sha256:e37d12cb172a892fb3e4a50901f9a55fd4a71ad1a8f56e23e3f0e36b109722e0
+    newTag: "437612bf"
+    digest: sha256:6d7f2d520a99ea2469df7a3f83978e4df384a1d230cbd34df44de2133887b304

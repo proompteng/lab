@@ -30,6 +30,7 @@ const globalState = globalThis as typeof globalThis & {
     githubToken: string | null
     githubApiBaseUrl: string
     codexReviewers: string[]
+    reviewBypassMode: 'strict' | 'timeout' | 'always'
     ciPollIntervalMs: number
     reviewPollIntervalMs: number
     ciMaxWaitMs: number
@@ -96,6 +97,7 @@ if (!globalState.__codexJudgeConfigMock) {
     githubToken: null,
     githubApiBaseUrl: 'https://api.github.com',
     codexReviewers: [],
+    reviewBypassMode: 'strict',
     ciPollIntervalMs: 1000,
     reviewPollIntervalMs: 1000,
     ciMaxWaitMs: 10_000,
@@ -172,6 +174,7 @@ const config = {
   githubToken: null,
   githubApiBaseUrl: 'https://api.github.com',
   codexReviewers: [],
+  reviewBypassMode: 'strict',
   ciPollIntervalMs: 1000,
   reviewPollIntervalMs: 1000,
   ciMaxWaitMs: 10_000,

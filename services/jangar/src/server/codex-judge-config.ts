@@ -2,6 +2,7 @@ export type CodexJudgeConfig = {
   githubToken: string | null
   githubApiBaseUrl: string
   codexReviewers: string[]
+  reviewBypassMode: 'strict' | 'timeout' | 'always'
   ciPollIntervalMs: number
   reviewPollIntervalMs: number
   ciMaxWaitMs: number
@@ -37,10 +38,18 @@ const parseNumber = (raw: string | undefined, fallback: number) => {
   return parsed
 }
 
+const parseReviewBypassMode = (raw: string | undefined) => {
+  const normalized = (raw ?? '').trim().toLowerCase()
+  if (normalized === 'always' || normalized === 'bypass' || normalized === 'true') return 'always'
+  if (normalized === 'timeout' || normalized === 'bypass_on_timeout') return 'timeout'
+  return 'strict'
+}
+
 export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
   const githubToken = (process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? '').trim() || null
   const githubApiBaseUrl = (process.env.GITHUB_API_BASE_URL ?? DEFAULT_GITHUB_API_BASE).trim()
   const codexReviewers = parseList(process.env.JANGAR_CODEX_REVIEWERS ?? process.env.CODEX_REVIEWERS)
+  const reviewBypassMode = parseReviewBypassMode(process.env.JANGAR_CODEX_REVIEW_POLICY)
   const ciPollIntervalMs = parseNumber(process.env.JANGAR_CI_POLL_INTERVAL_MS, 30_000)
   const reviewPollIntervalMs = parseNumber(process.env.JANGAR_REVIEW_POLL_INTERVAL_MS, 30_000)
   const ciMaxWaitMs = parseNumber(process.env.JANGAR_CI_MAX_WAIT_MS, 60 * 60_000)
@@ -68,6 +77,7 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     githubToken,
     githubApiBaseUrl,
     codexReviewers,
+    reviewBypassMode,
     ciPollIntervalMs,
     reviewPollIntervalMs,
     ciMaxWaitMs,

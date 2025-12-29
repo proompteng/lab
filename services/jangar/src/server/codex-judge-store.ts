@@ -213,7 +213,7 @@ export type CodexJudgeStore = {
   updateRerunSubmission: (input: UpdateRerunSubmissionInput) => Promise<CodexRerunSubmissionRecord | null>
   getRunByWorkflow: (workflowName: string, namespace?: string | null) => Promise<CodexRunRecord | null>
   getRunById: (runId: string) => Promise<CodexRunRecord | null>
-  listRunsByIssue: (repository: string, issueNumber: number, branch: string) => Promise<CodexRunRecord[]>
+  listRunsByIssue: (repository: string, issueNumber: number, branch?: string | null) => Promise<CodexRunRecord[]>
   getRunHistory: (input: GetRunHistoryInput) => Promise<CodexRunHistory>
   getLatestPromptTuningByIssue: (repository: string, issueNumber: number) => Promise<CodexPromptTuningRecord | null>
   createPromptTuning: (
@@ -437,6 +437,7 @@ export const createCodexJudgeStore = (
   const ready = ensureSchema(db)
 
   const getRunByWorkflow = async (workflowName: string, namespace?: string | null) => {
+    if (!workflowName) return null
     const row = await db
       .selectFrom('codex_judge.runs')
       .selectAll()
@@ -451,15 +452,18 @@ export const createCodexJudgeStore = (
     return row ? rowToRun(row as Record<string, unknown>) : null
   }
 
-  const listRunsByIssue = async (repository: string, issueNumber: number, branch: string) => {
-    const rows = await db
+  const listRunsByIssue = async (repository: string, issueNumber: number, branch?: string | null) => {
+    let query = db
       .selectFrom('codex_judge.runs')
       .selectAll()
       .where('repository', '=', repository)
       .where('issue_number', '=', issueNumber)
-      .where('branch', '=', branch)
-      .orderBy('created_at desc')
-      .execute()
+
+    if (branch && branch.length > 0) {
+      query = query.where('branch', '=', branch)
+    }
+
+    const rows = await query.orderBy('created_at desc').execute()
     return rows.map((row) => rowToRun(row as Record<string, unknown>))
   }
 
@@ -545,7 +549,7 @@ export const createCodexJudgeStore = (
   const enforceSingleActiveRun = async (run: CodexRunRecord) => {
     if (isTerminalRunStatus(run.status)) return run
 
-    const runs = await listRunsByIssue(run.repository, run.issueNumber, run.branch)
+    const runs = await listRunsByIssue(run.repository, run.issueNumber)
     const plan = planSupersession(runs)
     if (!plan.activeRun) return run
 
@@ -624,7 +628,6 @@ export const createCodexJudgeStore = (
       .select(['attempt'])
       .where('repository', '=', input.repository)
       .where('issue_number', '=', input.issueNumber)
-      .where('branch', '=', input.branch)
       .execute()
     const attempt = priorRuns.reduce((max, row) => Math.max(max, Number(row.attempt ?? 0)), 0) + 1
 
@@ -670,7 +673,6 @@ export const createCodexJudgeStore = (
         .select(['attempt'])
         .where('repository', '=', input.repository)
         .where('issue_number', '=', input.issueNumber)
-        .where('branch', '=', input.branch)
         .execute()
       const attempt = priorRuns.reduce((max, row) => Math.max(max, Number(row.attempt ?? 0)), 0) + 1
 
