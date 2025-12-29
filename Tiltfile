@@ -117,6 +117,17 @@ print(urllib.parse.urlunsplit((scheme, netloc, p.path, p.query, p.fragment)))
     ).strip()
 
 
+def _port_forward_serve_cmd(namespace, target, local_port, remote_port):
+    # kubectl port-forward can exit on transient connection resets; keep retrying.
+    # Bind to 127.0.0.1 to avoid IPv6/host binding surprises.
+    return 'bash -lc "set -euo pipefail; while true; do kubectl -n %s port-forward --address 127.0.0.1 %s %d:%d; echo \\\"port-forward exited; retrying in 1s...\\\" >&2; sleep 1; done"' % (
+        namespace,
+        target,
+        local_port,
+        remote_port,
+    )
+
+
 # -----------------------------------------------------------------------------
 # Remote dependency port-forwards
 # -----------------------------------------------------------------------------
@@ -128,7 +139,7 @@ if not postgres_service:
 else:
     local_resource(
         'pf-postgres',
-        serve_cmd='kubectl -n jangar port-forward svc/%s %d:5432' % (postgres_service, db_local_port),
+        serve_cmd=_port_forward_serve_cmd('jangar', 'svc/%s' % postgres_service, db_local_port, 5432),
         labels=['port-forward'],
     )
 
@@ -153,7 +164,7 @@ if enable_redis:
     else:
         local_resource(
             'pf-redis',
-            serve_cmd='kubectl -n jangar port-forward svc/%s %d:6379' % (redis_service, redis_local_port),
+            serve_cmd=_port_forward_serve_cmd('jangar', 'svc/%s' % redis_service, redis_local_port, 6379),
             labels=['port-forward'],
         )
         jangar_deps.append('pf-redis')
@@ -162,7 +173,7 @@ if enable_nats:
     # NATS is installed via Helm in the 'nats' namespace; the client port is typically 4222.
     local_resource(
         'pf-nats',
-        serve_cmd='kubectl -n nats port-forward svc/nats %d:4222' % nats_local_port,
+        serve_cmd=_port_forward_serve_cmd('nats', 'svc/nats', nats_local_port, 4222),
         labels=['port-forward'],
     )
     jangar_deps.append('pf-nats')
@@ -171,7 +182,7 @@ if enable_clickhouse:
     # ClickHouse service is defined in argocd/applications/torghut/clickhouse/clickhouse-service.yaml
     local_resource(
         'pf-clickhouse',
-        serve_cmd='kubectl -n torghut port-forward svc/torghut-clickhouse %d:8123' % clickhouse_local_port,
+        serve_cmd=_port_forward_serve_cmd('torghut', 'svc/torghut-clickhouse', clickhouse_local_port, 8123),
         labels=['port-forward'],
     )
     jangar_deps.append('pf-clickhouse')
