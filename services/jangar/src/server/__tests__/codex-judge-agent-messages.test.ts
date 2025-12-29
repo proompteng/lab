@@ -46,6 +46,8 @@ beforeEach(() => {
 
 afterEach(() => {
   delete globalState.__codexJudgeStoreMock
+  __private = null
+  vi.resetModules()
 })
 
 describe('agent message parsing', () => {
