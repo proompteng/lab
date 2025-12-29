@@ -2,7 +2,7 @@ import type { CodexAppServerClient } from '@proompteng/codex'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { resetCodexClient, setCodexClientFactory } from '~/server/codex-client'
-import { GitHubRateLimitError } from '~/server/github-client'
+import { GitHubRateLimitError, type ReviewSummary } from '~/server/github-client'
 import type { CodexEvaluationRecord, CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
 
 let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
@@ -319,6 +319,14 @@ const harness = (() => {
     })),
   }
 
+  const defaultReviewSummary: ReviewSummary = {
+    status: 'approved',
+    unresolvedThreads: [],
+    requestedChanges: false,
+    reviewComments: [],
+    issueComments: [],
+  }
+
   const github = {
     getPullRequestByHead: vi.fn(async () => ({
       number: 101,
@@ -345,13 +353,7 @@ const harness = (() => {
       mergeableState: 'clean',
     })),
     getCheckRuns: vi.fn(async () => ({ status: 'success' as const, url: 'https://ci.example.com' })),
-    getReviewSummary: vi.fn(async () => ({
-      status: 'approved' as const,
-      unresolvedThreads: [],
-      requestedChanges: false,
-      reviewComments: [],
-      issueComments: [],
-    })),
+    getReviewSummary: vi.fn<Promise<ReviewSummary>, []>(async () => defaultReviewSummary),
     getPullRequestDiff: vi.fn(async () => 'diff --git a/file b/file'),
     getRefSha: vi.fn(async () => 'sha-1'),
     getFile: vi.fn(async (_owner: string, _repo: string, _path: string) => ({ content: '', sha: 'file-sha' })),
