@@ -33,6 +33,12 @@ gh api graphql -F pullRequestId=PR_ID -F inReplyTo=COMMENT_ID -F body="Addressed
 ```
 
 - For new inline comments (not replies), prefer the GitHub UI to avoid diff-position errors. Use GraphQL only if you already know the exact `path` and diff `position`.
+- Submit your own open review to finalize it:
+
+```bash
+gh api graphql -F reviewId=REVIEW_ID -F body="Summary (optional)" -F event=COMMENT \
+  -f query='mutation($reviewId:ID!,$body:String!,$event:PullRequestReviewEvent!){submitPullRequestReview(input:{pullRequestReviewId:$reviewId,body:$body,event:$event}){pullRequestReview{id,state}}}'
+```
 
 ## PR creation and updates
 
