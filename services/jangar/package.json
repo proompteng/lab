@@ -16,6 +16,8 @@
     "lint": "bunx biome check --config-path ../../biome.json src"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@aws-sdk/s3-request-presigner": "^3.0.0",
     "@base-ui/react": "^1.0.0",
     "@bufbuild/protobuf": "^2.1.0",
     "@effect/schema": "^0.75.5",

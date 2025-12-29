@@ -1,5 +1,7 @@
 import { Buffer } from 'node:buffer'
 
+import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import * as S from '@effect/schema/Schema'
 import { Effect } from 'effect'
 import * as Either from 'effect/Either'
@@ -417,15 +419,15 @@ const MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
 const MAX_LOG_CHARS = 20_000
 
 const FALLBACK_ARTIFACTS = [
-  { name: 'implementation-changes', suffix: 'implementation-changes.tgz' },
-  { name: 'implementation-patch', suffix: 'implementation-patch.tgz' },
-  { name: 'implementation-status', suffix: 'implementation-status.tgz' },
-  { name: 'implementation-log', suffix: 'implementation-log.tgz' },
-  { name: 'implementation-events', suffix: 'implementation-events.tgz' },
-  { name: 'implementation-agent-log', suffix: 'implementation-agent-log.tgz' },
-  { name: 'implementation-runtime-log', suffix: 'implementation-runtime-log.tgz' },
-  { name: 'implementation-resume', suffix: 'implementation-resume.tgz' },
-  { name: 'implementation-notify', suffix: 'implementation-notify.tgz' },
+  { name: 'implementation-changes', path: '.codex-implementation-changes.tar.gz' },
+  { name: 'implementation-patch', path: '.codex-implementation.patch' },
+  { name: 'implementation-status', path: '.codex-implementation-status.txt' },
+  { name: 'implementation-log', path: '.codex-implementation.log' },
+  { name: 'implementation-events', path: '.codex-implementation-events.jsonl' },
+  { name: 'implementation-agent-log', path: '.codex-implementation-agent.log' },
+  { name: 'implementation-runtime-log', path: '.codex-implementation-runtime.log' },
+  { name: 'implementation-resume', path: '.codex/implementation-resume.json' },
+  { name: 'implementation-notify', path: '.codex-implementation-notify.json' },
 ]
 
 const ARTIFACT_TEXT_HINTS: Record<string, string[]> = {
@@ -465,6 +467,17 @@ const addArtifactEntry = (map: Map<string, ResolvedArtifact>, incoming: Resolved
   map.set(incoming.name, mergeArtifactEntry(existing, incoming))
 }
 
+const buildFallbackArtifactEntries = (workflowName: string, bucket: string): ResolvedArtifact[] => {
+  const baseKey = `${workflowName}/${workflowName}`
+  return FALLBACK_ARTIFACTS.map((artifact) => ({
+    name: artifact.name,
+    key: `${baseKey}/${artifact.path}`,
+    bucket,
+    url: null,
+    metadata: { source: 'static' },
+  }))
+}
+
 const updateArtifactsFromWorkflow = async (
   run: CodexRunRecord,
   artifactsOverride?: Array<{
@@ -480,16 +493,8 @@ const updateArtifactsFromWorkflow = async (
   const workflowNamespace = run.workflowNamespace ?? 'argo-workflows'
 
   const artifactMap = new Map<string, ResolvedArtifact>()
-  const baseKey = `${workflowName}/${workflowName}`
-
-  for (const artifact of FALLBACK_ARTIFACTS) {
-    addArtifactEntry(artifactMap, {
-      name: artifact.name,
-      key: `${baseKey}/${artifact.suffix}`,
-      bucket: DEFAULT_ARTIFACT_BUCKET,
-      url: null,
-      metadata: { source: 'static' },
-    })
+  for (const artifact of buildFallbackArtifactEntries(workflowName, DEFAULT_ARTIFACT_BUCKET)) {
+    addArtifactEntry(artifactMap, artifact)
   }
 
   if (artifactsOverride && artifactsOverride.length > 0) {
@@ -684,10 +689,70 @@ const extractCommitShaFromPayload = (payload: Record<string, unknown>) => {
   return null
 }
 
-const fetchArtifactBuffer = async (artifact: ResolvedArtifact, maxBytes = MAX_ARTIFACT_BYTES) => {
-  if (!artifact.url) return null
+type MinioConfig = {
+  endpoint: string
+  accessKey: string
+  secretKey: string
+  region: string
+}
+
+const normalizeMinioEndpoint = (endpoint: string, secure: boolean) => {
+  if (/^https?:\/\//i.test(endpoint)) return endpoint
+  return `http${secure ? 's' : ''}://${endpoint}`
+}
+
+const resolveMinioConfig = (): MinioConfig | null => {
+  const endpointRaw = (process.env.MINIO_ENDPOINT ?? '').trim()
+  const accessKey = (process.env.MINIO_ACCESS_KEY ?? '').trim()
+  const secretKey = (process.env.MINIO_SECRET_KEY ?? '').trim()
+  if (!endpointRaw || !accessKey || !secretKey) return null
+  const secureRaw = (process.env.MINIO_SECURE ?? '').trim().toLowerCase()
+  const secure = secureRaw === 'true' || secureRaw === '1'
+  const endpoint = normalizeMinioEndpoint(endpointRaw, secure)
+  return {
+    endpoint,
+    accessKey,
+    secretKey,
+    region: 'us-east-1',
+  }
+}
+
+const minioClientCache = (() => {
+  let cachedKey: string | null = null
+  let cachedClient: S3Client | null = null
+  return (config: MinioConfig) => {
+    const cacheKey = `${config.endpoint}:${config.accessKey}:${config.secretKey}:${config.region}`
+    if (cachedClient && cachedKey === cacheKey) return cachedClient
+    cachedKey = cacheKey
+    cachedClient = new S3Client({
+      region: config.region,
+      endpoint: config.endpoint,
+      credentials: {
+        accessKeyId: config.accessKey,
+        secretAccessKey: config.secretKey,
+      },
+      forcePathStyle: true,
+    })
+    return cachedClient
+  }
+})()
+
+const buildArtifactSignedUrl = async (artifact: ResolvedArtifact) => {
+  if (!artifact.bucket || !artifact.key) return null
+  const config = resolveMinioConfig()
+  if (!config) return null
   try {
-    const response = await fetch(artifact.url)
+    const client = minioClientCache(config)
+    const command = new GetObjectCommand({ Bucket: artifact.bucket, Key: artifact.key })
+    return await getSignedUrl(client, command, { expiresIn: 60 })
+  } catch {
+    return null
+  }
+}
+
+const fetchUrlBuffer = async (url: string, maxBytes: number) => {
+  try {
+    const response = await fetch(url)
     if (!response.ok) return null
     const contentLength = Number(response.headers.get('content-length') ?? 0)
     if (contentLength > maxBytes) return null
@@ -697,6 +762,14 @@ const fetchArtifactBuffer = async (artifact: ResolvedArtifact, maxBytes = MAX_AR
   } catch {
     return null
   }
+}
+
+const fetchArtifactBuffer = async (artifact: ResolvedArtifact, maxBytes = MAX_ARTIFACT_BYTES) => {
+  const urlBuffer = artifact.url ? await fetchUrlBuffer(artifact.url, maxBytes) : null
+  if (urlBuffer) return urlBuffer
+  const signedUrl = await buildArtifactSignedUrl(artifact)
+  if (!signedUrl) return null
+  return fetchUrlBuffer(signedUrl, maxBytes)
 }
 
 const fetchArtifactText = async (artifact: ResolvedArtifact, maxBytes = MAX_ARTIFACT_BYTES) => {
@@ -2408,8 +2481,10 @@ const writeMemories = async (run: CodexRunRecord, evaluation: CodexEvaluationRec
 }
 
 export const __private = {
+  buildFallbackArtifactEntries,
   evaluateRun,
   extractCommitShaFromArtifacts,
+  fetchArtifactBuffer,
   findCommitShaInValue,
   normalizeBranchRef,
   resolveCiContext,
