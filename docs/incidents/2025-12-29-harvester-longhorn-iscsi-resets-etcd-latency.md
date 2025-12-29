@@ -50,29 +50,8 @@ Apply:
 kubectl --kubeconfig ~/.kube/altra.yaml apply -f tofu/harvester/templates/longhorn-altra-disk.yaml
 ```
 
-This registers `/usr/local/longhorn-disk` (on `nvme0`) and tags both disks:
-- `nvme1` -> `/var/lib/harvester/defaultdisk`
-- `nvme0` -> `/usr/local/longhorn-disk`
-
-### 2) Migrate master root volumes to `nvme0`
-Use a temporary replica bump to move each master root volume to `nvme0`, then drop back to 1 replica.
-
-Example:
-```bash
-# master-00
-kubectl --kubeconfig ~/.kube/altra.yaml -n longhorn-system patch volumes.longhorn.io pvc-928c70bb-e3b9-47d5-9bde-e0d05c29a6f0 \
-  --type merge -p '{"spec":{"diskSelector":["nvme0"],"numberOfReplicas":2}}'
-
-# master-01
-kubectl --kubeconfig ~/.kube/altra.yaml -n longhorn-system patch volumes.longhorn.io pvc-7a5ad083-1caa-4fee-9a12-043569536a00 \
-  --type merge -p '{"spec":{"diskSelector":["nvme0"],"numberOfReplicas":2}}'
-
-# master-02
-kubectl --kubeconfig ~/.kube/altra.yaml -n longhorn-system patch volumes.longhorn.io pvc-397611d9-e598-48a3-a3d8-cc6b25ee4b85 \
-  --type merge -p '{"spec":{"diskSelector":["nvme0"],"numberOfReplicas":2}}'
-```
-
-After the new replica is healthy on `nvme0`, set `numberOfReplicas` back to `1`.
+This registers `/usr/local/longhorn-disk` (on `nvme0`) as an additional Longhorn disk
+without pinning any volumes to a specific disk.
 
 ## Validation
 After migration:
