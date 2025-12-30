@@ -14,7 +14,7 @@
     "migrate": "bunx drizzle-kit push --config drizzle.config.ts",
     "seed": "bun run scripts/seed.ts",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
-    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.oxlint.json ."
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.2.12",
