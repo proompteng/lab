@@ -11,7 +11,7 @@ COPY packages ./packages
 COPY apps ./apps
 COPY scripts ./scripts
 
-RUN bun install --frozen-lockfile
+RUN bun install --frozen-lockfile --ignore-scripts
 RUN bun run build:golink
 
 FROM oven/bun:${BUN_VERSION}-slim AS runner

@@ -15,13 +15,13 @@ spec:
     metadata:
       annotations:
         autoscaling.knative.dev/minScale: "1"
-        client.knative.dev/updateTimestamp: 2025-12-01T02:32:53.193Z
+        client.knative.dev/updateTimestamp: 2025-12-30T08:26:51.750Z
     spec:
       containerConcurrency: 0
       timeoutSeconds: 60
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/lab/golink@sha256:5e3e45afe3cfbf164dc92d19ff83c8a693d4a95b36ef29917d70005c00157465
+          image: registry.ide-newton.ts.net/lab/golink@sha256:832e1e55033909ea542b33ae4732ef1b87d492bc570e0102abe3cc8f166d4991
           imagePullPolicy: Always
           ports:
             - name: http1
@@ -33,9 +33,9 @@ spec:
                   name: golink-db-app
                   key: uri
             - name: GOLINK_VERSION
-              value: v0.330.1-25-ge6da366c
+              value: v0.377.3-2-g5d567569
             - name: GOLINK_COMMIT
-              value: e6da366c0a2270f1c5ab4a2dec37e616d51c57df
+              value: 5d567569578995e7bae1b435eb403a45936248f1
           resources:
             requests:
               cpu: 100m
