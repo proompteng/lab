@@ -23,7 +23,6 @@ This section cross-references the design/implementation plan against current cod
 | L) Run history API + UI | `docs/jangar/codex-judge-argo-design.md` | Partial (API only) | `services/jangar/src/routes/api/codex/runs.tsx` | [#2151](https://github.com/proompteng/lab/issues/2151) | - | API exists; UI route/components missing. |
 | M) Agent comms ingestion + SSE | `docs/nats-argo-agent-communications.md` | Implemented in code | `services/jangar/src/routes/api/agents/events.ts` | [#2187](https://github.com/proompteng/lab/issues/2187) | - | SSE endpoint exists; remaining deployment/ops tracked in issue. |
 | N) Observability / pipeline ops | `docs/nats-argo-agent-communications.md` | Not in code | - | [#2191](https://github.com/proompteng/lab/issues/2191), [#2173](https://github.com/proompteng/lab/issues/2173), [#2174](https://github.com/proompteng/lab/issues/2174) | - | No code found for these observability tasks yet. |
-| O) Argo events filter validation | `docs/jangar/codex-judge-argo-design.md` | Not in code | - | [#2175](https://github.com/proompteng/lab/issues/2175) | - | Impacts reliability of run-complete ingestion. |
 | P) Other open PRs (unrelated to judge) | - | In progress | - | [#2198](https://github.com/proompteng/lab/issues/2198) | [#2234](https://github.com/proompteng/lab/pull/2234), [#2203](https://github.com/proompteng/lab/pull/2203) | PR [#2203](https://github.com/proompteng/lab/pull/2203) addresses [#2198](https://github.com/proompteng/lab/issues/2198) (Oxlint). [#2234](https://github.com/proompteng/lab/pull/2234) is bonjour build changes. |
 
 Untracked gaps to consider creating issues for:
@@ -32,7 +31,6 @@ Untracked gaps to consider creating issues for:
 Remaining gaps for a fully functional judge system (as of 2025-12-29):
 - Run history UI is not implemented (API only) (#2151).
 - Observability for Kafka/NATS/agent comms is not implemented (#2191, #2173, #2174).
-- Argo Events filter validation is not implemented (#2175), which risks missed/duplicate run-complete events.
 
 Current production context (see `docs/codex-workflow.md`):
 - Workflow template: `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
