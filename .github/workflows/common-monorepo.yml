@@ -72,10 +72,12 @@ jobs:
 
       - name: Oxlint (non-blocking)
         if: inputs.oxlint-command != ''
+        continue-on-error: true
         run: ${{ inputs.oxlint-command }}
 
       - name: Oxlint (type-aware, non-blocking)
         if: inputs.oxlint-type-command != ''
+        continue-on-error: true
         run: ${{ inputs.oxlint-type-command }}
 
       - name: Test
