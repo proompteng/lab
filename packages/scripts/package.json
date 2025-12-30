@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "lint": "biome lint"
+    "lint": "biome lint",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json . && oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.jangar.json src/jangar src/shared"
   },
   "dependencies": {
     "@proompteng/temporal-bun-sdk": "workspace:*",

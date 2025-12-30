@@ -18,4 +18,6 @@ jobs:
     with:
       install-command: bun install --frozen-lockfile
       lint-command: bun run --filter reestr lint
+      oxlint-command: bun run --cwd apps/reestr lint:oxlint
+      oxlint-type-command: bun run --cwd apps/reestr lint:oxlint:type
       build-command: bun run --filter reestr build

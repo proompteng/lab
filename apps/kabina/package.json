@@ -15,7 +15,9 @@
     "build": "run-s build:renderer build:main",
     "build:renderer": "vite build",
     "build:main": "tsc --project tsconfig.electron.json",
-    "start": "electron ."
+    "start": "electron .",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json . && oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.electron.json electron"
   },
   "dependencies": {
     "@kubernetes/client-node": "^1.0.0",

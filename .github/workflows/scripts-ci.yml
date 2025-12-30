@@ -20,4 +20,6 @@ jobs:
       node-version: 24.11.1
       install-command: bun install --frozen-lockfile
       lint-command: bun run --filter @proompteng/scripts lint
+      oxlint-command: bun run --cwd packages/scripts lint:oxlint
+      oxlint-type-command: bun run --cwd packages/scripts lint:oxlint:type
       test-command: bun test packages/scripts/src

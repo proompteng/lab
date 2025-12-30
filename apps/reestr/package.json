@@ -9,7 +9,9 @@
     "start": "bun .output/server/index.mjs",
     "gen:reestr": "bun scripts/gen.ts",
     "lint": "bunx biome check",
-    "format": "bunx biome format --write"
+    "format": "bunx biome format --write",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
   },
   "dependencies": {
     "@base-ui/react": "^1.0.0",

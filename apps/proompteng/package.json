@@ -8,7 +8,9 @@
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "bunx biome check",
-    "format": "bunx biome format --write"
+    "format": "bunx biome format --write",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

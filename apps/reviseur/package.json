@@ -7,7 +7,9 @@
     "build": "mastra build",
     "lint": "biome lint",
     "format": "biome format",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
   },
   "keywords": [],
   "author": "",
