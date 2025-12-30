@@ -16,7 +16,7 @@ jobs:
   ci:
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      install-command: bun install --frozen-lockfile
+      install-command: bun install --frozen-lockfile --ignore-scripts
       lint-command: bun run --filter reestr lint
       oxlint-command: bun run --cwd apps/reestr lint:oxlint
       oxlint-type-command: bun run --cwd apps/reestr lint:oxlint:type

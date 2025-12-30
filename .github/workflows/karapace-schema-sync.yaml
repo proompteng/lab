@@ -37,7 +37,7 @@ jobs:
           github_token: ${{ github.token }}
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Validate protos compile
         run: buf build proto

@@ -25,7 +25,7 @@ jobs:
   test:
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      install-command: bun install --frozen-lockfile
+      install-command: bun install --frozen-lockfile --ignore-scripts
       lint-command: bunx biome check services/golink
       oxlint-command: bun run --cwd services/golink lint:oxlint
       oxlint-type-command: bun run --cwd services/golink lint:oxlint:type

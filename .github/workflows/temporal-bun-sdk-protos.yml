@@ -36,7 +36,7 @@ jobs:
         uses: bufbuild/buf-setup-action@v1
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Run Temporal proto regeneration
         run: bun packages/temporal-bun-sdk/scripts/update-temporal-protos.ts
