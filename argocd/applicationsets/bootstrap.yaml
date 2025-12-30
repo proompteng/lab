@@ -101,6 +101,7 @@ spec:
           - CreateNamespace=true
           - ServerSideApply=true
           - RespectIgnoreDifferences=true
+          - ClientSideApplyMigration=false
   templatePatch: |
     {{- if .annotations }}
     metadata:

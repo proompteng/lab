@@ -6,7 +6,7 @@ metadata:
   labels:
     app: torghut-ta
 spec:
-  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:8493b91ab4b9ca50212c36b198a1f8f98d8a5c30797343247643b5243a872349
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:0e6755ee83a55a0836cd9fafc1de4b6ef7781e81f1abdcc1ea4737b7220dae5c
   imagePullPolicy: IfNotPresent
   flinkVersion: v2_0
   serviceAccount: torghut-runtime
@@ -153,9 +153,9 @@ spec:
                   name: observability-minio-creds
                   key: secretkey
             - name: TORGHUT_TA_VERSION
-              value: v0.374.2-9-g68d870d6
+              value: v0.377.4-3-g5e393f6e
             - name: TORGHUT_TA_COMMIT
-              value: 68d870d6b2f1b01ab951e4bfc1f7e24ba5bb023f
+              value: 5e393f6e4bf5405b84a94e1e55dfb7e287417791
           ports:
             - containerPort: 9249
               name: metrics
