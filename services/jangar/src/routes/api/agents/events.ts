@@ -4,6 +4,7 @@ import { startAgentCommsSubscriber } from '~/server/agent-comms-subscriber'
 import { type AgentMessageRecord, createAgentMessagesStore } from '~/server/agent-messages-store'
 import { safeJsonStringify } from '~/server/chat-text'
 import { createCodexJudgeStore } from '~/server/codex-judge-store'
+import { recordSseConnection, recordSseError } from '~/server/metrics'
 
 export const Route = createFileRoute('/api/agents/events')({
   server: {
@@ -96,6 +97,7 @@ export const getAgentEvents = async (request: Request) => {
     store = createAgentMessagesStore()
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
+    recordSseError('agent-events', 'store')
     return jsonResponse({ ok: false, error: message }, message.includes('DATABASE_URL') ? 503 : 500)
   }
   const encoder = new TextEncoder()
@@ -104,9 +106,11 @@ export const getAgentEvents = async (request: Request) => {
   let isClosed = false
   let lastSeenAt: string | null = null
   const seenIds = new Set<string>()
+  let connectionClosed = false
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
+      recordSseConnection('agent-events', 'opened')
       const push = (payload: unknown) => {
         controller.enqueue(encoder.encode(`data: ${safeJsonStringify(payload)}\n\n`))
       }
@@ -130,6 +134,10 @@ export const getAgentEvents = async (request: Request) => {
           await store.close()
         } catch (error) {
           console.warn('Failed to close agent messages store', error)
+        }
+        if (!connectionClosed) {
+          recordSseConnection('agent-events', 'closed')
+          connectionClosed = true
         }
         controller.close()
       }
@@ -166,12 +174,14 @@ export const getAgentEvents = async (request: Request) => {
                 next.forEach(pushRecord)
               } catch (error) {
                 if (!isClosed) {
+                  recordSseError('agent-events', 'poll')
                   push({ error: error instanceof Error ? error.message : String(error) })
                 }
               }
             })()
           }, POLL_INTERVAL_MS)
         } catch (error) {
+          recordSseError('agent-events', 'initial')
           push({ error: error instanceof Error ? error.message : String(error) })
         }
       })()
@@ -182,6 +192,10 @@ export const getAgentEvents = async (request: Request) => {
       if (heartbeat) clearInterval(heartbeat)
       if (poller) clearInterval(poller)
       void store.close()
+      if (!connectionClosed) {
+        recordSseConnection('agent-events', 'closed')
+        connectionClosed = true
+      }
     },
   })
 

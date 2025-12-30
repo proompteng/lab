@@ -17,6 +17,7 @@ import { safeJsonStringify, stripTerminalControl } from './chat-text'
 import { ChatToolEventRenderer, chatToolEventRendererLive, type ToolRenderer } from './chat-tool-event-renderer'
 import { getCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
 import { loadConfig } from './config'
+import { recordSseConnection, recordSseError } from './metrics'
 import { ThreadState, ThreadStateLive, type ThreadStateService, ThreadStateUnavailableError } from './thread-state'
 import { pickWorktreeCityName } from './worktree-cities'
 import { WorktreeState, WorktreeStateLive, WorktreeStateUnavailableError } from './worktree-state'
@@ -52,6 +53,7 @@ class RequestError extends Error {
 }
 
 const sseError = (payload: unknown, status = 400) => {
+  recordSseError('chat', status >= 500 ? 'server' : 'client')
   const encoder = new TextEncoder()
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -309,9 +311,11 @@ const toSseResponse = (
   const id = `chatcmpl-${crypto.randomUUID()}`
   const heartbeatIntervalMs = 5_000
   const enableHeartbeat = process.env.NODE_ENV !== 'test'
+  let connectionClosed = false
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      recordSseConnection('chat', 'opened')
       let aborted = false
       let controllerClosed = false
       let activeTurnId: string | null = null
@@ -355,6 +359,10 @@ const toSseResponse = (
           // ignore
         } finally {
           controllerClosed = true
+          if (!connectionClosed) {
+            recordSseConnection('chat', 'closed')
+            connectionClosed = true
+          }
         }
       }
 
@@ -607,6 +615,7 @@ const toSseResponse = (
         }
       } catch (error) {
         const normalized = normalizeStreamError(error)
+        recordSseError('chat', 'internal')
         enqueueFrames(
           session.onInternalError({
             message: typeof normalized.message === 'string' ? normalized.message : safeJsonStringify(normalized),
@@ -626,6 +635,12 @@ const toSseResponse = (
           }
           safeClose()
         }
+      }
+    },
+    cancel() {
+      if (!connectionClosed) {
+        recordSseConnection('chat', 'closed')
+        connectionClosed = true
       }
     },
   })
