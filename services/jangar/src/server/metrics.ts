@@ -6,9 +6,18 @@ import {
   type Histogram,
   metrics as otelMetrics,
 } from '@opentelemetry/api'
-import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http'
+import { ExportResultCode } from '@opentelemetry/core'
+import { JsonMetricsSerializer } from '@opentelemetry/otlp-transformer'
 import { Resource } from '@opentelemetry/resources'
-import { MeterProvider, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
+import {
+  Aggregation,
+  AggregationTemporality,
+  InstrumentType,
+  MeterProvider,
+  PeriodicExportingMetricReader,
+  type PushMetricExporter,
+  type ResourceMetrics,
+} from '@opentelemetry/sdk-metrics'
 import {
   SEMRESATTRS_SERVICE_INSTANCE_ID,
   SEMRESATTRS_SERVICE_NAME,
@@ -37,6 +46,8 @@ type AgentCommsErrorStage = 'fetch' | 'insert' | 'decode' | 'unknown'
 type MetricsAttributes = Record<string, string>
 
 const DEFAULT_METRICS_ENDPOINT = 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics'
+
+type FetchTimeout = { signal?: AbortSignal; cancel: () => void }
 
 const globalState = globalThis as typeof globalThis & {
   __jangarMetrics?: MetricsState
@@ -80,6 +91,124 @@ export const recordAgentCommsError = (stage: AgentCommsErrorStage) => {
   recordCounter(metricsState.metrics?.agentCommsIngestErrors, 1, { stage })
 }
 
+const resolveMetricsEndpoint = (): string | null => {
+  const explicit = process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT?.trim()
+  if (explicit) return explicit
+  const lgtm = process.env.LGTM_MIMIR_METRICS_ENDPOINT?.trim()
+  if (lgtm) return lgtm
+  const base = process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim()
+  if (base) {
+    if (base.endsWith('/v1/metrics')) return base
+    const trimmed = base.replace(/\/+$/, '')
+    return `${trimmed}/v1/metrics`
+  }
+  return DEFAULT_METRICS_ENDPOINT
+}
+
+const parseHeaders = (value?: string) => {
+  if (!value) return undefined
+  const result: Record<string, string> = {}
+  for (const pair of value.split(',')) {
+    const [rawKey, ...rawRest] = pair.split('=')
+    if (!rawKey || rawRest.length === 0) continue
+    const key = rawKey.trim()
+    const rawValue = rawRest.join('=').trim()
+    if (!key || !rawValue) continue
+    result[key] = rawValue
+  }
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
+const mergeHeaders = (...headers: Array<Record<string, string> | undefined>): Record<string, string> | undefined => {
+  const merged: Record<string, string> = {}
+  for (const header of headers) {
+    if (!header) continue
+    Object.assign(merged, header)
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined
+}
+
+const parseTimeoutMillis = (value?: string) => {
+  if (!value) return undefined
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined
+  return parsed
+}
+
+const createTimeoutSignal = (timeoutMillis?: number): FetchTimeout => {
+  if (!timeoutMillis) return { cancel: () => {} }
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMillis)
+  return {
+    signal: controller.signal,
+    cancel: () => clearTimeout(timeoutId),
+  }
+}
+
+class FetchMetricExporter implements PushMetricExporter {
+  readonly #url: string
+  readonly #headers?: Record<string, string>
+  readonly #timeoutMillis?: number
+  #shutdown = false
+
+  constructor(url: string, headers?: Record<string, string>, timeoutMillis?: number) {
+    this.#url = url
+    this.#headers = headers
+    this.#timeoutMillis = timeoutMillis
+  }
+
+  export(metrics: ResourceMetrics, resultCallback: (result: { code: ExportResultCode; error?: Error }) => void): void {
+    if (this.#shutdown) {
+      resultCallback({ code: ExportResultCode.FAILED })
+      return
+    }
+
+    const body = JsonMetricsSerializer.serializeRequest([metrics])
+    void this.#send(body)
+      .then(() => {
+        resultCallback({ code: ExportResultCode.SUCCESS })
+      })
+      .catch((error) => {
+        resultCallback({ code: ExportResultCode.FAILED, error })
+      })
+  }
+
+  async forceFlush(): Promise<void> {}
+
+  async shutdown(): Promise<void> {
+    this.#shutdown = true
+  }
+
+  selectAggregationTemporality(_instrumentType: InstrumentType): AggregationTemporality {
+    return AggregationTemporality.CUMULATIVE
+  }
+
+  selectAggregation(_instrumentType: InstrumentType): Aggregation {
+    return Aggregation.Default()
+  }
+
+  async #send(body: Uint8Array): Promise<void> {
+    const { signal, cancel } = createTimeoutSignal(this.#timeoutMillis)
+    try {
+      const response = await fetch(this.#url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.#headers ?? {}),
+        },
+        body,
+        signal,
+      })
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(`OTLP metrics export failed: ${response.status} ${response.statusText} ${text}`.trim())
+      }
+    } finally {
+      cancel()
+    }
+  }
+}
+
 const createMetricsState = (): MetricsState => {
   if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
     return { enabled: false }
@@ -116,10 +245,10 @@ const createMetricsState = (): MetricsState => {
     const sharedHeaders = parseHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS)
     const metricHeaders = mergeHeaders(sharedHeaders, parseHeaders(process.env.OTEL_EXPORTER_OTLP_METRICS_HEADERS))
 
-    const exporterInstance = new OTLPMetricExporter({
-      url: metricsEndpoint,
-      headers: metricHeaders,
-    })
+    const timeoutMillis =
+      parseTimeoutMillis(process.env.OTEL_EXPORTER_OTLP_METRICS_TIMEOUT) ??
+      parseTimeoutMillis(process.env.OTEL_EXPORTER_OTLP_TIMEOUT)
+    const exporterInstance = new FetchMetricExporter(metricsEndpoint, metricHeaders, timeoutMillis)
 
     const reader = new PeriodicExportingMetricReader({
       exporter: exporterInstance,
@@ -180,41 +309,4 @@ const createMetricsState = (): MetricsState => {
 const metricsState = globalState.__jangarMetrics ?? createMetricsState()
 if (!globalState.__jangarMetrics) {
   globalState.__jangarMetrics = metricsState
-}
-
-const resolveMetricsEndpoint = (): string | null => {
-  const explicit = process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT?.trim()
-  if (explicit) return explicit
-  const lgtm = process.env.LGTM_MIMIR_METRICS_ENDPOINT?.trim()
-  if (lgtm) return lgtm
-  const base = process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim()
-  if (base) {
-    if (base.endsWith('/v1/metrics')) return base
-    const trimmed = base.replace(/\/+$/, '')
-    return `${trimmed}/v1/metrics`
-  }
-  return DEFAULT_METRICS_ENDPOINT
-}
-
-const parseHeaders = (value?: string) => {
-  if (!value) return undefined
-  const result: Record<string, string> = {}
-  for (const pair of value.split(',')) {
-    const [rawKey, ...rawRest] = pair.split('=')
-    if (!rawKey || rawRest.length === 0) continue
-    const key = rawKey.trim()
-    const rawValue = rawRest.join('=').trim()
-    if (!key || !rawValue) continue
-    result[key] = rawValue
-  }
-  return Object.keys(result).length > 0 ? result : undefined
-}
-
-const mergeHeaders = (...headers: Array<Record<string, string> | undefined>): Record<string, string> | undefined => {
-  const merged: Record<string, string> = {}
-  for (const header of headers) {
-    if (!header) continue
-    Object.assign(merged, header)
-  }
-  return Object.keys(merged).length > 0 ? merged : undefined
 }

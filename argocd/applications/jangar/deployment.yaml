@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2025-12-30T00:48:42.099Z"
+    deploy.knative.dev/rollout: "2025-12-30T22:52:18.230Z"
 spec:
   replicas: 1
   strategy:
@@ -64,7 +64,7 @@ spec:
             - name: OTEL_METRICS_EXPORTER
               value: otlp
             - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
-              value: http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics
+              value: http://jangar-alloy.jangar.svc.cluster.local:4318/v1/metrics
             - name: OTEL_EXPORTER_OTLP_METRICS_TIMEOUT
               value: "20000"
             - name: OTEL_LOGS_EXPORTER
