@@ -52,7 +52,7 @@ const buildImplementationPrompt = ({
   const trimmedBody = issueBody.trim() || fallbackBody
 
   return [
-    'Implement this issue end to end and open a merge-ready PR.',
+    'Implement this issue end to end and open a ready-to-merge PR.',
     `Repository: ${repositoryFullName}`,
     `Issue: #${issueNumber} - ${issueTitle}`,
     `Issue URL: ${issueUrl}`,
@@ -60,7 +60,6 @@ const buildImplementationPrompt = ({
     `Head branch: ${headBranch}`,
     '',
     'Requirements:',
-    '- Keep scope tight; smallest viable change set; avoid unrelated refactors.',
     `- Work only on \`${headBranch}\` based on \`${baseBranch}\`.`,
     '- Implement the requested changes.',
     '- Do not stop until all issue requirements are fully satisfied and the changes meet production-quality standards.',
@@ -68,9 +67,9 @@ const buildImplementationPrompt = ({
     '  apps/froussard/src/codex/cli/codex-progress-comment.ts.',
     '- Run all required formatters/linters/tests per repo instructions; fix and rerun until green.',
     `- Commit in logical units referencing #${issueNumber}; push the branch.`,
-    '- Open the PR using the default template per repo instructions; link the issue.',
+    '- Open a ready-to-merge PR using the default template per repo instructions; link the issue.',
     '- Finish only when required CI is green; fix failures and re-run the smallest necessary checks until it is.',
-    '- Do not stop until the PR is opened and all required checks are green.',
+    '- Do not stop until the PR is opened and in a mergeable state; resolve merge conflicts, address all review comments from anyone, and keep CI checks green.',
     '- Use relevant repo skills in `skills/` when applicable; do not restate their instructions.',
     '',
     'Memory:',
@@ -83,7 +82,7 @@ const buildImplementationPrompt = ({
     'Final reply (concise):',
     '- Summary (2–4 bullets)',
     '- Tests (commands + pass/fail)',
-    '- PR link',
+    '- PR markdown link',
     '- Blockers (if any)',
     '',
     'Issue body for quick reference:',
