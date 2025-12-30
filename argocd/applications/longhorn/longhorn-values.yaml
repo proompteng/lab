@@ -6,8 +6,33 @@ ingress:
   host: longhorn.lan
 persistence:
   defaultClassReplicaCount: 1
+global:
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: arc-runner
+      effect: NoSchedule
+longhornManager:
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: arc-runner
+      effect: NoSchedule
+longhornDriver:
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: arc-runner
+      effect: NoSchedule
+longhornUI:
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: arc-runner
+      effect: NoSchedule
 defaultSettings:
-  createDefaultDiskLabeledNodes: true
+  createDefaultDiskLabeledNodes: false
+  taintToleration: "dedicated=arc-runner:NoSchedule"
   storageReservedPercentageForDefaultDisk: 30
   storageMinimalAvailablePercentage: 20
   defaultReplicaCount: 1
