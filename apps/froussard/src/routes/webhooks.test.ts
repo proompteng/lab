@@ -145,6 +145,7 @@ describe('createWebhookHandler', () => {
     topics: {
       raw: 'raw-topic',
       codexStructured: 'github.issues.codex.tasks',
+      codexJudge: 'github.webhook.codex.judge',
       discordCommands: 'discord-topic',
     },
     discord: {
@@ -171,6 +172,7 @@ describe('createWebhookHandler', () => {
         topics: {
           raw: baseConfig.topics.raw,
           codexStructured: baseConfig.topics.codexStructured,
+          codexJudge: baseConfig.topics.codexJudge,
           discordCommands: baseConfig.topics.discordCommands,
         },
       },
@@ -776,11 +778,9 @@ describe('createWebhookHandler', () => {
         body: expect.stringContaining(':shipit:'),
       }),
     )
-    expect(publishedMessages).toHaveLength(1)
-    expect(publishedMessages[0]).toMatchObject({
-      topic: 'raw-topic',
-      key: 'delivery-review-clean-update',
-    })
+    expect(publishedMessages).toHaveLength(2)
+    expect(publishedMessages.some((message) => message.topic === 'raw-topic')).toBe(true)
+    expect(publishedMessages.some((message) => message.topic === baseConfig.topics.codexJudge)).toBe(true)
   })
 
   it('does not post a ready comment when thumbs up reaction is absent', async () => {
@@ -933,8 +933,9 @@ describe('createWebhookHandler', () => {
 
     expect(response.status).toBe(202)
     expect(githubServiceMock.createPullRequestComment).not.toHaveBeenCalled()
-    expect(publishedMessages).toHaveLength(1)
-    expect(publishedMessages[0]).toMatchObject({ topic: 'raw-topic', key: 'delivery-undraft-1' })
+    expect(publishedMessages).toHaveLength(2)
+    expect(publishedMessages.some((message) => message.topic === 'raw-topic')).toBe(true)
+    expect(publishedMessages.some((message) => message.topic === baseConfig.topics.codexJudge)).toBe(true)
   })
 
   it('returns 401 when Discord signature verification fails', async () => {

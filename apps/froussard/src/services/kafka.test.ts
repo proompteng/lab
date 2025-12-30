@@ -42,6 +42,7 @@ describe('KafkaProducerLayer', () => {
       topics: {
         raw: 'raw-topic',
         codexStructured: 'github.issues.codex.tasks',
+        codexJudge: 'github.webhook.codex.judge',
         discordCommands: 'discord-topic',
       },
     },

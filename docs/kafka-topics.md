@@ -32,6 +32,7 @@ spec:
 | ----------- | ------- | ----- |
 | `discord.commands.incoming` | Normalized Discord slash command interactions published by Froussard. | Defined in `argocd/applications/froussard/discord-commands-topic.yaml`. 7-day retention. |
 | `github.webhook.events` | Raw GitHub webhook payloads published by the `froussard` service. | Strimzi resource: `github-webhook-events`. 7-day retention. |
+| `github.webhook.codex.judge` | Filtered GitHub webhook events for Codex judge CI/review gating (published by `froussard`). | Strimzi resource: `github-webhook-codex-judge`. 7-day retention. |
 | `github.issues.codex.tasks` | Structured Codex task payloads (protobuf) for services like Facteur. | Defined in `argocd/applications/froussard/github-issues-codex-tasks-topic.yaml`. |
 | `argo.workflows.completions` | Normalized Argo Workflow completion events emitted by Argo Events. | Defined in `argocd/applications/froussard/argo-workflows-completions-topic.yaml`. Mirrors Codex topic retention (7 days). |
 

@@ -542,6 +542,15 @@ const ensureEmptyFile = async (path: string) => {
   await ensureFileDirectory(path)
   await writeFile(path, '', 'utf8')
 }
+
+const ensureNotifyPlaceholder = async (path: string, logger: CodexLogger) => {
+  try {
+    await ensureFileDirectory(path)
+    await writeFile(path, '', { flag: 'a' })
+  } catch (error) {
+    logger.warn(`Failed to ensure notify placeholder at ${path}`, error)
+  }
+}
 const extractArchiveTo = async (archivePath: string, destination: string) => {
   await new Promise<void>((resolve, reject) => {
     const tarProcess = spawnChild('tar', ['-xzf', archivePath, '-C', destination], {
@@ -1210,6 +1219,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       sessionId: capturedSessionId,
     }
   } finally {
+    await ensureNotifyPlaceholder(notifyPath, logger)
     try {
       await captureImplementationArtifacts({
         worktree,

@@ -14,9 +14,11 @@ flowchart LR
   subgraph Kafka Topics
     Raw[github.webhook.events]
     Structured[github.issues.codex.tasks]
+    CodexJudge[github.webhook.codex.judge]
     DiscordTopic[discord.commands.incoming]
   end
   Froussard -->|raw body| Raw
+  Froussard -->|codex judge filter| CodexJudge
   Froussard -->|codex task structured| Structured
   Froussard -->|slash command| DiscordTopic
   Structured --> Facteur[Facteur orchestrator]
@@ -29,7 +31,7 @@ The Argo CD application also provisions the `discord.commands.incoming` Kafka to
 
 - Validate GitHub `x-hub-signature-256` headers using `@octokit/webhooks`.
 - Validate Discord `x-signature-ed25519`/`x-signature-timestamp` headers using `discord-interactions` before parsing the payload.
-- Emit the original JSON event (`github.webhook.events`) and publish Codex task payloads in structured (`github.issues.codex.tasks`) form.
+- Emit the original JSON event (`github.webhook.events`), publish Codex task payloads in structured (`github.issues.codex.tasks`) form, and publish the filtered Codex judge stream (`github.webhook.codex.judge`).
 - Normalize Discord slash command payloads (command name, options, interaction token, user metadata) and publish them into `discord.commands.incoming`.
 - Provision and maintain the `discord.commands.incoming` Kafka topic for Facteur ingestion.
 - Surface health checks on `/health/liveness` and `/health/readiness`.
@@ -63,6 +65,7 @@ The local runtime exposes:
 - Discord slash command signature verification requires `DISCORD_PUBLIC_KEY`. Set
   `KAFKA_DISCORD_COMMAND_TOPIC` to control the output topic for normalized command events.
 - The structured stream is configured via `KAFKA_CODEX_TOPIC_STRUCTURED` (defaulting to `github.issues.codex.tasks`).
+- The Codex judge stream is configured via `KAFKA_CODEX_JUDGE_TOPIC` (defaulting to `github.webhook.codex.judge`).
 
 ### Local Deploy Script
 
