@@ -262,7 +262,15 @@ Use the existing Postgres wiring in `services/jangar/src/server/db.ts` (jangar-d
 Provide CI status for the attempt commit SHA (prefer PR head SHA).
 
 ### Options
-- Webhook receiver in Froussard (GitHub app), which forwards status updates to Jangar.
+- Froussard filters GitHub webhook events Jangar cares about and publishes them to a dedicated Kafka topic;
+  Jangar consumes that topic to update CI/review state (no direct webhook fan-out to Jangar).
+
+### Events to include in the filtered stream
+- `check_run` / `check_suite` (CI conclusion + URL for commit SHA)
+- `pull_request` (PR head SHA updates)
+- `pull_request_review` (review submitted/edited/dismissed)
+- `pull_request_review_comment` (review thread updates)
+- `issue_comment` (Codex comment-as-review fallback)
 
 ### Expected fields
 - ci_status: pending | success | failure
@@ -276,16 +284,18 @@ Provide CI status for the attempt commit SHA (prefer PR head SHA).
 
 ### Implementation notes
 - Jangar already has `GITHUB_TOKEN` in `argocd/applications/jangar/deployment.yaml`; use it to
-  query check-runs or workflow runs by commit SHA.
+  enrich data from GitHub APIs when Kafka payloads are insufficient.
 - Prefer PR head SHA (from GitHub API) over branch head to avoid stale results.
-- Jangar does not poll. CI status updates are delivered by Froussard and re-trigger judge evaluation.
+- Jangar does not poll. CI/review updates are delivered via the filtered Kafka stream and re-trigger judge evaluation.
 
 ### Deliverables
-- CI status updater (Froussard webhook fan-out).
+- Filtered GitHub webhook stream for Jangar (Kafka topic + publisher).
 - Mapping of CI status to run records.
 
 ### Detailed tasks
-- Confirm Froussard webhook delivery for check runs/suites.
+- Confirm Froussard webhook delivery for check runs/suites and review events.
+- Filter relevant GitHub events into the Jangar Kafka topic.
+- Add a Jangar consumer to read that topic and update runs.
 - Map commit SHA -> workflow run -> conclusion.
 - Store CI status in run record; re-trigger judge once final.
 
