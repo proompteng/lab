@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { ensureAgentCommsSubscriber } from '~/server/agent-comms-subscriber'
+import { startAgentCommsSubscriber } from '~/server/agent-comms-subscriber'
 import { type AgentMessageRecord, createAgentMessagesStore } from '~/server/agent-messages-store'
 import { safeJsonStringify } from '~/server/chat-text'
 import { createCodexJudgeStore } from '~/server/codex-judge-store'
@@ -75,8 +75,7 @@ export const getAgentEvents = async (request: Request) => {
     return jsonResponse({ ok: false, error: 'runId, workflowUid, or channel is required' }, 400)
   }
 
-  const subscriber = ensureAgentCommsSubscriber()
-  subscriber.ready.catch((error) => {
+  void startAgentCommsSubscriber().catch((error) => {
     console.warn('Agent comms subscriber failed to start', error)
   })
 

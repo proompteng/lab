@@ -1,11 +1,28 @@
-import { connect, type JetStreamClient, type JsMsg, StringCodec } from 'nats'
+import { Context, Effect, Layer, ManagedRuntime, pipe } from 'effect'
+import {
+  AckPolicy,
+  type ConsumerConfig,
+  connect,
+  DeliverPolicy,
+  ErrorCode,
+  isNatsError,
+  type JetStreamClient,
+  type JetStreamManager,
+  type JsMsg,
+  ReplayPolicy,
+  StringCodec,
+} from 'nats'
 
 import { type AgentMessageInput, createAgentMessagesStore } from '~/server/agent-messages-store'
 
-type AgentCommsSubscriber = {
-  ready: Promise<void>
-  close: () => Promise<void>
+export type AgentCommsSubscriberService = {
+  ready: Effect.Effect<void, Error>
 }
+
+export class AgentCommsSubscriber extends Context.Tag('AgentCommsSubscriber')<
+  AgentCommsSubscriber,
+  AgentCommsSubscriberService
+>() {}
 
 type SubscriberConfig = {
   natsUrl: string
@@ -16,6 +33,10 @@ type SubscriberConfig = {
   pullBatchSize: number
   pullExpiresMs: number
   pollDelayMs: number
+  reconnectDelayMs: number
+  maxAckPending: number
+  ackWaitMs: number
+  consumerDescription: string
 }
 
 const DEFAULT_CONFIG: SubscriberConfig = {
@@ -25,10 +46,51 @@ const DEFAULT_CONFIG: SubscriberConfig = {
   pullBatchSize: 250,
   pullExpiresMs: 1500,
   pollDelayMs: 250,
+  reconnectDelayMs: 2000,
+  maxAckPending: 20000,
+  ackWaitMs: 30000,
+  consumerDescription: 'Jangar agent communications ingestion',
 }
 
-const globalState = globalThis as typeof globalThis & {
-  __jangarAgentCommsSubscriber?: AgentCommsSubscriber
+const isSubscriberDisabled = () =>
+  process.env.NODE_ENV === 'test' || process.env.VITEST || process.env.JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED === 'true'
+
+const resolveConfig = (): SubscriberConfig => ({
+  ...DEFAULT_CONFIG,
+  natsUrl: process.env.NATS_URL?.trim() || DEFAULT_CONFIG.natsUrl,
+  natsUser: process.env.NATS_USER?.trim() || undefined,
+  natsPassword: process.env.NATS_PASSWORD?.trim() || undefined,
+})
+
+type DeferredPromise = {
+  promise: Promise<void>
+  resolve: () => void
+  reject: (error: Error) => void
+}
+
+const createDeferredPromise = (): DeferredPromise => {
+  let resolve: (() => void) | undefined
+  let reject: ((error: Error) => void) | undefined
+  let settled = false
+
+  const promise = new Promise<void>((innerResolve, innerReject) => {
+    resolve = () => {
+      if (settled) return
+      settled = true
+      innerResolve()
+    }
+    reject = (error: Error) => {
+      if (settled) return
+      settled = true
+      innerReject(error)
+    }
+  })
+
+  if (!resolve || !reject) {
+    throw new Error('Deferred promise executor did not initialize')
+  }
+
+  return { promise, resolve, reject }
 }
 
 const coerceString = (value: unknown): string | null => {
@@ -142,61 +204,184 @@ const normalizePayload = (raw: string, subject: string): AgentMessageInput | nul
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-const startSubscriber = async (config: SubscriberConfig, abort: AbortSignal) => {
-  const store = createAgentMessagesStore()
-  const sc = StringCodec()
-  let nc: Awaited<ReturnType<typeof connect>> | null = null
-  let js: JetStreamClient | null = null
+const msToNanos = (ms: number) => Math.max(1, Math.floor(ms)) * 1_000_000
 
+const buildConsumerConfig = (config: SubscriberConfig): ConsumerConfig => ({
+  durable_name: config.consumerName,
+  name: config.consumerName,
+  ack_policy: AckPolicy.Explicit,
+  deliver_policy: DeliverPolicy.All,
+  replay_policy: ReplayPolicy.Instant,
+  max_ack_pending: config.maxAckPending,
+  ack_wait: msToNanos(config.ackWaitMs),
+  description: config.consumerDescription,
+})
+
+const isMissingConsumer = (error: unknown) => {
+  if (!isNatsError(error)) return false
+  const apiError = error.jsError() ?? error.api_error
+  return apiError?.code === 404
+}
+
+const isAlreadyExists = (error: unknown) => {
+  if (!isNatsError(error)) return false
+  const apiError = error.jsError() ?? error.api_error
+  return apiError?.code === 409
+}
+
+const shouldReconnect = (error: unknown) => {
+  if (!isNatsError(error)) return false
+  return (
+    error.code === ErrorCode.ConnectionClosed ||
+    error.code === ErrorCode.ConnectionDraining ||
+    error.code === ErrorCode.ConnectionRefused ||
+    error.code === ErrorCode.ConnectionTimeout ||
+    error.code === ErrorCode.Disconnect ||
+    error.code === ErrorCode.ServerOptionNotAvailable ||
+    error.code === ErrorCode.JetStreamNotEnabled
+  )
+}
+
+const isNoMessageError = (error: unknown) => {
+  if (!isNatsError(error)) return false
+  return error.code === ErrorCode.JetStream404NoMessages || error.code === ErrorCode.JetStream408RequestTimeout
+}
+
+const ensureConsumer = async (manager: JetStreamManager, config: SubscriberConfig) => {
   try {
-    nc = await connect({
-      servers: config.natsUrl,
-      name: 'jangar-agent-comms-subscriber',
-      user: config.natsUser,
-      pass: config.natsPassword,
-    })
-    js = nc.jetstream()
+    const info = await manager.consumers.info(config.streamName, config.consumerName)
+    const expected = buildConsumerConfig(config)
+    const mismatches: string[] = []
+
+    if (info.config.ack_policy !== expected.ack_policy) mismatches.push('ack_policy')
+    if (info.config.deliver_policy !== expected.deliver_policy) mismatches.push('deliver_policy')
+    if (info.config.max_ack_pending !== expected.max_ack_pending) mismatches.push('max_ack_pending')
+    if (info.config.durable_name !== expected.durable_name) mismatches.push('durable_name')
+
+    if (mismatches.length > 0) {
+      console.warn('Agent comms consumer config mismatch', {
+        consumer: config.consumerName,
+        stream: config.streamName,
+        mismatches,
+      })
+    }
+
+    return
   } catch (error) {
-    await store.close()
-    throw error
+    if (!isMissingConsumer(error)) {
+      throw error
+    }
   }
 
   try {
+    await manager.consumers.add(config.streamName, buildConsumerConfig(config))
+    console.info('Created agent comms consumer', {
+      stream: config.streamName,
+      consumer: config.consumerName,
+    })
+  } catch (error) {
+    if (isAlreadyExists(error)) return
+    throw error
+  }
+}
+
+const consumeBatch = async (
+  js: JetStreamClient,
+  sc: ReturnType<typeof StringCodec>,
+  store: ReturnType<typeof createAgentMessagesStore>,
+  config: SubscriberConfig,
+  abort: AbortSignal,
+) => {
+  const batchInputs: AgentMessageInput[] = []
+  const ackables: JsMsg[] = []
+
+  const iterator = js.fetch(config.streamName, config.consumerName, {
+    batch: config.pullBatchSize,
+    expires: config.pullExpiresMs,
+  })
+
+  for await (const msg of iterator) {
+    if (abort.aborted) break
+    const decoded = sc.decode(msg.data)
+    const input = normalizePayload(decoded, msg.subject)
+    if (input) {
+      batchInputs.push(input)
+      ackables.push(msg)
+    } else {
+      msg.ack()
+    }
+  }
+
+  if (batchInputs.length > 0) {
+    await store.insertMessages(batchInputs)
+    for (const msg of ackables) {
+      msg.ack()
+    }
+  }
+}
+
+const consumeLoop = async (
+  js: JetStreamClient,
+  sc: ReturnType<typeof StringCodec>,
+  store: ReturnType<typeof createAgentMessagesStore>,
+  config: SubscriberConfig,
+  abort: AbortSignal,
+) => {
+  while (!abort.aborted) {
+    try {
+      await consumeBatch(js, sc, store, config, abort)
+    } catch (error) {
+      if (abort.aborted) return
+      if (isNoMessageError(error)) {
+        // no-op
+      } else if (shouldReconnect(error)) {
+        throw error
+      } else {
+        console.warn('Agent comms subscriber error', error)
+      }
+    }
+
+    if (!abort.aborted) {
+      await sleep(config.pollDelayMs)
+    }
+  }
+}
+
+const runSubscriberLoop = async (config: SubscriberConfig, abort: AbortSignal, markReady: () => void) => {
+  const store = createAgentMessagesStore()
+  const sc = StringCodec()
+
+  try {
     while (!abort.aborted) {
-      const batchInputs: AgentMessageInput[] = []
-      const ackables: JsMsg[] = []
+      let nc: Awaited<ReturnType<typeof connect>> | null = null
+
       try {
-        const iterator = js.fetch(config.streamName, config.consumerName, {
-          batch: config.pullBatchSize,
-          expires: config.pullExpiresMs,
+        nc = await connect({
+          servers: config.natsUrl,
+          name: 'jangar-agent-comms-subscriber',
+          user: config.natsUser,
+          pass: config.natsPassword,
         })
 
-        for await (const msg of iterator) {
-          const decoded = sc.decode(msg.data)
-          const input = normalizePayload(decoded, msg.subject)
-          if (input) {
-            batchInputs.push(input)
-            ackables.push(msg)
-          } else {
-            msg.ack()
-          }
-        }
-
-        if (batchInputs.length > 0) {
-          await store.insertMessages(batchInputs)
-          for (const msg of ackables) {
-            msg.ack()
-          }
-        }
+        const js = nc.jetstream()
+        const jsm = await nc.jetstreamManager()
+        await ensureConsumer(jsm, config)
+        markReady()
+        await consumeLoop(js, sc, store, config, abort)
       } catch (error) {
         if (!abort.aborted) {
-          console.warn('Agent comms subscriber error', error)
-          await sleep(config.pollDelayMs)
+          console.warn('Agent comms subscriber connection error', error)
+        }
+      } finally {
+        try {
+          await nc?.close()
+        } catch (error) {
+          console.warn('Failed to close NATS connection', error)
         }
       }
 
       if (!abort.aborted) {
-        await sleep(config.pollDelayMs)
+        await sleep(config.reconnectDelayMs)
       }
     }
   } finally {
@@ -205,59 +390,57 @@ const startSubscriber = async (config: SubscriberConfig, abort: AbortSignal) => 
     } catch (error) {
       console.warn('Failed to close agent comms store', error)
     }
-    try {
-      await nc?.close()
-    } catch (error) {
-      console.warn('Failed to close NATS connection', error)
-    }
   }
 }
 
-export const ensureAgentCommsSubscriber = (): AgentCommsSubscriber => {
-  if (globalState.__jangarAgentCommsSubscriber) {
-    return globalState.__jangarAgentCommsSubscriber
-  }
-
-  if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
-    const noop: AgentCommsSubscriber = {
-      ready: Promise.resolve(),
-      close: async () => {},
+export const AgentCommsSubscriberLive = Layer.scoped(
+  AgentCommsSubscriber,
+  Effect.gen(function* () {
+    if (isSubscriberDisabled()) {
+      return { ready: Effect.void }
     }
-    globalState.__jangarAgentCommsSubscriber = noop
-    return noop
-  }
 
-  if (process.env.JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED === 'true') {
-    const noop: AgentCommsSubscriber = {
-      ready: Promise.resolve(),
-      close: async () => {},
+    const abortController = new AbortController()
+    const readyGate = createDeferredPromise()
+    const config = resolveConfig()
+
+    yield* Effect.addFinalizer(() => Effect.sync(() => abortController.abort()))
+
+    yield* Effect.forkScoped(
+      pipe(
+        Effect.tryPromise({
+          try: () => runSubscriberLoop(config, abortController.signal, readyGate.resolve),
+          catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+        }),
+        Effect.catchAll((error) => {
+          readyGate.reject(error)
+          return Effect.sync(() => {
+            console.warn('Agent comms subscriber stopped', error)
+          })
+        }),
+      ),
+    )
+
+    return {
+      ready: Effect.tryPromise({
+        try: () => readyGate.promise,
+        catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+      }),
     }
-    globalState.__jangarAgentCommsSubscriber = noop
-    return noop
+  }),
+)
+
+const subscriberRuntime = ManagedRuntime.make(AgentCommsSubscriberLive)
+const startAgentCommsSubscriberEffect = Effect.flatMap(AgentCommsSubscriber, (service) => service.ready)
+let startPromise: Promise<void> | null = null
+
+export const startAgentCommsSubscriber = () => {
+  if (!startPromise) {
+    startPromise = subscriberRuntime.runPromise(startAgentCommsSubscriberEffect).catch((error) => {
+      startPromise = null
+      throw error
+    })
   }
 
-  const abortController = new AbortController()
-  const config: SubscriberConfig = {
-    ...DEFAULT_CONFIG,
-    natsUrl: process.env.NATS_URL?.trim() || DEFAULT_CONFIG.natsUrl,
-    natsUser: process.env.NATS_USER?.trim() || undefined,
-    natsPassword: process.env.NATS_PASSWORD?.trim() || undefined,
-  }
-
-  const ready = startSubscriber(config, abortController.signal)
-
-  const handle: AgentCommsSubscriber = {
-    ready,
-    close: async () => {
-      abortController.abort()
-      try {
-        await ready
-      } catch {
-        // ignore errors on shutdown
-      }
-    },
-  }
-
-  globalState.__jangarAgentCommsSubscriber = handle
-  return handle
+  return startPromise
 }
