@@ -2697,6 +2697,46 @@ const buildDiscordSuccessMessage = (run: CodexRunRecord, prUrl?: string, ciUrl?:
     .slice(0, DISCORD_MESSAGE_LIMIT)
 }
 
+const buildDiscordEscalationMessage = (run: CodexRunRecord, reason: string) => {
+  const issueUrl = resolveIssueUrl(run)
+  const resolvedPrUrl = resolvePrUrl(run)
+  const resolvedCiUrl = resolveCiUrl(run)
+  const artifactUrl = extractArtifactUrl(run)
+  const normalizedReason = reason.trim().length > 0 ? reason.trim() : 'unknown'
+  const statusLine = `⚠️ Codex needs human help for ${run.repository}#${run.issueNumber}.`
+  const reasonPrefix = 'Reason: '
+  const linkLines = [
+    issueUrl ? `Issue: ${issueUrl}` : null,
+    resolvedPrUrl ? `PR: ${resolvedPrUrl}` : null,
+    resolvedCiUrl ? `CI: ${resolvedCiUrl}` : null,
+    artifactUrl ? `Artifacts: ${artifactUrl}` : null,
+  ].filter(Boolean) as string[]
+
+  const buildLines = (links: string[]) => {
+    const fixedLines = [statusLine, ...links]
+    const fixedLength = fixedLines.join('\n').length
+    const maxReason = DISCORD_MESSAGE_LIMIT - fixedLength - reasonPrefix.length - 1
+    const trimmedReason = truncateDiscordText(normalizedReason, maxReason)
+    return [statusLine, `${reasonPrefix}${trimmedReason || 'unknown'}`, ...links]
+  }
+
+  let lines = buildLines(linkLines)
+  if (lines.join('\n').length > DISCORD_MESSAGE_LIMIT && artifactUrl) {
+    lines = buildLines(linkLines.filter((line) => !line.startsWith('Artifacts:')))
+  }
+
+  const content = lines.join('\n')
+  if (content.length <= DISCORD_MESSAGE_LIMIT) return content
+
+  const tightenedReason = truncateDiscordText(
+    normalizedReason,
+    Math.max(1, DISCORD_MESSAGE_LIMIT - content.length + normalizedReason.length),
+  )
+  return [statusLine, `${reasonPrefix}${tightenedReason || 'unknown'}`, ...linkLines]
+    .join('\n')
+    .slice(0, DISCORD_MESSAGE_LIMIT)
+}
+
 const sendDiscordSuccess = async (run: CodexRunRecord, prUrl?: string, ciUrl?: string) => {
   if (!config.discordBotToken || !config.discordChannelId) return
   const content = buildDiscordSuccessMessage(run, prUrl, ciUrl)
@@ -2713,7 +2753,16 @@ const sendDiscordSuccess = async (run: CodexRunRecord, prUrl?: string, ciUrl?: s
 
 const sendDiscordEscalation = async (run: CodexRunRecord, reason: string) => {
   if (!config.discordBotToken || !config.discordChannelId) return
-  const content = `⚠️ Codex needs human help for ${run.repository}#${run.issueNumber}. Reason: ${reason}`
+  let runForMessage = run
+  try {
+    const latest = await store.getRunById(run.id)
+    if (latest) {
+      runForMessage = latest
+    }
+  } catch {
+    // ignore store lookup failures; fall back to provided run
+  }
+  const content = buildDiscordEscalationMessage(runForMessage, reason)
   await fetch(`${config.discordApiBaseUrl}/channels/${config.discordChannelId}/messages`, {
     method: 'POST',
     headers: {

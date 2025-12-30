@@ -11,8 +11,8 @@ This section cross-references the design/implementation plan against current cod
 | --- | --- | --- | --- | --- | --- | --- |
 | A) Argo workflow artifacts | `docs/jangar/codex-judge-argo-implementation.md` | Done | `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml` | - | - | Matches required artifact outputs; aligns with tracking doc “completed.” |
 | B) Notify wrapper | `docs/jangar/codex-judge-argo-implementation.md` | Done | `apps/froussard/src/codex/cli/codex-implement.ts` | - | - | Emits `.codex-implementation-notify.json` and POSTs `/api/codex/notify`. |
-| C) Run-complete ingest + persistence | `docs/jangar/codex-judge-argo-design.md` | Partial | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/codex-judge-store.ts`, `services/jangar/src/routes/api/codex/run-complete.tsx` | #2225 | #2229 | Still drops some failed runs when metadata is missing; PR #2229 needs rebase/conflict resolution. |
-| D) Artifact retrieval + fallback | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/argo-client.ts` | - | - | Bucket/key fallback + correct workflow output names merged (#2231). |
+| C) Run-complete ingest + persistence | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/codex-judge-store.ts`, `services/jangar/src/routes/api/codex/run-complete.tsx` | - | - | Persists run-complete even with partial metadata; sentinel handling prevents treating unknown repo/branch as valid. |
+| D) Artifact retrieval + fallback | `docs/jangar/codex-judge-argo-design.md` | Partial (auth pending) | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/argo-client.ts` | - | #2235 | Fallback names merged (#2231); Argo API auth fix pending in #2235. |
 | E) CI gating by commit SHA | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/github-client.ts` | - | - | Commit-SHA-only gating merged (#2230). |
 | F) PR review gate (Codex) | `docs/jangar/codex-judge-argo-implementation.md` | Done | `services/jangar/src/server/github-client.ts`, `services/jangar/src/server/codex-judge.ts` | - | - | Strict review gate + summaries merged (#2232). |
 | G) Judge engine (gates + LLM) | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/codex-judge-gates.ts` | - | - | Deterministic gates + LLM judge + retries implemented. |
@@ -24,10 +24,16 @@ This section cross-references the design/implementation plan against current cod
 | M) Agent comms ingestion + SSE | `docs/nats-argo-agent-communications.md` | Implemented in code | `services/jangar/src/routes/api/agents/events.ts` | #2187 | - | SSE endpoint exists; remaining deployment/ops tracked in issue. |
 | N) Observability / pipeline ops | `docs/nats-argo-agent-communications.md` | Not in code | - | #2191, #2173, #2174 | - | No code found for these observability tasks yet. |
 | O) Argo events filter validation | `docs/jangar/codex-judge-argo-design.md` | Not in code | - | #2175 | - | Impacts reliability of run-complete ingestion. |
-| P) Other open PRs (unrelated to judge) | - | In progress | - | #2198 | #2203, #2221 | PR #2203 likely addresses #2198 (Oxlint). #2221 unrelated. |
+| P) Other open PRs (unrelated to judge) | - | In progress | - | #2198 | #2234, #2235, #2203 | PR #2203 addresses #2198 (Oxlint). #2234 is bonjour build changes. |
 
 Untracked gaps to consider creating issues for:
-- None noted (as of 2025-12-29).
+- Add workflow labels/annotations for repository/issue/head/base to improve run-complete correlation when `eventBody` is missing.
+
+Remaining gaps for a fully functional judge system (as of 2025-12-29):
+- Argo API artifact fetch auth is still pending (#2235); without it, fallback artifact retrieval can fail in locked-down clusters.
+- Run history UI is not implemented (API only) (#2151).
+- Observability for Kafka/NATS/agent comms is not implemented (#2191, #2173, #2174).
+- Argo Events filter validation is not implemented (#2175), which risks missed/duplicate run-complete events.
 
 Current production context (see `docs/codex-workflow.md`):
 - Workflow template: `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
