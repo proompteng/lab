@@ -13,6 +13,7 @@ spec:
             path: services/bonjour
             namespace: bonjour
             image: registry.ide-newton.ts.net/lab/bonjour:latest
+            replicas: 1
             automation: auto
             enabled: true
             annotations:
@@ -41,6 +42,8 @@ spec:
               value: '{{ if hasKey . "image" }}{{ .image }}{{ else }}registry.ide-newton.ts.net/lab/bonjour:latest{{ end }}'
             - name: NAMESPACE
               value: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+            - name: REPLICAS
+              value: '{{ if hasKey . "replicas" }}{{ .replicas }}{{ else }}2{{ end }}'
       syncPolicy:
         syncOptions:
           - CreateNamespace=true
