@@ -1,0 +1,34 @@
+apiVersion: sources.knative.dev/v1
+kind: KafkaSource
+metadata:
+  name: jangar-codex-github-events
+  namespace: jangar
+spec:
+  bootstrapServers:
+    - kafka-kafka-bootstrap.kafka:9092
+  topics:
+    - github.webhook.codex.judge
+  consumerGroup: jangar-codex-github-events
+  initialOffset: earliest
+  net:
+    sasl:
+      enable: true
+      type:
+        secretKeyRef:
+          name: kafka-codex-username
+          key: saslType
+      user:
+        secretKeyRef:
+          name: kafka-codex-username
+          key: username
+      password:
+        secretKeyRef:
+          name: kafka-codex-credentials
+          key: password
+  sink:
+    ref:
+      apiVersion: v1
+      kind: Service
+      name: jangar
+      namespace: jangar
+    uri: /api/codex/github-events

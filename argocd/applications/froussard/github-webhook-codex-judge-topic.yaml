@@ -1,0 +1,9 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: github-webhook-codex-judge
+  namespace: kafka
+spec:
+  topicName: github.webhook.codex.judge
+  partitions: 3
+  replicas: 3
