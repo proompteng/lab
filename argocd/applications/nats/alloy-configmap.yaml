@@ -10,41 +10,42 @@ data:
       format = "logfmt"
     }
 
-    discovery.kubernetes "nats_pods" {
-      role = "pod"
+    discovery.kubernetes "nats_exporter_endpoints" {
+      role = "endpoints"
 
       namespaces {
         names = ["nats"]
       }
 
       selectors {
-        role  = "pod"
-        label = "app.kubernetes.io/name=nats"
+        role  = "endpoints"
+        field = "metadata.namespace=nats"
       }
     }
 
     discovery.relabel "nats_metrics" {
-      targets = discovery.kubernetes.nats_pods.targets
+      targets = discovery.kubernetes.nats_exporter_endpoints.targets
 
       rule {
-        source_labels = ["__meta_kubernetes_pod_container_port_number"]
-        regex         = "8222"
+        source_labels = ["__meta_kubernetes_service_name"]
+        regex         = "nats-prometheus-exporter"
         action        = "keep"
       }
 
       rule {
-        source_labels = ["__meta_kubernetes_pod_name"]
-        target_label  = "pod"
+        source_labels = ["__meta_kubernetes_endpoint_port_name"]
+        regex         = "(?i)metrics"
+        action        = "keep"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_service_name"]
+        target_label  = "service"
       }
 
       rule {
         source_labels = ["__meta_kubernetes_namespace"]
         target_label  = "namespace"
-      }
-
-      rule {
-        source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
-        target_label  = "app"
       }
     }
 

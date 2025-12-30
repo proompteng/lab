@@ -6,6 +6,8 @@ resources:
   - alloy-configmap.yaml
   - alloy-deployment.yaml
   - alloy-rbac.yaml
+  - nats-exporter-deployment.yaml
+  - nats-exporter-service.yaml
   - stream-agent-comms.yaml
   - consumer-jangar-agent-comms.yaml
 helmCharts:

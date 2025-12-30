@@ -19,14 +19,14 @@ spec:
     spec:
       containers:
         - name: exporter
-          image: quay.io/danielqsj/kafka-exporter:v1.8.0
+          image: docker.io/danielqsj/kafka-exporter:v1.8.0
           imagePullPolicy: IfNotPresent
           args:
             - --kafka.server=kafka-kafka-bootstrap.kafka:9092
             - --sasl.enabled
             - --sasl.username=user1
             - --sasl.password=$(KAFKA_PASSWORD)
-            - --sasl.mechanism=SCRAM-SHA-512
+            - --sasl.mechanism=scram-sha512
             - --topic.filter=^argo\\.workflows\\.completions$
             - --group.filter=^jangar-codex-completions$
             - --log.level=info
