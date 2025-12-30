@@ -19,6 +19,8 @@ func TestWorkflowRunnerRun(t *testing.T) {
 		WorkflowTemplate:   "facteur-dispatch",
 		ServiceAccount:     "facteur",
 		Parameters:         map[string]string{"target": "cluster-a"},
+		Labels:             map[string]string{"codex.issue_number": "1234"},
+		Annotations:        map[string]string{"codex.repository": "proompteng/lab"},
 		GenerateNamePrefix: "dispatch",
 	}
 
@@ -35,6 +37,8 @@ func TestWorkflowRunnerRun(t *testing.T) {
 	require.Equal(t, "facteur-dispatch", client.lastRequest.WorkflowTemplate)
 	require.Equal(t, "facteur", client.lastRequest.ServiceAccount)
 	require.Equal(t, map[string]string{"target": "cluster-a"}, client.lastRequest.Parameters)
+	require.Equal(t, map[string]string{"codex.issue_number": "1234"}, client.lastRequest.Labels)
+	require.Equal(t, map[string]string{"codex.repository": "proompteng/lab"}, client.lastRequest.Annotations)
 	require.Equal(t, "dispatch-20250422-150405-", client.lastRequest.GenerateName)
 }
 

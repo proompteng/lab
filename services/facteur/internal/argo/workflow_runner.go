@@ -24,6 +24,8 @@ type RunInput struct {
 	WorkflowTemplate   string
 	ServiceAccount     string
 	Parameters         map[string]string
+	Labels             map[string]string
+	Annotations        map[string]string
 	GenerateNamePrefix string
 }
 
@@ -71,6 +73,8 @@ func (r *WorkflowRunner) Run(ctx context.Context, input RunInput) (RunResult, er
 		ServiceAccount:   input.ServiceAccount,
 		GenerateName:     generateName,
 		Parameters:       cloneMap(input.Parameters),
+		Labels:           cloneMap(input.Labels),
+		Annotations:      cloneMap(input.Annotations),
 	}
 
 	resp, err := r.client.SubmitWorkflow(ctx, req)
