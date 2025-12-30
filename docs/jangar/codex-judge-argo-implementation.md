@@ -216,27 +216,6 @@ Run-complete is the primary trigger for judging; notify only enriches the run co
 Note: KafkaSource delivers the payload as a CloudEvent. Jangar should read the JSON body
 from the CloudEvent `data` field (or directly if the source is configured to pass raw data).
 
-### Argo Events workflow completion payload (EventSource fixture)
-The Sensor filters validate against the raw EventSource payload (not the Kafka run-complete payload).
-The fixture lives at `packages/scripts/fixtures/argo-events/workflow-completion.json` and is captured
-from a real workflow completion event (redacted for secrets). Shape (truncated):
-
-```json
-{
-  "context": { "type": "com.argoproj.workflow", "time": "2025-12-29T22:18:02Z" },
-  "body": {
-    "metadata": { "name": "github-codex-implementation-20251229-221741-x7s46" },
-    "status": { "phase": "Succeeded", "finishedAt": "2025-12-29T22:18:02Z" }
-  }
-}
-```
-
-To refresh when Argo Events payloads change:
-- Capture a real workflow completion payload from the `workflow-completions` EventSource (for example,
-  by logging the event payload).
-- Replace the fixture JSON at the path above (keep the full `body` payload).
-- Run `bun run validate:argo-events` (and `bun run lint:argocd`) to confirm the Sensor filters still match.
-
 ### Storage
 Tables (or collections):
 - runs(id, issue_id, workflow_id, attempt, branch, status, turn_id, thread_id, timestamps)
