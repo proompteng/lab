@@ -27,7 +27,7 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   const context = resolve(repoRoot, options.context ?? process.env.BONJOUR_BUILD_CONTEXT ?? '.')
   const dockerfile = resolve(
     repoRoot,
-    options.dockerfile ?? process.env.BONJOUR_DOCKERFILE ?? 'packages/bonjour/Dockerfile',
+    options.dockerfile ?? process.env.BONJOUR_DOCKERFILE ?? 'services/bonjour/Dockerfile',
   )
   const platforms = options.platforms ??
     process.env.BONJOUR_IMAGE_PLATFORMS?.split(',').map((platform) => platform.trim()) ?? ['linux/arm64']

@@ -289,34 +289,6 @@
         "typescript": "^5.6.3",
       },
     },
-    "packages/bonjour": {
-      "name": "@proompteng/bonjour",
-      "version": "0.1.0",
-      "dependencies": {
-        "@hono/node-server": "^1.13.4",
-        "@opentelemetry/api": "^1.9.0",
-        "@opentelemetry/auto-instrumentations-node": "^0.53.0",
-        "@opentelemetry/exporter-metrics-otlp-http": "^0.55.0",
-        "@opentelemetry/exporter-trace-otlp-http": "^0.55.0",
-        "@opentelemetry/resources": "^1.28.0",
-        "@opentelemetry/sdk-metrics": "1.28.0",
-        "@opentelemetry/sdk-node": "^0.55.0",
-        "@opentelemetry/semantic-conventions": "^1.28.0",
-        "hono": "^4.4.7",
-        "pino": "^9.12.0",
-        "pino-loki": "^2.6.0",
-        "tslib": "^2.6.2",
-      },
-      "devDependencies": {
-        "@types/node": "^24.6.0",
-        "cdk8s": "^2.70.17",
-        "cdk8s-cli": "^2.201.39",
-        "cdk8s-plus-33": "^2.0.56",
-        "constructs": "^10.4.2",
-        "rimraf": "^5.0.10",
-        "tsx": "^4.20.6",
-      },
-    },
     "packages/cloutt": {
       "name": "cloutt",
       "version": "1.0.0",
@@ -443,6 +415,34 @@
       },
       "devDependencies": {
         "bun-types": "^1.1.20",
+      },
+    },
+    "services/bonjour": {
+      "name": "@proompteng/bonjour",
+      "version": "0.1.0",
+      "dependencies": {
+        "@hono/node-server": "^1.13.4",
+        "@opentelemetry/api": "^1.9.0",
+        "@opentelemetry/auto-instrumentations-node": "^0.53.0",
+        "@opentelemetry/exporter-metrics-otlp-http": "^0.55.0",
+        "@opentelemetry/exporter-trace-otlp-http": "^0.55.0",
+        "@opentelemetry/resources": "^1.28.0",
+        "@opentelemetry/sdk-metrics": "1.28.0",
+        "@opentelemetry/sdk-node": "^0.55.0",
+        "@opentelemetry/semantic-conventions": "^1.28.0",
+        "hono": "^4.4.7",
+        "pino": "^9.12.0",
+        "pino-loki": "^2.6.0",
+        "tslib": "^2.6.2",
+      },
+      "devDependencies": {
+        "@types/node": "^24.6.0",
+        "cdk8s": "^2.70.17",
+        "cdk8s-cli": "^2.201.39",
+        "cdk8s-plus-33": "^2.0.56",
+        "constructs": "^10.4.2",
+        "rimraf": "^5.0.10",
+        "tsx": "^4.20.6",
       },
     },
     "services/bumba": {
@@ -1511,7 +1511,7 @@
 
     "@proompteng/backend": ["@proompteng/backend@workspace:packages/backend"],
 
-    "@proompteng/bonjour": ["@proompteng/bonjour@workspace:packages/bonjour"],
+    "@proompteng/bonjour": ["@proompteng/bonjour@workspace:services/bonjour"],
 
     "@proompteng/bumba": ["@proompteng/bumba@workspace:services/bumba"],
 

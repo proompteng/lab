@@ -13900,7 +13900,7 @@
           ]
         }
       },
-      "packages/bonjour": {
+      "services/bonjour": {
         "packageJson": {
           "dependencies": [
             "npm:@hono/node-server@^1.13.4",

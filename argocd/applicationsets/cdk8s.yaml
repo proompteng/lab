@@ -10,7 +10,7 @@ spec:
     - list:
         elements:
           - name: bonjour
-            path: packages/bonjour
+            path: services/bonjour
             namespace: bonjour
             image: registry.ide-newton.ts.net/lab/bonjour:latest
             automation: auto

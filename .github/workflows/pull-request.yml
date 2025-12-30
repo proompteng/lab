@@ -5,6 +5,7 @@ on:
     paths:
       - "apps/**"
       - "packages/**"
+      - "services/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -30,7 +31,7 @@ jobs:
             proompteng:
               - 'apps/proompteng/**'
             bonjour:
-              - 'packages/bonjour/**'
+              - 'services/bonjour/**'
             docs:
               - 'apps/docs/**'
             kitty-krew:
