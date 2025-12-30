@@ -170,11 +170,9 @@ const startOpenTelemetry = async (options: OpenTelemetryConfig): Promise<OpenTel
     .merge(new otel.resources.Resource(resourceAttributes))
     .merge(
       new otel.resources.Resource({
-        [otel.semantic.SemanticResourceAttributes.SERVICE_NAME]: serviceName,
-        ...(serviceNamespace ? { [otel.semantic.SemanticResourceAttributes.SERVICE_NAMESPACE]: serviceNamespace } : {}),
-        ...(serviceInstanceId
-          ? { [otel.semantic.SemanticResourceAttributes.SERVICE_INSTANCE_ID]: serviceInstanceId }
-          : {}),
+        [otel.semantic.SEMRESATTRS_SERVICE_NAME]: serviceName,
+        ...(serviceNamespace ? { [otel.semantic.SEMRESATTRS_SERVICE_NAMESPACE]: serviceNamespace } : {}),
+        ...(serviceInstanceId ? { [otel.semantic.SEMRESATTRS_SERVICE_INSTANCE_ID]: serviceInstanceId } : {}),
       }),
     )
 

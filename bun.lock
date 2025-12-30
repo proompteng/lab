@@ -289,33 +289,6 @@
         "typescript": "^5.6.3",
       },
     },
-    "packages/bonjour": {
-      "name": "@proompteng/bonjour",
-      "version": "0.1.0",
-      "dependencies": {
-        "@hono/node-server": "^1.13.4",
-        "@opentelemetry/api": "^1.9.0",
-        "@opentelemetry/auto-instrumentations-node": "^0.53.0",
-        "@opentelemetry/exporter-metrics-otlp-http": "^0.55.0",
-        "@opentelemetry/exporter-trace-otlp-http": "^0.55.0",
-        "@opentelemetry/resources": "^1.28.0",
-        "@opentelemetry/sdk-metrics": "1.28.0",
-        "@opentelemetry/sdk-node": "^0.55.0",
-        "@opentelemetry/semantic-conventions": "^1.28.0",
-        "hono": "^4.4.7",
-        "pino": "^9.12.0",
-        "pino-loki": "^2.6.0",
-      },
-      "devDependencies": {
-        "@types/node": "^24.6.0",
-        "cdk8s": "^2.70.17",
-        "cdk8s-cli": "^2.201.39",
-        "cdk8s-plus-33": "^2.0.56",
-        "constructs": "^10.4.2",
-        "rimraf": "^5.0.10",
-        "tsx": "^4.20.6",
-      },
-    },
     "packages/cloutt": {
       "name": "cloutt",
       "version": "1.0.0",
@@ -442,6 +415,36 @@
       },
       "devDependencies": {
         "bun-types": "^1.1.20",
+      },
+    },
+    "services/bonjour": {
+      "name": "@proompteng/bonjour",
+      "version": "0.1.0",
+      "dependencies": {
+        "@hono/node-server": "^1.13.4",
+        "@opentelemetry/api": "^1.9.0",
+        "@opentelemetry/auto-instrumentations-node": "^0.53.0",
+        "@opentelemetry/exporter-metrics-otlp-http": "^0.55.0",
+        "@opentelemetry/exporter-metrics-otlp-proto": "^0.55.0",
+        "@opentelemetry/exporter-trace-otlp-http": "^0.55.0",
+        "@opentelemetry/exporter-trace-otlp-proto": "^0.55.0",
+        "@opentelemetry/resources": "^1.28.0",
+        "@opentelemetry/sdk-metrics": "1.28.0",
+        "@opentelemetry/sdk-node": "^0.55.0",
+        "@opentelemetry/semantic-conventions": "^1.28.0",
+        "hono": "^4.4.7",
+        "pino": "^9.12.0",
+        "pino-loki": "^2.6.0",
+        "tslib": "^2.6.2",
+      },
+      "devDependencies": {
+        "@types/node": "^24.6.0",
+        "cdk8s": "^2.70.17",
+        "cdk8s-cli": "^2.201.39",
+        "cdk8s-plus-33": "^2.0.56",
+        "constructs": "^10.4.2",
+        "rimraf": "^5.0.10",
+        "tsx": "^4.20.6",
       },
     },
     "services/bumba": {
@@ -1050,7 +1053,7 @@
 
     "@headlessui/react": ["@headlessui/react@2.2.9", "", { "dependencies": { "@floating-ui/react": "^0.26.16", "@react-aria/focus": "^3.20.2", "@react-aria/interactions": "^3.25.0", "@tanstack/react-virtual": "^3.13.9", "use-sync-external-store": "^1.5.0" }, "peerDependencies": { "react": "^18 || ^19 || ^19.0.0-rc", "react-dom": "^18 || ^19 || ^19.0.0-rc" } }, "sha512-Mb+Un58gwBn0/yWZfyrCh0TJyurtT+dETj7YHleylHk5od3dv2XqETPGWMyQ5/7sYN7oWdyM1u9MvC0OC8UmzQ=="],
 
-    "@hono/node-server": ["@hono/node-server@1.19.6", "", { "peerDependencies": { "hono": "^4" } }, "sha512-Shz/KjlIeAhfiuE93NDKVdZ7HdBVLQAfdbaXEaoAVO3ic9ibRSLGIQGkcBbFyuLr+7/1D5ZCINM8B+6IvXeMtw=="],
+    "@hono/node-server": ["@hono/node-server@1.19.7", "", { "peerDependencies": { "hono": "^4" } }, "sha512-vUcD0uauS7EU2caukW8z5lJKtoGMokxNbJtBiwHgpqxEXokaHCBkQUmCHhjFB1VUTWdqj25QoMkMKzgjq+uhrw=="],
 
     "@hookform/resolvers": ["@hookform/resolvers@5.2.2", "", { "dependencies": { "@standard-schema/utils": "^0.3.0" }, "peerDependencies": { "react-hook-form": "^7.55.0" } }, "sha512-A/IxlMLShx3KjV/HeTcTfaMxdwy690+L/ZADoeaTltLx+CVuzkeVIPuybK3jrRfw7YZnmdKsVVHAlEPIAEUNlA=="],
 
@@ -1598,7 +1601,7 @@
 
     "@proompteng/backend": ["@proompteng/backend@workspace:packages/backend"],
 
-    "@proompteng/bonjour": ["@proompteng/bonjour@workspace:packages/bonjour"],
+    "@proompteng/bonjour": ["@proompteng/bonjour@workspace:services/bonjour"],
 
     "@proompteng/bumba": ["@proompteng/bumba@workspace:services/bumba"],
 
@@ -5090,8 +5093,6 @@
 
     "@mastra/deployer/rollup": ["rollup@4.50.2", "", { "dependencies": { "@types/estree": "1.0.8" }, "optionalDependencies": { "@rollup/rollup-android-arm-eabi": "4.50.2", "@rollup/rollup-android-arm64": "4.50.2", "@rollup/rollup-darwin-arm64": "4.50.2", "@rollup/rollup-darwin-x64": "4.50.2", "@rollup/rollup-freebsd-arm64": "4.50.2", "@rollup/rollup-freebsd-x64": "4.50.2", "@rollup/rollup-linux-arm-gnueabihf": "4.50.2", "@rollup/rollup-linux-arm-musleabihf": "4.50.2", "@rollup/rollup-linux-arm64-gnu": "4.50.2", "@rollup/rollup-linux-arm64-musl": "4.50.2", "@rollup/rollup-linux-loong64-gnu": "4.50.2", "@rollup/rollup-linux-ppc64-gnu": "4.50.2", "@rollup/rollup-linux-riscv64-gnu": "4.50.2", "@rollup/rollup-linux-riscv64-musl": "4.50.2", "@rollup/rollup-linux-s390x-gnu": "4.50.2", "@rollup/rollup-linux-x64-gnu": "4.50.2", "@rollup/rollup-linux-x64-musl": "4.50.2", "@rollup/rollup-openharmony-arm64": "4.50.2", "@rollup/rollup-win32-arm64-msvc": "4.50.2", "@rollup/rollup-win32-ia32-msvc": "4.50.2", "@rollup/rollup-win32-x64-msvc": "4.50.2", "fsevents": "~2.3.2" }, "bin": { "rollup": "dist/bin/rollup" } }, "sha512-BgLRGy7tNS9H66aIMASq1qSYbAAJV6Z6WR4QYTvj5FgF15rZ/ympT1uixHXwzbZUBDbkvqUI1KR0fH1FhMaQ9w=="],
 
-    "@modelcontextprotocol/sdk/@hono/node-server": ["@hono/node-server@1.19.7", "", { "peerDependencies": { "hono": "^4" } }, "sha512-vUcD0uauS7EU2caukW8z5lJKtoGMokxNbJtBiwHgpqxEXokaHCBkQUmCHhjFB1VUTWdqj25QoMkMKzgjq+uhrw=="],
-
     "@modelcontextprotocol/sdk/zod": ["zod@4.1.13", "", {}, "sha512-AvvthqfqrAhNH9dnfmrfKzX5upOdjUVJYFqNSlkmGf64gRaTzlPwz99IHYnVs28qYAybvAlBV+H7pn0saFY4Ig=="],
 
     "@noble/curves/@noble/hashes": ["@noble/hashes@1.8.0", "", {}, "sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A=="],
@@ -5719,6 +5720,8 @@
     "msw/path-to-regexp": ["path-to-regexp@6.3.0", "", {}, "sha512-Yhpw4T9C6hPpgPeA28us07OJeqZ5EzQTkbfwuhsUg0c237RomFoETJgmp2sa3F/41gfLE6G5cqcYwznmeEeOlQ=="],
 
     "msw/type-fest": ["type-fest@5.2.0", "", { "dependencies": { "tagged-tag": "^1.0.0" } }, "sha512-xxCJm+Bckc6kQBknN7i9fnP/xobQRsRQxR01CztFkp/h++yfVxUUcmMgfR2HttJx/dpWjS9ubVuyspJv24Q9DA=="],
+
+    "nata/@hono/node-server": ["@hono/node-server@1.19.6", "", { "peerDependencies": { "hono": "^4" } }, "sha512-Shz/KjlIeAhfiuE93NDKVdZ7HdBVLQAfdbaXEaoAVO3ic9ibRSLGIQGkcBbFyuLr+7/1D5ZCINM8B+6IvXeMtw=="],
 
     "next/postcss": ["postcss@8.4.31", "", { "dependencies": { "nanoid": "^3.3.6", "picocolors": "^1.0.0", "source-map-js": "^1.0.2" } }, "sha512-PS08Iboia9mts/2ygV3eLpY5ghnUcfLV/EXTOW1E2qYxJKGGBUtNjN76FYHnMs36RmARn41bC0AZmn+rR0OVpQ=="],
 

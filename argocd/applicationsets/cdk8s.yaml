@@ -5,15 +5,17 @@ metadata:
   namespace: argocd
 spec:
   goTemplate: true
-  goTemplateOptions: ["missingkey=error"]
+  goTemplateOptions:
+    - missingkey=error
   generators:
     - list:
         elements:
           - name: bonjour
-            path: packages/bonjour
+            path: services/bonjour
             namespace: bonjour
-            image: registry.ide-newton.ts.net/lab/bonjour:latest
-            automation: auto
+            image: registry.ide-newton.ts.net/lab/bonjour@sha256:36c433afe92a113c4fc36193ee4a55c1d97efbf433229214a1d38861bc34c6b0
+            replicas: 1
+            automation: manual
             enabled: true
             annotations:
               argocd.argoproj.io/sync-wave: "6"
@@ -21,7 +23,10 @@ spec:
         matchExpressions:
           - key: enabled
             operator: NotIn
-            values: ["false", "False", "0"]
+            values:
+              - "false"
+              - "False"
+              - "0"
   template:
     metadata:
       name: "{{ .name }}"
@@ -41,6 +46,8 @@ spec:
               value: '{{ if hasKey . "image" }}{{ .image }}{{ else }}registry.ide-newton.ts.net/lab/bonjour:latest{{ end }}'
             - name: NAMESPACE
               value: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+            - name: REPLICAS
+              value: '{{ if hasKey . "replicas" }}{{ .replicas }}{{ else }}2{{ end }}'
       syncPolicy:
         syncOptions:
           - CreateNamespace=true

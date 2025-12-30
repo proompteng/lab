@@ -10,6 +10,7 @@ on:
     paths:
       - "apps/**"
       - "packages/**"
+      - "services/**"
 
 jobs:
   changes:
@@ -44,7 +45,7 @@ jobs:
             alchimie:
               - 'apps/alchimie/**'
             bonjour:
-              - 'packages/bonjour/**'
+              - 'services/bonjour/**'
 
   version:
     runs-on: arc-arm64
@@ -129,7 +130,7 @@ jobs:
     uses: ./.github/workflows/docker-build-common.yaml
     with:
       image_name: bonjour
-      dockerfile: ./packages/bonjour/Dockerfile
+      dockerfile: ./services/bonjour/Dockerfile
       context: .
       new_tag: ${{ needs.version.outputs.new_tag }}
 

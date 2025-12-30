@@ -14,6 +14,8 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 | Script | Description | Required CLIs | Example |
 | --- | --- | --- | --- |
 | `src/codex/notify-to-loki.ts` | Sends Codex notify payloads (including full assistant text) to Loki via the push API. | `bun` | `bun run packages/scripts/src/codex/notify-to-loki.ts --stdin` |
+| `src/bonjour/build-image.ts` | Builds and pushes the Bonjour Docker image. | `docker` | `bun run packages/scripts/src/bonjour/build-image.ts [tag]` |
+| `src/bonjour/deploy-service.ts` | Builds the Bonjour image, updates the Argo CD ApplicationSet entry, and applies the updated manifest. | `docker`, `kubectl` | `bun run packages/scripts/src/bonjour/deploy-service.ts` |
 | `src/jangar/build-image.ts` | Builds and pushes the `lab/jangar` Bun worker image using the jangar Dockerfile. | `docker` | `bun run packages/scripts/src/jangar/build-image.ts` |
 | `src/jangar/deploy-service.ts` | Builds the jangar image, bumps the Argo CD manifests, and applies the Knative service. | `docker`, `kubectl` | `bun run packages/scripts/src/jangar/deploy-service.ts` |
 | `src/froussard/deploy-service.ts` | Builds and pushes the Froussard Docker image, updates `knative-service.yaml` with the new digest + version metadata, and `kubectl apply`s the manifest (pass `--dry-run` to skip pushing/applying). | `docker`, `kubectl` | `bun run packages/scripts/src/froussard/deploy-service.ts` |

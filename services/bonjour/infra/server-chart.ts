@@ -1,6 +1,7 @@
 import { Chart, type ChartProps, Duration } from 'cdk8s'
 import {
   Deployment,
+  EnvFieldPaths,
   EnvValue,
   HorizontalPodAutoscaler,
   Metric,
@@ -33,12 +34,12 @@ export class ServerChart extends Chart {
     const targetCpu = Math.min(Math.max(props.cpuTargetUtilizationPercent ?? 70, 1), 100)
 
     const tempoTracesEndpoint =
-      props.tempoTracesEndpoint ?? 'http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces'
+      props.tempoTracesEndpoint ??
+      'http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces'
     const mimirMetricsEndpoint =
       props.mimirMetricsEndpoint ?? 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics'
     const lokiEndpoint =
-      props.lokiEndpoint ??
-      'http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push'
+      props.lokiEndpoint ?? 'http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local'
 
     const deployment = new Deployment(this, 'server', {
       metadata: {
@@ -72,8 +73,9 @@ export class ServerChart extends Chart {
         LGTM_MIMIR_METRICS_ENDPOINT: EnvValue.fromValue(mimirMetricsEndpoint),
         LGTM_LOKI_ENDPOINT: EnvValue.fromValue(lokiEndpoint),
         OTEL_EXPORTER_OTLP_PROTOCOL: EnvValue.fromValue('http/protobuf'),
-        POD_NAME: EnvValue.fromFieldPath('metadata.name'),
-        POD_NAMESPACE: EnvValue.fromFieldPath('metadata.namespace'),
+        OTEL_LOGS_EXPORTER: EnvValue.fromValue('none'),
+        POD_NAME: EnvValue.fromFieldRef(EnvFieldPaths.POD_NAME),
+        POD_NAMESPACE: EnvValue.fromFieldRef(EnvFieldPaths.POD_NAMESPACE),
       },
       securityContext: {
         ensureNonRoot: true,
