@@ -9,5 +9,10 @@ helmCharts:
     namespace: longhorn-system
     valuesFile: longhorn-values.yaml
     includeCRDs: true
-patchesStrategicMerge:
-  - patches/longhorn-csi-plugin-tolerations.patch.yaml
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: DaemonSet
+      name: longhorn-csi-plugin
+    path: patches/longhorn-csi-plugin-tolerations.patch.yaml
