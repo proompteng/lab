@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -293,11 +294,15 @@ func (i *implementer) execute(ctx context.Context, span trace.Span, deliveryID s
 		workflowTemplate = "github-codex-implementation"
 	}
 
+	labels, annotations := buildCodexWorkflowMetadata(task, base)
+
 	result, err := i.runner.Run(ctx, argo.RunInput{
 		Namespace:          namespace,
 		WorkflowTemplate:   workflowTemplate,
 		ServiceAccount:     i.cfg.ServiceAccount,
 		Parameters:         parameters,
+		Labels:             labels,
+		Annotations:        annotations,
 		GenerateNamePrefix: i.cfg.GenerateNamePrefix,
 	})
 	if err != nil {
@@ -312,4 +317,44 @@ func (i *implementer) execute(ctx context.Context, span trace.Span, deliveryID s
 		SubmittedAt:  result.SubmittedAt,
 		Duplicate:    false,
 	}, nil
+}
+
+func buildCodexWorkflowMetadata(task *froussardpb.CodexTask, base string) (map[string]string, map[string]string) {
+	if task == nil {
+		return nil, nil
+	}
+
+	labels := map[string]string{}
+	annotations := map[string]string{}
+
+	repository := strings.TrimSpace(task.GetRepository())
+	if repository != "" {
+		annotations["codex.repository"] = repository
+	}
+
+	issueNumber := task.GetIssueNumber()
+	if issueNumber > 0 {
+		value := strconv.FormatInt(issueNumber, 10)
+		labels["codex.issue_number"] = value
+		annotations["codex.issue_number"] = value
+	}
+
+	head := strings.TrimSpace(task.GetHead())
+	if head != "" {
+		annotations["codex.head"] = head
+	}
+
+	base = strings.TrimSpace(base)
+	if base != "" {
+		annotations["codex.base"] = base
+	}
+
+	if len(labels) == 0 {
+		labels = nil
+	}
+	if len(annotations) == 0 {
+		annotations = nil
+	}
+
+	return labels, annotations
 }

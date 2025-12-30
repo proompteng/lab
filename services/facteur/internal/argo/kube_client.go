@@ -33,34 +33,9 @@ func NewKubernetesClientForConfig(cfg *rest.Config) (*KubernetesClient, error) {
 
 // SubmitWorkflow clones a WorkflowTemplate and creates a Workflow resource.
 func (c *KubernetesClient) SubmitWorkflow(ctx context.Context, req SubmitRequest) (SubmitResponse, error) {
-	if req.Namespace == "" {
-		return SubmitResponse{}, fmt.Errorf("argo: namespace is required")
-	}
-	if req.WorkflowTemplate == "" {
-		return SubmitResponse{}, fmt.Errorf("argo: workflow template is required")
-	}
-	if req.GenerateName == "" {
-		return SubmitResponse{}, fmt.Errorf("argo: generate name is required")
-	}
-
-	workflow := &v1alpha1.Workflow{
-		ObjectMeta: apiv1.ObjectMeta{
-			Namespace:    req.Namespace,
-			GenerateName: req.GenerateName,
-		},
-		Spec: v1alpha1.WorkflowSpec{
-			WorkflowTemplateRef: &v1alpha1.WorkflowTemplateRef{
-				Name: req.WorkflowTemplate,
-			},
-		},
-	}
-
-	if req.ServiceAccount != "" {
-		workflow.Spec.ServiceAccountName = req.ServiceAccount
-	}
-
-	if len(req.Parameters) > 0 {
-		workflow.Spec.Arguments.Parameters = toParameterList(req.Parameters)
+	workflow, err := buildWorkflow(req)
+	if err != nil {
+		return SubmitResponse{}, err
 	}
 
 	created, err := c.client.ArgoprojV1alpha1().Workflows(req.Namespace).Create(ctx, workflow, apiv1.CreateOptions{})
@@ -106,4 +81,46 @@ func toParameterList(params map[string]string) []v1alpha1.Parameter {
 		result = append(result, v1alpha1.Parameter{Name: key, Value: v1alpha1.AnyStringPtr(value)})
 	}
 	return result
+}
+
+func buildWorkflow(req SubmitRequest) (*v1alpha1.Workflow, error) {
+	if req.Namespace == "" {
+		return nil, fmt.Errorf("argo: namespace is required")
+	}
+	if req.WorkflowTemplate == "" {
+		return nil, fmt.Errorf("argo: workflow template is required")
+	}
+	if req.GenerateName == "" {
+		return nil, fmt.Errorf("argo: generate name is required")
+	}
+
+	workflow := &v1alpha1.Workflow{
+		ObjectMeta: apiv1.ObjectMeta{
+			Namespace:    req.Namespace,
+			GenerateName: req.GenerateName,
+		},
+		Spec: v1alpha1.WorkflowSpec{
+			WorkflowTemplateRef: &v1alpha1.WorkflowTemplateRef{
+				Name: req.WorkflowTemplate,
+			},
+		},
+	}
+
+	if len(req.Labels) > 0 {
+		workflow.ObjectMeta.Labels = cloneMap(req.Labels)
+	}
+
+	if len(req.Annotations) > 0 {
+		workflow.ObjectMeta.Annotations = cloneMap(req.Annotations)
+	}
+
+	if req.ServiceAccount != "" {
+		workflow.Spec.ServiceAccountName = req.ServiceAccount
+	}
+
+	if len(req.Parameters) > 0 {
+		workflow.Spec.Arguments.Parameters = toParameterList(req.Parameters)
+	}
+
+	return workflow, nil
 }

@@ -9,6 +9,8 @@ type SubmitRequest struct {
 	ServiceAccount   string
 	GenerateName     string
 	Parameters       map[string]string
+	Labels           map[string]string
+	Annotations      map[string]string
 }
 
 // SubmitResponse is returned after a workflow submission.
