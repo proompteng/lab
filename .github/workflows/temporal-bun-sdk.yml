@@ -95,19 +95,15 @@ jobs:
         run: bunx biome check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests
 
       - name: Run Oxlint (temporal-bun-sdk, non-blocking)
-        continue-on-error: true
         run: bun run --cwd packages/temporal-bun-sdk lint:oxlint
 
       - name: Run Oxlint (temporal-bun-sdk, type-aware, non-blocking)
-        continue-on-error: true
         run: bun run --cwd packages/temporal-bun-sdk lint:oxlint:type
 
       - name: Run Oxlint (temporal-bun-sdk-example, non-blocking)
-        continue-on-error: true
         run: bun run --cwd packages/temporal-bun-sdk-example lint:oxlint
 
       - name: Run Oxlint (temporal-bun-sdk-example, type-aware, non-blocking)
-        continue-on-error: true
         run: bun run --cwd packages/temporal-bun-sdk-example lint:oxlint:type
 
       - name: Run Temporal Bun SDK tests
