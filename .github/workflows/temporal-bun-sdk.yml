@@ -42,6 +42,7 @@ jobs:
     runs-on: arc-arm64
 
     env:
+      TEMPORAL_TEST_SERVER: '1'
       TEMPORAL_TEST_TIMEOUT: '5000'
       TEMPORAL_INTEGRATION_TESTS: '1'
       TEMPORAL_ADDRESS: 127.0.0.1:7233
@@ -89,6 +90,25 @@ jobs:
 
       - name: Verify Temporal CLI
         run: temporal --version
+
+      - name: Start Temporal dev server
+        run: |
+          temporal server start-dev \
+            --namespace "$TEMPORAL_NAMESPACE" \
+            --port 7233 \
+            --ui-port 8233 \
+            --db-filename /tmp/temporal-dev.db \
+            > /tmp/temporal-dev.log 2>&1 &
+          for i in {1..60}; do
+            if (echo > /dev/tcp/127.0.0.1/7233) >/dev/null 2>&1; then
+              echo "Temporal dev server is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Temporal dev server failed to start"
+          tail -n 200 /tmp/temporal-dev.log || true
+          exit 1
 
       - name: Run Biome check (temporal-bun-sdk)
         run: bunx biome check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests
