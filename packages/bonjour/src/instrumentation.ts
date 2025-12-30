@@ -5,7 +5,11 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 import { Resource } from '@opentelemetry/resources'
 import { type MetricReader, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
 import { NodeSDK } from '@opentelemetry/sdk-node'
-import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions'
+import {
+  SEMRESATTRS_SERVICE_INSTANCE_ID,
+  SEMRESATTRS_SERVICE_NAME,
+  SEMRESATTRS_SERVICE_NAMESPACE,
+} from '@opentelemetry/semantic-conventions'
 
 diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR)
 
@@ -30,9 +34,9 @@ const metricHeaders = mergeHeaders(sharedHeaders, parseHeaders(process.env.OTEL_
 
 const resource = Resource.default().merge(
   new Resource({
-    [SemanticResourceAttributes.SERVICE_NAME]: serviceName,
-    [SemanticResourceAttributes.SERVICE_NAMESPACE]: serviceNamespace,
-    [SemanticResourceAttributes.SERVICE_INSTANCE_ID]: serviceInstanceId,
+    [SEMRESATTRS_SERVICE_NAME]: serviceName,
+    [SEMRESATTRS_SERVICE_NAMESPACE]: serviceNamespace,
+    [SEMRESATTRS_SERVICE_INSTANCE_ID]: serviceInstanceId,
   }),
 )
 
