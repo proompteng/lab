@@ -59,11 +59,9 @@ vi.mock('@opentelemetry/resources', () => ({
 }))
 
 vi.mock('@opentelemetry/semantic-conventions', () => ({
-  SemanticResourceAttributes: {
-    SERVICE_NAME: 'service.name',
-    SERVICE_NAMESPACE: 'service.namespace',
-    SERVICE_INSTANCE_ID: 'service.instance.id',
-  },
+  SEMRESATTRS_SERVICE_NAME: 'service.name',
+  SEMRESATTRS_SERVICE_NAMESPACE: 'service.namespace',
+  SEMRESATTRS_SERVICE_INSTANCE_ID: 'service.instance.id',
 }))
 
 const originalEnv = { ...process.env }
