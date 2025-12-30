@@ -7,10 +7,10 @@
     "dev": "bun --hot src/index.ts",
     "start": "bun src/index.ts",
     "lint": "bunx biome check --config-path ../../biome.json src",
-    "tsc": "bunx tsc --noEmit",
+    "tsc": "bunx tsc --noEmit -p tsconfig.paths.json",
     "test": "bun test",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
-    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.oxlint.json ."
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.paths.json ."
   },
   "dependencies": {
     "@proompteng/discord": "workspace:*",

@@ -9,12 +9,12 @@
     "lint": "bunx biome check src",
     "test": "vitest run",
     "test:watch": "vitest watch",
-    "tsc": "tsc --noEmit",
+    "tsc": "tsc --noEmit -p tsconfig.paths.json",
     "generate": "bunx drizzle-kit generate --config drizzle.config.ts",
     "migrate": "bunx drizzle-kit push --config drizzle.config.ts",
     "seed": "bun run scripts/seed.ts",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
-    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.oxlint.json ."
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.paths.json ."
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.2.12",

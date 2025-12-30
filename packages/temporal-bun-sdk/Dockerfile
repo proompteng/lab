@@ -24,6 +24,7 @@ RUN curl -L https://ziglang.org/download/0.15.1/zig-x86_64-linux-0.15.1.tar.xz |
 COPY packages/temporal-bun-sdk/package.json package.json
 COPY packages/temporal-bun-sdk/bunfig.toml bunfig.toml
 COPY packages/temporal-bun-sdk/tsconfig.json tsconfig.json
+COPY packages/temporal-bun-sdk/tsconfig.paths.json tsconfig.paths.json
 COPY packages/temporal-bun-sdk/src src
 COPY packages/temporal-bun-sdk/tests tests
 COPY packages/temporal-bun-sdk/scripts scripts
