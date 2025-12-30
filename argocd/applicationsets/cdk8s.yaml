@@ -5,14 +5,15 @@ metadata:
   namespace: argocd
 spec:
   goTemplate: true
-  goTemplateOptions: ["missingkey=error"]
+  goTemplateOptions:
+    - missingkey=error
   generators:
     - list:
         elements:
           - name: bonjour
             path: services/bonjour
             namespace: bonjour
-            image: registry.ide-newton.ts.net/lab/bonjour:latest
+            image: registry.ide-newton.ts.net/lab/bonjour@sha256:df51b42bde3568b0df84edd13b93bf90c49b5dd7a5896ea59dab80cb8659743e
             replicas: 1
             automation: auto
             enabled: true
@@ -22,7 +23,10 @@ spec:
         matchExpressions:
           - key: enabled
             operator: NotIn
-            values: ["false", "False", "0"]
+            values:
+              - "false"
+              - "False"
+              - "0"
   template:
     metadata:
       name: "{{ .name }}"
