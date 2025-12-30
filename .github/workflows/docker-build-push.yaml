@@ -151,7 +151,5 @@ jobs:
     if: failure()
     steps:
       - name: Delete release if any build failed
-        run: gh release delete ${{ needs.version.outputs.new_tag }} --cleanup-tag --yes
-        continue-on-error: true
-        env:
+        run: gh release delete ${{ needs.version.outputs.new_tag }} --cleanup-tag --yesenv:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

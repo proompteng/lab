@@ -82,13 +82,9 @@ jobs:
 
       - run: bun install --frozen-lockfile --ignore-scripts
 
-      - name: Oxlint (non-blocking)
-        continue-on-error: true
-        run: bun run --cwd apps/docs lint:oxlint
+      - name: Oxlint (non-blocking)run: bun run --cwd apps/docs lint:oxlint
 
-      - name: Oxlint (type-aware, non-blocking)
-        continue-on-error: true
-        run: bun run --cwd apps/docs lint:oxlint:type
+      - name: Oxlint (type-aware, non-blocking)run: bun run --cwd apps/docs lint:oxlint:type
 
       - run: bun run --filter docs build
 
@@ -127,13 +123,9 @@ jobs:
 
       - run: bun install --frozen-lockfile --ignore-scripts
 
-      - name: Oxlint (non-blocking)
-        continue-on-error: true
-        run: bun run --cwd apps/proompteng lint:oxlint
+      - name: Oxlint (non-blocking)run: bun run --cwd apps/proompteng lint:oxlint
 
-      - name: Oxlint (type-aware, non-blocking)
-        continue-on-error: true
-        run: bun run --cwd apps/proompteng lint:oxlint:type
+      - name: Oxlint (type-aware, non-blocking)run: bun run --cwd apps/proompteng lint:oxlint:type
 
       - run: bun run --filter proompteng build
 
@@ -161,13 +153,9 @@ jobs:
 
       - run: bun install --frozen-lockfile --ignore-scripts
 
-      - name: Oxlint (non-blocking)
-        continue-on-error: true
-        run: bun run --cwd packages/bonjour lint:oxlint
+      - name: Oxlint (non-blocking)run: bun run --cwd packages/bonjour lint:oxlint
 
-      - name: Oxlint (type-aware, non-blocking)
-        continue-on-error: true
-        run: bun run --cwd packages/bonjour lint:oxlint:type
+      - name: Oxlint (type-aware, non-blocking)run: bun run --cwd packages/bonjour lint:oxlint:type
 
       - run: bun run --filter @proompteng/bonjour build
 
@@ -203,13 +191,9 @@ jobs:
 
       - run: bun install --frozen-lockfile --ignore-scripts
 
-      - name: Oxlint (non-blocking)
-        continue-on-error: true
-        run: bun run --cwd packages/discord lint:oxlint
+      - name: Oxlint (non-blocking)run: bun run --cwd packages/discord lint:oxlint
 
-      - name: Oxlint (type-aware, non-blocking)
-        continue-on-error: true
-        run: bun run --cwd packages/discord lint:oxlint:type
+      - name: Oxlint (type-aware, non-blocking)run: bun run --cwd packages/discord lint:oxlint:type
 
       - run: bun run --filter @proompteng/discord test
 
@@ -230,14 +214,10 @@ jobs:
         working-directory: apps/kitty-krew
         run: bun install --frozen-lockfile --ignore-scripts
 
-      - name: Oxlint (non-blocking)
-        continue-on-error: true
-        working-directory: apps/kitty-krew
+      - name: Oxlint (non-blocking)working-directory: apps/kitty-krew
         run: bun run lint:oxlint
 
-      - name: Oxlint (type-aware, non-blocking)
-        continue-on-error: true
-        working-directory: apps/kitty-krew
+      - name: Oxlint (type-aware, non-blocking)working-directory: apps/kitty-krew
         run: bun run lint:oxlint:type
 
       - name: Lint
@@ -281,14 +261,10 @@ jobs:
       - run: bun install --frozen-lockfile --ignore-scripts
         working-directory: apps/reviseur
 
-      - name: Oxlint (non-blocking)
-        continue-on-error: true
-        working-directory: apps/reviseur
+      - name: Oxlint (non-blocking)working-directory: apps/reviseur
         run: bun run lint:oxlint
 
-      - name: Oxlint (type-aware, non-blocking)
-        continue-on-error: true
-        working-directory: apps/reviseur
+      - name: Oxlint (type-aware, non-blocking)working-directory: apps/reviseur
         run: bun run lint:oxlint:type
 
       - run: bun run build
