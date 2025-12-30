@@ -1,0 +1,13 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: longhorn-csi-plugin
+  namespace: longhorn-system
+spec:
+  template:
+    spec:
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: arc-runner
+          effect: NoSchedule
