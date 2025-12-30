@@ -11,6 +11,7 @@ resources:
   - graf-mimir-rules.yaml
   - graf-graf-dashboard-configmap.yaml
   - graf-bumba-dashboard-configmap.yaml
+  - codex-pipeline-dashboard-configmap.yaml
 
 helmCharts:
   - name: mimir-distributed

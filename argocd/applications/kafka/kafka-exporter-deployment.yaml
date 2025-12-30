@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-exporter
+  namespace: kafka
+  labels:
+    app.kubernetes.io/name: kafka-exporter
+    app.kubernetes.io/component: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kafka-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kafka-exporter
+        app.kubernetes.io/component: observability
+    spec:
+      containers:
+        - name: exporter
+          image: ghcr.io/danielqsj/kafka-exporter:v1.8.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --kafka.server=kafka-kafka-bootstrap.kafka:9092
+            - --sasl.enabled
+            - --sasl.username=user1
+            - --sasl.password=$(KAFKA_PASSWORD)
+            - --sasl.mechanism=SCRAM-SHA-512
+            - --topic.filter=^argo\\.workflows\\.completions$
+            - --group.filter=^jangar-codex-completions$
+            - --log.level=info
+          env:
+            - name: KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: user1
+                  key: password
+          ports:
+            - name: metrics
+              containerPort: 9308
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

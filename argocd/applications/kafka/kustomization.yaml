@@ -37,6 +37,11 @@ resources:
   - karapace.yaml
   - torghut-ws-kafkauser.yaml
   - torghut-topics.yaml
+  - kafka-exporter-deployment.yaml
+  - kafka-exporter-service.yaml
+  - alloy-configmap.yaml
+  - alloy-deployment.yaml
+  - alloy-rbac.yaml
 patches:
   # Make the operator watch all namespaces
   - target:
