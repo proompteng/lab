@@ -7,8 +7,8 @@
     "dev": "bun --hot src/worker.ts",
     "start": "bun src/worker.ts",
     "lint": "bunx biome check --config-path ../../biome.json src",
-    "lint:oxlint": "oxlint --config ../../.oxlintrc.json src",
-    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware src",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
     "test": "bun test",
     "tsc": "bunx tsc --noEmit"
   },

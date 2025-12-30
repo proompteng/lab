@@ -11,7 +11,9 @@
     "dev": "tsc -w -p tsconfig.json",
     "lint": "bunx biome check src",
     "start": "bun run build && node dist/cli.js",
-    "test": "bun test"
+    "test": "bun test",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
   },
   "dependencies": {
     "@clack/prompts": "^0.11.0",

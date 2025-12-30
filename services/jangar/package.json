@@ -14,6 +14,8 @@
     "test:ui:update": "bunx playwright test --update-snapshots",
     "tsc": "bunx tsc --noEmit",
     "lint": "bunx biome check --config-path ../../biome.json src",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
     "copy:grpc-proto": "bun run scripts/copy-agentctl-proto.ts"
   },
   "dependencies": {

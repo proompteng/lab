@@ -12,7 +12,7 @@
     "start:proompteng": "bun run --filter proompteng start",
     "lint:proompteng": "bun run --filter proompteng lint",
     "lint:oxlint": "oxlint --config .oxlintrc.json apps packages services scripts",
-    "lint:oxlint:type": "oxlint --config .oxlintrc.json --type-aware services/bumba/src",
+    "lint:oxlint:type": "bash -lc 'set -euo pipefail; bun run --cwd apps/docs lint:oxlint:type; bun run --cwd apps/froussard lint:oxlint:type; bun run --cwd apps/kabina lint:oxlint:type; bun run --cwd apps/kitty-krew lint:oxlint:type; bun run --cwd apps/nata lint:oxlint:type; bun run --cwd apps/proompteng lint:oxlint:type; bun run --cwd apps/reestr lint:oxlint:type; bun run --cwd apps/reviseur lint:oxlint:type; bun run --cwd packages/atelier lint:oxlint:type; bun run --cwd packages/bonjour lint:oxlint:type; bun run --cwd packages/cloutt lint:oxlint:type; bun run --cwd packages/codex lint:oxlint:type; bun run --cwd packages/cx-tools lint:oxlint:type; bun run --cwd packages/discord lint:oxlint:type; bun run --cwd packages/schematic lint:oxlint:type; bun run --cwd packages/scripts lint:oxlint:type; bun run --cwd packages/temporal-bun-sdk lint:oxlint:type; bun run --cwd packages/temporal-bun-sdk-example lint:oxlint:type; bun run --cwd services/bumba lint:oxlint:type; bun run --cwd services/golink lint:oxlint:type; bun run --cwd services/jangar lint:oxlint:type; bun run --cwd services/memories lint:oxlint:type; bun run --cwd services/oirat lint:oxlint:type;'",
     "lint:argocd": "scripts/kubeconform.sh argocd",
     "proto:generate": "buf generate --path proto/proompteng && buf generate --template buf.temporal.gen.yaml --path proto/temporal",
     "clean": "find . -name node_modules -type d -prune -exec rm -rf '{}' +",
@@ -74,8 +74,12 @@
     "typescript": "5.9.3"
   },
   "lint-staged": {
-    "*.{ts,tsx,js,jsx,css}": "biome format --write --no-errors-on-unmatched",
-    "*.go": "gofmt -w"
+    "*.go": "gofmt -w",
+    "*.{ts,tsx,js,jsx}": [
+      "oxlint --config .oxlintrc.json",
+      "biome format --write --no-errors-on-unmatched"
+    ],
+    "*.css": "biome format --write --no-errors-on-unmatched"
   },
   "workspaces": [
     "apps/*",
