@@ -5,7 +5,7 @@ const level = process.env.LOG_LEVEL ?? 'info'
 const service = process.env.OTEL_SERVICE_NAME ?? 'bonjour'
 const namespace = process.env.POD_NAMESPACE ?? 'default'
 const lokiEndpoint = process.env.LGTM_LOKI_ENDPOINT
-const lokiBasicAuth = process.env.LGTM_LOKI_BASIC_AUTH
+const lokiBasicAuth = parseLokiBasicAuth(process.env.LGTM_LOKI_BASIC_AUTH)
 const lokiDisabled = isTruthy(process.env.LOKI_DISABLED)
 
 const destinations: { stream: NodeJS.WritableStream }[] = [{ stream: process.stdout }]
@@ -49,4 +49,32 @@ function isTruthy(value?: string) {
     return false
   }
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase())
+}
+
+function parseLokiBasicAuth(value?: string) {
+  if (!value) {
+    return undefined
+  }
+  const direct = parseUserPass(value)
+  if (direct) {
+    return direct
+  }
+  try {
+    const decoded = Buffer.from(value, 'base64').toString('utf8')
+    return parseUserPass(decoded)
+  } catch {
+    return undefined
+  }
+}
+
+function parseUserPass(value: string) {
+  const [username, ...rest] = value.split(':')
+  if (!username || rest.length === 0) {
+    return undefined
+  }
+  const password = rest.join(':')
+  if (!password) {
+    return undefined
+  }
+  return { username, password }
 }
