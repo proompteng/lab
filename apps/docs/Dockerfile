@@ -17,7 +17,7 @@ COPY packages ./packages
 COPY services ./services
 
 ENV HUSKY=0
-RUN bun install --frozen-lockfile
+RUN bun install --frozen-lockfile --ignore-scripts
 
 FROM deps AS builder
 WORKDIR /app

@@ -21,6 +21,8 @@ jobs:
     with:
       bun-version: 1.3.5
       node-version: 24.11.1
-      install-command: bun install --frozen-lockfile
+      install-command: bun install --frozen-lockfile --ignore-scripts
       lint-command: bunx biome check packages/codex
+      oxlint-command: bun run --cwd packages/codex lint:oxlint
+      oxlint-type-command: bun run --cwd packages/codex lint:oxlint:type
       test-command: bun run --filter @proompteng/codex test

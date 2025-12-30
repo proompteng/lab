@@ -13,7 +13,6 @@
     "lib": ["esnext", "dom"],
     "skipLibCheck": true,
     "skipDefaultLibCheck": true,
-    "baseUrl": ".",
     "paths": {},
     "types": ["bun-types"]
   },

@@ -3,9 +3,12 @@
 FROM oven/bun:1.1.20
 WORKDIR /app
 
-COPY package.json bunfig.toml tsconfig.json ./
-RUN bun install --production
+COPY package.json bun.lock tsconfig.base.json ./
+COPY packages/temporal-bun-sdk ./packages/temporal-bun-sdk
+COPY packages/temporal-bun-sdk-example ./packages/temporal-bun-sdk-example
 
-COPY src ./src
+RUN bun install --ignore-scripts
+RUN bun --cwd packages/temporal-bun-sdk run build
 
+WORKDIR /app/packages/temporal-bun-sdk-example
 CMD ["bun", "run", "src/worker.ts"]

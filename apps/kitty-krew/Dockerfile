@@ -8,8 +8,10 @@ WORKDIR /repo
 COPY package.json bun.lock .npmrc* ./
 COPY scripts/run-husky-install.mjs ./scripts/run-husky-install.mjs
 
-# Copy the kitty-krew workspace source
-COPY apps/kitty-krew ./apps/kitty-krew
+# Copy workspace sources needed for frozen lockfile installs
+COPY apps ./apps
+COPY packages ./packages
+COPY services ./services
 
 # Install dependencies for the kitty-krew workspace using the root Bun lockfile
 ENV HUSKY=0

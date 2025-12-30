@@ -6,12 +6,14 @@ ENV BUN_INSTALL="/root/.bun"
 ENV PATH="$BUN_INSTALL/bin:$PATH"
 ENV HUSKY=0
 WORKDIR /app
+RUN apk add --no-cache bash curl
 RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION}
 
 COPY package.json bun.lock .npmrc* tsconfig.base.json ./
 COPY scripts/run-husky-install.mjs ./scripts/run-husky-install.mjs
-COPY apps/proompteng/package.json ./apps/proompteng/
-COPY packages/backend/package.json ./packages/backend/
+COPY apps ./apps
+COPY packages ./packages
+COPY services ./services
 RUN bun install --frozen-lockfile --ignore-scripts
 
 FROM deps AS builder

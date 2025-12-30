@@ -9,7 +9,9 @@
     "build": "tsc -p tsconfig.json",
     "example": "bun run examples/run-example.ts",
     "test": "vitest run",
-    "prepare": "bun run build"
+    "prepare": "bun run build",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
   },
   "devDependencies": {
     "@types/node": "^24.10.2",

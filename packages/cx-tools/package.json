@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "echo \"TODO(jng-010): build cx-tools binaries\"",
-    "lint": "biome lint --error-on-warnings || true"
+    "lint": "biome lint --error-on-warnings || true",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
   },
   "bin": {
     "cx-codex-run": "./dist/cx-codex-run.js",

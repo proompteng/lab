@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "bun run src/worker.ts",
     "worker:start": "bun run src/worker.ts",
-    "docker:build": "bun run scripts/build-docker.ts --tag temporal-bun-sdk-example:latest"
+    "docker:build": "bun run scripts/build-docker.ts --tag temporal-bun-sdk-example:latest",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
   },
   "dependencies": {
     "@proompteng/temporal-bun-sdk": "workspace:*",

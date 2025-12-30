@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM eclipse-temurin:25-jdk AS build
+FROM eclipse-temurin:21-jdk AS build
 WORKDIR /workspace
 
 COPY gradlew gradle.properties settings.gradle.kts build.gradle.kts ./
@@ -7,6 +7,7 @@ COPY gradle ./gradle
 COPY platform ./platform
 COPY flink-integration ./flink-integration
 COPY technical-analysis ./technical-analysis
+COPY technical-analysis-flink ./technical-analysis-flink
 COPY websockets ./websockets
 
 RUN chmod +x ./gradlew

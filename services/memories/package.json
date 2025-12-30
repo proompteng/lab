@@ -7,7 +7,9 @@
     "save-memory": "bun run ./save.ts",
     "retrieve-memory": "bun run ./retrieve.ts",
     "createdb": "bun run ./scripts/create-db.ts",
-    "test": "bun test tests"
+    "test": "bun test tests",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
   },
   "devDependencies": {
     "@types/bun": "latest"

@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "create-default-namespace": "bun run src/create-default-namespace.ts"
+    "create-default-namespace": "bun run src/create-default-namespace.ts",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.12.6",

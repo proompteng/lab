@@ -409,7 +409,7 @@ FROM tools AS codex-build
 WORKDIR /app
 COPY json/ .
 RUN --mount=type=cache,target=/root/.cache/bun \
-  bun install --no-save --ignore-scripts --filter @proompteng/codex
+  bun install --no-save --filter @proompteng/codex
 COPY full/ .
 RUN bun --cwd=packages/codex run build
 
@@ -417,7 +417,7 @@ FROM tools AS temporal-bun-sdk-build
 WORKDIR /app
 COPY json/ .
 RUN --mount=type=cache,target=/root/.cache/bun \
-  bun install --no-save --ignore-scripts --filter @proompteng/temporal-bun-sdk
+  bun install --no-save --filter @proompteng/temporal-bun-sdk
 COPY full/ .
 RUN bun --cwd=packages/temporal-bun-sdk run build
 
@@ -425,7 +425,7 @@ FROM tools AS jangar-deps-dev
 WORKDIR /app
 COPY json/ .
 RUN --mount=type=cache,target=/root/.cache/bun \
-  bun install --no-save --ignore-scripts --filter @proompteng/jangar
+  bun install --no-save --filter @proompteng/jangar
 
 FROM jangar-deps-dev AS jangar-build
 WORKDIR /app
@@ -438,7 +438,7 @@ FROM tools AS jangar-deps-prod
 WORKDIR /app
 COPY json/ .
 RUN --mount=type=cache,target=/root/.cache/bun \
-  bun install --no-save --ignore-scripts --filter @proompteng/jangar
+  bun install --no-save --filter @proompteng/jangar
 
 FROM tools AS runtime
 
