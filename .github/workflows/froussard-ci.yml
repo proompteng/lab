@@ -20,5 +20,5 @@ jobs:
       lint-command: bunx biome check apps/froussard
       oxlint-command: bun run --cwd apps/froussard lint:oxlint
       oxlint-type-command: bun run --cwd apps/froussard lint:oxlint:type
-      test-command: bun run --filter froussard test -- --coverage && node scripts/report-coverage.mjs
+      test-command: bun run --cwd packages/codex build && bun run --cwd packages/discord build && bun run --filter froussard test -- --coverage && node scripts/report-coverage.mjs
     secrets: inherit

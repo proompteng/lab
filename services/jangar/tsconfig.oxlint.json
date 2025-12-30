@@ -5,6 +5,7 @@
     "noEmit": true,
     "strict": true,
     "strictNullChecks": true,
+    "baseUrl": "./src",
     "paths": {
       "@/*": ["./*"],
       "~/*": ["./*"],

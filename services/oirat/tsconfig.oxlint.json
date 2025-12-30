@@ -5,6 +5,7 @@
     "strict": true,
     "strictNullChecks": true,
     "types": ["bun-types"],
+    "baseUrl": "./src",
     "paths": {
       "@/*": ["./*"]
     }
