@@ -59,12 +59,12 @@ const activeEvaluations = new Set<string>()
 const terminalStatuses = new Set(['completed', 'needs_human', 'needs_iteration'])
 const isTerminalStatus = (status: string | null | undefined) => (status ? terminalStatuses.has(status) : false)
 const MAX_JUDGE_JSON_RETRIES = 2
-const RECONCILE_STARTUP_DELAY_MS = 5_000
-const RECONCILE_INTERVAL_MS = 60_000
-const RECONCILE_BASE_DELAY_MS = 1_000
-const RECONCILE_JITTER_MS = 15_000
-const PENDING_EVALUATION_STATUSES = ['run_complete', 'waiting_for_ci', 'judging'] as const
-const RECONCILE_DISABLED = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
+const _RECONCILE_STARTUP_DELAY_MS = 5_000
+const _RECONCILE_INTERVAL_MS = 60_000
+const _RECONCILE_BASE_DELAY_MS = 1_000
+const _RECONCILE_JITTER_MS = 15_000
+const _PENDING_EVALUATION_STATUSES = ['run_complete', 'waiting_for_ci', 'judging'] as const
+const _RECONCILE_DISABLED = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
 const RERUN_SUBMISSION_BACKOFF_MS = [2_000, 7_000, 15_000]
 const JSON_ONLY_REMINDER = [
   'IMPORTANT: Return a single JSON object only.',

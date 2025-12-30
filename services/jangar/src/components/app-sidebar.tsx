@@ -38,6 +38,7 @@ type AppNavItem = {
 const appNav: AppNavItem[] = [
   { to: '/', label: 'Home', icon: IconHome },
   { to: '/memories', label: 'Memories', icon: IconBrain },
+  { to: '/codex/runs', label: 'Codex runs', icon: IconList },
   {
     to: '/agents',
     label: 'Agents',

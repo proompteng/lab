@@ -17,6 +17,7 @@ import { Route as AtlasIndexRouteImport } from './routes/atlas/index'
 import { Route as AgentsIndexRouteImport } from './routes/agents/index'
 import { Route as TorghutVisualsRouteImport } from './routes/torghut/visuals'
 import { Route as TorghutSymbolsRouteImport } from './routes/torghut/symbols'
+import { Route as CodexRunsRouteImport } from './routes/codex/runs'
 import { Route as AtlasSearchRouteImport } from './routes/atlas/search'
 import { Route as AtlasIndexedRouteImport } from './routes/atlas/indexed'
 import { Route as AtlasEnrichRouteImport } from './routes/atlas/enrich'
@@ -79,6 +80,11 @@ const TorghutVisualsRoute = TorghutVisualsRouteImport.update({
 const TorghutSymbolsRoute = TorghutSymbolsRouteImport.update({
   id: '/torghut/symbols',
   path: '/torghut/symbols',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CodexRunsRoute = CodexRunsRouteImport.update({
+  id: '/codex/runs',
+  path: '/codex/runs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AtlasSearchRoute = AtlasSearchRouteImport.update({
@@ -212,6 +218,7 @@ export interface FileRoutesByFullPath {
   '/atlas/enrich': typeof AtlasEnrichRoute
   '/atlas/indexed': typeof AtlasIndexedRoute
   '/atlas/search': typeof AtlasSearchRoute
+  '/codex/runs': typeof CodexRunsRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
   '/agents': typeof AgentsIndexRoute
@@ -245,6 +252,7 @@ export interface FileRoutesByTo {
   '/atlas/enrich': typeof AtlasEnrichRoute
   '/atlas/indexed': typeof AtlasIndexedRoute
   '/atlas/search': typeof AtlasSearchRoute
+  '/codex/runs': typeof CodexRunsRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
   '/agents': typeof AgentsIndexRoute
@@ -279,6 +287,7 @@ export interface FileRoutesById {
   '/atlas/enrich': typeof AtlasEnrichRoute
   '/atlas/indexed': typeof AtlasIndexedRoute
   '/atlas/search': typeof AtlasSearchRoute
+  '/codex/runs': typeof CodexRunsRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
   '/agents/': typeof AgentsIndexRoute
@@ -314,6 +323,7 @@ export interface FileRouteTypes {
     | '/atlas/enrich'
     | '/atlas/indexed'
     | '/atlas/search'
+    | '/codex/runs'
     | '/torghut/symbols'
     | '/torghut/visuals'
     | '/agents'
@@ -347,6 +357,7 @@ export interface FileRouteTypes {
     | '/atlas/enrich'
     | '/atlas/indexed'
     | '/atlas/search'
+    | '/codex/runs'
     | '/torghut/symbols'
     | '/torghut/visuals'
     | '/agents'
@@ -380,6 +391,7 @@ export interface FileRouteTypes {
     | '/atlas/enrich'
     | '/atlas/indexed'
     | '/atlas/search'
+    | '/codex/runs'
     | '/torghut/symbols'
     | '/torghut/visuals'
     | '/agents/'
@@ -414,6 +426,7 @@ export interface RootRouteChildren {
   AtlasEnrichRoute: typeof AtlasEnrichRoute
   AtlasIndexedRoute: typeof AtlasIndexedRoute
   AtlasSearchRoute: typeof AtlasSearchRoute
+  CodexRunsRoute: typeof CodexRunsRoute
   TorghutSymbolsRoute: typeof TorghutSymbolsRoute
   TorghutVisualsRoute: typeof TorghutVisualsRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
@@ -488,6 +501,13 @@ declare module '@tanstack/react-router' {
       path: '/torghut/symbols'
       fullPath: '/torghut/symbols'
       preLoaderRoute: typeof TorghutSymbolsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/codex/runs': {
+      id: '/codex/runs'
+      path: '/codex/runs'
+      fullPath: '/codex/runs'
+      preLoaderRoute: typeof CodexRunsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/atlas/search': {
@@ -680,6 +700,7 @@ const rootRouteChildren: RootRouteChildren = {
   AtlasEnrichRoute: AtlasEnrichRoute,
   AtlasIndexedRoute: AtlasIndexedRoute,
   AtlasSearchRoute: AtlasSearchRoute,
+  CodexRunsRoute: CodexRunsRoute,
   TorghutSymbolsRoute: TorghutSymbolsRoute,
   TorghutVisualsRoute: TorghutVisualsRoute,
   AgentsIndexRoute: AgentsIndexRoute,
