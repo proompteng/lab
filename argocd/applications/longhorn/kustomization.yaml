@@ -10,4 +10,4 @@ helmCharts:
     valuesFile: longhorn-values.yaml
     includeCRDs: true
 patchesStrategicMerge:
-  - patches/longhorn-csi-plugin-tolerations.yaml
+  - patches/longhorn-csi-plugin-tolerations.patch.yaml
