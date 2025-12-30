@@ -5,10 +5,10 @@ import {
   connect,
   DeliverPolicy,
   ErrorCode,
-  isNatsError,
   type JetStreamClient,
   type JetStreamManager,
   type JsMsg,
+  NatsError,
   ReplayPolicy,
   StringCodec,
 } from 'nats'
@@ -205,6 +205,8 @@ const normalizePayload = (raw: string, subject: string): AgentMessageInput | nul
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const msToNanos = (ms: number) => Math.max(1, Math.floor(ms)) * 1_000_000
+
+const isNatsError = (error: unknown): error is NatsError => error instanceof NatsError
 
 const buildConsumerConfig = (config: SubscriberConfig): ConsumerConfig => ({
   durable_name: config.consumerName,
