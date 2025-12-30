@@ -211,6 +211,9 @@ Runtime placement:
   continuously, decoupled from HTTP request lifecycles.
 - **Alternative:** start the subscriber inside the Jangar server process via a module-level
   `ManagedRuntime`, ensuring only one consumer is created per process.
+- **Current (Dec 30, 2025):** subscriber starts in-process via the Jangar SSR router bootstrap
+  (`services/jangar/src/server/agent-comms-runtime.ts`). Set `JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED=true`
+  when running a dedicated worker.
 
 ### Storage (Postgres)
 
