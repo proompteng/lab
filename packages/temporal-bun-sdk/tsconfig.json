@@ -6,15 +6,14 @@
     "declarationMap": true,
     "rootDir": ".",
     "moduleDetection": "force",
-    "baseUrl": "./",
     "rootDirs": ["src", "vendor"],
     "paths": {
-      "@proompteng/temporal-bun-sdk": ["src/index.ts"],
-      "@proompteng/temporal-bun-sdk/common": ["src/common/index.ts"],
-      "@proompteng/temporal-bun-sdk/core-bridge": ["src/core-bridge/index.ts"],
-      "@proompteng/temporal-bun-sdk/workflow": ["src/workflow/index.ts"],
-      "@proompteng/temporal-bun-sdk/worker": ["src/worker/index.ts"],
-      "@proompteng/temporal-bun-sdk/client": ["src/client/index.ts"]
+      "@proompteng/temporal-bun-sdk": ["./src/index.ts"],
+      "@proompteng/temporal-bun-sdk/common": ["./src/common/index.ts"],
+      "@proompteng/temporal-bun-sdk/core-bridge": ["./src/core-bridge/index.ts"],
+      "@proompteng/temporal-bun-sdk/workflow": ["./src/workflow/index.ts"],
+      "@proompteng/temporal-bun-sdk/worker": ["./src/worker/index.ts"],
+      "@proompteng/temporal-bun-sdk/client": ["./src/client/index.ts"]
     }
   },
   "include": ["src"]
