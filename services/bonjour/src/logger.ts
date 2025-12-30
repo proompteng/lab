@@ -18,6 +18,7 @@ if (lokiEndpoint && !lokiDisabled) {
         batching: true,
         interval: 5,
         timeout: 5000,
+        replaceTimestamp: true,
         labels: {
           service,
           namespace,
