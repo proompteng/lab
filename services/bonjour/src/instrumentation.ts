@@ -13,13 +13,9 @@ import {
 
 diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR)
 
-const versions = process.versions as Record<string, string | undefined>
-const isBunRuntime = typeof versions.bun === 'string'
-const sdkDisabled = isTruthy(process.env.OTEL_SDK_DISABLED)
-const sdkForceEnabled = isTruthy(process.env.OTEL_SDK_FORCE_ENABLED)
-const shouldStartSdk = !sdkDisabled && (!isBunRuntime || sdkForceEnabled)
+if (!isTruthy(process.env.OTEL_SDK_DISABLED)) {
+  applyBunNodeVersionShim()
 
-if (shouldStartSdk) {
   const serviceName = process.env.OTEL_SERVICE_NAME ?? process.env.LGTM_SERVICE_NAME ?? 'bonjour'
   const serviceNamespace = process.env.OTEL_SERVICE_NAMESPACE ?? process.env.POD_NAMESPACE ?? 'default'
   const serviceInstanceId = process.env.POD_NAME ?? process.pid.toString()
@@ -139,4 +135,18 @@ function isTruthy(value?: string) {
     return false
   }
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase())
+}
+
+function applyBunNodeVersionShim() {
+  const versions = process.versions as Record<string, string | undefined>
+  const bunVersion = versions.bun
+  const nodeVersion = versions.node
+  if (!bunVersion || !nodeVersion) {
+    return
+  }
+  const [major] = nodeVersion.split('.')
+  if (Number.parseInt(major ?? '', 10) < 14) {
+    return
+  }
+  versions.node = '12.0.0'
 }
