@@ -13,82 +13,90 @@ import {
 
 diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR)
 
-const serviceName = process.env.OTEL_SERVICE_NAME ?? process.env.LGTM_SERVICE_NAME ?? 'bonjour'
-const serviceNamespace = process.env.OTEL_SERVICE_NAMESPACE ?? process.env.POD_NAMESPACE ?? 'default'
-const serviceInstanceId = process.env.POD_NAME ?? process.pid.toString()
+const versions = process.versions as Record<string, string | undefined>
+const isBunRuntime = typeof versions.bun === 'string'
+const sdkDisabled = isTruthy(process.env.OTEL_SDK_DISABLED)
+const sdkForceEnabled = isTruthy(process.env.OTEL_SDK_FORCE_ENABLED)
+const shouldStartSdk = !sdkDisabled && (!isBunRuntime || sdkForceEnabled)
 
-const tracesEndpoint =
-  process.env.LGTM_TEMPO_TRACES_ENDPOINT ??
-  process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
-  'http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces'
-const metricsEndpoint =
-  process.env.LGTM_MIMIR_METRICS_ENDPOINT ??
-  process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT ??
-  'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics'
+if (shouldStartSdk) {
+  const serviceName = process.env.OTEL_SERVICE_NAME ?? process.env.LGTM_SERVICE_NAME ?? 'bonjour'
+  const serviceNamespace = process.env.OTEL_SERVICE_NAMESPACE ?? process.env.POD_NAMESPACE ?? 'default'
+  const serviceInstanceId = process.env.POD_NAME ?? process.pid.toString()
 
-const exportInterval = parseInt(process.env.OTEL_METRIC_EXPORT_INTERVAL ?? '15000', 10)
+  const tracesEndpoint =
+    process.env.LGTM_TEMPO_TRACES_ENDPOINT ??
+    process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
+    'http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces'
+  const metricsEndpoint =
+    process.env.LGTM_MIMIR_METRICS_ENDPOINT ??
+    process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT ??
+    'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics'
 
-const sharedHeaders = parseHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS)
-const traceHeaders = mergeHeaders(sharedHeaders, parseHeaders(process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS))
-const metricHeaders = mergeHeaders(sharedHeaders, parseHeaders(process.env.OTEL_EXPORTER_OTLP_METRICS_HEADERS))
+  const exportInterval = parseInt(process.env.OTEL_METRIC_EXPORT_INTERVAL ?? '15000', 10)
 
-const resource = Resource.default().merge(
-  new Resource({
-    [SEMRESATTRS_SERVICE_NAME]: serviceName,
-    [SEMRESATTRS_SERVICE_NAMESPACE]: serviceNamespace,
-    [SEMRESATTRS_SERVICE_INSTANCE_ID]: serviceInstanceId,
-  }),
-)
+  const sharedHeaders = parseHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS)
+  const traceHeaders = mergeHeaders(sharedHeaders, parseHeaders(process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS))
+  const metricHeaders = mergeHeaders(sharedHeaders, parseHeaders(process.env.OTEL_EXPORTER_OTLP_METRICS_HEADERS))
 
-const metricReader: MetricReader = new PeriodicExportingMetricReader({
-  exporter: new OTLPMetricExporter({
-    url: metricsEndpoint,
-    headers: metricHeaders,
-  }),
-  exportIntervalMillis: Number.isFinite(exportInterval) ? Math.max(exportInterval, 5000) : 15000,
-})
-
-const sdk = new NodeSDK({
-  resource,
-  traceExporter: new OTLPTraceExporter({
-    url: tracesEndpoint,
-    headers: traceHeaders,
-  }),
-  metricReader,
-  instrumentations: [
-    getNodeAutoInstrumentations({
-      '@opentelemetry/instrumentation-http': {
-        enabled: true,
-      },
-      '@opentelemetry/instrumentation-undici': {
-        enabled: true,
-      },
+  const resource = Resource.default().merge(
+    new Resource({
+      [SEMRESATTRS_SERVICE_NAME]: serviceName,
+      [SEMRESATTRS_SERVICE_NAMESPACE]: serviceNamespace,
+      [SEMRESATTRS_SERVICE_INSTANCE_ID]: serviceInstanceId,
     }),
-  ],
-})
+  )
 
-let shuttingDown = false
+  const metricReader: MetricReader = new PeriodicExportingMetricReader({
+    exporter: new OTLPMetricExporter({
+      url: metricsEndpoint,
+      headers: metricHeaders,
+    }),
+    exportIntervalMillis: Number.isFinite(exportInterval) ? Math.max(exportInterval, 5000) : 15000,
+  })
 
-try {
-  Promise.resolve(sdk.start()).catch((error) => {
+  const sdk = new NodeSDK({
+    resource,
+    traceExporter: new OTLPTraceExporter({
+      url: tracesEndpoint,
+      headers: traceHeaders,
+    }),
+    metricReader,
+    instrumentations: [
+      getNodeAutoInstrumentations({
+        '@opentelemetry/instrumentation-http': {
+          enabled: true,
+        },
+        '@opentelemetry/instrumentation-undici': {
+          enabled: true,
+        },
+      }),
+    ],
+  })
+
+  let shuttingDown = false
+
+  try {
+    Promise.resolve(sdk.start()).catch((error) => {
+      diag.error('failed to start OpenTelemetry SDK', error)
+    })
+  } catch (error) {
     diag.error('failed to start OpenTelemetry SDK', error)
-  })
-} catch (error) {
-  diag.error('failed to start OpenTelemetry SDK', error)
-}
-
-const shutdown = () => {
-  if (shuttingDown) {
-    return
   }
-  shuttingDown = true
-  void sdk.shutdown().catch((error) => {
-    diag.error('failed to gracefully shutdown OpenTelemetry SDK', error)
-  })
-}
 
-process.once('SIGTERM', shutdown)
-process.once('SIGINT', shutdown)
+  const shutdown = () => {
+    if (shuttingDown) {
+      return
+    }
+    shuttingDown = true
+    void sdk.shutdown().catch((error) => {
+      diag.error('failed to gracefully shutdown OpenTelemetry SDK', error)
+    })
+  }
+
+  process.once('SIGTERM', shutdown)
+  process.once('SIGINT', shutdown)
+}
 
 function parseHeaders(value?: string) {
   if (!value) {
@@ -124,4 +132,11 @@ function mergeHeaders(...headers: Array<Record<string, string> | undefined>): Re
   }
 
   return Object.keys(merged).length > 0 ? merged : undefined
+}
+
+function isTruthy(value?: string) {
+  if (!value) {
+    return false
+  }
+  return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase())
 }
