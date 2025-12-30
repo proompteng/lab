@@ -25,20 +25,14 @@ COPY packages/temporal-bun-sdk/package.json package.json
 COPY packages/temporal-bun-sdk/bunfig.toml bunfig.toml
 COPY packages/temporal-bun-sdk/tsconfig.json tsconfig.json
 COPY packages/temporal-bun-sdk/tsconfig.paths.json tsconfig.paths.json
+COPY tsconfig.base.json /tsconfig.base.json
 COPY packages/temporal-bun-sdk/src src
 COPY packages/temporal-bun-sdk/tests tests
 COPY packages/temporal-bun-sdk/scripts scripts
-COPY packages/temporal-bun-sdk/native native
-
 RUN bun install
 
-# Download pre-built libraries (required)
-# This replaces the previous lengthy Rust compilation process
-RUN bun run libs:download
-
-# Build TypeScript and native Zig components using pre-built libraries
+# Build TypeScript artifacts
 RUN bun run build
-RUN bun run build:native:zig:bundle
 
 FROM oven/bun:1.1.20 AS runner
 WORKDIR /app
@@ -51,10 +45,9 @@ RUN apt-get update && apt-get install -y \
 
 COPY packages/temporal-bun-sdk/package.json package.json
 COPY packages/temporal-bun-sdk/bunfig.toml bunfig.toml
-RUN bun install --production
+RUN bun install --production --ignore-scripts
 
 COPY --from=install /app/dist dist
-COPY --from=install /app/dist/native dist/native
 
 # Add health check for the worker
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
