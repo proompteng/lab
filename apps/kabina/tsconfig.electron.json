@@ -1,11 +1,18 @@
 {
-  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist-electron",
     "rootDir": "electron",
-    "module": "NodeNext",
+    "outDir": "dist-electron",
+    "sourceMap": true,
+    "declaration": false,
     "moduleResolution": "NodeNext",
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "importHelpers": true,
     "target": "ES2022",
+    "module": "NodeNext",
+    "lib": ["esnext", "dom"],
+    "skipLibCheck": true,
+    "skipDefaultLibCheck": true,
     "noEmit": false,
     "types": ["node", "electron"]
   },
