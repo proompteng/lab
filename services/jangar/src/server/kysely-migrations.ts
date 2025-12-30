@@ -5,6 +5,7 @@ import * as initMigration from '~/server/migrations/20251228_init'
 import * as codexJudgeTimeoutsMigration from '~/server/migrations/20251229_codex_judge_timeouts'
 import * as rerunSubmissionsMigration from '~/server/migrations/20251229_codex_rerun_submissions'
 import * as workflowCommsAgentMessagesMigration from '~/server/migrations/20251229_workflow_comms_agent_messages'
+import * as codexJudgeWebhookIndexesMigration from '~/server/migrations/20251230_codex_judge_webhook_indexes'
 
 type MigrationMap = Record<string, Migration>
 
@@ -23,6 +24,7 @@ const migrations: MigrationMap = {
   '20251229_codex_judge_timeouts': codexJudgeTimeoutsMigration,
   '20251229_codex_rerun_submissions': rerunSubmissionsMigration,
   '20251229_workflow_comms_agent_messages': workflowCommsAgentMessagesMigration,
+  '20251230_codex_judge_webhook_indexes': codexJudgeWebhookIndexesMigration,
 }
 
 const migrationProvider = new StaticMigrationProvider(migrations)

@@ -59,12 +59,12 @@ const activeEvaluations = new Set<string>()
 const terminalStatuses = new Set(['completed', 'needs_human', 'needs_iteration'])
 const isTerminalStatus = (status: string | null | undefined) => (status ? terminalStatuses.has(status) : false)
 const MAX_JUDGE_JSON_RETRIES = 2
-const RECONCILE_STARTUP_DELAY_MS = 5_000
-const RECONCILE_INTERVAL_MS = 60_000
-const RECONCILE_BASE_DELAY_MS = 1_000
-const RECONCILE_JITTER_MS = 15_000
-const PENDING_EVALUATION_STATUSES = ['run_complete', 'waiting_for_ci', 'judging'] as const
-const RECONCILE_DISABLED = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
+const _RECONCILE_STARTUP_DELAY_MS = 5_000
+const _RECONCILE_INTERVAL_MS = 60_000
+const _RECONCILE_BASE_DELAY_MS = 1_000
+const _RECONCILE_JITTER_MS = 15_000
+const _PENDING_EVALUATION_STATUSES = ['run_complete', 'waiting_for_ci', 'judging'] as const
+const _RECONCILE_DISABLED = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
 const RERUN_SUBMISSION_BACKOFF_MS = [2_000, 7_000, 15_000]
 const JSON_ONLY_REMINDER = [
   'IMPORTANT: Return a single JSON object only.',
@@ -868,14 +868,104 @@ const resolveCiContext = async (run: CodexRunRecord, pr: PullRequest | null) => 
   const existingSha = prSha ? null : run.commitSha
   const commitSha = prSha ?? artifactSha ?? existingSha ?? null
 
-  const ci = await fetchCiStatus(run, commitSha)
-  return { commitSha, ci }
+  if (!config.ciEventStreamEnabled) {
+    const ci = await fetchCiStatus(run, commitSha)
+    return { commitSha, ci, updatedRun: null as CodexRunRecord | null }
+  }
+
+  const commitChanged = Boolean(commitSha && run.commitSha && !matchesCommitSha(commitSha, run.commitSha))
+  const status = commitChanged ? 'pending' : (run.ciStatus ?? 'pending')
+  const url = commitChanged ? undefined : (run.ciUrl ?? undefined)
+  let updatedRun: CodexRunRecord | null = null
+
+  if (commitSha && (commitChanged || !run.commitSha || !run.ciStatus)) {
+    updatedRun =
+      (await store.updateCiStatus({
+        runId: run.id,
+        status,
+        url,
+        commitSha,
+      })) ?? null
+  }
+
+  return { commitSha, ci: { status, url }, updatedRun }
 }
 
 const fetchReviewStatus = async (run: CodexRunRecord, prNumber: number) => {
   const { owner, repo } = parseRepositoryParts(run.repository)
   const reviewers = config.codexReviewers.map((value) => value.toLowerCase())
   return github.getReviewSummary(owner, repo, prNumber, reviewers)
+}
+
+const normalizeReviewStatus = (value: unknown): ReviewSummary['status'] | null => {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'pending') return 'pending'
+  if (normalized === 'approved') return 'approved'
+  if (normalized === 'changes_requested') return 'changes_requested'
+  if (normalized === 'commented') return 'commented'
+  return null
+}
+
+const normalizeReviewSummary = (value: Record<string, unknown> | null | undefined) => {
+  const summary = value ?? {}
+  return {
+    unresolvedThreads: Array.isArray(summary.unresolvedThreads)
+      ? (summary.unresolvedThreads as ReviewSummary['unresolvedThreads'])
+      : [],
+    requestedChanges: Boolean(summary.requestedChanges),
+    reviewComments: Array.isArray(summary.reviewComments)
+      ? (summary.reviewComments as ReviewSummary['reviewComments'])
+      : [],
+    issueComments: Array.isArray(summary.issueComments)
+      ? (summary.issueComments as ReviewSummary['issueComments'])
+      : [],
+  }
+}
+
+const resolveReviewContext = async (run: CodexRunRecord, prNumber: number) => {
+  if (!config.ciEventStreamEnabled) {
+    const review = await fetchReviewStatus(run, prNumber)
+    const reviewSummary = {
+      unresolvedThreads: review.unresolvedThreads,
+      requestedChanges: review.requestedChanges,
+      reviewComments: review.reviewComments,
+      issueComments: review.issueComments,
+    }
+    const reviewRun =
+      (await store.updateReviewStatus({
+        runId: run.id,
+        status: review.status,
+        summary: reviewSummary,
+      })) ?? run
+    return { review, reviewRun, storedStatus: reviewRun.reviewStatus }
+  }
+
+  const storedStatusRaw = typeof run.reviewStatus === 'string' ? run.reviewStatus.trim() : ''
+  const normalizedStatus = normalizeReviewStatus(storedStatusRaw) ?? 'pending'
+  const reviewSummary = normalizeReviewSummary(run.reviewSummary)
+  let reviewRun = run
+
+  if (!storedStatusRaw) {
+    const updated = await store.updateReviewStatus({
+      runId: run.id,
+      status: normalizedStatus,
+      summary: reviewSummary,
+    })
+    if (updated) {
+      reviewRun = updated
+    }
+  }
+
+  const review: ReviewSummary = {
+    status: normalizedStatus,
+    unresolvedThreads: reviewSummary.unresolvedThreads,
+    requestedChanges: reviewSummary.requestedChanges,
+    reviewComments: reviewSummary.reviewComments,
+    issueComments: reviewSummary.issueComments,
+  }
+
+  return { review, reviewRun, storedStatus: storedStatusRaw }
 }
 
 const extractLogExcerpt = (payload?: Record<string, unknown> | null) => {
@@ -944,6 +1034,391 @@ const extractCommitShaFromPayload = (payload: Record<string, unknown>) => {
     if (normalized) return normalized
   }
   return null
+}
+
+type GithubWebhookStreamEvent = {
+  event: string
+  action: string | null
+  deliveryId: string | null
+  repository: string | null
+  sender: string | null
+  payload: Record<string, unknown>
+}
+
+const SUPPORTED_GITHUB_STREAM_EVENTS = new Set([
+  'check_run',
+  'check_suite',
+  'pull_request',
+  'pull_request_review',
+  'pull_request_review_comment',
+  'issue_comment',
+])
+
+const normalizeOptionalNumber = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
+}
+
+const extractRepositoryFromWebhookPayload = (payload: Record<string, unknown>) => {
+  if (isRecord(payload.repository)) {
+    const fullName = payload.repository.full_name
+    if (typeof fullName === 'string' && fullName.trim().length > 0) return fullName.trim()
+  }
+  if (
+    isRecord(payload.pull_request) &&
+    isRecord(payload.pull_request.base) &&
+    isRecord(payload.pull_request.base.repo)
+  ) {
+    const fullName = payload.pull_request.base.repo.full_name
+    if (typeof fullName === 'string' && fullName.trim().length > 0) return fullName.trim()
+  }
+  if (isRecord(payload.issue) && typeof payload.issue.repository_url === 'string') {
+    try {
+      const parsed = new URL(payload.issue.repository_url)
+      const segments = parsed.pathname.split('/').filter(Boolean)
+      if (segments.length >= 2) {
+        const owner = segments[segments.length - 2]
+        const repo = segments[segments.length - 1]
+        if (owner && repo) return `${owner}/${repo}`
+      }
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+const extractSenderLogin = (payload: Record<string, unknown>) => {
+  if (isRecord(payload.sender) && typeof payload.sender.login === 'string') {
+    return payload.sender.login.trim() || null
+  }
+  return null
+}
+
+const parseGithubWebhookEvent = (payload: Record<string, unknown>): GithubWebhookStreamEvent => {
+  const rawPayload = isRecord(payload.payload) ? payload.payload : payload
+  const event =
+    normalizeOptionalString(
+      payload.event ?? payload.event_type ?? payload.eventType ?? payload.name ?? payload['x-github-event'],
+    ) ?? ''
+  const action =
+    normalizeOptionalString(
+      payload.action ?? payload.event_action ?? payload.eventAction ?? payload['x-github-action'],
+    ) ?? null
+  const deliveryId =
+    normalizeOptionalString(
+      payload.deliveryId ?? payload.delivery_id ?? payload['x-github-delivery'] ?? payload.id ?? payload.key,
+    ) ?? null
+  const repository =
+    normalizeOptionalString(payload.repository) ??
+    normalizeOptionalString(payload.repository_full_name) ??
+    extractRepositoryFromWebhookPayload(rawPayload)
+  const sender = normalizeOptionalString(payload.sender) ?? extractSenderLogin(rawPayload)
+
+  return {
+    event,
+    action,
+    deliveryId,
+    repository,
+    sender,
+    payload: rawPayload,
+  }
+}
+
+const extractPullRequestInfo = (payload: Record<string, unknown>) => {
+  const pr = isRecord(payload.pull_request) ? payload.pull_request : null
+  if (!pr) {
+    return { number: null, url: null, headSha: null, headRef: null }
+  }
+  const number = normalizeOptionalNumber(pr.number)
+  const url = normalizeOptionalString(pr.html_url ?? pr.url)
+  const head = isRecord(pr.head) ? pr.head : null
+  const headSha = head ? normalizeSha(head.sha) : null
+  const headRef = head && typeof head.ref === 'string' ? head.ref.trim() || null : null
+  return { number, url, headSha, headRef }
+}
+
+const extractCheckPayload = (payload: Record<string, unknown>) => {
+  if (isRecord(payload.check_run)) return payload.check_run
+  if (isRecord(payload.check_suite)) return payload.check_suite
+  return null
+}
+
+const extractCheckPullRequests = (check: Record<string, unknown>) => {
+  const pullRequests = Array.isArray(check.pull_requests) ? check.pull_requests : []
+  return pullRequests
+    .map((entry) => (isRecord(entry) ? normalizeOptionalNumber(entry.number) : null))
+    .filter((value): value is number => value != null)
+}
+
+const deriveCiStatus = (status: string | null, conclusion: string | null) => {
+  const normalizedStatus = status?.trim().toLowerCase() ?? ''
+  if (normalizedStatus !== 'completed') return 'pending'
+  const normalizedConclusion = conclusion?.trim().toLowerCase() ?? ''
+  if (!normalizedConclusion) return 'pending'
+  if (normalizedConclusion === 'success' || normalizedConclusion === 'skipped') return 'success'
+  return 'failure'
+}
+
+const shouldRefreshReviewForPullRequest = (action: string | null) => {
+  const normalized = action?.trim().toLowerCase() ?? ''
+  return ['opened', 'reopened', 'synchronize', 'ready_for_review', 'converted_to_draft'].includes(normalized)
+}
+
+const dedupeRuns = (runs: CodexRunRecord[]) => {
+  const seen = new Map<string, CodexRunRecord>()
+  for (const run of runs) {
+    if (!seen.has(run.id)) {
+      seen.set(run.id, run)
+    }
+  }
+  return [...seen.values()]
+}
+
+const shouldTriggerEvaluation = (run: CodexRunRecord) => !isTerminalStatus(run.status) && run.status !== 'superseded'
+
+const scheduleEvaluationForRun = (runId: string) => scheduleEvaluation(runId, 1000, { reschedule: true })
+
+const fetchReviewSummaryForRepository = async (repository: string, prNumber: number) => {
+  const { owner, repo } = parseRepositoryParts(repository)
+  const reviewers = config.codexReviewers.map((value) => value.toLowerCase())
+  return github.getReviewSummary(owner, repo, prNumber, reviewers)
+}
+
+const fetchCheckRunSummaryForRepository = async (repository: string, commitSha: string) => {
+  const { owner, repo } = parseRepositoryParts(repository)
+  return github.getCheckRuns(owner, repo, commitSha)
+}
+
+const resolveRunsForCommitOrPr = async (
+  repository: string,
+  commitSha: string | null,
+  prNumbers: number[],
+): Promise<CodexRunRecord[]> => {
+  if (!repository) return []
+  let runs: CodexRunRecord[] = []
+  if (commitSha) {
+    runs = await store.listRunsByCommitSha(repository, commitSha)
+  }
+  if (runs.length === 0 && prNumbers.length > 0) {
+    const collected: CodexRunRecord[] = []
+    for (const prNumber of prNumbers) {
+      const prRuns = await store.listRunsByPrNumber(repository, prNumber)
+      collected.push(...prRuns)
+    }
+    runs = collected
+  }
+  return dedupeRuns(runs)
+}
+
+const handleCheckStreamEvent = async (event: GithubWebhookStreamEvent) => {
+  const repository = event.repository
+  if (!repository) return { updatedRunIds: [] as string[], status: null as string | null }
+  const checkPayload = extractCheckPayload(event.payload)
+  if (!checkPayload) return { updatedRunIds: [] as string[], status: null as string | null }
+
+  const commitSha = normalizeSha(checkPayload.head_sha ?? checkPayload.headSha)
+  const status = normalizeOptionalString(checkPayload.status)
+  const conclusion = normalizeOptionalString(checkPayload.conclusion)
+  const url = normalizeOptionalString(checkPayload.html_url ?? checkPayload.details_url ?? checkPayload.url)
+  const prNumbers = extractCheckPullRequests(checkPayload)
+
+  const normalizedAction = event.action?.trim().toLowerCase() ?? ''
+  const isCompleted = normalizedAction === 'completed' || status?.trim().toLowerCase() === 'completed'
+
+  let ciStatus = deriveCiStatus(status, conclusion)
+  let ciUrl = url ?? undefined
+
+  if (isCompleted && commitSha) {
+    try {
+      const summary = await fetchCheckRunSummaryForRepository(repository, commitSha)
+      ciStatus = summary.status
+      ciUrl = summary.url ?? ciUrl
+    } catch (error) {
+      console.warn('Failed to fetch aggregated check runs for CI status', { repository, commitSha, error })
+    }
+  }
+
+  const runs = await resolveRunsForCommitOrPr(repository, commitSha, prNumbers)
+  const updatedRunIds = new Set<string>()
+  for (const run of runs) {
+    if (!shouldTriggerEvaluation(run)) continue
+    const commitChanged = Boolean(commitSha && run.commitSha && !matchesCommitSha(commitSha, run.commitSha))
+    if (ciStatus === 'pending' && run.ciStatus && run.ciStatus !== 'pending' && !commitChanged) {
+      continue
+    }
+    const updated = await store.updateCiStatus({
+      runId: run.id,
+      status: ciStatus,
+      url: ciUrl,
+      commitSha,
+    })
+    if (updated) {
+      updatedRunIds.add(updated.id)
+      scheduleEvaluationForRun(updated.id)
+    }
+  }
+
+  return { updatedRunIds: [...updatedRunIds], status: ciStatus }
+}
+
+const handlePullRequestStreamEvent = async (event: GithubWebhookStreamEvent) => {
+  const repository = event.repository
+  if (!repository) return { updatedRunIds: [] as string[] }
+  const prInfo = extractPullRequestInfo(event.payload)
+  if (!prInfo.number) return { updatedRunIds: [] as string[] }
+
+  let runs: CodexRunRecord[] = []
+  if (prInfo.headRef) {
+    runs = await store.listRunsByBranch(repository, prInfo.headRef)
+  }
+  if (runs.length === 0 && prInfo.headSha) {
+    runs = await store.listRunsByCommitSha(repository, prInfo.headSha)
+  }
+  runs = dedupeRuns(runs)
+  if (runs.length === 0) return { updatedRunIds: [] as string[] }
+
+  const prUrl = prInfo.url ?? `https://github.com/${repository}/pull/${prInfo.number}`
+  const updatedRunIds = new Set<string>()
+  for (const run of runs) {
+    if (!shouldTriggerEvaluation(run)) continue
+    const updated = await store.updateRunPrInfo(run.id, prInfo.number, prUrl, prInfo.headSha)
+    if (updated) {
+      updatedRunIds.add(updated.id)
+      scheduleEvaluationForRun(updated.id)
+    }
+  }
+
+  if (shouldRefreshReviewForPullRequest(event.action)) {
+    try {
+      const review = await fetchReviewSummaryForRepository(repository, prInfo.number)
+      const reviewSummary = {
+        unresolvedThreads: review.unresolvedThreads,
+        requestedChanges: review.requestedChanges,
+        reviewComments: review.reviewComments,
+        issueComments: review.issueComments,
+      }
+      for (const run of runs) {
+        if (!shouldTriggerEvaluation(run)) continue
+        const updated = await store.updateReviewStatus({
+          runId: run.id,
+          status: review.status,
+          summary: reviewSummary,
+        })
+        if (updated) {
+          updatedRunIds.add(updated.id)
+          scheduleEvaluationForRun(updated.id)
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to refresh review summary from pull request event', {
+        repository,
+        prNumber: prInfo.number,
+        error,
+      })
+    }
+  }
+
+  return { updatedRunIds: [...updatedRunIds] }
+}
+
+const isPullRequestIssueComment = (payload: Record<string, unknown>) => {
+  if (!isRecord(payload.issue)) return false
+  return Boolean(payload.issue.pull_request)
+}
+
+const extractIssueCommentPrNumber = (payload: Record<string, unknown>) => {
+  if (!isRecord(payload.issue)) return null
+  return normalizeOptionalNumber(payload.issue.number)
+}
+
+const handleReviewStreamEvent = async (event: GithubWebhookStreamEvent) => {
+  const repository = event.repository
+  if (!repository) return { updatedRunIds: [] as string[] }
+
+  if (event.event === 'issue_comment' && !isPullRequestIssueComment(event.payload)) {
+    return { updatedRunIds: [] as string[] }
+  }
+
+  const prInfo = extractPullRequestInfo(event.payload)
+  const prNumber = prInfo.number ?? extractIssueCommentPrNumber(event.payload)
+  if (!prNumber) return { updatedRunIds: [] as string[] }
+
+  let runs = await store.listRunsByPrNumber(repository, prNumber)
+  if (runs.length === 0 && prInfo.headRef) {
+    runs = await store.listRunsByBranch(repository, prInfo.headRef)
+  }
+  if (runs.length === 0 && prInfo.headSha) {
+    runs = await store.listRunsByCommitSha(repository, prInfo.headSha)
+  }
+  runs = dedupeRuns(runs)
+  if (runs.length === 0) return { updatedRunIds: [] as string[] }
+
+  const prUrl = prInfo.url ?? `https://github.com/${repository}/pull/${prNumber}`
+  const updatedRunIds = new Set<string>()
+  for (const run of runs) {
+    if (!shouldTriggerEvaluation(run)) continue
+    const updated = await store.updateRunPrInfo(run.id, prNumber, prUrl, prInfo.headSha)
+    if (updated) {
+      updatedRunIds.add(updated.id)
+      scheduleEvaluationForRun(updated.id)
+    }
+  }
+
+  try {
+    const review = await fetchReviewSummaryForRepository(repository, prNumber)
+    const reviewSummary = {
+      unresolvedThreads: review.unresolvedThreads,
+      requestedChanges: review.requestedChanges,
+      reviewComments: review.reviewComments,
+      issueComments: review.issueComments,
+    }
+    for (const run of runs) {
+      if (!shouldTriggerEvaluation(run)) continue
+      const updated = await store.updateReviewStatus({
+        runId: run.id,
+        status: review.status,
+        summary: reviewSummary,
+      })
+      if (updated) {
+        updatedRunIds.add(updated.id)
+        scheduleEvaluationForRun(updated.id)
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to refresh review summary from webhook event', { repository, prNumber, error })
+  }
+
+  return { updatedRunIds: [...updatedRunIds] }
+}
+
+export const handleGithubWebhookEvent = async (payload: Record<string, unknown>) => {
+  if (!config.ciEventStreamEnabled) {
+    return { ok: false, reason: 'event_stream_disabled' }
+  }
+
+  await ensureStoreReady()
+  const parsed = parseGithubWebhookEvent(payload)
+  if (!parsed.event || !SUPPORTED_GITHUB_STREAM_EVENTS.has(parsed.event)) {
+    return { ok: false, reason: 'unsupported_event', event: parsed.event || null }
+  }
+
+  if (parsed.event === 'check_run' || parsed.event === 'check_suite') {
+    const result = await handleCheckStreamEvent(parsed)
+    return { ok: true, event: parsed.event, action: parsed.action, ...result }
+  }
+
+  if (parsed.event === 'pull_request') {
+    const result = await handlePullRequestStreamEvent(parsed)
+    return { ok: true, event: parsed.event, action: parsed.action, ...result }
+  }
+
+  const result = await handleReviewStreamEvent(parsed)
+  return { ok: true, event: parsed.event, action: parsed.action, ...result }
 }
 
 type MinioConfig = {
@@ -1626,7 +2101,7 @@ const evaluateRun = async (runId: string) => {
       }
     }
 
-    const { commitSha, ci } = await resolveCiContext(run, pr)
+    const { commitSha, ci, updatedRun: ciUpdatedRun } = await resolveCiContext(run, pr)
     if (!commitSha) {
       const evaluation = await store.updateDecision({
         runId: run.id,
@@ -1670,7 +2145,9 @@ const evaluateRun = async (runId: string) => {
       return
     }
 
-    const ciRun = (await store.updateCiStatus({ runId: run.id, status: ci.status, url: ci.url, commitSha })) ?? run
+    const ciRun = config.ciEventStreamEnabled
+      ? (ciUpdatedRun ?? run)
+      : ((await store.updateCiStatus({ runId: run.id, status: ci.status, url: ci.url, commitSha })) ?? run)
 
     if (ci.status === 'pending') {
       if (ciRun.status !== 'waiting_for_ci') {
@@ -1774,19 +2251,13 @@ const evaluateRun = async (runId: string) => {
       return
     }
 
-    const review = await fetchReviewStatus(run, pr.number)
+    const { review, reviewRun, storedStatus } = await resolveReviewContext(run, pr.number)
     const reviewSummary = {
       unresolvedThreads: review.unresolvedThreads,
       requestedChanges: review.requestedChanges,
       reviewComments: review.reviewComments,
       issueComments: review.issueComments,
     }
-    const reviewRun =
-      (await store.updateReviewStatus({
-        runId: run.id,
-        status: review.status,
-        summary: reviewSummary,
-      })) ?? run
 
     if (review.requestedChanges || review.unresolvedThreads.length > 0) {
       const evaluation = await store.updateDecision({
@@ -1807,11 +2278,13 @@ const evaluateRun = async (runId: string) => {
       return
     }
 
+    const wasBypassed = storedStatus === 'bypassed' || reviewRun.reviewStatus === 'bypassed'
     const shouldBypassReview =
-      review.status === 'pending' &&
-      (config.reviewBypassMode === 'always' ||
-        (config.reviewBypassMode === 'timeout' &&
-          hasWaitTimedOut(reviewRun.reviewStatusUpdatedAt, config.reviewMaxWaitMs)))
+      wasBypassed ||
+      (review.status === 'pending' &&
+        (config.reviewBypassMode === 'always' ||
+          (config.reviewBypassMode === 'timeout' &&
+            hasWaitTimedOut(reviewRun.reviewStatusUpdatedAt, config.reviewMaxWaitMs))))
 
     if (shouldBypassReview && reviewRun.reviewStatus !== 'bypassed') {
       console.warn('Bypassing Codex review gate', {

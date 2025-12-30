@@ -1,0 +1,273 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import type { CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
+
+const globalState = globalThis as typeof globalThis & {
+  __codexJudgeStoreMock?: CodexJudgeStore
+  __codexJudgeGithubMock?: {
+    getRefSha: ReturnType<typeof vi.fn>
+    getCheckRuns: ReturnType<typeof vi.fn>
+    getPullRequestByHead: ReturnType<typeof vi.fn>
+    getPullRequest: ReturnType<typeof vi.fn>
+    getPullRequestDiff: ReturnType<typeof vi.fn>
+    getReviewSummary: ReturnType<typeof vi.fn>
+    getFile: ReturnType<typeof vi.fn>
+    updateFile: ReturnType<typeof vi.fn>
+    createBranch: ReturnType<typeof vi.fn>
+    createPullRequest: ReturnType<typeof vi.fn>
+  }
+  __codexJudgeConfigMock?: {
+    githubToken: string | null
+    githubApiBaseUrl: string
+    codexReviewers: string[]
+    reviewBypassMode: 'strict' | 'timeout' | 'always'
+    ciEventStreamEnabled: boolean
+    ciMaxWaitMs: number
+    reviewMaxWaitMs: number
+    maxAttempts: number
+    backoffScheduleMs: number[]
+    facteurBaseUrl: string
+    argoServerUrl: string | null
+    discordBotToken: string | null
+    discordChannelId: string | null
+    discordApiBaseUrl: string
+    judgeModel: string
+    promptTuningEnabled: boolean
+    promptTuningRepo: string | null
+    promptTuningFailureThreshold: number
+    promptTuningWindowHours: number
+    promptTuningCooldownHours: number
+  }
+}
+
+const requireMock = <T>(value: T | undefined, name: string): T => {
+  if (!value) {
+    throw new Error(`Missing ${name} mock`)
+  }
+  return value
+}
+
+const githubMock = {
+  getRefSha: vi.fn(),
+  getCheckRuns: vi.fn(),
+  getPullRequestByHead: vi.fn(),
+  getPullRequest: vi.fn(),
+  getPullRequestDiff: vi.fn(),
+  getReviewSummary: vi.fn(),
+  getFile: vi.fn(),
+  updateFile: vi.fn(),
+  createBranch: vi.fn(),
+  createPullRequest: vi.fn(),
+}
+
+const configMock = {
+  githubToken: null,
+  githubApiBaseUrl: 'https://api.github.com',
+  codexReviewers: [],
+  reviewBypassMode: 'strict' as const,
+  ciEventStreamEnabled: true,
+  ciMaxWaitMs: 10_000,
+  reviewMaxWaitMs: 10_000,
+  maxAttempts: 3,
+  backoffScheduleMs: [1000],
+  facteurBaseUrl: 'http://facteur',
+  argoServerUrl: null,
+  discordBotToken: null,
+  discordChannelId: null,
+  discordApiBaseUrl: 'https://discord.com/api/v10',
+  judgeModel: 'gpt-5.2-codex',
+  promptTuningEnabled: false,
+  promptTuningRepo: null,
+  promptTuningFailureThreshold: 3,
+  promptTuningWindowHours: 24,
+  promptTuningCooldownHours: 6,
+}
+
+if (!globalState.__codexJudgeStoreMock) {
+  globalState.__codexJudgeStoreMock = {
+    ready: Promise.resolve(),
+    upsertRunComplete: vi.fn(),
+    attachNotify: vi.fn(),
+    updateCiStatus: vi.fn(),
+    updateReviewStatus: vi.fn(),
+    updateDecision: vi.fn(),
+    updateRunStatus: vi.fn(),
+    updateRunPrompt: vi.fn(),
+    updateRunPrInfo: vi.fn(),
+    upsertArtifacts: vi.fn(),
+    listRunsByStatus: vi.fn(),
+    claimRerunSubmission: vi.fn(),
+    updateRerunSubmission: vi.fn(),
+    getRunByWorkflow: vi.fn(),
+    getRunById: vi.fn(),
+    listRunsByIssue: vi.fn(),
+    listRunsByBranch: vi.fn(),
+    listRunsByCommitSha: vi.fn(),
+    listRunsByPrNumber: vi.fn(),
+    getRunHistory: vi.fn(),
+    getLatestPromptTuningByIssue: vi.fn(),
+    createPromptTuning: vi.fn(),
+    close: vi.fn(),
+  }
+}
+
+if (!globalState.__codexJudgeGithubMock) {
+  globalState.__codexJudgeGithubMock = githubMock
+}
+
+if (!globalState.__codexJudgeConfigMock) {
+  globalState.__codexJudgeConfigMock = { ...configMock }
+}
+
+const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
+  id: 'run-1',
+  repository: 'owner/repo',
+  issueNumber: 123,
+  branch: 'codex/issue-123',
+  attempt: 1,
+  workflowName: 'workflow-1',
+  workflowUid: null,
+  workflowNamespace: null,
+  turnId: null,
+  threadId: null,
+  stage: 'implementation',
+  status: 'run_complete',
+  phase: null,
+  prompt: null,
+  nextPrompt: null,
+  commitSha: null,
+  prNumber: null,
+  prUrl: null,
+  ciStatus: null,
+  ciUrl: null,
+  ciStatusUpdatedAt: null,
+  reviewStatus: null,
+  reviewSummary: {},
+  reviewStatusUpdatedAt: null,
+  notifyPayload: null,
+  runCompletePayload: null,
+  createdAt: '2025-01-01T00:00:00Z',
+  updatedAt: '2025-01-01T00:00:00Z',
+  startedAt: null,
+  finishedAt: null,
+  ...overrides,
+})
+
+let handleGithubWebhookEvent: Awaited<typeof import('../codex-judge')>['handleGithubWebhookEvent'] | null = null
+
+const requireHandler = async () => {
+  if (!handleGithubWebhookEvent) {
+    handleGithubWebhookEvent = (await import('../codex-judge')).handleGithubWebhookEvent
+  }
+  if (!handleGithubWebhookEvent) {
+    throw new Error('Missing handleGithubWebhookEvent export')
+  }
+  return handleGithubWebhookEvent
+}
+
+describe('codex-judge GitHub webhook stream handling', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    const storeMock = requireMock(globalState.__codexJudgeStoreMock, 'store')
+    Object.values(storeMock).forEach((value) => {
+      if (typeof value === 'function') {
+        ;(value as ReturnType<typeof vi.fn>).mockReset?.()
+      }
+    })
+    Object.assign(requireMock(globalState.__codexJudgeGithubMock, 'github'), githubMock)
+    Object.assign(requireMock(globalState.__codexJudgeConfigMock, 'config'), configMock)
+  })
+
+  afterEach(() => {
+    vi.clearAllTimers()
+    vi.useRealTimers()
+  })
+
+  it('skips events when the stream is disabled', async () => {
+    const handler = await requireHandler()
+    const config = requireMock(globalState.__codexJudgeConfigMock, 'config')
+    config.ciEventStreamEnabled = false
+
+    const result = await handler({ event: 'check_run', payload: {} })
+
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('event_stream_disabled')
+  })
+
+  it('updates CI status for check_run completion events', async () => {
+    const handler = await requireHandler()
+    const store = requireMock(globalState.__codexJudgeStoreMock, 'store')
+    const run = buildRun({ commitSha: 'a'.repeat(40) })
+    ;(store.listRunsByCommitSha as ReturnType<typeof vi.fn>).mockResolvedValueOnce([run])
+    ;(store.updateCiStatus as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...run,
+      ciStatus: 'success',
+      ciUrl: 'https://ci.example.com',
+    })
+    githubMock.getCheckRuns.mockResolvedValueOnce({ status: 'success', url: 'https://ci.example.com' })
+
+    const result = await handler({
+      event: 'check_run',
+      action: 'completed',
+      repository: 'owner/repo',
+      payload: {
+        check_run: {
+          head_sha: run.commitSha,
+          status: 'completed',
+          conclusion: 'success',
+          html_url: 'https://ci.example.com',
+        },
+        repository: { full_name: 'owner/repo' },
+      },
+    })
+
+    expect(result.ok).toBe(true)
+    expect(store.listRunsByCommitSha).toHaveBeenCalledWith('owner/repo', run.commitSha)
+    expect(store.updateCiStatus).toHaveBeenCalledWith({
+      runId: run.id,
+      status: 'success',
+      url: 'https://ci.example.com',
+      commitSha: run.commitSha,
+    })
+  })
+
+  it('updates review status for pull_request_review events', async () => {
+    const handler = await requireHandler()
+    const store = requireMock(globalState.__codexJudgeStoreMock, 'store')
+    const run = buildRun({ prNumber: 42 })
+    ;(store.listRunsByPrNumber as ReturnType<typeof vi.fn>).mockResolvedValueOnce([run])
+    ;(store.updateReviewStatus as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...run,
+      reviewStatus: 'approved',
+    })
+    githubMock.getReviewSummary.mockResolvedValueOnce({
+      status: 'approved',
+      unresolvedThreads: [],
+      requestedChanges: false,
+      reviewComments: [],
+      issueComments: [],
+    })
+
+    const result = await handler({
+      event: 'pull_request_review',
+      action: 'submitted',
+      repository: 'owner/repo',
+      payload: {
+        pull_request: {
+          number: 42,
+          head: { ref: 'codex/issue-123', sha: 'b'.repeat(40) },
+          html_url: 'https://github.com/owner/repo/pull/42',
+        },
+      },
+    })
+
+    expect(result.ok).toBe(true)
+    expect(store.listRunsByPrNumber).toHaveBeenCalledWith('owner/repo', 42)
+    expect(store.updateReviewStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: run.id,
+        status: 'approved',
+      }),
+    )
+  })
+})

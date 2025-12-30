@@ -43,6 +43,7 @@ const globalState = globalThis as typeof globalThis & {
     githubApiBaseUrl: string
     codexReviewers: string[]
     reviewBypassMode: 'strict' | 'timeout' | 'always'
+    ciEventStreamEnabled: boolean
     ciMaxWaitMs: number
     reviewMaxWaitMs: number
     maxAttempts: number
@@ -81,6 +82,9 @@ if (!globalState.__codexJudgeStoreMock) {
     getRunByWorkflow: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
+    listRunsByBranch: vi.fn(),
+    listRunsByCommitSha: vi.fn(),
+    listRunsByPrNumber: vi.fn(),
     getRunHistory: vi.fn(),
     getLatestPromptTuningByIssue: vi.fn(),
     createPromptTuning: vi.fn(),
@@ -109,6 +113,7 @@ if (!globalState.__codexJudgeConfigMock) {
     githubApiBaseUrl: 'https://api.github.com',
     codexReviewers: [],
     reviewBypassMode: 'strict',
+    ciEventStreamEnabled: false,
     ciMaxWaitMs: 10_000,
     reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
@@ -270,6 +275,9 @@ const harness = (() => {
       },
     ),
     listRunsByIssue: vi.fn(async () => [run]),
+    listRunsByBranch: vi.fn(async () => []),
+    listRunsByCommitSha: vi.fn(async () => []),
+    listRunsByPrNumber: vi.fn(async () => []),
     listRunsByStatus: vi.fn(async () => [run]),
     claimRerunSubmission: vi.fn(async ({ attempt, deliveryId }: { attempt: number; deliveryId: string }) => ({
       submission: {
@@ -370,6 +378,7 @@ const harness = (() => {
     githubApiBaseUrl: 'https://api.github.com',
     codexReviewers: [],
     reviewBypassMode: 'strict',
+    ciEventStreamEnabled: false,
     ciMaxWaitMs: 10_000,
     reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
