@@ -107,7 +107,7 @@ jobs:
 
       - name: Run Temporal Bun SDK tests
         run: |
-          bun run --filter @proompteng/temporal-bun-sdk test -- --timeout 20000
+          bun run --filter @proompteng/temporal-bun-sdk test
 
       - name: Run worker load suite
         run: |
