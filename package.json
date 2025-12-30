@@ -36,6 +36,7 @@
     "test:discord": "bun run --filter @proompteng/discord test",
     "build:facteur": "bun run packages/scripts/src/facteur/build-image.ts",
     "build:oirat": "bun run packages/scripts/src/oirat/build-image.ts",
+    "bonjour:deploy": "bun run packages/scripts/src/bonjour/deploy-service.ts",
     "facteur:reseal": "bun run packages/scripts/src/facteur/reseal-secrets.ts",
     "froussard:reseal": "bun run packages/scripts/src/froussard/reseal-secrets.ts",
     "facteur:deploy": "bun run packages/scripts/src/facteur/deploy-service.ts",
