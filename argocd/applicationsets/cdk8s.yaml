@@ -15,7 +15,7 @@ spec:
             namespace: bonjour
             image: registry.ide-newton.ts.net/lab/bonjour@sha256:36c433afe92a113c4fc36193ee4a55c1d97efbf433229214a1d38861bc34c6b0
             replicas: 1
-            automation: auto
+            automation: manual
             enabled: true
             annotations:
               argocd.argoproj.io/sync-wave: "6"

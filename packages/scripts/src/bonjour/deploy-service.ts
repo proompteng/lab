@@ -12,7 +12,14 @@ import { buildImage } from './build-image'
 const defaultAppSetPath = 'argocd/applicationsets/cdk8s.yaml'
 const defaultAppName = 'bonjour'
 
-const updateApplicationSetImage = (appSetPath: string, appName: string, image: string) => {
+type BonjourAutomation = 'auto' | 'manual'
+
+const updateApplicationSetElement = (
+  appSetPath: string,
+  appName: string,
+  image: string,
+  automation: BonjourAutomation,
+) => {
   const raw = readFileSync(appSetPath, 'utf8')
   const doc = YAML.parse(raw)
 
@@ -30,11 +37,13 @@ const updateApplicationSetImage = (appSetPath: string, appName: string, image: s
     throw new Error(`Unable to find ApplicationSet element named '${appName}' in ${appSetPath}`)
   }
 
-  ;(element as { image?: string }).image = image
+  const target = element as { image?: string; automation?: BonjourAutomation }
+  target.image = image
+  target.automation = automation
 
   const updated = YAML.stringify(doc, { lineWidth: 120 })
   writeFileSync(appSetPath, updated)
-  console.log(`Updated ${appSetPath} with image ${image}`)
+  console.log(`Updated ${appSetPath} with image ${image} (automation=${automation})`)
 }
 
 export const main = async () => {
@@ -52,7 +61,8 @@ export const main = async () => {
 
   const appSetPath = resolve(repoRoot, process.env.BONJOUR_APPSET_PATH ?? defaultAppSetPath)
   const appName = process.env.BONJOUR_APPSET_NAME ?? defaultAppName
-  updateApplicationSetImage(appSetPath, appName, repoDigest)
+  const automation = (process.env.BONJOUR_APP_AUTOMATION ?? 'manual') as BonjourAutomation
+  updateApplicationSetElement(appSetPath, appName, repoDigest, automation)
 
   await run('kubectl', ['apply', '-f', appSetPath])
 
