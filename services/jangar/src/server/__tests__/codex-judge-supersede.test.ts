@@ -31,6 +31,7 @@ const globalState = globalThis as typeof globalThis & {
     githubApiBaseUrl: string
     codexReviewers: string[]
     reviewBypassMode: 'strict' | 'timeout' | 'always'
+    ciEventStreamEnabled: boolean
     ciMaxWaitMs: number
     reviewMaxWaitMs: number
     maxAttempts: number
@@ -68,6 +69,9 @@ if (!globalState.__codexJudgeStoreMock) {
     getRunByWorkflow: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
+    listRunsByBranch: vi.fn(),
+    listRunsByCommitSha: vi.fn(),
+    listRunsByPrNumber: vi.fn(),
     getRunHistory: vi.fn(),
     getLatestPromptTuningByIssue: vi.fn(),
     createPromptTuning: vi.fn(),
@@ -96,6 +100,7 @@ if (!globalState.__codexJudgeConfigMock) {
     githubApiBaseUrl: 'https://api.github.com',
     codexReviewers: [],
     reviewBypassMode: 'strict',
+    ciEventStreamEnabled: false,
     ciMaxWaitMs: 10_000,
     reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
@@ -149,6 +154,9 @@ const store = {
   getRunByWorkflow: vi.fn(),
   getRunById: vi.fn(),
   listRunsByIssue: vi.fn(),
+  listRunsByBranch: vi.fn(),
+  listRunsByCommitSha: vi.fn(),
+  listRunsByPrNumber: vi.fn(),
   getRunHistory: vi.fn(),
   getLatestPromptTuningByIssue: vi.fn(),
   createPromptTuning: vi.fn(),
@@ -171,6 +179,7 @@ const config = {
   githubApiBaseUrl: 'https://api.github.com',
   codexReviewers: [],
   reviewBypassMode: 'strict',
+  ciEventStreamEnabled: false,
   ciMaxWaitMs: 10_000,
   reviewMaxWaitMs: 10_000,
   maxAttempts: 3,

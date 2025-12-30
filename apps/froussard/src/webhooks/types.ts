@@ -21,6 +21,7 @@ export interface WebhookConfig {
   topics: {
     raw: string
     codexStructured: string
+    codexJudge: string
     discordCommands: string
   }
   discord: {

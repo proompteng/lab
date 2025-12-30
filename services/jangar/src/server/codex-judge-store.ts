@@ -218,6 +218,9 @@ export type CodexJudgeStore = {
   getRunByWorkflow: (workflowName: string, namespace?: string | null) => Promise<CodexRunRecord | null>
   getRunById: (runId: string) => Promise<CodexRunRecord | null>
   listRunsByIssue: (repository: string, issueNumber: number, branch?: string | null) => Promise<CodexRunRecord[]>
+  listRunsByBranch: (repository: string, branch: string) => Promise<CodexRunRecord[]>
+  listRunsByCommitSha: (repository: string, commitSha: string) => Promise<CodexRunRecord[]>
+  listRunsByPrNumber: (repository: string, prNumber: number) => Promise<CodexRunRecord[]>
   getRunHistory: (input: GetRunHistoryInput) => Promise<CodexRunHistory>
   getLatestPromptTuningByIssue: (repository: string, issueNumber: number) => Promise<CodexPromptTuningRecord | null>
   createPromptTuning: (
@@ -243,6 +246,16 @@ const parseTimestamp = (value: string | null) => {
   if (!value) return null
   const parsed = Date.parse(value)
   return Number.isNaN(parsed) ? null : parsed
+}
+
+const normalizeShaValue = (value: string | null | undefined) => value?.trim().toLowerCase() ?? ''
+
+const matchesCommitSha = (expected: string | null | undefined, actual: string | null | undefined) => {
+  if (!expected || !actual) return true
+  const expectedValue = normalizeShaValue(expected)
+  const actualValue = normalizeShaValue(actual)
+  if (!expectedValue || !actualValue) return true
+  return expectedValue === actualValue || expectedValue.startsWith(actualValue) || actualValue.startsWith(expectedValue)
 }
 
 const getRunSortKey = (run: CodexRunRecord) => {
@@ -470,6 +483,44 @@ export const createCodexJudgeStore = (
     }
 
     const rows = await query.orderBy('created_at desc').execute()
+    return rows.map((row) => rowToRun(row as Record<string, unknown>))
+  }
+
+  const listRunsByBranch = async (repository: string, branch: string) => {
+    const rows = await db
+      .selectFrom('codex_judge.runs')
+      .selectAll()
+      .where('repository', '=', repository)
+      .where('branch', '=', branch)
+      .orderBy('created_at desc')
+      .execute()
+    return rows.map((row) => rowToRun(row as Record<string, unknown>))
+  }
+
+  const listRunsByCommitSha = async (repository: string, commitSha: string) => {
+    const trimmed = commitSha.trim()
+    if (!trimmed) return []
+    const prefix = trimmed.slice(0, Math.min(7, trimmed.length))
+    const rows = await db
+      .selectFrom('codex_judge.runs')
+      .selectAll()
+      .where('repository', '=', repository)
+      .where('commit_sha', 'like', `${prefix}%`)
+      .orderBy('created_at desc')
+      .execute()
+    return rows
+      .map((row) => rowToRun(row as Record<string, unknown>))
+      .filter((run) => matchesCommitSha(trimmed, run.commitSha))
+  }
+
+  const listRunsByPrNumber = async (repository: string, prNumber: number) => {
+    const rows = await db
+      .selectFrom('codex_judge.runs')
+      .selectAll()
+      .where('repository', '=', repository)
+      .where('pr_number', '=', prNumber)
+      .orderBy('created_at desc')
+      .execute()
     return rows.map((row) => rowToRun(row as Record<string, unknown>))
   }
 
@@ -1027,6 +1078,9 @@ export const createCodexJudgeStore = (
     getRunByWorkflow,
     getRunById,
     listRunsByIssue,
+    listRunsByBranch,
+    listRunsByCommitSha,
+    listRunsByPrNumber,
     getRunHistory,
     getLatestPromptTuningByIssue,
     createPromptTuning,

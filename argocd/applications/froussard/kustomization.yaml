@@ -8,6 +8,7 @@ resources:
   - workflow-completions-sensor.yaml
   - argo-workflows-completions-topic.yaml
   - github-webhook-topic.yaml
+  - github-webhook-codex-judge-topic.yaml
   - github-issues-codex-tasks-topic.yaml
   - github-codex-implementation-workflow-template.yaml
   - coder-workspace-access.yaml

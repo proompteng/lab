@@ -290,6 +290,7 @@ Provide CI status for the attempt commit SHA (prefer PR head SHA).
 
 ### Deliverables
 - Filtered GitHub webhook stream for Jangar (Kafka topic + publisher).
+  - Topic: `github.webhook.codex.judge` (producer: Froussard, consumer: Jangar).
 - Mapping of CI status to run records.
 
 ### Detailed tasks

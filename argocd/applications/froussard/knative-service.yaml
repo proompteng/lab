@@ -37,6 +37,8 @@ spec:
               value: github.webhook.events
             - name: KAFKA_CODEX_TOPIC_STRUCTURED
               value: github.issues.codex.tasks
+            - name: KAFKA_CODEX_JUDGE_TOPIC
+              value: github.webhook.codex.judge
             - name: KAFKA_DISCORD_COMMAND_TOPIC
               value: discord.commands.incoming
             - name: KAFKA_USERNAME

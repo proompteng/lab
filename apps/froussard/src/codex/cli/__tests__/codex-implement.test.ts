@@ -74,6 +74,7 @@ describe('runCodexImplementation', () => {
     delete process.env.IMPLEMENTATION_PATCH_PATH
     delete process.env.IMPLEMENTATION_STATUS_PATH
     delete process.env.IMPLEMENTATION_CHANGES_ARCHIVE_PATH
+    delete process.env.IMPLEMENTATION_NOTIFY_PATH
     delete process.env.CODEX_RUNTIME_LOG_PATH
     process.env.WORKTREE = workdir
     process.env.LGTM_LOKI_ENDPOINT = 'http://localhost/loki'

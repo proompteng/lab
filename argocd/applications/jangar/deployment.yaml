@@ -82,6 +82,8 @@ spec:
               value: codex,codex[bot],chatgpt-codex-connector,chatgpt-codex-connector[bot],gregkonush
             - name: JANGAR_CODEX_REVIEW_POLICY
               value: bypass
+            - name: JANGAR_CI_EVENT_STREAM_ENABLED
+              value: "true"
             - name: JANGAR_GITHUB_MIN_REQUEST_SPACING_MS
               value: "1000"
             - name: JANGAR_CI_MAX_WAIT_MS

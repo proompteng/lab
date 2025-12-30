@@ -309,4 +309,5 @@ stateDiagram-v2
 - Prompt template location: `apps/froussard/src/codex.ts` (`buildImplementationPrompt`).
 - Max attempts: 3 (configurable); backoff: exponential (5m, 15m, 45m) with max cap 60m.
 - CI integration: Froussard filters GitHub webhook events Jangar needs (CI + PR review signals) into a dedicated Kafka
-  topic; Jangar consumes that topic and updates run state (no polling in Jangar).
+  topic (`github.webhook.codex.judge`); Jangar consumes that topic and updates run state (no polling in Jangar, gated by
+  `JANGAR_CI_EVENT_STREAM_ENABLED`).
