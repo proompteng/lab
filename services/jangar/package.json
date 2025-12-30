@@ -15,7 +15,7 @@
     "tsc": "bunx tsc --noEmit",
     "lint": "bunx biome check --config-path ../../biome.json src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
-    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.oxlint.json ."
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.0.0",

@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "strict": true,
+    "strictNullChecks": true,
+    "paths": {
+      "@/*": ["./*"],
+      "~/*": ["./*"],
+      "@proompteng/codex": ["../../../packages/codex/src/index.ts"],
+      "@proompteng/codex/*": ["../../../packages/codex/src/*"]
+    }
+  },
+  "include": ["./src/**/*"]
+}
