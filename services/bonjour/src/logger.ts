@@ -1,4 +1,5 @@
 import pino, { multistream } from 'pino'
+import { pinoLoki } from 'pino-loki'
 
 const level = process.env.LOG_LEVEL ?? 'info'
 const service = process.env.OTEL_SERVICE_NAME ?? 'bonjour'
@@ -11,20 +12,17 @@ const destinations: { stream: NodeJS.WritableStream }[] = [{ stream: process.std
 
 if (lokiEndpoint && !lokiDisabled) {
   try {
-    const lokiStream = pino.transport({
-      target: 'pino-loki',
-      options: {
-        host: lokiEndpoint,
-        batching: true,
-        interval: 5,
-        timeout: 5000,
-        replaceTimestamp: true,
-        labels: {
-          service,
-          namespace,
-        },
-        basicAuth: lokiBasicAuth,
+    const lokiStream = pinoLoki({
+      host: lokiEndpoint,
+      batching: true,
+      interval: 5,
+      timeout: 5000,
+      replaceTimestamp: true,
+      labels: {
+        service,
+        namespace,
       },
+      basicAuth: lokiBasicAuth,
     })
 
     destinations.push({ stream: lokiStream })
