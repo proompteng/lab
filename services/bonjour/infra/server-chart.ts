@@ -73,6 +73,7 @@ export class ServerChart extends Chart {
         LGTM_MIMIR_METRICS_ENDPOINT: EnvValue.fromValue(mimirMetricsEndpoint),
         LGTM_LOKI_ENDPOINT: EnvValue.fromValue(lokiEndpoint),
         OTEL_EXPORTER_OTLP_PROTOCOL: EnvValue.fromValue('http/protobuf'),
+        OTEL_LOGS_EXPORTER: EnvValue.fromValue('none'),
         POD_NAME: EnvValue.fromFieldRef(EnvFieldPaths.POD_NAME),
         POD_NAMESPACE: EnvValue.fromFieldRef(EnvFieldPaths.POD_NAMESPACE),
       },
