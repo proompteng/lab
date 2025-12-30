@@ -80,6 +80,7 @@
 
 ## Kubernetes (kubectl)
 - Use explicit namespaces with kubectl (e.g., `kubectl get pods -n <ns>`).
+- Helm charts present: `mise exec helm@3 -- kustomize build --enable-helm <path> | kubectl apply -n <ns> -f -`.
 - CNPG access: `kubectl cnpg psql -n <ns> <cluster> -- <psql args>` (psql flags after `--`).
 
 ## When in Doubt
