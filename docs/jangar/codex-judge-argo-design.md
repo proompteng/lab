@@ -191,6 +191,24 @@ Artifact access:
   metadata is incomplete.
 - Query Argo Workflow API for outputs/artifact keys when needed.
 - Use notify log excerpts (output/agent/runtime/events/status) for judge context and memory snapshots; fall back to artifacts when notify is missing.
+
+### Workflow Metadata Labels/Annotations
+Facteur attaches Codex metadata to workflow labels/annotations so Jangar can recover run context even when `eventBody`
+is missing or malformed.
+
+Annotations (full-fidelity values):
+- `codex.repository` (e.g., `proompteng/lab`)
+- `codex.issue_number` (string)
+- `codex.head` (branch name)
+- `codex.base` (branch name)
+- `codex.turn_id`, `codex.thread_id` when available
+
+Labels (label-safe values):
+- `codex.issue_number` (string)
+
+Encoding rules:
+- Labels must satisfy Kubernetes constraints (max 63 chars, `[A-Za-z0-9_.-]`), so repo/branch values are stored in annotations.
+- Omit keys when values are unknown or empty.
 - Wait for GitHub Actions CI status for the attempt commit SHA.
 - Wait for Codex PR review completion and ensure all Codex review threads are resolved.
 - Parse Codex review comments and embed them into `next_prompt` when reruns are required.
