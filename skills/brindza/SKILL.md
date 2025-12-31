@@ -13,16 +13,16 @@ This skill provides guidance on food-related naming conventions and product know
 
 The lab repository uses food-related names for apps and services:
 
-### Apps (Frontend Applications)
+### Apps
 - `nata` - TypeScript HTTP function
-- `baozi` - S2I builder image
+- `baozi` - S2I builder image  
 - `alchimie` - Python-based application
 - `froussard` - Web application
 - `kabina` - Web application
 - `reestr` - Web application
 - `reviseur` - Web application
 
-### Services (Backend/Microservices)
+### Services
 - `miel` - Go service for Alpaca Trading API integration
 - `bumba` - Service component
 - `eclair` - Service component
