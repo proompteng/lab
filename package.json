@@ -23,6 +23,7 @@
     "k:install": "./kubernetes/install.sh",
     "k:bootstrap": "kubectl apply -k argocd/applications/argocd",
     "prepare": "node scripts/run-husky-install.mjs",
+    "postinstall": "bun run --filter @proompteng/otel build",
     "dev:convex": "bun run --filter @proompteng/backend dev",
     "dev:setup:convex": "bun run --filter @proompteng/backend dev:setup",
     "seed:models": "bun run --filter @proompteng/backend seed:models",

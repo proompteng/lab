@@ -15,9 +15,7 @@
     "verbatimModuleSyntax": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"],
-      "@proompteng/otel": ["../../packages/otel/src/index.ts"],
-      "@proompteng/otel/*": ["../../packages/otel/src/*"]
+      "@/*": ["./src/*"]
     },
 
     // Best practices

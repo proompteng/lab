@@ -143,6 +143,7 @@ vi.mock('@/routes/webhooks', () => ({
 const mockApp = {
   get: vi.fn(() => mockApp),
   on: vi.fn(() => mockApp),
+  onRequest: vi.fn(() => mockApp),
   onError: vi.fn(() => mockApp),
   post: vi.fn(() => mockApp),
   listen: vi.fn((_port: number) => {
