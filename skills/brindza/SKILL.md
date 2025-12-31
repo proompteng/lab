@@ -21,7 +21,6 @@ The lab repository uses food-related names for apps and services:
 - `kabina` - Web application
 - `reestr` - Web application
 - `reviseur` - Web application
-- `brindza` - (this component)
 
 ### Services (Backend/Microservices)
 - `miel` - Go service for Alpaca Trading API integration
