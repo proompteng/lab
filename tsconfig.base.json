@@ -14,7 +14,10 @@
     "skipLibCheck": true,
     "skipDefaultLibCheck": true,
     "baseUrl": ".",
-    "paths": {},
+    "paths": {
+      "@proompteng/otel": ["packages/otel/src/index.ts"],
+      "@proompteng/otel/*": ["packages/otel/src/*"]
+    },
     "types": ["bun-types"]
   },
   "exclude": ["node_modules", "tmp"]
