@@ -53,6 +53,24 @@ test('metric reader exports counters and histograms with resource attributes', a
   expect(scopeMetrics.metrics.map((metric) => metric.name)).toContain('unit_histogram')
 })
 
+test('metric reader skips instruments without data points', async () => {
+  const exporter = new TestMetricExporter()
+  const reader = new PeriodicExportingMetricReader({ exporter, exportIntervalMillis: 60000 })
+  const provider = new MeterProvider({
+    resource: new Resource({ 'service.name': 'otel-empty' }),
+  })
+
+  provider.addMetricReader(reader)
+  const meter = provider.getMeter('unit-empty')
+  meter.createCounter('empty_counter')
+  meter.createHistogram('empty_histogram')
+
+  await reader.forceFlush()
+  await provider.shutdown()
+
+  expect(exporter.exported.length).toBe(0)
+})
+
 test('metric exporter emits protobuf payload when configured', async () => {
   let capturedContentType: string | undefined
   let capturedLength = 0

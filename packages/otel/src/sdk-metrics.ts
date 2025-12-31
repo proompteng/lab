@@ -214,7 +214,10 @@ class CounterInstrument implements Counter {
     this.#records.set(key, { attributes: normalized, value })
   }
 
-  collect(timeUnixNano: string): Metric {
+  collect(timeUnixNano: string): Metric | null {
+    if (this.#records.size === 0) {
+      return null
+    }
     const dataPoints: MetricDataPoint[] = []
     for (const record of this.#records.values()) {
       dataPoints.push({
@@ -223,6 +226,9 @@ class CounterInstrument implements Counter {
         timeUnixNano,
         asDouble: record.value,
       })
+    }
+    if (dataPoints.length === 0) {
+      return null
     }
     return {
       name: this.#name,
@@ -277,7 +283,10 @@ class HistogramInstrument implements Histogram {
     })
   }
 
-  collect(timeUnixNano: string): Metric {
+  collect(timeUnixNano: string): Metric | null {
+    if (this.#records.size === 0) {
+      return null
+    }
     const dataPoints: MetricDataPoint[] = []
     for (const record of this.#records.values()) {
       dataPoints.push({
@@ -291,6 +300,9 @@ class HistogramInstrument implements Histogram {
         bucketCounts: [record.count.toString()],
         explicitBounds: [],
       })
+    }
+    if (dataPoints.length === 0) {
+      return null
     }
     return {
       name: this.#name,
@@ -338,10 +350,16 @@ class Meter {
   collect(timeUnixNano: string): Metric[] {
     const metrics: Metric[] = []
     for (const counter of this.#counters.values()) {
-      metrics.push(counter.collect(timeUnixNano))
+      const metric = counter.collect(timeUnixNano)
+      if (metric) {
+        metrics.push(metric)
+      }
     }
     for (const histogram of this.#histograms.values()) {
-      metrics.push(histogram.collect(timeUnixNano))
+      const metric = histogram.collect(timeUnixNano)
+      if (metric) {
+        metrics.push(metric)
+      }
     }
     return metrics
   }
