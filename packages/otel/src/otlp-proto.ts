@@ -294,14 +294,14 @@ const encodeHistogramDataPoint = (dataPoint: MetricDataPoint): Uint8Array => {
     writer.writeFixed64Field(3, dataPoint.timeUnixNano)
   }
   if (dataPoint.count !== undefined) {
-    writer.writeUint64Field(4, dataPoint.count)
+    writer.writeFixed64Field(4, dataPoint.count)
   }
   if (dataPoint.sum !== undefined) {
     writer.writeDoubleField(5, dataPoint.sum)
   }
   if (dataPoint.bucketCounts) {
     for (const count of dataPoint.bucketCounts) {
-      writer.writeUint64Field(6, count)
+      writer.writeFixed64Field(6, count)
     }
   }
   if (dataPoint.explicitBounds) {
@@ -310,10 +310,10 @@ const encodeHistogramDataPoint = (dataPoint: MetricDataPoint): Uint8Array => {
     }
   }
   if (dataPoint.min !== undefined) {
-    writer.writeDoubleField(10, dataPoint.min)
+    writer.writeDoubleField(11, dataPoint.min)
   }
   if (dataPoint.max !== undefined) {
-    writer.writeDoubleField(11, dataPoint.max)
+    writer.writeDoubleField(12, dataPoint.max)
   }
   for (const attribute of dataPoint.attributes) {
     writer.writeMessageField(9, encodeKeyValue(attribute))
