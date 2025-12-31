@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2025-12-30T00:48:42.099Z"
+    deploy.knative.dev/rollout: "2025-12-31T07:10:34.445Z"
 spec:
   replicas: 1
   strategy:
@@ -54,15 +54,23 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
-              value: http/protobuf
+              value: grpc
+            - name: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
+              value: grpc
+            - name: OTEL_EXPORTER_OTLP_METRICS_PROTOCOL
+              value: grpc
             - name: OTEL_EXPORTER_OTLP_TRACES_COMPRESSION
               value: gzip
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
-              value: http://observability-tempo-gateway.observability.svc.cluster.local/otlp/v1/traces
+              value: http://observability-tempo-gateway.observability.svc.cluster.local:4317
             - name: OTEL_EXPORTER_OTLP_TRACES_TIMEOUT
               value: "20000"
             - name: OTEL_METRICS_EXPORTER
-              value: none
+              value: otlp
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              value: http://jangar-alloy.jangar.svc.cluster.local:4317
+            - name: OTEL_EXPORTER_OTLP_METRICS_TIMEOUT
+              value: "20000"
             - name: OTEL_LOGS_EXPORTER
               value: none
             - name: CODEX_BIN

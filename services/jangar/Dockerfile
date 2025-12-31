@@ -413,12 +413,21 @@ RUN --mount=type=cache,target=/root/.cache/bun \
 COPY full/ .
 RUN bun --cwd=packages/codex run build
 
+FROM tools AS otel-build
+WORKDIR /app
+COPY json/ .
+RUN --mount=type=cache,target=/root/.cache/bun \
+  bun install --no-save --ignore-scripts --filter @proompteng/otel
+COPY full/ .
+RUN bun --cwd=packages/otel run build
+
 FROM tools AS temporal-bun-sdk-build
 WORKDIR /app
 COPY json/ .
 RUN --mount=type=cache,target=/root/.cache/bun \
   bun install --no-save --ignore-scripts --filter @proompteng/temporal-bun-sdk
 COPY full/ .
+COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
 RUN bun --cwd=packages/temporal-bun-sdk run build
 
 FROM tools AS jangar-deps-dev
@@ -430,6 +439,7 @@ RUN --mount=type=cache,target=/root/.cache/bun \
 FROM jangar-deps-dev AS jangar-build
 WORKDIR /app
 COPY full/ .
+COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
 COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
 WORKDIR /app/services/jangar
 RUN bun run start:build
@@ -446,6 +456,8 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 
 COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
+COPY --from=otel-build /app/packages/otel/package.json /app/packages/otel/package.json
+COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
 COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
 COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
 

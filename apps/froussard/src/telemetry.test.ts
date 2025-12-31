@@ -2,30 +2,35 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const setLoggerMock = vi.fn()
 const diagConsoleLoggerMock = vi.fn()
+const diagErrorMock = vi.fn()
+const diagWarnMock = vi.fn()
+const traceStartSpanMock = vi.fn().mockReturnValue({ end: vi.fn() })
+const traceGetTracerMock = vi.fn().mockReturnValue({ startSpan: traceStartSpanMock })
 
-vi.mock('@opentelemetry/api', () => ({
-  diag: { setLogger: setLoggerMock },
+vi.mock('@proompteng/otel/api', () => ({
+  diag: { setLogger: setLoggerMock, error: diagErrorMock, warn: diagWarnMock },
   DiagConsoleLogger: diagConsoleLoggerMock,
   DiagLogLevel: { ERROR: 'ERROR' },
+  trace: { getTracer: traceGetTracerMock },
 }))
 
 const autoInstrumentationMock = vi.fn().mockReturnValue([{ name: 'http' }])
-vi.mock('@opentelemetry/auto-instrumentations-node', () => ({
+vi.mock('@proompteng/otel/auto-instrumentations-node', () => ({
   getNodeAutoInstrumentations: autoInstrumentationMock,
 }))
 
 const traceExporterMock = vi.fn().mockImplementation((config: unknown) => ({ config }))
-vi.mock('@opentelemetry/exporter-trace-otlp-http', () => ({
+vi.mock('@proompteng/otel/exporter-trace-otlp-http', () => ({
   OTLPTraceExporter: traceExporterMock,
 }))
 
 const metricExporterMock = vi.fn().mockImplementation((config: unknown) => ({ config }))
-vi.mock('@opentelemetry/exporter-metrics-otlp-http', () => ({
+vi.mock('@proompteng/otel/exporter-metrics-otlp-http', () => ({
   OTLPMetricExporter: metricExporterMock,
 }))
 
 const metricReaderMock = vi.fn().mockImplementation((config: unknown) => ({ config }))
-vi.mock('@opentelemetry/sdk-metrics', () => ({
+vi.mock('@proompteng/otel/sdk-metrics', () => ({
   PeriodicExportingMetricReader: metricReaderMock,
   MetricReader: class {},
 }))
@@ -38,7 +43,7 @@ const nodeSdkCtorMock = vi.fn().mockImplementation((config: unknown) => ({
   shutdown: nodeSdkShutdownMock,
 }))
 
-vi.mock('@opentelemetry/sdk-node', () => ({
+vi.mock('@proompteng/otel/sdk-node', () => ({
   NodeSDK: nodeSdkCtorMock,
 }))
 
@@ -54,11 +59,11 @@ class MockResource {
   }
 }
 
-vi.mock('@opentelemetry/resources', () => ({
+vi.mock('@proompteng/otel/resources', () => ({
   Resource: MockResource,
 }))
 
-vi.mock('@opentelemetry/semantic-conventions', () => ({
+vi.mock('@proompteng/otel/semantic-conventions', () => ({
   SEMRESATTRS_SERVICE_NAME: 'service.name',
   SEMRESATTRS_SERVICE_NAMESPACE: 'service.namespace',
   SEMRESATTRS_SERVICE_INSTANCE_ID: 'service.instance.id',
@@ -98,6 +103,10 @@ describe('telemetry', () => {
     autoInstrumentationMock.mockClear()
     setLoggerMock.mockClear()
     diagConsoleLoggerMock.mockClear()
+    diagErrorMock.mockClear()
+    diagWarnMock.mockClear()
+    traceGetTracerMock.mockClear()
+    traceStartSpanMock.mockClear()
     const processHandle = process as unknown as {
       on: (...args: unknown[]) => unknown
       once: (...args: unknown[]) => unknown
@@ -139,11 +148,13 @@ describe('telemetry', () => {
     expect(traceExporterMock).toHaveBeenCalledWith({
       url: 'http://tempo:4318/v1/traces',
       headers: undefined,
+      protocol: 'http/json',
     })
 
     expect(metricExporterMock).toHaveBeenCalledWith({
       url: 'http://mimir/otlp',
       headers: undefined,
+      protocol: 'http/json',
     })
 
     expect(metricReaderMock).toHaveBeenCalledWith({
@@ -182,11 +193,13 @@ describe('telemetry', () => {
     expect(traceExporterMock).toHaveBeenCalledWith({
       url: 'http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces',
       headers: undefined,
+      protocol: 'http/json',
     })
 
     expect(metricExporterMock).toHaveBeenCalledWith({
       url: 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics',
       headers: undefined,
+      protocol: 'http/json',
     })
   })
 
@@ -200,11 +213,13 @@ describe('telemetry', () => {
     expect(traceExporterMock).toHaveBeenCalledWith({
       url: 'http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces',
       headers: expect.objectContaining({ global: 'alpha', shared: 'bravo', trace: 'charlie' }),
+      protocol: 'http/json',
     })
 
     expect(metricExporterMock).toHaveBeenCalledWith({
       url: 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics',
       headers: expect.objectContaining({ global: 'alpha', shared: 'bravo', metric: 'delta' }),
+      protocol: 'http/json',
     })
   })
 })

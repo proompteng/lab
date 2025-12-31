@@ -23,6 +23,7 @@
     "@effect/schema": "^0.75.5",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@proompteng/codex": "workspace:*",
+    "@proompteng/otel": "workspace:*",
     "@proompteng/temporal-bun-sdk": "workspace:*",
     "@tabler/icons-react": "^3.36.0",
     "@tailwindcss/vite": "^4.1.17",

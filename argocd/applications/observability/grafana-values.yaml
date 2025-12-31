@@ -52,6 +52,7 @@ testFramework:
 dashboardsConfigMaps:
   graf-graf-dashboard: graf-graf-dashboard
   graf-bumba-dashboard: graf-bumba-dashboard
+  codex-pipeline-dashboard: codex-pipeline-dashboard
 
 dashboardProviders:
   dashboardproviders.yaml:
@@ -73,3 +74,11 @@ dashboardProviders:
         editable: true
         options:
           path: /var/lib/grafana/dashboards/graf-bumba-dashboard
+      - name: codex-pipeline-dashboard
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/codex-pipeline-dashboard

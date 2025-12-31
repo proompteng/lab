@@ -1,17 +1,15 @@
-import { DiagConsoleLogger, DiagLogLevel, diag } from '@opentelemetry/api'
-import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node'
-import { OTLPMetricExporter as OTLPMetricExporterHttp } from '@opentelemetry/exporter-metrics-otlp-http'
-import { OTLPMetricExporter as OTLPMetricExporterProto } from '@opentelemetry/exporter-metrics-otlp-proto'
-import { OTLPTraceExporter as OTLPTraceExporterHttp } from '@opentelemetry/exporter-trace-otlp-http'
-import { OTLPTraceExporter as OTLPTraceExporterProto } from '@opentelemetry/exporter-trace-otlp-proto'
-import { Resource } from '@opentelemetry/resources'
-import { type MetricReader, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
-import { NodeSDK } from '@opentelemetry/sdk-node'
+import { DiagConsoleLogger, DiagLogLevel, diag } from '@proompteng/otel/api'
+import { getNodeAutoInstrumentations } from '@proompteng/otel/auto-instrumentations-node'
+import { OTLPMetricExporter } from '@proompteng/otel/exporter-metrics-otlp-http'
+import { OTLPTraceExporter } from '@proompteng/otel/exporter-trace-otlp-http'
+import { Resource } from '@proompteng/otel/resources'
+import { type MetricReader, PeriodicExportingMetricReader } from '@proompteng/otel/sdk-metrics'
+import { NodeSDK } from '@proompteng/otel/sdk-node'
 import {
   SEMRESATTRS_SERVICE_INSTANCE_ID,
   SEMRESATTRS_SERVICE_NAME,
   SEMRESATTRS_SERVICE_NAMESPACE,
-} from '@opentelemetry/semantic-conventions'
+} from '@proompteng/otel/semantic-conventions'
 
 diag.setLogger(new DiagConsoleLogger(), resolveDiagLogLevel(DiagLogLevel))
 
@@ -22,17 +20,6 @@ if (!isTruthy(process.env.OTEL_SDK_DISABLED)) {
   const serviceNamespace = process.env.OTEL_SERVICE_NAMESPACE ?? process.env.POD_NAMESPACE ?? 'default'
   const serviceInstanceId = process.env.OTEL_SERVICE_INSTANCE_ID ?? process.env.POD_NAME ?? process.pid.toString()
 
-  const tracesEndpoint =
-    process.env.LGTM_TEMPO_TRACES_ENDPOINT ??
-    process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
-    resolveEndpoint(process.env.OTEL_EXPORTER_OTLP_ENDPOINT, 'traces') ??
-    'http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces'
-  const metricsEndpoint =
-    process.env.LGTM_MIMIR_METRICS_ENDPOINT ??
-    process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT ??
-    resolveEndpoint(process.env.OTEL_EXPORTER_OTLP_ENDPOINT, 'metrics') ??
-    'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics'
-
   const tracesProtocol = resolveOtlpProtocol(
     process.env.OTEL_EXPORTER_OTLP_TRACES_PROTOCOL ?? process.env.OTEL_EXPORTER_OTLP_PROTOCOL,
     diag,
@@ -41,6 +28,23 @@ if (!isTruthy(process.env.OTEL_SDK_DISABLED)) {
     process.env.OTEL_EXPORTER_OTLP_METRICS_PROTOCOL ?? process.env.OTEL_EXPORTER_OTLP_PROTOCOL,
     diag,
   )
+
+  const defaultTracesEndpoint =
+    tracesProtocol === 'grpc'
+      ? 'http://observability-tempo-gateway.observability.svc.cluster.local:4317'
+      : 'http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces'
+  const defaultMetricsEndpoint = 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics'
+
+  const tracesEndpoint =
+    process.env.LGTM_TEMPO_TRACES_ENDPOINT ??
+    process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
+    resolveEndpoint(process.env.OTEL_EXPORTER_OTLP_ENDPOINT, 'traces', tracesProtocol) ??
+    defaultTracesEndpoint
+  const metricsEndpoint =
+    process.env.LGTM_MIMIR_METRICS_ENDPOINT ??
+    process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT ??
+    resolveEndpoint(process.env.OTEL_EXPORTER_OTLP_ENDPOINT, 'metrics', metricsProtocol) ??
+    defaultMetricsEndpoint
 
   const tracesTimeoutMs = resolveTimeoutMs(
     process.env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT,
@@ -221,7 +225,11 @@ function resolveTimeoutMs(signalValue?: string, fallbackValue?: string): number 
   return Math.max(parsed, 1000)
 }
 
-function resolveEndpoint(endpoint: string | undefined, signal: 'traces' | 'metrics'): string | undefined {
+function resolveEndpoint(
+  endpoint: string | undefined,
+  signal: 'traces' | 'metrics',
+  protocol: OtlpProtocol,
+): string | undefined {
   if (!endpoint) {
     return undefined
   }
@@ -229,8 +237,23 @@ function resolveEndpoint(endpoint: string | undefined, signal: 'traces' | 'metri
   if (!trimmed) {
     return undefined
   }
+  if (protocol === 'grpc') {
+    return stripEndpointPath(trimmed)
+  }
   const base = trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed
   return `${base}/v1/${signal}`
+}
+
+function stripEndpointPath(value: string): string {
+  try {
+    const url = new URL(value)
+    url.pathname = ''
+    url.search = ''
+    url.hash = ''
+    return url.toString().replace(/\/$/, '')
+  } catch {
+    return value.replace(/\/+$/, '')
+  }
 }
 
 function shouldEnableMetrics(metricsEndpoint: string | undefined): boolean {
@@ -244,7 +267,7 @@ function shouldEnableMetrics(metricsEndpoint: string | undefined): boolean {
   return Boolean(metricsEndpoint)
 }
 
-function resolveDiagLogLevel(DiagLogLevel: typeof import('@opentelemetry/api').DiagLogLevel) {
+function resolveDiagLogLevel(DiagLogLevel: typeof import('@proompteng/otel/api').DiagLogLevel) {
   const raw = process.env.OTEL_LOG_LEVEL
   if (!raw) {
     return DiagLogLevel.ERROR
@@ -265,7 +288,7 @@ function resolveDiagLogLevel(DiagLogLevel: typeof import('@opentelemetry/api').D
   }
 }
 
-type OtlpProtocol = 'http/json' | 'http/protobuf'
+type OtlpProtocol = 'http/json' | 'http/protobuf' | 'grpc'
 
 function resolveOtlpProtocol(value: string | undefined, logger: Pick<Console, 'warn'> = console): OtlpProtocol {
   if (!value) {
@@ -283,12 +306,11 @@ function resolveOtlpProtocol(value: string | undefined, logger: Pick<Console, 'w
     case 'json':
       return 'http/json'
     case 'grpc':
-      logger.warn(
-        'OTLP gRPC protocol requested, falling back to http/protobuf (grpc is not supported in this runtime).',
-      )
-      return 'http/protobuf'
+      return 'grpc'
     default:
-      logger.warn(`Unknown OTLP protocol '${value}', expected http/protobuf or http/json. Falling back to http/json.`)
+      logger.warn(
+        `Unknown OTLP protocol '${value}', expected grpc, http/protobuf, or http/json. Falling back to http/json.`,
+      )
       return 'http/json'
   }
 }
@@ -296,17 +318,11 @@ function resolveOtlpProtocol(value: string | undefined, logger: Pick<Console, 'w
 type ExporterConfig = { url: string; headers?: Record<string, string>; timeoutMillis?: number }
 
 function createTraceExporter(protocol: OtlpProtocol, config: ExporterConfig) {
-  if (protocol === 'http/protobuf') {
-    return new OTLPTraceExporterProto(config)
-  }
-  return new OTLPTraceExporterHttp(config)
+  return new OTLPTraceExporter({ ...config, protocol })
 }
 
 function createMetricExporter(protocol: OtlpProtocol, config: ExporterConfig) {
-  if (protocol === 'http/protobuf') {
-    return new OTLPMetricExporterProto(config)
-  }
-  return new OTLPMetricExporterHttp(config)
+  return new OTLPMetricExporter({ ...config, protocol })
 }
 
 function applyBunNodeVersionShim() {

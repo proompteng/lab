@@ -1,0 +1,316 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: codex-pipeline-dashboard
+  namespace: observability
+data:
+  codex-pipeline-dashboard.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "gnetId": null,
+      "graphTooltip": 0,
+      "id": null,
+      "iteration": 1,
+      "links": [],
+      "panels": [
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(kafka_consumergroup_current_offset_sum{consumergroup=\"jangar-codex-completions\", topic=\"argo.workflows.completions\"}[5m]))",
+              "legendFormat": "messages/sec",
+              "refId": "A"
+            }
+          ],
+          "title": "Kafka Completions Ingest Rate",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 0
+          },
+          "id": 2,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(kafka_consumergroup_lag_sum{consumergroup=\"jangar-codex-completions\", topic=\"argo.workflows.completions\"})",
+              "legendFormat": "lag",
+              "refId": "A"
+            }
+          ],
+          "title": "Kafka Completions Consumer Lag",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 8
+          },
+          "id": 3,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(jetstream_stream_last_seq{stream_name=\"agent-comms\"}[5m])) or sum(rate(jetstream_stream_last_seq{stream=\"agent-comms\"}[5m]))",
+              "legendFormat": "messages/sec",
+              "refId": "A"
+            }
+          ],
+          "title": "NATS Agent Comms Publish Rate",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 8
+          },
+          "id": 4,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "max(jetstream_stream_total_messages{stream_name=\"agent-comms\"}) or max(jetstream_stream_total_messages{stream=\"agent-comms\"})",
+              "legendFormat": "messages",
+              "refId": "A"
+            },
+            {
+              "expr": "max(jetstream_stream_total_bytes{stream_name=\"agent-comms\"}) or max(jetstream_stream_total_bytes{stream=\"agent-comms\"})",
+              "legendFormat": "bytes",
+              "refId": "B"
+            }
+          ],
+          "title": "NATS Agent Comms Stream Size",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 16
+          },
+          "id": 5,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "max(jetstream_consumer_num_pending{consumer_name=\"jangar-agent-comms\", stream_name=\"agent-comms\"}) or max(jetstream_consumer_num_pending{consumer=\"jangar-agent-comms\", stream=\"agent-comms\"})",
+              "legendFormat": "pending",
+              "refId": "A"
+            }
+          ],
+          "title": "NATS Agent Comms Consumer Lag",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 16
+          },
+          "id": 6,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(jangar_agent_comms_inserted_total[5m]))",
+              "legendFormat": "inserts/sec",
+              "refId": "A"
+            }
+          ],
+          "title": "Jangar Agent Comms Insert Rate",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 24
+          },
+          "id": 7,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(jangar_agent_comms_ingest_errors_total[5m]))",
+              "legendFormat": "errors/sec",
+              "refId": "A"
+            }
+          ],
+          "title": "Jangar Agent Comms Ingest Errors",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 24
+          },
+          "id": 8,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(jangar_sse_connections_total{stream=\"chat\", state=\"opened\"}) - sum(jangar_sse_connections_total{stream=\"chat\", state=\"closed\"})",
+              "legendFormat": "chat",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(jangar_sse_connections_total{stream=\"agent-events\", state=\"opened\"}) - sum(jangar_sse_connections_total{stream=\"agent-events\", state=\"closed\"})",
+              "legendFormat": "agent-events",
+              "refId": "B"
+            }
+          ],
+          "title": "Jangar SSE Active Connections",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 32
+          },
+          "id": 9,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(jangar_sse_errors_total{stream=\"chat\"}[5m]))",
+              "legendFormat": "chat",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(rate(jangar_sse_errors_total{stream=\"agent-events\"}[5m]))",
+              "legendFormat": "agent-events",
+              "refId": "B"
+            }
+          ],
+          "title": "Jangar SSE Error Rate",
+          "type": "timeseries"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 36,
+      "style": "dark",
+      "tags": [
+        "codex",
+        "observability"
+      ],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Codex Pipeline Observability",
+      "uid": "codex-pipeline-observability",
+      "version": 1
+    }

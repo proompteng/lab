@@ -16,7 +16,8 @@ COPY services services
 RUN --mount=type=cache,target=/root/.cache/bun \
   bun install --no-save --frozen-lockfile --ignore-scripts
 
-# Build output for the Bonjour package (ensure root toolchain bins are on PATH)
+# Build shared workspace packages and Bonjour output (ensure root toolchain bins are on PATH)
+RUN bun --cwd=packages/otel run build
 RUN PATH="/app/node_modules/.bin:$PATH" bun run --filter @proompteng/bonjour build
 
 FROM oven/bun:${BUN_VERSION} AS prod-deps
@@ -40,6 +41,7 @@ COPY --from=prod-deps /app/node_modules /app/node_modules
 COPY --from=prod-deps /app/services/bonjour/node_modules /app/services/bonjour/node_modules
 COPY --from=builder /app/services/bonjour/package.json /app/services/bonjour/package.json
 COPY --from=builder /app/services/bonjour/dist /app/services/bonjour/dist
+COPY --from=builder /app/packages/otel /app/packages/otel
 
 EXPOSE 3000
 CMD ["bun", "dist/server.js"]

@@ -14,6 +14,7 @@ import {
 } from 'nats'
 
 import { type AgentMessageInput, createAgentMessagesStore } from '~/server/agent-messages-store'
+import { recordAgentCommsBatch, recordAgentCommsError } from '~/server/metrics'
 
 export type AgentCommsSubscriberService = {
   ready: Effect.Effect<void, Error>
@@ -296,29 +297,39 @@ const consumeBatch = async (
 ) => {
   const batchInputs: AgentMessageInput[] = []
   const ackables: JsMsg[] = []
+  let stage: 'fetch' | 'insert' | 'unknown' = 'fetch'
 
-  const iterator = js.fetch(config.streamName, config.consumerName, {
-    batch: config.pullBatchSize,
-    expires: config.pullExpiresMs,
-  })
+  try {
+    const iterator = js.fetch(config.streamName, config.consumerName, {
+      batch: config.pullBatchSize,
+      expires: config.pullExpiresMs,
+    })
 
-  for await (const msg of iterator) {
-    if (abort.aborted) break
-    const decoded = sc.decode(msg.data)
-    const input = normalizePayload(decoded, msg.subject)
-    if (input) {
-      batchInputs.push(input)
-      ackables.push(msg)
-    } else {
-      msg.ack()
+    for await (const msg of iterator) {
+      if (abort.aborted) break
+      const decoded = sc.decode(msg.data)
+      const input = normalizePayload(decoded, msg.subject)
+      if (input) {
+        batchInputs.push(input)
+        ackables.push(msg)
+      } else {
+        recordAgentCommsError('decode')
+        msg.ack()
+      }
     }
-  }
 
-  if (batchInputs.length > 0) {
-    await store.insertMessages(batchInputs)
-    for (const msg of ackables) {
-      msg.ack()
+    if (batchInputs.length > 0) {
+      stage = 'insert'
+      const insertStart = Date.now()
+      await store.insertMessages(batchInputs)
+      recordAgentCommsBatch(batchInputs.length, Date.now() - insertStart)
+      for (const msg of ackables) {
+        msg.ack()
+      }
     }
+  } catch (error) {
+    recordAgentCommsError(stage)
+    throw error
   }
 }
 
@@ -356,7 +367,6 @@ const runSubscriberLoop = async (config: SubscriberConfig, abort: AbortSignal, m
   try {
     while (!abort.aborted) {
       let nc: Awaited<ReturnType<typeof connect>> | null = null
-
       try {
         nc = await connect({
           servers: config.natsUrl,
@@ -364,7 +374,6 @@ const runSubscriberLoop = async (config: SubscriberConfig, abort: AbortSignal, m
           user: config.natsUser,
           pass: config.natsPassword,
         })
-
         const js = nc.jetstream()
         const jsm = await nc.jetstreamManager()
         await ensureConsumer(jsm, config)

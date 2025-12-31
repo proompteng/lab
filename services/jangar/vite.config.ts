@@ -6,20 +6,7 @@ import { nitro } from 'nitro/vite'
 import { defineConfig } from 'vite'
 import viteTsConfigPaths from 'vite-tsconfig-paths'
 
-const opentelemetryExternals = [
-  '@opentelemetry/api',
-  '@opentelemetry/auto-instrumentations-node',
-  '@opentelemetry/exporter-metrics-otlp-http',
-  '@opentelemetry/exporter-metrics-otlp-proto',
-  '@opentelemetry/exporter-trace-otlp-http',
-  '@opentelemetry/exporter-trace-otlp-proto',
-  '@opentelemetry/resources',
-  '@opentelemetry/sdk-metrics',
-  '@opentelemetry/sdk-node',
-  '@opentelemetry/semantic-conventions',
-]
-
-const ssrExternals = [...opentelemetryExternals, 'kysely', 'nats', 'pg']
+const ssrExternals = ['kysely', 'nats', 'pg']
 
 const config = defineConfig({
   server: {
@@ -27,9 +14,6 @@ const config = defineConfig({
   },
   ssr: {
     external: ssrExternals,
-  },
-  optimizeDeps: {
-    exclude: opentelemetryExternals,
   },
   build: {
     rollupOptions: {
