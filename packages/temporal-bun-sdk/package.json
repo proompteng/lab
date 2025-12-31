@@ -51,8 +51,8 @@
   "scripts": {
     "clean": "rm -rf dist",
     "dev": "bun --watch src/bin/start-worker.ts",
-    "build": "tsc --project tsconfig.json --pretty false",
-    "prepare": "tsc --project tsconfig.json --pretty false",
+    "build": "bun run --filter @proompteng/otel build && tsc --project tsconfig.json --pretty false",
+    "prepare": "bun run --filter @proompteng/otel build && tsc --project tsconfig.json --pretty false",
     "test": "bun test",
     "test:load": "bun scripts/run-worker-load.ts",
     "test:coverage": "bun test --coverage",
