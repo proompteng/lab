@@ -1,6 +1,8 @@
 import '@/telemetry'
 
 import { Webhooks } from '@octokit/webhooks'
+import { SpanStatusCode, trace } from '@proompteng/otel/api'
+import { SpanKind } from '@proompteng/otel/sdk-trace'
 import { Effect } from 'effect'
 import { Elysia } from 'elysia'
 
@@ -25,6 +27,32 @@ const kafka = runtime.runSync(
     return yield* KafkaProducer
   }),
 )
+
+const recordRequestSpan = (request: Request, status?: number, error?: Error) => {
+  const url = new URL(request.url)
+  const tracer = trace.getTracer('froussard')
+  const span = tracer.startSpan(`${request.method} ${url.pathname}`, {
+    kind: SpanKind.SERVER,
+    attributes: {
+      'http.method': request.method,
+      'http.route': url.pathname,
+      'url.path': url.pathname,
+      'url.scheme': url.protocol.replace(':', ''),
+      'server.address': url.hostname,
+    },
+  })
+  if (typeof status === 'number') {
+    span.setAttribute('http.status_code', status)
+    if (status >= 500) {
+      span.setStatus({ code: SpanStatusCode.ERROR })
+    }
+  }
+  if (error) {
+    span.setStatus({ code: SpanStatusCode.ERROR, message: error.message })
+    span.recordException(error)
+  }
+  span.end()
+}
 
 export const createApp = () => {
   const health = createHealthHandlers({ runtime, kafka })
@@ -60,12 +88,18 @@ export const createApp = () => {
     )
     .get('/health/liveness', health.liveness)
     .get('/health/readiness', health.readiness)
-    .on('request', ({ request }) => {
+    .onRequest((context) => {
+      const { request } = context
       const url = new URL(request.url)
       logger.info({ method: request.method, path: url.pathname }, 'request received')
+      recordRequestSpan(request)
     })
-    .onError(({ error }) => {
+    .onError((context) => {
+      const { error, request } = context
       logger.error({ err: error }, 'server error')
+      if (request) {
+        recordRequestSpan(request, 500, error instanceof Error ? error : undefined)
+      }
       return new Response('Internal Server Error', { status: 500 })
     })
     .post('/webhooks/:provider', ({ request, params }) => webhookHandler(request, params.provider))

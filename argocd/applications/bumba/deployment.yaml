@@ -17,7 +17,7 @@ spec:
         app.kubernetes.io/name: bumba
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2025-12-28T03:39:30.877Z"
+        kubectl.kubernetes.io/restartedAt: "2025-12-31T05:35:53.291Z"
     spec:
       containers:
         - name: bumba
@@ -74,11 +74,15 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
-              value: http/json
+              value: grpc
+            - name: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
+              value: grpc
+            - name: OTEL_EXPORTER_OTLP_METRICS_PROTOCOL
+              value: grpc
             - name: OTEL_EXPORTER_OTLP_TRACES_COMPRESSION
               value: gzip
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
-              value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
+              value: http://observability-tempo-distributor.observability.svc.cluster.local:4317
             - name: OTEL_EXPORTER_OTLP_TRACES_TIMEOUT
               value: "20000"
             - name: OTEL_METRICS_EXPORTER

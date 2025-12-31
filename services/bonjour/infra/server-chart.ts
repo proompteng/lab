@@ -34,10 +34,8 @@ export class ServerChart extends Chart {
     const targetCpu = Math.min(Math.max(props.cpuTargetUtilizationPercent ?? 70, 1), 100)
 
     const tempoTracesEndpoint =
-      props.tempoTracesEndpoint ??
-      'http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces'
-    const mimirMetricsEndpoint =
-      props.mimirMetricsEndpoint ?? 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics'
+      props.tempoTracesEndpoint ?? 'http://observability-tempo-distributor.observability.svc.cluster.local:4317'
+    const mimirMetricsEndpoint = props.mimirMetricsEndpoint ?? 'http://jangar-alloy.jangar.svc.cluster.local:4317'
     const lokiEndpoint =
       props.lokiEndpoint ?? 'http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local'
 
@@ -72,7 +70,8 @@ export class ServerChart extends Chart {
         LGTM_TEMPO_TRACES_ENDPOINT: EnvValue.fromValue(tempoTracesEndpoint),
         LGTM_MIMIR_METRICS_ENDPOINT: EnvValue.fromValue(mimirMetricsEndpoint),
         LGTM_LOKI_ENDPOINT: EnvValue.fromValue(lokiEndpoint),
-        OTEL_EXPORTER_OTLP_PROTOCOL: EnvValue.fromValue('http/protobuf'),
+        OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: EnvValue.fromValue('grpc'),
+        OTEL_EXPORTER_OTLP_METRICS_PROTOCOL: EnvValue.fromValue('grpc'),
         OTEL_LOGS_EXPORTER: EnvValue.fromValue('none'),
         POD_NAME: EnvValue.fromFieldRef(EnvFieldPaths.POD_NAME),
         POD_NAMESPACE: EnvValue.fromFieldRef(EnvFieldPaths.POD_NAMESPACE),

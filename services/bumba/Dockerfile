@@ -8,11 +8,13 @@ WORKDIR /app
 ENV HUSKY=0
 COPY json/ .
 COPY tsconfig.base.json ./
+# Turbo prune doesn't emit a bun.lock that stays frozen with trimmed workspaces.
 RUN --mount=type=cache,target=/root/.cache/bun \
-  bun install --no-save --frozen-lockfile --ignore-scripts --filter @proompteng/bumba
+  bun install --ignore-scripts --filter @proompteng/bumba
 
 FROM deps AS build
 COPY full/ .
+RUN bun --cwd=packages/otel run build
 RUN bun --cwd=packages/temporal-bun-sdk run build
 
 FROM oven/bun:${BUN_VERSION} AS deps-prod
@@ -21,7 +23,7 @@ ENV HUSKY=0
 COPY json/ .
 COPY tsconfig.base.json ./
 RUN --mount=type=cache,target=/root/.cache/bun \
-  bun install --no-save --production --frozen-lockfile --ignore-scripts --filter @proompteng/bumba
+  bun install --omit=dev --ignore-scripts --filter @proompteng/bumba
 
 FROM oven/bun:${BUN_VERSION} AS runner
 WORKDIR /app
@@ -35,5 +37,6 @@ RUN --mount=type=cache,target=/var/cache/apt \
 COPY --from=deps-prod /app/node_modules ./node_modules
 COPY --from=build /app/services/bumba ./services/bumba
 COPY --from=build /app/tsconfig.base.json ./tsconfig.base.json
+COPY --from=build /app/packages/otel ./packages/otel
 COPY --from=build /app/packages/temporal-bun-sdk ./packages/temporal-bun-sdk
 CMD ["bun", "services/bumba/src/worker.ts"]

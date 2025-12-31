@@ -1,6 +1,6 @@
 import { DiagConsoleLogger, DiagLogLevel, diag } from './diag'
 import { type Counter, type Histogram, NoopMeterProvider } from './sdk-metrics'
-import { NoopTracerProvider, SpanStatusCode, type Span, type SpanOptions } from './sdk-trace'
+import { NoopTracerProvider, type Span, type SpanOptions, SpanStatusCode } from './sdk-trace'
 
 type MeterLike = {
   createCounter: (name: string, options?: { description?: string; unit?: string }) => Counter

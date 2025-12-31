@@ -1,5 +1,5 @@
-import { diag } from './diag'
 import { ExportResultCode } from './core'
+import { diag } from './diag'
 import { type AttributeValue, stableAttributesKey, toUnixNano } from './otlp'
 import { Resource } from './resources'
 
@@ -153,6 +153,18 @@ export class Span {
 
   setStatus(status: SpanStatus): void {
     this.#status = status
+  }
+
+  setAttribute(key: string, value: AttributeValue): this {
+    this.#attributes[key] = value
+    return this
+  }
+
+  setAttributes(attributes: SpanAttributes): this {
+    for (const [key, value] of Object.entries(attributes)) {
+      this.#attributes[key] = value
+    }
+    return this
   }
 
   recordException(error: Error): void {

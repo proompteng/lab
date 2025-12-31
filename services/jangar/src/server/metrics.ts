@@ -80,18 +80,58 @@ export const recordAgentCommsError = (stage: AgentCommsErrorStage) => {
   recordCounter(metricsState.metrics?.agentCommsIngestErrors, 1, { stage })
 }
 
-const resolveMetricsEndpoint = (): string | null => {
+type OtlpProtocol = 'http/json' | 'http/protobuf' | 'grpc'
+
+const resolveOtlpProtocol = (value: string | undefined): OtlpProtocol => {
+  if (!value) return 'http/json'
+  const normalized = value.trim().toLowerCase()
+  switch (normalized) {
+    case 'http/protobuf':
+    case 'http/proto':
+    case 'protobuf':
+    case 'proto':
+    case 'http':
+      return 'http/protobuf'
+    case 'http/json':
+    case 'json':
+      return 'http/json'
+    case 'grpc':
+      return 'grpc'
+    default:
+      diag.warn(
+        `Unknown OTLP protocol '${value}', expected grpc, http/protobuf, or http/json. Falling back to http/json.`,
+      )
+      return 'http/json'
+  }
+}
+
+const resolveMetricsEndpoint = (protocol: OtlpProtocol): string | null => {
   const explicit = process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT?.trim()
-  if (explicit) return explicit
+  if (explicit) return protocol === 'grpc' ? stripEndpointPath(explicit) : explicit
   const lgtm = process.env.LGTM_MIMIR_METRICS_ENDPOINT?.trim()
-  if (lgtm) return lgtm
+  if (lgtm) return protocol === 'grpc' ? stripEndpointPath(lgtm) : lgtm
   const base = process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim()
   if (base) {
+    if (protocol === 'grpc') {
+      return stripEndpointPath(base)
+    }
     if (base.endsWith('/v1/metrics')) return base
     const trimmed = base.replace(/\/+$/, '')
     return `${trimmed}/v1/metrics`
   }
-  return DEFAULT_METRICS_ENDPOINT
+  return protocol === 'grpc' ? stripEndpointPath(DEFAULT_METRICS_ENDPOINT) : DEFAULT_METRICS_ENDPOINT
+}
+
+const stripEndpointPath = (value: string): string => {
+  try {
+    const url = new URL(value)
+    url.pathname = ''
+    url.search = ''
+    url.hash = ''
+    return url.toString().replace(/\/$/, '')
+  } catch {
+    return value.replace(/\/+$/, '')
+  }
 }
 
 const parseHeaders = (value?: string) => {
@@ -134,7 +174,10 @@ const createMetricsState = (): MetricsState => {
     return { enabled: false }
   }
 
-  const metricsEndpoint = resolveMetricsEndpoint()
+  const metricsProtocol = resolveOtlpProtocol(
+    process.env.OTEL_EXPORTER_OTLP_METRICS_PROTOCOL ?? process.env.OTEL_EXPORTER_OTLP_PROTOCOL,
+  )
+  const metricsEndpoint = resolveMetricsEndpoint(metricsProtocol)
   if (!metricsEndpoint) {
     return { enabled: false }
   }
@@ -166,6 +209,7 @@ const createMetricsState = (): MetricsState => {
     const exporterInstance = new OTLPMetricExporter({
       url: metricsEndpoint,
       headers: metricHeaders,
+      protocol: metricsProtocol,
       ...(timeoutMillis ? { timeoutMillis } : {}),
     })
 

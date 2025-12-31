@@ -1,43 +1,33 @@
 import { ExportResultCode } from './core'
+import { encodeMetricsRequest } from './otlp-proto'
+import { type OtlpProtocol, sendOtlpGrpc, sendOtlpHttp } from './otlp-transport'
 import {
   Aggregation,
   AggregationTemporality,
-  InstrumentType,
+  type InstrumentType,
   type PushMetricExporter,
   type ResourceMetrics,
 } from './sdk-metrics'
-import { diag } from './diag'
 
 type ExporterConfig = {
   url: string
   headers?: Record<string, string>
   timeoutMillis?: number
-}
-
-type FetchTimeout = { signal?: AbortSignal; cancel: () => void }
-
-const createTimeoutSignal = (timeoutMillis?: number): FetchTimeout => {
-  if (!timeoutMillis) {
-    return { cancel: () => {} }
-  }
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMillis)
-  return {
-    signal: controller.signal,
-    cancel: () => clearTimeout(timeoutId),
-  }
+  protocol?: OtlpProtocol
 }
 
 export class OTLPMetricExporter implements PushMetricExporter {
   readonly #url: string
   readonly #headers?: Record<string, string>
   readonly #timeoutMillis?: number
+  readonly #protocol: OtlpProtocol
   #shutdown = false
 
   constructor(config: ExporterConfig) {
     this.#url = config.url
     this.#headers = config.headers
     this.#timeoutMillis = config.timeoutMillis
+    this.#protocol = config.protocol ?? 'http/json'
   }
 
   export(metrics: ResourceMetrics, resultCallback: (result: { code: ExportResultCode; error?: Error }) => void): void {
@@ -45,10 +35,11 @@ export class OTLPMetricExporter implements PushMetricExporter {
       resultCallback({ code: ExportResultCode.FAILED, error: new Error('exporter shutdown') })
       return
     }
+    const protocol = this.#protocol
+    const body =
+      protocol === 'http/json' ? JSON.stringify({ resourceMetrics: [metrics] }) : encodeMetricsRequest(metrics)
 
-    const body = JSON.stringify({ resourceMetrics: [metrics] })
-
-    void this.#send(body)
+    void this.#send(body, protocol)
       .then(() => {
         resultCallback({ code: ExportResultCode.SUCCESS })
       })
@@ -71,31 +62,33 @@ export class OTLPMetricExporter implements PushMetricExporter {
     return new Aggregation('default')
   }
 
-  async #send(body: string): Promise<void> {
-    const fetchFn = globalThis.fetch
-    if (typeof fetchFn !== 'function') {
-      throw new Error('fetch is not available in this runtime')
-    }
-    const { signal, cancel } = createTimeoutSignal(this.#timeoutMillis)
-    try {
-      const response = await fetchFn(this.#url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(this.#headers ?? {}),
+  async #send(body: string | Uint8Array, protocol: OtlpProtocol): Promise<void> {
+    if (protocol === 'grpc') {
+      if (!(body instanceof Uint8Array)) {
+        throw new Error('OTLP gRPC export requires protobuf payload')
+      }
+      await sendOtlpGrpc(
+        {
+          url: this.#url,
+          headers: this.#headers,
+          ...(this.#timeoutMillis ? { timeoutMillis: this.#timeoutMillis } : {}),
         },
         body,
-        signal,
-      })
-      if (!response.ok) {
-        const text = await response.text()
-        throw new Error(`OTLP metrics export failed: ${response.status} ${response.statusText} ${text}`.trim())
-      }
-    } catch (error) {
-      diag.error('otlp metric export failed', error)
-      throw error
-    } finally {
-      cancel()
+        '/opentelemetry.proto.collector.metrics.v1.MetricsService/Export',
+        'metrics',
+      )
+      return
     }
+
+    await sendOtlpHttp(
+      {
+        url: this.#url,
+        headers: this.#headers,
+        ...(this.#timeoutMillis ? { timeoutMillis: this.#timeoutMillis } : {}),
+      },
+      body,
+      protocol === 'http/protobuf' ? 'application/x-protobuf' : 'application/json',
+      'metrics',
+    )
   }
 }

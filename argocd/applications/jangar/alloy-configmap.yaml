@@ -11,6 +11,10 @@ data:
     }
 
     otelcol.receiver.otlp "codex" {
+      grpc {
+        endpoint = "0.0.0.0:4317"
+      }
+
       http {
         endpoint = "0.0.0.0:4318"
       }

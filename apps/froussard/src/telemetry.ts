@@ -1,6 +1,6 @@
 import os from 'node:os'
 
-import { DiagConsoleLogger, DiagLogLevel, diag } from '@proompteng/otel/api'
+import { DiagConsoleLogger, DiagLogLevel, diag, trace } from '@proompteng/otel/api'
 import { getNodeAutoInstrumentations } from '@proompteng/otel/auto-instrumentations-node'
 import { OTLPMetricExporter } from '@proompteng/otel/exporter-metrics-otlp-http'
 import { OTLPTraceExporter } from '@proompteng/otel/exporter-trace-otlp-http'
@@ -35,15 +35,30 @@ function createTelemetryState(): TelemetryState {
   const serviceNamespace = process.env.OTEL_SERVICE_NAMESPACE ?? process.env.POD_NAMESPACE ?? 'default'
   const serviceInstanceId = process.env.POD_NAME ?? process.env.HOSTNAME ?? os.hostname() ?? process.pid.toString()
 
+  const tracesProtocol = resolveOtlpProtocol(
+    process.env.OTEL_EXPORTER_OTLP_TRACES_PROTOCOL ?? process.env.OTEL_EXPORTER_OTLP_PROTOCOL,
+  )
+  const metricsProtocol = resolveOtlpProtocol(
+    process.env.OTEL_EXPORTER_OTLP_METRICS_PROTOCOL ?? process.env.OTEL_EXPORTER_OTLP_PROTOCOL,
+  )
+
+  const defaultTracesEndpoint =
+    tracesProtocol === 'grpc'
+      ? 'http://observability-tempo-gateway.observability.svc.cluster.local:4317'
+      : 'http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces'
+  const defaultMetricsEndpoint = 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics'
+
   const tracesEndpoint =
     process.env.LGTM_TEMPO_TRACES_ENDPOINT ??
     process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
-    'http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces'
+    resolveEndpoint(process.env.OTEL_EXPORTER_OTLP_ENDPOINT, 'traces', tracesProtocol) ??
+    defaultTracesEndpoint
 
   const metricsEndpoint =
     process.env.LGTM_MIMIR_METRICS_ENDPOINT ??
     process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT ??
-    'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics'
+    resolveEndpoint(process.env.OTEL_EXPORTER_OTLP_ENDPOINT, 'metrics', metricsProtocol) ??
+    defaultMetricsEndpoint
 
   const exportInterval = parseInt(process.env.OTEL_METRIC_EXPORT_INTERVAL ?? '15000', 10)
 
@@ -63,6 +78,7 @@ function createTelemetryState(): TelemetryState {
     exporter: new OTLPMetricExporter({
       url: metricsEndpoint,
       headers: metricHeaders,
+      protocol: metricsProtocol,
     }),
     exportIntervalMillis: Number.isFinite(exportInterval) ? Math.max(exportInterval, 5000) : 15000,
   })
@@ -72,6 +88,7 @@ function createTelemetryState(): TelemetryState {
     traceExporter: new OTLPTraceExporter({
       url: tracesEndpoint,
       headers: traceHeaders,
+      protocol: tracesProtocol,
     }),
     metricReader,
     instrumentations: [
@@ -92,9 +109,15 @@ function createTelemetryState(): TelemetryState {
   }
 
   try {
-    Promise.resolve(sdk.start()).catch((error) => {
-      diag.error('failed to start OpenTelemetry SDK', error)
-    })
+    Promise.resolve(sdk.start())
+      .then(() => {
+        const tracer = trace.getTracer('froussard')
+        const span = tracer.startSpan('froussard.startup')
+        span.end()
+      })
+      .catch((error) => {
+        diag.error('failed to start OpenTelemetry SDK', error)
+      })
   } catch (error) {
     diag.error('failed to start OpenTelemetry SDK', error)
   }
@@ -152,6 +175,64 @@ function mergeHeaders(...headers: Array<Record<string, string> | undefined>): Re
   }
 
   return Object.keys(merged).length > 0 ? merged : undefined
+}
+
+type OtlpProtocol = 'http/json' | 'http/protobuf' | 'grpc'
+
+function resolveOtlpProtocol(value: string | undefined): OtlpProtocol {
+  if (!value) {
+    return 'http/json'
+  }
+  const normalized = value.trim().toLowerCase()
+  switch (normalized) {
+    case 'http/protobuf':
+    case 'http/proto':
+    case 'protobuf':
+    case 'proto':
+    case 'http':
+      return 'http/protobuf'
+    case 'http/json':
+    case 'json':
+      return 'http/json'
+    case 'grpc':
+      return 'grpc'
+    default:
+      diag.warn(
+        `Unknown OTLP protocol '${value}', expected grpc, http/protobuf, or http/json. Falling back to http/json.`,
+      )
+      return 'http/json'
+  }
+}
+
+function resolveEndpoint(
+  endpoint: string | undefined,
+  signal: 'traces' | 'metrics',
+  protocol: OtlpProtocol,
+): string | undefined {
+  if (!endpoint) {
+    return undefined
+  }
+  const trimmed = endpoint.trim()
+  if (!trimmed) {
+    return undefined
+  }
+  if (protocol === 'grpc') {
+    return stripEndpointPath(trimmed)
+  }
+  const base = trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed
+  return `${base}/v1/${signal}`
+}
+
+function stripEndpointPath(value: string): string {
+  try {
+    const url = new URL(value)
+    url.pathname = ''
+    url.search = ''
+    url.hash = ''
+    return url.toString().replace(/\/$/, '')
+  } catch {
+    return value.replace(/\/+$/, '')
+  }
 }
 
 export const telemetrySdk = telemetryState.sdk

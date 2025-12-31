@@ -1,8 +1,8 @@
-import { diag } from './diag'
 import { metrics, trace } from './api'
-import { MeterProvider, type MetricReader } from './sdk-metrics'
-import { type SpanExporter, TracerProvider, createSimpleSpanProcessor } from './sdk-trace'
+import { diag } from './diag'
 import { Resource } from './resources'
+import { MeterProvider, type MetricReader } from './sdk-metrics'
+import { createSimpleSpanProcessor, type SpanExporter, TracerProvider } from './sdk-trace'
 
 export interface NodeSDKConfiguration {
   resource?: Resource

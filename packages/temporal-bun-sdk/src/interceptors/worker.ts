@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
-import { Effect } from 'effect'
-
 import { SpanStatusCode, trace } from '@proompteng/otel/api'
+import { Effect } from 'effect'
 import type { DataConverter } from '../common/payloads'
 import type { Logger } from '../observability/logger'
 import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from '../observability/metrics'

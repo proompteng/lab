@@ -1,0 +1,23 @@
+name: otel
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/otel/**'
+      - '.github/workflows/otel-ci.yml'
+  pull_request:
+    paths:
+      - 'packages/otel/**'
+      - '.github/workflows/otel-ci.yml'
+
+jobs:
+  lint-test-build:
+    uses: ./.github/workflows/common-monorepo.yml
+    with:
+      install-command: bun install --frozen-lockfile
+      lint-command: bunx biome check packages/otel/src packages/otel/tests
+      test-command: bun run --filter @proompteng/otel test
+      build-command: bun run --filter @proompteng/otel build
+    secrets: inherit

@@ -1,5 +1,5 @@
-import { diag } from './diag'
 import { ExportResultCode } from './core'
+import { diag } from './diag'
 import { type AttributeValue, attributesToKeyValueList, stableAttributesKey, toUnixNano } from './otlp'
 import { Resource } from './resources'
 
