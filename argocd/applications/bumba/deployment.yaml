@@ -74,7 +74,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
-              value: http/protobuf
+              value: http/json
             - name: OTEL_EXPORTER_OTLP_TRACES_COMPRESSION
               value: gzip
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT

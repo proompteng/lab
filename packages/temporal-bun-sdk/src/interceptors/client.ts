@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { SpanStatusCode, trace } from '@opentelemetry/api'
+
 import { Effect } from 'effect'
+
+import { SpanStatusCode, trace } from '@proompteng/otel/api'
 import { defaultRetryPolicy, type TemporalRpcRetryPolicy, withTemporalRetry } from '../client/retries'
 import type { DataConverter } from '../common/payloads'
 import type { Logger } from '../observability/logger'

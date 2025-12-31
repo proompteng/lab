@@ -24,6 +24,7 @@ spec:
           args:
             - -varz
             - -healthz
+            - -jsz=all
             - http://nats-headless.nats.svc.cluster.local:8222
           ports:
             - name: metrics

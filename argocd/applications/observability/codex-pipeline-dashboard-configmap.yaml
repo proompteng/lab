@@ -46,7 +46,7 @@ data:
           },
           "targets": [
             {
-              "expr": "sum(rate(kafka_topic_partition_current_offset{topic=\"argo.workflows.completions\"}[5m]))",
+              "expr": "sum(rate(kafka_consumergroup_current_offset_sum{consumergroup=\"jangar-codex-completions\", topic=\"argo.workflows.completions\"}[5m]))",
               "legendFormat": "messages/sec",
               "refId": "A"
             }
@@ -74,7 +74,7 @@ data:
           },
           "targets": [
             {
-              "expr": "sum(kafka_consumergroup_lag{consumergroup=\"jangar-codex-completions\", topic=\"argo.workflows.completions\"})",
+              "expr": "sum(kafka_consumergroup_lag_sum{consumergroup=\"jangar-codex-completions\", topic=\"argo.workflows.completions\"})",
               "legendFormat": "lag",
               "refId": "A"
             }
@@ -130,12 +130,12 @@ data:
           },
           "targets": [
             {
-              "expr": "max(jetstream_stream_messages{stream_name=\"agent-comms\"}) or max(jetstream_stream_messages{stream=\"agent-comms\"})",
+              "expr": "max(jetstream_stream_total_messages{stream_name=\"agent-comms\"}) or max(jetstream_stream_total_messages{stream=\"agent-comms\"})",
               "legendFormat": "messages",
               "refId": "A"
             },
             {
-              "expr": "max(jetstream_stream_bytes{stream_name=\"agent-comms\"}) or max(jetstream_stream_bytes{stream=\"agent-comms\"})",
+              "expr": "max(jetstream_stream_total_bytes{stream_name=\"agent-comms\"}) or max(jetstream_stream_total_bytes{stream=\"agent-comms\"})",
               "legendFormat": "bytes",
               "refId": "B"
             }

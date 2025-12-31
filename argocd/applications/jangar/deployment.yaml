@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2025-12-30T23:34:38.525Z"
+    deploy.knative.dev/rollout: "2025-12-31T03:04:10.995Z"
 spec:
   replicas: 1
   strategy:
@@ -54,7 +54,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
-              value: http/protobuf
+              value: http/json
             - name: OTEL_EXPORTER_OTLP_TRACES_COMPRESSION
               value: gzip
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT

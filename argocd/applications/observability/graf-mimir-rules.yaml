@@ -55,7 +55,7 @@ data:
       - name: codex-pipeline-observability.rules
         rules:
           - alert: CodexKafkaCompletionsLagHigh
-            expr: sum(kafka_consumergroup_lag{consumergroup="jangar-codex-completions", topic="argo.workflows.completions"}) > 1000
+            expr: sum(kafka_consumergroup_lag_sum{consumergroup="jangar-codex-completions", topic="argo.workflows.completions"}) > 1000
             for: 15m
             labels:
               severity: warning

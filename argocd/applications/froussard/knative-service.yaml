@@ -79,7 +79,7 @@ spec:
             - name: LGTM_LOKI_ENDPOINT
               value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
-              value: http/protobuf
+              value: http/json
           readinessProbe:
             httpGet:
               path: /health/readiness

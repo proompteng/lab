@@ -5,24 +5,15 @@ import {
   diag,
   type Histogram,
   metrics as otelMetrics,
-} from '@opentelemetry/api'
-import { ExportResultCode } from '@opentelemetry/core'
-import { JsonMetricsSerializer } from '@opentelemetry/otlp-transformer'
-import { Resource } from '@opentelemetry/resources'
-import {
-  Aggregation,
-  AggregationTemporality,
-  InstrumentType,
-  MeterProvider,
-  PeriodicExportingMetricReader,
-  type PushMetricExporter,
-  type ResourceMetrics,
-} from '@opentelemetry/sdk-metrics'
+} from '@proompteng/otel/api'
+import { OTLPMetricExporter } from '@proompteng/otel/exporter-metrics-otlp-http'
+import { Resource } from '@proompteng/otel/resources'
+import { MeterProvider, PeriodicExportingMetricReader } from '@proompteng/otel/sdk-metrics'
 import {
   SEMRESATTRS_SERVICE_INSTANCE_ID,
   SEMRESATTRS_SERVICE_NAME,
   SEMRESATTRS_SERVICE_NAMESPACE,
-} from '@opentelemetry/semantic-conventions'
+} from '@proompteng/otel/semantic-conventions'
 
 type JangarMetrics = {
   sseConnections: Counter
@@ -46,8 +37,6 @@ type AgentCommsErrorStage = 'fetch' | 'insert' | 'decode' | 'unknown'
 type MetricsAttributes = Record<string, string>
 
 const DEFAULT_METRICS_ENDPOINT = 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics'
-
-type FetchTimeout = { signal?: AbortSignal; cancel: () => void }
 
 const globalState = globalThis as typeof globalThis & {
   __jangarMetrics?: MetricsState
@@ -135,80 +124,6 @@ const parseTimeoutMillis = (value?: string) => {
   return parsed
 }
 
-const createTimeoutSignal = (timeoutMillis?: number): FetchTimeout => {
-  if (!timeoutMillis) return { cancel: () => {} }
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMillis)
-  return {
-    signal: controller.signal,
-    cancel: () => clearTimeout(timeoutId),
-  }
-}
-
-class FetchMetricExporter implements PushMetricExporter {
-  readonly #url: string
-  readonly #headers?: Record<string, string>
-  readonly #timeoutMillis?: number
-  #shutdown = false
-
-  constructor(url: string, headers?: Record<string, string>, timeoutMillis?: number) {
-    this.#url = url
-    this.#headers = headers
-    this.#timeoutMillis = timeoutMillis
-  }
-
-  export(metrics: ResourceMetrics, resultCallback: (result: { code: ExportResultCode; error?: Error }) => void): void {
-    if (this.#shutdown) {
-      resultCallback({ code: ExportResultCode.FAILED })
-      return
-    }
-
-    const body = JsonMetricsSerializer.serializeRequest([metrics])
-    void this.#send(body)
-      .then(() => {
-        resultCallback({ code: ExportResultCode.SUCCESS })
-      })
-      .catch((error) => {
-        resultCallback({ code: ExportResultCode.FAILED, error })
-      })
-  }
-
-  async forceFlush(): Promise<void> {}
-
-  async shutdown(): Promise<void> {
-    this.#shutdown = true
-  }
-
-  selectAggregationTemporality(_instrumentType: InstrumentType): AggregationTemporality {
-    return AggregationTemporality.CUMULATIVE
-  }
-
-  selectAggregation(_instrumentType: InstrumentType): Aggregation {
-    return Aggregation.Default()
-  }
-
-  async #send(body: Uint8Array): Promise<void> {
-    const { signal, cancel } = createTimeoutSignal(this.#timeoutMillis)
-    try {
-      const response = await fetch(this.#url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(this.#headers ?? {}),
-        },
-        body,
-        signal,
-      })
-      if (!response.ok) {
-        const text = await response.text()
-        throw new Error(`OTLP metrics export failed: ${response.status} ${response.statusText} ${text}`.trim())
-      }
-    } finally {
-      cancel()
-    }
-  }
-}
-
 const createMetricsState = (): MetricsState => {
   if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
     return { enabled: false }
@@ -248,7 +163,11 @@ const createMetricsState = (): MetricsState => {
     const timeoutMillis =
       parseTimeoutMillis(process.env.OTEL_EXPORTER_OTLP_METRICS_TIMEOUT) ??
       parseTimeoutMillis(process.env.OTEL_EXPORTER_OTLP_TIMEOUT)
-    const exporterInstance = new FetchMetricExporter(metricsEndpoint, metricHeaders, timeoutMillis)
+    const exporterInstance = new OTLPMetricExporter({
+      url: metricsEndpoint,
+      headers: metricHeaders,
+      ...(timeoutMillis ? { timeoutMillis } : {}),
+    })
 
     const reader = new PeriodicExportingMetricReader({
       exporter: exporterInstance,

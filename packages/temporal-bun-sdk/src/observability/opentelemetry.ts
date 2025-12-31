@@ -1,5 +1,15 @@
-import type { PushMetricExporter } from '@opentelemetry/sdk-metrics'
-import type { NodeSDKConfiguration } from '@opentelemetry/sdk-node'
+import { DiagConsoleLogger, DiagLogLevel, diag } from '@proompteng/otel/api'
+import { getNodeAutoInstrumentations } from '@proompteng/otel/auto-instrumentations-node'
+import { OTLPMetricExporter } from '@proompteng/otel/exporter-metrics-otlp-http'
+import { OTLPTraceExporter } from '@proompteng/otel/exporter-trace-otlp-http'
+import { Resource } from '@proompteng/otel/resources'
+import { PeriodicExportingMetricReader } from '@proompteng/otel/sdk-metrics'
+import { type NodeSDKConfiguration, NodeSDK } from '@proompteng/otel/sdk-node'
+import {
+  SEMRESATTRS_SERVICE_INSTANCE_ID,
+  SEMRESATTRS_SERVICE_NAME,
+  SEMRESATTRS_SERVICE_NAMESPACE,
+} from '@proompteng/otel/semantic-conventions'
 
 export interface OpenTelemetryConfig {
   enabled?: boolean
@@ -27,15 +37,6 @@ const DEFAULT_OTLP_PROTOCOL: OtlpProtocol = 'http/json'
 
 type OtlpProtocol = 'http/json' | 'http/protobuf'
 
-type OpenTelemetryCoreModules = {
-  api: typeof import('@opentelemetry/api')
-  autoInstrumentations: typeof import('@opentelemetry/auto-instrumentations-node')
-  resources: typeof import('@opentelemetry/resources')
-  sdkMetrics: typeof import('@opentelemetry/sdk-metrics')
-  sdkNode: typeof import('@opentelemetry/sdk-node')
-  semantic: typeof import('@opentelemetry/semantic-conventions')
-}
-
 const applyBunNodeVersionShim = (): void => {
   const versions = typeof process !== 'undefined' ? (process.versions as Record<string, string>) : undefined
   const bunVersion = versions?.bun
@@ -49,26 +50,6 @@ const applyBunNodeVersionShim = (): void => {
     return
   }
   versions.node = '12.0.0'
-}
-
-const loadOpenTelemetryCoreModules = async (): Promise<OpenTelemetryCoreModules> => {
-  const [api, autoInstrumentations, resources, sdkMetrics, sdkNode, semantic] = await Promise.all([
-    import('@opentelemetry/api'),
-    import('@opentelemetry/auto-instrumentations-node'),
-    import('@opentelemetry/resources'),
-    import('@opentelemetry/sdk-metrics'),
-    import('@opentelemetry/sdk-node'),
-    import('@opentelemetry/semantic-conventions'),
-  ])
-
-  return {
-    api,
-    autoInstrumentations,
-    resources,
-    sdkMetrics,
-    sdkNode,
-    semantic,
-  }
 }
 
 let activeHandle: OpenTelemetryHandle | undefined
@@ -98,8 +79,6 @@ const startOpenTelemetry = async (options: OpenTelemetryConfig): Promise<OpenTel
   }
 
   applyBunNodeVersionShim()
-  const otel = await loadOpenTelemetryCoreModules()
-  const { diag, DiagConsoleLogger, DiagLogLevel } = otel.api
 
   diag.setLogger(new DiagConsoleLogger(), resolveDiagLogLevel(DiagLogLevel))
 
@@ -166,30 +145,30 @@ const startOpenTelemetry = async (options: OpenTelemetryConfig): Promise<OpenTel
   )
 
   const resourceAttributes = parseResourceAttributes(process.env.OTEL_RESOURCE_ATTRIBUTES)
-  const resource = otel.resources.Resource.default()
-    .merge(new otel.resources.Resource(resourceAttributes))
+  const resource = Resource.default()
+    .merge(new Resource(resourceAttributes))
     .merge(
-      new otel.resources.Resource({
-        [otel.semantic.SEMRESATTRS_SERVICE_NAME]: serviceName,
-        ...(serviceNamespace ? { [otel.semantic.SEMRESATTRS_SERVICE_NAMESPACE]: serviceNamespace } : {}),
-        ...(serviceInstanceId ? { [otel.semantic.SEMRESATTRS_SERVICE_INSTANCE_ID]: serviceInstanceId } : {}),
+      new Resource({
+        [SEMRESATTRS_SERVICE_NAME]: serviceName,
+        ...(serviceNamespace ? { [SEMRESATTRS_SERVICE_NAMESPACE]: serviceNamespace } : {}),
+        ...(serviceInstanceId ? { [SEMRESATTRS_SERVICE_INSTANCE_ID]: serviceInstanceId } : {}),
       }),
     )
 
-  const traceExporter = await loadTraceExporter(tracesProtocol, {
+  const traceExporter = createTraceExporter(tracesProtocol, {
     url: tracesEndpoint,
     headers: traceHeaders,
     ...(tracesTimeoutMs ? { timeoutMillis: tracesTimeoutMs } : {}),
   })
 
-  let metricReader: InstanceType<typeof otel.sdkMetrics.PeriodicExportingMetricReader> | undefined
+  let metricReader: PeriodicExportingMetricReader | undefined
   if (metricsEnabled) {
-    const metricExporter = await loadMetricExporter(metricsProtocol, {
+    const metricExporter = createMetricExporter(metricsProtocol, {
       url: metricsEndpoint,
       headers: metricHeaders,
       ...(metricsTimeoutMs ? { timeoutMillis: metricsTimeoutMs } : {}),
     })
-    metricReader = new otel.sdkMetrics.PeriodicExportingMetricReader({
+    metricReader = new PeriodicExportingMetricReader({
       exporter: metricExporter,
       exportIntervalMillis,
       ...(exportTimeoutMillis ? { exportTimeoutMillis } : {}),
@@ -199,13 +178,13 @@ const startOpenTelemetry = async (options: OpenTelemetryConfig): Promise<OpenTel
   const sdkConfig: Partial<NodeSDKConfiguration> = {
     resource,
     traceExporter,
-    instrumentations: resolveInstrumentations(otel.autoInstrumentations.getNodeAutoInstrumentations),
+    instrumentations: resolveInstrumentations(getNodeAutoInstrumentations),
   }
   if (metricReader) {
     sdkConfig.metricReader = metricReader
   }
 
-  const sdk = new otel.sdkNode.NodeSDK(sdkConfig)
+  const sdk = new NodeSDK(sdkConfig)
 
   try {
     await sdk.start()
@@ -299,9 +278,7 @@ const coerceBoolean = (value: string | undefined): boolean | undefined => {
   return undefined
 }
 
-const resolveInstrumentations = (
-  getNodeAutoInstrumentations: typeof import('@opentelemetry/auto-instrumentations-node').getNodeAutoInstrumentations,
-) => {
+const resolveInstrumentations = (autoInstrumentationFactory: typeof getNodeAutoInstrumentations) => {
   const enabled = coerceBoolean(process.env.TEMPORAL_OTEL_AUTO_INSTRUMENTATION)
   if (enabled === false) {
     return []
@@ -310,7 +287,7 @@ const resolveInstrumentations = (
     return []
   }
   return [
-    getNodeAutoInstrumentations({
+    autoInstrumentationFactory({
       '@opentelemetry/instrumentation-http': {
         enabled: true,
       },
@@ -333,7 +310,7 @@ const resolveEndpoint = (endpoint: string | undefined, signal: 'traces' | 'metri
   return `${base}/v1/${signal}`
 }
 
-const resolveDiagLogLevel = (DiagLogLevel: typeof import('@opentelemetry/api').DiagLogLevel) => {
+const resolveDiagLogLevel = (DiagLogLevel: typeof import('@proompteng/otel/api').DiagLogLevel) => {
   const raw = process.env.OTEL_LOG_LEVEL ?? process.env.TEMPORAL_OTEL_LOG_LEVEL
   if (!raw) {
     return DiagLogLevel.ERROR
@@ -426,10 +403,8 @@ const resolveOtlpProtocol = (value: string | undefined, logger: Pick<Console, 'w
     case 'json':
       return 'http/json'
     case 'grpc':
-      logger.warn(
-        'OTLP gRPC protocol requested, falling back to http/protobuf (grpc is not supported in this runtime).',
-      )
-      return 'http/protobuf'
+      logger.warn('OTLP gRPC protocol requested, falling back to http/json (grpc is not supported in this runtime).')
+      return 'http/json'
     default:
       logger.warn(
         `Unknown OTLP protocol '${value}', expected http/protobuf or http/json. Falling back to ${DEFAULT_OTLP_PROTOCOL}.`,
@@ -439,24 +414,16 @@ const resolveOtlpProtocol = (value: string | undefined, logger: Pick<Console, 'w
 }
 
 type ExporterConfig = { url: string; headers?: Record<string, string>; timeoutMillis?: number }
-type MetricExporterModule = { OTLPMetricExporter: new (config: ExporterConfig) => PushMetricExporter }
-type TraceExporter = NonNullable<NodeSDKConfiguration['traceExporter']>
-type TraceExporterModule = { OTLPTraceExporter: new (config: ExporterConfig) => TraceExporter }
-
-const loadMetricExporter = async (protocol: OtlpProtocol, config: ExporterConfig): Promise<PushMetricExporter> => {
-  const moduleId =
-    protocol === 'http/protobuf'
-      ? '@opentelemetry/exporter-metrics-otlp-proto'
-      : '@opentelemetry/exporter-metrics-otlp-http'
-  const module = (await import(moduleId)) as MetricExporterModule
-  return new module.OTLPMetricExporter(config)
+const createMetricExporter = (protocol: OtlpProtocol, config: ExporterConfig) => {
+  if (protocol === 'http/protobuf') {
+    diag.warn('OTLP protobuf requested; falling back to http/json exporter.')
+  }
+  return new OTLPMetricExporter(config)
 }
 
-const loadTraceExporter = async (protocol: OtlpProtocol, config: ExporterConfig): Promise<TraceExporter> => {
-  const moduleId =
-    protocol === 'http/protobuf'
-      ? '@opentelemetry/exporter-trace-otlp-proto'
-      : '@opentelemetry/exporter-trace-otlp-http'
-  const module = (await import(moduleId)) as TraceExporterModule
-  return new module.OTLPTraceExporter(config)
+const createTraceExporter = (protocol: OtlpProtocol, config: ExporterConfig) => {
+  if (protocol === 'http/protobuf') {
+    diag.warn('OTLP protobuf requested; falling back to http/json exporter.')
+  }
+  return new OTLPTraceExporter(config)
 }

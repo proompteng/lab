@@ -12,7 +12,7 @@ The Codex implementation pipeline now has end-to-end telemetry for Kafka complet
 ### Panels
 
 - **Kafka completions**
-  - Ingest rate for `argo.workflows.completions` (messages/sec).
+  - Ingest rate (consumer offset delta) for `argo.workflows.completions` (messages/sec).
   - Consumer lag for `jangar-codex-completions`.
 - **NATS agent comms**
   - Publish rate (`agent-comms` JetStream stream).
@@ -36,7 +36,7 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
 ## Data sources / scrape targets
 
 - **Kafka**: `kafka-exporter` Deployment in `kafka` namespace (scraped by `kafka-alloy`).
-- **NATS**: JetStream monitoring endpoint on port `8222` scraped by `nats-alloy`.
+- **NATS**: `nats-prometheus-exporter` with JetStream `-jsz=streams,consumers` (scraped by `nats-alloy`).
 - **Jangar**: OTLP metrics exporter (OTEL) pushing to Mimir.
 
 ## Validation

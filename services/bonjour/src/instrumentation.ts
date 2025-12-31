@@ -1,17 +1,15 @@
-import { DiagConsoleLogger, DiagLogLevel, diag } from '@opentelemetry/api'
-import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node'
-import { OTLPMetricExporter as OTLPMetricExporterHttp } from '@opentelemetry/exporter-metrics-otlp-http'
-import { OTLPMetricExporter as OTLPMetricExporterProto } from '@opentelemetry/exporter-metrics-otlp-proto'
-import { OTLPTraceExporter as OTLPTraceExporterHttp } from '@opentelemetry/exporter-trace-otlp-http'
-import { OTLPTraceExporter as OTLPTraceExporterProto } from '@opentelemetry/exporter-trace-otlp-proto'
-import { Resource } from '@opentelemetry/resources'
-import { type MetricReader, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
-import { NodeSDK } from '@opentelemetry/sdk-node'
+import { DiagConsoleLogger, DiagLogLevel, diag } from '@proompteng/otel/api'
+import { getNodeAutoInstrumentations } from '@proompteng/otel/auto-instrumentations-node'
+import { OTLPMetricExporter } from '@proompteng/otel/exporter-metrics-otlp-http'
+import { OTLPTraceExporter } from '@proompteng/otel/exporter-trace-otlp-http'
+import { Resource } from '@proompteng/otel/resources'
+import { type MetricReader, PeriodicExportingMetricReader } from '@proompteng/otel/sdk-metrics'
+import { NodeSDK } from '@proompteng/otel/sdk-node'
 import {
   SEMRESATTRS_SERVICE_INSTANCE_ID,
   SEMRESATTRS_SERVICE_NAME,
   SEMRESATTRS_SERVICE_NAMESPACE,
-} from '@opentelemetry/semantic-conventions'
+} from '@proompteng/otel/semantic-conventions'
 
 diag.setLogger(new DiagConsoleLogger(), resolveDiagLogLevel(DiagLogLevel))
 
@@ -244,7 +242,7 @@ function shouldEnableMetrics(metricsEndpoint: string | undefined): boolean {
   return Boolean(metricsEndpoint)
 }
 
-function resolveDiagLogLevel(DiagLogLevel: typeof import('@opentelemetry/api').DiagLogLevel) {
+function resolveDiagLogLevel(DiagLogLevel: typeof import('@proompteng/otel/api').DiagLogLevel) {
   const raw = process.env.OTEL_LOG_LEVEL
   if (!raw) {
     return DiagLogLevel.ERROR
@@ -283,10 +281,8 @@ function resolveOtlpProtocol(value: string | undefined, logger: Pick<Console, 'w
     case 'json':
       return 'http/json'
     case 'grpc':
-      logger.warn(
-        'OTLP gRPC protocol requested, falling back to http/protobuf (grpc is not supported in this runtime).',
-      )
-      return 'http/protobuf'
+      logger.warn('OTLP gRPC protocol requested, falling back to http/json (grpc is not supported in this runtime).')
+      return 'http/json'
     default:
       logger.warn(`Unknown OTLP protocol '${value}', expected http/protobuf or http/json. Falling back to http/json.`)
       return 'http/json'
@@ -297,16 +293,16 @@ type ExporterConfig = { url: string; headers?: Record<string, string>; timeoutMi
 
 function createTraceExporter(protocol: OtlpProtocol, config: ExporterConfig) {
   if (protocol === 'http/protobuf') {
-    return new OTLPTraceExporterProto(config)
+    diag.warn('OTLP protobuf requested; falling back to http/json exporter.')
   }
-  return new OTLPTraceExporterHttp(config)
+  return new OTLPTraceExporter(config)
 }
 
 function createMetricExporter(protocol: OtlpProtocol, config: ExporterConfig) {
   if (protocol === 'http/protobuf') {
-    return new OTLPMetricExporterProto(config)
+    diag.warn('OTLP protobuf requested; falling back to http/json exporter.')
   }
-  return new OTLPMetricExporterHttp(config)
+  return new OTLPMetricExporter(config)
 }
 
 function applyBunNodeVersionShim() {

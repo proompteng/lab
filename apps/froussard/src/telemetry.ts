@@ -1,17 +1,17 @@
 import os from 'node:os'
 
-import { DiagConsoleLogger, DiagLogLevel, diag } from '@opentelemetry/api'
-import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node'
-import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http'
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
-import { Resource } from '@opentelemetry/resources'
-import { type MetricReader, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
-import { NodeSDK } from '@opentelemetry/sdk-node'
+import { DiagConsoleLogger, DiagLogLevel, diag } from '@proompteng/otel/api'
+import { getNodeAutoInstrumentations } from '@proompteng/otel/auto-instrumentations-node'
+import { OTLPMetricExporter } from '@proompteng/otel/exporter-metrics-otlp-http'
+import { OTLPTraceExporter } from '@proompteng/otel/exporter-trace-otlp-http'
+import { Resource } from '@proompteng/otel/resources'
+import { type MetricReader, PeriodicExportingMetricReader } from '@proompteng/otel/sdk-metrics'
+import { NodeSDK } from '@proompteng/otel/sdk-node'
 import {
   SEMRESATTRS_SERVICE_INSTANCE_ID,
   SEMRESATTRS_SERVICE_NAME,
   SEMRESATTRS_SERVICE_NAMESPACE,
-} from '@opentelemetry/semantic-conventions'
+} from '@proompteng/otel/semantic-conventions'
 
 diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR)
 
