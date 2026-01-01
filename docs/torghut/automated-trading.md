@@ -3,7 +3,7 @@
 This document describes a **single-run, end‑to‑end** implementation plan for the core automated trading pipeline in torghut. It is intentionally structured as a one‑shot execution guide for Codex (no milestones).
 
 ## Scope
-- **Signals source:** ClickHouse `ta_signals` by default (Kafka optional).
+- **Signals source:** ClickHouse `ta_signals`.
 - **Execution mode:** paper trading by default, live trading gated by config.
 - **Universe:** from Jangar symbols endpoint or per‑strategy list.
 - **Owner:** torghut service (FastAPI) or a dedicated worker deployment in the torghut namespace.
@@ -27,7 +27,6 @@ SignalIngestor -> DecisionEngine -> RiskEngine -> OrderExecutor -> Reconciler
 Create a module folder under `services/torghut/app/trading/` with:
 - `models.py` — Pydantic DTOs for signals/decisions/execution requests.
 - `ingest.py` — ClickHouse signal ingestion (poll by `event_ts` cursor).
-  - Optional Kafka interface: `TRADING_SIGNAL_SOURCE=kafka|clickhouse`.
 - `decisions.py` — Strategy evaluation (start with simple MACD/RSI example).
 - `risk.py` — Risk checks:
   - `max_position_pct_equity`
@@ -51,7 +50,7 @@ In `services/torghut/app/main.py`:
 In `services/torghut/app/config.py` add:
 - `TRADING_ENABLED` (bool)
 - `TRADING_MODE` (`paper|live`)
-- `TRADING_SIGNAL_SOURCE` (`clickhouse|kafka`)
+- `TRADING_SIGNAL_SOURCE` (`clickhouse`)
 - `TRADING_POLL_MS`
 - `TRADING_UNIVERSE_SOURCE` (`jangar|static`)
 
@@ -127,5 +126,5 @@ New (proposed):
 ```
 
 ## Notes
-- If Kafka is used instead of ClickHouse, set `TRADING_SIGNAL_SOURCE=kafka` and add a Kafka consumer config using the existing Strimzi SCRAM creds.
+- Signal ingestion is ClickHouse-only for this plan.
 - Keep the system paper‑only unless explicitly configured for live trading.
