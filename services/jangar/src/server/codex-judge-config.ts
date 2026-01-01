@@ -2,7 +2,6 @@ export type CodexJudgeConfig = {
   githubToken: string | null
   githubApiBaseUrl: string
   codexReviewers: string[]
-  reviewBypassMode: 'strict' | 'timeout' | 'always'
   ciEventStreamEnabled: boolean
   ciMaxWaitMs: number
   reviewMaxWaitMs: number
@@ -37,18 +36,10 @@ const parseNumber = (raw: string | undefined, fallback: number) => {
   return parsed
 }
 
-const parseReviewBypassMode = (raw: string | undefined) => {
-  const normalized = (raw ?? '').trim().toLowerCase()
-  if (normalized === 'always' || normalized === 'bypass' || normalized === 'true') return 'always'
-  if (normalized === 'timeout' || normalized === 'bypass_on_timeout') return 'timeout'
-  return 'strict'
-}
-
 export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
   const githubToken = (process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? '').trim() || null
   const githubApiBaseUrl = (process.env.GITHUB_API_BASE_URL ?? DEFAULT_GITHUB_API_BASE).trim()
   const codexReviewers = parseList(process.env.JANGAR_CODEX_REVIEWERS ?? process.env.CODEX_REVIEWERS)
-  const reviewBypassMode = parseReviewBypassMode(process.env.JANGAR_CODEX_REVIEW_POLICY)
   const ciEventStreamEnabled =
     (process.env.JANGAR_CI_EVENT_STREAM_ENABLED ?? process.env.JANGAR_GITHUB_EVENT_STREAM_ENABLED ?? 'false')
       .trim()
@@ -78,7 +69,6 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     githubToken,
     githubApiBaseUrl,
     codexReviewers,
-    reviewBypassMode,
     ciEventStreamEnabled,
     ciMaxWaitMs,
     reviewMaxWaitMs,

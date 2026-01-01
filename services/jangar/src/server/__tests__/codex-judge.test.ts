@@ -42,7 +42,6 @@ const globalState = globalThis as typeof globalThis & {
     githubToken: string | null
     githubApiBaseUrl: string
     codexReviewers: string[]
-    reviewBypassMode: 'strict' | 'timeout' | 'always'
     ciEventStreamEnabled: boolean
     ciMaxWaitMs: number
     reviewMaxWaitMs: number
@@ -112,7 +111,6 @@ if (!globalState.__codexJudgeConfigMock) {
     githubToken: null,
     githubApiBaseUrl: 'https://api.github.com',
     codexReviewers: [],
-    reviewBypassMode: 'strict',
     ciEventStreamEnabled: false,
     ciMaxWaitMs: 10_000,
     reviewMaxWaitMs: 10_000,
@@ -377,7 +375,6 @@ const harness = (() => {
     githubToken: null,
     githubApiBaseUrl: 'https://api.github.com',
     codexReviewers: [],
-    reviewBypassMode: 'strict',
     ciEventStreamEnabled: false,
     ciMaxWaitMs: 10_000,
     reviewMaxWaitMs: 10_000,
@@ -682,22 +679,6 @@ describe('codex judge review gate', () => {
     }
   })
 
-  it('waits for review completion when bypass is disabled', async () => {
-    harness.github.getReviewSummary.mockResolvedValue({
-      status: 'pending',
-      unresolvedThreads: [],
-      requestedChanges: false,
-      reviewComments: [],
-      issueComments: [],
-    })
-
-    const privateApi = await requirePrivate()
-    await privateApi.evaluateRun('run-1')
-
-    expect(harness.codexClient.runTurn).not.toHaveBeenCalled()
-    expect(harness.store.updateDecision).not.toHaveBeenCalled()
-  })
-
   it('reruns with thread summaries when unresolved threads exist', async () => {
     const commentBody = 'Please add a regression test for the null guard.'
     harness.github.getReviewSummary.mockResolvedValue({
@@ -760,37 +741,20 @@ describe('codex judge review gate', () => {
     expect(decisionInput?.nextPrompt).toContain('Codex review summary comments:')
   })
 
-  it('bypasses review only when explicitly configured', async () => {
-    harness.config.reviewBypassMode = 'always'
-    try {
-      harness.github.getReviewSummary.mockResolvedValue({
-        status: 'pending',
-        unresolvedThreads: [],
-        requestedChanges: false,
-        reviewComments: [],
-        issueComments: [],
-      })
-      harness.setJudgeResponses([
-        JSON.stringify({
-          decision: 'pass',
-          confidence: 0.9,
-          requirements_coverage: [],
-          missing_items: [],
-          suggested_fixes: [],
-          next_prompt: null,
-          prompt_tuning_suggestions: [],
-          system_improvement_suggestions: [],
-        }),
-      ])
+  it('waits for review completion before running the judge', async () => {
+    harness.github.getReviewSummary.mockResolvedValue({
+      status: 'pending',
+      unresolvedThreads: [],
+      requestedChanges: false,
+      reviewComments: [],
+      issueComments: [],
+    })
 
-      const privateApi = await requirePrivate()
-      await privateApi.evaluateRun('run-1')
+    const privateApi = await requirePrivate()
+    await privateApi.evaluateRun('run-1')
 
-      expect(harness.codexClient.runTurn).toHaveBeenCalled()
-      expect(harness.store.updateDecision).toHaveBeenCalledWith(expect.objectContaining({ decision: 'pass' }))
-    } finally {
-      harness.config.reviewBypassMode = 'strict'
-    }
+    expect(harness.codexClient.runTurn).not.toHaveBeenCalled()
+    expect(harness.store.updateDecision).not.toHaveBeenCalled()
   })
 })
 

@@ -40,12 +40,6 @@ storeReady.catch((error) => {
   console.error('Codex judge store failed to initialize', error)
 })
 const config = globalOverrides.__codexJudgeConfigMock ?? loadCodexJudgeConfig()
-if (config.reviewBypassMode !== 'strict') {
-  console.warn('Codex review bypass policy enabled', {
-    mode: config.reviewBypassMode,
-    env: 'JANGAR_CODEX_REVIEW_POLICY',
-  })
-}
 const github =
   globalOverrides.__codexJudgeGithubMock ??
   createGitHubClient({ token: config.githubToken, apiBaseUrl: config.githubApiBaseUrl })
@@ -938,7 +932,7 @@ const resolveReviewContext = async (run: CodexRunRecord, prNumber: number) => {
         status: review.status,
         summary: reviewSummary,
       })) ?? run
-    return { review, reviewRun, storedStatus: reviewRun.reviewStatus }
+    return { review, reviewRun }
   }
 
   const storedStatusRaw = typeof run.reviewStatus === 'string' ? run.reviewStatus.trim() : ''
@@ -965,7 +959,7 @@ const resolveReviewContext = async (run: CodexRunRecord, prNumber: number) => {
     issueComments: reviewSummary.issueComments,
   }
 
-  return { review, reviewRun, storedStatus: storedStatusRaw }
+  return { review, reviewRun }
 }
 
 const extractLogExcerpt = (payload?: Record<string, unknown> | null) => {
@@ -2251,13 +2245,7 @@ const evaluateRun = async (runId: string) => {
       return
     }
 
-    const { review, reviewRun, storedStatus } = await resolveReviewContext(run, pr.number)
-    const reviewSummary = {
-      unresolvedThreads: review.unresolvedThreads,
-      requestedChanges: review.requestedChanges,
-      reviewComments: review.reviewComments,
-      issueComments: review.issueComments,
-    }
+    const { review, reviewRun } = await resolveReviewContext(run, pr.number)
 
     if (review.requestedChanges || review.unresolvedThreads.length > 0) {
       const evaluation = await store.updateDecision({
@@ -2278,30 +2266,7 @@ const evaluateRun = async (runId: string) => {
       return
     }
 
-    const wasBypassed = storedStatus === 'bypassed' || reviewRun.reviewStatus === 'bypassed'
-    const shouldBypassReview =
-      wasBypassed ||
-      (review.status === 'pending' &&
-        (config.reviewBypassMode === 'always' ||
-          (config.reviewBypassMode === 'timeout' &&
-            hasWaitTimedOut(reviewRun.reviewStatusUpdatedAt, config.reviewMaxWaitMs))))
-
-    if (shouldBypassReview && reviewRun.reviewStatus !== 'bypassed') {
-      console.warn('Bypassing Codex review gate', {
-        runId: run.id,
-        prNumber: pr.number,
-        mode: config.reviewBypassMode,
-        pendingSince: reviewRun.reviewStatusUpdatedAt,
-        maxWaitMs: config.reviewMaxWaitMs,
-      })
-      await store.updateReviewStatus({
-        runId: run.id,
-        status: 'bypassed',
-        summary: reviewSummary,
-      })
-    }
-
-    if (review.status === 'pending' && !shouldBypassReview) {
+    if (review.status === 'pending') {
       if (hasWaitTimedOut(reviewRun.reviewStatusUpdatedAt, config.reviewMaxWaitMs)) {
         const elapsedMs = getElapsedMs(reviewRun.reviewStatusUpdatedAt)
         const evaluation = await store.updateDecision({
@@ -2317,10 +2282,7 @@ const evaluateRun = async (runId: string) => {
           nextPrompt: 'Codex review did not complete in time. Re-request review and resolve feedback.',
           promptTuning: {},
           systemSuggestions: {
-            suggestions: [
-              'Auto-bypass Codex review after a configurable timeout when no review arrives.',
-              'Verify Codex review bot is configured as an allowed reviewer in branch protections.',
-            ],
+            suggestions: ['Verify Codex review bot is configured as an allowed reviewer in branch protections.'],
           },
         })
         const refreshedRun = (await store.getRunById(run.id)) ?? run
@@ -2370,7 +2332,6 @@ const evaluateRun = async (runId: string) => {
       return
     }
 
-    const reviewStatusForJudge = shouldBypassReview ? 'bypassed' : review.status
     const judgePrompt = buildJudgePrompt({
       issueTitle,
       issueBody,
@@ -2379,7 +2340,7 @@ const evaluateRun = async (runId: string) => {
       diff,
       summary: (run.notifyPayload?.last_assistant_message as string | null) ?? null,
       ciStatus: ci.status,
-      reviewStatus: reviewStatusForJudge,
+      reviewStatus: review.status,
       logExcerpt,
     })
 
