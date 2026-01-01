@@ -1,6 +1,6 @@
 import { IconHome2, IconPackage, IconTrash } from '@tabler/icons-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, useRouterState } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
 import { useState } from 'react'
 
@@ -81,6 +81,9 @@ function ImageDetails() {
   })
 
   const { repository, tags, totalSizeBytes, hasTotalSize, fetchedAt, error } = data
+  const isRoutePending = useRouterState({
+    select: (state) => state.isLoading || state.matches.some((match) => match.status === 'pending'),
+  })
   const sortedTags = [...tags].sort((first, second) => {
     const firstTime = first.createdAt ? Date.parse(first.createdAt) : Number.NEGATIVE_INFINITY
     const secondTime = second.createdAt ? Date.parse(second.createdAt) : Number.NEGATIVE_INFINITY
@@ -106,6 +109,8 @@ function ImageDetails() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const showSkeleton = isRoutePending || isDeleting
+  const skeletonRows = Array.from({ length: 6 })
 
   const handleConfirmDelete = async () => {
     if (!tagToDelete || isDeleting) {
@@ -181,7 +186,7 @@ function ImageDetails() {
               </p>
             ) : null}
             <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]]:overflow-x-hidden [&_[data-slot=scroll-area-viewport]]:overflow-y-auto [&_[data-slot=scroll-area-viewport]]:overscroll-contain [&_[data-slot=table-container]]:overflow-x-hidden">
-              <Table className="table-fixed text-sm">
+              <Table className="table-fixed text-sm" aria-busy={showSkeleton}>
                 <colgroup>
                   <col className="w-[20%]" />
                   <col className="w-[46%]" />
@@ -191,19 +196,35 @@ function ImageDetails() {
                 </colgroup>
                 <TableHeader>
                   <TableRow className="h-12 border-neutral-800/80 text-xs uppercase tracking-wide text-neutral-400">
-                    <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 font-semibold">Tag</TableHead>
-                    <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 font-semibold">
+                    <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 text-center font-semibold">
+                      Tag
+                    </TableHead>
+                    <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 text-center font-semibold">
                       Manifest breakdown
                     </TableHead>
-                    <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 font-semibold">Size</TableHead>
-                    <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 font-semibold">Updated</TableHead>
+                    <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 text-center font-semibold">
+                      Size
+                    </TableHead>
+                    <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 text-center font-semibold">
+                      Updated
+                    </TableHead>
                     <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 text-center font-semibold">
                       Actions
                     </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedTags.length === 0 ? (
+                  {showSkeleton ? (
+                    skeletonRows.map((_, index) => (
+                      <TableRow key={`skeleton-${index}`} className="h-12 border-neutral-800/80">
+                        {Array.from({ length: 5 }).map((__, cellIndex) => (
+                          <TableCell key={`skeleton-cell-${index}-${cellIndex}`} className="px-4 py-3">
+                            <div className="h-4 w-full rounded bg-neutral-800/70 animate-pulse" />
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    ))
+                  ) : sortedTags.length === 0 ? (
                     <TableRow className="h-12 border-neutral-800/80">
                       <TableCell colSpan={5} className="px-4 py-0 text-center text-sm text-neutral-300">
                         No tags found for this repository.
@@ -223,7 +244,10 @@ function ImageDetails() {
                             tag.manifests?.length ? (
                               <div className="flex flex-col items-center gap-2 text-center">
                                 {tag.manifests.map((manifest) => (
-                                  <div key={manifest.digest} className="flex flex-wrap items-center gap-2 text-xs">
+                                  <div
+                                    key={manifest.digest}
+                                    className="flex flex-wrap items-center justify-center gap-2 text-xs"
+                                  >
                                     <span className="rounded-full border border-neutral-700/70 bg-neutral-900/70 px-2 py-0.5 text-neutral-200">
                                       {manifest.platformLabel}
                                     </span>
@@ -271,7 +295,7 @@ function ImageDetails() {
                                       setDeleteOpen(true)
                                     }}
                                   >
-                                    <IconTrash className="size-4 text-rose-400" />
+                                    <IconTrash className="size-5 text-rose-400" />
                                   </Button>
                                 }
                               />

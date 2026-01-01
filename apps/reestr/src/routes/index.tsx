@@ -1,6 +1,6 @@
-import { IconTrash } from '@tabler/icons-react'
+import { IconHome2, IconTrash } from '@tabler/icons-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, useRouterState } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
 import type { KeyboardEvent } from 'react'
 import { useState } from 'react'
@@ -16,6 +16,7 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
 } from '~/components/ui/alert-dialog'
+import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage } from '~/components/ui/breadcrumb'
 import { Button } from '~/components/ui/button'
 import { ScrollArea } from '~/components/ui/scroll-area'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
@@ -41,6 +42,10 @@ function App() {
     queryFn: () => registryImagesServerFn(),
     initialData,
     staleTime: 30_000,
+  })
+
+  const isRoutePending = useRouterState({
+    select: (state) => state.isLoading || state.matches.some((match) => match.status === 'pending'),
   })
 
   const { images, error, fetchedAt } = data
@@ -76,6 +81,8 @@ function App() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const showSkeleton = isRoutePending || isDeleting
+  const skeletonRows = Array.from({ length: 6 })
 
   const handleConfirmDelete = async () => {
     if (!imageToDelete || isDeleting) {
@@ -118,6 +125,18 @@ function App() {
   return (
     <div className="flex justify-center overflow-x-hidden h-dvh w-full">
       <section className="flex flex-col overflow-x-hidden h-dvh w-full max-w-6xl px-6 py-6 text-neutral-100">
+        <header className="flex items-center mb-4">
+          <Breadcrumb>
+            <BreadcrumbList>
+              <BreadcrumbItem>
+                <BreadcrumbPage className="inline-flex items-center gap-2 leading-none">
+                  <IconHome2 className="size-4" />
+                  Registry
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+        </header>
         <div className="flex min-h-0 flex-1 flex-col rounded-sm border border-neutral-800/80 bg-neutral-950 shadow-[0_0_0_1px_rgba(10,10,10,0.6)]">
           {error ? (
             <p role="alert" className="mt-4 px-6 text-sm text-rose-400">
@@ -125,7 +144,7 @@ function App() {
             </p>
           ) : null}
           <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]]:overflow-x-hidden [&_[data-slot=scroll-area-viewport]]:overflow-y-auto [&_[data-slot=scroll-area-viewport]]:overscroll-contain [&_[data-slot=table-container]]:overflow-x-hidden">
-            <Table className="table-fixed text-sm">
+            <Table className="table-fixed text-sm" aria-busy={showSkeleton}>
               <colgroup>
                 <col className="w-[22%]" />
                 <col className="w-[42%]" />
@@ -145,7 +164,17 @@ function App() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {images.length === 0 ? (
+                {showSkeleton ? (
+                  skeletonRows.map((_, index) => (
+                    <TableRow key={`skeleton-${index}`} className="h-12 border-neutral-800/80">
+                      {Array.from({ length: 5 }).map((__, cellIndex) => (
+                        <TableCell key={`skeleton-cell-${index}-${cellIndex}`} className="px-4 py-3">
+                          <div className="h-4 w-full rounded bg-neutral-800/70 animate-pulse" />
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                ) : images.length === 0 ? (
                   <TableRow className="h-12 border-neutral-800/80">
                     <TableCell colSpan={5} className="px-4 py-0 text-center text-sm text-neutral-300">
                       No images found in the registry.
