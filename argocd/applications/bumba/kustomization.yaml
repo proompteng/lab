@@ -5,4 +5,4 @@ resources:
   - deployment.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/bumba
-    newTag: "91fcf5a0"
+    newTag: "c65d7568"
