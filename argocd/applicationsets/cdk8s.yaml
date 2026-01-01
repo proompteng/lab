@@ -13,7 +13,7 @@ spec:
           - name: bonjour
             path: services/bonjour
             namespace: bonjour
-            image: registry.ide-newton.ts.net/lab/bonjour@sha256:4a9ec36b90a493ac56574429c611c37069a421250f2423bdee0dbb18433ab6f9
+            image: registry.ide-newton.ts.net/lab/bonjour@sha256:8b1ebac20afc95edaf794f52648fb33eff4ef85e6b4e0250cde2ff98af1a298b
             replicas: 1
             automation: manual
             enabled: true
