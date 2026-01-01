@@ -6,7 +6,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path'
 
 import { createTemporalClient } from '@proompteng/temporal-bun-sdk'
 
-import { fatal, repoRoot as defaultRepoRoot } from '../shared/cli'
+import { repoRoot as defaultRepoRoot, fatal } from '../shared/cli'
 
 type Options = {
   repoRoot: string
