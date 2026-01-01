@@ -21,6 +21,18 @@ SignalIngestor -> DecisionEngine -> RiskEngine -> OrderExecutor -> Reconciler
                                    ↘ Persistence (trade_decisions, executions)
 ```
 
+```mermaid
+flowchart LR
+  CH[(ClickHouse ta_signals)] --> ING[SignalIngestor]
+  ING --> DEC[DecisionEngine]
+  DEC --> RISK[RiskEngine]
+  RISK --> EXEC[OrderExecutor]
+  EXEC --> ALPACA[Alpaca API]
+  EXEC --> DB[(Postgres: trade_decisions, executions)]
+  ALPACA --> REC[Reconciler]
+  REC --> DB
+```
+
 ## One‑Shot Execution Steps (implementation within a single Codex run)
 
 ### 1) Create trading modules (code)
