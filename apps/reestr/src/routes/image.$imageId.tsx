@@ -187,7 +187,7 @@ function ImageDetails() {
                   <col className="w-[46%]" />
                   <col className="w-[14%]" />
                   <col className="w-[14%]" />
-                  <col className="w-[6%]" />
+                  <col className="w-[8%]" />
                 </colgroup>
                 <TableHeader>
                   <TableRow className="h-12 border-neutral-800/80 text-xs uppercase tracking-wide text-neutral-400">
@@ -212,16 +212,16 @@ function ImageDetails() {
                   ) : (
                     sortedTags.map((tag) => (
                       <TableRow key={tag.tag} className="border-neutral-800/80">
-                        <TableCell className="px-4 py-3 align-top break-words whitespace-normal">
-                          <div className="flex flex-col gap-1">
+                        <TableCell className="px-4 py-3 align-top text-center break-words whitespace-normal">
+                          <div className="flex flex-col items-center gap-1 text-center">
                             <span className="text-sm font-semibold text-neutral-100">{tag.tag}</span>
                             {tag.error ? <span className="break-words text-xs text-rose-400">{tag.error}</span> : null}
                           </div>
                         </TableCell>
-                        <TableCell className="px-4 py-3 break-words whitespace-normal">
+                        <TableCell className="px-4 py-3 text-center break-words whitespace-normal">
                           {tag.manifestType === 'list' ? (
                             tag.manifests?.length ? (
-                              <div className="flex flex-col gap-2">
+                              <div className="flex flex-col items-center gap-2 text-center">
                                 {tag.manifests.map((manifest) => (
                                   <div key={manifest.digest} className="flex flex-wrap items-center gap-2 text-xs">
                                     <span className="rounded-full border border-neutral-700/70 bg-neutral-900/70 px-2 py-0.5 text-neutral-200">
@@ -245,14 +245,14 @@ function ImageDetails() {
                             <span className="text-xs text-neutral-500">Single manifest</span>
                           )}
                         </TableCell>
-                        <TableCell className="px-4 py-3 text-xs text-neutral-300">
+                        <TableCell className="px-4 py-3 text-center text-xs text-neutral-300">
                           {typeof tag.sizeBytes === 'number' ? (
                             <span className="text-sm font-medium text-neutral-100">{formatSize(tag.sizeBytes)}</span>
                           ) : (
                             <span className="text-xs text-neutral-500">Unknown</span>
                           )}
                         </TableCell>
-                        <TableCell className="px-4 py-3 text-xs text-neutral-300">
+                        <TableCell className="px-4 py-3 text-center text-xs text-neutral-300">
                           {tag.createdAt ? formatTimestamp(tag.createdAt) : '—'}
                         </TableCell>
                         <TableCell className="px-2 py-3 align-middle">
@@ -271,7 +271,7 @@ function ImageDetails() {
                                       setDeleteOpen(true)
                                     }}
                                   >
-                                    <IconTrash className="text-rose-400" />
+                                    <IconTrash className="size-4 text-rose-400" />
                                   </Button>
                                 }
                               />
