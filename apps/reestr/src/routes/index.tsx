@@ -81,7 +81,8 @@ function App() {
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const showSkeleton = isRoutePending || isDeleting
-  const skeletonRows = Array.from({ length: 6 })
+  const skeletonRows = ['row-1', 'row-2', 'row-3', 'row-4', 'row-5', 'row-6']
+  const skeletonCells = ['cell-1', 'cell-2', 'cell-3', 'cell-4', 'cell-5']
 
   const handleConfirmDelete = async () => {
     if (!imageToDelete || isDeleting) {
@@ -175,10 +176,10 @@ function App() {
               </TableHeader>
               <TableBody>
                 {showSkeleton ? (
-                  skeletonRows.map((_, index) => (
-                    <TableRow key={`skeleton-${index}`} className="h-12 border-neutral-800/80">
-                      {Array.from({ length: 5 }).map((__, cellIndex) => (
-                        <TableCell key={`skeleton-cell-${index}-${cellIndex}`} className="px-4 py-3">
+                  skeletonRows.map((rowId) => (
+                    <TableRow key={rowId} className="h-12 border-neutral-800/80">
+                      {skeletonCells.map((cellId) => (
+                        <TableCell key={`${rowId}-${cellId}`} className="px-4 py-3">
                           <div className="h-4 w-full rounded bg-neutral-800/70 animate-pulse" />
                         </TableCell>
                       ))}

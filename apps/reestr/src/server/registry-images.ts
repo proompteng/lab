@@ -33,6 +33,11 @@ function pickLatestTag(details: TagDetails[]): TagDetails | undefined {
   return details.find((detail) => detail.sizeBytes)
 }
 
+const isMissingManifest = (error?: string) => error?.includes('Manifest request failed (404)')
+
+const filterMissingManifestTagDetails = (details: TagDetails[]) =>
+  details.filter((detail) => !isMissingManifest(detail.error))
+
 async function computeRegistryImages(): Promise<RegistryImagesResponse> {
   const fetchedAt = new Date().toISOString()
 
@@ -69,9 +74,7 @@ async function computeRegistryImages(): Promise<RegistryImagesResponse> {
 
         if (tags.length) {
           tagDetails = await Promise.all(tags.map((tag) => fetchTagDetails(repository, tag)))
-          const filteredDetails = tagDetails.filter(
-            (detail) => !detail.error?.includes('Manifest request failed (404)'),
-          )
+          const filteredDetails = filterMissingManifestTagDetails(tagDetails)
           const latestTag = pickLatestTag(filteredDetails)
           sizeBytes = latestTag?.sizeBytes
           sizeTag = latestTag?.tag
@@ -81,9 +84,7 @@ async function computeRegistryImages(): Promise<RegistryImagesResponse> {
           }
         }
 
-        const filteredTags = tagDetails
-          .filter((detail) => !detail.error?.includes('Manifest request failed (404)'))
-          .map((detail) => detail.tag)
+        const filteredTags = filterMissingManifestTagDetails(tagDetails).map((detail) => detail.tag)
 
         if (!filteredTags.length) {
           return null
@@ -126,3 +127,7 @@ export const registryImagesServerFn = createServerFn({ method: 'GET' }).handler(
   }
   return value
 })
+
+export const __private = {
+  filterMissingManifestTagDetails,
+}

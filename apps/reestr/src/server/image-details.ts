@@ -21,6 +21,9 @@ const buildTotalSize = (tags: TagManifestBreakdown[]) => {
   }
 }
 
+const filterMissingManifestBreakdowns = (tags: TagManifestBreakdown[]) =>
+  tags.filter((tag) => !tag.error?.includes('Manifest request failed (404)'))
+
 export const imageDetailsServerFn = createServerFn({ method: 'POST' }).handler(async ({ data }) => {
   const fetchedAt = new Date().toISOString()
   const repository = (data as { repository: string }).repository
@@ -38,7 +41,7 @@ export const imageDetailsServerFn = createServerFn({ method: 'POST' }).handler(a
   }
 
   const tagBreakdowns = await Promise.all(tagsResult.tags.map((tag) => fetchTagManifestBreakdown(repository, tag)))
-  const filteredBreakdowns = tagBreakdowns.filter((tag) => !tag.error?.includes('Manifest request failed (404)'))
+  const filteredBreakdowns = filterMissingManifestBreakdowns(tagBreakdowns)
   const { total, hasTotal } = buildTotalSize(filteredBreakdowns)
 
   return {
@@ -51,3 +54,7 @@ export const imageDetailsServerFn = createServerFn({ method: 'POST' }).handler(a
 })
 
 export type { ImageDetailsResponse }
+
+export const __private = {
+  filterMissingManifestBreakdowns,
+}
