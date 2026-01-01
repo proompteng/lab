@@ -388,3 +388,134 @@ describe('bumba completion parsing', () => {
     expect(() => parseCompletionOutput('plain text response')).toThrow('completion response was not valid JSON')
   })
 })
+
+describe('bumba embeddings', () => {
+  const restoreEnv = (key: string, value: string | undefined) => {
+    if (value === undefined) {
+      delete process.env[key]
+    } else {
+      process.env[key] = value
+    }
+  }
+
+  it('batches embedding requests for Ollama embed API', async () => {
+    const previousFetch = globalThis.fetch
+    const previousEnv = {
+      OPENAI_API_BASE_URL: process.env.OPENAI_API_BASE_URL,
+      OPENAI_EMBEDDING_API_BASE_URL: process.env.OPENAI_EMBEDDING_API_BASE_URL,
+      OPENAI_EMBEDDING_MODEL: process.env.OPENAI_EMBEDDING_MODEL,
+      OPENAI_EMBEDDING_DIMENSION: process.env.OPENAI_EMBEDDING_DIMENSION,
+      OPENAI_EMBEDDING_BATCH_SIZE: process.env.OPENAI_EMBEDDING_BATCH_SIZE,
+      OPENAI_EMBEDDING_TIMEOUT_MS: process.env.OPENAI_EMBEDDING_TIMEOUT_MS,
+      OPENAI_EMBEDDING_TRUNCATE: process.env.OPENAI_EMBEDDING_TRUNCATE,
+      OPENAI_EMBEDDING_KEEP_ALIVE: process.env.OPENAI_EMBEDDING_KEEP_ALIVE,
+    }
+
+    process.env.OPENAI_API_BASE_URL = 'http://127.0.0.1:11434/v1'
+    process.env.OPENAI_EMBEDDING_API_BASE_URL = 'http://127.0.0.1:11434/api'
+    process.env.OPENAI_EMBEDDING_MODEL = 'qwen3-embedding:0.6b'
+    process.env.OPENAI_EMBEDDING_DIMENSION = '3'
+    process.env.OPENAI_EMBEDDING_BATCH_SIZE = '2'
+    process.env.OPENAI_EMBEDDING_TIMEOUT_MS = '5000'
+    process.env.OPENAI_EMBEDDING_TRUNCATE = 'false'
+    process.env.OPENAI_EMBEDDING_KEEP_ALIVE = '30m'
+
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input instanceof Request
+              ? input.url
+              : ''
+      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {}
+      requests.push({ url, body })
+
+      return new Response(
+        JSON.stringify({
+          embeddings: [
+            [0, 1, 2],
+            [3, 4, 5],
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        },
+      )
+    }) as typeof fetch
+
+    try {
+      const first = activities.createEmbedding({ text: 'alpha' })
+      const second = activities.createEmbedding({ text: 'beta' })
+      const [resultA, resultB] = await Promise.all([first, second])
+
+      expect(resultA.embedding).toEqual([0, 1, 2])
+      expect(resultB.embedding).toEqual([3, 4, 5])
+      expect(requests).toHaveLength(1)
+      expect(requests[0]?.url).toBe('http://127.0.0.1:11434/api/embed')
+      expect(requests[0]?.body.model).toBe('qwen3-embedding:0.6b')
+      expect(requests[0]?.body.input).toEqual(['alpha', 'beta'])
+      expect(requests[0]?.body.truncate).toBe(false)
+      expect(requests[0]?.body.keep_alive).toBe('30m')
+    } finally {
+      globalThis.fetch = previousFetch
+      for (const [key, value] of Object.entries(previousEnv)) {
+        restoreEnv(key, value)
+      }
+    }
+  })
+
+  it('uses the embeddings endpoint for OpenAI-compatible bases', async () => {
+    const previousFetch = globalThis.fetch
+    const previousEnv = {
+      OPENAI_API_BASE_URL: process.env.OPENAI_API_BASE_URL,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+      OPENAI_EMBEDDING_API_BASE_URL: process.env.OPENAI_EMBEDDING_API_BASE_URL,
+      OPENAI_EMBEDDING_DIMENSION: process.env.OPENAI_EMBEDDING_DIMENSION,
+      OPENAI_EMBEDDING_BATCH_SIZE: process.env.OPENAI_EMBEDDING_BATCH_SIZE,
+    }
+
+    process.env.OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
+    process.env.OPENAI_API_KEY = 'test-key'
+    delete process.env.OPENAI_EMBEDDING_API_BASE_URL
+    process.env.OPENAI_EMBEDDING_DIMENSION = '4'
+    process.env.OPENAI_EMBEDDING_BATCH_SIZE = '1'
+
+    let requestUrl = ''
+    let requestBody: Record<string, unknown> | null = null
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      requestUrl =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input instanceof Request
+              ? input.url
+              : ''
+      requestBody = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null
+
+      return new Response(JSON.stringify({ data: [{ embedding: [1, 1, 1, 1] }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+
+    try {
+      const result = await activities.createEmbedding({ text: 'hello' })
+      expect(result.embedding).toEqual([1, 1, 1, 1])
+      expect(requestUrl).toBe('https://api.openai.com/v1/embeddings')
+      expect(requestBody?.input).toEqual(['hello'])
+      expect(requestBody?.dimensions).toBe(4)
+    } finally {
+      globalThis.fetch = previousFetch
+      for (const [key, value] of Object.entries(previousEnv)) {
+        restoreEnv(key, value)
+      }
+    }
+  })
+})

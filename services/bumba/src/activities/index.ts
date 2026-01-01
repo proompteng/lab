@@ -277,6 +277,16 @@ const normalizeOptionalNumber = (value: unknown) => {
   return null
 }
 
+const normalizeOptionalBoolean = (value: unknown) => {
+  if (typeof value === 'boolean') return value
+  const trimmed = normalizeOptionalText(value)
+  if (!trimmed) return null
+  const normalized = trimmed.toLowerCase()
+  if (['true', '1', 'yes', 'y'].includes(normalized)) return true
+  if (['false', '0', 'no', 'n'].includes(normalized)) return false
+  return null
+}
+
 const shouldSkipRepoFile = (filePath: string) => {
   const normalized = filePath.trim()
   if (!normalized) return true
@@ -370,6 +380,22 @@ const loadEmbeddingMaxInputChars = () => {
   return maxInputChars
 }
 
+const loadEmbeddingBatchSize = () => {
+  const batchSize = Number.parseInt(process.env.OPENAI_EMBEDDING_BATCH_SIZE ?? '1', 10)
+  if (!Number.isFinite(batchSize) || batchSize <= 0) {
+    throw new Error('OPENAI_EMBEDDING_BATCH_SIZE must be a positive integer')
+  }
+  return batchSize
+}
+
+const resolveEmbeddingBaseUrl = (apiBaseUrl: string) => {
+  const override = normalizeOptionalText(process.env.OPENAI_EMBEDDING_API_BASE_URL)
+  const raw = override ?? apiBaseUrl
+  return raw.replace(/\/+$/, '')
+}
+
+const isOllamaEmbedBaseUrl = (rawBaseUrl: string) => rawBaseUrl.endsWith('/api')
+
 const resolveEmbeddingDefaults = (apiBaseUrl: string) => {
   const hosted = isHostedOpenAiBaseUrl(apiBaseUrl)
   return {
@@ -393,13 +419,28 @@ const loadEmbeddingConfig = () => {
       'missing OPENAI_API_KEY; set it or point OPENAI_API_BASE_URL at an OpenAI-compatible endpoint (e.g. Ollama)',
     )
   }
+  const embeddingBaseUrl = resolveEmbeddingBaseUrl(apiBaseUrl)
   const defaults = resolveEmbeddingDefaults(apiBaseUrl)
   const model = process.env.OPENAI_EMBEDDING_MODEL ?? defaults.model
   const dimension = loadEmbeddingDimension(defaults.dimension)
   const timeoutMs = loadEmbeddingTimeoutMs()
   const maxInputChars = loadEmbeddingMaxInputChars()
+  const truncate = normalizeOptionalBoolean(process.env.OPENAI_EMBEDDING_TRUNCATE) ?? false
+  const keepAlive = normalizeOptionalText(process.env.OPENAI_EMBEDDING_KEEP_ALIVE)
+  const batchSize = loadEmbeddingBatchSize()
 
-  return { apiKey, apiBaseUrl, model, dimension, timeoutMs, maxInputChars }
+  return {
+    apiKey,
+    apiBaseUrl,
+    embeddingBaseUrl,
+    model,
+    dimension,
+    timeoutMs,
+    maxInputChars,
+    truncate,
+    keepAlive,
+    batchSize,
+  }
 }
 
 const vectorToPgArray = (values: number[]) => `[${values.join(',')}]`
@@ -1648,44 +1689,94 @@ export const parseCompletionOutput = (rawText: string) => {
   throw new Error('completion response was not valid JSON')
 }
 
-const embedText = async (text: string): Promise<number[]> => {
-  const { apiKey, apiBaseUrl, model, dimension, timeoutMs, maxInputChars } = loadEmbeddingConfig()
-  if (text.length > maxInputChars) {
-    throw new Error(`embedding input too large (${text.length} chars; max ${maxInputChars})`)
+const normalizeEmbeddingMatrix = (raw: unknown): number[][] | null => {
+  if (!Array.isArray(raw)) return null
+  if (raw.length === 0) return []
+  const first = raw[0]
+  if (Array.isArray(first)) {
+    const matrix = raw as unknown[][]
+    for (const row of matrix) {
+      if (!Array.isArray(row) || row.some((value) => typeof value !== 'number')) {
+        return null
+      }
+    }
+    return matrix as number[][]
+  }
+  if (raw.some((value) => typeof value !== 'number')) return null
+  return [raw as number[]]
+}
+
+const requestEmbeddingBatch = async (texts: string[]): Promise<number[][]> => {
+  const { apiKey, embeddingBaseUrl, model, dimension, timeoutMs, maxInputChars, truncate, keepAlive } =
+    loadEmbeddingConfig()
+
+  for (const text of texts) {
+    if (text.length > maxInputChars) {
+      throw new Error(`embedding input too large (${text.length} chars; max ${maxInputChars})`)
+    }
   }
 
   const timeoutSignal = AbortSignal.timeout(timeoutMs)
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+  }
+  if (apiKey) {
+    headers.authorization = `Bearer ${apiKey}`
+  }
+
+  const isOllamaEmbed = isOllamaEmbedBaseUrl(embeddingBaseUrl)
+  const url = `${embeddingBaseUrl}/${isOllamaEmbed ? 'embed' : 'embeddings'}`
+  const body = isOllamaEmbed
+    ? {
+        model,
+        input: texts,
+        ...(truncate === null ? {} : { truncate }),
+        ...(keepAlive ? { keep_alive: keepAlive } : {}),
+      }
+    : {
+        model,
+        input: texts,
+        dimensions: dimension,
+      }
 
   try {
-    const headers: Record<string, string> = {
-      'content-type': 'application/json',
-    }
-    if (apiKey) {
-      headers.authorization = `Bearer ${apiKey}`
-    }
-
-    const response = await fetch(`${apiBaseUrl}/embeddings`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ model, input: text }),
-      signal: timeoutSignal,
-    })
+    const response = await withModelConcurrency(() =>
+      fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: timeoutSignal,
+      }),
+    )
 
     if (!response.ok) {
-      const body = await response.text()
-      throw new Error(`embedding request failed (${response.status}): ${body}`)
+      const errorBody = await response.text()
+      throw new Error(`embedding request failed (${response.status}): ${errorBody}`)
     }
 
-    const json = (await response.json()) as { data?: { embedding?: number[] }[] }
-    const embedding = json.data?.[0]?.embedding
-    if (!embedding || !Array.isArray(embedding)) {
-      throw new Error('embedding response missing data[0].embedding')
+    const json = (await response.json()) as {
+      data?: { embedding?: number[] }[]
+      embeddings?: unknown
+      embedding?: unknown
     }
-    if (embedding.length !== dimension) {
-      throw new Error(`embedding dimension mismatch: expected ${dimension} but got ${embedding.length}`)
+    const rawEmbeddings = isOllamaEmbed
+      ? (json.embeddings ?? json.embedding)
+      : json.data?.map((entry) => entry.embedding)
+    const embeddings = normalizeEmbeddingMatrix(rawEmbeddings)
+    if (!embeddings) {
+      throw new Error('embedding response missing embeddings')
+    }
+    if (embeddings.length !== texts.length) {
+      throw new Error(`embedding response missing embeddings for ${texts.length} inputs`)
     }
 
-    return embedding
+    for (const embedding of embeddings) {
+      if (embedding.length !== dimension) {
+        throw new Error(`embedding dimension mismatch: expected ${dimension} but got ${embedding.length}`)
+      }
+    }
+
+    return embeddings
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       throw new Error(`embedding request timed out after ${timeoutMs}ms`)
@@ -1693,6 +1784,76 @@ const embedText = async (text: string): Promise<number[]> => {
     throw error
   }
 }
+
+type EmbeddingRequest = {
+  text: string
+  resolve: (embedding: number[]) => void
+  reject: (error: Error) => void
+}
+
+let embeddingQueue: EmbeddingRequest[] = []
+let embeddingFlushScheduled = false
+let embeddingFlushPromise: Promise<void> | null = null
+
+const scheduleEmbeddingFlush = () => {
+  if (embeddingFlushScheduled) return
+  embeddingFlushScheduled = true
+  queueMicrotask(() => {
+    embeddingFlushScheduled = false
+    void flushEmbeddingQueue()
+  })
+}
+
+const flushEmbeddingQueue = async (): Promise<void> => {
+  if (embeddingFlushPromise) return embeddingFlushPromise
+
+  embeddingFlushPromise = (async () => {
+    const tasks: Promise<void>[] = []
+    while (embeddingQueue.length > 0) {
+      let batchSize = 1
+      try {
+        batchSize = loadEmbeddingBatchSize()
+      } catch (error) {
+        const batch = embeddingQueue.splice(0)
+        const failure = toError(error)
+        batch.forEach((item) => item.reject(failure))
+        return
+      }
+
+      const batch = embeddingQueue.splice(0, batchSize)
+      tasks.push(
+        (async () => {
+          const texts = batch.map((item) => item.text)
+          try {
+            const embeddings = await requestEmbeddingBatch(texts)
+            embeddings.forEach((embedding, index) => {
+              batch[index]?.resolve(embedding)
+            })
+          } catch (error) {
+            const failure = toError(error)
+            batch.forEach((item) => item.reject(failure))
+          }
+        })(),
+      )
+    }
+    if (tasks.length > 0) {
+      await Promise.allSettled(tasks)
+    }
+  })().finally(() => {
+    embeddingFlushPromise = null
+    if (embeddingQueue.length > 0) {
+      scheduleEmbeddingFlush()
+    }
+  })
+
+  return embeddingFlushPromise
+}
+
+const embedText = (text: string): Promise<number[]> =>
+  new Promise((resolve, reject) => {
+    embeddingQueue.push({ text, resolve, reject })
+    scheduleEmbeddingFlush()
+  })
 
 const withDefaultSslMode = (rawUrl: string) => {
   let url: URL

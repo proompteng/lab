@@ -123,6 +123,14 @@ spec:
               value: qwen3-embedding:0.6b
             - name: OPENAI_EMBEDDING_DIMENSION
               value: "1024"
+            - name: OPENAI_EMBEDDING_API_BASE_URL
+              value: http://192.168.1.190:11434/api
+            - name: OPENAI_EMBEDDING_BATCH_SIZE
+              value: "16"
+            - name: OPENAI_EMBEDDING_KEEP_ALIVE
+              value: 30m
+            - name: OPENAI_EMBEDDING_TRUNCATE
+              value: "false"
             - name: OPENAI_EMBEDDING_TIMEOUT_MS
               value: "60000"
           readinessProbe:
