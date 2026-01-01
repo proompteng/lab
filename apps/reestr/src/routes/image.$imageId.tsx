@@ -108,6 +108,9 @@ function ImageDetails() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [pruneOpen, setPruneOpen] = useState(false)
+  const [pruneError, setPruneError] = useState<string | null>(null)
+  const [isPruning, setIsPruning] = useState(false)
   const showSkeleton = isRoutePending || isDeleting
   const skeletonRows = Array.from({ length: 6 })
 
@@ -135,6 +138,53 @@ function ImageDetails() {
       setIsDeleting(false)
     }
   }
+
+  const handleConfirmPrune = async () => {
+    if (isPruning) {
+      return
+    }
+
+    const tagsToDelete = sortedTags.slice(3)
+    if (tagsToDelete.length === 0) {
+      setPruneError('No tags to prune.')
+      return
+    }
+
+    setIsPruning(true)
+    setPruneError(null)
+
+    try {
+      const results = await Promise.allSettled(
+        tagsToDelete.map((tag) => runDeleteTag({ data: { repository, tag: tag.tag } })),
+      )
+      const failedTags = results
+        .map((result, index) => ({ result, tag: tagsToDelete[index]?.tag }))
+        .filter(({ result }) => result.status === 'rejected')
+        .map(({ tag }) => tag)
+        .filter(Boolean) as string[]
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: imageDetailsQueryKey(repository) }),
+        queryClient.invalidateQueries({ queryKey: ['registryImages'] }),
+      ])
+
+      if (failedTags.length) {
+        const preview = failedTags.slice(0, 3).join(', ')
+        const suffix = failedTags.length > 3 ? ` and ${failedTags.length - 3} more` : ''
+        setPruneError(`Failed to delete ${failedTags.length} tag(s): ${preview}${suffix}`)
+        setIsPruning(false)
+        return
+      }
+
+      setIsPruning(false)
+      setPruneOpen(false)
+    } catch (error) {
+      setPruneError(error instanceof Error ? error.message : 'Failed to prune tags')
+      setIsPruning(false)
+    }
+  }
+
+  const showLoadingState = showSkeleton || isPruning
 
   return (
     <div className="flex justify-center overflow-x-hidden h-dvh w-full">
@@ -168,12 +218,26 @@ function ImageDetails() {
                   <p className="text-xs text-neutral-500">Last refreshed {formattedTime}</p>
                 </div>
               </div>
-              <div className="rounded-sm border border-neutral-800/80 bg-neutral-950 px-4 py-3 text-right">
-                <p className="text-[11px] uppercase tracking-wide text-neutral-500">Total size</p>
-                <p className="text-lg font-semibold text-neutral-100">
-                  {hasTotalSize && totalSizeBytes !== undefined ? formatSize(totalSizeBytes) : 'Unknown'}
-                </p>
-                <p className="text-xs text-neutral-500">{tags.length} tags</p>
+              <div className="flex flex-col items-end gap-3">
+                <div className="rounded-sm border border-neutral-800/80 bg-neutral-950 px-4 py-3 text-right">
+                  <p className="text-[11px] uppercase tracking-wide text-neutral-500">Total size</p>
+                  <p className="text-lg font-semibold text-neutral-100">
+                    {hasTotalSize && totalSizeBytes !== undefined ? formatSize(totalSizeBytes) : 'Unknown'}
+                  </p>
+                  <p className="text-xs text-neutral-500">{tags.length} tags</p>
+                </div>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={sortedTags.length <= 3 || isPruning}
+                  onClick={() => {
+                    setPruneError(null)
+                    setPruneOpen(true)
+                  }}
+                >
+                  Prune old tags
+                </Button>
               </div>
             </div>
           </header>
@@ -185,7 +249,7 @@ function ImageDetails() {
               </p>
             ) : null}
             <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]]:overflow-x-hidden [&_[data-slot=scroll-area-viewport]]:overflow-y-auto [&_[data-slot=scroll-area-viewport]]:overscroll-contain [&_[data-slot=table-container]]:overflow-x-hidden">
-              <Table className="table-fixed text-sm" aria-busy={showSkeleton}>
+              <Table className="table-fixed text-sm" aria-busy={showLoadingState}>
                 <colgroup>
                   <col className="w-[20%]" />
                   <col className="w-[46%]" />
@@ -213,7 +277,7 @@ function ImageDetails() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {showSkeleton ? (
+                  {showLoadingState ? (
                     skeletonRows.map((_, index) => (
                       <TableRow key={`skeleton-${index}`} className="h-12 border-neutral-800/80">
                         {Array.from({ length: 5 }).map((__, cellIndex) => (
@@ -288,6 +352,7 @@ function ImageDetails() {
                                     variant="ghost"
                                     size="icon-sm"
                                     aria-label={`Delete ${tag.tag}`}
+                                    disabled={isPruning}
                                     onClick={() => {
                                       setTagToDelete(tag)
                                       setDeleteError(null)
@@ -345,6 +410,39 @@ function ImageDetails() {
                   onClick={handleConfirmDelete}
                 >
                   {isDeleting ? 'Deleting…' : 'Delete'}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+          <AlertDialog
+            open={pruneOpen}
+            onOpenChange={(open) => {
+              if (!open && isPruning) {
+                return
+              }
+
+              setPruneOpen(open)
+
+              if (!open) {
+                setPruneError(null)
+              }
+            }}
+          >
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Prune old tags</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will delete {Math.max(0, sortedTags.length - 3)} tag(s). The 3 most recently updated tags will be
+                  kept.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+
+              {pruneError ? <p className="text-xs text-rose-400">{pruneError}</p> : null}
+
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={isPruning}>Cancel</AlertDialogCancel>
+                <AlertDialogAction variant="destructive" disabled={isPruning} onClick={handleConfirmPrune}>
+                  {isPruning ? 'Pruning…' : 'Prune'}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
