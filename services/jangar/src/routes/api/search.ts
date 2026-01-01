@@ -92,12 +92,19 @@ const rankFiles = (matches: AtlasSearchMatch[], limit: number) => {
       continue
     }
 
-    if (!existing.summary && next.summary) {
-      ranked.set(key, { ...existing, summary: next.summary })
+    let updated = false
+    const merged: AtlasSearchItem = { ...existing }
+    if (!merged.summary && next.summary) {
+      merged.summary = next.summary
+      updated = true
     }
     if (next.tags && next.tags.length > 0) {
-      const combined = new Set([...(existing.tags ?? []), ...next.tags])
-      ranked.set(key, { ...existing, tags: Array.from(combined) })
+      const combined = new Set([...(merged.tags ?? []), ...next.tags])
+      merged.tags = Array.from(combined)
+      updated = true
+    }
+    if (updated) {
+      ranked.set(key, merged)
     }
   }
 

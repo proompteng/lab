@@ -104,6 +104,7 @@ function AtlasSearchPage() {
   const astCache = React.useRef(new Map<string, AtlasAstPreview>())
   const previewAbortRef = React.useRef<AbortController | null>(null)
   const astAbortRef = React.useRef<AbortController | null>(null)
+  const closeRequestedRef = React.useRef(false)
 
   React.useEffect(() => {
     setQuery(searchState.query)
@@ -137,19 +138,22 @@ function AtlasSearchPage() {
   }, [])
 
   React.useEffect(() => {
-    if (!searchState.query.trim()) {
+    const trimmedQuery = searchState.query.trim()
+    const trimmedRepository = searchState.repository.trim()
+    const trimmedPathPrefix = searchState.pathPrefix.trim()
+    if (!trimmedQuery) {
       setSearchResults([])
       setSearchStatus(null)
       return
     }
     void runSearch({
-      query: searchState.query.trim(),
-      repository: searchState.repository.trim() || undefined,
-      pathPrefix: searchState.pathPrefix.trim() || undefined,
+      query: trimmedQuery,
+      repository: trimmedRepository || undefined,
+      pathPrefix: trimmedPathPrefix || undefined,
       ref: MAIN_REF,
       limit: fetchLimit,
     })
-  }, [fetchLimit, runSearch, searchState])
+  }, [fetchLimit, runSearch, searchState.pathPrefix, searchState.query, searchState.repository])
 
   const submitSearch = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -203,17 +207,7 @@ function AtlasSearchPage() {
     [navigate, searchState],
   )
 
-  const openPreview = React.useCallback(
-    (item: AtlasFileItem) => {
-      setSelectedItem(item)
-      setSheetOpen(true)
-      setActiveTab('content')
-      updatePanelSearch({ open: true, tab: 'content', item })
-    },
-    [updatePanelSearch],
-  )
-
-  const closePreview = React.useCallback(() => {
+  const resetPreviewState = React.useCallback(() => {
     previewAbortRef.current?.abort()
     astAbortRef.current?.abort()
     setSelectedItem(null)
@@ -224,8 +218,24 @@ function AtlasSearchPage() {
     setFilePreviewError(null)
     setAstError(null)
     setSheetOpen(false)
+  }, [])
+
+  const openPreview = React.useCallback(
+    (item: AtlasFileItem) => {
+      closeRequestedRef.current = false
+      setSelectedItem(item)
+      setSheetOpen(true)
+      setActiveTab('content')
+      updatePanelSearch({ open: true, tab: 'content', item })
+    },
+    [updatePanelSearch],
+  )
+
+  const closePreview = React.useCallback(() => {
+    closeRequestedRef.current = true
+    resetPreviewState()
     updatePanelSearch({ open: false, tab: 'content' })
-  }, [updatePanelSearch])
+  }, [resetPreviewState, updatePanelSearch])
 
   const loadFilePreview = React.useCallback(async (item: AtlasFileItem) => {
     if (!item.path) {
@@ -327,18 +337,25 @@ function AtlasSearchPage() {
 
   React.useEffect(() => {
     if (!searchState.panelOpen) {
-      if (sheetOpen) closePreview()
+      closeRequestedRef.current = false
+      if (sheetOpen || selectedItem) {
+        resetPreviewState()
+      }
       return
     }
+    if (closeRequestedRef.current) return
     setSheetOpen(true)
     setActiveTab(searchState.panelTab)
 
     const panelPath = searchState.panelPath.trim()
-    if (!panelPath) return
+    const panelFileVersionId = searchState.panelFileVersionId.trim()
+    if (!panelPath && !panelFileVersionId) {
+      closePreview()
+      return
+    }
 
     const panelRepo = searchState.panelRepository.trim()
     const panelRef = searchState.panelRef.trim() || MAIN_REF
-    const panelFileVersionId = searchState.panelFileVersionId.trim()
     const match = searchResults.find((item) => {
       if (!item.path) return false
       if (panelFileVersionId && item.fileVersionId === panelFileVersionId) return true
@@ -357,6 +374,7 @@ function AtlasSearchPage() {
     setSelectedItem(match ?? fallbackItem)
   }, [
     closePreview,
+    resetPreviewState,
     searchResults,
     searchState.panelFileVersionId,
     searchState.panelOpen,
@@ -365,12 +383,14 @@ function AtlasSearchPage() {
     searchState.panelRepository,
     searchState.panelTab,
     sheetOpen,
+    selectedItem,
   ])
 
   const totalResults = searchResults.length
   const hasMore = totalResults >= fetchLimit && fetchLimit < MAX_PAGE_FETCH_LIMIT
   const totalPages = Math.max(1, Math.ceil((totalResults + (hasMore ? pageSize : 0)) / pageSize))
-  const clampedPage = Math.min(currentPage, totalPages)
+  const shouldHoldPage = totalResults > 0 && fetchLimit > totalResults
+  const clampedPage = shouldHoldPage ? currentPage : Math.min(currentPage, totalPages)
   const pageStartIndex = (clampedPage - 1) * pageSize
   const pageResults = searchResults.slice(pageStartIndex, pageStartIndex + pageSize)
   const rangeStart = totalResults > 0 ? pageStartIndex + 1 : 0
@@ -384,7 +404,9 @@ function AtlasSearchPage() {
   }, [clampedPage, totalPages])
   const isCapped = fetchLimit >= MAX_PAGE_FETCH_LIMIT && totalResults >= MAX_PAGE_FETCH_LIMIT
   const totalLabel = hasMore ? `${totalResults}+` : `${totalResults}`
-  const rangeLabel = totalResults === 0 ? 'No results yet.' : `Showing ${rangeStart}-${rangeEnd} of ${totalLabel}`
+  const rangeLabel = totalResults === 0 ? 'No results yet.' : `${rangeStart}-${rangeEnd} of ${totalLabel}`
+  const pageLabel = totalPages > 1 ? `Page ${clampedPage}/${totalPages}` : 'Page 1'
+  const capLabel = isCapped ? `Capped at ${MAX_PAGE_FETCH_LIMIT}` : null
 
   const goToPage = React.useCallback(
     (page: number) => {
@@ -562,14 +584,11 @@ function AtlasSearchPage() {
       <section className="flex min-h-0 flex-1 flex-col gap-2">
         <AtlasSectionHeader
           title="Results"
-          count={totalResults}
           actions={
-            <div className="flex flex-col items-end text-[11px] text-muted-foreground">
-              <span>{rangeLabel}</span>
-              <span>
-                Page {clampedPage} of {totalPages}
-              </span>
-              {isCapped ? <span>Showing the first {MAX_PAGE_FETCH_LIMIT} results.</span> : null}
+            <div className="flex flex-wrap items-center text-[11px] text-muted-foreground">
+              <span className="tabular-nums pr-2">{rangeLabel}</span>
+              <span className="tabular-nums border-l border-border/60 px-2">{pageLabel}</span>
+              {capLabel ? <span className="hidden border-l border-border/60 pl-2 sm:inline">{capLabel}</span> : null}
             </div>
           }
         />
@@ -668,6 +687,7 @@ function AtlasSearchPage() {
         open={sheetOpen}
         onOpenChange={(open) => {
           if (open) {
+            closeRequestedRef.current = false
             if (selectedItem) {
               updatePanelSearch({ open: true, tab: activeTab, item: selectedItem })
             }
