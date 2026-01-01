@@ -488,7 +488,7 @@ Persist structured learning from each run so future prompts and judge decisions 
 - Embedding provider is controlled by:
   - `OPENAI_API_BASE_URL` / `OPENAI_API_KEY`
   - `OPENAI_EMBEDDING_MODEL` / `OPENAI_EMBEDDING_DIMENSION`
-  - Self-hosted defaults: `qwen3-embedding:0.6b`, dimension `1024`
+  - Self-hosted defaults: `qwen3-embedding-saigak:0.6b`, dimension `1024`
   - OpenAI defaults: `text-embedding-3-small`, dimension `1536`
 
 ### Acceptance criteria

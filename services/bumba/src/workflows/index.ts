@@ -92,7 +92,7 @@ const cleanupEnrichmentTimeouts = {
 }
 
 const PARENT_CLOSE_POLICY_ABANDON = 2
-const CHILD_WORKFLOW_BATCH_SIZE = 10
+const DEFAULT_CHILD_WORKFLOW_BATCH_SIZE = 24
 const CHILD_WORKFLOW_PROGRESS_INTERVAL = 10
 const CHILD_WORKFLOW_COMPLETED_SIGNAL = '__childWorkflowCompleted'
 
@@ -118,6 +118,21 @@ const getCauseError = (cause: Cause.Cause<unknown>): Error | undefined => {
 const isWorkflowBlocked = (cause: Cause.Cause<unknown>): boolean => {
   const error = getCauseError(cause)
   return error instanceof WorkflowBlockedError
+}
+
+const clampPositiveNumber = (value: number | null | undefined, fallback?: number) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return fallback
+  }
+  return Math.floor(value)
+}
+
+const resolveChildWorkflowConcurrency = (input: { childWorkflowConcurrency?: number; maxFiles?: number }) => {
+  const maxFilesConcurrency = clampPositiveNumber(input.maxFiles)
+  return (
+    clampPositiveNumber(input.childWorkflowConcurrency, maxFilesConcurrency ?? DEFAULT_CHILD_WORKFLOW_BATCH_SIZE) ??
+    DEFAULT_CHILD_WORKFLOW_BATCH_SIZE
+  )
 }
 
 type ChildWorkflowCompletion = {
@@ -168,6 +183,7 @@ const EnrichRepositoryInput = Schema.Struct({
   pathPrefix: Schema.optional(Schema.String),
   maxFiles: Schema.optional(Schema.Number),
   files: Schema.optional(Schema.Array(Schema.String)),
+  childWorkflowConcurrency: Schema.optional(Schema.Number),
   queuedCount: Schema.optional(Schema.Number),
   stats: Schema.optional(
     Schema.Struct({
@@ -382,14 +398,6 @@ export const workflows = [
                 filePath,
                 error: error.message,
               })
-              return Effect.succeed<EnrichOutput>({
-                summary: 'Unknown (model timeout)',
-                enriched: '- Model enrichment timed out; output unavailable.',
-                metadata: {
-                  modelTimeout: true,
-                  error: error.message,
-                },
-              })
             }
             return Effect.failCause(cause)
           },
@@ -562,6 +570,8 @@ export const workflows = [
       Effect.gen(function* () {
         const { repoRoot, repository, ref, commit, context, pathPrefix, maxFiles, eventDeliveryId } = input
 
+        const childWorkflowBatchSize = resolveChildWorkflowConcurrency(input)
+
         logWorkflow('enrichRepository.started', {
           workflowId: info.workflowId,
           runId: info.runId,
@@ -574,6 +584,7 @@ export const workflows = [
           pathPrefix: pathPrefix ?? null,
           maxFiles: maxFiles ?? null,
           providedFiles: input.files ? input.files.length : null,
+          childWorkflowConcurrency: childWorkflowBatchSize,
         })
 
         const ingestion = eventDeliveryId
@@ -634,7 +645,7 @@ export const workflows = [
 
         const run = Effect.gen(function* () {
           while (nextIndex < files.length || pending.size > 0) {
-            while (pending.size < CHILD_WORKFLOW_BATCH_SIZE && nextIndex < files.length) {
+            while (pending.size < childWorkflowBatchSize && nextIndex < files.length) {
               const filePath = files[nextIndex]
               const childWorkflowId = `${info.workflowId}-child-${info.runId}-${childSequence}`
               childSequence += 1
@@ -665,7 +676,7 @@ export const workflows = [
               )
             }
 
-            if (started > 0 && (started % CHILD_WORKFLOW_BATCH_SIZE === 0 || started === files.length)) {
+            if (started > 0 && (started % childWorkflowBatchSize === 0 || started === files.length)) {
               logWorkflow('enrichRepository.childrenStarted', {
                 workflowId: info.workflowId,
                 runId: info.runId,
@@ -674,6 +685,7 @@ export const workflows = [
                 completed,
                 failed,
                 totalFiles: files.length,
+                childWorkflowConcurrency: childWorkflowBatchSize,
               })
             }
 
@@ -737,6 +749,10 @@ export const workflows = [
             completed,
             failed,
           })
+
+          if (failed > 0) {
+            return yield* Effect.fail(new Error(`${failed} child workflows failed`))
+          }
 
           return {
             total,

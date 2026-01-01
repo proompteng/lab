@@ -3,6 +3,8 @@ import { readFile, stat } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { basename, extname, relative, resolve, sep } from 'node:path'
 import { SQL } from 'bun'
+import { Effect } from 'effect'
+import * as TSemaphore from 'effect/TSemaphore'
 import { Language, Parser } from 'web-tree-sitter'
 import { isMap, isScalar, isSeq, LineCounter, parseAllDocuments } from 'yaml'
 
@@ -167,10 +169,10 @@ export type BumbaActivities = typeof activities
 const DEFAULT_OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
 const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'
 const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536
-const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding:0.6b'
+const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding-saigak:0.6b'
 const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 1024
 const DEFAULT_OPENAI_COMPLETION_MODEL = 'gpt-5.2-codex'
-const DEFAULT_SELF_HOSTED_COMPLETION_MODEL = 'qwen3-coder:30b-a3b-q4_K_M'
+const DEFAULT_SELF_HOSTED_COMPLETION_MODEL = 'qwen3-coder-saigak:30b-a3b-q4_K_M'
 const DEFAULT_GITHUB_API_BASE_URL = 'https://api.github.com'
 const DEFAULT_GITHUB_API_VERSION = '2022-11-28'
 
@@ -179,6 +181,8 @@ const MAX_FACTS = 300
 const MAX_FACT_CHARS = 200
 const MAX_SUMMARY_NODES = 80
 const MAX_COMPLETION_INPUT_CHARS = 12_000
+const DEFAULT_COMPLETION_MAX_OUTPUT_TOKENS = 512
+const DEFAULT_MODEL_CONCURRENCY = 2
 const DEFAULT_MAX_REPO_FILES = 5_000
 const MAX_REPO_FILES = 20_000
 
@@ -270,6 +274,16 @@ const normalizeOptionalNumber = (value: unknown) => {
     const parsed = Number.parseInt(value, 10)
     if (Number.isFinite(parsed)) return parsed
   }
+  return null
+}
+
+const normalizeOptionalBoolean = (value: unknown) => {
+  if (typeof value === 'boolean') return value
+  const trimmed = normalizeOptionalText(value)
+  if (!trimmed) return null
+  const normalized = trimmed.toLowerCase()
+  if (['true', '1', 'yes', 'y'].includes(normalized)) return true
+  if (['false', '0', 'no', 'n'].includes(normalized)) return false
   return null
 }
 
@@ -366,6 +380,22 @@ const loadEmbeddingMaxInputChars = () => {
   return maxInputChars
 }
 
+const loadEmbeddingBatchSize = () => {
+  const batchSize = Number.parseInt(process.env.OPENAI_EMBEDDING_BATCH_SIZE ?? '1', 10)
+  if (!Number.isFinite(batchSize) || batchSize <= 0) {
+    throw new Error('OPENAI_EMBEDDING_BATCH_SIZE must be a positive integer')
+  }
+  return batchSize
+}
+
+const resolveEmbeddingBaseUrl = (apiBaseUrl: string) => {
+  const override = normalizeOptionalText(process.env.OPENAI_EMBEDDING_API_BASE_URL)
+  const raw = override ?? apiBaseUrl
+  return raw.replace(/\/+$/, '')
+}
+
+const isOllamaEmbedBaseUrl = (rawBaseUrl: string) => rawBaseUrl.endsWith('/api')
+
 const resolveEmbeddingDefaults = (apiBaseUrl: string) => {
   const hosted = isHostedOpenAiBaseUrl(apiBaseUrl)
   return {
@@ -389,13 +419,28 @@ const loadEmbeddingConfig = () => {
       'missing OPENAI_API_KEY; set it or point OPENAI_API_BASE_URL at an OpenAI-compatible endpoint (e.g. Ollama)',
     )
   }
+  const embeddingBaseUrl = resolveEmbeddingBaseUrl(apiBaseUrl)
   const defaults = resolveEmbeddingDefaults(apiBaseUrl)
   const model = process.env.OPENAI_EMBEDDING_MODEL ?? defaults.model
   const dimension = loadEmbeddingDimension(defaults.dimension)
   const timeoutMs = loadEmbeddingTimeoutMs()
   const maxInputChars = loadEmbeddingMaxInputChars()
+  const truncate = normalizeOptionalBoolean(process.env.OPENAI_EMBEDDING_TRUNCATE) ?? false
+  const keepAlive = normalizeOptionalText(process.env.OPENAI_EMBEDDING_KEEP_ALIVE)
+  const batchSize = loadEmbeddingBatchSize()
 
-  return { apiKey, apiBaseUrl, model, dimension, timeoutMs, maxInputChars }
+  return {
+    apiKey,
+    apiBaseUrl,
+    embeddingBaseUrl,
+    model,
+    dimension,
+    timeoutMs,
+    maxInputChars,
+    truncate,
+    keepAlive,
+    batchSize,
+  }
 }
 
 const vectorToPgArray = (values: number[]) => `[${values.join(',')}]`
@@ -834,6 +879,25 @@ const loadLanguageForExtension = async (ext: string): Promise<LoadedLanguage | n
 }
 
 const clampNumber = (value: number, fallback: number) => (Number.isFinite(value) && value > 0 ? value : fallback)
+const toError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
+
+const modelConcurrency = clampNumber(
+  Number.parseInt(process.env.BUMBA_MODEL_CONCURRENCY ?? '', 10),
+  DEFAULT_MODEL_CONCURRENCY,
+)
+const modelSemaphore = TSemaphore.unsafeMake(modelConcurrency)
+const withModelConcurrency = async <T>(fn: () => Promise<T>): Promise<T> =>
+  await Effect.runPromise(
+    TSemaphore.withPermits(
+      modelSemaphore,
+      1,
+    )(
+      Effect.tryPromise({
+        try: fn,
+        catch: (error) => toError(error),
+      }),
+    ),
+  )
 
 const loadRepoListLimit = (requested?: number | null) => {
   const envLimit = clampNumber(Number.parseInt(process.env.BUMBA_MAX_REPO_FILES ?? '', 10), DEFAULT_MAX_REPO_FILES)
@@ -1495,7 +1559,12 @@ const loadCompletionConfig = () => {
     MAX_COMPLETION_INPUT_CHARS,
   )
 
-  return { apiBaseUrl, apiKey, model, timeoutMs, maxInputChars }
+  const maxOutputTokens = clampNumber(
+    Number.parseInt(process.env.OPENAI_COMPLETION_MAX_OUTPUT_TOKENS ?? '', 10),
+    DEFAULT_COMPLETION_MAX_OUTPUT_TOKENS,
+  )
+
+  return { apiBaseUrl, apiKey, model, timeoutMs, maxInputChars, maxOutputTokens }
 }
 
 const parseStreamingCompletion = async (response: Response) => {
@@ -1557,85 +1626,261 @@ const parseStreamingCompletion = async (response: Response) => {
   return output.trim()
 }
 
-const parseCompletionOutput = (rawText: string) => {
+export const parseCompletionOutput = (rawText: string) => {
+  const normalizeSummary = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
+  const normalizeEnriched = (value: unknown) => {
+    if (typeof value === 'string') return value.trim()
+    if (Array.isArray(value)) {
+      const lines = value
+        .filter((entry): entry is string => typeof entry === 'string')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0)
+      if (lines.length === 0) return ''
+      return lines.map((line) => (line.startsWith('-') ? line : `- ${line}`)).join('\n')
+    }
+    return ''
+  }
+  const extractErrorMessage = (value: unknown) => {
+    if (!value || typeof value !== 'object') return null
+    const errorValue = (value as { error?: unknown }).error
+    if (!errorValue || typeof errorValue !== 'object') return null
+    const message = (errorValue as { message?: unknown }).message
+    if (typeof message === 'string' && message.trim().length > 0) {
+      return message.trim()
+    }
+    return null
+  }
+
   const trimmed = rawText.trim()
+  if (trimmed.length === 0) {
+    throw new Error('completion response was empty')
+  }
   const firstBrace = trimmed.indexOf('{')
   const lastBrace = trimmed.lastIndexOf('}')
   if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
     const jsonCandidate = trimmed.slice(firstBrace, lastBrace + 1)
     try {
-      const parsed = JSON.parse(jsonCandidate) as { summary?: string; enriched?: string }
-      const summary = typeof parsed.summary === 'string' ? parsed.summary.trim() : ''
-      const enriched = typeof parsed.enriched === 'string' ? parsed.enriched.trim() : ''
-      if (summary || enriched) {
-        return {
-          summary: summary || enriched,
-          enriched: enriched || summary,
-          metadata: { parsedJson: true },
-        }
+      const parsed = JSON.parse(jsonCandidate) as { summary?: unknown; enriched?: unknown; error?: unknown }
+      const errorMessage = extractErrorMessage(parsed)
+      if (errorMessage) {
+        throw new Error(`completion error: ${errorMessage}`)
       }
-    } catch {
-      // fall through
+      const summary = normalizeSummary(parsed.summary)
+      const enriched = normalizeEnriched(parsed.enriched)
+      if (!summary && !enriched) {
+        throw new Error('completion response missing summary/enriched')
+      }
+      return {
+        summary: summary || enriched,
+        enriched: enriched || summary,
+        metadata: { parsedJson: true },
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('completion error:')) {
+        throw error
+      }
+      if (error instanceof Error && error.message.includes('summary/enriched')) {
+        throw error
+      }
+      throw new Error('completion response was not valid JSON')
     }
   }
 
-  const fallback = trimmed.length > 0 ? trimmed : 'No enrichment response.'
-  const summary = fallback.split(/\n\n+/)[0] ?? fallback
-  return {
-    summary: summary.trim(),
-    enriched: fallback,
-    metadata: { parsedJson: false },
-  }
+  throw new Error('completion response was not valid JSON')
 }
 
-const embedText = async (text: string): Promise<number[]> => {
-  const { apiKey, apiBaseUrl, model, dimension, timeoutMs, maxInputChars } = loadEmbeddingConfig()
-  if (text.length > maxInputChars) {
-    throw new Error(`embedding input too large (${text.length} chars; max ${maxInputChars})`)
+const normalizeEmbeddingMatrix = (raw: unknown): number[][] | null => {
+  if (!Array.isArray(raw)) return null
+  if (raw.length === 0) return []
+  const first = raw[0]
+  if (Array.isArray(first)) {
+    const matrix = raw as unknown[][]
+    for (const row of matrix) {
+      if (!Array.isArray(row) || row.some((value) => typeof value !== 'number')) {
+        return null
+      }
+    }
+    return matrix as number[][]
+  }
+  if (raw.some((value) => typeof value !== 'number')) return null
+  return [raw as number[]]
+}
+
+const requestEmbeddingBatch = async (texts: string[]): Promise<number[][]> => {
+  const { apiKey, embeddingBaseUrl, model, dimension, timeoutMs, maxInputChars, truncate, keepAlive } =
+    loadEmbeddingConfig()
+
+  for (const text of texts) {
+    if (text.length > maxInputChars) {
+      throw new Error(`embedding input too large (${text.length} chars; max ${maxInputChars})`)
+    }
   }
 
-  const controller = new AbortController()
-  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+  }
+  if (apiKey) {
+    headers.authorization = `Bearer ${apiKey}`
+  }
+
+  const isOllamaEmbed = isOllamaEmbedBaseUrl(embeddingBaseUrl)
+  const url = `${embeddingBaseUrl}/${isOllamaEmbed ? 'embed' : 'embeddings'}`
+  const body = isOllamaEmbed
+    ? {
+        model,
+        input: texts,
+        ...(truncate === null ? {} : { truncate }),
+        ...(keepAlive ? { keep_alive: keepAlive } : {}),
+      }
+    : {
+        model,
+        input: texts,
+        dimensions: dimension,
+      }
 
   try {
-    const headers: Record<string, string> = {
-      'content-type': 'application/json',
-    }
-    if (apiKey) {
-      headers.authorization = `Bearer ${apiKey}`
-    }
-
-    const response = await fetch(`${apiBaseUrl}/embeddings`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ model, input: text }),
-      signal: controller.signal,
+    const response = await withModelConcurrency(() => {
+      const timeoutSignal = AbortSignal.timeout(timeoutMs)
+      return fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: timeoutSignal,
+      })
     })
 
     if (!response.ok) {
-      const body = await response.text()
-      throw new Error(`embedding request failed (${response.status}): ${body}`)
+      const errorBody = await response.text()
+      throw new Error(`embedding request failed (${response.status}): ${errorBody}`)
     }
 
-    const json = (await response.json()) as { data?: { embedding?: number[] }[] }
-    const embedding = json.data?.[0]?.embedding
-    if (!embedding || !Array.isArray(embedding)) {
-      throw new Error('embedding response missing data[0].embedding')
+    const json = (await response.json()) as {
+      data?: { embedding?: number[] }[]
+      embeddings?: unknown
+      embedding?: unknown
     }
-    if (embedding.length !== dimension) {
-      throw new Error(`embedding dimension mismatch: expected ${dimension} but got ${embedding.length}`)
+    const rawEmbeddings = isOllamaEmbed
+      ? (json.embeddings ?? json.embedding)
+      : json.data?.map((entry) => entry.embedding)
+    const embeddings = normalizeEmbeddingMatrix(rawEmbeddings)
+    if (!embeddings) {
+      throw new Error('embedding response missing embeddings')
+    }
+    if (embeddings.length !== texts.length) {
+      throw new Error(`embedding response missing embeddings for ${texts.length} inputs`)
     }
 
-    return embedding
+    for (const embedding of embeddings) {
+      if (embedding.length !== dimension) {
+        throw new Error(`embedding dimension mismatch: expected ${dimension} but got ${embedding.length}`)
+      }
+    }
+
+    return embeddings
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       throw new Error(`embedding request timed out after ${timeoutMs}ms`)
     }
     throw error
-  } finally {
-    clearTimeout(timeoutHandle)
   }
 }
+
+type EmbeddingRequest = {
+  text: string
+  resolve: (embedding: number[]) => void
+  reject: (error: Error) => void
+}
+
+const embeddingQueue: EmbeddingRequest[] = []
+let embeddingFlushScheduled = false
+let embeddingFlushPromise: Promise<void> | null = null
+
+const processEmbeddingBatch = (batch: EmbeddingRequest[]) => {
+  const texts = batch.map((item) => item.text)
+  return Effect.matchEffect(
+    Effect.tryPromise({
+      try: () => requestEmbeddingBatch(texts),
+      catch: (error) => toError(error),
+    }),
+    {
+      onFailure: (error) =>
+        Effect.sync(() => {
+          for (const item of batch) {
+            item.reject(error)
+          }
+        }),
+      onSuccess: (embeddings) =>
+        Effect.sync(() => {
+          embeddings.forEach((embedding, index) => {
+            batch[index]?.resolve(embedding)
+          })
+        }),
+    },
+  )
+}
+
+const scheduleEmbeddingFlush = () => {
+  if (embeddingFlushScheduled) return
+  embeddingFlushScheduled = true
+  queueMicrotask(() => {
+    embeddingFlushScheduled = false
+    void flushEmbeddingQueue()
+  })
+}
+
+const flushEmbeddingQueue = async (): Promise<void> => {
+  if (embeddingFlushPromise) return embeddingFlushPromise
+
+  embeddingFlushPromise = Effect.runPromise(
+    Effect.gen(function* () {
+      while (embeddingQueue.length > 0) {
+        let batchSize = 1
+        try {
+          batchSize = loadEmbeddingBatchSize()
+        } catch (error) {
+          const batch = embeddingQueue.splice(0)
+          const failure = toError(error)
+          for (const item of batch) {
+            item.reject(failure)
+          }
+          return
+        }
+
+        const batches: EmbeddingRequest[][] = []
+        while (embeddingQueue.length > 0) {
+          batches.push(embeddingQueue.splice(0, batchSize))
+        }
+
+        if (batches.length > 0) {
+          yield* Effect.all(batches.map(processEmbeddingBatch), { discard: true })
+        }
+      }
+    }),
+  ).finally(() => {
+    embeddingFlushPromise = null
+    if (embeddingQueue.length > 0) {
+      scheduleEmbeddingFlush()
+    }
+  })
+
+  return embeddingFlushPromise
+}
+
+const embedText = (text: string): Promise<number[]> =>
+  Effect.runPromise(
+    Effect.tryPromise({
+      try: () =>
+        new Promise<number[]>((resolve, reject) => {
+          embeddingQueue.push({
+            text,
+            resolve,
+            reject,
+          })
+          scheduleEmbeddingFlush()
+        }),
+      catch: (error) => toError(error),
+    }),
+  )
 
 const withDefaultSslMode = (rawUrl: string) => {
   let url: URL
@@ -1953,7 +2198,7 @@ export const activities = {
 
   async enrichWithModel(input: EnrichInput): Promise<EnrichOutput> {
     const startedAt = Date.now()
-    const { apiBaseUrl, apiKey, model, timeoutMs, maxInputChars } = loadCompletionConfig()
+    const { apiBaseUrl, apiKey, model, timeoutMs, maxInputChars, maxOutputTokens } = loadCompletionConfig()
 
     logActivity('info', 'started', 'enrichWithModel', {
       filename: input.filename,
@@ -1963,6 +2208,7 @@ export const activities = {
       astSummaryChars: input.astSummary.length,
       contextChars: input.context.length,
       maxInputChars,
+      maxOutputTokens,
     })
 
     const truncatedContent =
@@ -1973,11 +2219,13 @@ export const activities = {
       'You are an Atlas enrichment agent.',
       'Return a valid JSON object ONLY with keys "summary" and "enriched".',
       'Do not include markdown, code fences, or extra keys.',
+      'Return ONLY this shape: {"summary":"...","enriched":"- ...\\n- ..."}',
       '"summary": 2-4 sentences (<= 400 chars) describing what the file does.',
       '"enriched": a single string of 3-6 bullet lines, each starting with "- ". Each bullet <= 120 chars.',
       'Bullets should cover: purpose, key APIs/entry points, data flow, side effects/IO, risks/edge cases.',
       'If information is missing, say "Unknown" instead of guessing.',
       'If input is truncated, include a bullet: "Input truncated; details may be missing."',
+      'Never return file metadata objects, schemas, or code samples; only summary/enriched.',
     ].join(' ')
 
     const userSections = [
@@ -1991,6 +2239,8 @@ export const activities = {
     const payload = {
       model,
       stream: true,
+      max_tokens: maxOutputTokens,
+      temperature: 0,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userSections.join('\n\n') },
@@ -2082,11 +2332,9 @@ export const activities = {
       return result
     }
 
-    const controller = new AbortController()
-    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
-
     try {
-      const result = await requestCompletion(controller.signal)
+      const timeoutSignal = AbortSignal.timeout(timeoutMs)
+      const result = await withModelConcurrency(() => requestCompletion(timeoutSignal))
       return result
     } catch (error) {
       const timeoutError = error instanceof Error && error.name === 'AbortError'
@@ -2102,8 +2350,6 @@ export const activities = {
         throw new Error(message)
       }
       throw error
-    } finally {
-      clearTimeout(timeoutHandle)
     }
   },
 

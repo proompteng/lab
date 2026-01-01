@@ -26,6 +26,9 @@ export const main = async () => {
 
   const kustomizePath = resolve(repoRoot, process.env.BUMBA_KUSTOMIZE_PATH ?? 'argocd/applications/bumba')
   await run('kubectl', ['apply', '-k', kustomizePath])
+  const namespace = resolveKustomizeNamespace(kustomizePath)
+  const deploymentName = process.env.BUMBA_K8S_DEPLOYMENT ?? 'bumba'
+  await run('kubectl', ['rollout', 'status', `deployment/${deploymentName}`, '-n', namespace])
 }
 
 if (import.meta.main) {
@@ -69,4 +72,22 @@ function updateManifests(options: ManifestUpdateOptions) {
     writeFileSync(deploymentPath, updatedDeployment)
     console.log(`Updated ${deploymentPath} rollout annotation to ${rolloutTimestamp}`)
   }
+}
+
+function resolveKustomizeNamespace(kustomizePath: string) {
+  const envNamespace = process.env.BUMBA_K8S_NAMESPACE?.trim()
+  if (envNamespace) {
+    return envNamespace
+  }
+  try {
+    const kustomizationPath = resolve(kustomizePath, 'kustomization.yaml')
+    const kustomization = readFileSync(kustomizationPath, 'utf8')
+    const match = kustomization.match(/^namespace:\s*([^\s#]+)/m)
+    if (match?.[1]) {
+      return match[1]
+    }
+  } catch {
+    // fall back to default below
+  }
+  return 'jangar'
 }

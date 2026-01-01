@@ -1,62 +1,57 @@
 ---
 name: github
-description: GitHub operations with gh and git: create/update/review PRs, address review comments, manage issues, check/rerun workflows, and merge PRs. Use when the user asks to work on GitHub PRs or issues, respond/resolve review threads, inspect CI runs, or perform merges/releases.
+description: Work with GitHub in this repo: PR creation, CI checks, and gh CLI operations.
 ---
 
 # GitHub
 
-## Quick start
+## Overview
 
-- Read `AGENTS.md` and `CLAUDE.md` in the repo root for repo-specific rules before touching PRs.
-- Use `gh pr view <num> --json ...` and `gh pr diff <num>` to understand scope and changes.
-- Use `gh run list -b <branch>` and `gh run view <run-id> --log-failed` to inspect CI failures.
+Use the GitHub CLI to create PRs, review checks, and inspect CI logs. Follow the repo conventions for commits and PR titles.
 
-## Review and comments
+## Commit conventions
 
-- List unresolved review threads with GraphQL and resolve only after fixing:
+Use Conventional Commits:
 
-```bash
-gh api graphql -F owner=ORG -F name=REPO -F number=PR_NUM -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{id,isResolved,comments(first:10){nodes{id,author{login},body,path}}}}}}}'
+```
+fix(bumba): stabilize workflows
 ```
 
-- Resolve a thread by id:
+Example:
 
-```bash
-gh api graphql -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id,isResolved}}}' -F threadId=THREAD_ID
+```
+fix(bumba): stabilize workflows
 ```
 
-- Reply inline to the original review comment (preferred):
+## Create a PR
+
+1. Copy `.github/PULL_REQUEST_TEMPLATE.md` to a temp file.
+2. Fill it out.
+3. Create the PR with `gh pr create`.
 
 ```bash
-gh api graphql -F pullRequestId=PR_ID -F inReplyTo=COMMENT_ID -F body="Addressed: ..." \
-  -f query='mutation($pullRequestId:ID!,$body:String!,$inReplyTo:ID!){addPullRequestReviewComment(input:{pullRequestId:$pullRequestId,body:$body,inReplyTo:$inReplyTo}){comment{id}}}'
+cp .github/PULL_REQUEST_TEMPLATE.md /tmp/pr.md
+$EDITOR /tmp/pr.md
+gh pr create --body-file /tmp/pr.md
 ```
 
-- For new inline comments (not replies), prefer the GitHub UI to avoid diff-position errors. Use GraphQL only if you already know the exact `path` and diff `position`.
-- Submit your own open review to finalize it:
+## Check CI
 
 ```bash
-gh api graphql -F reviewId=REVIEW_ID -F body="Summary (optional)" -F event=COMMENT \
-  -f query='mutation($reviewId:ID!,$body:String!,$event:PullRequestReviewEvent!){submitPullRequestReview(input:{pullRequestReviewId:$reviewId,body:$body,event:$event}){pullRequestReview{id,state}}}'
-```
-
-## PR creation and updates
-
-- Create commits that follow Conventional Commits; keep commits focused.
-- Create PRs using the repo template when required:
-
-```bash
-cp .github/PULL_REQUEST_TEMPLATE.md /tmp/pr-body.md
-# edit /tmp/pr-body.md
-
-gh pr create --body-file /tmp/pr-body.md
+gh pr checks 2259
+gh run view 123456789 --log
 ```
 
 ## Merge
 
-- Ensure checks are green and requested review tasks are resolved.
-- Use squash merge unless the user requests otherwise:
+Use squash merge, do not delete the branch via CLI:
 
 ```bash
-gh pr merge PR_NUM --squash --delete-branch
+gh pr merge 2202 --squash -R proompteng/lab
 ```
+
+## Resources
+
+- Reference: `references/github-pr-guide.md`
+- Helper: `scripts/create-pr.sh`
+- Sample PR body: `assets/pr-body-template.md`

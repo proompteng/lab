@@ -103,7 +103,7 @@ Jangar also exposes JSON endpoints that mirror the MCP memory inputs:
 - `PGSSLMODE` (optional; defaults to `require`; Jangar does not support `sslrootcert` URL params for Bun’s Postgres client)
 - `OPENAI_API_KEY` (API key used for embedding calls; required for hosted OpenAI, optional for self-hosted OpenAI-compatible endpoints like Ollama)
 - `OPENAI_API_BASE_URL` / `OPENAI_API_BASE` (optional; defaults to `https://api.openai.com/v1`)
-- `OPENAI_EMBEDDING_MODEL` (optional; defaults to `text-embedding-3-small` on OpenAI, or `qwen3-embedding:0.6b` for self-hosted bases)
+- `OPENAI_EMBEDDING_MODEL` (optional; defaults to `text-embedding-3-small` on OpenAI, or `qwen3-embedding-saigak:0.6b` for self-hosted bases)
 - `OPENAI_EMBEDDING_DIMENSION` (optional; defaults to `1536` on OpenAI, or `1024` for the self-hosted model)
 - `OPENAI_EMBEDDING_TIMEOUT_MS` (optional; defaults to `15000`)
 - `OPENAI_EMBEDDING_MAX_INPUT_CHARS` (optional; defaults to `60000`)
@@ -114,7 +114,7 @@ To use the self-hosted embeddings model on `docker-host`:
 
 ```bash
 export OPENAI_API_BASE_URL='http://192.168.1.190:11434/v1'
-export OPENAI_EMBEDDING_MODEL='qwen3-embedding:0.6b'
+export OPENAI_EMBEDDING_MODEL='qwen3-embedding-saigak:0.6b'
 export OPENAI_EMBEDDING_DIMENSION='1024'
 # OPENAI_API_KEY is optional for Ollama
 ```

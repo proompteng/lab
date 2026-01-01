@@ -35,33 +35,46 @@ nvidia-smi
 ls -la /dev/nvidia*
 ```
 
-## Install Ollama (systemd)
-Install Ollama via the upstream script:
+## Install Ollama + Saigak (recommended)
+Saigak wires Ollama for throughput tuning plus a host-level proxy on `:11434`
+that exports OTEL metrics.
+
+From the repo root (local machine), copy Saigak to the VM and install:
+
+```bash
+scp -r services/saigak kalmyk@192.168.1.190:/tmp/saigak
+ssh kalmyk@192.168.1.190
+cd /tmp/saigak
+SAIGAK_SKIP_MODELS=1 ./scripts/install.sh
+```
+
+Saigak keeps Ollama bound to `127.0.0.1:11435` and exposes the proxy on
+`0.0.0.0:11434` (so Kubernetes pods can reach it).
+
+If a legacy `ollama-proxy.service` is running, disable it so the container
+proxy can bind `:11434`:
+
+```bash
+sudo systemctl disable --now ollama-proxy.service
+```
+
+Verify listeners:
+
+```bash
+ss -lntp | grep -E '11434|11435'
+curl -fsS http://127.0.0.1:11434/api/tags
+```
+
+## Install Ollama (manual fallback)
+If you need to bootstrap without Saigak, install Ollama via the upstream script:
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
-```
-
-Expose Ollama on `0.0.0.0:11434` (so Kubernetes pods can reach it):
-
-```bash
-sudo install -d /etc/systemd/system/ollama.service.d
-cat <<'EOF' | sudo tee /etc/systemd/system/ollama.service.d/override.conf >/dev/null
-[Service]
-Environment=OLLAMA_HOST=0.0.0.0
-EOF
-
-sudo systemctl daemon-reload
 sudo systemctl enable --now ollama
-sudo systemctl restart ollama
 ```
 
-Verify it’s listening and serving:
-
-```bash
-ss -lntp | grep 11434
-curl -fsS http://127.0.0.1:11434/api/tags
-```
+Then configure a host proxy separately or adjust consumers to talk to
+`127.0.0.1:11435`.
 
 ## Pull models
 ### Chat/coding: Qwen3 Coder (quantized)
@@ -99,13 +112,29 @@ curl -fsS http://127.0.0.1:11434/v1/embeddings \
 
 Note: no changes to `jangar` are required for embeddings — as long as clients can reach `http://192.168.1.190:11434`, they can call `POST /v1/embeddings` directly.
 
+### Create tuned aliases (Saigak defaults)
+If you have the repo available on the host, create tuned aliases using the Saigak modelfiles:
+
+```bash
+ollama create qwen3-coder-saigak:30b-a3b-q4_K_M \
+  -f /path/to/lab/services/saigak/config/models/qwen3-coder-30b-a3b-q4-k-m.modelfile
+ollama create qwen3-embedding-saigak:0.6b \
+  -f /path/to/lab/services/saigak/config/models/qwen3-embedding-0-6b.modelfile
+```
+
+To keep OpenWebUI’s model picker clean, remove the base tags after creating aliases:
+
+```bash
+ollama rm qwen3-coder:30b-a3b-q4_K_M qwen3-embedding:0.6b
+```
+
 ### Configure Jangar / memories to use Ollama embeddings
 
 Both `services/jangar` (MCP memories tools) and `services/memories` (CLI helpers) can point at Ollama via the same OpenAI-style env vars:
 
 ```bash
 export OPENAI_API_BASE_URL='http://192.168.1.190:11434/v1'
-export OPENAI_EMBEDDING_MODEL='qwen3-embedding:0.6b'
+export OPENAI_EMBEDDING_MODEL='qwen3-embedding-saigak:0.6b'
 export OPENAI_EMBEDDING_DIMENSION='1024'
 # OPENAI_API_KEY is optional for Ollama
 ```
@@ -124,4 +153,5 @@ After ArgoCD reconciles, you can verify reachability from inside the OpenWebUI p
 kubectl -n jangar exec open-webui-0 -- sh -lc 'curl -fsS http://192.168.1.190:11434/api/tags | head -c 400; echo'
 ```
 
-If the models are available, OpenWebUI should include `qwen3-coder:30b-a3b-q4_K_M` in its model list.
+If the models are available, OpenWebUI should include `qwen3-coder-saigak:30b-a3b-q4_K_M` and
+`qwen3-embedding-saigak:0.6b` in its model list.

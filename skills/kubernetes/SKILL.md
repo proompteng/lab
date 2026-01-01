@@ -1,40 +1,47 @@
 ---
 name: kubernetes
-description: Kubernetes operations with kubectl and related CLIs (debugging, inspection, safe mutations, and storage triage) in this repo. Use when running or suggesting kubectl commands, diagnosing cluster resource issues, or handling CNPG/Postgres access.
+description: Use for kubectl, CNPG, and kustomize/helm operations in this repo, including rollouts and cluster debugging.
 ---
 
-## Baseline checks
-- Confirm namespace before changes: `kubectl get ns`.
-- Prefer read-only first: `kubectl get`, `kubectl describe`, `kubectl get events --sort-by=.lastTimestamp`, `kubectl logs`.
-- Capture resource ownership (ArgoCD/Helm) before mutating: `kubectl get <kind> <name> -o yaml | rg ownerReferences|helm|argocd`.
+# Kubernetes
 
-## Read-only helpers
-- Tail logs with context: `kubectl logs <pod> -c <container> --since=1h --tail=200` (use `-f` to follow).
-- Grep logs (ripgrep/grep): `kubectl logs <pod> -c <container> --since=1h | rg -i 'error|warn'` or `kubectl logs <pod> -c <container> --since=1h | grep -E 'error|warn'`.
-- Crash-loop check: `kubectl logs <pod> -c <container> --previous`.
-- Exec for live inspection: `kubectl exec -it <pod> -c <container> -- <command>` (keep `--` separator).
-- Local access via port-forward: `kubectl port-forward svc/<name> 8080:80` (or `pod/<name>`).
-- Quick resource usage: `kubectl top pods -n <ns>` / `kubectl top nodes` (requires Metrics Server).
+## Overview
 
-## Safe mutation workflow
-- If GitOps-managed, edit manifests in repo and sync with ArgoCD; document any emergency kubectl edits and reconcile back to Git.
-- Use targeted patches: `kubectl patch <kind> <name> --type merge|json -p '<patch>'`.
-- For rollouts: `kubectl rollout restart <kind>/<name>` and `kubectl rollout status ...`.
-- Avoid destructive actions unless requested; prefer scale-to-zero before deleting stateful workloads.
+Operate cluster resources with explicit namespaces and GitOps manifests. Use CNPG for Postgres access and Helm v3 for kustomize when required.
 
-## Storage and PVC triage
-- Identify owning PVC/PV: `kubectl get pvc -A | rg <pvc-id>`; `kubectl get pv <pv> -o yaml`.
-- Check Longhorn volume state (if present): `kubectl -n longhorn-system get volumes.longhorn.io <vol> -o yaml`.
-- Clear stale CSI attachments only when safe: `kubectl delete volumeattachment <name>`.
-- When fsck is required, run it from a privileged hostPath pod on the node that has the device.
+## Namespace discipline
 
-## Common diagnostics
-- Pod scheduling: `kubectl describe pod <pod>` and look for `FailedMount`, `FailedAttachVolume`, `ImagePullBackOff`.
-- Node health: `kubectl get nodes -o wide` and inspect taints.
-- Service reachability: `kubectl get svc -n <ns>` and verify endpoints.
+Always specify `-n jangar` for the Jangar stack unless a different namespace is required.
 
-## Notes
-- Prefer explicit namespaces (`-n <ns>`) and labels (`-l key=value`).
-- Use output formatting when needed: `-o json`, `-o yaml`, or `-o jsonpath=<template>`.
-- Use `--validate=false` only when API validation is temporarily unavailable.
-- CNPG access: use `kubectl cnpg psql -n <ns> <cluster> -- <psql args>` (the `-c` and other psql flags go after `--`).
+## Common operations
+
+```bash
+kubectl get pods -n jangar
+kubectl logs -n jangar deploy/bumba --tail=200
+kubectl rollout status -n jangar deployment/bumba
+```
+
+## Exec and port-forward
+
+```bash
+kubectl exec -n jangar deploy/bumba -- env | rg TEMPORAL
+kubectl -n jangar port-forward svc/open-webui 8080:80
+```
+
+## CNPG (Postgres)
+
+```bash
+kubectl cnpg psql -n jangar jangar-db -- -c 'select now();'
+```
+
+## Helm-enabled kustomize
+
+```bash
+mise exec helm@3 -- kustomize build --enable-helm argocd/applications/jangar | kubectl apply -n jangar -f -
+```
+
+## Resources
+
+- Reference: `references/kubectl-runbook.md`
+- Helper: `scripts/kubectl-ns.sh`
+- Triage checklist: `assets/kubectl-triage.md`
