@@ -1,14 +1,27 @@
+import { IconTrash } from '@tabler/icons-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
+import { useServerFn } from '@tanstack/react-start'
+import { useState } from 'react'
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from '~/components/ui/alert-dialog'
+import { Button } from '~/components/ui/button'
 import { ScrollArea } from '~/components/ui/scroll-area'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
-import {
-  decodeRepositoryParam,
-  fetchRepositoryTags,
-  fetchTagManifestBreakdown,
-  formatSize,
-  type TagManifestBreakdown,
-} from '~/lib/registry'
+import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
+import { decodeRepositoryParam, formatSize, type TagManifestBreakdown } from '~/lib/registry'
+import { deleteTagServerFn } from '~/server/delete-tag'
+import { type ImageDetailsResponse, imageDetailsServerFn } from '~/server/image-details'
 
 type ImageDetailsLoaderData = {
   repository: string
@@ -35,50 +48,65 @@ const formatTimestamp = (value?: string) => {
   }).format(new Date(parsed))
 }
 
-const buildTotalSize = (tags: TagManifestBreakdown[]) => {
-  const sizes = tags.map((tag) => tag.sizeBytes).filter((size): size is number => typeof size === 'number')
-  return {
-    total: sizes.reduce((total, size) => total + size, 0),
-    hasTotal: sizes.length > 0,
-  }
-}
-
 export const Route = createFileRoute('/image/$imageId')({
   loader: async ({ params }): Promise<ImageDetailsLoaderData> => {
-    const fetchedAt = new Date().toISOString()
     const repository = decodeRepositoryParam(params.imageId)
-    const tagsResult = await fetchRepositoryTags(repository)
-    if (tagsResult.error) {
-      return {
-        repository,
-        tags: [],
-        totalSizeBytes: undefined,
-        hasTotalSize: false,
-        fetchedAt,
-        error: tagsResult.error,
-      }
-    }
-
-    const tagBreakdowns = await Promise.all(tagsResult.tags.map((tag) => fetchTagManifestBreakdown(repository, tag)))
-    const { total, hasTotal } = buildTotalSize(tagBreakdowns)
-
-    return {
-      repository,
-      tags: tagBreakdowns,
-      totalSizeBytes: hasTotal ? total : undefined,
-      hasTotalSize: hasTotal,
-      fetchedAt,
-    }
+    const result = await imageDetailsServerFn({ data: { repository } })
+    return result as ImageDetailsLoaderData
   },
   component: ImageDetails,
 })
 
+const imageDetailsQueryKey = (repository: string) => ['imageDetails', repository] as const
+
 function ImageDetails() {
-  const { repository, tags, totalSizeBytes, hasTotalSize, fetchedAt, error } = Route.useLoaderData()
+  const queryClient = useQueryClient()
+  const runDeleteTag = useServerFn(deleteTagServerFn)
+
+  const initialData = Route.useLoaderData() as ImageDetailsResponse
+
+  const { data } = useQuery({
+    queryKey: imageDetailsQueryKey(initialData.repository),
+    queryFn: () => imageDetailsServerFn({ data: { repository: initialData.repository } }),
+    initialData,
+    staleTime: 30_000,
+  })
+
+  const { repository, tags, totalSizeBytes, hasTotalSize, fetchedAt, error } = data
   const formattedTime = new Intl.DateTimeFormat(undefined, {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(fetchedAt))
+
+  const [tagToDelete, setTagToDelete] = useState<TagManifestBreakdown | null>(null)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  const handleConfirmDelete = async () => {
+    if (!tagToDelete || isDeleting) {
+      return
+    }
+
+    setIsDeleting(true)
+    setDeleteError(null)
+
+    try {
+      await runDeleteTag({ data: { repository, tag: tagToDelete.tag } })
+
+      setIsDeleting(false)
+      setDeleteOpen(false)
+      setTagToDelete(null)
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: imageDetailsQueryKey(repository) }),
+        queryClient.invalidateQueries({ queryKey: ['registryImages'] }),
+      ])
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : 'Failed to delete tag')
+      setIsDeleting(false)
+    }
+  }
 
   return (
     <div className="flex h-dvh w-full justify-center">
@@ -112,10 +140,11 @@ function ImageDetails() {
             <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]]:overflow-y-auto [&_[data-slot=scroll-area-viewport]]:overscroll-contain [&_[data-slot=table-container]]:overflow-x-visible">
               <Table className="table-fixed text-sm">
                 <colgroup>
-                  <col className="w-[22%]" />
-                  <col className="w-[48%]" />
+                  <col className="w-[20%]" />
+                  <col className="w-[46%]" />
                   <col className="w-[14%]" />
-                  <col className="w-[16%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[6%]" />
                 </colgroup>
                 <TableHeader>
                   <TableRow className="h-12 border-neutral-800/80 text-xs uppercase tracking-wide text-neutral-400">
@@ -125,12 +154,15 @@ function ImageDetails() {
                     </TableHead>
                     <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 font-semibold">Size</TableHead>
                     <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 font-semibold">Updated</TableHead>
+                    <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 text-right font-semibold">
+                      Actions
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {tags.length === 0 ? (
                     <TableRow className="h-12 border-neutral-800/80">
-                      <TableCell colSpan={4} className="px-4 py-0 text-center text-sm text-neutral-300">
+                      <TableCell colSpan={5} className="px-4 py-0 text-center text-sm text-neutral-300">
                         No tags found for this repository.
                       </TableCell>
                     </TableRow>
@@ -178,6 +210,30 @@ function ImageDetails() {
                         <TableCell className="px-4 py-3 text-xs text-neutral-300">
                           {tag.createdAt ? formatTimestamp(tag.createdAt) : '—'}
                         </TableCell>
+                        <TableCell className="px-2 py-3 align-top">
+                          <div className="flex justify-end">
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    aria-label={`Delete ${tag.tag}`}
+                                    onClick={() => {
+                                      setTagToDelete(tag)
+                                      setDeleteError(null)
+                                      setDeleteOpen(true)
+                                    }}
+                                  >
+                                    <IconTrash className="text-rose-400" />
+                                  </Button>
+                                }
+                              />
+                              <TooltipContent>Delete tag</TooltipContent>
+                            </Tooltip>
+                          </div>
+                        </TableCell>
                       </TableRow>
                     ))
                   )}
@@ -185,6 +241,49 @@ function ImageDetails() {
               </Table>
             </ScrollArea>
           </div>
+
+          <AlertDialog
+            open={deleteOpen}
+            onOpenChange={(open) => {
+              if (!open && isDeleting) {
+                return
+              }
+
+              setDeleteOpen(open)
+
+              if (!open) {
+                setTagToDelete(null)
+                setDeleteError(null)
+              }
+            }}
+          >
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogMedia className="bg-rose-500/10 text-rose-400">
+                  <IconTrash />
+                </AlertDialogMedia>
+                <AlertDialogTitle>Delete tag</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {tagToDelete
+                    ? `This will delete ${repository}:${tagToDelete.tag}. This cannot be undone.`
+                    : 'Select a tag to delete.'}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+
+              {deleteError ? <p className="text-xs text-rose-400">{deleteError}</p> : null}
+
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive"
+                  disabled={!tagToDelete || isDeleting}
+                  onClick={handleConfirmDelete}
+                >
+                  {isDeleting ? 'Deleting…' : 'Delete'}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </section>
     </div>

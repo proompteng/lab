@@ -1,117 +1,30 @@
+import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import type { KeyboardEvent } from 'react'
 
 import { ScrollArea } from '~/components/ui/scroll-area'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
-import {
-  encodeRepositoryParam,
-  fetchRegistryCatalog,
-  fetchRepositoryTags,
-  fetchTagDetails,
-  formatSize,
-  type TagDetails,
-} from '~/lib/registry'
-
-type RegistryImage = {
-  name: string
-  tags: string[]
-  sizeBytes?: number
-  sizeTag?: string
-  sizeTimestamp?: string
-  error?: string
-  sizeError?: string
-}
-
-function pickLatestTag(details: TagDetails[]): TagDetails | undefined {
-  const withDates = details.filter((detail) => detail.createdAt)
-  if (withDates.length) {
-    return withDates.slice().sort((left, right) => {
-      const leftTime = left.createdAt ? Date.parse(left.createdAt) : 0
-      const rightTime = right.createdAt ? Date.parse(right.createdAt) : 0
-      return rightTime - leftTime
-    })[0]
-  }
-
-  return details.find((detail) => detail.sizeBytes)
-}
-
-async function fetchRegistryImages(): Promise<{
-  images: RegistryImage[]
-  error?: string
-  fetchedAt: string
-}> {
-  const fetchedAt = new Date().toISOString()
-
-  try {
-    const catalogResult = await fetchRegistryCatalog()
-    if (catalogResult.error) {
-      return {
-        images: [],
-        error: catalogResult.error,
-        fetchedAt,
-      }
-    }
-
-    const repositories = catalogResult.repositories
-
-    const images = await Promise.all(
-      repositories.map(async (repository) => {
-        const tagsResult = await fetchRepositoryTags(repository)
-        if (tagsResult.error) {
-          return {
-            name: repository,
-            tags: [],
-            error: tagsResult.error,
-          }
-        }
-
-        const tags = tagsResult.tags
-        let sizeBytes: number | undefined
-        let sizeTag: string | undefined
-        let sizeTimestamp: string | undefined
-        let sizeError: string | undefined
-
-        if (tags.length) {
-          const tagDetails = await Promise.all(tags.map((tag) => fetchTagDetails(repository, tag)))
-          const latestTag = pickLatestTag(tagDetails)
-          sizeBytes = latestTag?.sizeBytes
-          sizeTag = latestTag?.tag
-          sizeTimestamp = latestTag?.createdAt
-          if (!sizeBytes) {
-            sizeError = latestTag?.error ?? 'No valid manifest found'
-          }
-        } else {
-          sizeError = 'No tags available'
-        }
-
-        return {
-          name: repository,
-          tags,
-          sizeTag,
-          sizeBytes,
-          sizeTimestamp,
-          sizeError,
-        }
-      }),
-    )
-
-    return { images, fetchedAt }
-  } catch (error) {
-    return {
-      images: [],
-      error: error instanceof Error ? error.message : 'Failed to load registry',
-      fetchedAt,
-    }
-  }
-}
+import { encodeRepositoryParam, formatSize } from '~/lib/registry'
+import { type RegistryImagesResponse, registryImagesServerFn } from '~/server/registry-images'
 
 export const Route = createFileRoute('/')({
   component: App,
-  loader: fetchRegistryImages,
+  loader: async () => registryImagesServerFn(),
 })
 
+const registryImagesQueryKey = ['registryImages'] as const
+
 function App() {
-  const { images, error, fetchedAt } = Route.useLoaderData()
+  const initialData = Route.useLoaderData() as RegistryImagesResponse
+
+  const { data } = useQuery({
+    queryKey: registryImagesQueryKey,
+    queryFn: () => registryImagesServerFn(),
+    initialData,
+    staleTime: 30_000,
+  })
+
+  const { images, error, fetchedAt } = data
   const _formattedTime = new Intl.DateTimeFormat(undefined, {
     dateStyle: 'medium',
     timeStyle: 'short',
