@@ -72,6 +72,7 @@ export type AtlasService = {
   }) => Effect.Effect<AtlasIndexedFile[], Error>
   getAstPreview: (input: { fileVersionId: string; limit?: number }) => Effect.Effect<AtlasAstPreview, Error>
   search: (input: AtlasSearchInput) => Effect.Effect<AtlasSearchMatch[], Error>
+  searchCount: (input: AtlasSearchInput) => Effect.Effect<number, Error>
   stats: () => Effect.Effect<AtlasStats, Error>
   close: () => Effect.Effect<void, Error>
 }
@@ -147,6 +148,7 @@ export const AtlasLive = Layer.scoped(
         wrap('atlas list indexed files failed', (resolved) => resolved.listIndexedFiles(input)),
       getAstPreview: (input) => wrap('atlas get ast preview failed', (resolved) => resolved.getAstPreview(input)),
       search: (input) => wrap('atlas search failed', (resolved) => resolved.search(input)),
+      searchCount: (input) => wrap('atlas search count failed', (resolved) => resolved.searchCount(input)),
       stats: () => wrap('atlas stats failed', (resolved) => resolved.stats()),
       close: () =>
         pipe(

@@ -43,6 +43,8 @@ test.beforeEach(async ({ page }) => {
 
       const buildItems = (count: number) => Array.from({ length: count }, (_, idx) => buildItem(idx + 1))
 
+      const totalMatches = 42
+
       window.fetch = async (input, init) => {
         const rawUrl = typeof input === 'string' ? input : input.url
         const resolvedUrl = new URL(rawUrl, window.location.origin)
@@ -58,7 +60,7 @@ test.beforeEach(async ({ page }) => {
           const limitRaw = resolvedUrl.searchParams.get('limit') ?? '0'
           const limit = Number.parseInt(limitRaw, 10)
           const items = Number.isFinite(limit) && limit > 0 ? buildItems(limit) : []
-          return jsonResponse({ ok: true, items })
+          return jsonResponse({ ok: true, items, total: totalMatches })
         }
 
         if (pathname === '/api/atlas/file') {
@@ -124,8 +126,8 @@ test('paginates atlas results and keeps URL in sync', async ({ page }) => {
       (call) => call.pathname === '/api/search' && call.url.includes('limit=10'),
     ),
   )
-  await expect(page.getByText('1-10 of 10+')).toBeVisible()
-  await expect(page.getByText('Page 1/2')).toBeVisible()
+  await expect(page.getByText('1-10 of 42')).toBeVisible()
+  await expect(page.getByText('Page 1/5')).toBeVisible()
   await expect(page.getByText('services/jangar/src/routes/file-1.ts')).toBeVisible()
 
   const pagination = page.getByRole('navigation', { name: 'pagination' })
@@ -137,7 +139,7 @@ test('paginates atlas results and keeps URL in sync', async ({ page }) => {
   )
 
   await expect(page).toHaveURL(/page=2/)
-  await expect(page.getByText('11-20 of 20+')).toBeVisible()
+  await expect(page.getByText('11-20 of 42')).toBeVisible()
   await expect(page.getByText('services/jangar/src/routes/file-11.ts')).toBeVisible()
   await expect(page.getByText('services/jangar/src/routes/file-1.ts')).toHaveCount(0)
 })

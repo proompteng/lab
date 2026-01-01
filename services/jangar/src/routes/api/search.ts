@@ -141,8 +141,11 @@ export const getSearchHandlerEffect = (request: Request) =>
       const atlas = yield* Atlas
 
       let matches: AtlasSearchMatch[]
+      let total: number
       try {
-        matches = yield* atlas.search(searchInput)
+        ;[matches, total] = yield* Effect.all([atlas.search(searchInput), atlas.searchCount(searchInput)], {
+          concurrency: 'unbounded',
+        })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         const normalized = message.toLowerCase()
@@ -155,10 +158,12 @@ export const getSearchHandlerEffect = (request: Request) =>
 
         // Port-forwards can briefly restart (local listener down for ~1s). Retry once.
         yield* Effect.sleep(Duration.millis(750))
-        matches = yield* atlas.search(searchInput)
+        ;[matches, total] = yield* Effect.all([atlas.search(searchInput), atlas.searchCount(searchInput)], {
+          concurrency: 'unbounded',
+        })
       }
       const items = rankFiles(matches, requestedLimit)
-      return jsonResponse({ ok: true, matches, items })
+      return jsonResponse({ ok: true, matches, items, total })
     }),
     Effect.catchAll((error) => Effect.succeed(resolveServiceError(error.message))),
   )

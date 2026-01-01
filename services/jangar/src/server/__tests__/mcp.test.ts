@@ -62,6 +62,7 @@ const makeAtlasService = (): AtlasService => {
     listIndexedFiles: () => fail(),
     getAstPreview: () => fail(),
     search: () => fail(),
+    searchCount: () => fail(),
     stats: () => fail(),
     close: () => Effect.void,
   }

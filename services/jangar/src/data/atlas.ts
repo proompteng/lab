@@ -39,8 +39,8 @@ export type AtlasAstPreview =
   | { ok: false; message: string }
 
 export type AtlasSearchResult =
-  | { ok: true; items: AtlasFileItem[]; raw: unknown }
-  | { ok: false; items: AtlasFileItem[]; message: string; raw?: unknown }
+  | { ok: true; items: AtlasFileItem[]; raw: unknown; total?: number }
+  | { ok: false; items: AtlasFileItem[]; message: string; raw?: unknown; total?: number }
 
 export type AtlasEnrichInput = {
   repository: string
@@ -174,6 +174,26 @@ const extractAtlasItems = (payload: unknown): AtlasFileItem[] => {
   return candidates.map(normalizeAtlasItem)
 }
 
+const extractAtlasTotal = (payload: unknown): number | undefined => {
+  if (!payload || typeof payload !== 'object') return undefined
+  const record = payload as Record<string, unknown>
+  const raw =
+    parseNumber(record.total) ??
+    parseNumber(record.count) ??
+    parseNumber(record.totalMatches) ??
+    parseNumber(record.total_matches) ??
+    record.total ??
+    record.count ??
+    record.totalMatches ??
+    record.total_matches
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw
+  if (typeof raw === 'string') {
+    const parsed = Number.parseInt(raw, 10)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
+}
+
 export const searchAtlas = async (params: AtlasSearchParams): Promise<AtlasSearchResult> => {
   const searchParams = new URLSearchParams()
   if (params.query !== undefined) searchParams.set('query', params.query)
@@ -197,16 +217,19 @@ export const searchAtlas = async (params: AtlasSearchParams): Promise<AtlasSearc
     payload = null
   }
 
+  const total = extractAtlasTotal(payload)
+
   if (!response.ok) {
     return {
       ok: false,
       items: extractAtlasItems(payload),
       raw: payload ?? undefined,
+      total,
       message: `Search failed (${response.status})`,
     }
   }
 
-  return { ok: true, items: extractAtlasItems(payload), raw: payload }
+  return { ok: true, items: extractAtlasItems(payload), raw: payload, total }
 }
 
 export const listAtlasIndexedFiles = async (

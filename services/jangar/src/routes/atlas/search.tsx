@@ -81,6 +81,7 @@ function AtlasSearchPage() {
   )
 
   const [searchResults, setSearchResults] = React.useState<AtlasFileItem[]>([])
+  const [searchTotal, setSearchTotal] = React.useState(0)
   const [searchStatus, setSearchStatus] = React.useState<string | null>(null)
   const [searchError, setSearchError] = React.useState<string | null>(null)
   const [isSearching, setIsSearching] = React.useState(false)
@@ -122,15 +123,21 @@ function AtlasSearchPage() {
     setSearchError(null)
     try {
       const result = await searchAtlas(params)
+      const total = Number.isFinite(result.total)
+        ? Math.max(result.items.length, result.total ?? 0)
+        : result.items.length
       if (!result.ok) {
         setSearchResults(result.items ?? [])
+        setSearchTotal(total)
         setSearchStatus(result.message)
         return
       }
       setSearchResults(result.items)
-      setSearchStatus(result.items.length === 0 ? 'No matches found.' : `Found ${result.items.length} results.`)
+      setSearchTotal(total)
+      setSearchStatus(result.items.length === 0 ? 'No matches found.' : `Found ${total} matches.`)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err)
+      setSearchTotal(0)
       setSearchStatus(message)
     } finally {
       setIsSearching(false)
@@ -143,6 +150,7 @@ function AtlasSearchPage() {
     const trimmedPathPrefix = searchState.pathPrefix.trim()
     if (!trimmedQuery) {
       setSearchResults([])
+      setSearchTotal(0)
       setSearchStatus(null)
       return
     }
@@ -386,15 +394,14 @@ function AtlasSearchPage() {
     selectedItem,
   ])
 
-  const totalResults = searchResults.length
-  const hasMore = totalResults >= fetchLimit && fetchLimit < MAX_PAGE_FETCH_LIMIT
-  const totalPages = Math.max(1, Math.ceil((totalResults + (hasMore ? pageSize : 0)) / pageSize))
-  const shouldHoldPage = totalResults > 0 && fetchLimit > totalResults
-  const clampedPage = shouldHoldPage ? currentPage : Math.min(currentPage, totalPages)
+  const totalResults = searchTotal
+  const cappedTotal = Math.min(totalResults, MAX_PAGE_FETCH_LIMIT)
+  const totalPages = Math.max(1, Math.ceil(cappedTotal / pageSize))
+  const clampedPage = Math.min(currentPage, totalPages)
   const pageStartIndex = (clampedPage - 1) * pageSize
   const pageResults = searchResults.slice(pageStartIndex, pageStartIndex + pageSize)
   const rangeStart = totalResults > 0 ? pageStartIndex + 1 : 0
-  const rangeEnd = totalResults > 0 ? Math.min(pageStartIndex + pageSize, totalResults) : 0
+  const rangeEnd = totalResults > 0 ? Math.min(pageStartIndex + pageResults.length, totalResults) : 0
   const pageNumbers = React.useMemo(() => {
     if (totalPages <= 1) return [1]
     const windowSize = 5
@@ -402,8 +409,8 @@ function AtlasSearchPage() {
     const count = Math.min(totalPages, windowSize)
     return Array.from({ length: count }, (_, index) => start + index)
   }, [clampedPage, totalPages])
-  const isCapped = fetchLimit >= MAX_PAGE_FETCH_LIMIT && totalResults >= MAX_PAGE_FETCH_LIMIT
-  const totalLabel = hasMore ? `${totalResults}+` : `${totalResults}`
+  const isCapped = totalResults > MAX_PAGE_FETCH_LIMIT
+  const totalLabel = `${totalResults}`
   const rangeLabel = totalResults === 0 ? 'No results yet.' : `${rangeStart}-${rangeEnd} of ${totalLabel}`
   const pageLabel = totalPages > 1 ? `Page ${clampedPage}/${totalPages}` : 'Page 1'
   const capLabel = isCapped ? `Capped at ${MAX_PAGE_FETCH_LIMIT}` : null
