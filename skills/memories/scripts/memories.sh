@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: memories.sh save --task-name bumba-enrich-repo --content "Enrichment facts for services/bumba" --summary "Bumba repo facts" --tags "bumba,enrich"" >&2
+  echo 'Usage: memories.sh save --task-name bumba-enrich-repo --content "Enrichment facts for services/bumba" --summary "Bumba repo facts" --tags "bumba,enrich"' >&2
   exit 1
 fi
 
