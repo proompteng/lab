@@ -13,7 +13,6 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
-  AlertDialogMedia,
   AlertDialogTitle,
 } from '~/components/ui/alert-dialog'
 import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage } from '~/components/ui/breadcrumb'
@@ -310,9 +309,6 @@ function App() {
         >
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogMedia className="bg-rose-500/10 text-rose-400">
-                <IconTrash />
-              </AlertDialogMedia>
               <AlertDialogTitle>Delete image tags</AlertDialogTitle>
               <AlertDialogDescription>
                 {imageToDelete

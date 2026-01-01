@@ -12,7 +12,6 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
-  AlertDialogMedia,
   AlertDialogTitle,
 } from '~/components/ui/alert-dialog'
 import {
@@ -328,9 +327,6 @@ function ImageDetails() {
           >
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogMedia className="bg-rose-500/10 text-rose-400">
-                  <IconTrash />
-                </AlertDialogMedia>
                 <AlertDialogTitle>Delete tag</AlertDialogTitle>
                 <AlertDialogDescription>
                   {tagToDelete
