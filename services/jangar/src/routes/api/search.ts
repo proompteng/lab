@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
+import { Duration, Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
 import { Atlas, AtlasLive } from '~/server/atlas'
 import { parseAtlasSearchInput } from '~/server/atlas-http'
@@ -42,8 +42,20 @@ const jsonResponse = (payload: unknown, status = 200) => {
 const errorResponse = (message: string, status = 500) => jsonResponse({ ok: false, message, error: message }, status)
 
 const resolveServiceError = (message: string) => {
+  const normalized = message.toLowerCase()
   if (message.includes('DATABASE_URL')) return errorResponse(message, 503)
   if (message.includes('OPENAI_API_KEY')) return errorResponse(message, 503)
+  if (
+    normalized.includes('econnrefused') ||
+    normalized.includes('connection terminated unexpectedly') ||
+    normalized.includes('server closed the connection unexpectedly') ||
+    normalized.includes('terminating connection')
+  ) {
+    return errorResponse(message, 503)
+  }
+  if (normalized.includes('timed out') || normalized.includes('timeout')) {
+    return errorResponse(message, 504)
+  }
   return errorResponse(message, 500)
 }
 
@@ -83,7 +95,24 @@ export const getSearchHandlerEffect = (request: Request) =>
       if (!parsed.ok) return errorResponse(parsed.message, 400)
 
       const atlas = yield* Atlas
-      const matches = yield* atlas.search(parsed.value)
+
+      let matches: AtlasSearchMatch[]
+      try {
+        matches = yield* atlas.search(parsed.value)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        const normalized = message.toLowerCase()
+        const looksLikeTransientDbBlip =
+          normalized.includes('econnrefused') ||
+          normalized.includes('connection terminated unexpectedly') ||
+          normalized.includes('server closed the connection unexpectedly')
+
+        if (!looksLikeTransientDbBlip) throw error
+
+        // Port-forwards can briefly restart (local listener down for ~1s). Retry once.
+        yield* Effect.sleep(Duration.millis(750))
+        matches = yield* atlas.search(parsed.value)
+      }
       const items = matches.map(mapMatchToItem)
       return jsonResponse({ ok: true, matches, items })
     }),
@@ -91,5 +120,15 @@ export const getSearchHandlerEffect = (request: Request) =>
   )
 
 export const getAtlasSearchHandler = async (request: Request) => {
-  return handlerRuntime.runPromise(getSearchHandlerEffect(request))
+  const timeoutMs = Number.parseInt(process.env.ATLAS_SEARCH_TIMEOUT_MS ?? '25000', 10)
+  const effectiveTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 25_000
+
+  return Promise.race([
+    handlerRuntime.runPromise(getSearchHandlerEffect(request)),
+    new Promise<Response>((resolve) => {
+      setTimeout(() => {
+        resolve(errorResponse(`atlas search timed out after ${effectiveTimeoutMs}ms`, 504))
+      }, effectiveTimeoutMs)
+    }),
+  ])
 }
