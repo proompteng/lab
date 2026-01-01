@@ -166,7 +166,7 @@ spec:
             - name: CH_PORT
               value: "8123"
             - name: CH_DATABASE
-              value: default
+              value: torghut
             - name: CH_SECURE
               value: "false"
             - name: CH_USER
