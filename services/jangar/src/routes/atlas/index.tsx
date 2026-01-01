@@ -10,7 +10,19 @@ function AtlasIndexRedirect() {
   return (
     <Navigate
       to="/atlas/search"
-      search={{ query: '', repository: '', pathPrefix: '', limit: DEFAULT_LIMIT, page: 1 }}
+      search={{
+        query: '',
+        repository: '',
+        pathPrefix: '',
+        limit: DEFAULT_LIMIT,
+        page: 1,
+        panelOpen: false,
+        panelTab: 'content',
+        panelPath: '',
+        panelRepository: '',
+        panelRef: '',
+        panelFileVersionId: '',
+      }}
     />
   )
 }

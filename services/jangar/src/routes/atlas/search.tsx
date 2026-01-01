@@ -24,6 +24,12 @@ type AtlasSearchState = {
   pathPrefix: string
   limit: number
   page: number
+  panelOpen: boolean
+  panelTab: 'content' | 'ast'
+  panelPath: string
+  panelRepository: string
+  panelRef: string
+  panelFileVersionId: string
 }
 
 const DEFAULT_LIMIT = 25
@@ -44,12 +50,19 @@ export const Route = createFileRoute('/atlas/search')({
         : typeof search.page === 'string'
           ? Number.parseInt(search.page, 10)
           : 1
+    const tabRaw = typeof search.panelTab === 'string' ? search.panelTab : 'content'
     return {
       query: typeof search.query === 'string' ? search.query : '',
       repository: typeof search.repository === 'string' ? search.repository : '',
       pathPrefix: typeof search.pathPrefix === 'string' ? search.pathPrefix : '',
       limit: Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : DEFAULT_LIMIT,
       page: Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1,
+      panelOpen: search.panelOpen === '1' || search.panelOpen === 'true' || search.panelOpen === true,
+      panelTab: tabRaw === 'ast' ? 'ast' : 'content',
+      panelPath: typeof search.panelPath === 'string' ? search.panelPath : '',
+      panelRepository: typeof search.panelRepository === 'string' ? search.panelRepository : '',
+      panelRef: typeof search.panelRef === 'string' ? search.panelRef : '',
+      panelFileVersionId: typeof search.panelFileVersionId === 'string' ? search.panelFileVersionId : '',
     }
   },
   component: AtlasSearchPage,
@@ -157,15 +170,62 @@ function AtlasSearchPage() {
         pathPrefix: pathPrefix.trim(),
         limit: Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : DEFAULT_LIMIT,
         page: 1,
+        panelOpen: false,
+        panelTab: 'content',
+        panelPath: '',
+        panelRepository: '',
+        panelRef: '',
+        panelFileVersionId: '',
       },
     })
   }
 
-  const openPreview = React.useCallback((item: AtlasFileItem) => {
-    setSelectedItem(item)
-    setSheetOpen(true)
-    setActiveTab('content')
-  }, [])
+  const updatePanelSearch = React.useCallback(
+    (next: { open: boolean; tab: 'content' | 'ast'; item?: AtlasFileItem | null }) => {
+      const nextItem = next.item
+      void navigate({
+        replace: true,
+        search: {
+          query: searchState.query,
+          repository: searchState.repository,
+          pathPrefix: searchState.pathPrefix,
+          limit: searchState.limit,
+          page: searchState.page,
+          panelOpen: next.open,
+          panelTab: next.tab,
+          panelPath: next.open && nextItem?.path ? nextItem.path : '',
+          panelRepository: next.open && nextItem?.repository ? nextItem.repository : '',
+          panelRef: next.open && nextItem?.ref ? nextItem.ref : '',
+          panelFileVersionId: next.open && nextItem?.fileVersionId ? nextItem.fileVersionId : '',
+        },
+      })
+    },
+    [navigate, searchState],
+  )
+
+  const openPreview = React.useCallback(
+    (item: AtlasFileItem) => {
+      setSelectedItem(item)
+      setSheetOpen(true)
+      setActiveTab('content')
+      updatePanelSearch({ open: true, tab: 'content', item })
+    },
+    [updatePanelSearch],
+  )
+
+  const closePreview = React.useCallback(() => {
+    previewAbortRef.current?.abort()
+    astAbortRef.current?.abort()
+    setSelectedItem(null)
+    setFilePreview(null)
+    setAstPreview(null)
+    setFilePreviewStatus('idle')
+    setAstStatus('idle')
+    setFilePreviewError(null)
+    setAstError(null)
+    setSheetOpen(false)
+    updatePanelSearch({ open: false, tab: 'content' })
+  }, [updatePanelSearch])
 
   const loadFilePreview = React.useCallback(async (item: AtlasFileItem) => {
     if (!item.path) {
@@ -265,6 +325,48 @@ function AtlasSearchPage() {
     void loadAstPreview(selectedItem)
   }, [loadAstPreview, loadFilePreview, selectedItem, sheetOpen])
 
+  React.useEffect(() => {
+    if (!searchState.panelOpen) {
+      if (sheetOpen) closePreview()
+      return
+    }
+    setSheetOpen(true)
+    setActiveTab(searchState.panelTab)
+
+    const panelPath = searchState.panelPath.trim()
+    if (!panelPath) return
+
+    const panelRepo = searchState.panelRepository.trim()
+    const panelRef = searchState.panelRef.trim() || MAIN_REF
+    const panelFileVersionId = searchState.panelFileVersionId.trim()
+    const match = searchResults.find((item) => {
+      if (!item.path) return false
+      if (panelFileVersionId && item.fileVersionId === panelFileVersionId) return true
+      const samePath = item.path === panelPath
+      const sameRepo = panelRepo ? item.repository === panelRepo : true
+      const sameRef = panelRef ? (item.ref ?? MAIN_REF) === panelRef : true
+      return samePath && sameRepo && sameRef
+    })
+
+    const fallbackItem: AtlasFileItem = {
+      path: panelPath,
+      repository: panelRepo || undefined,
+      ref: panelRef,
+      fileVersionId: panelFileVersionId || undefined,
+    }
+    setSelectedItem(match ?? fallbackItem)
+  }, [
+    closePreview,
+    searchResults,
+    searchState.panelFileVersionId,
+    searchState.panelOpen,
+    searchState.panelPath,
+    searchState.panelRef,
+    searchState.panelRepository,
+    searchState.panelTab,
+    sheetOpen,
+  ])
+
   const totalResults = searchResults.length
   const hasMore = totalResults >= fetchLimit && fetchLimit < MAX_PAGE_FETCH_LIMIT
   const totalPages = Math.max(1, Math.ceil((totalResults + (hasMore ? pageSize : 0)) / pageSize))
@@ -293,10 +395,28 @@ function AtlasSearchPage() {
           pathPrefix: searchState.pathPrefix,
           limit: searchState.limit,
           page,
+          panelOpen: searchState.panelOpen,
+          panelTab: searchState.panelTab,
+          panelPath: searchState.panelPath,
+          panelRepository: searchState.panelRepository,
+          panelRef: searchState.panelRef,
+          panelFileVersionId: searchState.panelFileVersionId,
         },
       })
     },
-    [navigate, searchState.limit, searchState.pathPrefix, searchState.query, searchState.repository],
+    [
+      navigate,
+      searchState.limit,
+      searchState.panelFileVersionId,
+      searchState.panelOpen,
+      searchState.panelPath,
+      searchState.panelRef,
+      searchState.panelRepository,
+      searchState.panelTab,
+      searchState.pathPrefix,
+      searchState.query,
+      searchState.repository,
+    ],
   )
 
   React.useEffect(() => {
@@ -353,7 +473,21 @@ function AtlasSearchPage() {
                 setPathPrefix('')
                 setLimit(DEFAULT_LIMIT.toString())
                 setShowAdvanced(false)
-                void navigate({ search: { query: '', repository: '', pathPrefix: '', limit: DEFAULT_LIMIT, page: 1 } })
+                void navigate({
+                  search: {
+                    query: '',
+                    repository: '',
+                    pathPrefix: '',
+                    limit: DEFAULT_LIMIT,
+                    page: 1,
+                    panelOpen: false,
+                    panelTab: 'content',
+                    panelPath: '',
+                    panelRepository: '',
+                    panelRef: '',
+                    panelFileVersionId: '',
+                  },
+                })
               }}
             >
               Clear
@@ -533,18 +667,14 @@ function AtlasSearchPage() {
       <Sheet
         open={sheetOpen}
         onOpenChange={(open) => {
-          setSheetOpen(open)
-          if (!open) {
-            previewAbortRef.current?.abort()
-            astAbortRef.current?.abort()
-            setSelectedItem(null)
-            setFilePreview(null)
-            setAstPreview(null)
-            setFilePreviewStatus('idle')
-            setAstStatus('idle')
-            setFilePreviewError(null)
-            setAstError(null)
+          if (open) {
+            if (selectedItem) {
+              updatePanelSearch({ open: true, tab: activeTab, item: selectedItem })
+            }
+            setSheetOpen(true)
+            return
           }
+          closePreview()
         }}
       >
         <SheetContent
@@ -580,7 +710,10 @@ function AtlasSearchPage() {
               type="button"
               size="sm"
               variant={activeTab === 'content' ? 'secondary' : 'ghost'}
-              onClick={() => setActiveTab('content')}
+              onClick={() => {
+                setActiveTab('content')
+                updatePanelSearch({ open: true, tab: 'content', item: selectedItem ?? undefined })
+              }}
             >
               Content
             </Button>
@@ -588,7 +721,10 @@ function AtlasSearchPage() {
               type="button"
               size="sm"
               variant={activeTab === 'ast' ? 'secondary' : 'ghost'}
-              onClick={() => setActiveTab('ast')}
+              onClick={() => {
+                setActiveTab('ast')
+                updatePanelSearch({ open: true, tab: 'ast', item: selectedItem ?? undefined })
+              }}
             >
               AST
             </Button>
