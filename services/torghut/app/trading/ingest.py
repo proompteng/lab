@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Optional, cast
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -50,11 +50,16 @@ class ClickHouseSignalIngestor:
 
         max_event_ts: Optional[datetime] = None
         for row in rows:
+            event_ts = _parse_ts(row.get("event_ts"))
+            symbol = row.get("symbol")
+            if event_ts is None or not isinstance(symbol, str):
+                logger.warning("Skipping signal with missing event_ts or symbol")
+                continue
             try:
                 signal = SignalEnvelope(
-                    event_ts=_parse_ts(row.get("event_ts")),
+                    event_ts=event_ts,
                     ingest_ts=_parse_ts(row.get("ingest_ts")),
-                    symbol=row.get("symbol"),
+                    symbol=symbol,
                     payload=_normalize_payload(row.get("payload")),
                     timeframe=_coerce_timeframe(row),
                     seq=row.get("seq"),
@@ -148,13 +153,19 @@ def _parse_ts(value: Any) -> Optional[datetime]:
 
 
 def _coerce_timeframe(row: dict[str, Any]) -> Optional[str]:
-    window = row.get("window") or {}
-    size = None
+    window = row.get("window")
+    size: Optional[str] = None
     if isinstance(window, dict):
-        size = window.get("size")
-    payload = row.get("payload") or {}
-    if isinstance(payload, dict) and payload.get("timeframe"):
-        return payload.get("timeframe")
+        window_dict = cast(dict[str, Any], window)
+        raw_size = window_dict.get("size")
+        if isinstance(raw_size, str):
+            size = raw_size
+    payload = row.get("payload")
+    if isinstance(payload, dict):
+        payload_dict = cast(dict[str, Any], payload)
+        timeframe = payload_dict.get("timeframe")
+        if isinstance(timeframe, str):
+            return timeframe
     if size == "PT1S":
         return "1Sec"
     if size == "PT1M":
@@ -166,14 +177,14 @@ def _normalize_payload(payload: Any) -> dict[str, Any]:
     if payload is None:
         return {}
     if isinstance(payload, dict):
-        return payload
+        return cast(dict[str, Any], payload)
     if isinstance(payload, str):
         try:
             decoded = json.loads(payload)
         except json.JSONDecodeError:
             return {}
         if isinstance(decoded, dict):
-            return decoded
+            return cast(dict[str, Any], decoded)
     return {}
 
 

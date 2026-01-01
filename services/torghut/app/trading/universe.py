@@ -6,7 +6,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional, cast
 from urllib.request import Request, urlopen
 
 from ..config import settings
@@ -61,11 +61,22 @@ class UniverseResolver:
 
 def _parse_symbols(payload: object) -> set[str]:
     if isinstance(payload, dict):
-        maybe_symbols = payload.get("symbols")
+        payload_dict = cast(dict[str, Any], payload)
+        maybe_symbols = payload_dict.get("symbols")
         if isinstance(maybe_symbols, list):
-            return {str(symbol).strip() for symbol in maybe_symbols if str(symbol).strip()}
+            symbols: set[str] = set()
+            for symbol in cast(list[Any], maybe_symbols):
+                cleaned = str(symbol).strip()
+                if cleaned:
+                    symbols.add(cleaned)
+            return symbols
     if isinstance(payload, list):
-        return {str(symbol).strip() for symbol in payload if str(symbol).strip()}
+        symbols: set[str] = set()
+        for symbol in cast(list[Any], payload):
+            cleaned = str(symbol).strip()
+            if cleaned:
+                symbols.add(cleaned)
+        return symbols
     return set()
 
 

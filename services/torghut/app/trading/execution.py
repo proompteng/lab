@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from collections.abc import Mapping
+from typing import Any, Optional, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -94,12 +95,24 @@ class OrderExecutor:
 
     def mark_rejected(self, session: Session, decision_row: TradeDecision, reason: str) -> None:
         decision_row.status = "rejected"
-        decision_json = decision_row.decision_json or {}
-        if isinstance(decision_json, dict):
-            decision_json.setdefault("risk_reasons", []).append(reason)
-            decision_row.decision_json = decision_json
+        decision_json = _coerce_json(decision_row.decision_json)
+        existing = decision_json.get("risk_reasons")
+        if isinstance(existing, list):
+            risk_reasons = [str(item) for item in cast(list[Any], existing)]
+        else:
+            risk_reasons = []
+        risk_reasons.append(reason)
+        decision_json["risk_reasons"] = risk_reasons
+        decision_row.decision_json = decision_json
         session.add(decision_row)
         session.commit()
+
+
+def _coerce_json(value: Any) -> dict[str, Any]:
+    if isinstance(value, Mapping):
+        raw = cast(Mapping[str, Any], value)
+        return {str(key): val for key, val in raw.items()}
+    return {}
 
 
 __all__ = ["OrderExecutor"]

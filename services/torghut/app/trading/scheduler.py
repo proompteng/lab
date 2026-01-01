@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -169,14 +169,19 @@ class TradingPipeline:
     @staticmethod
     def _load_strategies(session: Session) -> list[Strategy]:
         stmt = select(Strategy).where(Strategy.enabled.is_(True))
-        return session.execute(stmt).scalars().all()
+        return list(session.execute(stmt).scalars().all())
 
 
 def _coerce_strategy_symbols(raw: object) -> set[str]:
     if raw is None:
         return set()
     if isinstance(raw, list):
-        return {str(symbol).strip() for symbol in raw if str(symbol).strip()}
+        symbols: set[str] = set()
+        for symbol in cast(list[Any], raw):
+            cleaned = str(symbol).strip()
+            if cleaned:
+                symbols.add(cleaned)
+        return symbols
     if isinstance(raw, str):
         return {symbol.strip() for symbol in raw.split(",") if symbol.strip()}
     return set()

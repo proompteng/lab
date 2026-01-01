@@ -84,7 +84,7 @@ class RiskEngine:
 
 def _extract_decision_price(decision: StrategyDecision) -> Optional[Decimal]:
     for key in ("price", "limit_price", "stop_price"):
-        value = decision.params.get(key) if isinstance(decision.params, dict) else None
+        value = decision.params.get(key)
         if value is None:
             value = getattr(decision, key, None)
         if value is not None:

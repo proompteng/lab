@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from decimal import Decimal
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Optional, cast
 
 from ..config import settings
 from ..models import Strategy
@@ -74,10 +74,11 @@ class DecisionEngine:
 
 
 def _extract_macd(payload: dict[str, Any]) -> tuple[Optional[Decimal], Optional[Decimal]]:
-    macd_block = payload.get("macd") if isinstance(payload, dict) else None
+    macd_block = payload.get("macd")
     if isinstance(macd_block, dict):
-        macd_val = macd_block.get("macd")
-        signal_val = macd_block.get("signal")
+        macd_dict = cast(dict[str, Any], macd_block)
+        macd_val = macd_dict.get("macd")
+        signal_val = macd_dict.get("signal")
     else:
         macd_val = payload.get("macd")
         signal_val = payload.get("macd_signal")
@@ -85,14 +86,10 @@ def _extract_macd(payload: dict[str, Any]) -> tuple[Optional[Decimal], Optional[
 
 
 def _extract_rsi(payload: dict[str, Any]) -> Optional[Decimal]:
-    if not isinstance(payload, dict):
-        return None
     return _optional_decimal(payload.get("rsi14") or payload.get("rsi"))
 
 
 def _extract_price(payload: dict[str, Any]) -> Optional[Decimal]:
-    if not isinstance(payload, dict):
-        return None
     for key in ("price", "close", "c", "last"):
         if key in payload:
             return _optional_decimal(payload.get(key))
