@@ -218,18 +218,9 @@ function ImageDetails() {
                   <h1 className="text-xl font-semibold text-neutral-100">{repository}</h1>
                   <p className="text-xs text-neutral-500">Last refreshed {formattedTime}</p>
                 </div>
-              </div>
-              <div className="flex flex-col items-end gap-3">
-                <div className="rounded-sm border border-neutral-800/80 bg-neutral-950 px-4 py-3 text-right">
-                  <p className="text-[11px] uppercase tracking-wide text-neutral-500">Total size</p>
-                  <p className="text-lg font-semibold text-neutral-100">
-                    {hasTotalSize && totalSizeBytes !== undefined ? formatSize(totalSizeBytes) : 'Unknown'}
-                  </p>
-                  <p className="text-xs text-neutral-500">{tags.length} tags</p>
-                </div>
                 <Button
                   type="button"
-                  variant="destructive"
+                  variant="outline"
                   size="sm"
                   disabled={sortedTags.length <= 3 || isPruning}
                   onClick={() => {
@@ -239,6 +230,15 @@ function ImageDetails() {
                 >
                   Prune old tags
                 </Button>
+              </div>
+              <div className="flex flex-col items-end gap-3">
+                <div className="rounded-sm border border-neutral-800/80 bg-neutral-950 px-4 py-3 text-right">
+                  <p className="text-[11px] uppercase tracking-wide text-neutral-500">Total size</p>
+                  <p className="text-lg font-semibold text-neutral-100">
+                    {hasTotalSize && totalSizeBytes !== undefined ? formatSize(totalSizeBytes) : 'Unknown'}
+                  </p>
+                  <p className="text-xs text-neutral-500">{tags.length} tags</p>
+                </div>
               </div>
             </div>
           </header>
