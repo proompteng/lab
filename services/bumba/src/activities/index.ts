@@ -1791,7 +1791,7 @@ type EmbeddingRequest = {
   reject: (error: Error) => void
 }
 
-let embeddingQueue: EmbeddingRequest[] = []
+const embeddingQueue: EmbeddingRequest[] = []
 let embeddingFlushScheduled = false
 let embeddingFlushPromise: Promise<void> | null = null
 
@@ -1816,7 +1816,9 @@ const flushEmbeddingQueue = async (): Promise<void> => {
       } catch (error) {
         const batch = embeddingQueue.splice(0)
         const failure = toError(error)
-        batch.forEach((item) => item.reject(failure))
+        for (const item of batch) {
+          item.reject(failure)
+        }
         return
       }
 
@@ -1831,7 +1833,9 @@ const flushEmbeddingQueue = async (): Promise<void> => {
             })
           } catch (error) {
             const failure = toError(error)
-            batch.forEach((item) => item.reject(failure))
+            for (const item of batch) {
+              item.reject(failure)
+            }
           }
         })(),
       )

@@ -509,8 +509,12 @@ describe('bumba embeddings', () => {
       const result = await activities.createEmbedding({ text: 'hello' })
       expect(result.embedding).toEqual([1, 1, 1, 1])
       expect(requestUrl).toBe('https://api.openai.com/v1/embeddings')
-      expect(requestBody?.input).toEqual(['hello'])
-      expect(requestBody?.dimensions).toBe(4)
+      if (!requestBody) {
+        throw new Error('expected embedding request body')
+      }
+      const body = requestBody as { input?: unknown; dimensions?: unknown }
+      expect(body.input).toEqual(['hello'])
+      expect(body.dimensions).toBe(4)
     } finally {
       globalThis.fetch = previousFetch
       for (const [key, value] of Object.entries(previousEnv)) {
