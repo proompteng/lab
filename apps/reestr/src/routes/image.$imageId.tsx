@@ -1,4 +1,4 @@
-import { IconTrash } from '@tabler/icons-react'
+import { IconHome2, IconPackage, IconTrash } from '@tabler/icons-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
@@ -15,6 +15,14 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
 } from '~/components/ui/alert-dialog'
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from '~/components/ui/breadcrumb'
 import { Button } from '~/components/ui/button'
 import { ScrollArea } from '~/components/ui/scroll-area'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
@@ -73,6 +81,22 @@ function ImageDetails() {
   })
 
   const { repository, tags, totalSizeBytes, hasTotalSize, fetchedAt, error } = data
+  const sortedTags = [...tags].sort((first, second) => {
+    const firstTime = first.createdAt ? Date.parse(first.createdAt) : Number.NEGATIVE_INFINITY
+    const secondTime = second.createdAt ? Date.parse(second.createdAt) : Number.NEGATIVE_INFINITY
+
+    if (Number.isNaN(firstTime) && Number.isNaN(secondTime)) {
+      return 0
+    }
+    if (Number.isNaN(firstTime)) {
+      return 1
+    }
+    if (Number.isNaN(secondTime)) {
+      return -1
+    }
+
+    return secondTime - firstTime
+  })
   const formattedTime = new Intl.DateTimeFormat(undefined, {
     dateStyle: 'medium',
     timeStyle: 'short',
@@ -109,25 +133,41 @@ function ImageDetails() {
   }
 
   return (
-    <div className="flex h-dvh w-full justify-center">
-      <section className="flex h-dvh w-full max-w-6xl flex-col px-6 py-6 text-neutral-100">
+    <div className="flex justify-center overflow-x-hidden h-dvh w-full">
+      <section className="flex flex-col overflow-x-hidden h-dvh w-full max-w-6xl px-6 py-6 text-neutral-100">
         <div className="flex min-h-0 flex-1 flex-col gap-4">
-          <header className="flex flex-wrap items-start justify-between gap-4">
-            <div className="flex flex-col gap-2">
-              <Link to="/" className="text-xs font-medium text-neutral-400 transition hover:text-neutral-100">
-                ← Back to registry
-              </Link>
-              <div className="space-y-1">
-                <h1 className="text-xl font-semibold text-neutral-100">{repository}</h1>
-                <p className="text-xs text-neutral-500">Last refreshed {formattedTime}</p>
+          <header className="flex flex-col gap-3">
+            <Breadcrumb>
+              <BreadcrumbList>
+                <BreadcrumbItem>
+                  <BreadcrumbLink render={<Link to="/" />} className="inline-flex items-center gap-1 text-neutral-400">
+                    <IconHome2 className="size-3.5" />
+                    Registry
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator />
+                <BreadcrumbItem>
+                  <BreadcrumbPage className="inline-flex items-center gap-1">
+                    <IconPackage className="size-3.5" />
+                    {repository}
+                  </BreadcrumbPage>
+                </BreadcrumbItem>
+              </BreadcrumbList>
+            </Breadcrumb>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex flex-col gap-2">
+                <div className="space-y-1">
+                  <h1 className="text-xl font-semibold text-neutral-100">{repository}</h1>
+                  <p className="text-xs text-neutral-500">Last refreshed {formattedTime}</p>
+                </div>
               </div>
-            </div>
-            <div className="rounded-sm border border-neutral-800/80 bg-neutral-950 px-4 py-3 text-right">
-              <p className="text-[11px] uppercase tracking-wide text-neutral-500">Total size</p>
-              <p className="text-lg font-semibold text-neutral-100">
-                {hasTotalSize && totalSizeBytes !== undefined ? formatSize(totalSizeBytes) : 'Unknown'}
-              </p>
-              <p className="text-xs text-neutral-500">{tags.length} tags</p>
+              <div className="rounded-sm border border-neutral-800/80 bg-neutral-950 px-4 py-3 text-right">
+                <p className="text-[11px] uppercase tracking-wide text-neutral-500">Total size</p>
+                <p className="text-lg font-semibold text-neutral-100">
+                  {hasTotalSize && totalSizeBytes !== undefined ? formatSize(totalSizeBytes) : 'Unknown'}
+                </p>
+                <p className="text-xs text-neutral-500">{tags.length} tags</p>
+              </div>
             </div>
           </header>
 
@@ -137,7 +177,7 @@ function ImageDetails() {
                 {error}
               </p>
             ) : null}
-            <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]]:overflow-y-auto [&_[data-slot=scroll-area-viewport]]:overscroll-contain [&_[data-slot=table-container]]:overflow-x-visible">
+            <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]]:overflow-x-hidden [&_[data-slot=scroll-area-viewport]]:overflow-y-auto [&_[data-slot=scroll-area-viewport]]:overscroll-contain [&_[data-slot=table-container]]:overflow-x-hidden">
               <Table className="table-fixed text-sm">
                 <colgroup>
                   <col className="w-[20%]" />
@@ -154,28 +194,28 @@ function ImageDetails() {
                     </TableHead>
                     <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 font-semibold">Size</TableHead>
                     <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 font-semibold">Updated</TableHead>
-                    <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 text-right font-semibold">
+                    <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 text-center font-semibold">
                       Actions
                     </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {tags.length === 0 ? (
+                  {sortedTags.length === 0 ? (
                     <TableRow className="h-12 border-neutral-800/80">
                       <TableCell colSpan={5} className="px-4 py-0 text-center text-sm text-neutral-300">
                         No tags found for this repository.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    tags.map((tag) => (
+                    sortedTags.map((tag) => (
                       <TableRow key={tag.tag} className="border-neutral-800/80">
-                        <TableCell className="px-4 py-3 align-top">
+                        <TableCell className="px-4 py-3 align-top break-words whitespace-normal">
                           <div className="flex flex-col gap-1">
                             <span className="text-sm font-semibold text-neutral-100">{tag.tag}</span>
-                            {tag.error ? <span className="text-xs text-rose-400">{tag.error}</span> : null}
+                            {tag.error ? <span className="break-words text-xs text-rose-400">{tag.error}</span> : null}
                           </div>
                         </TableCell>
-                        <TableCell className="px-4 py-3">
+                        <TableCell className="px-4 py-3 break-words whitespace-normal">
                           {tag.manifestType === 'list' ? (
                             tag.manifests?.length ? (
                               <div className="flex flex-col gap-2">
@@ -189,7 +229,9 @@ function ImageDetails() {
                                         ? formatSize(manifest.sizeBytes)
                                         : 'Unknown'}
                                     </span>
-                                    {manifest.error ? <span className="text-rose-400">{manifest.error}</span> : null}
+                                    {manifest.error ? (
+                                      <span className="break-words text-rose-400">{manifest.error}</span>
+                                    ) : null}
                                   </div>
                                 ))}
                               </div>
@@ -210,8 +252,8 @@ function ImageDetails() {
                         <TableCell className="px-4 py-3 text-xs text-neutral-300">
                           {tag.createdAt ? formatTimestamp(tag.createdAt) : '—'}
                         </TableCell>
-                        <TableCell className="px-2 py-3 align-top">
-                          <div className="flex justify-end">
+                        <TableCell className="px-2 py-3 align-middle">
+                          <div className="flex items-center justify-center">
                             <Tooltip>
                               <TooltipTrigger
                                 render={

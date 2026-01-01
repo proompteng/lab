@@ -1,9 +1,12 @@
+import { IconTrash } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import type { KeyboardEvent } from 'react'
 
+import { Button } from '~/components/ui/button'
 import { ScrollArea } from '~/components/ui/scroll-area'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
+import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
 import { encodeRepositoryParam, formatSize } from '~/lib/registry'
 import { type RegistryImagesResponse, registryImagesServerFn } from '~/server/registry-images'
 
@@ -15,6 +18,7 @@ export const Route = createFileRoute('/')({
 const registryImagesQueryKey = ['registryImages'] as const
 
 function App() {
+  const navigate = useNavigate()
   const initialData = Route.useLoaderData() as RegistryImagesResponse
 
   const { data } = useQuery({
@@ -54,21 +58,22 @@ function App() {
   }
 
   return (
-    <div className="flex h-dvh w-full justify-center">
-      <section className="flex h-dvh w-full max-w-6xl flex-col px-6 py-6 text-neutral-100">
+    <div className="flex justify-center overflow-x-hidden h-dvh w-full">
+      <section className="flex flex-col overflow-x-hidden h-dvh w-full max-w-6xl px-6 py-6 text-neutral-100">
         <div className="flex min-h-0 flex-1 flex-col rounded-sm border border-neutral-800/80 bg-neutral-950 shadow-[0_0_0_1px_rgba(10,10,10,0.6)]">
           {error ? (
             <p role="alert" className="mt-4 px-6 text-sm text-rose-400">
               {error}
             </p>
           ) : null}
-          <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]]:overflow-y-auto [&_[data-slot=scroll-area-viewport]]:overscroll-contain [&_[data-slot=table-container]]:overflow-x-visible">
+          <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]]:overflow-x-hidden [&_[data-slot=scroll-area-viewport]]:overflow-y-auto [&_[data-slot=scroll-area-viewport]]:overscroll-contain [&_[data-slot=table-container]]:overflow-x-hidden">
             <Table className="table-fixed text-sm">
               <colgroup>
-                <col className="w-[24%]" />
-                <col className="w-[44%]" />
+                <col className="w-[22%]" />
+                <col className="w-[42%]" />
                 <col className="w-[14%]" />
-                <col className="w-[18%]" />
+                <col className="w-[16%]" />
+                <col className="w-[6%]" />
               </colgroup>
               <TableHeader>
                 <TableRow className="h-12 border-neutral-800/80 text-xs uppercase tracking-wide text-neutral-400">
@@ -76,12 +81,15 @@ function App() {
                   <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 font-semibold">Tags</TableHead>
                   <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 font-semibold">Size</TableHead>
                   <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 font-semibold">Updated</TableHead>
+                  <TableHead className="sticky top-0 z-10 bg-neutral-950 px-2 py-0 text-center font-semibold">
+                    Actions
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {images.length === 0 ? (
                   <TableRow className="h-12 border-neutral-800/80">
-                    <TableCell colSpan={4} className="px-4 py-0 text-center text-sm text-neutral-300">
+                    <TableCell colSpan={5} className="px-4 py-0 text-center text-sm text-neutral-300">
                       No images found in the registry.
                     </TableCell>
                   </TableRow>
@@ -164,6 +172,28 @@ function App() {
                           >
                             {image.sizeTimestamp ? formatTimestamp(image.sizeTimestamp) : '—'}
                           </Link>
+                        </TableCell>
+                        <TableCell className="px-0 py-0">
+                          <div className="flex h-full items-center justify-center">
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    aria-label={`Delete tags for ${image.name}`}
+                                    onClick={() => {
+                                      navigate({ to: '/image/$imageId', params: { imageId } })
+                                    }}
+                                  >
+                                    <IconTrash className="text-rose-400" />
+                                  </Button>
+                                }
+                              />
+                              <TooltipContent>Delete tags</TooltipContent>
+                            </Tooltip>
+                          </div>
                         </TableCell>
                       </TableRow>
                     )
