@@ -18,8 +18,8 @@ flowchart LR
   FL -->|micro-bars 1s| K2[(ta.bars.1s.v1)]
   FL -->|EMA/RSI/MACD/VWAP/etc| K3[(ta.signals.v1)]
   FL -->|status| K4[(ta.status.v1)]
-  K2 --> TOR[torghut main svc]
-  K3 --> TOR
+  K2 --> CH[(ClickHouse ta_microbars)]
+  K3 --> CHS[(ClickHouse ta_signals)]
   subgraph Infra
     OP["Flink K8s Operator"]
     STR["Strimzi Kafka"]
@@ -38,7 +38,7 @@ flowchart LR
   - Single replica per Alpaca account to satisfy the single-connection constraint.
 - Kafka: Strimzi-managed, SASL/TLS; topics lz4, RF=3, partitions=1 per symbol.
 - Flink: 1.20.x via Operator 1.13.x; KafkaSource/Sink with exactly-once; checkpoints every 10 s to MinIO/S3.
-- torghut main service: consumes TA topics; feature flag to choose TA source.
+- torghut main service: does **not** consume TA topics; TA is used via ClickHouse-backed APIs and external consumers.
 
 ### Version matrix
 - Alpaca WS: `wss://stream.data.alpaca.markets/v2/{feed}`; one active connection per account.
@@ -70,6 +70,7 @@ flowchart LR
 ## Security
 - Kafka auth via Strimzi KafkaUser (SCRAM/TLS) mounted in torghut namespace (reflector allowed).
 - Pods runAsNonRoot, readOnlyRootFS, drop NET_RAW; scoped NetworkPolicies (egress Alpaca + Kafka + MinIO).
+- Current state: Kafka client connections in torghut use `SASL_PLAINTEXT` (no TLS). This is acceptable for now and should be revisited if we require in-cluster encryption.
 
 ## Observability
 - Expose Prometheus-format metrics; existing stack is Grafana Mimir/Loki/Tempo (see `argocd/applications/observability`).
@@ -98,7 +99,7 @@ flowchart LR
 - Keep topics/schemas identical across envs; vary retention/replication if needed.
 
 ## Feature Flags for Consumers
-- torghut main service should gate TA consumption (enable/disable, choose topic/version).
+- External consumers should gate TA consumption (enable/disable, choose topic/version).
 - Consumers should set `isolation.level=read_committed` when sinks use transactions; fallback to at-least-once profile supported via config.
 
 ## Multi-symbol Scaling Plan
@@ -118,7 +119,7 @@ flowchart LR
 - Apply operator first (#1913), then forwarder (#1914), then TA job (#1915).
 - Ensure checkpoint bucket/secret provisioned before TA job sync.
 - Create KafkaTopic CRs and register schemas before enabling sinks to avoid topic/subject missing errors.
-- Keep torghut main service behind a feature flag until TA signal quality is validated.
+- Keep external consumers behind a feature flag until TA signal quality is validated.
 
 ## Related docs
 - Forwarder details: `docs/torghut/alpaca-forwarder.md`
