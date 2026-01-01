@@ -55,6 +55,7 @@
 - Tailwind CSS only; class order layout → spacing → sizing → typography → colors; use `cn()` for conditionals.
 - Zinc palette (primary zinc-900/100, secondary zinc-700/300), responsive utilities, no hardcoded widths/heights.
 - Forms: Zod schemas in `schemas/` + `zodResolver`; validate after typing and keep errors inline.
+- Do not edit base shadcn components directly; customize via composition or props.
 
 ## Testing Guidelines
 - Co-locate tests: `*.test.ts(x)`, `*_test.go`, `src/test/kotlin/*Test.kt`, `test/**`, `alchimie_tests/`.

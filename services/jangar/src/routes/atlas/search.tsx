@@ -379,7 +379,15 @@ function AtlasSearchPage() {
       ref: panelRef,
       fileVersionId: panelFileVersionId || undefined,
     }
-    setSelectedItem(match ?? fallbackItem)
+    const nextItem = match ?? fallbackItem
+    const isSameSelection =
+      selectedItem?.path === nextItem.path &&
+      (selectedItem?.repository ?? '') === (nextItem.repository ?? '') &&
+      (selectedItem?.ref ?? '') === (nextItem.ref ?? '') &&
+      (selectedItem?.fileVersionId ?? '') === (nextItem.fileVersionId ?? '')
+    if (!isSameSelection) {
+      setSelectedItem(nextItem)
+    }
   }, [
     closePreview,
     resetPreviewState,
@@ -706,7 +714,7 @@ function AtlasSearchPage() {
       >
         <SheetContent
           side="right"
-          className="flex flex-col data-[side=right]:w-[min(96vw,120rem)] data-[side=right]:sm:w-[min(92vw,120rem)] data-[side=right]:sm:max-w-none"
+          className="min-h-0 flex flex-col data-[side=right]:w-[min(96vw,120rem)] data-[side=right]:sm:w-[min(92vw,120rem)] data-[side=right]:sm:max-w-none"
         >
           <SheetHeader className="gap-2 border-b px-4 py-3 pr-12">
             <SheetTitle className="break-words text-base">{selectedItem?.path ?? 'File preview'}</SheetTitle>
@@ -757,85 +765,88 @@ function AtlasSearchPage() {
             </Button>
           </div>
 
-          <ScrollArea className="flex-1">
-            <div className="p-4">
-              {activeTab === 'content' ? (
-                <div className="space-y-3">
-                  {filePreviewStatus === 'loading' ? (
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span className="size-3 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none" />
-                      Loading file preview…
-                    </div>
-                  ) : filePreviewStatus === 'error' ? (
-                    <p className="text-xs text-destructive">{filePreviewError ?? 'Failed to load file preview.'}</p>
-                  ) : filePreview?.ok ? (
-                    <div className="space-y-2">
-                      {filePreview.truncated ? (
-                        <p className="text-[11px] text-muted-foreground">
-                          Showing the first {filePreview.content.split('\n').length} lines (truncated for performance).
-                        </p>
-                      ) : null}
-                      <pre className="overflow-auto rounded-none border p-3 font-mono text-[11px] text-foreground bg-muted/20">
-                        {filePreview.content || 'File preview is empty.'}
-                      </pre>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">Select a file to preview its content.</p>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {astStatus === 'loading' ? (
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span className="size-3 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none" />
-                      Loading AST facts…
-                    </div>
-                  ) : astStatus === 'error' ? (
-                    <p className="text-xs text-destructive">{astError ?? 'Failed to load AST facts.'}</p>
-                  ) : astPreview?.ok ? (
-                    <div className="space-y-4">
-                      {astPreview.summary ? (
-                        <pre className="whitespace-pre-wrap rounded-none border p-3 font-mono text-[11px] text-foreground bg-muted/20">
-                          {astPreview.summary}
+          <div className="min-h-0 flex-1">
+            <ScrollArea className="h-full">
+              <div className="p-4">
+                {activeTab === 'content' ? (
+                  <div className="space-y-3">
+                    {filePreviewStatus === 'loading' ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <span className="size-3 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none" />
+                        Loading file preview…
+                      </div>
+                    ) : filePreviewStatus === 'error' ? (
+                      <p className="text-xs text-destructive">{filePreviewError ?? 'Failed to load file preview.'}</p>
+                    ) : filePreview?.ok ? (
+                      <div className="space-y-2">
+                        {filePreview.truncated ? (
+                          <p className="text-[11px] text-muted-foreground">
+                            Showing the first {filePreview.content.split('\n').length} lines (truncated for
+                            performance).
+                          </p>
+                        ) : null}
+                        <pre className="overflow-auto rounded-none border p-3 font-mono text-[11px] text-foreground bg-muted/20">
+                          {filePreview.content || 'File preview is empty.'}
                         </pre>
-                      ) : null}
-                      {astPreview.facts.length > 0 ? (
-                        <div className="space-y-2">
-                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">AST facts</p>
-                          <div className="overflow-auto rounded-none border bg-background">
-                            <table className="w-full text-[11px]">
-                              <thead className="border-b bg-muted/30 text-left uppercase tracking-widest text-muted-foreground">
-                                <tr>
-                                  <th className="px-3 py-2 font-medium">Lines</th>
-                                  <th className="px-3 py-2 font-medium">Node</th>
-                                  <th className="px-3 py-2 font-medium">Snippet</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {astPreview.facts.map((fact, factIndex) => (
-                                  <tr key={`${fact.nodeType}-${factIndex}`} className="border-b last:border-b-0">
-                                    <td className="px-3 py-2 text-muted-foreground">
-                                      {fact.startLine ?? '—'}-{fact.endLine ?? '—'}
-                                    </td>
-                                    <td className="px-3 py-2 font-medium text-foreground">{fact.nodeType}</td>
-                                    <td className="px-3 py-2 font-mono text-foreground">{fact.matchText}</td>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Select a file to preview its content.</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {astStatus === 'loading' ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <span className="size-3 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none" />
+                        Loading AST facts…
+                      </div>
+                    ) : astStatus === 'error' ? (
+                      <p className="text-xs text-destructive">{astError ?? 'Failed to load AST facts.'}</p>
+                    ) : astPreview?.ok ? (
+                      <div className="space-y-4">
+                        {astPreview.summary ? (
+                          <pre className="whitespace-pre-wrap rounded-none border p-3 font-mono text-[11px] text-foreground bg-muted/20">
+                            {astPreview.summary}
+                          </pre>
+                        ) : null}
+                        {astPreview.facts.length > 0 ? (
+                          <div className="space-y-2">
+                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">AST facts</p>
+                            <div className="overflow-auto rounded-none border bg-background">
+                              <table className="w-full text-[11px]">
+                                <thead className="border-b bg-muted/30 text-left uppercase tracking-widest text-muted-foreground">
+                                  <tr>
+                                    <th className="px-3 py-2 font-medium">Lines</th>
+                                    <th className="px-3 py-2 font-medium">Node</th>
+                                    <th className="px-3 py-2 font-medium">Snippet</th>
                                   </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                                </thead>
+                                <tbody>
+                                  {astPreview.facts.map((fact, factIndex) => (
+                                    <tr key={`${fact.nodeType}-${factIndex}`} className="border-b last:border-b-0">
+                                      <td className="px-3 py-2 text-muted-foreground">
+                                        {fact.startLine ?? '—'}-{fact.endLine ?? '—'}
+                                      </td>
+                                      <td className="px-3 py-2 font-medium text-foreground">{fact.nodeType}</td>
+                                      <td className="px-3 py-2 font-mono text-foreground">{fact.matchText}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
                           </div>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-muted-foreground">No AST facts stored for this file yet.</p>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">Select a file to inspect its AST.</p>
-                  )}
-                </div>
-              )}
-            </div>
-          </ScrollArea>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">No AST facts stored for this file yet.</p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Select a file to inspect its AST.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+          </div>
         </SheetContent>
       </Sheet>
     </main>
