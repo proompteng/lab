@@ -2530,6 +2530,8 @@ export const activities = {
       'If input is truncated, include a bullet: "Input truncated; details may be missing."',
       'Never return file metadata objects, schemas, or code samples; only summary/enriched.',
       'If you are unable to comply, return exactly: {"summary":"Unknown","enriched":"- Unknown"}',
+      'Invalid responses include JSON objects that list fields, schemas, or code.',
+      'Do NOT output objects like {"filename":"...","code":"..."} or {"activityId":"string", ...}.',
     ].join(' ')
 
     const userSections = [
@@ -2571,7 +2573,10 @@ export const activities = {
           .filter((entry) => entry && entry.length > 0)
           .join(' ')
         const repairSections = [
-          ...userSections,
+          `Filename: ${input.filename}`,
+          input.context ? `Context: ${input.context}` : null,
+          `Input truncated: ${wasTruncated ? 'yes' : 'no'}`,
+          `AST summary:\n${input.astSummary}`,
           previousOutput ? `Previous response:\n${previousOutput}` : null,
         ].filter((section) => section && section.length > 0)
         return [
