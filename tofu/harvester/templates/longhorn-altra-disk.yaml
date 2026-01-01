@@ -37,9 +37,9 @@ spec:
       allowScheduling: true
       diskType: filesystem
       path: /var/lib/harvester/defaultdisk
-      storageReserved: 107374182400
+      storageReserved: 53687091200
     nvme0-disk:
       allowScheduling: true
       diskType: filesystem
       path: /usr/local/longhorn-disk
-      storageReserved: 214748364800
+      storageReserved: 53687091200
