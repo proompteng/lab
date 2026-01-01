@@ -25,9 +25,11 @@ SAIGAK_GRAFANA_PASSWORD=changeme \
 
 Optional: enable Nginx by setting `SAIGAK_ENABLE_NGINX=1`.
 Optional: pre-pull models by setting `SAIGAK_MODELS` (comma-separated).
-Default models: `qwen3-coder:30b-a3b-q4_K_M`, `qwen3-embedding:0.6b` (set `SAIGAK_SKIP_MODELS=1` to skip).
+Default base models (used to build tuned aliases): `qwen3-coder:30b-a3b-q4_K_M`, `qwen3-embedding:0.6b`
+(set `SAIGAK_SKIP_MODELS=1` to skip).
 Tuned aliases are created by default (`SAIGAK_CREATE_TUNED_MODELS=1`):
 `qwen3-coder-saigak:30b-a3b-q4_K_M`, `qwen3-embedding-saigak:0.6b`.
+Base tags are pruned after alias creation unless `SAIGAK_PRUNE_BASE_MODELS=0`.
 
 ## Requirements
 
@@ -61,7 +63,7 @@ Run a quick throughput check against the proxy:
 
 ```bash
 ./services/saigak/scripts/load-test.py \
-  --model qwen3-coder:30b-a3b-q4_K_M \
+  --model qwen3-coder-saigak:30b-a3b-q4_K_M \
   --duration 60 \
   --concurrency 8
 ```

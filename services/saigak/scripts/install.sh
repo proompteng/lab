@@ -71,6 +71,15 @@ if [[ "${SAIGAK_CREATE_TUNED_MODELS:-1}" == "1" ]]; then
   sudo -u ollama OLLAMA_HOST=127.0.0.1:11435 /usr/local/bin/ollama create \
     qwen3-embedding-saigak:0.6b \
     -f "${SERVICE_DIR}/config/models/qwen3-embedding-0-6b.modelfile"
+
+  if [[ "${SAIGAK_PRUNE_BASE_MODELS:-1}" == "1" ]]; then
+    log "pruning base model tags"
+    for model in qwen3-coder:30b-a3b-q4_K_M qwen3-embedding:0.6b; do
+      if OLLAMA_HOST=127.0.0.1:11435 /usr/local/bin/ollama list | awk '{print $1}' | grep -Fxq "${model}"; then
+        sudo -u ollama OLLAMA_HOST=127.0.0.1:11435 /usr/local/bin/ollama rm "${model}"
+      fi
+    done
+  fi
 fi
 
 require_cmd docker

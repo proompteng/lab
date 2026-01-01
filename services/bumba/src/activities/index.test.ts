@@ -413,7 +413,7 @@ describe('bumba embeddings', () => {
 
     process.env.OPENAI_API_BASE_URL = 'http://127.0.0.1:11434/v1'
     process.env.OPENAI_EMBEDDING_API_BASE_URL = 'http://127.0.0.1:11434/api'
-    process.env.OPENAI_EMBEDDING_MODEL = 'qwen3-embedding:0.6b'
+    process.env.OPENAI_EMBEDDING_MODEL = 'qwen3-embedding-saigak:0.6b'
     process.env.OPENAI_EMBEDDING_DIMENSION = '3'
     process.env.OPENAI_EMBEDDING_BATCH_SIZE = '2'
     process.env.OPENAI_EMBEDDING_TIMEOUT_MS = '5000'
@@ -457,7 +457,7 @@ describe('bumba embeddings', () => {
       expect(resultB.embedding).toEqual([3, 4, 5])
       expect(requests).toHaveLength(1)
       expect(requests[0]?.url).toBe('http://127.0.0.1:11434/api/embed')
-      expect(requests[0]?.body.model).toBe('qwen3-embedding:0.6b')
+      expect(requests[0]?.body.model).toBe('qwen3-embedding-saigak:0.6b')
       expect(requests[0]?.body.input).toEqual(['alpha', 'beta'])
       expect(requests[0]?.body.truncate).toBe(false)
       expect(requests[0]?.body.keep_alive).toBe('30m')
