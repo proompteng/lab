@@ -13,6 +13,10 @@ type ImageDetailsResponse = {
   error?: string
 }
 
+type ImageDetailsInput = {
+  repository: string
+}
+
 const buildTotalSize = (tags: TagManifestBreakdown[]) => {
   const sizes = tags.map((tag) => tag.sizeBytes).filter((size): size is number => typeof size === 'number')
   return {
@@ -24,34 +28,38 @@ const buildTotalSize = (tags: TagManifestBreakdown[]) => {
 const filterMissingManifestBreakdowns = (tags: TagManifestBreakdown[]) =>
   tags.filter((tag) => !tag.error?.includes('Manifest request failed (404)'))
 
-export const imageDetailsServerFn = createServerFn({ method: 'POST' }).handler(async ({ data }) => {
-  const fetchedAt = new Date().toISOString()
-  const repository = (data as { repository: string }).repository
+const imageDetailsInputValidator = (input: ImageDetailsInput) => input
 
-  const tagsResult = await fetchRepositoryTags(repository)
-  if (tagsResult.error) {
+export const imageDetailsServerFn = createServerFn({ method: 'POST' })
+  .inputValidator(imageDetailsInputValidator)
+  .handler(async ({ data }) => {
+    const fetchedAt = new Date().toISOString()
+    const { repository } = data
+
+    const tagsResult = await fetchRepositoryTags(repository)
+    if (tagsResult.error) {
+      return {
+        repository,
+        tags: [],
+        totalSizeBytes: undefined,
+        hasTotalSize: false,
+        fetchedAt,
+        error: tagsResult.error,
+      } satisfies ImageDetailsResponse
+    }
+
+    const tagBreakdowns = await Promise.all(tagsResult.tags.map((tag) => fetchTagManifestBreakdown(repository, tag)))
+    const filteredBreakdowns = filterMissingManifestBreakdowns(tagBreakdowns)
+    const { total, hasTotal } = buildTotalSize(filteredBreakdowns)
+
     return {
       repository,
-      tags: [],
-      totalSizeBytes: undefined,
-      hasTotalSize: false,
+      tags: filteredBreakdowns,
+      totalSizeBytes: hasTotal ? total : undefined,
+      hasTotalSize: hasTotal,
       fetchedAt,
-      error: tagsResult.error,
     } satisfies ImageDetailsResponse
-  }
-
-  const tagBreakdowns = await Promise.all(tagsResult.tags.map((tag) => fetchTagManifestBreakdown(repository, tag)))
-  const filteredBreakdowns = filterMissingManifestBreakdowns(tagBreakdowns)
-  const { total, hasTotal } = buildTotalSize(filteredBreakdowns)
-
-  return {
-    repository,
-    tags: filteredBreakdowns,
-    totalSizeBytes: hasTotal ? total : undefined,
-    hasTotalSize: hasTotal,
-    fetchedAt,
-  } satisfies ImageDetailsResponse
-})
+  })
 
 export type { ImageDetailsResponse }
 
