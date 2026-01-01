@@ -1,6 +1,6 @@
 import { IconTrash } from '@tabler/icons-react'
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
-import { createServerFn, useServerFn } from '@tanstack/react-start'
+import { useServerFn } from '@tanstack/react-start'
 import { useState } from 'react'
 
 import {
@@ -20,12 +20,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~
 import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
 import {
   decodeRepositoryParam,
-  deleteTag,
   fetchRepositoryTags,
   fetchTagManifestBreakdown,
   formatSize,
   type TagManifestBreakdown,
 } from '~/lib/registry'
+import { deleteTagServerFn } from '~/server/delete-tag'
 
 type ImageDetailsLoaderData = {
   repository: string
@@ -35,19 +35,6 @@ type ImageDetailsLoaderData = {
   fetchedAt: string
   error?: string
 }
-
-type DeleteTagInput = {
-  repository: string
-  tag: string
-}
-
-const deleteTagServerFn = createServerFn({ method: 'POST' }).handler(async ({ data }) => {
-  const input = data as DeleteTagInput
-  const result = await deleteTag(input.repository, input.tag)
-  if (result.error) {
-    throw new Error(result.error)
-  }
-})
 
 const formatTimestamp = (value?: string) => {
   if (!value) {
