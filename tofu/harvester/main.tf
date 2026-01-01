@@ -21,7 +21,7 @@ locals {
   kube_master_memory    = "32Gi"
   kube_worker_memory    = "30Gi"
   docker_vm_memory      = "32Gi"
-  kube_node_disk_size   = "200Gi"
+  kube_node_disk_size   = "300Gi"
   docker_node_disk_size = "100Gi"
 
   master_mac_addresses = {
@@ -127,6 +127,17 @@ resource "harvester_network" "cluster_network" {
   cluster_network_name = data.harvester_clusternetwork.mgmt.name
   name                 = "cluster-network"
   vlan_id              = 1
+
+  labels = {
+    "network.harvesterhci.io/clusternetwork" = "mgmt"
+    "network.harvesterhci.io/ready"          = "true"
+    "network.harvesterhci.io/type"           = "L2VlanNetwork"
+    "network.harvesterhci.io/vlan-id"        = "1"
+  }
+
+  route_mode    = "manual"
+  route_cidr    = "192.168.1.0/24"
+  route_gateway = "192.168.1.254"
 }
 
 resource "harvester_virtualmachine" "kube-cluster" {
