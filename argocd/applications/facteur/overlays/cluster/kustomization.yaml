@@ -21,4 +21,4 @@ resources:
   - alloy-deployment.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/facteur
-    newTag: 963eb0d1
+    newTag: 07c171df
