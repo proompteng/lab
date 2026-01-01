@@ -253,7 +253,7 @@ const computeBackoffDelayMs = (
   backoffCoefficient: number,
 ) => {
   if (attempt <= 1) return initialDelayMs
-  const exponent = Math.pow(backoffCoefficient, attempt - 1)
+  const exponent = backoffCoefficient ** (attempt - 1)
   const delay = initialDelayMs * exponent
   return Math.min(delay, maxDelayMs)
 }
@@ -2528,7 +2528,12 @@ export const activities = {
       DEFAULT_COMPLETION_REPAIR_OUTPUT_CHARS,
     )
 
-    const buildCompletionMessages = (mode: 'initial' | 'repair', context?: { output?: string; error?: string }) => {
+    type CompletionMessage = { role: 'system' | 'user'; content: string }
+
+    const buildCompletionMessages = (
+      mode: 'initial' | 'repair',
+      context?: { output?: string; error?: string },
+    ): CompletionMessage[] => {
       if (mode === 'repair') {
         const previousOutput = context?.output ? safeSlice(context.output, repairMaxChars) : ''
         const repairPrompt = [
@@ -2557,10 +2562,7 @@ export const activities = {
       ]
     }
 
-    const buildCompletionPayload = (
-      messages: Array<{ role: 'system' | 'user'; content: string }>,
-      includeFormat: boolean,
-    ) => ({
+    const buildCompletionPayload = (messages: CompletionMessage[], includeFormat: boolean) => ({
       model,
       stream: true,
       max_tokens: maxOutputTokens,
@@ -2583,7 +2585,7 @@ export const activities = {
 
     const requestCompletion = async (
       signal: AbortSignal,
-      messages: Array<{ role: 'system' | 'user'; content: string }>,
+      messages: CompletionMessage[],
     ): Promise<{ output: string; responseFormat: 'json_object' | 'none' }> => {
       const headers: Record<string, string> = {
         'content-type': 'application/json',
