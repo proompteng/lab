@@ -9,6 +9,7 @@ from .entities import (
     TimestampMixin,
     ToolRunLog,
     TradeDecision,
+    TradeCursor,
 )
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "TimestampMixin",
     "ToolRunLog",
     "TradeDecision",
+    "TradeCursor",
 ]

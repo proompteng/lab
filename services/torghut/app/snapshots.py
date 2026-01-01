@@ -60,6 +60,7 @@ def sync_order_to_db(
         "avg_fill_price": _optional_decimal(order_response.get("filled_avg_price")),
         "status": order_response.get("status"),
         "raw_order": order_response,
+        "last_update_at": datetime.now(timezone.utc),
     }
 
     if existing:
