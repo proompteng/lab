@@ -816,7 +816,7 @@ class TemporalClientImpl implements TemporalClient {
 
           const closeEvent = this.#extractCloseEvent(response)
           if (!closeEvent || !closeEvent.attributes) {
-            continue
+            throw new Error('Workflow close event not found')
           }
 
           const attributes = closeEvent.attributes
