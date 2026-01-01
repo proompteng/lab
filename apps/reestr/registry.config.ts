@@ -12,5 +12,9 @@ export default defineRegistries([
       supportsMetrics: true,
       supportsSbom: false,
     },
+    tls: {
+      allowInsecure: false,
+      allowHttp: false,
+    },
   },
 ])

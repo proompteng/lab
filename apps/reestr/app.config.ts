@@ -1,7 +1,6 @@
-import { defineConfig } from '@tanstack/react-start/config'
 import viteTsConfigPaths from 'vite-tsconfig-paths'
 
-export default defineConfig({
+const config = {
   vite: {
     plugins: [
       viteTsConfigPaths({
@@ -21,4 +20,6 @@ export default defineConfig({
     appDirectory: './src',
     routesDirectory: './src/routes',
   },
-})
+}
+
+export default config

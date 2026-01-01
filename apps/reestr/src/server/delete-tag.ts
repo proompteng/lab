@@ -7,10 +7,14 @@ type DeleteTagInput = {
   tag: string
 }
 
-export const deleteTagServerFn = createServerFn({ method: 'POST' }).handler(async ({ data }) => {
-  const input = data as DeleteTagInput
-  const result = await deleteTag(input.repository, input.tag)
-  if (result.error) {
-    throw new Error(result.error)
-  }
-})
+const deleteTagInputValidator = (input: DeleteTagInput) => input
+
+export const deleteTagServerFn = createServerFn({ method: 'POST' })
+  .inputValidator(deleteTagInputValidator)
+  .handler(async ({ data }) => {
+    const input = data
+    const result = await deleteTag(input.repository, input.tag)
+    if (result.error) {
+      throw new Error(result.error)
+    }
+  })

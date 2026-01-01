@@ -33,6 +33,11 @@ function pickLatestTag(details: TagDetails[]): TagDetails | undefined {
   return details.find((detail) => detail.sizeBytes)
 }
 
+const isMissingManifest = (error?: string) => error?.includes('Manifest request failed (404)')
+
+const filterMissingManifestTagDetails = (details: TagDetails[]) =>
+  details.filter((detail) => !isMissingManifest(detail.error))
+
 async function computeRegistryImages(): Promise<RegistryImagesResponse> {
   const fetchedAt = new Date().toISOString()
 
@@ -65,22 +70,29 @@ async function computeRegistryImages(): Promise<RegistryImagesResponse> {
         let sizeTimestamp: string | undefined
         let sizeError: string | undefined
 
+        let tagDetails: TagDetails[] = []
+
         if (tags.length) {
-          const tagDetails = await Promise.all(tags.map((tag) => fetchTagDetails(repository, tag)))
-          const latestTag = pickLatestTag(tagDetails)
+          tagDetails = await Promise.all(tags.map((tag) => fetchTagDetails(repository, tag)))
+          const filteredDetails = filterMissingManifestTagDetails(tagDetails)
+          const latestTag = pickLatestTag(filteredDetails)
           sizeBytes = latestTag?.sizeBytes
           sizeTag = latestTag?.tag
           sizeTimestamp = latestTag?.createdAt
           if (!sizeBytes) {
             sizeError = latestTag?.error ?? 'No valid manifest found'
           }
-        } else {
-          sizeError = 'No tags available'
+        }
+
+        const filteredTags = filterMissingManifestTagDetails(tagDetails).map((detail) => detail.tag)
+
+        if (!filteredTags.length) {
+          return null
         }
 
         return {
           name: repository,
-          tags,
+          tags: filteredTags,
           sizeTag,
           sizeBytes,
           sizeTimestamp,
@@ -89,7 +101,7 @@ async function computeRegistryImages(): Promise<RegistryImagesResponse> {
       }),
     )
 
-    return { images, fetchedAt }
+    return { images: images.filter(Boolean) as RegistryImage[], fetchedAt }
   } catch (error) {
     return {
       images: [],
@@ -115,3 +127,7 @@ export const registryImagesServerFn = createServerFn({ method: 'GET' }).handler(
   }
   return value
 })
+
+export const __private = {
+  filterMissingManifestTagDetails,
+}
