@@ -1,0 +1,11 @@
+{
+  "taskName": "bumba-enrich-repo",
+  "content": "Enrichment facts for services/bumba with AST and model outputs.",
+  "summary": "Bumba enrichment summary",
+  "tags": ["bumba", "enrich"],
+  "metadata": {
+    "repository": "proompteng/lab",
+    "pathPrefix": "services/bumba",
+    "model": "qwen3-coder-saigak:30b-a3b-q4_K_M"
+  }
+}

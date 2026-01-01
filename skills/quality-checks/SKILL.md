@@ -1,16 +1,50 @@
 ---
 name: quality-checks
-description: Run required formatting and tests for TS/Go changes.
+description: Run formatting, lint, typecheck, and tests for this repo; use when validating changes or investigating CI failures.
 ---
 
-## Install & Setup
-- Install dependencies with `bun install`.
-- For Go services, run `go mod tidy` inside each service when modules change.
+# Quality Checks
 
-## Required Checks
-- TypeScript/JavaScript changes: run `bunx biome check <paths>` and fix all diagnostics.
-- Go changes: run `go test ./...` and `go build ./...` (or narrow with `-run`).
-- UI apps: use `bun run lint:<app>`; for smoke tests use `bun run build:<app>` then `bun run start:<app>`.
+## Overview
 
-## Constraints
-- Never edit lockfiles by hand; regenerate with the package manager.
+Run the smallest set of checks for touched code. Use workspace filters and targeted test commands.
+
+## JS/TS
+
+```bash
+bun run format
+bun run --filter @proompteng/bumba lint
+bun run --filter @proompteng/bumba tsc
+bunx biome check services/bumba
+```
+
+## Go
+
+```bash
+go test ./services/prt
+go build ./services/prt
+```
+
+## Kotlin
+
+```bash
+./gradlew test --tests "pkg.ClassTest"
+```
+
+## Rails
+
+```bash
+bundle exec rails test test/models/user_test.rb:42
+```
+
+## Python
+
+```bash
+pytest alchimie_tests/test_file.py -k "pattern"
+```
+
+## Resources
+
+- Reference: `references/quality-matrix.md`
+- Helper script: `scripts/run-quality.sh`
+- Checklist: `assets/quality-checklist.md`

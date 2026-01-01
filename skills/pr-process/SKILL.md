@@ -1,13 +1,23 @@
 ---
 name: pr-process
-description: Follow the repo’s PR and commit conventions.
+description: Prepare commits and pull requests for this repo following the PR template and Conventional Commits.
 ---
 
-## Commits
-- Use Conventional Commits with approved types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, `test`.
+# PR Process
 
-## PRs
-- Use the default template in `.github/PULL_REQUEST_TEMPLATE.md`.
-- Fill Summary, Related Issues, Testing, Screenshots/None, Breaking Changes/None, Checklist.
-- Use `gh pr create --body-file /tmp/pr.md`; wrap markdown in single quotes or use `--body-file`.
-- Merge with squash: `gh pr merge <number> --squash --delete-branch`.
+## Overview
+
+Follow the repo PR template and semantic commit conventions. Use squash merges.
+
+## Steps
+
+1. Commit with Conventional Commits.
+2. Fill `.github/PULL_REQUEST_TEMPLATE.md`.
+3. Create PR with `gh pr create --body-file`.
+4. Merge with squash, no branch delete.
+
+## Resources
+
+- Reference: `references/pr-process.md`
+- Helper: `scripts/pr-create.sh`
+- Checklist: `assets/pr-checklist.md`

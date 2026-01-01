@@ -1,164 +1,62 @@
 # Temporal CLI quick reference
 
-## Connection defaults
+## Connection
 
 ```bash
-export TEMPORAL_ADDRESS=localhost:7233
+export TEMPORAL_ADDRESS=temporal-grpc.ide-newton.ts.net:7233
 export TEMPORAL_NAMESPACE=default
 ```
 
-Optional per repo:
-
-```bash
-export TEMPORAL_TASK_QUEUE=bumba
-```
-
-Use `--address` / `--namespace` flags to override if you cannot set env vars.
-
-## Workflow discovery
-
-List recent workflows:
+## List
 
 ```bash
 temporal --namespace "$TEMPORAL_NAMESPACE" workflow list --limit 20
 ```
 
-Filter by type/status:
+## Filter
 
 ```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow list \
-  --query 'WorkflowType="enrichRepository" and ExecutionStatus="Running"'
+temporal --namespace "$TEMPORAL_NAMESPACE" workflow list   --query 'WorkflowType="enrichFile" and ExecutionStatus="Running"'
 ```
 
-Count workflows:
+## Describe / show / result
 
 ```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow count \
-  --query 'WorkflowType="enrichFile" and ExecutionStatus="Failed"'
+temporal --namespace "$TEMPORAL_NAMESPACE" workflow describe   --workflow-id bumba-repo-0e6476cd-6df7-4ee3-8184-95029cd50c88   --run-id 019b7788-e535-752c-8a4a-2ee44de7065e
+
+temporal --namespace "$TEMPORAL_NAMESPACE" workflow show   --workflow-id bumba-repo-0e6476cd-6df7-4ee3-8184-95029cd50c88   --run-id 019b7788-e535-752c-8a4a-2ee44de7065e   --output json > /tmp/workflow-history.json
+
+temporal --namespace "$TEMPORAL_NAMESPACE" workflow result   --workflow-id bumba-repo-0e6476cd-6df7-4ee3-8184-95029cd50c88   --run-id 019b7788-e535-752c-8a4a-2ee44de7065e
 ```
 
-## Inspect a workflow
+## Reset
 
 ```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow describe \
-  --workflow-id "$WORKFLOW_ID" \
-  --run-id "$RUN_ID"
+temporal --namespace "$TEMPORAL_NAMESPACE" workflow reset   --workflow-id bumba-repo-0e6476cd-6df7-4ee3-8184-95029cd50c88   --run-id 019b7788-e535-752c-8a4a-2ee44de7065e   --event-id 31   --reset-type FirstWorkflowTask   --reason "reset to known-good event"
 ```
 
-Fetch history as JSON (for replay analysis):
+## Cancel / terminate
 
 ```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow show \
-  --workflow-id "$WORKFLOW_ID" \
-  --run-id "$RUN_ID" \
-  --output json > /tmp/workflow-history.json
+temporal --namespace "$TEMPORAL_NAMESPACE" workflow cancel --workflow-id bumba-repo-0e6476cd-6df7-4ee3-8184-95029cd50c88
+
+temporal --namespace "$TEMPORAL_NAMESPACE" workflow terminate   --workflow-id bumba-repo-0e6476cd-6df7-4ee3-8184-95029cd50c88   --reason "manual cleanup"
 ```
 
-Stream live progress:
+## Task queues
 
 ```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow trace \
-  --workflow-id "$WORKFLOW_ID" \
-  --run-id "$RUN_ID"
+temporal --namespace "$TEMPORAL_NAMESPACE" task-queue describe --task-queue bumba
 ```
 
-## Start workflows
-
-Start a workflow:
+## Batch operations
 
 ```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow start \
-  --workflow-type enrichRepository \
-  --task-queue "$TEMPORAL_TASK_QUEUE" \
-  --workflow-id "bumba-repo-$(uuidgen | tr '[:upper:]' '[:lower:]')" \
-  --input '{"repoRoot":"/workspace/lab","pathPrefix":"services","maxFiles":50}'
-```
-
-Get the result (blocking):
-
-```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow result \
-  --workflow-id "$WORKFLOW_ID" \
-  --run-id "$RUN_ID"
-```
-
-## Control workflows
-
-Cancel:
-
-```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow cancel --workflow-id "$WORKFLOW_ID"
-```
-
-Terminate:
-
-```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow terminate \
-  --workflow-id "$WORKFLOW_ID" \
-  --reason "manual cleanup"
-```
-
-Signal:
-
-```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow signal \
-  --workflow-id "$WORKFLOW_ID" \
-  --name "signalName" \
-  --input '{}'
-```
-
-## Reset workflows
-
-Use `workflow show` to identify the event ID to reset to, then:
-
-```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow reset \
-  --workflow-id "$WORKFLOW_ID" \
-  --run-id "$RUN_ID" \
-  --reason "reset to known-good event" \
-  --event-id "$EVENT_ID" \
-  --reset-type FirstWorkflowTask
-```
-
-## Task queue / worker visibility
-
-```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" task-queue describe \
-  --task-queue "$TEMPORAL_TASK_QUEUE"
-```
-
-List task queue partitions:
-
-```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" task-queue list-partition \
-  --task-queue "$TEMPORAL_TASK_QUEUE"
+temporal --namespace "$TEMPORAL_NAMESPACE" batch start   --query 'WorkflowType="enrichFile" and ExecutionStatus="Failed"'   --reason "cleanup failed enrichFile runs"   --terminate
 ```
 
 ## Schedules
 
 ```bash
 temporal --namespace "$TEMPORAL_NAMESPACE" schedule list
-```
-
-Describe schedule:
-
-```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" schedule describe --schedule-id "$SCHEDULE_ID"
-```
-
-## Batch operations
-
-Start a batch job for a query:
-
-```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" batch start \
-  --query 'WorkflowType="enrichFile" and ExecutionStatus="Failed"' \
-  --reason "bulk cleanup" \
-  --terminate
-```
-
-## Namespaces
-
-```bash
-temporal namespace list
 ```
