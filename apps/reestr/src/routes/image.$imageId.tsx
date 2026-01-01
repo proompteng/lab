@@ -1,9 +1,26 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { IconTrash } from '@tabler/icons-react'
+import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
+import { createServerFn, useServerFn } from '@tanstack/react-start'
+import { useState } from 'react'
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from '~/components/ui/alert-dialog'
+import { Button } from '~/components/ui/button'
 import { ScrollArea } from '~/components/ui/scroll-area'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
+import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
 import {
   decodeRepositoryParam,
+  deleteTag,
   fetchRepositoryTags,
   fetchTagManifestBreakdown,
   formatSize,
@@ -18,6 +35,19 @@ type ImageDetailsLoaderData = {
   fetchedAt: string
   error?: string
 }
+
+type DeleteTagInput = {
+  repository: string
+  tag: string
+}
+
+const deleteTagServerFn = createServerFn({ method: 'POST' }).handler(async ({ data }) => {
+  const input = data as DeleteTagInput
+  const result = await deleteTag(input.repository, input.tag)
+  if (result.error) {
+    throw new Error(result.error)
+  }
+})
 
 const formatTimestamp = (value?: string) => {
   if (!value) {
@@ -74,11 +104,41 @@ export const Route = createFileRoute('/image/$imageId')({
 })
 
 function ImageDetails() {
+  const router = useRouter()
+  const runDeleteTag = useServerFn(deleteTagServerFn)
+
   const { repository, tags, totalSizeBytes, hasTotalSize, fetchedAt, error } = Route.useLoaderData()
   const formattedTime = new Intl.DateTimeFormat(undefined, {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(fetchedAt))
+
+  const [tagToDelete, setTagToDelete] = useState<TagManifestBreakdown | null>(null)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  const handleConfirmDelete = async () => {
+    if (!tagToDelete || isDeleting) {
+      return
+    }
+
+    setIsDeleting(true)
+    setDeleteError(null)
+
+    try {
+      await runDeleteTag({ data: { repository, tag: tagToDelete.tag } })
+
+      setIsDeleting(false)
+      setDeleteOpen(false)
+      setTagToDelete(null)
+
+      await router.invalidate({ sync: true })
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : 'Failed to delete tag')
+      setIsDeleting(false)
+    }
+  }
 
   return (
     <div className="flex h-dvh w-full justify-center">
@@ -112,10 +172,11 @@ function ImageDetails() {
             <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]]:overflow-y-auto [&_[data-slot=scroll-area-viewport]]:overscroll-contain [&_[data-slot=table-container]]:overflow-x-visible">
               <Table className="table-fixed text-sm">
                 <colgroup>
-                  <col className="w-[22%]" />
-                  <col className="w-[48%]" />
+                  <col className="w-[20%]" />
+                  <col className="w-[46%]" />
                   <col className="w-[14%]" />
-                  <col className="w-[16%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[6%]" />
                 </colgroup>
                 <TableHeader>
                   <TableRow className="h-12 border-neutral-800/80 text-xs uppercase tracking-wide text-neutral-400">
@@ -125,12 +186,15 @@ function ImageDetails() {
                     </TableHead>
                     <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 font-semibold">Size</TableHead>
                     <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 font-semibold">Updated</TableHead>
+                    <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 text-right font-semibold">
+                      Actions
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {tags.length === 0 ? (
                     <TableRow className="h-12 border-neutral-800/80">
-                      <TableCell colSpan={4} className="px-4 py-0 text-center text-sm text-neutral-300">
+                      <TableCell colSpan={5} className="px-4 py-0 text-center text-sm text-neutral-300">
                         No tags found for this repository.
                       </TableCell>
                     </TableRow>
@@ -178,6 +242,30 @@ function ImageDetails() {
                         <TableCell className="px-4 py-3 text-xs text-neutral-300">
                           {tag.createdAt ? formatTimestamp(tag.createdAt) : '—'}
                         </TableCell>
+                        <TableCell className="px-2 py-3 align-top">
+                          <div className="flex justify-end">
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    aria-label={`Delete ${tag.tag}`}
+                                    onClick={() => {
+                                      setTagToDelete(tag)
+                                      setDeleteError(null)
+                                      setDeleteOpen(true)
+                                    }}
+                                  >
+                                    <IconTrash className="text-rose-400" />
+                                  </Button>
+                                }
+                              />
+                              <TooltipContent>Delete tag</TooltipContent>
+                            </Tooltip>
+                          </div>
+                        </TableCell>
                       </TableRow>
                     ))
                   )}
@@ -185,6 +273,49 @@ function ImageDetails() {
               </Table>
             </ScrollArea>
           </div>
+
+          <AlertDialog
+            open={deleteOpen}
+            onOpenChange={(open) => {
+              if (!open && isDeleting) {
+                return
+              }
+
+              setDeleteOpen(open)
+
+              if (!open) {
+                setTagToDelete(null)
+                setDeleteError(null)
+              }
+            }}
+          >
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogMedia className="bg-rose-500/10 text-rose-400">
+                  <IconTrash />
+                </AlertDialogMedia>
+                <AlertDialogTitle>Delete tag</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {tagToDelete
+                    ? `This will delete ${repository}:${tagToDelete.tag}. This cannot be undone.`
+                    : 'Select a tag to delete.'}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+
+              {deleteError ? <p className="text-xs text-rose-400">{deleteError}</p> : null}
+
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive"
+                  disabled={!tagToDelete || isDeleting}
+                  onClick={handleConfirmDelete}
+                >
+                  {isDeleting ? 'Deleting…' : 'Delete'}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </section>
     </div>

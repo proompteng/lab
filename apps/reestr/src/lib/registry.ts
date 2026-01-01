@@ -302,6 +302,68 @@ const fetchTagManifestBreakdown = async (repository: string, tag: string): Promi
   }
 }
 
+const fetchManifestDigest = async (
+  repository: string,
+  reference: string,
+): Promise<{ digest?: string; error?: string }> => {
+  try {
+    const response = await fetch(new URL(`/v2/${repository}/manifests/${reference}`, registryBaseUrl), {
+      method: 'HEAD',
+      headers: {
+        Accept: registryAcceptHeader,
+      },
+    })
+
+    if (response.ok) {
+      const digest = response.headers.get('docker-content-digest') ?? response.headers.get('Docker-Content-Digest')
+      if (digest) {
+        return { digest }
+      }
+    }
+
+    const fallbackResponse = await fetch(new URL(`/v2/${repository}/manifests/${reference}`, registryBaseUrl), {
+      headers: {
+        Accept: registryAcceptHeader,
+      },
+    })
+
+    if (!fallbackResponse.ok) {
+      return { error: `Manifest request failed (${fallbackResponse.status})` }
+    }
+
+    const digest =
+      fallbackResponse.headers.get('docker-content-digest') ?? fallbackResponse.headers.get('Docker-Content-Digest')
+    if (!digest) {
+      return { error: 'Registry did not return Docker-Content-Digest' }
+    }
+
+    return { digest }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Failed to resolve manifest digest' }
+  }
+}
+
+const deleteTag = async (repository: string, tag: string): Promise<{ error?: string }> => {
+  const digestResult = await fetchManifestDigest(repository, tag)
+  if (!digestResult.digest) {
+    return { error: digestResult.error ?? 'Could not resolve digest for tag' }
+  }
+
+  try {
+    const response = await fetch(new URL(`/v2/${repository}/manifests/${digestResult.digest}`, registryBaseUrl), {
+      method: 'DELETE',
+    })
+
+    if (!response.ok) {
+      return { error: `Delete request failed (${response.status})` }
+    }
+
+    return {}
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Failed to delete tag' }
+  }
+}
+
 const formatSize = (bytes: number): string => {
   if (!Number.isFinite(bytes) || bytes <= 0) {
     return '0\u00A0B'
@@ -338,5 +400,6 @@ export {
   fetchRepositoryTags,
   fetchTagDetails,
   fetchTagManifestBreakdown,
+  deleteTag,
   formatSize,
 }
