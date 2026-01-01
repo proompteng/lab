@@ -406,6 +406,8 @@ function AtlasSearchPage() {
   const cappedTotal = Math.min(totalResults, MAX_PAGE_FETCH_LIMIT)
   const totalPages = Math.max(1, Math.ceil(cappedTotal / pageSize))
   const clampedPage = Math.min(currentPage, totalPages)
+  const isFirstPage = clampedPage <= 1
+  const isLastPage = clampedPage >= totalPages
   const pageStartIndex = (clampedPage - 1) * pageSize
   const pageResults = searchResults.slice(pageStartIndex, pageStartIndex + pageSize)
   const rangeStart = totalResults > 0 ? pageStartIndex + 1 : 0
@@ -670,8 +672,12 @@ function AtlasSearchPage() {
                 <PaginationContent>
                   <PaginationItem>
                     <PaginationPrevious
-                      onClick={() => goToPage(Math.max(1, clampedPage - 1))}
-                      disabled={clampedPage <= 1}
+                      aria-disabled={isFirstPage}
+                      className={isFirstPage ? 'pointer-events-none opacity-50' : undefined}
+                      onClick={() => {
+                        if (isFirstPage) return
+                        goToPage(Math.max(1, clampedPage - 1))
+                      }}
                     />
                   </PaginationItem>
                 </PaginationContent>
@@ -687,8 +693,12 @@ function AtlasSearchPage() {
                 <PaginationContent>
                   <PaginationItem>
                     <PaginationNext
-                      onClick={() => goToPage(Math.min(totalPages, clampedPage + 1))}
-                      disabled={clampedPage >= totalPages}
+                      aria-disabled={isLastPage}
+                      className={isLastPage ? 'pointer-events-none opacity-50' : undefined}
+                      onClick={() => {
+                        if (isLastPage) return
+                        goToPage(Math.min(totalPages, clampedPage + 1))
+                      }}
                     />
                   </PaginationItem>
                 </PaginationContent>

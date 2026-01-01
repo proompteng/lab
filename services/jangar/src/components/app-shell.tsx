@@ -32,9 +32,7 @@ export function AppShell({ mainId, children }: { mainId: string; children: React
                     {isLast ? (
                       <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
                     ) : (
-                      <BreadcrumbLink asChild>
-                        <Link to={crumb.to}>{crumb.label}</Link>
-                      </BreadcrumbLink>
+                      <BreadcrumbLink render={<Link to={crumb.to} />}>{crumb.label}</BreadcrumbLink>
                     )}
                     {!isLast ? <BreadcrumbSeparator /> : null}
                   </BreadcrumbItem>
