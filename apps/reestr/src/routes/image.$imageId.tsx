@@ -1,5 +1,6 @@
 import { IconTrash } from '@tabler/icons-react'
-import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
 import { useState } from 'react'
 
@@ -18,14 +19,9 @@ import { Button } from '~/components/ui/button'
 import { ScrollArea } from '~/components/ui/scroll-area'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
-import {
-  decodeRepositoryParam,
-  fetchRepositoryTags,
-  fetchTagManifestBreakdown,
-  formatSize,
-  type TagManifestBreakdown,
-} from '~/lib/registry'
+import { decodeRepositoryParam, formatSize, type TagManifestBreakdown } from '~/lib/registry'
 import { deleteTagServerFn } from '~/server/delete-tag'
+import { type ImageDetailsResponse, imageDetailsServerFn } from '~/server/image-details'
 
 type ImageDetailsLoaderData = {
   repository: string
@@ -52,49 +48,31 @@ const formatTimestamp = (value?: string) => {
   }).format(new Date(parsed))
 }
 
-const buildTotalSize = (tags: TagManifestBreakdown[]) => {
-  const sizes = tags.map((tag) => tag.sizeBytes).filter((size): size is number => typeof size === 'number')
-  return {
-    total: sizes.reduce((total, size) => total + size, 0),
-    hasTotal: sizes.length > 0,
-  }
-}
-
 export const Route = createFileRoute('/image/$imageId')({
   loader: async ({ params }): Promise<ImageDetailsLoaderData> => {
-    const fetchedAt = new Date().toISOString()
     const repository = decodeRepositoryParam(params.imageId)
-    const tagsResult = await fetchRepositoryTags(repository)
-    if (tagsResult.error) {
-      return {
-        repository,
-        tags: [],
-        totalSizeBytes: undefined,
-        hasTotalSize: false,
-        fetchedAt,
-        error: tagsResult.error,
-      }
-    }
-
-    const tagBreakdowns = await Promise.all(tagsResult.tags.map((tag) => fetchTagManifestBreakdown(repository, tag)))
-    const { total, hasTotal } = buildTotalSize(tagBreakdowns)
-
-    return {
-      repository,
-      tags: tagBreakdowns,
-      totalSizeBytes: hasTotal ? total : undefined,
-      hasTotalSize: hasTotal,
-      fetchedAt,
-    }
+    const result = await imageDetailsServerFn({ data: { repository } })
+    return result as ImageDetailsLoaderData
   },
   component: ImageDetails,
 })
 
+const imageDetailsQueryKey = (repository: string) => ['imageDetails', repository] as const
+
 function ImageDetails() {
-  const router = useRouter()
+  const queryClient = useQueryClient()
   const runDeleteTag = useServerFn(deleteTagServerFn)
 
-  const { repository, tags, totalSizeBytes, hasTotalSize, fetchedAt, error } = Route.useLoaderData()
+  const initialData = Route.useLoaderData() as ImageDetailsResponse
+
+  const { data } = useQuery({
+    queryKey: imageDetailsQueryKey(initialData.repository),
+    queryFn: () => imageDetailsServerFn({ data: { repository: initialData.repository } }),
+    initialData,
+    staleTime: 30_000,
+  })
+
+  const { repository, tags, totalSizeBytes, hasTotalSize, fetchedAt, error } = data
   const formattedTime = new Intl.DateTimeFormat(undefined, {
     dateStyle: 'medium',
     timeStyle: 'short',
@@ -120,7 +98,10 @@ function ImageDetails() {
       setDeleteOpen(false)
       setTagToDelete(null)
 
-      await router.invalidate({ sync: true })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: imageDetailsQueryKey(repository) }),
+        queryClient.invalidateQueries({ queryKey: ['registryImages'] }),
+      ])
     } catch (error) {
       setDeleteError(error instanceof Error ? error.message : 'Failed to delete tag')
       setIsDeleting(false)

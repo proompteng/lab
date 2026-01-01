@@ -1,6 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 
-import { deleteTag } from '~/lib/registry'
+import { deleteTag } from './registry-client'
 
 type DeleteTagInput = {
   repository: string
