@@ -6,6 +6,9 @@ resources:
   - service.yaml
   - pvc.yaml
   - storageclass-longhorn-single.yaml
+  - registry-configmap.yaml
+  - registry-gc-rbac.yaml
+  - registry-gc-cronjob.yaml
   - tailscale-ingress.yaml
   - reestr-knative-service.yaml
   - reestr-tailscale-service.yaml

@@ -15,6 +15,9 @@ spec:
       containers:
         - name: registry
           image: registry:3
+          env:
+            - name: REGISTRY_CONFIGURATION_PATH
+              value: /etc/docker/registry/config.yml
           resources:
             limits:
               cpu: "1"
@@ -25,9 +28,14 @@ spec:
           ports:
             - containerPort: 5000
           volumeMounts:
+            - name: registry-config
+              mountPath: /etc/docker/registry
             - name: registry-data
               mountPath: /var/lib/registry
       volumes:
+        - name: registry-config
+          configMap:
+            name: registry-config
         - name: registry-data
           persistentVolumeClaim:
             claimName: registry-data
