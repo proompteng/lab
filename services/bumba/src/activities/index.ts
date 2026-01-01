@@ -182,6 +182,7 @@ const MAX_FACT_CHARS = 200
 const MAX_SUMMARY_NODES = 80
 const MAX_COMPLETION_INPUT_CHARS = 12_000
 const DEFAULT_COMPLETION_MAX_OUTPUT_TOKENS = 512
+const MAX_COMPLETION_LOG_CHARS = 2_000
 const DEFAULT_MODEL_CONCURRENCY = 2
 const DEFAULT_COMPLETION_MAX_ATTEMPTS = 2
 const DEFAULT_COMPLETION_RETRY_INITIAL_MS = 1_000
@@ -278,6 +279,7 @@ const LOCK_FILENAMES = new Set([
   'composer.lock',
   'cargo.lock',
   'gemfile.lock',
+  'go.sum',
   'package-lock.json',
   'pnpm-lock.yaml',
   'pnpm-lock.yml',
@@ -1070,6 +1072,24 @@ const loadAstLimits = () => {
 const safeSlice = (value: string, maxChars: number) => {
   if (value.length <= maxChars) return value
   return `${value.slice(0, maxChars)}...`
+}
+
+const summarizeCompletionOutput = (output: string, maxChars: number) => {
+  if (output.length <= maxChars) {
+    return {
+      outputLength: output.length,
+      outputHead: output,
+      outputTail: '',
+    }
+  }
+
+  const headSize = Math.floor(maxChars / 2)
+  const tailSize = maxChars - headSize
+  return {
+    outputLength: output.length,
+    outputHead: output.slice(0, headSize),
+    outputTail: output.slice(-tailSize),
+  }
 }
 
 const splitLines = (source: string) => source.split(/\r?\n/)
@@ -2501,7 +2521,8 @@ export const activities = {
     const systemPrompt = [
       'You are an Atlas enrichment agent.',
       'Return a valid JSON object ONLY with keys "summary" and "enriched".',
-      'Do not include markdown, code fences, or extra keys.',
+      'The response MUST be a single JSON object, with no extra keys, no filename, and no code.',
+      'Do not include markdown, code fences, arrays, or nested objects.',
       'Return ONLY this shape: {"summary":"...","enriched":"- ...\\n- ..."}',
       '"summary": 2-4 sentences (<= 400 chars) describing what the file does.',
       '"enriched": a single string of 3-6 bullet lines, each starting with "- ". Each bullet <= 120 chars.',
@@ -2509,6 +2530,9 @@ export const activities = {
       'If information is missing, say "Unknown" instead of guessing.',
       'If input is truncated, include a bullet: "Input truncated; details may be missing."',
       'Never return file metadata objects, schemas, or code samples; only summary/enriched.',
+      'If you are unable to comply, return exactly: {"summary":"Unknown","enriched":"- Unknown"}',
+      'Invalid responses include JSON objects that list fields, schemas, or code.',
+      'Do NOT output objects like {"filename":"...","code":"..."} or {"activityId":"string", ...}.',
     ].join(' ')
 
     const userSections = [
@@ -2542,12 +2566,18 @@ export const activities = {
           context?.error ? `Error: ${context.error}` : null,
           'Return ONLY a valid JSON object with keys "summary" and "enriched".',
           'Do not add extra keys or markdown.',
+          'Ignore any previous response that does not already contain summary/enriched.',
+          'Do not include filenames or code.',
+          'If you are unable to comply, return exactly: {"summary":"Unknown","enriched":"- Unknown"}',
           'If the previous response contained useful content, reuse it; otherwise regenerate from the input below.',
         ]
           .filter((entry) => entry && entry.length > 0)
           .join(' ')
         const repairSections = [
-          ...userSections,
+          `Filename: ${input.filename}`,
+          input.context ? `Context: ${input.context}` : null,
+          `Input truncated: ${wasTruncated ? 'yes' : 'no'}`,
+          `AST summary:\n${input.astSummary}`,
           previousOutput ? `Previous response:\n${previousOutput}` : null,
         ].filter((section) => section && section.length > 0)
         return [
@@ -2666,6 +2696,7 @@ export const activities = {
       let attempt = 1
       let lastOutput: string | undefined
       let lastParseError: string | undefined
+      let lastResponseFormat: 'json_object' | 'none' | undefined
 
       while (attempt <= completionRetry.maxAttempts) {
         const mode = lastParseError ? 'repair' : 'initial'
@@ -2677,6 +2708,7 @@ export const activities = {
             requestCompletion(timeoutSignal, messages),
           )
           lastOutput = output
+          lastResponseFormat = responseFormat
           const parsed = parseCompletionOutput(output)
           const result = {
             summary: parsed.summary,
@@ -2695,6 +2727,17 @@ export const activities = {
           const isParseError = message.startsWith('completion response')
           if (isParseError) {
             lastParseError = message
+            if (lastOutput !== undefined) {
+              const outputSummary = summarizeCompletionOutput(lastOutput, MAX_COMPLETION_LOG_CHARS)
+              logActivity('error', 'completionParseError', 'enrichWithModel', {
+                filename: input.filename,
+                model,
+                wasTruncated,
+                responseFormat: lastResponseFormat ?? 'unknown',
+                parseError: message,
+                ...outputSummary,
+              })
+            }
           } else {
             lastParseError = undefined
           }

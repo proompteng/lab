@@ -83,6 +83,9 @@
 - Helm charts present: `mise exec helm@3 -- kustomize build --enable-helm <path> | kubectl apply -n <ns> -f -`.
 - CNPG access: `kubectl cnpg psql -n <ns> <cluster> -- <psql args>` (psql flags after `--`).
 
+## Temporal
+- Temporal CLI usage, address, namespace, and task queue defaults live in `skills/temporal/SKILL.md` (source of truth).
+
 ## When in Doubt
 - Check the nearest README for service-specific commands.
 - Search internet with correct keyword and questions containing context using web.run.
