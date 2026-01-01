@@ -65,6 +65,22 @@ ssh kalmyk@192.168.1.190
 sudo lspci -nn | grep -i nvidia
 ```
 
+## Prevent drift after Harvester reboots
+The Harvester host can come back with the GPU no longer bound to `vfio-pci`,
+which makes the PCI device controller report `missing group for address: 000c:01:00.0`
+and prevents `docker-host` from starting. To keep the binding consistent, apply
+the DaemonSet that re-binds the GPU on node boot:
+
+```bash
+kubectl --kubeconfig ~/.kube/altra.yaml apply -f tofu/harvester/templates/ga102-vfio-bind-daemonset.yaml
+```
+
+Notes:
+- The DaemonSet is scoped to node `altra` and the GPU address `000c:01:00.0`.
+- If the GPU moves to another node or address, update the `nodeSelector` and
+  PCI address in `tofu/harvester/templates/ga102-vfio-bind-daemonset.yaml`.
+- Remove with `kubectl --kubeconfig ~/.kube/altra.yaml -n harvester-system delete ds/ga102-vfio-bind`.
+
 ## Troubleshooting
 - If the VM gets stuck `Pending` with `GPU ... is not permitted in permittedHostDevices configuration`, ensure the `harvester-pcidevices-controller` has created a device plugin for `nvidia.com/GA102_GEFORCE_RTX_3090` and requeue/restart it if needed:
   - `kubectl --kubeconfig ~/.kube/altra.yaml -n harvester-system get pods | grep harvester-pcidevices-controller`
