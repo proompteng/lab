@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Language } from 'web-tree-sitter'
 
-import { activities } from './index'
+import { activities, parseCompletionOutput } from './index'
 
 const runGit = (args: string[], cwd: string) => {
   const result = Bun.spawnSync(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
@@ -349,5 +349,42 @@ describe('bumba readRepoFile', () => {
       globalThis.fetch = previousFetch
       await rm(repoRoot, { recursive: true, force: true })
     }
+  })
+})
+
+describe('bumba completion parsing', () => {
+  it('normalizes enriched arrays into bullet strings', () => {
+    const output = parseCompletionOutput(
+      JSON.stringify({
+        summary: 'One line summary.',
+        enriched: ['first bullet', '- second bullet'],
+      }),
+    )
+
+    expect(output.summary).toBe('One line summary.')
+    expect(output.enriched).toBe('- first bullet\n- second bullet')
+    expect(output.metadata.parsedJson).toBe(true)
+  })
+
+  it('fails fast on error payloads', () => {
+    expect(() =>
+      parseCompletionOutput(
+        JSON.stringify({
+          error: {
+            message: 'The response was filtered due to the prompt violating the content policy.',
+          },
+        }),
+      ),
+    ).toThrow('completion error: The response was filtered due to the prompt violating the content policy.')
+  })
+
+  it('rejects JSON without summary or enriched fields', () => {
+    expect(() => parseCompletionOutput(JSON.stringify({ foo: 'bar' }))).toThrow(
+      'completion response missing summary/enriched',
+    )
+  })
+
+  it('rejects non-JSON responses', () => {
+    expect(() => parseCompletionOutput('plain text response')).toThrow('completion response was not valid JSON')
   })
 })

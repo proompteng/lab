@@ -17,7 +17,7 @@ spec:
         app.kubernetes.io/name: bumba
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2025-12-31T07:09:52.070Z"
+        kubectl.kubernetes.io/restartedAt: "2026-01-01T01:26:44.393Z"
     spec:
       containers:
         - name: bumba
@@ -44,9 +44,11 @@ spec:
             - name: TEMPORAL_TASK_QUEUE
               value: bumba
             - name: TEMPORAL_WORKFLOW_CONCURRENCY
-              value: "20"
+              value: "32"
             - name: TEMPORAL_ACTIVITY_CONCURRENCY
-              value: "20"
+              value: "16"
+            - name: TEMPORAL_STICKY_CACHE_SIZE
+              value: "1024"
             - name: TEMPORAL_DETERMINISM_MARKER_MODE
               value: delta
             - name: TEMPORAL_DETERMINISM_MARKER_INTERVAL_TASKS
@@ -110,7 +112,13 @@ spec:
             - name: OPENAI_API_BASE_URL
               value: http://192.168.1.190:11434/v1
             - name: OPENAI_COMPLETION_TIMEOUT_MS
-              value: "60000"
+              value: "300000"
+            - name: OPENAI_COMPLETION_MAX_OUTPUT_TOKENS
+              value: "512"
+            - name: BUMBA_MODEL_CONCURRENCY
+              value: "4"
+            - name: BUMBA_CHILD_WORKFLOW_CONCURRENCY
+              value: "24"
             - name: OPENAI_EMBEDDING_MODEL
               value: qwen3-embedding:0.6b
             - name: OPENAI_EMBEDDING_DIMENSION

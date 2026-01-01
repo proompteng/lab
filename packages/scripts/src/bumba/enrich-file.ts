@@ -264,7 +264,7 @@ const main = async () => {
   }
 
   if (options.wait) {
-    output.result = await client.workflow.result(startResult.handle)
+    output.result = await startResult.handle.result()
   }
 
   console.log(JSON.stringify(output, null, 2))

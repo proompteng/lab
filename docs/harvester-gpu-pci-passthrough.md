@@ -70,3 +70,20 @@ sudo lspci -nn | grep -i nvidia
   - `kubectl --kubeconfig ~/.kube/altra.yaml -n harvester-system get pods | grep harvester-pcidevices-controller`
   - `kubectl --kubeconfig ~/.kube/altra.yaml -n harvester-system logs <pod> -c agent --tail=200`
 - If the admission webhook says the GPU resource name is not found in the PCI device cache, wait a few seconds and retry the VM patch, or restart the `harvester-pcidevices-controller` pod.
+- If the VM fails with `missing group for address: 000c:01:00.0` or `failed to create GPU host-devices: ... Device: []`, the GPU function is not bound to `vfio-pci`, so no IOMMU group is exposed to the controller. Bind it on the Harvester node, then force a reconcile:
+  - Bind the GPU function:
+    ```bash
+    kubectl --kubeconfig ~/.kube/altra.yaml debug node/altra -it --image=busybox -- \
+      chroot /host /bin/sh -c 'echo vfio-pci > /sys/bus/pci/devices/000c:01:00.0/driver_override; \
+      echo 000c:01:00.0 > /sys/bus/pci/drivers_probe'
+    ```
+  - Reconcile claims:
+    ```bash
+    ts=$(date +%s)
+    kubectl --kubeconfig ~/.kube/altra.yaml annotate pcideviceclaim altra-000c01000 harvesterhci.io/force-reconcile=$ts --overwrite
+    kubectl --kubeconfig ~/.kube/altra.yaml annotate pcideviceclaim altra-000c01001 harvesterhci.io/force-reconcile=$ts --overwrite
+    ```
+  - Restart the VM instance:
+    ```bash
+    kubectl --kubeconfig ~/.kube/altra.yaml -n default delete vmi docker-host
+    ```

@@ -35,33 +35,46 @@ nvidia-smi
 ls -la /dev/nvidia*
 ```
 
-## Install Ollama (systemd)
-Install Ollama via the upstream script:
+## Install Ollama + Saigak (recommended)
+Saigak wires Ollama for throughput tuning plus a host-level proxy on `:11434`
+that exports OTEL metrics.
+
+From the repo root (local machine), copy Saigak to the VM and install:
+
+```bash
+scp -r services/saigak kalmyk@192.168.1.190:/tmp/saigak
+ssh kalmyk@192.168.1.190
+cd /tmp/saigak
+SAIGAK_SKIP_MODELS=1 ./scripts/install.sh
+```
+
+Saigak keeps Ollama bound to `127.0.0.1:11435` and exposes the proxy on
+`0.0.0.0:11434` (so Kubernetes pods can reach it).
+
+If a legacy `ollama-proxy.service` is running, disable it so the container
+proxy can bind `:11434`:
+
+```bash
+sudo systemctl disable --now ollama-proxy.service
+```
+
+Verify listeners:
+
+```bash
+ss -lntp | grep -E '11434|11435'
+curl -fsS http://127.0.0.1:11434/api/tags
+```
+
+## Install Ollama (manual fallback)
+If you need to bootstrap without Saigak, install Ollama via the upstream script:
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
-```
-
-Expose Ollama on `0.0.0.0:11434` (so Kubernetes pods can reach it):
-
-```bash
-sudo install -d /etc/systemd/system/ollama.service.d
-cat <<'EOF' | sudo tee /etc/systemd/system/ollama.service.d/override.conf >/dev/null
-[Service]
-Environment=OLLAMA_HOST=0.0.0.0
-EOF
-
-sudo systemctl daemon-reload
 sudo systemctl enable --now ollama
-sudo systemctl restart ollama
 ```
 
-Verify it’s listening and serving:
-
-```bash
-ss -lntp | grep 11434
-curl -fsS http://127.0.0.1:11434/api/tags
-```
+Then configure a host proxy separately or adjust consumers to talk to
+`127.0.0.1:11435`.
 
 ## Pull models
 ### Chat/coding: Qwen3 Coder (quantized)

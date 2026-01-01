@@ -335,8 +335,8 @@ test('enrichFile completes when all activities are resolved', async () => {
   expect(output.result).toEqual({ id: 'enrichment-id', filename: input.filePath })
 })
 
-test('enrichFile falls back when enrichWithModel times out', async () => {
-  const { executor, dataConverter } = makeExecutor()
+test('enrichFile fails when enrichWithModel times out', async () => {
+  const { executor } = makeExecutor()
   const input = {
     repoRoot: '/workspace/lab/.worktrees/bumba',
     filePath: 'apps/froussard/src/webhooks/github.ts',
@@ -473,24 +473,9 @@ test('enrichFile falls back when enrichWithModel times out', async () => {
     activityResults,
   })
 
-  const scheduleCommands = output.commands.filter(
-    (command: Command) => command.commandType === CommandType.SCHEDULE_ACTIVITY_TASK,
-  )
-  const persistCommand = scheduleCommands.find((command) => {
-    if (command.attributes?.case !== 'scheduleActivityTaskCommandAttributes') {
-      return false
-    }
-    return command.attributes.value.activityType?.name === 'persistEnrichmentRecord'
-  })
-
-  expect(output.completion).toBe('completed')
-  expect(persistCommand).toBeDefined()
-  if (persistCommand?.attributes?.case !== 'scheduleActivityTaskCommandAttributes') {
-    throw new Error('Expected persistEnrichmentRecord command attributes.')
-  }
-  const decoded = await decodePayloadsToValues(dataConverter, persistCommand.attributes.value.input?.payloads ?? [])
-  const record = decoded?.[0] as { summary?: string } | undefined
-  expect(record?.summary ?? '').toContain('model timeout')
+  expect(output.completion).toBe('failed')
+  expect(output.failure).toBeInstanceOf(Error)
+  expect((output.failure as Error).message).toContain('completion request timed out')
 })
 
 test('enrichFile schedules cleanup when force is enabled', async () => {
@@ -713,7 +698,7 @@ test('enrichRepository schedules listing and child workflows', async () => {
   const childCommands = output.commands.filter(
     (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
   )
-  expect(childCommands).toHaveLength(10)
+  expect(childCommands).toHaveLength(12)
   const childAttrs =
     childCommands[0]?.attributes?.case === 'startChildWorkflowExecutionCommandAttributes'
       ? childCommands[0].attributes.value
@@ -722,7 +707,7 @@ test('enrichRepository schedules listing and child workflows', async () => {
   expect(output.completion).toBe('pending')
 })
 
-test('enrichRepository keeps 10 child workflows in flight', async () => {
+test('enrichRepository keeps 24 child workflows in flight', async () => {
   const { executor } = makeExecutor()
   const files = Array.from({ length: 52 }, (_value, index) => `path/to/file-${index}.ts`)
   const input = {
@@ -743,7 +728,7 @@ test('enrichRepository keeps 10 child workflows in flight', async () => {
   const initialChildCommands = initial.commands.filter(
     (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
   )
-  expect(initialChildCommands).toHaveLength(10)
+  expect(initialChildCommands).toHaveLength(24)
   expect(initial.completion).toBe('pending')
 
   const signalDeliveries = [
@@ -775,8 +760,92 @@ test('enrichRepository keeps 10 child workflows in flight', async () => {
     nextChildCommands[0]?.attributes?.case === 'startChildWorkflowExecutionCommandAttributes'
       ? nextChildCommands[0].attributes.value
       : undefined
-  expect(nextChildAttrs?.workflowId).toBe(`${workflowId}-child-${runId}-10`)
+  expect(nextChildAttrs?.workflowId).toBe(`${workflowId}-child-${runId}-24`)
   expect(next.completion).toBe('pending')
+})
+
+test('enrichRepository respects child workflow concurrency overrides', async () => {
+  const { executor } = makeExecutor()
+  const files = Array.from({ length: 20 }, (_value, index) => `path/to/file-${index}.ts`)
+  const input = {
+    repoRoot: '/workspace/lab/.worktrees/bumba',
+    repository: 'proompteng/lab',
+    files,
+    childWorkflowConcurrency: 6,
+  }
+  const workflowId = 'repo-workflow-override'
+  const runId = 'run-override'
+
+  const initial = await execute(executor, {
+    workflowType: 'enrichRepository',
+    arguments: input,
+    workflowId,
+    runId,
+  })
+
+  const initialChildCommands = initial.commands.filter(
+    (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
+  )
+  expect(initialChildCommands).toHaveLength(6)
+  expect(initial.completion).toBe('pending')
+
+  const signalDeliveries = [
+    {
+      name: '__childWorkflowCompleted',
+      args: [
+        {
+          workflowId: `${workflowId}-child-${runId}-0`,
+          status: 'completed',
+        },
+      ],
+    },
+  ]
+
+  const next = await execute(executor, {
+    workflowType: 'enrichRepository',
+    arguments: input,
+    workflowId,
+    runId,
+    determinismState: initial.determinismState,
+    signalDeliveries,
+  })
+
+  const nextChildCommands = next.commands.filter(
+    (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
+  )
+  expect(nextChildCommands).toHaveLength(1)
+  const nextChildAttrs =
+    nextChildCommands[0]?.attributes?.case === 'startChildWorkflowExecutionCommandAttributes'
+      ? nextChildCommands[0].attributes.value
+      : undefined
+  expect(nextChildAttrs?.workflowId).toBe(`${workflowId}-child-${runId}-6`)
+  expect(next.completion).toBe('pending')
+})
+
+test('enrichRepository uses maxFiles as the default child workflow concurrency', async () => {
+  const { executor } = makeExecutor()
+  const files = Array.from({ length: 20 }, (_value, index) => `path/to/file-${index}.ts`)
+  const input = {
+    repoRoot: '/workspace/lab/.worktrees/bumba',
+    repository: 'proompteng/lab',
+    files,
+    maxFiles: 6,
+  }
+  const workflowId = 'repo-workflow-maxfiles'
+  const runId = 'run-maxfiles'
+
+  const initial = await execute(executor, {
+    workflowType: 'enrichRepository',
+    arguments: input,
+    workflowId,
+    runId,
+  })
+
+  const initialChildCommands = initial.commands.filter(
+    (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
+  )
+  expect(initialChildCommands).toHaveLength(6)
+  expect(initial.completion).toBe('pending')
 })
 
 test('enrichRepository completes when child workflows signal completion', async () => {
@@ -832,4 +901,60 @@ test('enrichRepository completes when child workflows signal completion', async 
     completed: files.length,
     failed: 0,
   })
+})
+
+test('enrichRepository fails when child workflows report failures', async () => {
+  const { executor } = makeExecutor()
+  const files = ['path/to/file-0.ts', 'path/to/file-1.ts']
+  const input = {
+    repoRoot: '/workspace/lab/.worktrees/bumba',
+    repository: 'proompteng/lab',
+    files,
+  }
+  const workflowId = 'repo-workflow'
+  const runId = 'run-2'
+
+  const initial = await execute(executor, {
+    workflowType: 'enrichRepository',
+    arguments: input,
+    workflowId,
+    runId,
+  })
+
+  expect(initial.completion).toBe('pending')
+
+  const signalDeliveries = [
+    {
+      name: '__childWorkflowCompleted',
+      args: [
+        {
+          workflowId: `${workflowId}-child-${runId}-0`,
+          status: 'completed',
+        },
+      ],
+    },
+    {
+      name: '__childWorkflowCompleted',
+      args: [
+        {
+          workflowId: `${workflowId}-child-${runId}-1`,
+          status: 'failed',
+        },
+      ],
+    },
+  ]
+
+  const completion = await execute(executor, {
+    workflowType: 'enrichRepository',
+    arguments: input,
+    workflowId,
+    runId,
+    determinismState: initial.determinismState,
+    signalDeliveries,
+    pendingChildWorkflows: new Set(),
+  })
+
+  expect(completion.completion).toBe('failed')
+  expect(completion.failure).toBeInstanceOf(Error)
+  expect((completion.failure as Error).message).toContain('1 child workflows failed')
 })
