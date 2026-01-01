@@ -1,0 +1,82 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: registry-gc
+  namespace: registry
+spec:
+  schedule: "30 3 * * 0"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          serviceAccountName: registry-gc
+          restartPolicy: Never
+          containers:
+            - name: gc
+              image: alpine:3.20
+              env:
+                - name: KUBECTL_VERSION
+                  value: v1.33.0
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -euo pipefail
+                  apk add --no-cache ca-certificates curl
+                  arch="$(uname -m)"
+                  case "${arch}" in
+                    aarch64) kubectl_arch="arm64" ;;
+                    x86_64) kubectl_arch="amd64" ;;
+                    *) echo "unsupported arch: ${arch}" >&2; exit 1 ;;
+                  esac
+                  curl -L --retry 5 --retry-delay 3 -o /usr/local/bin/kubectl \
+                    "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${kubectl_arch}/kubectl"
+                  chmod +x /usr/local/bin/kubectl
+
+                  gc_job="registry-gc-${HOSTNAME}-$(date +%s)"
+
+                  kubectl -n registry scale deployment/registry --replicas=0
+                  kubectl -n registry rollout status deployment/registry --timeout=5m
+
+                  cat <<JOB | kubectl -n registry apply -f -
+                  apiVersion: batch/v1
+                  kind: Job
+                  metadata:
+                    name: ${gc_job}
+                  spec:
+                    backoffLimit: 0
+                    template:
+                      spec:
+                        restartPolicy: Never
+                        containers:
+                          - name: gc
+                            image: registry:3
+                            command:
+                              - /bin/registry
+                              - garbage-collect
+                              - /etc/docker/registry/config.yml
+                            volumeMounts:
+                              - name: registry-data
+                                mountPath: /var/lib/registry
+                              - name: registry-config
+                                mountPath: /etc/docker/registry
+                        volumes:
+                          - name: registry-data
+                            persistentVolumeClaim:
+                              claimName: registry-data
+                          - name: registry-config
+                            configMap:
+                              name: registry-config
+                  JOB
+
+                  kubectl -n registry wait --for=condition=complete job/${gc_job} --timeout=2h
+                  kubectl -n registry logs job/${gc_job}
+                  kubectl -n registry delete job/${gc_job}
+
+                  kubectl -n registry scale deployment/registry --replicas=1
+                  kubectl -n registry rollout status deployment/registry --timeout=5m

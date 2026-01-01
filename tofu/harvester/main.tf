@@ -21,7 +21,7 @@ locals {
   kube_master_memory    = "32Gi"
   kube_worker_memory    = "30Gi"
   docker_vm_memory      = "32Gi"
-  kube_node_disk_size   = "150Gi"
+  kube_node_disk_size   = "200Gi"
   docker_node_disk_size = "100Gi"
 
   master_mac_addresses = {

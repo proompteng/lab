@@ -21,6 +21,13 @@ const activityRetry = {
   maximumAttempts: 4,
 }
 
+const childWorkflowRetry = {
+  initialIntervalMs: 5_000,
+  backoffCoefficient: 2,
+  maximumIntervalMs: 120_000,
+  maximumAttempts: 3,
+}
+
 const readRepoFileTimeouts = {
   startToCloseTimeoutMs: 90_000,
   scheduleToCloseTimeoutMs: 600_000,
@@ -672,6 +679,7 @@ export const workflows = [
                 {
                   parentClosePolicy: PARENT_CLOSE_POLICY_ABANDON,
                   workflowId: childWorkflowId,
+                  retry: childWorkflowRetry,
                 },
               )
             }

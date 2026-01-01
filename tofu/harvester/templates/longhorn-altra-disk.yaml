@@ -37,6 +37,7 @@ spec:
       allowScheduling: true
       diskType: filesystem
       path: /var/lib/harvester/defaultdisk
+      storageReserved: 107374182400
     nvme0-disk:
       allowScheduling: true
       diskType: filesystem
