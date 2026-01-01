@@ -2520,7 +2520,8 @@ export const activities = {
     const systemPrompt = [
       'You are an Atlas enrichment agent.',
       'Return a valid JSON object ONLY with keys "summary" and "enriched".',
-      'Do not include markdown, code fences, or extra keys.',
+      'The response MUST be a single JSON object, with no extra keys, no filename, and no code.',
+      'Do not include markdown, code fences, arrays, or nested objects.',
       'Return ONLY this shape: {"summary":"...","enriched":"- ...\\n- ..."}',
       '"summary": 2-4 sentences (<= 400 chars) describing what the file does.',
       '"enriched": a single string of 3-6 bullet lines, each starting with "- ". Each bullet <= 120 chars.',
@@ -2528,6 +2529,7 @@ export const activities = {
       'If information is missing, say "Unknown" instead of guessing.',
       'If input is truncated, include a bullet: "Input truncated; details may be missing."',
       'Never return file metadata objects, schemas, or code samples; only summary/enriched.',
+      'If you are unable to comply, return exactly: {"summary":"Unknown","enriched":"- Unknown"}',
     ].join(' ')
 
     const userSections = [
@@ -2561,6 +2563,9 @@ export const activities = {
           context?.error ? `Error: ${context.error}` : null,
           'Return ONLY a valid JSON object with keys "summary" and "enriched".',
           'Do not add extra keys or markdown.',
+          'Ignore any previous response that does not already contain summary/enriched.',
+          'Do not include filenames or code.',
+          'If you are unable to comply, return exactly: {"summary":"Unknown","enriched":"- Unknown"}',
           'If the previous response contained useful content, reuse it; otherwise regenerate from the input below.',
         ]
           .filter((entry) => entry && entry.length > 0)
