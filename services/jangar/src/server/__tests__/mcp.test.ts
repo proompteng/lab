@@ -60,6 +60,7 @@ const makeAtlasService = (): AtlasService => {
     upsertEventFile: () => fail(),
     upsertIngestionTarget: () => fail(),
     listIndexedFiles: () => fail(),
+    getAstPreview: () => fail(),
     search: () => fail(),
     stats: () => fail(),
     close: () => Effect.void,

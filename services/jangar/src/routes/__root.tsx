@@ -26,7 +26,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       <head>
         <HeadContent />
       </head>
-      <body className="min-h-screen bg-background text-foreground">
+      <body className="min-h-screen bg-background text-foreground antialiased">
         <a href={`#${mainId}`} className="sr-only focus:not-sr-only">
           Skip to content
         </a>

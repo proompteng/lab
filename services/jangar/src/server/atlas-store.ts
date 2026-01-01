@@ -305,6 +305,18 @@ export type AtlasStats = {
   embeddings: number
 }
 
+export type AtlasAstFact = {
+  nodeType: string
+  matchText: string
+  startLine: number | null
+  endLine: number | null
+}
+
+export type AtlasAstPreview = {
+  facts: AtlasAstFact[]
+  summary?: string | null
+}
+
 export type AtlasIndexedFile = {
   repository: string
   ref: string
@@ -344,6 +356,7 @@ export type AtlasStore = {
     ref?: string
     pathPrefix?: string
   }) => Promise<AtlasIndexedFile[]>
+  getAstPreview: (input: { fileVersionId: string; limit?: number }) => Promise<AtlasAstPreview>
   search: (input: AtlasSearchInput) => Promise<AtlasSearchMatch[]>
   stats: () => Promise<AtlasStats>
   close: () => Promise<void>
@@ -1495,6 +1508,41 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     }))
   }
 
+  const getAstPreview: AtlasStore['getAstPreview'] = async ({ fileVersionId, limit }) => {
+    await ensureSchema()
+
+    const resolvedFileVersionId = normalizeText(fileVersionId, 'fileVersionId')
+    const resolvedLimit = Math.max(1, Math.min(1000, Math.floor(limit ?? 500)))
+
+    const facts = await db
+      .selectFrom('atlas.tree_sitter_facts')
+      .select(['node_type', 'match_text', 'start_line', 'end_line'])
+      .where('file_version_id', '=', resolvedFileVersionId)
+      .orderBy('start_line', 'asc')
+      .orderBy('node_type', 'asc')
+      .limit(resolvedLimit)
+      .execute()
+
+    const summaryRow = await db
+      .selectFrom('atlas.enrichments')
+      .select([sql<string>`metadata ->> 'astSummary'`.as('ast_summary')])
+      .where('file_version_id', '=', resolvedFileVersionId)
+      .where('kind', '=', 'model_enrichment')
+      .orderBy('created_at', 'desc')
+      .limit(1)
+      .executeTakeFirst()
+
+    return {
+      facts: facts.map((row) => ({
+        nodeType: row.node_type,
+        matchText: row.match_text,
+        startLine: row.start_line ?? null,
+        endLine: row.end_line ?? null,
+      })),
+      summary: summaryRow?.ast_summary ?? null,
+    }
+  }
+
   const search: AtlasStore['search'] = async ({ query, limit, repository, ref, pathPrefix, tags, kinds }) => {
     await ensureSchema()
 
@@ -1698,6 +1746,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     upsertEventFile,
     upsertIngestionTarget,
     listIndexedFiles,
+    getAstPreview,
     search,
     stats,
     close,
