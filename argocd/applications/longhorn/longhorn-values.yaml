@@ -33,7 +33,7 @@ longhornUI:
 defaultSettings:
   createDefaultDiskLabeledNodes: false
   taintToleration: "dedicated=arc-runner:NoSchedule"
-  storageReservedPercentageForDefaultDisk: 30
+  storageReservedPercentageForDefaultDisk: 0
   storageMinimalAvailablePercentage: 0
   defaultReplicaCount: 1
   replicaAutoBalance: best-effort

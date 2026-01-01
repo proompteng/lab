@@ -9,6 +9,37 @@ helmCharts:
     namespace: longhorn-system
     valuesFile: longhorn-values.yaml
     includeCRDs: true
+resources:
+  - nodes/kube-worker-00.patch.yaml
+  - nodes/kube-worker-01.patch.yaml
+  - nodes/kube-worker-02.patch.yaml
+  - nodes/kube-worker-03.patch.yaml
+  - nodes/kube-worker-04.patch.yaml
+  - nodes/kube-worker-05.patch.yaml
+  - nodes/kube-worker-06.patch.yaml
+  - nodes/kube-worker-07.patch.yaml
+  - nodes/kube-worker-08.patch.yaml
+  - nodes/kube-worker-09.patch.yaml
+  - nodes/kube-worker-10.patch.yaml
+  - nodes/kube-worker-11.patch.yaml
+  - nodes/kube-worker-12.patch.yaml
+  - nodes/kube-worker-13.patch.yaml
+  - nodes/kube-worker-14.patch.yaml
+  - nodes/kube-worker-15.patch.yaml
+  - nodes/kube-worker-16.patch.yaml
+  - nodes/kube-worker-17.patch.yaml
+  - nodes/kube-worker-18.patch.yaml
+  - nodes/kube-worker-19.patch.yaml
+  - nodes/kube-worker-20.patch.yaml
+  - nodes/kube-worker-21.patch.yaml
+  - nodes/kube-worker-22.patch.yaml
+  - nodes/kube-worker-23.patch.yaml
+  - nodes/kube-worker-24.patch.yaml
+  - nodes/kube-worker-25.patch.yaml
+  - nodes/kube-worker-26.patch.yaml
+  - nodes/kube-worker-27.patch.yaml
+  - nodes/kube-worker-28.patch.yaml
+  - nodes/kube-worker-29.patch.yaml
 patches:
   - target:
       group: apps
