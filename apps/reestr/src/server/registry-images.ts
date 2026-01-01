@@ -65,8 +65,10 @@ async function computeRegistryImages(): Promise<RegistryImagesResponse> {
         let sizeTimestamp: string | undefined
         let sizeError: string | undefined
 
+        let tagDetails: TagDetails[] = []
+
         if (tags.length) {
-          const tagDetails = await Promise.all(tags.map((tag) => fetchTagDetails(repository, tag)))
+          tagDetails = await Promise.all(tags.map((tag) => fetchTagDetails(repository, tag)))
           const filteredDetails = tagDetails.filter(
             (detail) => !detail.error?.includes('Manifest request failed (404)'),
           )
