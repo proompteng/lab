@@ -1,9 +1,0 @@
-apiVersion: longhorn.io/v1beta2
-kind: Node
-metadata:
-  name: kube-worker-20
-  namespace: longhorn-system
-spec:
-  disks:
-    default-disk-916210eb19e17e39:
-      storageReserved: 0
