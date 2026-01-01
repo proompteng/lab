@@ -305,6 +305,18 @@ export type AtlasStats = {
   embeddings: number
 }
 
+export type AtlasAstFact = {
+  nodeType: string
+  matchText: string
+  startLine: number | null
+  endLine: number | null
+}
+
+export type AtlasAstPreview = {
+  facts: AtlasAstFact[]
+  summary?: string | null
+}
+
 export type AtlasIndexedFile = {
   repository: string
   ref: string
@@ -344,7 +356,9 @@ export type AtlasStore = {
     ref?: string
     pathPrefix?: string
   }) => Promise<AtlasIndexedFile[]>
+  getAstPreview: (input: { fileVersionId: string; limit?: number }) => Promise<AtlasAstPreview>
   search: (input: AtlasSearchInput) => Promise<AtlasSearchMatch[]>
+  searchCount: (input: AtlasSearchInput) => Promise<number>
   stats: () => Promise<AtlasStats>
   close: () => Promise<void>
 }
@@ -361,6 +375,7 @@ const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding-saigak:0.6b'
 const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 1024
 const DEFAULT_INDEX_LIMIT = 50
 const DEFAULT_SEARCH_LIMIT = 10
+const MAX_SEARCH_LIMIT = 200
 
 const SCHEMA = 'atlas'
 
@@ -1495,16 +1510,84 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     }))
   }
 
+  const getAstPreview: AtlasStore['getAstPreview'] = async ({ fileVersionId, limit }) => {
+    await ensureSchema()
+
+    const resolvedFileVersionId = normalizeText(fileVersionId, 'fileVersionId')
+    const resolvedLimit = Math.max(1, Math.min(1000, Math.floor(limit ?? 500)))
+
+    const facts = await db
+      .selectFrom('atlas.tree_sitter_facts')
+      .select(['node_type', 'match_text', 'start_line', 'end_line'])
+      .where('file_version_id', '=', resolvedFileVersionId)
+      .orderBy('start_line', 'asc')
+      .orderBy('node_type', 'asc')
+      .limit(resolvedLimit)
+      .execute()
+
+    const summaryRow = await db
+      .selectFrom('atlas.enrichments')
+      .select([sql<string>`metadata ->> 'astSummary'`.as('ast_summary')])
+      .where('file_version_id', '=', resolvedFileVersionId)
+      .where('kind', '=', 'model_enrichment')
+      .orderBy('created_at', 'desc')
+      .limit(1)
+      .executeTakeFirst()
+
+    return {
+      facts: facts.map((row) => ({
+        nodeType: row.node_type,
+        matchText: row.match_text,
+        startLine: row.start_line ?? null,
+        endLine: row.end_line ?? null,
+      })),
+      summary: summaryRow?.ast_summary ?? null,
+    }
+  }
+
+  const resolveSearchFilters = ({
+    repository,
+    ref,
+    pathPrefix,
+    tags,
+    kinds,
+  }: Pick<AtlasSearchInput, 'repository' | 'ref' | 'pathPrefix' | 'tags' | 'kinds'>) => ({
+    repository: typeof repository === 'string' ? repository.trim() : '',
+    ref: typeof ref === 'string' ? ref.trim() : '',
+    pathPrefix: typeof pathPrefix === 'string' ? pathPrefix.trim() : '',
+    tags: normalizeTags(tags),
+    kinds: normalizeTags(kinds),
+  })
+
+  const applySearchFilters = <T extends { where: (...args: unknown[]) => T }>(
+    query: T,
+    filters: ReturnType<typeof resolveSearchFilters>,
+  ) => {
+    let next = query
+    if (filters.repository) {
+      next = next.where('repositories.name', '=', filters.repository)
+    }
+    if (filters.ref) {
+      next = next.where('file_versions.repository_ref', '=', filters.ref)
+    }
+    if (filters.pathPrefix) {
+      next = next.where('file_keys.path', 'like', `${filters.pathPrefix}%`)
+    }
+    if (filters.tags.length > 0) {
+      next = next.where(sql<boolean>`enrichments.tags && ${sql.value(filters.tags)}::text[]`)
+    }
+    if (filters.kinds.length > 0) {
+      next = next.where(sql<boolean>`enrichments.kind = ANY(${sql.value(filters.kinds)}::text[])`)
+    }
+    return next
+  }
+
   const search: AtlasStore['search'] = async ({ query, limit, repository, ref, pathPrefix, tags, kinds }) => {
     await ensureSchema()
 
     const resolvedQuery = normalizeText(query, 'query')
-    const resolvedLimit = Math.max(1, Math.min(50, Math.floor(limit ?? DEFAULT_SEARCH_LIMIT)))
-    const resolvedRepository = typeof repository === 'string' ? repository.trim() : ''
-    const resolvedRef = typeof ref === 'string' ? ref.trim() : ''
-    const resolvedPathPrefix = typeof pathPrefix === 'string' ? pathPrefix.trim() : ''
-    const resolvedTags = normalizeTags(tags)
-    const resolvedKinds = normalizeTags(kinds)
+    const resolvedLimit = Math.max(1, Math.min(MAX_SEARCH_LIMIT, Math.floor(limit ?? DEFAULT_SEARCH_LIMIT)))
+    const filters = resolveSearchFilters({ repository, ref, pathPrefix, tags, kinds })
 
     const embeddingConfig = loadEmbeddingConfig()
     const embedding = await embedText(resolvedQuery, embeddingConfig)
@@ -1556,21 +1639,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
       .where('embeddings.model', '=', embeddingConfig.model)
       .where('embeddings.dimension', '=', embeddingConfig.dimension)
 
-    if (resolvedRepository) {
-      searchQuery = searchQuery.where('repositories.name', '=', resolvedRepository)
-    }
-    if (resolvedRef) {
-      searchQuery = searchQuery.where('file_versions.repository_ref', '=', resolvedRef)
-    }
-    if (resolvedPathPrefix) {
-      searchQuery = searchQuery.where('file_keys.path', 'like', `${resolvedPathPrefix}%`)
-    }
-    if (resolvedTags.length > 0) {
-      searchQuery = searchQuery.where(sql<boolean>`enrichments.tags && ${sql.value(resolvedTags)}::text[]`)
-    }
-    if (resolvedKinds.length > 0) {
-      searchQuery = searchQuery.where(sql<boolean>`enrichments.kind = ANY(${sql.value(resolvedKinds)}::text[])`)
-    }
+    searchQuery = applySearchFilters(searchQuery, filters)
 
     const rows = await searchQuery.orderBy(distanceExpr).limit(resolvedLimit).execute()
 
@@ -1642,6 +1711,33 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     }))
   }
 
+  const searchCount: AtlasStore['searchCount'] = async ({ query, repository, ref, pathPrefix, tags, kinds }) => {
+    await ensureSchema()
+
+    const resolvedQuery = normalizeText(query, 'query')
+    const filters = resolveSearchFilters({ repository, ref, pathPrefix, tags, kinds })
+    const embeddingConfig = loadEmbeddingConfig()
+    const embedding = await embedText(resolvedQuery, embeddingConfig)
+    const vectorString = vectorToPgArray(embedding)
+    const distanceExpr = sql<number>`embeddings.embedding <=> ${vectorString}::vector`
+
+    let countQuery = db
+      .selectFrom('atlas.embeddings as embeddings')
+      .innerJoin('atlas.enrichments as enrichments', 'enrichments.id', 'embeddings.enrichment_id')
+      .innerJoin('atlas.file_versions as file_versions', 'file_versions.id', 'enrichments.file_version_id')
+      .innerJoin('atlas.file_keys as file_keys', 'file_keys.id', 'file_versions.file_key_id')
+      .innerJoin('atlas.repositories as repositories', 'repositories.id', 'file_keys.repository_id')
+      .select(['file_versions.id as file_version_id', distanceExpr.as('distance')])
+      .where('embeddings.model', '=', embeddingConfig.model)
+      .where('embeddings.dimension', '=', embeddingConfig.dimension)
+
+    countQuery = applySearchFilters(countQuery, filters)
+
+    const rows = await countQuery.orderBy(distanceExpr).limit(MAX_SEARCH_LIMIT).execute()
+    const unique = new Set(rows.map((row) => row.file_version_id))
+    return unique.size
+  }
+
   const stats: AtlasStore['stats'] = async () => {
     await ensureSchema()
 
@@ -1698,7 +1794,9 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     upsertEventFile,
     upsertIngestionTarget,
     listIndexedFiles,
+    getAstPreview,
     search,
+    searchCount,
     stats,
     close,
   }

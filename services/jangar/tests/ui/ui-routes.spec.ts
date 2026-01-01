@@ -21,6 +21,7 @@ const atlasIndexedResponse = {
 }
 const atlasSearchResponse = {
   ok: true,
+  total: 1,
   items: [
     {
       repository: 'proompteng/lab',

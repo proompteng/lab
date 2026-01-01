@@ -11,6 +11,7 @@ export type AtlasSearchParams = {
 }
 
 export type AtlasFileItem = {
+  fileVersionId?: string
   repository?: string
   ref?: string
   commit?: string
@@ -22,9 +23,24 @@ export type AtlasFileItem = {
   tags?: string[]
 }
 
+export type AtlasFilePreview =
+  | { ok: true; repository?: string; ref?: string; path?: string; content: string; truncated?: boolean }
+  | { ok: false; message: string }
+
+export type AtlasAstFact = {
+  nodeType: string
+  matchText: string
+  startLine: number | null
+  endLine: number | null
+}
+
+export type AtlasAstPreview =
+  | { ok: true; fileVersionId?: string; summary?: string; facts: AtlasAstFact[] }
+  | { ok: false; message: string }
+
 export type AtlasSearchResult =
-  | { ok: true; items: AtlasFileItem[]; raw: unknown }
-  | { ok: false; items: AtlasFileItem[]; message: string; raw?: unknown }
+  | { ok: true; items: AtlasFileItem[]; raw: unknown; total?: number }
+  | { ok: false; items: AtlasFileItem[]; message: string; raw?: unknown; total?: number }
 
 export type AtlasEnrichInput = {
   repository: string
@@ -93,6 +109,12 @@ const normalizeAtlasItem = (raw: unknown): AtlasFileItem => {
       parseString(file.repository) ??
       parseString(metadata.repository) ??
       parseString(metadata.repo),
+    fileVersionId:
+      parseString(record.fileVersionId) ??
+      parseString(record.file_version_id) ??
+      parseString(file.id) ??
+      parseString(file.fileVersionId) ??
+      parseString(metadata.fileVersionId),
     ref:
       parseString(record.ref) ??
       parseString(record.branch) ??
@@ -152,6 +174,26 @@ const extractAtlasItems = (payload: unknown): AtlasFileItem[] => {
   return candidates.map(normalizeAtlasItem)
 }
 
+const extractAtlasTotal = (payload: unknown): number | undefined => {
+  if (!payload || typeof payload !== 'object') return undefined
+  const record = payload as Record<string, unknown>
+  const raw =
+    parseNumber(record.total) ??
+    parseNumber(record.count) ??
+    parseNumber(record.totalMatches) ??
+    parseNumber(record.total_matches) ??
+    record.total ??
+    record.count ??
+    record.totalMatches ??
+    record.total_matches
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw
+  if (typeof raw === 'string') {
+    const parsed = Number.parseInt(raw, 10)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
+}
+
 export const searchAtlas = async (params: AtlasSearchParams): Promise<AtlasSearchResult> => {
   const searchParams = new URLSearchParams()
   if (params.query !== undefined) searchParams.set('query', params.query)
@@ -175,16 +217,19 @@ export const searchAtlas = async (params: AtlasSearchParams): Promise<AtlasSearc
     payload = null
   }
 
+  const total = extractAtlasTotal(payload)
+
   if (!response.ok) {
     return {
       ok: false,
       items: extractAtlasItems(payload),
       raw: payload ?? undefined,
+      total,
       message: `Search failed (${response.status})`,
     }
   }
 
-  return { ok: true, items: extractAtlasItems(payload), raw: payload }
+  return { ok: true, items: extractAtlasItems(payload), raw: payload, total }
 }
 
 export const listAtlasIndexedFiles = async (
@@ -306,4 +351,95 @@ export const listAtlasPaths = async (params: AtlasPathLookupParams): Promise<Atl
     ? record.paths.filter((item): item is string => typeof item === 'string')
     : []
   return { ok: true, paths }
+}
+
+export const getAtlasFilePreview = async (params: {
+  repository?: string
+  ref?: string
+  path?: string
+  signal?: AbortSignal
+}): Promise<AtlasFilePreview> => {
+  const searchParams = new URLSearchParams()
+  if (params.repository) searchParams.set('repository', params.repository)
+  if (params.ref) searchParams.set('ref', params.ref)
+  if (params.path) searchParams.set('path', params.path)
+
+  const url = `/api/atlas/file${searchParams.toString() ? `?${searchParams.toString()}` : ''}`
+  const response = await fetch(url, { signal: params.signal })
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    const message =
+      payload && typeof payload === 'object' && 'message' in payload ? String(payload.message) : 'File preview failed'
+    return { ok: false, message }
+  }
+
+  if (!payload || typeof payload !== 'object') return { ok: false, message: 'Invalid preview response.' }
+  const record = payload as Record<string, unknown>
+
+  return {
+    ok: true,
+    repository: parseString(record.repository),
+    ref: parseString(record.ref),
+    path: parseString(record.path),
+    content: parseString(record.content) ?? '',
+    truncated: typeof record.truncated === 'boolean' ? record.truncated : undefined,
+  }
+}
+
+export const getAtlasAstPreview = async (params: {
+  fileVersionId?: string
+  limit?: number
+  signal?: AbortSignal
+}): Promise<AtlasAstPreview> => {
+  const searchParams = new URLSearchParams()
+  if (params.fileVersionId) searchParams.set('fileVersionId', params.fileVersionId)
+  if (params.limit !== undefined) searchParams.set('limit', params.limit.toString())
+
+  const url = `/api/atlas/ast${searchParams.toString() ? `?${searchParams.toString()}` : ''}`
+  const response = await fetch(url, { signal: params.signal })
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    const message =
+      payload && typeof payload === 'object' && 'message' in payload ? String(payload.message) : 'AST preview failed'
+    return { ok: false, message }
+  }
+
+  if (!payload || typeof payload !== 'object') return { ok: false, message: 'Invalid AST response.' }
+  const record = payload as Record<string, unknown>
+  const facts = Array.isArray(record.facts)
+    ? record.facts
+        .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+        .map((item) => {
+          const startLine = typeof item.startLine === 'number' ? item.startLine : null
+          const endLine = typeof item.endLine === 'number' ? item.endLine : null
+          const altStart = typeof item.start_line === 'number' ? item.start_line : null
+          const altEnd = typeof item.end_line === 'number' ? item.end_line : null
+
+          return {
+            nodeType: parseString(item.nodeType) ?? parseString(item.node_type) ?? 'node',
+            matchText: parseString(item.matchText) ?? parseString(item.match_text) ?? '',
+            startLine: startLine ?? altStart,
+            endLine: endLine ?? altEnd,
+          }
+        })
+    : []
+
+  return {
+    ok: true,
+    fileVersionId: parseString(record.fileVersionId) ?? parseString(record.file_version_id),
+    summary: parseString(record.summary) ?? undefined,
+    facts,
+  }
 }

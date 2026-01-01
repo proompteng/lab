@@ -42,7 +42,7 @@ test.describe('live deps (Tilt / remote cluster)', () => {
     ).toBe(true)
 
     await expect(page.getByText(/Search failed \(\d+\)/)).toHaveCount(0)
-    await expect(page.getByText(/No matches found\.|Found \d+ results\./)).toBeVisible()
+    await expect(page.getByText(/No matches found\.|Found \d+ matches\./)).toBeVisible()
   })
 
   test('atlas search route works for temporal query (URL navigation)', async ({ page }) => {
@@ -72,7 +72,7 @@ test.describe('live deps (Tilt / remote cluster)', () => {
     ).toBe(true)
 
     // The UI should surface a success status string.
-    await expect(page.getByText(/No matches found\.|Found \d+ results\./)).toBeVisible()
+    await expect(page.getByText(/No matches found\.|Found \d+ matches\./)).toBeVisible()
 
     // And it should not surface the common infra errors.
     await expect(

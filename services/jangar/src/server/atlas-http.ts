@@ -9,6 +9,7 @@ export const MAX_CONTENT_HASH_CHARS = 200
 export const MAX_QUERY_CHARS = 10_000
 export const MAX_TAGS = 50
 export const MAX_KINDS = 50
+export const MAX_SEARCH_LIMIT = 200
 
 type ValidationResult<T> = { ok: true; value: T } | { ok: false; message: string }
 
@@ -61,15 +62,15 @@ const normalizeStringArray = (value: unknown, maxItems: number) => {
 
 const normalizeLimit = (value: unknown, fallback = DEFAULT_LIMIT) => {
   if (typeof value === 'number' && Number.isFinite(value)) {
-    return Math.max(1, Math.min(50, Math.floor(value)))
+    return Math.max(1, Math.min(MAX_SEARCH_LIMIT, Math.floor(value)))
   }
   if (typeof value === 'string') {
     const parsed = Number.parseInt(value, 10)
     if (Number.isFinite(parsed)) {
-      return Math.max(1, Math.min(50, parsed))
+      return Math.max(1, Math.min(MAX_SEARCH_LIMIT, parsed))
     }
   }
-  return Math.max(1, Math.min(50, fallback))
+  return Math.max(1, Math.min(MAX_SEARCH_LIMIT, fallback))
 }
 
 const normalizeMetadata = (value: unknown): Record<string, unknown> | undefined => {

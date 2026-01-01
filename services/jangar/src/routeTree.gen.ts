@@ -36,6 +36,8 @@ import { Route as ApiCodexNotifyRouteImport } from './routes/api/codex/notify'
 import { Route as ApiCodexGithubEventsRouteImport } from './routes/api/codex/github-events'
 import { Route as ApiAtlasPathsRouteImport } from './routes/api/atlas/paths'
 import { Route as ApiAtlasIndexedRouteImport } from './routes/api/atlas/indexed'
+import { Route as ApiAtlasFileRouteImport } from './routes/api/atlas/file'
+import { Route as ApiAtlasAstRouteImport } from './routes/api/atlas/ast'
 import { Route as ApiAgentsEventsRouteImport } from './routes/api/agents/events'
 import { Route as OpenaiV1ChatCompletionsRouteImport } from './routes/openai/v1/chat/completions'
 import { Route as ApiTorghutTaSignalsRouteImport } from './routes/api/torghut/ta/signals'
@@ -178,6 +180,16 @@ const ApiAtlasIndexedRoute = ApiAtlasIndexedRouteImport.update({
   path: '/api/atlas/indexed',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAtlasFileRoute = ApiAtlasFileRouteImport.update({
+  id: '/api/atlas/file',
+  path: '/api/atlas/file',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAtlasAstRoute = ApiAtlasAstRouteImport.update({
+  id: '/api/atlas/ast',
+  path: '/api/atlas/ast',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAgentsEventsRoute = ApiAgentsEventsRouteImport.update({
   id: '/api/agents/events',
   path: '/api/agents/events',
@@ -230,6 +242,8 @@ export interface FileRoutesByFullPath {
   '/agents': typeof AgentsIndexRoute
   '/atlas': typeof AtlasIndexRoute
   '/api/agents/events': typeof ApiAgentsEventsRoute
+  '/api/atlas/ast': typeof ApiAtlasAstRoute
+  '/api/atlas/file': typeof ApiAtlasFileRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/codex/github-events': typeof ApiCodexGithubEventsRoute
@@ -265,6 +279,8 @@ export interface FileRoutesByTo {
   '/agents': typeof AgentsIndexRoute
   '/atlas': typeof AtlasIndexRoute
   '/api/agents/events': typeof ApiAgentsEventsRoute
+  '/api/atlas/ast': typeof ApiAtlasAstRoute
+  '/api/atlas/file': typeof ApiAtlasFileRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/codex/github-events': typeof ApiCodexGithubEventsRoute
@@ -301,6 +317,8 @@ export interface FileRoutesById {
   '/agents/': typeof AgentsIndexRoute
   '/atlas/': typeof AtlasIndexRoute
   '/api/agents/events': typeof ApiAgentsEventsRoute
+  '/api/atlas/ast': typeof ApiAtlasAstRoute
+  '/api/atlas/file': typeof ApiAtlasFileRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/codex/github-events': typeof ApiCodexGithubEventsRoute
@@ -338,6 +356,8 @@ export interface FileRouteTypes {
     | '/agents'
     | '/atlas'
     | '/api/agents/events'
+    | '/api/atlas/ast'
+    | '/api/atlas/file'
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/codex/github-events'
@@ -373,6 +393,8 @@ export interface FileRouteTypes {
     | '/agents'
     | '/atlas'
     | '/api/agents/events'
+    | '/api/atlas/ast'
+    | '/api/atlas/file'
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/codex/github-events'
@@ -408,6 +430,8 @@ export interface FileRouteTypes {
     | '/agents/'
     | '/atlas/'
     | '/api/agents/events'
+    | '/api/atlas/ast'
+    | '/api/atlas/file'
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/codex/github-events'
@@ -444,6 +468,8 @@ export interface RootRouteChildren {
   AgentsIndexRoute: typeof AgentsIndexRoute
   AtlasIndexRoute: typeof AtlasIndexRoute
   ApiAgentsEventsRoute: typeof ApiAgentsEventsRoute
+  ApiAtlasAstRoute: typeof ApiAtlasAstRoute
+  ApiAtlasFileRoute: typeof ApiAtlasFileRoute
   ApiAtlasIndexedRoute: typeof ApiAtlasIndexedRoute
   ApiAtlasPathsRoute: typeof ApiAtlasPathsRoute
   ApiCodexGithubEventsRoute: typeof ApiCodexGithubEventsRoute
@@ -649,6 +675,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAtlasIndexedRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/atlas/file': {
+      id: '/api/atlas/file'
+      path: '/api/atlas/file'
+      fullPath: '/api/atlas/file'
+      preLoaderRoute: typeof ApiAtlasFileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/atlas/ast': {
+      id: '/api/atlas/ast'
+      path: '/api/atlas/ast'
+      fullPath: '/api/atlas/ast'
+      preLoaderRoute: typeof ApiAtlasAstRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/agents/events': {
       id: '/api/agents/events'
       path: '/api/agents/events'
@@ -726,6 +766,8 @@ const rootRouteChildren: RootRouteChildren = {
   AgentsIndexRoute: AgentsIndexRoute,
   AtlasIndexRoute: AtlasIndexRoute,
   ApiAgentsEventsRoute: ApiAgentsEventsRoute,
+  ApiAtlasAstRoute: ApiAtlasAstRoute,
+  ApiAtlasFileRoute: ApiAtlasFileRoute,
   ApiAtlasIndexedRoute: ApiAtlasIndexedRoute,
   ApiAtlasPathsRoute: ApiAtlasPathsRoute,
   ApiCodexGithubEventsRoute: ApiCodexGithubEventsRoute,
