@@ -17,6 +17,15 @@ This document describes a **single-run, end‑to‑end** implementation plan for
 ## System Overview
 Pipeline:
 ```
+
+## Runtime Configuration (env)
+- `TRADING_ENABLED` (default `false`) gates the trading loop.
+- `TRADING_MODE` (`paper|live`, default `paper`); live requires `TRADING_LIVE_ENABLED=true`.
+- `TRADING_SIGNAL_SOURCE` (`clickhouse`), `TRADING_SIGNAL_TABLE` (default `torghut.ta_signals`).
+- `TA_CLICKHOUSE_URL`, `TA_CLICKHOUSE_USERNAME`, `TA_CLICKHOUSE_PASSWORD` for ClickHouse access.
+- `TRADING_POLL_MS` and `TRADING_RECONCILE_MS` for loop intervals.
+- `TRADING_UNIVERSE_SOURCE` (`jangar|static`), `JANGAR_SYMBOLS_URL`, `TRADING_STATIC_SYMBOLS`.
+- Optional risk defaults: `TRADING_MAX_NOTIONAL_PER_TRADE`, `TRADING_MAX_POSITION_PCT_EQUITY`.
 SignalIngestor -> DecisionEngine -> RiskEngine -> OrderExecutor -> Reconciler
                                    ↘ Persistence (trade_decisions, executions)
 ```

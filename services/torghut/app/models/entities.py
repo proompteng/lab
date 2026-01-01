@@ -72,9 +72,11 @@ class TradeDecision(Base, CreatedAtMixin):
     timeframe: Mapped[str] = mapped_column(String(length=16), nullable=False)
     decision_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
     rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    decision_hash: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
     status: Mapped[str] = mapped_column(
         String(length=32), nullable=False, default="planned", server_default=text("'planned'")
     )
+    executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     strategy: Mapped[Strategy] = relationship(back_populates="trade_decisions")
     executions: Mapped[List["Execution"]] = relationship(back_populates="trade_decision")
@@ -82,6 +84,7 @@ class TradeDecision(Base, CreatedAtMixin):
     __table_args__ = (
         Index("ix_trade_decisions_strategy", "strategy_id"),
         Index("ix_trade_decisions_status", "status"),
+        Index("ix_trade_decisions_decision_hash", "decision_hash", unique=True),
     )
 
 
@@ -107,6 +110,7 @@ class Execution(Base, TimestampMixin):
     avg_fill_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
     status: Mapped[str] = mapped_column(String(length=32), nullable=False)
     raw_order: Mapped[Any] = mapped_column(JSONType, nullable=True)
+    last_update_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     trade_decision: Mapped[Optional[TradeDecision]] = relationship(back_populates="executions")
 
@@ -152,12 +156,23 @@ class ToolRunLog(Base, CreatedAtMixin):
     )
 
 
+class TradeCursor(Base, TimestampMixin):
+    """Cursor for signal ingestion progress tracking."""
+
+    __tablename__ = "trade_cursor"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    source: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
+    cursor_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 __all__ = [
     "Strategy",
     "TradeDecision",
     "Execution",
     "PositionSnapshot",
     "ToolRunLog",
+    "TradeCursor",
     "TimestampMixin",
     "CreatedAtMixin",
     "JSONType",

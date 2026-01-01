@@ -68,6 +68,10 @@ class TorghutAlpacaClient:
         orders = self.trading.get_orders(request)
         return [self._model_to_dict(order) for order in orders]
 
+    def get_order(self, alpaca_order_id: str) -> Dict[str, Any]:
+        order = self.trading.get_order_by_id(alpaca_order_id)
+        return self._model_to_dict(order)
+
     def submit_order(
         self,
         symbol: str,
