@@ -140,15 +140,18 @@ function ImageDetails() {
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
-                  <BreadcrumbLink render={<Link to="/" />} className="inline-flex items-center gap-1 text-neutral-400">
-                    <IconHome2 className="size-3.5" />
+                  <BreadcrumbLink
+                    render={<Link to="/" />}
+                    className="inline-flex items-center gap-2 text-neutral-400 leading-none"
+                  >
+                    <IconHome2 className="size-4" />
                     Registry
                   </BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage className="inline-flex items-center gap-1">
-                    <IconPackage className="size-3.5" />
+                  <BreadcrumbPage className="inline-flex items-center gap-2 leading-none break-words">
+                    <IconPackage className="size-4" />
                     {repository}
                   </BreadcrumbPage>
                 </BreadcrumbItem>

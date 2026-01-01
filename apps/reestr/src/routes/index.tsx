@@ -1,13 +1,27 @@
 import { IconTrash } from '@tabler/icons-react'
-import { useQuery } from '@tanstack/react-query'
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { createFileRoute, Link } from '@tanstack/react-router'
+import { useServerFn } from '@tanstack/react-start'
 import type { KeyboardEvent } from 'react'
+import { useState } from 'react'
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from '~/components/ui/alert-dialog'
 import { Button } from '~/components/ui/button'
 import { ScrollArea } from '~/components/ui/scroll-area'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
 import { encodeRepositoryParam, formatSize } from '~/lib/registry'
+import { deleteTagServerFn } from '~/server/delete-tag'
 import { type RegistryImagesResponse, registryImagesServerFn } from '~/server/registry-images'
 
 export const Route = createFileRoute('/')({
@@ -18,7 +32,8 @@ export const Route = createFileRoute('/')({
 const registryImagesQueryKey = ['registryImages'] as const
 
 function App() {
-  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const runDeleteTag = useServerFn(deleteTagServerFn)
   const initialData = Route.useLoaderData() as RegistryImagesResponse
 
   const { data } = useQuery({
@@ -54,6 +69,49 @@ function App() {
     if (event.key === ' ' || event.key === 'Spacebar') {
       event.preventDefault()
       event.currentTarget.click()
+    }
+  }
+
+  const [imageToDelete, setImageToDelete] = useState<RegistryImagesResponse['images'][number] | null>(null)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  const handleConfirmDelete = async () => {
+    if (!imageToDelete || isDeleting) {
+      return
+    }
+
+    if (!imageToDelete.tags.length) {
+      setDeleteError('No tags found to delete.')
+      return
+    }
+
+    setIsDeleting(true)
+    setDeleteError(null)
+
+    try {
+      const results = await Promise.allSettled(
+        imageToDelete.tags.map((tag) => runDeleteTag({ data: { repository: imageToDelete.name, tag } })),
+      )
+      const firstFailure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+
+      if (firstFailure) {
+        const message =
+          firstFailure.reason instanceof Error ? firstFailure.reason.message : 'Failed to delete image tags'
+        setDeleteError(message)
+        setIsDeleting(false)
+        return
+      }
+
+      setIsDeleting(false)
+      setDeleteOpen(false)
+      setImageToDelete(null)
+
+      await queryClient.invalidateQueries({ queryKey: registryImagesQueryKey })
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : 'Failed to delete image tags')
+      setIsDeleting(false)
     }
   }
 
@@ -184,7 +242,9 @@ function App() {
                                     size="icon-sm"
                                     aria-label={`Delete tags for ${image.name}`}
                                     onClick={() => {
-                                      navigate({ to: '/image/$imageId', params: { imageId } })
+                                      setImageToDelete(image)
+                                      setDeleteError(null)
+                                      setDeleteOpen(true)
                                     }}
                                   >
                                     <IconTrash className="text-rose-400" />
@@ -203,6 +263,49 @@ function App() {
             </Table>
           </ScrollArea>
         </div>
+
+        <AlertDialog
+          open={deleteOpen}
+          onOpenChange={(open) => {
+            if (!open && isDeleting) {
+              return
+            }
+
+            setDeleteOpen(open)
+
+            if (!open) {
+              setImageToDelete(null)
+              setDeleteError(null)
+            }
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogMedia className="bg-rose-500/10 text-rose-400">
+                <IconTrash />
+              </AlertDialogMedia>
+              <AlertDialogTitle>Delete image tags</AlertDialogTitle>
+              <AlertDialogDescription>
+                {imageToDelete
+                  ? `This will delete ${imageToDelete.tags.length} tag(s) for ${imageToDelete.name}. This cannot be undone.`
+                  : 'Select an image to delete.'}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+
+            {deleteError ? <p className="text-xs text-rose-400">{deleteError}</p> : null}
+
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                disabled={!imageToDelete?.tags.length || isDeleting}
+                onClick={handleConfirmDelete}
+              >
+                {isDeleting ? 'Deleting…' : 'Delete'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </section>
     </div>
   )
