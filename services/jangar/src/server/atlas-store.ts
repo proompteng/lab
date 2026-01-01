@@ -374,6 +374,7 @@ const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding-saigak:0.6b'
 const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 1024
 const DEFAULT_INDEX_LIMIT = 50
 const DEFAULT_SEARCH_LIMIT = 10
+const MAX_SEARCH_LIMIT = 200
 
 const SCHEMA = 'atlas'
 
@@ -1547,7 +1548,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     await ensureSchema()
 
     const resolvedQuery = normalizeText(query, 'query')
-    const resolvedLimit = Math.max(1, Math.min(50, Math.floor(limit ?? DEFAULT_SEARCH_LIMIT)))
+    const resolvedLimit = Math.max(1, Math.min(MAX_SEARCH_LIMIT, Math.floor(limit ?? DEFAULT_SEARCH_LIMIT)))
     const resolvedRepository = typeof repository === 'string' ? repository.trim() : ''
     const resolvedRef = typeof ref === 'string' ? ref.trim() : ''
     const resolvedPathPrefix = typeof pathPrefix === 'string' ? pathPrefix.trim() : ''

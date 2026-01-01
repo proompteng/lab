@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { Duration, Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
 import { Atlas, AtlasLive } from '~/server/atlas'
-import { DEFAULT_REF, parseAtlasSearchInput } from '~/server/atlas-http'
+import { DEFAULT_REF, MAX_SEARCH_LIMIT, parseAtlasSearchInput } from '~/server/atlas-http'
 import type { AtlasSearchMatch } from '~/server/atlas-store'
 
 type AtlasSearchItem = {
@@ -128,7 +128,7 @@ export const getSearchHandlerEffect = (request: Request) =>
       }
 
       const requestedLimit = parsed.value.limit ?? 10
-      const searchLimit = Math.min(requestedLimit * 3, 50)
+      const searchLimit = Math.min(Math.max(requestedLimit * 3, requestedLimit), MAX_SEARCH_LIMIT)
       const searchInput = { ...parsed.value, ref: DEFAULT_REF, limit: searchLimit }
 
       const atlas = yield* Atlas

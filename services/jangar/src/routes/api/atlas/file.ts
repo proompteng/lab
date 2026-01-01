@@ -34,6 +34,9 @@ const errorResponse = (message: string, status = 500) => jsonResponse({ ok: fals
 
 const resolveServiceError = (message: string) => {
   const normalized = message.toLowerCase()
+  if (normalized.includes('does not exist in') || (normalized.includes('path') && normalized.includes('fatal'))) {
+    return errorResponse('File not found on main.', 404)
+  }
   if (
     normalized.includes('econnrefused') ||
     normalized.includes('connection terminated unexpectedly') ||

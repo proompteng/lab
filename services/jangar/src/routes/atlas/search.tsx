@@ -4,6 +4,15 @@ import * as React from 'react'
 import { AtlasSectionHeader } from '@/components/atlas-results-table'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from '@/components/ui/pagination'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import type { AtlasAstPreview, AtlasFileItem, AtlasFilePreview, AtlasSearchParams } from '@/data/atlas'
 import { getAtlasAstPreview, getAtlasFilePreview, searchAtlas } from '@/data/atlas'
@@ -14,10 +23,12 @@ type AtlasSearchState = {
   repository: string
   pathPrefix: string
   limit: number
+  page: number
 }
 
 const DEFAULT_LIMIT = 25
 const MAIN_REF = 'main'
+const MAX_PAGE_FETCH_LIMIT = 200
 
 export const Route = createFileRoute('/atlas/search')({
   validateSearch: (search: Record<string, unknown>): AtlasSearchState => {
@@ -27,11 +38,18 @@ export const Route = createFileRoute('/atlas/search')({
         : typeof search.limit === 'string'
           ? Number.parseInt(search.limit, 10)
           : DEFAULT_LIMIT
+    const pageRaw =
+      typeof search.page === 'number'
+        ? search.page
+        : typeof search.page === 'string'
+          ? Number.parseInt(search.page, 10)
+          : 1
     return {
       query: typeof search.query === 'string' ? search.query : '',
       repository: typeof search.repository === 'string' ? search.repository : '',
       pathPrefix: typeof search.pathPrefix === 'string' ? search.pathPrefix : '',
       limit: Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : DEFAULT_LIMIT,
+      page: Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1,
     }
   },
   component: AtlasSearchPage,
@@ -62,6 +80,10 @@ function AtlasSearchPage() {
   const [astPreview, setAstPreview] = React.useState<AtlasAstPreview | null>(null)
   const [astStatus, setAstStatus] = React.useState<'idle' | 'loading' | 'error'>('idle')
   const [astError, setAstError] = React.useState<string | null>(null)
+
+  const pageSize = searchState.limit
+  const currentPage = searchState.page
+  const fetchLimit = Math.min(pageSize * currentPage, MAX_PAGE_FETCH_LIMIT)
 
   const queryRef = React.useRef<HTMLInputElement | null>(null)
   const advancedId = React.useId()
@@ -112,9 +134,9 @@ function AtlasSearchPage() {
       repository: searchState.repository.trim() || undefined,
       pathPrefix: searchState.pathPrefix.trim() || undefined,
       ref: MAIN_REF,
-      limit: searchState.limit,
+      limit: fetchLimit,
     })
-  }, [runSearch, searchState])
+  }, [fetchLimit, runSearch, searchState])
 
   const submitSearch = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -134,6 +156,7 @@ function AtlasSearchPage() {
         repository: repository.trim(),
         pathPrefix: pathPrefix.trim(),
         limit: Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : DEFAULT_LIMIT,
+        page: 1,
       },
     })
   }
@@ -242,8 +265,48 @@ function AtlasSearchPage() {
     void loadAstPreview(selectedItem)
   }, [loadAstPreview, loadFilePreview, selectedItem, sheetOpen])
 
+  const totalResults = searchResults.length
+  const hasMore = totalResults >= fetchLimit && fetchLimit < MAX_PAGE_FETCH_LIMIT
+  const totalPages = Math.max(1, Math.ceil((totalResults + (hasMore ? pageSize : 0)) / pageSize))
+  const clampedPage = Math.min(currentPage, totalPages)
+  const pageStartIndex = (clampedPage - 1) * pageSize
+  const pageResults = searchResults.slice(pageStartIndex, pageStartIndex + pageSize)
+  const rangeStart = totalResults > 0 ? pageStartIndex + 1 : 0
+  const rangeEnd = totalResults > 0 ? Math.min(pageStartIndex + pageSize, totalResults) : 0
+  const pageNumbers = React.useMemo(() => {
+    if (totalPages <= 1) return [1]
+    const windowSize = 5
+    const start = Math.max(1, Math.min(clampedPage - 2, totalPages - windowSize + 1))
+    const count = Math.min(totalPages, windowSize)
+    return Array.from({ length: count }, (_, index) => start + index)
+  }, [clampedPage, totalPages])
+  const isCapped = fetchLimit >= MAX_PAGE_FETCH_LIMIT && totalResults >= MAX_PAGE_FETCH_LIMIT
+  const totalLabel = hasMore ? `${totalResults}+` : `${totalResults}`
+  const rangeLabel = totalResults === 0 ? 'No results yet.' : `Showing ${rangeStart}-${rangeEnd} of ${totalLabel}`
+
+  const goToPage = React.useCallback(
+    (page: number) => {
+      void navigate({
+        search: {
+          query: searchState.query,
+          repository: searchState.repository,
+          pathPrefix: searchState.pathPrefix,
+          limit: searchState.limit,
+          page,
+        },
+      })
+    },
+    [navigate, searchState.limit, searchState.pathPrefix, searchState.query, searchState.repository],
+  )
+
+  React.useEffect(() => {
+    if (currentPage !== clampedPage) {
+      goToPage(clampedPage)
+    }
+  }, [clampedPage, currentPage, goToPage])
+
   return (
-    <main className="mx-auto w-full max-w-6xl space-y-4 p-4">
+    <main className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col gap-4 p-4">
       <header className="space-y-2">
         <h1 className="text-lg font-semibold">Search</h1>
         <p className="text-xs text-muted-foreground">Search indexed files on main and open previews.</p>
@@ -290,7 +353,7 @@ function AtlasSearchPage() {
                 setPathPrefix('')
                 setLimit(DEFAULT_LIMIT.toString())
                 setShowAdvanced(false)
-                void navigate({ search: { query: '', repository: '', pathPrefix: '', limit: DEFAULT_LIMIT } })
+                void navigate({ search: { query: '', repository: '', pathPrefix: '', limit: DEFAULT_LIMIT, page: 1 } })
               }}
             >
               Clear
@@ -362,64 +425,109 @@ function AtlasSearchPage() {
         ) : null}
       </section>
 
-      <section className="space-y-2">
-        <AtlasSectionHeader title="Results" count={searchResults.length} />
-        {searchResults.length === 0 ? (
-          <div className="rounded-none border bg-card p-6 text-center text-xs text-muted-foreground">
-            Run a search to see matches.
-          </div>
-        ) : (
-          <div className="divide-y rounded-none border bg-card">
-            {searchResults.map((item, index) => {
-              const key =
-                [item.fileVersionId, item.repository, item.path, item.ref, item.commit].filter(Boolean).join(':') ||
-                `row-${index}`
-              let scoreLabel = '—'
-              if (typeof item.score === 'number') {
-                scoreLabel = item.score.toFixed(3)
-              }
-              const updatedLabel = item.updatedAt ? formatDate(item.updatedAt) : '—'
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => openPreview(item)}
-                  className="w-full text-left transition hover:bg-muted/40"
-                >
-                  <div className="flex flex-col gap-2 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex flex-col">
-                        <span className="text-sm font-semibold text-foreground">{item.path ?? 'Unknown path'}</span>
-                        <span className="text-[11px] text-muted-foreground">
-                          {item.repository ?? '—'} · {item.ref ?? MAIN_REF}
-                        </span>
+      <section className="flex min-h-0 flex-1 flex-col gap-2">
+        <AtlasSectionHeader
+          title="Results"
+          count={totalResults}
+          actions={
+            <div className="flex flex-col items-end text-[11px] text-muted-foreground">
+              <span>{rangeLabel}</span>
+              <span>
+                Page {clampedPage} of {totalPages}
+              </span>
+              {isCapped ? <span>Showing the first {MAX_PAGE_FETCH_LIMIT} results.</span> : null}
+            </div>
+          }
+        />
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-none border bg-card">
+          {totalResults === 0 ? (
+            <div className="p-6 text-center text-xs text-muted-foreground">Run a search to see matches.</div>
+          ) : (
+            <ScrollArea className="min-h-0 flex-1">
+              <div className="divide-y">
+                {pageResults.map((item, index) => {
+                  const key =
+                    [item.fileVersionId, item.repository, item.path, item.ref, item.commit].filter(Boolean).join(':') ||
+                    `row-${index}`
+                  let scoreLabel = '—'
+                  if (typeof item.score === 'number') {
+                    scoreLabel = item.score.toFixed(3)
+                  }
+                  const updatedLabel = item.updatedAt ? formatDate(item.updatedAt) : '—'
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => openPreview(item)}
+                      className="w-full text-left transition hover:bg-muted/40"
+                    >
+                      <div className="flex flex-col gap-2 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-col">
+                            <span className="text-sm font-semibold text-foreground">{item.path ?? 'Unknown path'}</span>
+                            <span className="text-[11px] text-muted-foreground">
+                              {item.repository ?? '—'} · {item.ref ?? MAIN_REF}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                            <span className="tabular-nums">Score {scoreLabel}</span>
+                            <span className="tabular-nums">{updatedLabel}</span>
+                          </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {item.summary?.trim() ? item.summary : 'No summary available yet for this file.'}
+                        </p>
+                        {item.tags && item.tags.length > 0 ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            {item.tags.slice(0, 8).map((tag) => (
+                              <span
+                                key={tag}
+                                className="rounded-none border border-border bg-muted/30 px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
-                      <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-                        <span className="tabular-nums">Score {scoreLabel}</span>
-                        <span className="tabular-nums">{updatedLabel}</span>
-                      </div>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {item.summary?.trim() ? item.summary : 'No summary available yet for this file.'}
-                    </p>
-                    {item.tags && item.tags.length > 0 ? (
-                      <div className="flex flex-wrap items-center gap-2">
-                        {item.tags.slice(0, 8).map((tag) => (
-                          <span
-                            key={tag}
-                            className="rounded-none border border-border bg-muted/30 px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-        )}
+                    </button>
+                  )
+                })}
+              </div>
+            </ScrollArea>
+          )}
+          {totalResults > 0 ? (
+            <div className="border-t px-3 py-2">
+              <Pagination>
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPrevious
+                      onClick={() => goToPage(Math.max(1, clampedPage - 1))}
+                      disabled={clampedPage <= 1}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+                <PaginationContent>
+                  {pageNumbers.map((page) => (
+                    <PaginationItem key={page}>
+                      <PaginationLink isActive={page === clampedPage} onClick={() => goToPage(page)}>
+                        {page}
+                      </PaginationLink>
+                    </PaginationItem>
+                  ))}
+                </PaginationContent>
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationNext
+                      onClick={() => goToPage(Math.min(totalPages, clampedPage + 1))}
+                      disabled={clampedPage >= totalPages}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            </div>
+          ) : null}
+        </div>
       </section>
 
       <Sheet
@@ -441,10 +549,10 @@ function AtlasSearchPage() {
       >
         <SheetContent
           side="right"
-          className="flex flex-col w-[min(48rem,100%)] data-[side=right]:max-w-none sm:w-[min(56rem,100%)]"
+          className="flex flex-col data-[side=right]:w-[min(96vw,120rem)] data-[side=right]:sm:w-[min(92vw,120rem)] data-[side=right]:sm:max-w-none"
         >
-          <SheetHeader className="gap-2 border-b px-4 py-3">
-            <SheetTitle className="text-base">{selectedItem?.path ?? 'File preview'}</SheetTitle>
+          <SheetHeader className="gap-2 border-b px-4 py-3 pr-12">
+            <SheetTitle className="break-words text-base">{selectedItem?.path ?? 'File preview'}</SheetTitle>
             <SheetDescription>
               {selectedItem?.repository ?? '—'} · {selectedItem?.ref ?? MAIN_REF}
             </SheetDescription>
