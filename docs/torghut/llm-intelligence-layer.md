@@ -1,132 +1,246 @@
 # Torghut LLM Intelligence Layer
 
+## Status
+Draft (target: paper trading first)
+
 ## Summary
-Introduce an LLM-driven intelligence layer that sits on top of deterministic TA signals and strategy decisions. The layer adds contextual reasoning, veto/approve decisions, and optional sizing adjustments while preserving safety and auditability. It should never bypass deterministic risk controls or trading gates.
+Introduce a deterministic-first intelligence layer that reviews trade decisions using an LLM, adds context-aware veto/approve/adjust recommendations, and records full audit trails. The LLM layer must never bypass deterministic risk gates, and live trading remains fail-closed by default. The design aligns with AI risk management guidance and LLM app security best practices.
 
 ## Goals
-- Add LLM review on top of deterministic decisions (approve/veto/adjust).
-- Provide explainability and traceability (prompt, model, response, rationale, token usage).
-- Enforce strict safety: LLM cannot force an order when guards fail.
-- Support paper trading by default; live trading requires explicit enablement.
+- Add a policy-constrained LLM review step on top of deterministic decisions.
+- Provide traceability: prompts, responses, model versions, and rationale.
+- Preserve deterministic risk controls and idempotency guarantees.
+- Enable paper trading and shadow evaluation before any live enablement.
 
 ## Non-goals
-- Replace deterministic strategies with LLM-only trading.
-- Provide news ingestion or full RAG in this phase.
-- Execute trades without deterministic checks and idempotency.
+- Replacing deterministic strategies with LLM-only trading.
+- Real-time news ingestion or external RAG as a dependency.
+- Autonomous trade execution without deterministic risk checks.
 
-## Architecture
+## Design Principles
+- Deterministic-first: LLM is advisory and cannot force execution.
+- Fail-closed for live: any LLM error => veto (live) or fallback (paper).
+- Minimal, curated context: no untrusted free text in prompts.
+- Structured outputs only: JSON schema validation and strict parsing.
+- Full auditability: every decision is reproducible and explainable.
+
+## Architecture Overview
 
 Deterministic pipeline (existing):
 SignalIngestor -> DecisionEngine -> RiskEngine -> OrderExecutor -> Reconciler
 
 LLM overlay (new):
-Deterministic Decision -> LLMReview -> (Approve/Veto/Adjust) -> RiskEngine -> Execution
+DecisionEngine -> LLMReviewEngine -> PolicyGuard -> RiskEngine -> OrderExecutor
 
 ```mermaid
 flowchart LR
-  CH[(ClickHouse ta_signals)] --> ING[SignalIngestor]
-  ING --> DEC[DecisionEngine]
-  DEC --> LLM[LLMReviewEngine]
-  LLM --> RISK[RiskEngine]
-  RISK --> EXEC[OrderExecutor]
-  EXEC --> ALPACA[Alpaca API]
-  EXEC --> DB[(Postgres: trade_decisions, executions, llm_reviews)]
-  ALPACA --> REC[Reconciler]
-  REC --> DB
+  subgraph Data
+    CH[(ClickHouse: ta_signals, ta_microbars)]
+    PG[(Postgres: positions, orders, executions, llm_reviews)]
+    QUOTES[Quote Snapshot]
+  end
+
+  subgraph Deterministic
+    ING[SignalIngestor]
+    DEC[DecisionEngine]
+  end
+
+  subgraph Intelligence
+    LLM[LLMReviewEngine]
+    POL[PolicyGuard]
+  end
+
+  subgraph Execution
+    RISK[RiskEngine]
+    EXEC[OrderExecutor]
+    REC[Reconciler]
+  end
+
+  CH --> ING --> DEC --> LLM --> POL --> RISK --> EXEC --> REC
+  PG --> DEC
+  QUOTES --> DEC
+  EXEC --> PG
+  REC --> PG
 ```
 
-## Data Flow
-1) Deterministic strategy emits a StrategyDecision from TA signals.
-2) LLMReviewEngine builds a prompt with signal context, strategy metadata, recent decisions, and optional portfolio snapshot.
-3) LLM responds with a structured verdict: approve/veto/adjust, confidence, and rationale.
-4) If approved, decision may be adjusted (size, order type). If vetoed, decision is recorded with rationale.
-5) RiskEngine runs after LLM review (LLM cannot bypass risk).
-6) OrderExecutor submits only when both LLM and risk approve.
+```mermaid
+sequenceDiagram
+  participant DEC as DecisionEngine
+  participant LLM as LLMReviewEngine
+  participant POL as PolicyGuard
+  participant RISK as RiskEngine
+  participant EXEC as OrderExecutor
+  participant DB as Audit Store
 
-## LLM Roles
-- Review deterministic decision: is this signal strong enough to trade?
-- Provide qualitative context when signals conflict (example: RSI oversold but macro risk).
-- Size adjustment (optional): suggest scaling quantity within bounds.
-- Explain rationale for audit and debugging.
+  DEC->>LLM: ReviewRequest(decision + context)
+  LLM->>LLM: Model call (structured output)
+  LLM-->>POL: ReviewResponse(approve/veto/adjust)
+  POL-->>DEC: ReviewedDecision (bounded adjustments)
+  DEC->>RISK: RiskCheck(reviewed decision)
+  RISK-->>DEC: pass/fail
+  DEC->>EXEC: Execute if approved + pass
+  EXEC->>DB: persist executions + llm_reviews
+```
 
-## Required Schema Additions
-Create a table to store LLM reviews (example names; exact schema in migration):
-- llm_decision_reviews:
-  - id (uuid)
-  - trade_decision_id (uuid, FK)
-  - model (string)
-  - prompt_version (string)
-  - input_json (jsonb)
-  - response_json (jsonb)
-  - verdict (enum: approve, veto, adjust)
-  - confidence (float)
-  - adjusted_qty (numeric, nullable)
-  - rationale (text)
-  - tokens_prompt (int, nullable)
-  - tokens_completion (int, nullable)
-  - created_at (timestamp)
+## Component Responsibilities
+- SignalIngestor: reads TA features/signals from ClickHouse.
+- DecisionEngine: creates StrategyDecision objects deterministically.
+- LLMReviewEngine: builds prompt, calls LLM, validates JSON response.
+- PolicyGuard: clamps adjustments to allowed bounds and enforces policy.
+- RiskEngine: final deterministic risk checks (limits, notional, positions).
+- OrderExecutor: submits to broker and persists execution state.
+- Reconciler: syncs broker state, closes loops, updates positions.
 
-Store a denormalized summary of the LLM verdict on trade_decisions.decision_json as well.
+## Intelligence Layer Behaviors
+- Approve: LLM agrees with decision and passes through unchanged.
+- Veto: decision is dropped and recorded with rationale.
+- Adjust: LLM proposes size/urgency adjustments within strict bounds.
 
-## LLM Interface
-Add a new module in torghut:
-- services/torghut/app/trading/llm.py
-  - LLMReviewEngine
-  - LLMClient wrapper (OpenAI)
-  - Prompt template loader + versioning
+### Adjustment Policy (examples)
+- max_qty_multiplier: 1.25 (LLM cannot increase size beyond 25%).
+- min_qty_multiplier: 0.50 (LLM can reduce but not zero unless veto).
+- order_type: may only switch between market/limit when explicitly allowed.
+- price_band: limit price must be within risk-derived bands.
 
-## Prompting
-- Use a stable, versioned prompt template (example: prompt_version = "llm-review-v1").
-- Provide a strict JSON schema response with enum values only.
-- Include a deterministic decision summary + portfolio snapshot + recent decisions.
+## Data Contracts
+### StrategyDecision (input to LLM)
+- decision_id (uuid)
+- symbol (string)
+- side (buy/sell)
+- qty (numeric)
+- signal_summary (jsonb)
+- strategy_id (string)
+- strategy_version (string)
+- decision_ts (timestamp)
+- deterministic_risk_snapshot (jsonb)
+- recent_positions (jsonb)
 
-Example expected LLM response schema:
+### LLMReviewRequest
+- decision: StrategyDecision
+- portfolio_snapshot: positions, exposure, pnl
+- market_snapshot: last price, spread, volatility bucket
+- recent_decisions: last N decisions for symbol/strategy
+- policy: adjustment bounds, live/paper mode
+- prompt_version
+
+### LLMReviewResponse (validated JSON)
+```
 {
   "verdict": "approve|veto|adjust",
-  "confidence": 0.0-1.0,
-  "adjusted_qty": number | null,
-  "rationale": "short reasoning"
+  "confidence": 0.0,
+  "adjusted_qty": null,
+  "adjusted_order_type": null,
+  "rationale": "short reasoning",
+  "risk_flags": ["string"]
 }
+```
+
+## Prompting and Output Control
+- Use a versioned system prompt with explicit schema contract.
+- Provide only numeric/structured context from trusted sources.
+- Avoid free-form user input in prompt (prevents injection).
+- Require concise rationale; disallow chain-of-thought in storage.
+- Enforce strict JSON schema parsing and reject invalid responses.
+
+## Governance and Change Management
+- Maintain a model registry (provider, model ID, release date, limits).
+- Require review/approval for prompt or model changes.
+- Record a change log for prompt versions and evaluation results.
+- Enforce least-privilege API keys and rotate on schedule.
+
+## Failure Modes and Fallbacks
+- Timeout or parse error: veto in live, deterministic pass-through in paper.
+- Low confidence: veto or downgrade to hold, based on strategy policy.
+- Missing context (quotes/positions): reject review and fall back.
+- Circuit breaker: if error rate exceeds threshold, disable LLM globally.
+
+## Risk Management Alignment
+### NIST AI RMF (Govern, Map, Measure, Manage)
+- Govern: model inventory, access controls, and change approvals.
+- Map: document intended use, data lineage, and decision boundaries.
+- Measure: offline evaluation, stress testing, error taxonomies.
+- Manage: controls, monitoring, and incident response for model drift.
+
+### GenAI Profile
+- Apply GenAI-specific risk guidance around prompt design, output handling,
+  and runtime monitoring, using the profile as a checklist for gaps.
+
+### Model Risk Management (SR 11-7)
+- Require independent validation and effective challenge of the LLM review
+  process, including documentation of limitations and assumptions.
+
+## Security and Safety Controls
+Map risks to OWASP LLM Top 10 classes and mitigations:
+- LLM01 Prompt Injection: no untrusted text in prompt, strict schema.
+- LLM02 Insecure Output Handling: JSON schema validation + bounded actions.
+- LLM04 Model DoS: timeouts, rate limits, budget caps.
+- LLM06 Sensitive Disclosure: redact or avoid PII in prompts/logs.
+- LLM08 Excessive Agency: LLM cannot execute; deterministic gate required.
+- LLM09 Overreliance: policy default is deterministic override.
+- LLM10 Model Theft: restrict API keys, monitor usage, rotate credentials.
+
+## Observability
+- Structured logs: decision_id, model, prompt_version, verdict, confidence.
+- Metrics: llm_requests_total, llm_veto_total, llm_adjust_total, llm_error_total.
+- Cost tracking: tokens_prompt, tokens_completion, dollars_estimate.
+
+## Storage Schema Additions
+- llm_decision_reviews
+  - id (uuid)
+  - decision_id (uuid, FK)
+  - model
+  - prompt_version
+  - input_json
+  - response_json
+  - verdict
+  - confidence
+  - adjusted_qty
+  - adjusted_order_type
+  - rationale
+  - risk_flags
+  - tokens_prompt
+  - tokens_completion
+  - created_at
+
+Also store a denormalized summary on trade_decisions for quick audits.
+
+## Evaluation Plan
+- Shadow mode: run LLM review but do not execute its verdict.
+- Offline replay: simulate LLM decisions on historical TA windows.
+- Golden set: curated decisions with expected veto/approve labels.
+- Stress tests: high volatility, low liquidity, and missing data scenarios.
+- Human review: spot check rationale and false veto/approve rates.
+
+## Deployment and Rollout
+- Paper trading only (LLM_ENABLED=true, TRADING_MODE=paper).
+- Shadow in live (LLM verdict logged, no effect on execution).
+- Live gating with confidence threshold and fail-closed.
+- Gradual expansion by strategy ID and symbol allowlist.
 
 ## Configuration
-Add env vars in `services/torghut/app/config.py`:
+Add to `services/torghut/app/config.py`:
 - LLM_ENABLED (bool)
 - LLM_MODEL (string)
 - LLM_PROMPT_VERSION (string)
-- LLM_MAX_TOKENS (int)
 - LLM_TEMPERATURE (float)
+- LLM_MAX_TOKENS (int)
 - LLM_TIMEOUT_SECONDS (int)
-- LLM_APPROVAL_REQUIRED (bool) # if true, veto on LLM failure
+- LLM_FAIL_MODE (enum: veto|pass_through)
+- LLM_MIN_CONFIDENCE (float)
 - LLM_ADJUSTMENT_ALLOWED (bool)
 
-## Safety and Guardrails
-- LLM cannot bypass TRADING_ENABLED or TRADING_MODE gating.
-- LLM cannot override RiskEngine failures.
-- For live trading, require LLM approval and a minimum confidence threshold.
-- If LLM fails, either default to deterministic (paper) or veto (live).
+## Code Layout (proposed)
+- services/torghut/app/trading/llm/
+  - review_engine.py (LLMReviewEngine)
+  - prompt_templates/ (versioned prompts)
+  - schema.py (pydantic models for request/response)
+  - client.py (provider abstraction)
+- services/torghut/app/trading/decision_engine.py (hook LLM review)
+- services/torghut/app/trading/risk_engine.py (enforce post-LLM checks)
+- services/torghut/app/db/migrations/ (llm_decision_reviews)
 
-## Observability
-Emit structured logs:
-- llm_verdict, confidence, model, prompt_version, decision_id, strategy_id, symbol
-
-Add basic metrics:
-- llm_requests_total
-- llm_approvals_total
-- llm_vetoes_total
-- llm_failures_total
-
-## Testing
-- Unit tests for prompt formatting and response parsing.
-- Unit tests for decision adjustment bounds.
-- Integration test: deterministic decision -> LLM approve -> execution row
-- Integration test: LLM veto -> no execution
-
-## Rollout
-- Default LLM_ENABLED=false in prod.
-- Enable in paper first, then gated live with confidence threshold.
-- Add a feature flag to disable adjustment and allow only approve/veto.
-
-## Open Questions
-- Which context is most valuable for LLM review (recent PnL, macro events)?
-- Should LLM be mandatory for all decisions or only for certain strategies?
-- Should LLM be used for dynamic sizing or just veto/approve?
+## References
+- NIST AI RMF 1.0: https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-ai-rmf-10
+- NIST AI RMF GenAI Profile: https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence
+- OWASP Top 10 for LLM Applications: https://owasp.org/www-project-top-10-for-large-language-model-applications/
+- Federal Reserve SR 11-7 (Model Risk Management): https://www.federalreserve.gov/frrs/guidance/supervisory-guidance-on-model-risk-management.htm
