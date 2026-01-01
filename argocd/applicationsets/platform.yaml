@@ -128,13 +128,6 @@ spec:
               argocd.argoproj.io/sync-wave: "3"
             automation: manual
             enabled: "true"
-          - name: lgtm
-            path: argocd/applications/lgtm
-            namespace: lgtm
-            annotations:
-              argocd.argoproj.io/sync-wave: "3"
-            automation: manual
-            enabled: "false"
           - name: observability
             path: argocd/applications/observability
             namespace: observability
@@ -296,33 +289,6 @@ spec:
           name: graf-db
           jqPathExpressions:
             - .spec.volumeClaimTemplates
-        - kind: StatefulSet
-          group: apps
-          namespace: lgtm
-          jqPathExpressions:
-            - .spec.volumeClaimTemplates[].apiVersion
-            - .spec.volumeClaimTemplates[].kind
-            - .spec.volumeClaimTemplates[].spec.volumeMode
-            - .spec.volumeClaimTemplates[].status
-            - .spec.persistentVolumeClaimRetentionPolicy
-            - .spec.podManagementPolicy
-            - .spec.updateStrategy.type
-            - .spec.updateStrategy.rollingUpdate.partition
-            - .spec.template.spec.serviceAccount
-            - .spec.template.spec.dnsPolicy
-            - .spec.template.spec.restartPolicy
-            - .spec.template.spec.schedulerName
-            - .spec.template.spec.volumes[].configMap.defaultMode
-            - .spec.template.spec.containers[].livenessProbe.failureThreshold
-            - .spec.template.spec.containers[].livenessProbe.httpGet.scheme
-            - .spec.template.spec.containers[].livenessProbe.periodSeconds
-            - .spec.template.spec.containers[].livenessProbe.successThreshold
-            - .spec.template.spec.containers[].livenessProbe.timeoutSeconds
-            - .spec.template.spec.containers[].readinessProbe.failureThreshold
-            - .spec.template.spec.containers[].readinessProbe.httpGet.scheme
-            - .spec.template.spec.containers[].readinessProbe.periodSeconds
-            - .spec.template.spec.containers[].readinessProbe.successThreshold
-            - .spec.template.spec.containers[].readinessProbe.timeoutSeconds
         - kind: StatefulSet
           group: apps
           namespace: temporal
