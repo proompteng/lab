@@ -10,6 +10,24 @@ metadata:
     argocd.argoproj.io/sync-wave: "1"
 spec:
   configuration:
+    files:
+      config.d/99-logging-overrides.xml: |-
+        <yandex>
+          <logger>
+            <level>information</level>
+          </logger>
+        </yandex>
+      users.d/99-profile-overrides.xml: |-
+        <yandex>
+          <profiles>
+            <default>
+              <!-- Disable sampling profiler logs to keep system tables small. -->
+              <query_profiler_real_time_period_ns>0</query_profiler_real_time_period_ns>
+              <query_profiler_cpu_time_period_ns>0</query_profiler_cpu_time_period_ns>
+              <log_profile_events>0</log_profile_events>
+            </default>
+          </profiles>
+        </yandex>
     zookeeper:
       nodes:
         - host: keeper-torghut-keeper

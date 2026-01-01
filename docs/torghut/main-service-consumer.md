@@ -1,4 +1,6 @@
-# torghut Main Service Consumer Guide
+# torghut Main Service Consumer Guide (Deprecated)
+
+> **Status (2026-01-01):** The main torghut service no longer consumes TA topics. This doc is retained for reference only if a future consumer is added.
 
 ## Purpose
 How the main torghut service should consume TA outputs and switch sources safely.
