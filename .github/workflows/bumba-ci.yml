@@ -13,7 +13,6 @@ on:
       - '.github/workflows/docker-build-common.yaml'
       - 'package.json'
       - 'bun.lock'
-      - '!**/go.sum'
   pull_request:
     paths:
       - 'services/bumba/**'
@@ -24,7 +23,6 @@ on:
       - '.github/workflows/docker-build-common.yaml'
       - 'package.json'
       - 'bun.lock'
-      - '!**/go.sum'
   workflow_dispatch:
 
 concurrency:
