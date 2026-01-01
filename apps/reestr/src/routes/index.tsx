@@ -114,6 +114,17 @@ function App() {
       setDeleteOpen(false)
       setImageToDelete(null)
 
+      queryClient.setQueryData<RegistryImagesResponse>(registryImagesQueryKey, (current) => {
+        if (!current) {
+          return current
+        }
+
+        return {
+          ...current,
+          images: current.images.filter((image) => image.name !== imageToDelete.name),
+        }
+      })
+
       await queryClient.invalidateQueries({ queryKey: registryImagesQueryKey })
     } catch (error) {
       setDeleteError(error instanceof Error ? error.message : 'Failed to delete image tags')

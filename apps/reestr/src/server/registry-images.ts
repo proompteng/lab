@@ -67,20 +67,29 @@ async function computeRegistryImages(): Promise<RegistryImagesResponse> {
 
         if (tags.length) {
           const tagDetails = await Promise.all(tags.map((tag) => fetchTagDetails(repository, tag)))
-          const latestTag = pickLatestTag(tagDetails)
+          const filteredDetails = tagDetails.filter(
+            (detail) => !detail.error?.includes('Manifest request failed (404)'),
+          )
+          const latestTag = pickLatestTag(filteredDetails)
           sizeBytes = latestTag?.sizeBytes
           sizeTag = latestTag?.tag
           sizeTimestamp = latestTag?.createdAt
           if (!sizeBytes) {
             sizeError = latestTag?.error ?? 'No valid manifest found'
           }
-        } else {
-          sizeError = 'No tags available'
+        }
+
+        const filteredTags = tagDetails
+          .filter((detail) => !detail.error?.includes('Manifest request failed (404)'))
+          .map((detail) => detail.tag)
+
+        if (!filteredTags.length) {
+          return null
         }
 
         return {
           name: repository,
-          tags,
+          tags: filteredTags,
           sizeTag,
           sizeBytes,
           sizeTimestamp,
@@ -89,7 +98,7 @@ async function computeRegistryImages(): Promise<RegistryImagesResponse> {
       }),
     )
 
-    return { images, fetchedAt }
+    return { images: images.filter(Boolean) as RegistryImage[], fetchedAt }
   } catch (error) {
     return {
       images: [],

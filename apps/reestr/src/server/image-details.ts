@@ -38,11 +38,12 @@ export const imageDetailsServerFn = createServerFn({ method: 'POST' }).handler(a
   }
 
   const tagBreakdowns = await Promise.all(tagsResult.tags.map((tag) => fetchTagManifestBreakdown(repository, tag)))
-  const { total, hasTotal } = buildTotalSize(tagBreakdowns)
+  const filteredBreakdowns = tagBreakdowns.filter((tag) => !tag.error?.includes('Manifest request failed (404)'))
+  const { total, hasTotal } = buildTotalSize(filteredBreakdowns)
 
   return {
     repository,
-    tags: tagBreakdowns,
+    tags: filteredBreakdowns,
     totalSizeBytes: hasTotal ? total : undefined,
     hasTotalSize: hasTotal,
     fetchedAt,
