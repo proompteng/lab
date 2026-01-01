@@ -36,6 +36,7 @@ class TestModels(TestCase):
                 timeframe="1Min",
                 decision_json={"side": "buy"},
                 rationale="test",
+                decision_hash="decision-1",
             )
             session.add(decision)
             session.commit()
