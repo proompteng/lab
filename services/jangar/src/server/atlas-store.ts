@@ -1711,11 +1711,15 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     }))
   }
 
-  const searchCount: AtlasStore['searchCount'] = async ({ repository, ref, pathPrefix, tags, kinds }) => {
+  const searchCount: AtlasStore['searchCount'] = async ({ query, repository, ref, pathPrefix, tags, kinds }) => {
     await ensureSchema()
 
+    const resolvedQuery = normalizeText(query, 'query')
     const filters = resolveSearchFilters({ repository, ref, pathPrefix, tags, kinds })
     const embeddingConfig = loadEmbeddingConfig()
+    const embedding = await embedText(resolvedQuery, embeddingConfig)
+    const vectorString = vectorToPgArray(embedding)
+    const distanceExpr = sql<number>`embeddings.embedding <=> ${vectorString}::vector`
 
     let countQuery = db
       .selectFrom('atlas.embeddings as embeddings')
@@ -1723,18 +1727,15 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
       .innerJoin('atlas.file_versions as file_versions', 'file_versions.id', 'enrichments.file_version_id')
       .innerJoin('atlas.file_keys as file_keys', 'file_keys.id', 'file_versions.file_key_id')
       .innerJoin('atlas.repositories as repositories', 'repositories.id', 'file_keys.repository_id')
-      .select(sql<number>`count(distinct file_versions.id)`.as('total'))
+      .select(['file_versions.id as file_version_id', distanceExpr.as('distance')])
       .where('embeddings.model', '=', embeddingConfig.model)
       .where('embeddings.dimension', '=', embeddingConfig.dimension)
 
     countQuery = applySearchFilters(countQuery, filters)
 
-    const row = await countQuery.executeTakeFirst()
-    const rawTotal = row?.total
-    if (typeof rawTotal === 'number' && Number.isFinite(rawTotal)) return rawTotal
-    if (typeof rawTotal === 'bigint') return Number(rawTotal)
-    const parsed = Number.parseInt(String(rawTotal ?? 0), 10)
-    return Number.isFinite(parsed) ? parsed : 0
+    const rows = await countQuery.orderBy(distanceExpr).limit(MAX_SEARCH_LIMIT).execute()
+    const unique = new Set(rows.map((row) => row.file_version_id))
+    return unique.size
   }
 
   const stats: AtlasStore['stats'] = async () => {
