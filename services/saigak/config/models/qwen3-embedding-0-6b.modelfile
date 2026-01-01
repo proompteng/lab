@@ -1,0 +1,2 @@
+FROM qwen3-embedding:0.6b
+TEMPLATE {{ .Prompt }}

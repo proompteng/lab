@@ -63,6 +63,16 @@ if [[ "${SAIGAK_SKIP_MODELS:-}" != "1" ]]; then
   done
 fi
 
+if [[ "${SAIGAK_CREATE_TUNED_MODELS:-1}" == "1" ]]; then
+  log "creating tuned model aliases"
+  sudo -u ollama OLLAMA_HOST=127.0.0.1:11435 /usr/local/bin/ollama create \
+    qwen3-coder-saigak:30b-a3b-q4_K_M \
+    -f "${SERVICE_DIR}/config/models/qwen3-coder-30b-a3b-q4-k-m.modelfile"
+  sudo -u ollama OLLAMA_HOST=127.0.0.1:11435 /usr/local/bin/ollama create \
+    qwen3-embedding-saigak:0.6b \
+    -f "${SERVICE_DIR}/config/models/qwen3-embedding-0-6b.modelfile"
+fi
+
 require_cmd docker
 if ! docker compose version >/dev/null 2>&1; then
   echo "[saigak] docker compose plugin is required" >&2

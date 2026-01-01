@@ -26,6 +26,8 @@ SAIGAK_GRAFANA_PASSWORD=changeme \
 Optional: enable Nginx by setting `SAIGAK_ENABLE_NGINX=1`.
 Optional: pre-pull models by setting `SAIGAK_MODELS` (comma-separated).
 Default models: `qwen3-coder:30b-a3b-q4_K_M`, `qwen3-embedding:0.6b` (set `SAIGAK_SKIP_MODELS=1` to skip).
+Tuned aliases are created by default (`SAIGAK_CREATE_TUNED_MODELS=1`):
+`qwen3-coder-saigak:30b-a3b-q4_K_M`, `qwen3-embedding-saigak:0.6b`.
 
 ## Requirements
 
@@ -38,6 +40,8 @@ If Docker is missing, install it first or use the `ubuntu-docker` cloud-init pro
 
 - `services/saigak/config/ollama.env`
   - OLLAMA runtime settings (parallelism, queue, keep alive)
+- `services/saigak/config/models/*.modelfile`
+  - Tuned model parameters and stop sequences for qwen3 completion and embedding
 - `services/saigak/config/alloy/config.alloy`
   - OTLP receiver and exporters to LGTM (`http://mimir/otlp`, `http://tempo`)
 - `services/saigak/config/nginx/nginx.conf`

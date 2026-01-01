@@ -1,0 +1,11 @@
+FROM qwen3-coder:30b-a3b-q4_K_M
+TEMPLATE {{ .Prompt }}
+RENDERER qwen3-coder
+PARSER qwen3-coder
+PARAMETER top_k 20
+PARAMETER top_p 0.8
+PARAMETER repeat_penalty 1.05
+PARAMETER stop <|im_start|>
+PARAMETER stop <|im_end|>
+PARAMETER stop <|endoftext|>
+PARAMETER temperature 0.7
