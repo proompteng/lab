@@ -1,8 +1,8 @@
 import { Context, Effect, Layer, pipe } from 'effect'
 
 import {
-  type AtlasIndexedFile,
   type AtlasAstPreview,
+  type AtlasIndexedFile,
   type AtlasSearchInput,
   type AtlasSearchMatch,
   type AtlasStats,

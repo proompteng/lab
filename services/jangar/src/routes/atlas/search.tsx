@@ -1,4 +1,4 @@
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { AtlasSectionHeader } from '@/components/atlas-results-table'
@@ -496,7 +496,7 @@ function AtlasSearchPage() {
                   </div>
                 ) : filePreviewStatus === 'error' ? (
                   <p className="text-xs text-destructive">{filePreviewError ?? 'Failed to load file preview.'}</p>
-                ) : filePreview && filePreview.ok ? (
+                ) : filePreview?.ok ? (
                   <div className="space-y-2">
                     {filePreview.truncated ? (
                       <p className="text-[11px] text-muted-foreground">
@@ -520,7 +520,7 @@ function AtlasSearchPage() {
                   </div>
                 ) : astStatus === 'error' ? (
                   <p className="text-xs text-destructive">{astError ?? 'Failed to load AST facts.'}</p>
-                ) : astPreview && astPreview.ok ? (
+                ) : astPreview?.ok ? (
                   <div className="space-y-4">
                     {astPreview.summary ? (
                       <pre className="whitespace-pre-wrap rounded-none border p-3 font-mono text-[11px] text-foreground bg-muted/20">
@@ -570,13 +570,13 @@ function AtlasSearchPage() {
 }
 
 const buildEnrichSearch = (item: AtlasFileItem) => {
-  const search: Record<string, string> = {}
-  if (item.repository) search.repository = item.repository
-  if (item.ref) search.ref = item.ref
-  if (item.path) search.path = item.path
-  if (item.commit) search.commit = item.commit
-  if (item.contentHash) search.contentHash = item.contentHash
-  return Object.keys(search).length ? search : undefined
+  return {
+    repository: item.repository ?? '',
+    ref: item.ref ?? MAIN_REF,
+    path: item.path ?? '',
+    commit: item.commit ?? '',
+    contentHash: item.contentHash ?? '',
+  }
 }
 
 const formatDate = (value: string) => {

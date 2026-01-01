@@ -7,10 +7,5 @@ export const Route = createFileRoute('/atlas/')({
 const DEFAULT_LIMIT = 25
 
 function AtlasIndexRedirect() {
-  return (
-    <Navigate
-      to="/atlas/search"
-      search={{ query: '', repository: '', ref: '', pathPrefix: '', limit: DEFAULT_LIMIT }}
-    />
-  )
+  return <Navigate to="/atlas/search" search={{ query: '', repository: '', pathPrefix: '', limit: DEFAULT_LIMIT }} />
 }
