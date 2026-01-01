@@ -182,6 +182,7 @@ const MAX_FACT_CHARS = 200
 const MAX_SUMMARY_NODES = 80
 const MAX_COMPLETION_INPUT_CHARS = 12_000
 const DEFAULT_COMPLETION_MAX_OUTPUT_TOKENS = 512
+const MAX_COMPLETION_LOG_CHARS = 2_000
 const DEFAULT_MODEL_CONCURRENCY = 2
 const DEFAULT_COMPLETION_MAX_ATTEMPTS = 2
 const DEFAULT_COMPLETION_RETRY_INITIAL_MS = 1_000
@@ -1070,6 +1071,24 @@ const loadAstLimits = () => {
 const safeSlice = (value: string, maxChars: number) => {
   if (value.length <= maxChars) return value
   return `${value.slice(0, maxChars)}...`
+}
+
+const summarizeCompletionOutput = (output: string, maxChars: number) => {
+  if (output.length <= maxChars) {
+    return {
+      outputLength: output.length,
+      outputHead: output,
+      outputTail: '',
+    }
+  }
+
+  const headSize = Math.floor(maxChars / 2)
+  const tailSize = maxChars - headSize
+  return {
+    outputLength: output.length,
+    outputHead: output.slice(0, headSize),
+    outputTail: output.slice(-tailSize),
+  }
 }
 
 const splitLines = (source: string) => source.split(/\r?\n/)
@@ -2666,6 +2685,7 @@ export const activities = {
       let attempt = 1
       let lastOutput: string | undefined
       let lastParseError: string | undefined
+      let lastResponseFormat: 'json_object' | 'none' | undefined
 
       while (attempt <= completionRetry.maxAttempts) {
         const mode = lastParseError ? 'repair' : 'initial'
@@ -2677,6 +2697,7 @@ export const activities = {
             requestCompletion(timeoutSignal, messages),
           )
           lastOutput = output
+          lastResponseFormat = responseFormat
           const parsed = parseCompletionOutput(output)
           const result = {
             summary: parsed.summary,
@@ -2695,6 +2716,17 @@ export const activities = {
           const isParseError = message.startsWith('completion response')
           if (isParseError) {
             lastParseError = message
+            if (lastOutput !== undefined) {
+              const outputSummary = summarizeCompletionOutput(lastOutput, MAX_COMPLETION_LOG_CHARS)
+              logActivity('error', 'completionParseError', 'enrichWithModel', {
+                filename: input.filename,
+                model,
+                wasTruncated,
+                responseFormat: lastResponseFormat ?? 'unknown',
+                parseError: message,
+                ...outputSummary,
+              })
+            }
           } else {
             lastParseError = undefined
           }
