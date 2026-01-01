@@ -9,3 +9,4 @@ PARAMETER stop <|im_start|>
 PARAMETER stop <|im_end|>
 PARAMETER stop <|endoftext|>
 PARAMETER temperature 0.7
+PARAMETER num_ctx 8192

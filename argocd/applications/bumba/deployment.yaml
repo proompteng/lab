@@ -17,7 +17,7 @@ spec:
         app.kubernetes.io/name: bumba
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-01-01T02:23:05.387Z"
+        kubectl.kubernetes.io/restartedAt: "2026-01-01T03:06:12.893Z"
     spec:
       containers:
         - name: bumba
@@ -44,9 +44,9 @@ spec:
             - name: TEMPORAL_TASK_QUEUE
               value: bumba
             - name: TEMPORAL_WORKFLOW_CONCURRENCY
-              value: "32"
+              value: "64"
             - name: TEMPORAL_ACTIVITY_CONCURRENCY
-              value: "16"
+              value: "32"
             - name: TEMPORAL_STICKY_CACHE_SIZE
               value: "1024"
             - name: TEMPORAL_DETERMINISM_MARKER_MODE
@@ -111,28 +111,30 @@ spec:
               value: require
             - name: OPENAI_API_BASE_URL
               value: http://192.168.1.190:11434/v1
+            - name: OPENAI_COMPLETION_MODEL
+              value: qwen3-coder-saigak:30b-a3b-q4_K_M
             - name: OPENAI_COMPLETION_TIMEOUT_MS
               value: "300000"
             - name: OPENAI_COMPLETION_MAX_OUTPUT_TOKENS
-              value: "512"
+              value: "1024"
             - name: BUMBA_MODEL_CONCURRENCY
-              value: "4"
+              value: "8"
             - name: BUMBA_CHILD_WORKFLOW_CONCURRENCY
-              value: "24"
+              value: "64"
             - name: OPENAI_EMBEDDING_MODEL
-              value: qwen3-embedding:0.6b
+              value: qwen3-embedding-saigak:0.6b
             - name: OPENAI_EMBEDDING_DIMENSION
               value: "1024"
             - name: OPENAI_EMBEDDING_API_BASE_URL
               value: http://192.168.1.190:11434/api
             - name: OPENAI_EMBEDDING_BATCH_SIZE
-              value: "16"
+              value: "32"
             - name: OPENAI_EMBEDDING_KEEP_ALIVE
               value: 30m
             - name: OPENAI_EMBEDDING_TRUNCATE
               value: "false"
             - name: OPENAI_EMBEDDING_TIMEOUT_MS
-              value: "60000"
+              value: "120000"
           readinessProbe:
             httpGet:
               path: /readyz

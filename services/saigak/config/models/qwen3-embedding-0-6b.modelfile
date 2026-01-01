@@ -1,2 +1,3 @@
 FROM qwen3-embedding:0.6b
 TEMPLATE {{ .Prompt }}
+PARAMETER num_ctx 4096
