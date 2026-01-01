@@ -135,8 +135,8 @@ test('enrichFile does not mark ingestion failed when blocked on readRepoFile', a
             },
           ],
           timeouts: {
-            scheduleToCloseTimeoutMs: 120_000,
-            startToCloseTimeoutMs: 30_000,
+            scheduleToCloseTimeoutMs: 600_000,
+            startToCloseTimeoutMs: 120_000,
           },
           retry: {
             initialIntervalMs: 2_000,

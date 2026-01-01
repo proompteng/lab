@@ -67,23 +67,23 @@ const persistFactsTimeouts = {
 }
 
 const upsertIngestionTimeouts = {
-  startToCloseTimeoutMs: 30_000,
-  scheduleToCloseTimeoutMs: 120_000,
+  startToCloseTimeoutMs: 120_000,
+  scheduleToCloseTimeoutMs: 600_000,
 }
 
 const upsertEventFileTimeouts = {
-  startToCloseTimeoutMs: 30_000,
-  scheduleToCloseTimeoutMs: 120_000,
+  startToCloseTimeoutMs: 120_000,
+  scheduleToCloseTimeoutMs: 600_000,
 }
 
 const upsertIngestionTargetTimeouts = {
-  startToCloseTimeoutMs: 30_000,
-  scheduleToCloseTimeoutMs: 120_000,
+  startToCloseTimeoutMs: 120_000,
+  scheduleToCloseTimeoutMs: 600_000,
 }
 
 const markEventProcessedTimeouts = {
-  startToCloseTimeoutMs: 30_000,
-  scheduleToCloseTimeoutMs: 120_000,
+  startToCloseTimeoutMs: 120_000,
+  scheduleToCloseTimeoutMs: 600_000,
 }
 
 const cleanupEnrichmentTimeouts = {

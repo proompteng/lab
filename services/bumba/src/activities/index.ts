@@ -1716,7 +1716,6 @@ const requestEmbeddingBatch = async (texts: string[]): Promise<number[][]> => {
     }
   }
 
-  const timeoutSignal = AbortSignal.timeout(timeoutMs)
   const headers: Record<string, string> = {
     'content-type': 'application/json',
   }
@@ -1740,14 +1739,15 @@ const requestEmbeddingBatch = async (texts: string[]): Promise<number[][]> => {
       }
 
   try {
-    const response = await withModelConcurrency(() =>
-      fetch(url, {
+    const response = await withModelConcurrency(() => {
+      const timeoutSignal = AbortSignal.timeout(timeoutMs)
+      return fetch(url, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
         signal: timeoutSignal,
-      }),
-    )
+      })
+    })
 
     if (!response.ok) {
       const errorBody = await response.text()
@@ -1795,6 +1795,30 @@ const embeddingQueue: EmbeddingRequest[] = []
 let embeddingFlushScheduled = false
 let embeddingFlushPromise: Promise<void> | null = null
 
+const processEmbeddingBatch = (batch: EmbeddingRequest[]) => {
+  const texts = batch.map((item) => item.text)
+  return Effect.matchEffect(
+    Effect.tryPromise({
+      try: () => requestEmbeddingBatch(texts),
+      catch: (error) => toError(error),
+    }),
+    {
+      onFailure: (error) =>
+        Effect.sync(() => {
+          for (const item of batch) {
+            item.reject(error)
+          }
+        }),
+      onSuccess: (embeddings) =>
+        Effect.sync(() => {
+          embeddings.forEach((embedding, index) => {
+            batch[index]?.resolve(embedding)
+          })
+        }),
+    },
+  )
+}
+
 const scheduleEmbeddingFlush = () => {
   if (embeddingFlushScheduled) return
   embeddingFlushScheduled = true
@@ -1807,43 +1831,32 @@ const scheduleEmbeddingFlush = () => {
 const flushEmbeddingQueue = async (): Promise<void> => {
   if (embeddingFlushPromise) return embeddingFlushPromise
 
-  embeddingFlushPromise = (async () => {
-    const tasks: Promise<void>[] = []
-    while (embeddingQueue.length > 0) {
-      let batchSize = 1
-      try {
-        batchSize = loadEmbeddingBatchSize()
-      } catch (error) {
-        const batch = embeddingQueue.splice(0)
-        const failure = toError(error)
-        for (const item of batch) {
-          item.reject(failure)
-        }
-        return
-      }
-
-      const batch = embeddingQueue.splice(0, batchSize)
-      tasks.push(
-        (async () => {
-          const texts = batch.map((item) => item.text)
-          try {
-            const embeddings = await requestEmbeddingBatch(texts)
-            embeddings.forEach((embedding, index) => {
-              batch[index]?.resolve(embedding)
-            })
-          } catch (error) {
-            const failure = toError(error)
-            for (const item of batch) {
-              item.reject(failure)
-            }
+  embeddingFlushPromise = Effect.runPromise(
+    Effect.gen(function* () {
+      while (embeddingQueue.length > 0) {
+        let batchSize = 1
+        try {
+          batchSize = loadEmbeddingBatchSize()
+        } catch (error) {
+          const batch = embeddingQueue.splice(0)
+          const failure = toError(error)
+          for (const item of batch) {
+            item.reject(failure)
           }
-        })(),
-      )
-    }
-    if (tasks.length > 0) {
-      await Promise.allSettled(tasks)
-    }
-  })().finally(() => {
+          return
+        }
+
+        const batches: EmbeddingRequest[][] = []
+        while (embeddingQueue.length > 0) {
+          batches.push(embeddingQueue.splice(0, batchSize))
+        }
+
+        if (batches.length > 0) {
+          yield* Effect.all(batches.map(processEmbeddingBatch), { discard: true })
+        }
+      }
+    }),
+  ).finally(() => {
     embeddingFlushPromise = null
     if (embeddingQueue.length > 0) {
       scheduleEmbeddingFlush()
@@ -1854,10 +1867,20 @@ const flushEmbeddingQueue = async (): Promise<void> => {
 }
 
 const embedText = (text: string): Promise<number[]> =>
-  new Promise((resolve, reject) => {
-    embeddingQueue.push({ text, resolve, reject })
-    scheduleEmbeddingFlush()
-  })
+  Effect.runPromise(
+    Effect.tryPromise({
+      try: () =>
+        new Promise<number[]>((resolve, reject) => {
+          embeddingQueue.push({
+            text,
+            resolve,
+            reject,
+          })
+          scheduleEmbeddingFlush()
+        }),
+      catch: (error) => toError(error),
+    }),
+  )
 
 const withDefaultSslMode = (rawUrl: string) => {
   let url: URL
