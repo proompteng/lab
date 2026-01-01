@@ -290,12 +290,10 @@ Store creds as Kubernetes secrets in the appropriate namespaces; if needed, mirr
 
 ## Observability
 
-- Enable NATS monitoring endpoints.
-- Optionally enable `promExporter` in the NATS Helm values and add a scrape target in `argocd/applications/observability`.
-- Track:
-  - publish rate per subject
-  - JetStream storage growth
-  - consumer lag for `jangar-agent-comms`
+- Jangar emits OTLP metrics for SSE + agent comms (`services/jangar/src/server/metrics.ts`).
+- Alerts + dashboards are wired in `argocd/applications/observability/graf-mimir-rules.yaml` and
+  `argocd/applications/observability/codex-pipeline-dashboard-configmap.yaml` (Kafka lag + JetStream pending).
+- NATS monitoring endpoints / promExporter can be enabled if deeper JetStream telemetry is needed.
 
 ## Rollout plan
 

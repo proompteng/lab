@@ -3,7 +3,7 @@
 This document splits the work into parallel tracks and provides concrete interfaces, schemas, and workflow steps.
 The judge pipeline is triggered by the Argo run-complete event (success or failure); notify is enrichment only.
 
-## Project Progress Inventory (as of 2025-12-29)
+## Project Progress Inventory (as of 2026-01-01)
 
 This section cross-references the design/implementation plan against current code and open GitHub items in this repo.
 
@@ -17,20 +17,20 @@ This section cross-references the design/implementation plan against current cod
 | F) PR review gate (Codex) | `docs/jangar/codex-judge-argo-implementation.md` | Done | `services/jangar/src/server/github-client.ts`, `services/jangar/src/server/codex-judge.ts` | - | - | Strict review gate + summaries merged ([#2232](https://github.com/proompteng/lab/pull/2232)). |
 | G) Judge engine (gates + LLM) | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/codex-judge-gates.ts` | - | - | Deterministic gates + LLM judge + retries implemented. |
 | H) Rerun orchestration | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/migrations/20251229_codex_rerun_submissions.ts` | - | - | Submits to Facteur with backoff + dedupe. |
-| I) Discord notifications | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts` | - | [#2237](https://github.com/proompteng/lab/pull/2237) | Success + escalation flows implemented; link enrichment pending in [#2237](https://github.com/proompteng/lab/pull/2237). |
+| I) Discord notifications | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts` | - | - | Success + escalation flows include issue/PR/CI/artifact links. |
 | J) Prompt auto-tuning PRs | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts` | - | - | Threshold + cooldown implemented; uses PR template if present. |
 | K) Memory snapshots (10/run) | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts` | - | - | Writes 10 snapshots per run into memories store. |
-| L) Run history API + UI | `docs/jangar/codex-judge-argo-design.md` | Partial (API only) | `services/jangar/src/routes/api/codex/runs.tsx` | [#2151](https://github.com/proompteng/lab/issues/2151) | - | API exists; UI route/components missing. |
+| L) Run history API + UI | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/routes/api/codex/runs.tsx`, `services/jangar/src/routes/codex/runs.tsx`, `services/jangar/src/data/codex.ts` | - | - | API + UI implemented with stats + run detail cards. |
 | M) Agent comms ingestion + SSE | `docs/nats-argo-agent-communications.md` | Implemented in code | `services/jangar/src/routes/api/agents/events.ts` | [#2187](https://github.com/proompteng/lab/issues/2187) | - | SSE endpoint exists; remaining deployment/ops tracked in issue. |
-| N) Observability / pipeline ops | `docs/nats-argo-agent-communications.md` | Not in code | - | [#2191](https://github.com/proompteng/lab/issues/2191), [#2173](https://github.com/proompteng/lab/issues/2173), [#2174](https://github.com/proompteng/lab/issues/2174) | - | No code found for these observability tasks yet. |
+| N) Observability / pipeline ops | `docs/nats-argo-agent-communications.md` | Done | `services/jangar/src/server/metrics.ts`, `argocd/applications/observability/graf-mimir-rules.yaml`, `argocd/applications/observability/codex-pipeline-dashboard-configmap.yaml` | - | - | Metrics + alerts + dashboard for codex pipeline and agent comms. |
 | P) Other open PRs (unrelated to judge) | - | In progress | - | [#2198](https://github.com/proompteng/lab/issues/2198) | [#2234](https://github.com/proompteng/lab/pull/2234), [#2203](https://github.com/proompteng/lab/pull/2203) | PR [#2203](https://github.com/proompteng/lab/pull/2203) addresses [#2198](https://github.com/proompteng/lab/issues/2198) (Oxlint). [#2234](https://github.com/proompteng/lab/pull/2234) is bonjour build changes. |
 
-Untracked gaps to consider creating issues for:
-- Add workflow labels/annotations for repository/issue/head/base to improve run-complete correlation when `eventBody` is missing.
+Workflow metadata correlation:
+- Facteur now attaches `codex.repository`, `codex.issue_number`, `codex.head`, and `codex.base` annotations/labels when
+  submitting workflows (`services/facteur/internal/orchestrator/implementation.go`).
 
-Remaining gaps for a fully functional judge system (as of 2025-12-29):
-- Run history UI is not implemented (API only) (#2151).
-- Observability for Kafka/NATS/agent comms is not implemented (#2191, #2173, #2174).
+Remaining gaps for a fully functional judge system (as of 2026-01-01):
+- No functional gaps currently tracked; follow ongoing ops items as needed.
 
 Current production context (see `docs/codex-workflow.md`):
 - Workflow template: `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
@@ -318,7 +318,7 @@ Ensure the Codex review is complete and all Codex review threads are resolved be
 - Gate on:
   - Latest Codex review state is `APPROVED` or `COMMENTED` with all threads resolved.
   - No open review threads authored by Codex.
-- Review bypass is disabled by default; opt in with `JANGAR_CODEX_REVIEW_POLICY=timeout|always` and log usage.
+- Review bypass has been removed; the gate is always enforced.
 - If Codex review requested changes or has unresolved threads, treat as `needs_iteration` and build
   `next_prompt` that enumerates each review comment with the required fix.
 - If no formal Codex reviews exist but Codex posted PR issue comments, treat the latest Codex comment
