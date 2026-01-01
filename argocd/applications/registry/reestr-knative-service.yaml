@@ -16,7 +16,7 @@ spec:
       annotations:
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/target: "100"
-        deploy.knative.dev/rollout: "2026-01-01T18:36:34.881Z"
+        deploy.knative.dev/rollout: "2026-01-01T18:57:33.953Z"
     spec:
       containerConcurrency: 0
       timeoutSeconds: 60
