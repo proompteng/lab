@@ -36,6 +36,7 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
         sa.Column("source", sa.String(length=64), nullable=False, unique=True),
         sa.Column("cursor_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("cursor_seq", sa.Integer(), server_default="0", nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column(
             "updated_at",

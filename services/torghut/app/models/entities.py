@@ -7,7 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, List, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Numeric, String, Text, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text
 from sqlalchemy import func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -164,6 +164,9 @@ class TradeCursor(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     source: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
     cursor_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    cursor_seq: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
 
 
 __all__ = [

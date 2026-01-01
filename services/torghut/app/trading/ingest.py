@@ -43,18 +43,20 @@ class ClickHouseSignalIngestor:
             logger.warning("ClickHouse URL missing; skipping signal ingestion")
             return []
 
-        cursor = self._get_cursor(session)
-        query = self._build_query(cursor)
+        cursor_ts, cursor_seq = self._get_cursor(session)
+        query = self._build_query(cursor_ts, cursor_seq)
         rows = self._query_clickhouse(query)
         signals: list[SignalEnvelope] = []
 
         max_event_ts: Optional[datetime] = None
+        max_seq: int = 0
         for row in rows:
             event_ts = _parse_ts(row.get("event_ts"))
             symbol = row.get("symbol")
             if event_ts is None or not isinstance(symbol, str):
                 logger.warning("Skipping signal with missing event_ts or symbol")
                 continue
+            seq = _coerce_seq(row.get("seq"))
             try:
                 signal = SignalEnvelope(
                     event_ts=event_ts,
@@ -62,29 +64,31 @@ class ClickHouseSignalIngestor:
                     symbol=symbol,
                     payload=_normalize_payload(row.get("payload")),
                     timeframe=_coerce_timeframe(row),
-                    seq=row.get("seq"),
+                    seq=seq,
                     source=row.get("source"),
                 )
             except Exception as exc:
                 logger.warning("Skipping invalid signal row: %s", exc)
                 continue
             signals.append(signal)
-            if max_event_ts is None or signal.event_ts > max_event_ts:
+            if max_event_ts is None or (signal.event_ts, seq) > (max_event_ts, max_seq):
                 max_event_ts = signal.event_ts
+                max_seq = seq
 
         if max_event_ts is not None:
-            self._set_cursor(session, max_event_ts)
+            self._set_cursor(session, max_event_ts, max_seq)
 
         return signals
 
-    def _build_query(self, cursor: datetime) -> str:
-        cursor_str = cursor.strftime("%Y-%m-%d %H:%M:%S")
+    def _build_query(self, cursor_ts: datetime, cursor_seq: int) -> str:
+        cursor_str = cursor_ts.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         limit = self.batch_size
         return (
-            "SELECT event_ts, ingest_ts, symbol, payload, window, seq, source "
+            "SELECT event_ts, ingest_ts, symbol, payload, window, ifNull(seq, 0) AS seq, source "
             f"FROM {self.table} "
-            f"WHERE event_ts > toDateTime('{cursor_str}') "
-            "ORDER BY event_ts ASC "
+            f"WHERE (event_ts > toDateTime('{cursor_str}', 'UTC')) "
+            f"OR (event_ts = toDateTime('{cursor_str}', 'UTC') AND ifNull(seq, 0) > {cursor_seq}) "
+            "ORDER BY event_ts ASC, seq ASC "
             f"LIMIT {limit} "
             "FORMAT JSONEachRow"
         )
@@ -112,23 +116,24 @@ class ClickHouseSignalIngestor:
                 logger.warning("Failed to decode ClickHouse row: %s", exc)
         return rows
 
-    def _get_cursor(self, session: Session) -> datetime:
+    def _get_cursor(self, session: Session) -> tuple[datetime, int]:
         stmt = select(TradeCursor).where(TradeCursor.source == "clickhouse")
         cursor_row = session.execute(stmt).scalar_one_or_none()
         if cursor_row:
-            return cursor_row.cursor_at
+            return cursor_row.cursor_at, cursor_row.cursor_seq
 
         lookback = timedelta(minutes=self.initial_lookback_minutes)
-        return datetime.now(timezone.utc) - lookback
+        return datetime.now(timezone.utc) - lookback, -1
 
-    def _set_cursor(self, session: Session, cursor_at: datetime) -> None:
+    def _set_cursor(self, session: Session, cursor_at: datetime, cursor_seq: int) -> None:
         stmt = select(TradeCursor).where(TradeCursor.source == "clickhouse")
         cursor_row = session.execute(stmt).scalar_one_or_none()
         if cursor_row:
             cursor_row.cursor_at = cursor_at
+            cursor_row.cursor_seq = cursor_seq
             session.add(cursor_row)
         else:
-            cursor_row = TradeCursor(source="clickhouse", cursor_at=cursor_at)
+            cursor_row = TradeCursor(source="clickhouse", cursor_at=cursor_at, cursor_seq=cursor_seq)
             session.add(cursor_row)
         session.commit()
 
@@ -186,6 +191,17 @@ def _normalize_payload(payload: Any) -> dict[str, Any]:
         if isinstance(decoded, dict):
             return cast(dict[str, Any], decoded)
     return {}
+
+
+def _coerce_seq(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, int):
+        return value
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 __all__ = ["ClickHouseSignalIngestor"]

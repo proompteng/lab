@@ -17,6 +17,9 @@ This document describes a **single-run, end‑to‑end** implementation plan for
 ## System Overview
 Pipeline:
 ```
+SignalIngestor -> DecisionEngine -> RiskEngine -> OrderExecutor -> Reconciler
+                                   ↘ Persistence (trade_decisions, executions)
+```
 
 ## Runtime Configuration (env)
 - `TRADING_ENABLED` (default `false`) gates the trading loop.
@@ -26,9 +29,6 @@ Pipeline:
 - `TRADING_POLL_MS` and `TRADING_RECONCILE_MS` for loop intervals.
 - `TRADING_UNIVERSE_SOURCE` (`jangar|static`), `JANGAR_SYMBOLS_URL`, `TRADING_STATIC_SYMBOLS`.
 - Optional risk defaults: `TRADING_MAX_NOTIONAL_PER_TRADE`, `TRADING_MAX_POSITION_PCT_EQUITY`.
-SignalIngestor -> DecisionEngine -> RiskEngine -> OrderExecutor -> Reconciler
-                                   ↘ Persistence (trade_decisions, executions)
-```
 
 ```mermaid
 flowchart LR
