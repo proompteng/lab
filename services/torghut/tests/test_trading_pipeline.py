@@ -2,18 +2,18 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from unittest import TestCase
 
-import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.models import Base, Strategy, TradeDecision, Execution
+from app.models import Base, Execution, Strategy, TradeDecision
 from app.trading.decisions import DecisionEngine
 from app.trading.execution import OrderExecutor
 from app.trading.models import SignalEnvelope, StrategyDecision
+from app.trading.reconcile import Reconciler
 from app.trading.risk import RiskEngine
 from app.trading.scheduler import TradingPipeline, TradingState
-from app.trading.reconcile import Reconciler
 from app.trading.universe import UniverseResolver
 
 
@@ -69,84 +69,14 @@ class FakeAlpacaClient:
         }
 
 
-@pytest.fixture()
-def session_factory():
-    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, expire_on_commit=False, future=True)
+class TestTradingPipeline(TestCase):
+    def setUp(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        self.session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
-
-def test_decision_engine_macd_rsi() -> None:
-    engine = DecisionEngine()
-    strategy = Strategy(
-        name="demo",
-        description="demo",
-        enabled=True,
-        base_timeframe="1Min",
-        universe_type="static",
-        universe_symbols=["AAPL"],
-    )
-    signal = SignalEnvelope(
-        event_ts=datetime.now(timezone.utc),
-        symbol="AAPL",
-        payload={"macd": {"macd": 1.2, "signal": 0.5}, "rsi14": 25, "price": 100},
-        timeframe="1Min",
-    )
-    decisions = engine.evaluate(signal, [strategy])
-    assert decisions
-    assert decisions[0].action == "buy"
-
-
-def test_risk_engine_rejects_live_trading(monkeypatch, session_factory) -> None:
-    from app import config
-
-    monkeypatch.setattr(config.settings, "trading_enabled", True)
-    monkeypatch.setattr(config.settings, "trading_mode", "live")
-    monkeypatch.setattr(config.settings, "trading_live_enabled", False)
-
-    strategy = Strategy(
-        name="demo",
-        description="demo",
-        enabled=True,
-        base_timeframe="1Min",
-        universe_type="static",
-        universe_symbols=["AAPL"],
-    )
-    decision = StrategyDecision(
-        strategy_id="strategy",
-        symbol="AAPL",
-        event_ts=datetime.now(timezone.utc),
-        timeframe="1Min",
-        action="buy",
-        qty=Decimal("1"),
-        params={"price": Decimal("100")},
-    )
-
-    with session_factory() as session:
-        engine = RiskEngine()
-        verdict = engine.evaluate(
-            session,
-            decision,
-            strategy,
-            account={"equity": "10000", "buying_power": "10000"},
-            positions=[],
-            allowed_symbols={"AAPL"},
-        )
-        assert not verdict.approved
-        assert "live_trading_disabled" in verdict.reasons
-
-
-def test_pipeline_idempotent_execution(monkeypatch, session_factory) -> None:
-    from app import config
-
-    monkeypatch.setattr(config.settings, "trading_enabled", True)
-    monkeypatch.setattr(config.settings, "trading_mode", "paper")
-    monkeypatch.setattr(config.settings, "trading_live_enabled", False)
-    monkeypatch.setattr(config.settings, "trading_universe_source", "static")
-    monkeypatch.setattr(config.settings, "trading_static_symbols_raw", "AAPL")
-
-    session_local = session_factory
-    with session_local() as session:
+    def test_decision_engine_macd_rsi(self) -> None:
+        engine = DecisionEngine()
         strategy = Strategy(
             name="demo",
             description="demo",
@@ -154,38 +84,128 @@ def test_pipeline_idempotent_execution(monkeypatch, session_factory) -> None:
             base_timeframe="1Min",
             universe_type="static",
             universe_symbols=["AAPL"],
-            max_notional_per_trade=Decimal("1000"),
         )
-        session.add(strategy)
-        session.commit()
-        session.refresh(strategy)
+        signal = SignalEnvelope(
+            event_ts=datetime.now(timezone.utc),
+            symbol="AAPL",
+            payload={"macd": {"macd": 1.2, "signal": 0.5}, "rsi14": 25, "price": 100},
+            timeframe="1Min",
+        )
+        decisions = engine.evaluate(signal, [strategy])
+        self.assertTrue(decisions)
+        self.assertEqual(decisions[0].action, "buy")
 
-    signal = SignalEnvelope(
-        event_ts=datetime.now(timezone.utc),
-        symbol="AAPL",
-        payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
-        timeframe="1Min",
-    )
+    def test_risk_engine_rejects_live_trading(self) -> None:
+        from app import config
 
-    pipeline = TradingPipeline(
-        alpaca_client=FakeAlpacaClient(),
-        ingestor=FakeIngestor([signal]),
-        decision_engine=DecisionEngine(),
-        risk_engine=RiskEngine(),
-        executor=OrderExecutor(),
-        reconciler=Reconciler(),
-        universe_resolver=UniverseResolver(),
-        state=TradingState(),
-        account_label="paper",
-        session_factory=session_local,
-    )
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = False
 
-    pipeline.run_once()
-    pipeline.run_once()
+        try:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            decision = StrategyDecision(
+                strategy_id="strategy",
+                symbol="AAPL",
+                event_ts=datetime.now(timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1"),
+                params={"price": Decimal("100")},
+            )
 
-    with session_local() as session:
-        decisions = session.execute(select(TradeDecision)).scalars().all()
-        executions = session.execute(select(Execution)).scalars().all()
-        assert len(decisions) == 1
-        assert len(executions) == 1
-        assert decisions[0].decision_hash is not None
+            with self.session_local() as session:
+                engine = RiskEngine()
+                verdict = engine.evaluate(
+                    session,
+                    decision,
+                    strategy,
+                    account={"equity": "10000", "buying_power": "10000"},
+                    positions=[],
+                    allowed_symbols={"AAPL"},
+                )
+            self.assertFalse(verdict.approved)
+            self.assertIn("live_trading_disabled", verdict.reasons)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+
+    def test_pipeline_idempotent_execution(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+                session.refresh(strategy)
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                timeframe="1Min",
+            )
+
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+
+            pipeline.run_once()
+            pipeline.run_once()
+
+            with self.session_local() as session:
+                decisions = session.execute(select(TradeDecision)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(len(decisions), 1)
+                self.assertEqual(len(executions), 1)
+                self.assertIsNotNone(decisions[0].decision_hash)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original["trading_universe_source"]
+            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
