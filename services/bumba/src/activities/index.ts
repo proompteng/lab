@@ -183,6 +183,16 @@ const MAX_SUMMARY_NODES = 80
 const MAX_COMPLETION_INPUT_CHARS = 12_000
 const DEFAULT_COMPLETION_MAX_OUTPUT_TOKENS = 512
 const DEFAULT_MODEL_CONCURRENCY = 2
+const DEFAULT_COMPLETION_MAX_ATTEMPTS = 2
+const DEFAULT_COMPLETION_RETRY_INITIAL_MS = 1_000
+const DEFAULT_COMPLETION_RETRY_MAX_MS = 15_000
+const DEFAULT_COMPLETION_RETRY_BACKOFF = 2
+const DEFAULT_COMPLETION_REPAIR_OUTPUT_CHARS = 4_000
+const DEFAULT_EMBEDDING_MAX_ATTEMPTS = 2
+const DEFAULT_EMBEDDING_RETRY_INITIAL_MS = 500
+const DEFAULT_EMBEDDING_RETRY_MAX_MS = 8_000
+const DEFAULT_EMBEDDING_RETRY_BACKOFF = 2
+const DEFAULT_EMBEDDING_BATCH_WINDOW_MS = 0
 const DEFAULT_MAX_REPO_FILES = 5_000
 const MAX_REPO_FILES = 20_000
 
@@ -201,6 +211,67 @@ const logActivity = (
 }
 
 const formatActivityError = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
+const createNonRetryableError = (message: string, name = 'NonRetryableError'): Error => {
+  const error = new Error(message)
+  error.name = name
+  ;(error as { nonRetryable?: boolean }).nonRetryable = true
+  return error
+}
+
+const createRetryableError = (message: string, retryAfterMs?: number): Error => {
+  const error = new Error(message)
+  error.name = 'RetryableError'
+  ;(error as { retryable?: boolean; retryAfterMs?: number }).retryable = true
+  if (typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+    ;(error as { retryAfterMs?: number }).retryAfterMs = retryAfterMs
+  }
+  return error
+}
+
+const isRetryableError = (error: unknown): error is Error & { retryable?: boolean; retryAfterMs?: number } =>
+  Boolean(error && typeof error === 'object' && (error as { retryable?: boolean }).retryable)
+
+const isNonRetryableError = (error: unknown): boolean =>
+  Boolean(error && typeof error === 'object' && (error as { nonRetryable?: boolean }).nonRetryable)
+
+const sleepMs = (durationMs: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, durationMs)
+  })
+
+const jitterDelayMs = (delayMs: number) => {
+  if (!Number.isFinite(delayMs) || delayMs <= 0) return 0
+  const jitter = delayMs * (0.15 + Math.random() * 0.2)
+  return Math.max(0, Math.round(delayMs - jitter))
+}
+
+const computeBackoffDelayMs = (
+  attempt: number,
+  initialDelayMs: number,
+  maxDelayMs: number,
+  backoffCoefficient: number,
+) => {
+  if (attempt <= 1) return initialDelayMs
+  const exponent = Math.pow(backoffCoefficient, attempt - 1)
+  const delay = initialDelayMs * exponent
+  return Math.min(delay, maxDelayMs)
+}
+
+const parseRetryAfterMs = (response: Response): number | undefined => {
+  const header = response.headers.get('retry-after')
+  if (!header) return undefined
+  const seconds = Number.parseInt(header, 10)
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return seconds * 1000
+  }
+  const parsedDate = Date.parse(header)
+  if (Number.isFinite(parsedDate)) {
+    const delayMs = parsedDate - Date.now()
+    if (delayMs > 0) return delayMs
+  }
+  return undefined
+}
 
 const LOCK_FILENAMES = new Set([
   'bun.lock',
@@ -359,7 +430,7 @@ const isHostedOpenAiBaseUrl = (rawBaseUrl: string) => {
 const loadEmbeddingDimension = (fallback: number) => {
   const dimension = Number.parseInt(process.env.OPENAI_EMBEDDING_DIMENSION ?? String(fallback), 10)
   if (!Number.isFinite(dimension) || dimension <= 0) {
-    throw new Error('OPENAI_EMBEDDING_DIMENSION must be a positive integer')
+    throw createNonRetryableError('OPENAI_EMBEDDING_DIMENSION must be a positive integer', 'EmbeddingConfigError')
   }
   return dimension
 }
@@ -367,7 +438,7 @@ const loadEmbeddingDimension = (fallback: number) => {
 const loadEmbeddingTimeoutMs = () => {
   const timeoutMs = Number.parseInt(process.env.OPENAI_EMBEDDING_TIMEOUT_MS ?? '15000', 10)
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new Error('OPENAI_EMBEDDING_TIMEOUT_MS must be a positive integer')
+    throw createNonRetryableError('OPENAI_EMBEDDING_TIMEOUT_MS must be a positive integer', 'EmbeddingConfigError')
   }
   return timeoutMs
 }
@@ -375,7 +446,7 @@ const loadEmbeddingTimeoutMs = () => {
 const loadEmbeddingMaxInputChars = () => {
   const maxInputChars = Number.parseInt(process.env.OPENAI_EMBEDDING_MAX_INPUT_CHARS ?? '60000', 10)
   if (!Number.isFinite(maxInputChars) || maxInputChars <= 0) {
-    throw new Error('OPENAI_EMBEDDING_MAX_INPUT_CHARS must be a positive integer')
+    throw createNonRetryableError('OPENAI_EMBEDDING_MAX_INPUT_CHARS must be a positive integer', 'EmbeddingConfigError')
   }
   return maxInputChars
 }
@@ -383,9 +454,70 @@ const loadEmbeddingMaxInputChars = () => {
 const loadEmbeddingBatchSize = () => {
   const batchSize = Number.parseInt(process.env.OPENAI_EMBEDDING_BATCH_SIZE ?? '1', 10)
   if (!Number.isFinite(batchSize) || batchSize <= 0) {
-    throw new Error('OPENAI_EMBEDDING_BATCH_SIZE must be a positive integer')
+    throw createNonRetryableError('OPENAI_EMBEDDING_BATCH_SIZE must be a positive integer', 'EmbeddingConfigError')
   }
   return batchSize
+}
+
+const loadEmbeddingBatchWindowMs = () => {
+  const windowMs = Number.parseInt(
+    process.env.OPENAI_EMBEDDING_BATCH_WINDOW_MS ?? String(DEFAULT_EMBEDDING_BATCH_WINDOW_MS),
+    10,
+  )
+  if (!Number.isFinite(windowMs) || windowMs < 0) {
+    throw createNonRetryableError(
+      'OPENAI_EMBEDDING_BATCH_WINDOW_MS must be a non-negative integer',
+      'EmbeddingConfigError',
+    )
+  }
+  return windowMs
+}
+
+const loadEmbeddingBatchMaxChars = () => {
+  const raw = process.env.OPENAI_EMBEDDING_MAX_BATCH_CHARS
+  if (!raw) return null
+  const maxChars = Number.parseInt(raw, 10)
+  if (!Number.isFinite(maxChars) || maxChars <= 0) {
+    throw createNonRetryableError(
+      'OPENAI_EMBEDDING_MAX_BATCH_CHARS must be a positive integer when set',
+      'EmbeddingConfigError',
+    )
+  }
+  return maxChars
+}
+
+const loadEmbeddingRetryConfig = () => {
+  const maxAttempts = Number.parseInt(
+    process.env.OPENAI_EMBEDDING_MAX_ATTEMPTS ?? String(DEFAULT_EMBEDDING_MAX_ATTEMPTS),
+    10,
+  )
+  if (!Number.isFinite(maxAttempts) || maxAttempts <= 0) {
+    throw createNonRetryableError('OPENAI_EMBEDDING_MAX_ATTEMPTS must be a positive integer', 'EmbeddingConfigError')
+  }
+  const initialDelayMs = Number.parseInt(
+    process.env.OPENAI_EMBEDDING_RETRY_INITIAL_MS ?? String(DEFAULT_EMBEDDING_RETRY_INITIAL_MS),
+    10,
+  )
+  const maxDelayMs = Number.parseInt(
+    process.env.OPENAI_EMBEDDING_RETRY_MAX_MS ?? String(DEFAULT_EMBEDDING_RETRY_MAX_MS),
+    10,
+  )
+  const backoffCoefficient = Number.parseFloat(
+    process.env.OPENAI_EMBEDDING_RETRY_BACKOFF ?? String(DEFAULT_EMBEDDING_RETRY_BACKOFF),
+  )
+  if (!Number.isFinite(initialDelayMs) || initialDelayMs <= 0) {
+    throw createNonRetryableError(
+      'OPENAI_EMBEDDING_RETRY_INITIAL_MS must be a positive integer',
+      'EmbeddingConfigError',
+    )
+  }
+  if (!Number.isFinite(maxDelayMs) || maxDelayMs <= 0) {
+    throw createNonRetryableError('OPENAI_EMBEDDING_RETRY_MAX_MS must be a positive integer', 'EmbeddingConfigError')
+  }
+  if (!Number.isFinite(backoffCoefficient) || backoffCoefficient <= 0) {
+    throw createNonRetryableError('OPENAI_EMBEDDING_RETRY_BACKOFF must be a positive number', 'EmbeddingConfigError')
+  }
+  return { maxAttempts, initialDelayMs, maxDelayMs, backoffCoefficient }
 }
 
 const resolveEmbeddingBaseUrl = (apiBaseUrl: string) => {
@@ -415,8 +547,9 @@ const loadEmbeddingConfig = () => {
   const apiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL
   const apiKey = process.env.OPENAI_API_KEY?.trim() || null
   if (!apiKey && isHostedOpenAiBaseUrl(apiBaseUrl)) {
-    throw new Error(
+    throw createNonRetryableError(
       'missing OPENAI_API_KEY; set it or point OPENAI_API_BASE_URL at an OpenAI-compatible endpoint (e.g. Ollama)',
+      'EmbeddingConfigError',
     )
   }
   const embeddingBaseUrl = resolveEmbeddingBaseUrl(apiBaseUrl)
@@ -879,17 +1012,36 @@ const loadLanguageForExtension = async (ext: string): Promise<LoadedLanguage | n
 }
 
 const clampNumber = (value: number, fallback: number) => (Number.isFinite(value) && value > 0 ? value : fallback)
+const clampNonNegativeNumber = (value: number, fallback: number) =>
+  Number.isFinite(value) && value >= 0 ? value : fallback
 const toError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
 
-const modelConcurrency = clampNumber(
-  Number.parseInt(process.env.BUMBA_MODEL_CONCURRENCY ?? '', 10),
-  DEFAULT_MODEL_CONCURRENCY,
+const completionConcurrency = clampNumber(
+  Number.parseInt(process.env.BUMBA_COMPLETION_CONCURRENCY ?? '', 10),
+  clampNumber(Number.parseInt(process.env.BUMBA_MODEL_CONCURRENCY ?? '', 10), DEFAULT_MODEL_CONCURRENCY),
 )
-const modelSemaphore = TSemaphore.unsafeMake(modelConcurrency)
-const withModelConcurrency = async <T>(fn: () => Promise<T>): Promise<T> =>
+const embeddingConcurrency = clampNumber(
+  Number.parseInt(process.env.BUMBA_EMBEDDING_CONCURRENCY ?? '', 10),
+  clampNumber(Number.parseInt(process.env.BUMBA_MODEL_CONCURRENCY ?? '', 10), DEFAULT_MODEL_CONCURRENCY),
+)
+const completionSemaphore = TSemaphore.unsafeMake(completionConcurrency)
+const embeddingSemaphore = TSemaphore.unsafeMake(embeddingConcurrency)
+const withCompletionConcurrency = async <T>(fn: () => Promise<T>): Promise<T> =>
   await Effect.runPromise(
     TSemaphore.withPermits(
-      modelSemaphore,
+      completionSemaphore,
+      1,
+    )(
+      Effect.tryPromise({
+        try: fn,
+        catch: (error) => toError(error),
+      }),
+    ),
+  )
+const withEmbeddingConcurrency = async <T>(fn: () => Promise<T>): Promise<T> =>
+  await Effect.runPromise(
+    TSemaphore.withPermits(
+      embeddingSemaphore,
       1,
     )(
       Effect.tryPromise({
@@ -1546,14 +1698,18 @@ const loadCompletionConfig = () => {
   const apiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL
   const apiKey = process.env.OPENAI_API_KEY?.trim() || null
   if (!apiKey && isHostedOpenAiBaseUrl(apiBaseUrl)) {
-    throw new Error(
+    throw createNonRetryableError(
       'missing OPENAI_API_KEY; set it or point OPENAI_API_BASE_URL at an OpenAI-compatible endpoint (e.g. Ollama)',
+      'CompletionConfigError',
     )
   }
 
   const defaults = resolveCompletionDefaults(apiBaseUrl)
   const model = process.env.OPENAI_COMPLETION_MODEL ?? process.env.OPENAI_MODEL ?? defaults.model
   const timeoutMs = Number.parseInt(process.env.OPENAI_COMPLETION_TIMEOUT_MS ?? '60000', 10)
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw createNonRetryableError('OPENAI_COMPLETION_TIMEOUT_MS must be a positive integer', 'CompletionConfigError')
+  }
   const maxInputChars = clampNumber(
     Number.parseInt(process.env.OPENAI_COMPLETION_MAX_INPUT_CHARS ?? '', 10),
     MAX_COMPLETION_INPUT_CHARS,
@@ -1565,6 +1721,40 @@ const loadCompletionConfig = () => {
   )
 
   return { apiBaseUrl, apiKey, model, timeoutMs, maxInputChars, maxOutputTokens }
+}
+
+const loadCompletionRetryConfig = () => {
+  const maxAttempts = Number.parseInt(
+    process.env.OPENAI_COMPLETION_MAX_ATTEMPTS ?? String(DEFAULT_COMPLETION_MAX_ATTEMPTS),
+    10,
+  )
+  if (!Number.isFinite(maxAttempts) || maxAttempts <= 0) {
+    throw createNonRetryableError('OPENAI_COMPLETION_MAX_ATTEMPTS must be a positive integer', 'CompletionConfigError')
+  }
+  const initialDelayMs = Number.parseInt(
+    process.env.OPENAI_COMPLETION_RETRY_INITIAL_MS ?? String(DEFAULT_COMPLETION_RETRY_INITIAL_MS),
+    10,
+  )
+  const maxDelayMs = Number.parseInt(
+    process.env.OPENAI_COMPLETION_RETRY_MAX_MS ?? String(DEFAULT_COMPLETION_RETRY_MAX_MS),
+    10,
+  )
+  const backoffCoefficient = Number.parseFloat(
+    process.env.OPENAI_COMPLETION_RETRY_BACKOFF ?? String(DEFAULT_COMPLETION_RETRY_BACKOFF),
+  )
+  if (!Number.isFinite(initialDelayMs) || initialDelayMs <= 0) {
+    throw createNonRetryableError(
+      'OPENAI_COMPLETION_RETRY_INITIAL_MS must be a positive integer',
+      'CompletionConfigError',
+    )
+  }
+  if (!Number.isFinite(maxDelayMs) || maxDelayMs <= 0) {
+    throw createNonRetryableError('OPENAI_COMPLETION_RETRY_MAX_MS must be a positive integer', 'CompletionConfigError')
+  }
+  if (!Number.isFinite(backoffCoefficient) || backoffCoefficient <= 0) {
+    throw createNonRetryableError('OPENAI_COMPLETION_RETRY_BACKOFF must be a positive number', 'CompletionConfigError')
+  }
+  return { maxAttempts, initialDelayMs, maxDelayMs, backoffCoefficient }
 }
 
 const parseStreamingCompletion = async (response: Response) => {
@@ -1706,13 +1896,19 @@ const normalizeEmbeddingMatrix = (raw: unknown): number[][] | null => {
   return [raw as number[]]
 }
 
-const requestEmbeddingBatch = async (texts: string[]): Promise<number[][]> => {
+const isRetryableStatus = (status: number) =>
+  status === 408 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504
+
+const requestEmbeddingBatchOnce = async (texts: string[]): Promise<number[][]> => {
   const { apiKey, embeddingBaseUrl, model, dimension, timeoutMs, maxInputChars, truncate, keepAlive } =
     loadEmbeddingConfig()
 
   for (const text of texts) {
     if (text.length > maxInputChars) {
-      throw new Error(`embedding input too large (${text.length} chars; max ${maxInputChars})`)
+      throw createNonRetryableError(
+        `embedding input too large (${text.length} chars; max ${maxInputChars})`,
+        'EmbeddingInputError',
+      )
     }
   }
 
@@ -1739,7 +1935,7 @@ const requestEmbeddingBatch = async (texts: string[]): Promise<number[][]> => {
       }
 
   try {
-    const response = await withModelConcurrency(() => {
+    const response = await withEmbeddingConcurrency(() => {
       const timeoutSignal = AbortSignal.timeout(timeoutMs)
       return fetch(url, {
         method: 'POST',
@@ -1751,7 +1947,14 @@ const requestEmbeddingBatch = async (texts: string[]): Promise<number[][]> => {
 
     if (!response.ok) {
       const errorBody = await response.text()
-      throw new Error(`embedding request failed (${response.status}): ${errorBody}`)
+      const retryAfterMs = parseRetryAfterMs(response)
+      if (isRetryableStatus(response.status)) {
+        throw createRetryableError(`embedding request failed (${response.status}): ${errorBody}`, retryAfterMs)
+      }
+      throw createNonRetryableError(
+        `embedding request failed (${response.status}): ${errorBody}`,
+        'EmbeddingResponseError',
+      )
     }
 
     const json = (await response.json()) as {
@@ -1764,25 +1967,56 @@ const requestEmbeddingBatch = async (texts: string[]): Promise<number[][]> => {
       : json.data?.map((entry) => entry.embedding)
     const embeddings = normalizeEmbeddingMatrix(rawEmbeddings)
     if (!embeddings) {
-      throw new Error('embedding response missing embeddings')
+      throw createRetryableError('embedding response missing embeddings')
     }
     if (embeddings.length !== texts.length) {
-      throw new Error(`embedding response missing embeddings for ${texts.length} inputs`)
+      throw createRetryableError(`embedding response missing embeddings for ${texts.length} inputs`)
     }
 
     for (const embedding of embeddings) {
       if (embedding.length !== dimension) {
-        throw new Error(`embedding dimension mismatch: expected ${dimension} but got ${embedding.length}`)
+        throw createNonRetryableError(
+          `embedding dimension mismatch: expected ${dimension} but got ${embedding.length}`,
+          'EmbeddingDimensionMismatchError',
+        )
       }
     }
 
     return embeddings
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`embedding request timed out after ${timeoutMs}ms`)
+      throw createRetryableError(`embedding request timed out after ${timeoutMs}ms`)
     }
     throw error
   }
+}
+
+const requestEmbeddingBatch = async (texts: string[]): Promise<number[][]> => {
+  const { maxAttempts, initialDelayMs, maxDelayMs, backoffCoefficient } = loadEmbeddingRetryConfig()
+  let attempt = 1
+  let lastError: unknown
+
+  while (attempt <= maxAttempts) {
+    try {
+      return await requestEmbeddingBatchOnce(texts)
+    } catch (error) {
+      lastError = error
+      if (isNonRetryableError(error) || attempt >= maxAttempts) {
+        throw error
+      }
+      const retryable = isRetryableError(error) || error instanceof Error
+      if (!retryable) {
+        throw error
+      }
+      const retryAfterMs = isRetryableError(error) ? error.retryAfterMs : undefined
+      const backoffDelay = computeBackoffDelayMs(attempt, initialDelayMs, maxDelayMs, backoffCoefficient)
+      const delayMs = retryAfterMs ?? backoffDelay
+      await sleepMs(jitterDelayMs(delayMs))
+      attempt += 1
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('embedding request failed')
 }
 
 type EmbeddingRequest = {
@@ -1794,6 +2028,36 @@ type EmbeddingRequest = {
 const embeddingQueue: EmbeddingRequest[] = []
 let embeddingFlushScheduled = false
 let embeddingFlushPromise: Promise<void> | null = null
+let embeddingFlushTimer: ReturnType<typeof setTimeout> | null = null
+
+const buildEmbeddingBatches = (pending: EmbeddingRequest[], batchSize: number, batchMaxChars: number | null) => {
+  const batches: EmbeddingRequest[][] = []
+  while (pending.length > 0) {
+    const batch: EmbeddingRequest[] = []
+    let batchChars = 0
+    while (pending.length > 0 && batch.length < batchSize) {
+      const next = pending[0]
+      if (!next) break
+      const nextChars = next.text.length
+      if (batchMaxChars && batch.length > 0 && batchChars + nextChars > batchMaxChars) {
+        break
+      }
+      pending.shift()
+      batch.push(next)
+      batchChars += nextChars
+    }
+    if (batch.length === 0) {
+      const fallback = pending.shift()
+      if (fallback) {
+        batch.push(fallback)
+      }
+    }
+    if (batch.length > 0) {
+      batches.push(batch)
+    }
+  }
+  return batches
+}
 
 const processEmbeddingBatch = (batch: EmbeddingRequest[]) => {
   const texts = batch.map((item) => item.text)
@@ -1822,10 +2086,22 @@ const processEmbeddingBatch = (batch: EmbeddingRequest[]) => {
 const scheduleEmbeddingFlush = () => {
   if (embeddingFlushScheduled) return
   embeddingFlushScheduled = true
-  queueMicrotask(() => {
+  const windowMs = loadEmbeddingBatchWindowMs()
+  if (windowMs === 0) {
+    queueMicrotask(() => {
+      embeddingFlushScheduled = false
+      void flushEmbeddingQueue()
+    })
+    return
+  }
+  if (embeddingFlushTimer) {
+    return
+  }
+  embeddingFlushTimer = setTimeout(() => {
+    embeddingFlushTimer = null
     embeddingFlushScheduled = false
     void flushEmbeddingQueue()
-  })
+  }, windowMs)
 }
 
 const flushEmbeddingQueue = async (): Promise<void> => {
@@ -1835,8 +2111,10 @@ const flushEmbeddingQueue = async (): Promise<void> => {
     Effect.gen(function* () {
       while (embeddingQueue.length > 0) {
         let batchSize = 1
+        let batchMaxChars: number | null = null
         try {
           batchSize = loadEmbeddingBatchSize()
+          batchMaxChars = loadEmbeddingBatchMaxChars()
         } catch (error) {
           const batch = embeddingQueue.splice(0)
           const failure = toError(error)
@@ -1846,10 +2124,8 @@ const flushEmbeddingQueue = async (): Promise<void> => {
           return
         }
 
-        const batches: EmbeddingRequest[][] = []
-        while (embeddingQueue.length > 0) {
-          batches.push(embeddingQueue.splice(0, batchSize))
-        }
+        const pending = embeddingQueue.splice(0)
+        const batches = buildEmbeddingBatches(pending, batchSize, batchMaxChars)
 
         if (batches.length > 0) {
           yield* Effect.all(batches.map(processEmbeddingBatch), { discard: true })
@@ -1866,8 +2142,14 @@ const flushEmbeddingQueue = async (): Promise<void> => {
   return embeddingFlushPromise
 }
 
-const embedText = (text: string): Promise<number[]> =>
-  Effect.runPromise(
+const embedText = async (text: string): Promise<number[]> => {
+  const batchSize = loadEmbeddingBatchSize()
+  if (batchSize <= 1) {
+    const embeddings = await requestEmbeddingBatch([text])
+    return embeddings[0] ?? []
+  }
+
+  return Effect.runPromise(
     Effect.tryPromise({
       try: () =>
         new Promise<number[]>((resolve, reject) => {
@@ -1881,6 +2163,7 @@ const embedText = (text: string): Promise<number[]> =>
       catch: (error) => toError(error),
     }),
   )
+}
 
 const withDefaultSslMode = (rawUrl: string) => {
   let url: URL
@@ -2236,20 +2519,55 @@ export const activities = {
       `Content${wasTruncated ? ' (truncated)' : ''}:\n${truncatedContent}`,
     ].filter((section) => section && section.length > 0)
 
-    const payload = {
+    const completionRetry = loadCompletionRetryConfig()
+    const repairMaxChars = clampNonNegativeNumber(
+      Number.parseInt(
+        process.env.OPENAI_COMPLETION_REPAIR_OUTPUT_CHARS ?? String(DEFAULT_COMPLETION_REPAIR_OUTPUT_CHARS),
+        10,
+      ),
+      DEFAULT_COMPLETION_REPAIR_OUTPUT_CHARS,
+    )
+
+    const buildCompletionMessages = (mode: 'initial' | 'repair', context?: { output?: string; error?: string }) => {
+      if (mode === 'repair') {
+        const previousOutput = context?.output ? safeSlice(context.output, repairMaxChars) : ''
+        const repairPrompt = [
+          systemPrompt,
+          'The previous response was invalid JSON or missing required fields.',
+          context?.error ? `Error: ${context.error}` : null,
+          'Return ONLY a valid JSON object with keys "summary" and "enriched".',
+          'Do not add extra keys or markdown.',
+          'If the previous response contained useful content, reuse it; otherwise regenerate from the input below.',
+        ]
+          .filter((entry) => entry && entry.length > 0)
+          .join(' ')
+        const repairSections = [
+          ...userSections,
+          previousOutput ? `Previous response:\n${previousOutput}` : null,
+        ].filter((section) => section && section.length > 0)
+        return [
+          { role: 'system', content: repairPrompt },
+          { role: 'user', content: repairSections.join('\n\n') },
+        ]
+      }
+
+      return [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userSections.join('\n\n') },
+      ]
+    }
+
+    const buildCompletionPayload = (
+      messages: Array<{ role: 'system' | 'user'; content: string }>,
+      includeFormat: boolean,
+    ) => ({
       model,
       stream: true,
       max_tokens: maxOutputTokens,
       temperature: 0,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userSections.join('\n\n') },
-      ],
-    }
-    const payloadWithFormat = {
-      ...payload,
-      response_format: { type: 'json_object' },
-    }
+      messages,
+      ...(includeFormat ? { response_format: { type: 'json_object' } } : {}),
+    })
 
     const logCompletion = (responseFormat: 'json_object' | 'none', result: EnrichOutput) => {
       logActivity('info', 'completed', 'enrichWithModel', {
@@ -2263,7 +2581,10 @@ export const activities = {
       })
     }
 
-    const requestCompletion = async (signal: AbortSignal) => {
+    const requestCompletion = async (
+      signal: AbortSignal,
+      messages: Array<{ role: 'system' | 'user'; content: string }>,
+    ): Promise<{ output: string; responseFormat: 'json_object' | 'none' }> => {
       const headers: Record<string, string> = {
         'content-type': 'application/json',
       }
@@ -2271,34 +2592,89 @@ export const activities = {
         headers.authorization = `Bearer ${apiKey}`
       }
 
-      const response = await fetch(`${apiBaseUrl}/chat/completions`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payloadWithFormat),
-        signal,
-      })
+      const payloadWithFormat = buildCompletionPayload(messages, true)
+      const payload = buildCompletionPayload(messages, false)
 
-      if (!response.ok) {
-        const body = await response.text()
-        const lowerBody = body.toLowerCase()
-        const formatUnsupported =
-          lowerBody.includes('response_format') ||
-          lowerBody.includes('json_schema') ||
-          lowerBody.includes('json object') ||
-          lowerBody.includes('unsupported') ||
-          lowerBody.includes('unknown parameter')
-        if (formatUnsupported) {
-          const fallbackResponse = await fetch(`${apiBaseUrl}/chat/completions`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(payload),
-            signal,
-          })
-          if (!fallbackResponse.ok) {
-            const fallbackBody = await fallbackResponse.text()
-            throw new Error(`completion request failed (${fallbackResponse.status}): ${fallbackBody}`)
+      try {
+        const response = await fetch(`${apiBaseUrl}/chat/completions`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payloadWithFormat),
+          signal,
+        })
+
+        if (!response.ok) {
+          const body = await response.text()
+          const lowerBody = body.toLowerCase()
+          const formatUnsupported =
+            lowerBody.includes('response_format') ||
+            lowerBody.includes('json_schema') ||
+            lowerBody.includes('json object') ||
+            lowerBody.includes('unsupported') ||
+            lowerBody.includes('unknown parameter')
+          if (formatUnsupported) {
+            const fallbackResponse = await fetch(`${apiBaseUrl}/chat/completions`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(payload),
+              signal,
+            })
+            if (!fallbackResponse.ok) {
+              const fallbackBody = await fallbackResponse.text()
+              if (isRetryableStatus(fallbackResponse.status)) {
+                throw createRetryableError(
+                  `completion request failed (${fallbackResponse.status}): ${fallbackBody}`,
+                  parseRetryAfterMs(fallbackResponse),
+                )
+              }
+              throw createNonRetryableError(
+                `completion request failed (${fallbackResponse.status}): ${fallbackBody}`,
+                'CompletionResponseError',
+              )
+            }
+            const output = await parseStreamingCompletion(fallbackResponse)
+            return { output, responseFormat: 'none' }
           }
-          const output = await parseStreamingCompletion(fallbackResponse)
+          if (isRetryableStatus(response.status)) {
+            throw createRetryableError(
+              `completion request failed (${response.status}): ${body}`,
+              parseRetryAfterMs(response),
+            )
+          }
+          throw createNonRetryableError(
+            `completion request failed (${response.status}): ${body}`,
+            'CompletionResponseError',
+          )
+        }
+
+        const output = await parseStreamingCompletion(response)
+        return { output, responseFormat: 'json_object' }
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          throw createRetryableError(`completion request timed out after ${timeoutMs}ms`)
+        }
+        if (error instanceof Error && error.name === 'TypeError') {
+          throw createRetryableError(`completion request network error: ${error.message}`)
+        }
+        throw error
+      }
+    }
+
+    try {
+      let attempt = 1
+      let lastOutput: string | undefined
+      let lastParseError: string | undefined
+
+      while (attempt <= completionRetry.maxAttempts) {
+        const mode = lastParseError ? 'repair' : 'initial'
+        const messages = buildCompletionMessages(mode, { output: lastOutput, error: lastParseError })
+        const timeoutSignal = AbortSignal.timeout(timeoutMs)
+
+        try {
+          const { output, responseFormat } = await withCompletionConcurrency(() =>
+            requestCompletion(timeoutSignal, messages),
+          )
+          lastOutput = output
           const parsed = parseCompletionOutput(output)
           const result = {
             summary: parsed.summary,
@@ -2307,37 +2683,40 @@ export const activities = {
               model,
               wasTruncated,
               parsedJson: parsed.metadata.parsedJson,
-              responseFormat: 'none',
+              responseFormat,
             },
           }
-          logCompletion('none', result)
+          logCompletion(responseFormat, result)
           return result
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          const isParseError = message.startsWith('completion response')
+          if (isParseError) {
+            lastParseError = message
+          } else {
+            lastParseError = undefined
+          }
+
+          if (isNonRetryableError(error) || attempt >= completionRetry.maxAttempts) {
+            throw error
+          }
+          const retryAfterMs = isRetryableError(error) ? error.retryAfterMs : undefined
+          const backoffDelay = computeBackoffDelayMs(
+            attempt,
+            completionRetry.initialDelayMs,
+            completionRetry.maxDelayMs,
+            completionRetry.backoffCoefficient,
+          )
+          const delayMs = retryAfterMs ?? backoffDelay
+          await sleepMs(jitterDelayMs(delayMs))
+          attempt += 1
         }
-        throw new Error(`completion request failed (${response.status}): ${body}`)
       }
 
-      const output = await parseStreamingCompletion(response)
-      const parsed = parseCompletionOutput(output)
-      const result = {
-        summary: parsed.summary,
-        enriched: parsed.enriched,
-        metadata: {
-          model,
-          wasTruncated,
-          parsedJson: parsed.metadata.parsedJson,
-          responseFormat: 'json_object',
-        },
-      }
-      logCompletion('json_object', result)
-      return result
-    }
-
-    try {
-      const timeoutSignal = AbortSignal.timeout(timeoutMs)
-      const result = await withModelConcurrency(() => requestCompletion(timeoutSignal))
-      return result
+      throw new Error('completion request failed after retries')
     } catch (error) {
-      const timeoutError = error instanceof Error && error.name === 'AbortError'
+      const timeoutError =
+        error instanceof Error && (error.name === 'AbortError' || error.message.includes('timed out'))
       const message = timeoutError ? `completion request timed out after ${timeoutMs}ms` : formatActivityError(error)
       logActivity('error', 'failed', 'enrichWithModel', {
         filename: input.filename,
