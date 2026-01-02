@@ -327,6 +327,6 @@ CREATE INDEX trade_decisions_symbol_created_at_idx
 - Loki label cardinality: https://grafana.com/docs/loki/latest/get-started/labels/cardinality/
 - Kubernetes probes: https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes
 - Kubernetes NetworkPolicy: https://v1-34.docs.kubernetes.io/docs/concepts/services-networking/network-policies/
-- Knative concurrency: https://knative.dev/v1.19-docs/serving/autoscaling/concurrency/
+- Knative concurrency: https://knative.dev/docs/serving/autoscaling/concurrency/
 - Knative autoscaling overview: https://knative.dev/docs/serving/autoscaling/
 - Schema Registry compatibility: https://docs.confluent.io/platform/current/schema-registry/fundamentals/schema-evolution.html
