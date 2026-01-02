@@ -451,7 +451,21 @@ const reconcileRecordStatus = async (
 
   if (!tmuxSession && record.status === 'ready') {
     const updated = await updateTerminalSessionRecord(record.id, {
-      status: 'error',
+      status: 'closed',
+      worktreeName: record.worktreeName,
+      worktreePath: record.worktreePath,
+      tmuxSocket: TMUX_SOCKET_NAME,
+      errorMessage: record.errorMessage ?? 'tmux session missing',
+      readyAt: record.readyAt,
+      closedAt: record.closedAt ?? new Date().toISOString(),
+      metadata: record.metadata,
+    })
+    return updated ?? record
+  }
+
+  if (!tmuxSession && record.status === 'error' && record.readyAt) {
+    const updated = await updateTerminalSessionRecord(record.id, {
+      status: 'closed',
       worktreeName: record.worktreeName,
       worktreePath: record.worktreePath,
       tmuxSocket: TMUX_SOCKET_NAME,
