@@ -359,7 +359,10 @@ class TradingScheduler:
         self.state = TradingState()
         self._task: Optional[asyncio.Task[None]] = None
         self._stop_event = asyncio.Event()
-        self._pipeline = TradingPipeline(
+        self._pipeline: Optional[TradingPipeline] = None
+
+    def _build_pipeline(self) -> TradingPipeline:
+        return TradingPipeline(
             alpaca_client=TorghutAlpacaClient(),
             ingestor=ClickHouseSignalIngestor(),
             decision_engine=DecisionEngine(),
@@ -374,6 +377,8 @@ class TradingScheduler:
     async def start(self) -> None:
         if self._task:
             return
+        if self._pipeline is None:
+            self._pipeline = self._build_pipeline()
         self._stop_event.clear()
         self.state.running = True
         self._task = asyncio.create_task(self._run_loop())
@@ -397,6 +402,8 @@ class TradingScheduler:
 
         while not self._stop_event.is_set():
             try:
+                if self._pipeline is None:
+                    raise RuntimeError("trading_pipeline_not_initialized")
                 self._pipeline.run_once()
                 self.state.last_run_at = datetime.now(timezone.utc)
             except Exception as exc:  # pragma: no cover - loop guard
@@ -406,6 +413,8 @@ class TradingScheduler:
             now = datetime.now(timezone.utc)
             if now - last_reconcile >= timedelta(seconds=reconcile_interval):
                 try:
+                    if self._pipeline is None:
+                        raise RuntimeError("trading_pipeline_not_initialized")
                     updates = self._pipeline.reconcile()
                     if updates:
                         logger.info("Reconciled %s executions", updates)
