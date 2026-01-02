@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
+import { Loader2 } from 'lucide-react'
 import * as React from 'react'
 import { toast } from 'sonner'
 
@@ -231,7 +232,7 @@ function TerminalsIndexPage() {
             {skeletonKeys.map((key) => (
               <div
                 key={key}
-                className={cn('grid gap-4 px-4 py-4 border-b border-border last:border-b-0', tableColumns)}
+                className={cn('grid items-center gap-4 px-4 py-4 border-b border-border last:border-b-0', tableColumns)}
               >
                 <div className="space-y-2">
                   <Skeleton className="h-4 w-28" />
@@ -254,7 +255,7 @@ function TerminalsIndexPage() {
             <div className="min-w-0">
               <div
                 className={cn(
-                  'grid gap-4 border-b border-border px-4 py-3 text-[11px] uppercase tracking-widest text-muted-foreground',
+                  'grid items-center gap-4 border-b border-border px-4 py-3 text-[11px] uppercase tracking-widest text-muted-foreground',
                   tableColumns,
                 )}
               >
@@ -268,7 +269,7 @@ function TerminalsIndexPage() {
               {showPendingRow ? (
                 <div
                   className={cn(
-                    'grid gap-4 px-4 py-4 border-b border-border text-xs text-muted-foreground',
+                    'grid items-center gap-4 px-4 py-4 border-b border-border text-xs text-muted-foreground',
                     tableColumns,
                   )}
                 >
@@ -286,7 +287,7 @@ function TerminalsIndexPage() {
                     <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
                     Creating
                   </span>
-                  <div className="flex justify-end">
+                  <div className="flex items-center justify-end">
                     <Skeleton className="h-8 w-20" />
                   </div>
                 </div>
@@ -299,14 +300,14 @@ function TerminalsIndexPage() {
                   <div
                     key={session.id}
                     className={cn(
-                      'relative grid gap-4 px-4 py-4 border-b border-border last:border-b-0 text-sm text-foreground transition',
+                      'grid items-center gap-4 px-4 py-4 border-b border-border last:border-b-0 text-sm text-foreground transition',
                       tableColumns,
                       rowTone,
                     )}
                     data-session-id={session.id}
                     data-session-status={session.status}
                   >
-                    <div className="space-y-1">
+                    <div className="flex flex-col gap-1">
                       <Link
                         to="/terminals/$sessionId"
                         params={{ sessionId: session.id }}
@@ -340,7 +341,7 @@ function TerminalsIndexPage() {
                       <span className={cn('h-2 w-2 rounded-full', meta.dot)} />
                       {meta.label}
                     </div>
-                    <div className="flex justify-end">
+                    <div className="flex items-center justify-end">
                       {(session.status === 'closed' || session.status === 'error') && (
                         <AlertDialog>
                           <AlertDialogTrigger
@@ -354,7 +355,10 @@ function TerminalsIndexPage() {
                                   event.stopPropagation()
                                 }}
                               >
-                                {isDeleting ? 'Deleting...' : 'Delete'}
+                                <span className="inline-flex items-center gap-2">
+                                  {isDeleting ? <Loader2 className="size-4 animate-spin" /> : null}
+                                  Delete
+                                </span>
                               </Button>
                             }
                           />
@@ -379,17 +383,18 @@ function TerminalsIndexPage() {
                                   event.stopPropagation()
                                   void deleteSession(session.id)
                                 }}
+                                disabled={isDeleting}
                               >
-                                Delete
+                                <span className="inline-flex items-center gap-2">
+                                  {isDeleting ? <Loader2 className="size-4 animate-spin" /> : null}
+                                  {isDeleting ? 'Deleting' : 'Delete'}
+                                </span>
                               </AlertDialogAction>
                             </AlertDialogFooter>
                           </AlertDialogContent>
                         </AlertDialog>
                       )}
                     </div>
-                    {isDeleting ? (
-                      <div className="absolute inset-x-0 bottom-0 h-0.5 bg-emerald-400/70 animate-pulse" />
-                    ) : null}
                   </div>
                 )
               })}
