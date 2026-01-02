@@ -54,6 +54,18 @@ class Settings(BaseSettings):
     trading_clickhouse_password: Optional[str] = Field(default=None, alias="TA_CLICKHOUSE_PASSWORD")
     trading_clickhouse_timeout_seconds: int = Field(default=5, alias="TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS")
 
+    llm_enabled: bool = Field(default=False, alias="LLM_ENABLED")
+    llm_model: str = Field(default="gpt-4.1-mini", alias="LLM_MODEL")
+    llm_prompt_version: str = Field(default="v1", alias="LLM_PROMPT_VERSION")
+    llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE")
+    llm_max_tokens: int = Field(default=300, alias="LLM_MAX_TOKENS")
+    llm_timeout_seconds: int = Field(default=20, alias="LLM_TIMEOUT_SECONDS")
+    llm_fail_mode: Literal["veto", "pass_through"] = Field(default="veto", alias="LLM_FAIL_MODE")
+    llm_min_confidence: float = Field(default=0.5, alias="LLM_MIN_CONFIDENCE")
+    llm_adjustment_allowed: bool = Field(default=False, alias="LLM_ADJUSTMENT_ALLOWED")
+    llm_max_qty_multiplier: float = Field(default=1.25, alias="LLM_MAX_QTY_MULTIPLIER")
+    llm_min_qty_multiplier: float = Field(default=0.5, alias="LLM_MIN_QTY_MULTIPLIER")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

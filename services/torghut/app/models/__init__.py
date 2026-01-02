@@ -4,6 +4,7 @@ from .base import Base, GUID, JSONType, metadata_obj
 from .entities import (
     CreatedAtMixin,
     Execution,
+    LLMDecisionReview,
     PositionSnapshot,
     Strategy,
     TimestampMixin,
@@ -19,6 +20,7 @@ __all__ = [
     "metadata_obj",
     "CreatedAtMixin",
     "Execution",
+    "LLMDecisionReview",
     "PositionSnapshot",
     "Strategy",
     "TimestampMixin",
