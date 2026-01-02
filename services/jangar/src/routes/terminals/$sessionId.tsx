@@ -2,8 +2,6 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { TerminalView } from '@/components/terminal-view'
-import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,6 +13,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 
 export const Route = createFileRoute('/terminals/$sessionId')({
   component: TerminalSessionPage,
@@ -307,16 +307,15 @@ function TerminalSessionPage() {
         )}
       </section>
       {toast ? (
-        <div
+        <output
           className={`fixed bottom-6 right-6 z-50 rounded-none border px-3 py-2 text-xs shadow-lg ${
             toast.tone === 'error'
               ? 'border-destructive/60 bg-destructive/10 text-destructive'
               : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
           }`}
-          role="status"
         >
           {toast.message}
-        </div>
+        </output>
       ) : null}
     </main>
   )

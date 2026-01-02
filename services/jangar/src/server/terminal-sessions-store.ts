@@ -1,6 +1,6 @@
 import { sql } from 'kysely'
 
-import { getDb, type Db } from '~/server/db'
+import { type Db, getDb } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
 
 export type TerminalSessionStatus = 'creating' | 'ready' | 'error' | 'closed'

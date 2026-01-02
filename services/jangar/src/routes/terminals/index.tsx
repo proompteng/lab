@@ -1,9 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
-import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Skeleton } from '@/components/ui/skeleton'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,6 +12,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/terminals/')({
@@ -46,6 +46,8 @@ const formatDateTime = (value: string | null) => {
   if (Number.isNaN(date.getTime())) return value
   return dateFormatter.format(date)
 }
+
+const skeletonKeys = ['skeleton-a', 'skeleton-b', 'skeleton-c', 'skeleton-d', 'skeleton-e', 'skeleton-f']
 
 function TerminalsIndexPage() {
   const [sessions, setSessions] = React.useState<TerminalSession[]>([])
@@ -257,9 +259,9 @@ function TerminalsIndexPage() {
               <span>Status</span>
               <span className="text-right">Actions</span>
             </div>
-            {Array.from({ length: 6 }, (_, index) => (
+            {skeletonKeys.map((key) => (
               <div
-                key={`skeleton-${index}`}
+                key={key}
                 className={cn('grid gap-4 px-4 py-4 border-b border-border last:border-b-0', tableColumns)}
               >
                 <div className="space-y-2">
@@ -427,17 +429,16 @@ function TerminalsIndexPage() {
         )}
       </section>
       {toast ? (
-        <div
+        <output
           className={cn(
             'fixed bottom-6 right-6 z-50 rounded-none border px-3 py-2 text-xs shadow-lg',
             toast.tone === 'error'
               ? 'border-destructive/60 bg-destructive/10 text-destructive'
               : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200',
           )}
-          role="status"
         >
           {toast.message}
-        </div>
+        </output>
       ) : null}
     </main>
   )

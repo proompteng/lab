@@ -25,6 +25,23 @@ type PeerState = {
   snapshotInFlight: boolean
 }
 
+type WebSocketPeer = {
+  send: (data: string) => void
+  close: (code?: number, reason?: string) => void
+  context?: { sessionId?: string }
+}
+
+type WebSocketMessage = {
+  json: () => unknown
+  text: () => string
+}
+
+type WebSocketUpgradeRequest = {
+  url: string
+  headers: Headers
+  context?: Record<string, unknown>
+}
+
 export const Route = createFileRoute('/api/terminals/$sessionId/ws')({
   server: {
     handlers: {
@@ -42,12 +59,12 @@ const encodeBase64 = (value: string | Uint8Array) => {
 
 const decodeBase64 = (value: string) => Buffer.from(value, 'base64').toString('utf8')
 
-const sendJson = (peer: { send: (data: string) => void }, payload: unknown) => {
+const sendJson = (peer: WebSocketPeer, payload: unknown) => {
   peer.send(JSON.stringify(payload))
 }
 
-const resolveSessionId = (request: Request) => {
-  const pathname = new URL(request.url).pathname
+const resolveSessionId = (url: string) => {
+  const pathname = new URL(url, 'http://localhost').pathname
   const match = pathname.match(/\/api\/terminals\/([^/]+)\/ws$/)
   if (!match) return null
   const candidate = formatSessionId(decodeURIComponent(match[1] ?? ''))
@@ -55,15 +72,12 @@ const resolveSessionId = (request: Request) => {
   return candidate
 }
 
-const closeWithError = (
-  peer: { send: (data: string) => void; close: (code?: number, reason?: string) => void },
-  message: string,
-) => {
+const closeWithError = (peer: WebSocketPeer, message: string) => {
   sendJson(peer, { type: 'error', message, fatal: true })
   peer.close(1008, message)
 }
 
-const readLogChunk = async (state: PeerState, peer: { send: (data: string) => void }) => {
+const readLogChunk = async (state: PeerState, peer: WebSocketPeer) => {
   if (state.closed || !state.handle) return
   const stats = await state.handle.stat()
   if (stats.size < state.offset) {
@@ -80,8 +94,8 @@ const readLogChunk = async (state: PeerState, peer: { send: (data: string) => vo
 }
 
 const websocketHooks = defineWebSocket({
-  async upgrade(request) {
-    const sessionId = resolveSessionId(request)
+  async upgrade(request: WebSocketUpgradeRequest) {
+    const sessionId = resolveSessionId(request.url)
     if (!sessionId) return new Response('Invalid terminal session id.', { status: 400 })
 
     const session = await getTerminalSession(sessionId)
@@ -100,10 +114,12 @@ const websocketHooks = defineWebSocket({
       return new Response(message, { status: 500 })
     }
 
-    return { context: { sessionId } }
+    request.context = request.context ?? {}
+    request.context.sessionId = sessionId
+    return
   },
 
-  async open(peer) {
+  async open(peer: WebSocketPeer) {
     const sessionId = typeof peer.context?.sessionId === 'string' ? peer.context.sessionId : null
     if (!sessionId) {
       closeWithError(peer, 'Invalid terminal session id.')
@@ -144,7 +160,7 @@ const websocketHooks = defineWebSocket({
     }, 25)
   },
 
-  async message(peer, message) {
+  async message(peer: WebSocketPeer, message: WebSocketMessage) {
     const state = peerState.get(peer)
     if (!state || state.closed) return
 
@@ -202,7 +218,7 @@ const websocketHooks = defineWebSocket({
     }
   },
 
-  async close(peer) {
+  async close(peer: WebSocketPeer) {
     const state = peerState.get(peer)
     if (!state) return
     state.closed = true
@@ -218,7 +234,7 @@ const websocketHooks = defineWebSocket({
     peerState.delete(peer)
   },
 
-  error(peer, error) {
+  error(peer: WebSocketPeer, error: unknown) {
     const state = peerState.get(peer)
     console.warn('[terminals] ws error', {
       sessionId: state?.sessionId,
