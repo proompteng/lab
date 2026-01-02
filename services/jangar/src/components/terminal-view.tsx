@@ -35,8 +35,8 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
   const reconnectAttemptRef = React.useRef(0)
   const resizeObserverRef = React.useRef<ResizeObserver | null>(null)
   const inputBufferRef = React.useRef('')
-  const inputTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const shouldReconnectRef = React.useRef(true)
+  const resizeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [status, setStatus] = React.useState<'connecting' | 'connected' | 'error'>('connecting')
   const [error, setError] = React.useState<string | null>(null)
@@ -59,25 +59,28 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
 
     const flushInput = () => {
       if (!inputBufferRef.current) return
-      const socket = socketRef.current
-      if (!socket || socket.readyState !== WebSocket.OPEN) return
       const data = inputBufferRef.current
       inputBufferRef.current = ''
       sendMessage({ type: 'input', data: encodeInput(data) })
-    }
-
-    const scheduleInputFlush = () => {
-      if (inputTimerRef.current) return
-      inputTimerRef.current = setTimeout(() => {
-        inputTimerRef.current = null
-        flushInput()
-      }, 16)
     }
 
     const sendResize = () => {
       const terminal = terminalRef.current
       if (!terminal) return
       sendMessage({ type: 'resize', cols: terminal.cols, rows: terminal.rows })
+    }
+
+    const refreshLayout = () => {
+      if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current)
+      resizeTimerRef.current = setTimeout(() => {
+        resizeTimerRef.current = null
+        const terminal = terminalRef.current
+        const fitAddon = fitRef.current
+        if (!terminal || !fitAddon) return
+        fitAddon.fit()
+        terminal.refresh(0, Math.max(0, terminal.rows - 1))
+        sendResize()
+      }, 50)
     }
 
     const attachSocket = () => {
@@ -184,25 +187,53 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       fitRef.current = fitAddon
 
       terminal.onData((data: string) => {
-        inputBufferRef.current += data
-        if (data.includes('\r')) {
-          flushInput()
-        } else {
-          scheduleInputFlush()
+        if (socketRef.current?.readyState === WebSocket.OPEN) {
+          sendMessage({ type: 'input', data: encodeInput(data) })
+          return
         }
+        inputBufferRef.current += data
       })
 
       resizeObserverRef.current = new ResizeObserver(() => {
-        fitAddon.fit()
-        sendResize()
+        refreshLayout()
       })
       resizeObserverRef.current.observe(containerRef.current)
       sendResize()
+      refreshLayout()
+
+      const handleVisibility = () => {
+        if (document.visibilityState === 'visible') {
+          refreshLayout()
+        }
+      }
+
+      const handleWindowFocus = () => {
+        refreshLayout()
+      }
+
+      const handleWindowResize = () => {
+        refreshLayout()
+      }
+
+      document.addEventListener('visibilitychange', handleVisibility)
+      window.addEventListener('focus', handleWindowFocus)
+      window.addEventListener('resize', handleWindowResize)
+      window.visualViewport?.addEventListener('resize', handleWindowResize)
 
       attachSocket()
+
+      return () => {
+        document.removeEventListener('visibilitychange', handleVisibility)
+        window.removeEventListener('focus', handleWindowFocus)
+        window.removeEventListener('resize', handleWindowResize)
+        window.visualViewport?.removeEventListener('resize', handleWindowResize)
+      }
     }
 
-    void connect()
+    let cleanupListeners: (() => void) | null = null
+    void connect().then((cleanup) => {
+      if (cleanup) cleanupListeners = cleanup
+    })
 
     return () => {
       isDisposed = true
@@ -211,9 +242,9 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         clearTimeout(reconnectTimerRef.current)
         reconnectTimerRef.current = null
       }
-      if (inputTimerRef.current) {
-        clearTimeout(inputTimerRef.current)
-        inputTimerRef.current = null
+      if (resizeTimerRef.current) {
+        clearTimeout(resizeTimerRef.current)
+        resizeTimerRef.current = null
       }
       if (socketRef.current) {
         socketRef.current.close()
@@ -228,6 +259,10 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         terminalRef.current = null
       }
       fitRef.current = null
+      if (cleanupListeners) {
+        cleanupListeners()
+        cleanupListeners = null
+      }
     }
   }, [sessionId])
 
