@@ -124,6 +124,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       }
 
       const socket = new WebSocket(buildSocketUrl())
+      socket.binaryType = 'arraybuffer'
       socketRef.current = socket
 
       socket.onopen = () => {
@@ -136,12 +137,11 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         }
       }
 
-      socket.onmessage = (event) => {
+      const handleMessage = (raw: string) => {
         if (!terminalRef.current) return
-        if (typeof event.data !== 'string') return
         let payload: { type?: string; data?: string; message?: string; fatal?: boolean } | null = null
         try {
-          payload = JSON.parse(event.data)
+          payload = JSON.parse(raw)
         } catch {
           return
         }
@@ -171,6 +171,25 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
             shouldReconnectRef.current = false
             socket.close()
           }
+        }
+      }
+
+      socket.onmessage = (event) => {
+        if (typeof event.data === 'string') {
+          handleMessage(event.data)
+          return
+        }
+        if (event.data instanceof ArrayBuffer) {
+          handleMessage(new TextDecoder().decode(new Uint8Array(event.data)))
+          return
+        }
+        if (event.data instanceof Blob) {
+          event.data
+            .text()
+            .then((text) => {
+              handleMessage(text)
+            })
+            .catch(() => {})
         }
       }
 
