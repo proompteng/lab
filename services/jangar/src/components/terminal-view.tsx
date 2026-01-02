@@ -167,7 +167,15 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
 
       const handleMessage = (raw: string) => {
         if (!terminalRef.current) return
-        let payload: { type?: string; data?: string; message?: string; fatal?: boolean } | null = null
+        let payload: {
+          type?: string
+          data?: string
+          message?: string
+          fatal?: boolean
+          seq?: number
+          cols?: number
+          rows?: number
+        } | null = null
         try {
           payload = JSON.parse(raw)
         } catch {
