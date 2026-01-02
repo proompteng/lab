@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test'
 
+const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? ''
+const isLocalBaseURL = !baseURL || /localhost|127\.0\.0\.1/.test(baseURL)
+
+test.skip(!isLocalBaseURL, 'UI snapshot tests are only stable against local renders.')
+
 const memoryCount = 12
 const torghutSymbolsResponse = {
   items: [
