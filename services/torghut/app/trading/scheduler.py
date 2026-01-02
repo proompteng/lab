@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -221,6 +221,7 @@ class TradingPipeline:
             if policy_outcome.verdict == "adjust":
                 adjusted_qty = Decimal(str(policy_outcome.decision.qty))
                 adjusted_order_type = policy_outcome.decision.order_type
+                self._persist_llm_adjusted_decision(session, decision_row, policy_outcome.decision)
 
             self._persist_llm_review(
                 session=session,
@@ -245,10 +246,11 @@ class TradingPipeline:
             return policy_outcome.decision, None
         except Exception as exc:
             fallback = self._resolve_llm_fallback()
-            verdict = "veto" if fallback == "veto" else "approve"
+            effective_verdict = "veto" if fallback == "veto" else "approve"
             response_json = {
                 "error": str(exc),
                 "fallback": fallback,
+                "effective_verdict": effective_verdict,
             }
             if not request_json:
                 request_json = {"decision": decision.model_dump(mode="json")}
@@ -259,7 +261,7 @@ class TradingPipeline:
                 prompt_version=settings.llm_prompt_version,
                 request_json=request_json,
                 response_json=response_json,
-                verdict=verdict,
+                verdict="error",
                 confidence=None,
                 adjusted_qty=None,
                 adjusted_order_type=None,
@@ -314,6 +316,25 @@ class TradingPipeline:
         )
         session.add(review)
         session.commit()
+
+    @staticmethod
+    def _persist_llm_adjusted_decision(
+        session: Session,
+        decision_row: TradeDecision,
+        decision: StrategyDecision,
+    ) -> None:
+        decision_json = _coerce_json(decision_row.decision_json)
+        decision_json["llm_adjusted_decision"] = decision.model_dump(mode="json")
+        decision_row.decision_json = decision_json
+        session.add(decision_row)
+        session.commit()
+
+
+def _coerce_json(value: Any) -> dict[str, Any]:
+    if isinstance(value, Mapping):
+        raw = cast(Mapping[str, Any], value)
+        return {str(key): val for key, val in raw.items()}
+    return {}
 
 
 def _coerce_strategy_symbols(raw: object) -> set[str]:
