@@ -48,6 +48,8 @@ const parseDateInput = (value: string | null, field: string) => {
   return date
 }
 
+const formatClickHouseDateTime64 = (value: Date) => value.toISOString().replace(/Z$/, '')
+
 const parseLimit = (value: string | null, fallback: number) => {
   if (!value) return fallback
   const parsed = Number.parseInt(value, 10)
@@ -87,8 +89,8 @@ export const parseTaRangeParams = (url: URL): ValidationResult<TaRangeQuery> => 
       ok: true,
       value: {
         symbol,
-        from: fromDate.toISOString(),
-        to: toDate.toISOString(),
+        from: formatClickHouseDateTime64(fromDate),
+        to: formatClickHouseDateTime64(toDate),
         limit,
       },
     }
