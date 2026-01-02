@@ -310,9 +310,9 @@ CREATE INDEX trade_decisions_symbol_created_at_idx
 
 ## References (research)
 - Alpaca WS connection limits: https://docs.alpaca.markets/docs/streaming-market-data
-- Kafka topic configs (cleanup.policy, retention.ms): https://kafka.apache.org/20/configuration/topic-level-configs/
-- Kafka retention.ms details: https://kafka.apache.org/30/configuration/topic-level-configs/
-- Log compaction behavior: https://docs.confluent.io/kafka/design/log_compaction.html
+- Kafka topic configs (cleanup.policy, retention.ms): https://kafka.apache.org/41/configuration/topic-configs/
+- Kafka retention.ms details: https://kafka.apache.org/41/configuration/topic-configs/
+- Kafka log compaction design: https://kafka.apache.org/41/design/design/
 - Flink checkpointing overview: https://nightlies.apache.org/flink/flink-docs-master/docs/dev/datastream/fault-tolerance/checkpointing/
 - Flink savepoints: https://nightlies.apache.org/flink/flink-docs-master/docs/ops/state/savepoints/
 - ClickHouse TTL: https://clickhouse.com/docs/guides/developer/ttl
