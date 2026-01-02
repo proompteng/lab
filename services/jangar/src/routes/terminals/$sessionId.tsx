@@ -3,6 +3,7 @@ import * as React from 'react'
 
 import { TerminalView } from '@/components/terminal-view'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -55,6 +56,7 @@ function TerminalSessionPage() {
   const [isLoading, setIsLoading] = React.useState(true)
   const [isTerminating, setIsTerminating] = React.useState(false)
   const [isDeleting, setIsDeleting] = React.useState(false)
+  const isInitialLoading = isLoading && !session && !error
 
   const loadSession = React.useCallback(async () => {
     setIsLoading(true)
@@ -114,20 +116,37 @@ function TerminalSessionPage() {
   return (
     <main className="flex flex-col gap-4 p-6 min-h-svh">
       <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-2">
-          <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Terminal session</p>
-          <h1 className="text-lg font-semibold">{session?.label ?? sessionId}</h1>
-          <div className="text-xs text-muted-foreground">
-            {session?.worktreePath ? `Worktree: ${session.worktreePath}` : 'Worktree path unavailable'}
+        {isInitialLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-3 w-24" />
+            <Skeleton className="h-6 w-40" />
+            <Skeleton className="h-3 w-64" />
+            <Skeleton className="h-3 w-52" />
+            <Skeleton className="h-3 w-24" />
           </div>
-          <div className="text-xs text-muted-foreground">
-            Created {formatDateTime(session?.createdAt ?? null)} - {session?.attached ? 'Attached' : 'Detached'}
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Terminal session</p>
+            <h1 className="text-lg font-semibold">{session?.label ?? sessionId}</h1>
+            <div className="text-xs text-muted-foreground">
+              {session?.worktreePath ? `Worktree: ${session.worktreePath}` : 'Worktree path unavailable'}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Created {formatDateTime(session?.createdAt ?? null)} - {session?.attached ? 'Attached' : 'Detached'}
+            </div>
+            <div className={`text-xs flex items-center gap-2 ${statusTone}`}>
+              <span className={`h-2 w-2 rounded-full ${statusDot}`} />
+              {statusLabel === 'creating' ? (
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
+                  Provisioning
+                </span>
+              ) : (
+                statusLabel
+              )}
+            </div>
           </div>
-          <div className={`text-xs flex items-center gap-2 ${statusTone}`}>
-            <span className={`h-2 w-2 rounded-full ${statusDot}`} />
-            {statusLabel === 'creating' ? 'Provisioning' : statusLabel}
-          </div>
-        </div>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" render={<Link to="/terminals" />}>
             All sessions
@@ -208,7 +227,14 @@ function TerminalSessionPage() {
             </AlertDialog>
           )}
           <Button variant="outline" onClick={loadSession} disabled={isLoading}>
-            Refresh
+            {isLoading ? (
+              <span className="inline-flex items-center gap-2">
+                <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
+                Refreshing...
+              </span>
+            ) : (
+              'Refresh'
+            )}
           </Button>
         </div>
       </header>
@@ -220,7 +246,17 @@ function TerminalSessionPage() {
       ) : null}
 
       <section className="flex flex-col flex-1 min-h-0">
-        {session?.status === 'ready' ? (
+        {isInitialLoading ? (
+          <div className="flex flex-col gap-3 rounded-none border border-border bg-card p-4">
+            <div className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
+              Loading terminal session...
+            </div>
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-3 w-52" />
+            <Skeleton className="h-64 w-full" />
+          </div>
+        ) : session?.status === 'ready' ? (
           <TerminalView sessionId={sessionId} />
         ) : session?.status === 'error' ? (
           <div className="rounded-none border border-destructive/40 bg-destructive/10 p-4 text-xs text-destructive">
@@ -231,8 +267,13 @@ function TerminalSessionPage() {
             Session closed. Create a new session to continue.
           </div>
         ) : (
-          <div className="rounded-none border border-border bg-card p-4 text-xs text-muted-foreground">
-            Preparing terminal session. It will connect automatically once ready.
+          <div className="flex flex-col gap-3 rounded-none border border-border bg-card p-4 text-xs text-muted-foreground">
+            <div className="inline-flex items-center gap-2">
+              <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
+              Preparing terminal session...
+            </div>
+            <Skeleton className="h-3 w-40" />
+            <Skeleton className="h-3 w-52" />
           </div>
         )}
       </section>

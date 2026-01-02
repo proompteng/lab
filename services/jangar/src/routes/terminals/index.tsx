@@ -2,6 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -51,6 +52,8 @@ function TerminalsIndexPage() {
   const [isLoading, setIsLoading] = React.useState(false)
   const [isCreating, setIsCreating] = React.useState(false)
   const [showClosed, setShowClosed] = React.useState(false)
+  const isInitialLoading = isLoading && sessions.length === 0
+  const showPendingRow = isCreating && !sessions.some((session) => session.status === 'creating')
 
   const loadSessions = React.useCallback(async () => {
     setIsLoading(true)
@@ -159,7 +162,14 @@ function TerminalsIndexPage() {
             {showClosed ? 'Hide closed' : 'Show closed'}
           </Button>
           <Button variant="outline" onClick={loadSessions} disabled={isLoading}>
-            Refresh
+            {isLoading ? (
+              <span className="inline-flex items-center gap-2">
+                <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
+                Refreshing...
+              </span>
+            ) : (
+              'Refresh'
+            )}
           </Button>
           <Button onClick={createSession} disabled={isCreating}>
             {isCreating ? (
@@ -180,13 +190,65 @@ function TerminalsIndexPage() {
         </div>
       ) : null}
 
-      {sessions.length === 0 ? (
+      {isInitialLoading ? (
+        <section className="overflow-hidden rounded-none border border-border bg-card">
+          <ul>
+            {Array.from({ length: 4 }, (_, index) => (
+              <li key={`skeleton-${index}`} className="border-b border-border last:border-b-0">
+                <div className="flex flex-col gap-2 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="flex-1 space-y-2">
+                      <Skeleton className="h-4 w-28" />
+                      <Skeleton className="h-3 w-64" />
+                    </div>
+                    <div className="flex flex-col items-end gap-2">
+                      <Skeleton className="h-3 w-20" />
+                      <Skeleton className="h-3 w-16" />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Skeleton className="h-3 w-36" />
+                    <Skeleton className="h-3 w-16" />
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : sessions.length === 0 ? (
         <section className="rounded-none border border-border bg-card p-6 text-xs text-muted-foreground">
-          {isLoading ? 'Loading sessions...' : 'No terminal sessions yet. Create one to get started.'}
+          No terminal sessions yet. Create one to get started.
         </section>
       ) : (
         <section className="overflow-hidden rounded-none border border-border bg-card">
           <ul>
+            {showPendingRow ? (
+              <li className="border-b border-border">
+                <div className="flex flex-col gap-3 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="flex-1 space-y-2">
+                      <div className="inline-flex items-center gap-2 text-xs text-amber-400">
+                        <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
+                        Provisioning session...
+                      </div>
+                      <Skeleton className="h-4 w-40" />
+                      <Skeleton className="h-3 w-64" />
+                    </div>
+                    <div className="flex flex-col items-end gap-2">
+                      <Skeleton className="h-3 w-20" />
+                      <Skeleton className="h-3 w-16" />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Skeleton className="h-3 w-36" />
+                    <div className="flex items-center gap-2 text-xs text-amber-400">
+                      <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+                      Creating
+                    </div>
+                  </div>
+                </div>
+              </li>
+            ) : null}
             {sessions.map((session) => (
               <li key={session.id} className="border-b border-border last:border-b-0">
                 {(() => {

@@ -348,13 +348,28 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
     }
   }, [sessionId])
 
+  const isConnecting = status === 'connecting'
+
   return (
-    <div className="flex flex-col overflow-hidden h-full w-full rounded-none border border-border bg-black">
+    <div className="relative flex flex-col overflow-hidden h-full w-full rounded-none border border-border bg-black">
       <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs border-b border-border text-muted-foreground">
-        <span>Status: {status}</span>
+        <span className="inline-flex items-center gap-2">
+          Status: {status}
+          {isConnecting ? (
+            <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
+          ) : null}
+        </span>
         {error ? <span className="text-destructive">{error}</span> : null}
       </div>
       <div ref={containerRef} className="flex flex-1 min-h-0" />
+      {isConnecting ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
+            Connecting to terminal...
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
