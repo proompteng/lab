@@ -30,10 +30,13 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
   const containerRef = React.useRef<HTMLDivElement | null>(null)
   const terminalRef = React.useRef<import('xterm').Terminal | null>(null)
   const fitRef = React.useRef<import('xterm-addon-fit').FitAddon | null>(null)
-  const eventSourceRef = React.useRef<EventSource | null>(null)
+  const socketRef = React.useRef<WebSocket | null>(null)
+  const reconnectTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const reconnectAttemptRef = React.useRef(0)
   const resizeObserverRef = React.useRef<ResizeObserver | null>(null)
   const inputBufferRef = React.useRef('')
   const inputTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const shouldReconnectRef = React.useRef(true)
 
   const [status, setStatus] = React.useState<'connecting' | 'connected' | 'error'>('connecting')
   const [error, setError] = React.useState<string | null>(null)
@@ -41,17 +44,26 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
   React.useEffect(() => {
     let isDisposed = false
     const decoder = new TextDecoder()
+    shouldReconnectRef.current = true
+
+    const buildSocketUrl = () => {
+      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+      return `${protocol}://${window.location.host}/api/terminals/${encodeURIComponent(sessionId)}/ws`
+    }
+
+    const sendMessage = (payload: unknown) => {
+      const socket = socketRef.current
+      if (!socket || socket.readyState !== WebSocket.OPEN) return
+      socket.send(JSON.stringify(payload))
+    }
 
     const flushInput = () => {
       if (!inputBufferRef.current) return
+      const socket = socketRef.current
+      if (!socket || socket.readyState !== WebSocket.OPEN) return
       const data = inputBufferRef.current
       inputBufferRef.current = ''
-      void fetch(`/api/terminals/${encodeURIComponent(sessionId)}/input`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ data: encodeInput(data) }),
-        keepalive: true,
-      }).catch(() => undefined)
+      sendMessage({ type: 'input', data: encodeInput(data) })
     }
 
     const scheduleInputFlush = () => {
@@ -65,12 +77,82 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
     const sendResize = () => {
       const terminal = terminalRef.current
       if (!terminal) return
-      void fetch(`/api/terminals/${encodeURIComponent(sessionId)}/resize`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ cols: terminal.cols, rows: terminal.rows }),
-        keepalive: true,
-      }).catch(() => undefined)
+      sendMessage({ type: 'resize', cols: terminal.cols, rows: terminal.rows })
+    }
+
+    const attachSocket = () => {
+      if (socketRef.current) {
+        socketRef.current.close()
+      }
+
+      const socket = new WebSocket(buildSocketUrl())
+      socketRef.current = socket
+
+      socket.onopen = () => {
+        reconnectAttemptRef.current = 0
+        setStatus('connected')
+        setError(null)
+        sendResize()
+        if (inputBufferRef.current) {
+          flushInput()
+        }
+      }
+
+      socket.onmessage = (event) => {
+        if (!terminalRef.current) return
+        if (typeof event.data !== 'string') return
+        let payload: { type?: string; data?: string; message?: string; fatal?: boolean } | null = null
+        try {
+          payload = JSON.parse(event.data)
+        } catch {
+          return
+        }
+        if (!payload) return
+        if (payload.type === 'snapshot' && payload.data) {
+          const text = decoder.decode(base64ToBytes(payload.data))
+          if (text) {
+            terminalRef.current.reset()
+            terminalRef.current.write(text)
+          }
+          return
+        }
+        if (payload.type === 'output' && payload.data) {
+          const text = decoder.decode(base64ToBytes(payload.data))
+          if (text) terminalRef.current.write(text)
+          return
+        }
+        if (payload.type === 'error') {
+          const message = payload.message ?? 'Terminal connection failed.'
+          setError(message)
+          if (payload.fatal) {
+            setStatus('error')
+            shouldReconnectRef.current = false
+            socket.close()
+          }
+        }
+      }
+
+      socket.onerror = () => {
+        if (!shouldReconnectRef.current) return
+        setStatus('connecting')
+        setError('Reconnecting...')
+      }
+
+      socket.onclose = () => {
+        if (!shouldReconnectRef.current || isDisposed) return
+        setStatus('connecting')
+        setError('Reconnecting...')
+        if (reconnectTimerRef.current) return
+        const attempt = reconnectAttemptRef.current
+        const delay = Math.min(10_000, 1000 * 2 ** attempt)
+        reconnectAttemptRef.current += 1
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectTimerRef.current = null
+          if (!isDisposed && shouldReconnectRef.current) {
+            attachSocket()
+          }
+        }, delay)
+      }
     }
 
     const connect = async () => {
@@ -117,56 +199,25 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       resizeObserverRef.current.observe(containerRef.current)
       sendResize()
 
-      const eventSource = new EventSource(`/api/terminals/${encodeURIComponent(sessionId)}/stream`)
-      eventSourceRef.current = eventSource
-
-      eventSource.onopen = () => {
-        setStatus('connected')
-        setError(null)
-      }
-
-      eventSource.addEventListener('snapshot', (event) => {
-        const payload = (event as MessageEvent).data
-        if (!payload || !terminalRef.current) return
-        const text = decoder.decode(base64ToBytes(payload))
-        if (text) {
-          terminalRef.current.reset()
-          terminalRef.current.write(text)
-        }
-      })
-
-      eventSource.addEventListener('output', (event) => {
-        const payload = (event as MessageEvent).data
-        if (!payload || !terminalRef.current) return
-        const text = decoder.decode(base64ToBytes(payload))
-        if (text) terminalRef.current.write(text)
-      })
-
-      eventSource.addEventListener('server-error', (event) => {
-        const payload = (event as MessageEvent).data
-        if (payload) {
-          setError(atob(payload))
-        }
-        setStatus('error')
-      })
-
-      eventSource.onerror = () => {
-        setStatus('connecting')
-        setError('Reconnecting...')
-      }
+      attachSocket()
     }
 
     void connect()
 
     return () => {
       isDisposed = true
+      shouldReconnectRef.current = false
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
       if (inputTimerRef.current) {
         clearTimeout(inputTimerRef.current)
         inputTimerRef.current = null
       }
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close()
-        eventSourceRef.current = null
+      if (socketRef.current) {
+        socketRef.current.close()
+        socketRef.current = null
       }
       if (resizeObserverRef.current) {
         resizeObserverRef.current.disconnect()
