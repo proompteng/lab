@@ -45,13 +45,20 @@ Enable trading loop:
 1) Confirm `argocd/applications/torghut/knative-service.yaml` has `TRADING_ENABLED=true`,
    `TRADING_MODE=paper`, and `TRADING_LIVE_ENABLED=false`.
 2) Ensure `JANGAR_SYMBOLS_URL` is reachable (or switch to `TRADING_UNIVERSE_SOURCE=static` + `TRADING_STATIC_SYMBOLS`).
-3) Sync the Argo CD application for torghut.
-4) Verify `kubectl -n torghut get ksvc torghut` is Ready and `GET /trading/status` returns enabled `true`.
+3) Seed at least one enabled strategy (dev/stage):
+   `uv run python services/torghut/scripts/seed_strategy.py --name macd-rsi-default --base-timeframe 1Min --symbols AAPL,MSFT --enabled`
+4) Sync the Argo CD application for torghut.
+5) Verify `kubectl -n torghut get ksvc torghut` is Ready and `GET /trading/status` returns enabled `true`.
 
 Disable trading loop:
 1) Set `TRADING_ENABLED=false` (and optionally set `minScale: "0"` if you want the service to idle).
 2) Sync the Argo CD application for torghut.
 3) Verify `/trading/status` reports enabled `false` and no new decisions are written.
+
+Trading audit + metrics:
+- `GET /trading/decisions?symbol=&since=` returns recent decision rows.
+- `GET /trading/executions?symbol=&since=` returns recent executions.
+- `GET /trading/metrics` returns counters for decisions, orders, and LLM outcomes.
 
 ## Kafka produce failures
 - Readiness should go false; inspect auth/ACL, broker reachability, and SASL secrets.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Optional
 
 from openai.types.chat import ChatCompletionMessageParam
@@ -13,8 +14,17 @@ from pydantic import ValidationError
 from ...config import settings
 from ..models import StrategyDecision
 from .client import LLMClient
+from .circuit import LLMCircuitBreaker
 from .policy import allowed_order_types
-from .schema import LLMDecisionContext, LLMPolicyContext, LLMReviewRequest, LLMReviewResponse
+from .schema import (
+    LLMDecisionContext,
+    LLMPolicyContext,
+    LLMReviewRequest,
+    MarketSnapshot,
+    PortfolioSnapshot,
+    RecentDecisionSummary,
+    LLMReviewResponse,
+)
 
 _SYSTEM_PROMPT = (
     "You are an automated trading review agent. "
@@ -47,23 +57,42 @@ class LLMReviewEngine:
         prompt_version: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        circuit_breaker: Optional[LLMCircuitBreaker] = None,
     ) -> None:
         self.model = model or settings.llm_model
         self.prompt_version = prompt_version or settings.llm_prompt_version
         self.temperature = temperature if temperature is not None else settings.llm_temperature
         self.max_tokens = max_tokens if max_tokens is not None else settings.llm_max_tokens
         self.client = client or LLMClient(self.model, settings.llm_timeout_seconds)
+        self.circuit_breaker = circuit_breaker or LLMCircuitBreaker.from_settings()
+        self.system_prompt = load_prompt_template(self.prompt_version)
 
     def review(
         self,
         decision: StrategyDecision,
         account: dict[str, str],
         positions: list[dict[str, str]],
+        request: Optional[LLMReviewRequest] = None,
+        portfolio: Optional[PortfolioSnapshot] = None,
+        market: Optional[MarketSnapshot] = None,
+        recent_decisions: Optional[list[RecentDecisionSummary]] = None,
     ) -> LLMReviewOutcome:
-        request = self.build_request(decision, account, positions)
+        if request is None:
+            if portfolio is None:
+                raise ValueError("llm_request_missing_portfolio")
+            if recent_decisions is None:
+                recent_decisions = []
+            request = self.build_request(
+                decision,
+                account,
+                positions,
+                portfolio,
+                market,
+                recent_decisions,
+            )
         request_json = request.model_dump(mode="json")
         messages: list[ChatCompletionMessageParam] = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": self.system_prompt},
             {
                 "role": "user",
                 "content": (
@@ -109,6 +138,9 @@ class LLMReviewEngine:
         decision: StrategyDecision,
         account: dict[str, str],
         positions: list[dict[str, str]],
+        portfolio: PortfolioSnapshot,
+        market: Optional[MarketSnapshot],
+        recent_decisions: list[RecentDecisionSummary],
     ) -> LLMReviewRequest:
         return LLMReviewRequest(
             decision=LLMDecisionContext(
@@ -123,6 +155,9 @@ class LLMReviewEngine:
                 rationale=decision.rationale,
                 params=decision.params,
             ),
+            portfolio=portfolio,
+            market=market,
+            recent_decisions=recent_decisions,
             account=account,
             positions=positions,
             policy=LLMPolicyContext(
@@ -146,3 +181,11 @@ def _coerce_int(value: Any) -> Optional[int]:
 
 
 __all__ = ["LLMReviewEngine", "LLMReviewOutcome"]
+
+
+def load_prompt_template(version: str) -> str:
+    templates_dir = Path(__file__).resolve().parent / "prompt_templates"
+    candidate = templates_dir / f"system_{version}.txt"
+    if candidate.exists():
+        return candidate.read_text(encoding="utf-8")
+    return _SYSTEM_PROMPT

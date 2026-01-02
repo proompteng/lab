@@ -14,10 +14,14 @@ from app.trading.llm.review_engine import LLMReviewOutcome
 from app.trading.llm.schema import (
     LLMDecisionContext,
     LLMPolicyContext,
+    MarketSnapshot,
+    PortfolioSnapshot,
+    RecentDecisionSummary,
     LLMReviewRequest,
     LLMReviewResponse,
 )
 from app.trading.models import SignalEnvelope, StrategyDecision
+from app.trading.prices import PriceFetcher
 from app.trading.reconcile import Reconciler
 from app.trading.risk import RiskEngine
 from app.trading.scheduler import TradingPipeline, TradingState
@@ -84,19 +88,32 @@ class FakeLLMReviewEngine:
         adjusted_order_type: str | None = None,
         confidence: float = 0.9,
         error: Exception | None = None,
+        circuit_open: bool = False,
     ) -> None:
         self.verdict = verdict
         self.adjusted_qty = adjusted_qty
         self.adjusted_order_type = adjusted_order_type
         self.confidence = confidence
         self.error = error
+        self.circuit_breaker = FakeCircuitBreaker(circuit_open)
 
     def build_request(
         self,
         decision: StrategyDecision,
         account: dict[str, str],
         positions: list[dict[str, str]],
+        portfolio: PortfolioSnapshot | None = None,
+        market: MarketSnapshot | None = None,
+        recent_decisions: list[RecentDecisionSummary] | None = None,
     ) -> LLMReviewRequest:
+        portfolio_snapshot = portfolio or PortfolioSnapshot(
+            equity=Decimal("10000"),
+            cash=Decimal("10000"),
+            buying_power=Decimal("10000"),
+            total_exposure=Decimal("0"),
+            exposure_by_symbol={},
+            positions=positions,
+        )
         return LLMReviewRequest(
             decision=LLMDecisionContext(
                 strategy_id=decision.strategy_id,
@@ -110,6 +127,9 @@ class FakeLLMReviewEngine:
                 rationale=decision.rationale,
                 params=decision.params,
             ),
+            portfolio=portfolio_snapshot,
+            market=market,
+            recent_decisions=recent_decisions or [],
             account=account,
             positions=positions,
             policy=LLMPolicyContext(
@@ -127,10 +147,21 @@ class FakeLLMReviewEngine:
         decision: StrategyDecision,
         account: dict[str, str],
         positions: list[dict[str, str]],
+        request: LLMReviewRequest | None = None,
+        portfolio: PortfolioSnapshot | None = None,
+        market: MarketSnapshot | None = None,
+        recent_decisions: list[RecentDecisionSummary] | None = None,
     ) -> LLMReviewOutcome:
         if self.error:
             raise self.error
-        request = self.build_request(decision, account, positions)
+        request = request or self.build_request(
+            decision,
+            account,
+            positions,
+            portfolio=portfolio,
+            market=market,
+            recent_decisions=recent_decisions,
+        )
         response = LLMReviewResponse(
             verdict=self.verdict,
             confidence=self.confidence,
@@ -148,6 +179,28 @@ class FakeLLMReviewEngine:
             tokens_prompt=12,
             tokens_completion=7,
         )
+
+
+class FakePriceFetcher(PriceFetcher):
+    def __init__(self, price: Decimal) -> None:
+        self.price = price
+
+    def fetch_price(self, signal: SignalEnvelope) -> Decimal:
+        return self.price
+
+
+class FakeCircuitBreaker:
+    def __init__(self, open_state: bool = False) -> None:
+        self.open_state = open_state
+
+    def is_open(self) -> bool:
+        return self.open_state
+
+    def record_error(self) -> None:
+        return None
+
+    def record_success(self) -> None:
+        return None
 
 
 class TestTradingPipeline(TestCase):
@@ -175,6 +228,26 @@ class TestTradingPipeline(TestCase):
         decisions = engine.evaluate(signal, [strategy])
         self.assertTrue(decisions)
         self.assertEqual(decisions[0].action, "buy")
+
+    def test_decision_engine_attaches_price(self) -> None:
+        engine = DecisionEngine(price_fetcher=FakePriceFetcher(Decimal("101.5")))
+        strategy = Strategy(
+            name="demo",
+            description="demo",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime.now(timezone.utc),
+            symbol="AAPL",
+            payload={"macd": {"macd": 1.2, "signal": 0.5}, "rsi14": 25},
+            timeframe="1Min",
+        )
+        decisions = engine.evaluate(signal, [strategy])
+        self.assertTrue(decisions)
+        self.assertEqual(decisions[0].params.get("price"), Decimal("101.5"))
 
     def test_risk_engine_rejects_live_trading(self) -> None:
         from app import config
@@ -624,6 +697,155 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_fail_mode = original["llm_fail_mode"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
+
+    def test_pipeline_llm_shadow_mode(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_min_confidence": config.settings.llm_min_confidence,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = True
+        config.settings.llm_shadow_mode = True
+        config.settings.llm_min_confidence = 0.0
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                timeframe="1Min",
+            )
+
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+                llm_review_engine=FakeLLMReviewEngine(verdict="veto"),
+            )
+
+            pipeline.run_once()
+
+            with self.session_local() as session:
+                reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                decisions = session.execute(select(TradeDecision)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(len(reviews), 1)
+                self.assertEqual(reviews[0].verdict, "veto")
+                self.assertEqual(decisions[0].status, "submitted")
+                self.assertEqual(len(executions), 1)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original["trading_universe_source"]
+            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_min_confidence = original["llm_min_confidence"]
+
+    def test_pipeline_llm_circuit_open(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = True
+        config.settings.llm_fail_mode = "pass_through"
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                timeframe="1Min",
+            )
+
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+                llm_review_engine=FakeLLMReviewEngine(circuit_open=True),
+            )
+
+            pipeline.run_once()
+
+            with self.session_local() as session:
+                reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(len(reviews), 1)
+                self.assertEqual(reviews[0].verdict, "error")
+                self.assertEqual(len(executions), 1)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original["trading_universe_source"]
+            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
 
     def test_pipeline_llm_min_confidence(self) -> None:
         from app import config

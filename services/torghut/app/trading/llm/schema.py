@@ -17,6 +17,10 @@ def _account_default() -> dict[str, str]:
     return {}
 
 
+def _recent_decisions_default() -> list["RecentDecisionSummary"]:
+    return []
+
+
 class LLMDecisionContext(BaseModel):
     """Minimal decision context passed to the LLM reviewer."""
 
@@ -32,6 +36,47 @@ class LLMDecisionContext(BaseModel):
     timeframe: str
     rationale: Optional[str] = None
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+class PortfolioSnapshot(BaseModel):
+    """Portfolio snapshot supplied to the LLM reviewer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    equity: Optional[Decimal] = None
+    cash: Optional[Decimal] = None
+    buying_power: Optional[Decimal] = None
+    total_exposure: Optional[Decimal] = None
+    exposure_by_symbol: dict[str, Decimal] = Field(default_factory=dict)
+    positions: list[dict[str, Any]] = Field(default_factory=_positions_default)
+
+
+class MarketSnapshot(BaseModel):
+    """Latest market data for the symbol."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str
+    as_of: datetime
+    price: Optional[Decimal] = None
+    spread: Optional[Decimal] = None
+    source: Optional[str] = None
+
+
+class RecentDecisionSummary(BaseModel):
+    """Recent decisions for the same symbol/strategy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    decision_id: str
+    strategy_id: str
+    symbol: str
+    action: Literal["buy", "sell"]
+    qty: Decimal
+    status: str
+    created_at: datetime
+    rationale: Optional[str] = None
+    price: Optional[Decimal] = None
 
 
 class LLMPolicyContext(BaseModel):
@@ -51,6 +96,9 @@ class LLMReviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     decision: LLMDecisionContext
+    portfolio: PortfolioSnapshot
+    market: Optional[MarketSnapshot] = None
+    recent_decisions: list[RecentDecisionSummary] = Field(default_factory=_recent_decisions_default)
     account: dict[str, str] = Field(default_factory=_account_default)
     positions: list[dict[str, str]] = Field(default_factory=_positions_default)
     policy: LLMPolicyContext
@@ -83,6 +131,9 @@ class LLMReviewResponse(BaseModel):
 
 __all__ = [
     "LLMDecisionContext",
+    "PortfolioSnapshot",
+    "MarketSnapshot",
+    "RecentDecisionSummary",
     "LLMPolicyContext",
     "LLMReviewRequest",
     "LLMReviewResponse",

@@ -68,6 +68,15 @@ Notes:
 {"watermark_lag_ms": 850, "last_event_ts": "2025-12-03T18:32:10Z", "status": "ok", "heartbeat": true}
 ```
 
+## ClickHouse storage contract
+The authoritative ClickHouse table for TA signals uses the envelope fields:
+- `event_ts`, `ingest_ts`, `symbol`, `window`, `payload`, `seq`, `source`
+
+Trading ingestion will read the envelope shape by default. For legacy flat tables
+(`ts`, `macd`, `rsi`, `vwap`, `signal_json`), set `TRADING_SIGNAL_SCHEMA=flat` and
+ensure `ts` is present. Prefer creating a view that aliases the envelope table to
+flat columns if you have older consumers.
+
 ## Avro subject naming
 - Use TopicNameStrategy (default) or per-topic subject: `<topic>-value`.
 - Compatibility: backward (recommended) to allow additive fields.

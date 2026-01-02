@@ -22,10 +22,15 @@ Pipeline:
 - `TRADING_ENABLED` (default `false`) gates the trading loop.
 - `TRADING_MODE` (`paper|live`, default `paper`); live requires `TRADING_LIVE_ENABLED=true`.
 - `TRADING_SIGNAL_SOURCE` (`clickhouse`), `TRADING_SIGNAL_TABLE` (default `torghut.ta_signals`).
+- `TRADING_SIGNAL_SCHEMA` (`auto|envelope|flat`) to align ClickHouse shape with ingestion.
+- `TRADING_PRICE_TABLE` (default `torghut.ta_microbars`) for price snapshots.
+- `TRADING_PRICE_LOOKBACK_MINUTES` for price lookups (default `5`).
 - `TA_CLICKHOUSE_URL`, `TA_CLICKHOUSE_USERNAME`, `TA_CLICKHOUSE_PASSWORD` for ClickHouse access.
 - `TRADING_POLL_MS` and `TRADING_RECONCILE_MS` for loop intervals.
 - `TRADING_UNIVERSE_SOURCE` (`jangar|static`), `JANGAR_SYMBOLS_URL`, `TRADING_STATIC_SYMBOLS`.
 - Optional risk defaults: `TRADING_MAX_NOTIONAL_PER_TRADE`, `TRADING_MAX_POSITION_PCT_EQUITY`.
+- LLM controls: `LLM_ENABLED`, `LLM_SHADOW_MODE`, `LLM_PROMPT_VERSION`, `LLM_RECENT_DECISIONS`,
+  `LLM_CIRCUIT_MAX_ERRORS`, `LLM_CIRCUIT_WINDOW_SECONDS`, `LLM_CIRCUIT_COOLDOWN_SECONDS`.
 SignalIngestor -> DecisionEngine -> RiskEngine -> OrderExecutor -> Reconciler
                                    ↘ Persistence (trade_decisions, executions)
 ```
@@ -110,6 +115,12 @@ Metrics (min set):
 - `orders_submitted_total`
 - `orders_rejected_total`
 - `reconcile_updates_total`
+- `llm_requests_total`
+- `llm_veto_total`
+- `llm_adjust_total`
+- `llm_error_total`
+- `llm_circuit_open_total`
+- `llm_shadow_total`
 
 ### 8) Manifests / runtime
 Option A: run trading loop in torghut Knative service.
@@ -125,6 +136,32 @@ Add unit tests:
 - idempotency
 Integration test:
 - ingest one fake signal -> decision -> execution row
+
+## Strategy provisioning
+Seed or update a default strategy (dev/stage):
+```
+uv run python services/torghut/scripts/seed_strategy.py \
+  --name macd-rsi-default \
+  --base-timeframe 1Min \
+  --symbols AAPL,MSFT \
+  --enabled
+```
+
+## Replay / backtest hook
+Replay ClickHouse signals through the decision engine without executing orders:
+```
+uv run python services/torghut/scripts/replay_signals.py \
+  --start 2026-01-01T00:00:00Z \
+  --end 2026-01-01T01:00:00Z \
+  --symbol AAPL \
+  --limit 200 \
+  --apply-risk
+```
+
+## Trading audit APIs
+- `GET /trading/decisions?symbol=&since=`
+- `GET /trading/executions?symbol=&since=`
+- `GET /trading/metrics`
 
 ## Code Locations (existing + new)
 Existing:

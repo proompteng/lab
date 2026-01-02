@@ -22,10 +22,13 @@ from .decisions import DecisionEngine
 from .execution import OrderExecutor
 from .ingest import ClickHouseSignalIngestor
 from .llm import LLMReviewEngine, apply_policy
-from .models import StrategyDecision
+from .models import SignalEnvelope, StrategyDecision
+from .prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
 from .reconcile import Reconciler
 from .risk import RiskEngine
 from .universe import UniverseResolver
+from .llm.schema import MarketSnapshot as LLMMarketSnapshot
+from .llm.schema import PortfolioSnapshot, RecentDecisionSummary
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,13 @@ class TradingMetrics:
     orders_submitted_total: int = 0
     orders_rejected_total: int = 0
     reconcile_updates_total: int = 0
+    llm_requests_total: int = 0
+    llm_approve_total: int = 0
+    llm_veto_total: int = 0
+    llm_adjust_total: int = 0
+    llm_error_total: int = 0
+    llm_circuit_open_total: int = 0
+    llm_shadow_total: int = 0
 
 
 @dataclass
@@ -63,6 +73,7 @@ class TradingPipeline:
         account_label: str,
         session_factory: Callable[[], Session] = SessionLocal,
         llm_review_engine: Optional[LLMReviewEngine] = None,
+        price_fetcher: Optional[PriceFetcher] = None,
     ) -> None:
         self.alpaca_client = alpaca_client
         self.ingestor = ingestor
@@ -74,6 +85,7 @@ class TradingPipeline:
         self.state = state
         self.account_label = account_label
         self.session_factory = session_factory
+        self.price_fetcher = price_fetcher or ClickHousePriceFetcher()
         if llm_review_engine is not None:
             self.llm_review_engine = llm_review_engine
         elif settings.llm_enabled:
@@ -142,6 +154,8 @@ class TradingPipeline:
         if self.executor.execution_exists(session, decision_row):
             return
 
+        decision = self._ensure_decision_price(decision, signal_price=decision.params.get("price"))
+
         decision, llm_reject_reason = self._apply_llm_review(
             session,
             decision,
@@ -204,11 +218,44 @@ class TradingPipeline:
             return decision, None
 
         engine = self.llm_review_engine or LLMReviewEngine()
+        if engine.circuit_breaker.is_open():
+            self.state.metrics.llm_circuit_open_total += 1
+            return self._handle_llm_unavailable(
+                session,
+                decision,
+                decision_row,
+                account,
+                positions,
+                reason="llm_circuit_open",
+            )
         request_json: dict[str, Any] = {}
         try:
-            request = engine.build_request(decision, account, positions)
+            self.state.metrics.llm_requests_total += 1
+            portfolio_snapshot = _build_portfolio_snapshot(account, positions)
+            market_snapshot = self._build_market_snapshot(decision)
+            recent_decisions = _load_recent_decisions(
+                session,
+                decision.strategy_id,
+                decision.symbol,
+            )
+            request = engine.build_request(
+                decision,
+                account,
+                positions,
+                portfolio_snapshot,
+                market_snapshot,
+                recent_decisions,
+            )
             request_json = request.model_dump(mode="json")
-            outcome = engine.review(decision, account, positions)
+            outcome = engine.review(
+                decision,
+                account,
+                positions,
+                request=request,
+                portfolio=portfolio_snapshot,
+                market=market_snapshot,
+                recent_decisions=recent_decisions,
+            )
             policy_outcome = apply_policy(decision, outcome.response)
 
             response_json = dict(outcome.response_json)
@@ -219,9 +266,14 @@ class TradingPipeline:
             adjusted_qty = None
             adjusted_order_type = None
             if policy_outcome.verdict == "adjust":
+                self.state.metrics.llm_adjust_total += 1
                 adjusted_qty = Decimal(str(policy_outcome.decision.qty))
                 adjusted_order_type = policy_outcome.decision.order_type
                 self._persist_llm_adjusted_decision(session, decision_row, policy_outcome.decision)
+            elif policy_outcome.verdict == "approve":
+                self.state.metrics.llm_approve_total += 1
+            elif policy_outcome.verdict == "veto":
+                self.state.metrics.llm_veto_total += 1
 
             self._persist_llm_review(
                 session=session,
@@ -240,11 +292,17 @@ class TradingPipeline:
                 tokens_completion=outcome.tokens_completion,
             )
 
+            engine.circuit_breaker.record_success()
+            if settings.llm_shadow_mode:
+                self.state.metrics.llm_shadow_total += 1
+                return decision, None
             if policy_outcome.verdict == "veto":
                 return decision, policy_outcome.reason or "llm_veto"
 
             return policy_outcome.decision, None
         except Exception as exc:
+            engine.circuit_breaker.record_error()
+            self.state.metrics.llm_error_total += 1
             fallback = self._resolve_llm_fallback()
             effective_verdict = "veto" if fallback == "veto" else "approve"
             response_json = {
@@ -275,6 +333,107 @@ class TradingPipeline:
                 return decision, "llm_error"
             logger.warning("LLM review failed; pass-through decision_id=%s error=%s", decision_row.id, exc)
             return decision, None
+
+    def _handle_llm_unavailable(
+        self,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        account: dict[str, str],
+        positions: list[dict[str, str]],
+        reason: str,
+    ) -> tuple[StrategyDecision, Optional[str]]:
+        fallback = self._resolve_llm_fallback()
+        effective_verdict = "veto" if fallback == "veto" else "approve"
+        portfolio_snapshot = _build_portfolio_snapshot(account, positions)
+        market_snapshot = self._build_market_snapshot(decision)
+        recent_decisions = _load_recent_decisions(
+            session,
+            decision.strategy_id,
+            decision.symbol,
+        )
+        request_payload = {
+            "decision": decision.model_dump(mode="json"),
+            "portfolio": portfolio_snapshot.model_dump(mode="json"),
+            "market": market_snapshot.model_dump(mode="json") if market_snapshot else None,
+            "recent_decisions": [item.model_dump(mode="json") for item in recent_decisions],
+            "reason": reason,
+        }
+        self._persist_llm_review(
+            session=session,
+            decision_row=decision_row,
+            model=settings.llm_model,
+            prompt_version=settings.llm_prompt_version,
+            request_json=request_payload,
+            response_json={"error": reason, "fallback": fallback, "effective_verdict": effective_verdict},
+            verdict="error",
+            confidence=None,
+            adjusted_qty=None,
+            adjusted_order_type=None,
+            rationale=reason,
+            risk_flags=[reason],
+            tokens_prompt=None,
+            tokens_completion=None,
+        )
+        if settings.llm_shadow_mode:
+            self.state.metrics.llm_shadow_total += 1
+            return decision, None
+        if fallback == "veto":
+            return decision, "llm_error"
+        return decision, None
+
+    def _build_market_snapshot(self, decision: StrategyDecision) -> Optional[LLMMarketSnapshot]:
+        params = decision.params or {}
+        price = params.get("price") or params.get("close")
+        spread: Optional[Any] = None
+        imbalance = params.get("imbalance")
+        if isinstance(imbalance, Mapping):
+            imbalance_data = cast(Mapping[str, Any], imbalance)
+            spread = imbalance_data.get("spread")
+        snapshot = None
+        if price is not None:
+            snapshot = MarketSnapshot(
+                symbol=decision.symbol,
+                as_of=decision.event_ts,
+                price=_optional_decimal(price),
+                spread=_optional_decimal(spread),
+                source="decision_params",
+            )
+        else:
+            snapshot = self.price_fetcher.fetch_market_snapshot(
+                SignalEnvelope(
+                    event_ts=decision.event_ts,
+                    symbol=decision.symbol,
+                    payload={},
+                    timeframe=decision.timeframe,
+                )
+            )
+        if snapshot is None:
+            return None
+        return LLMMarketSnapshot(
+            symbol=snapshot.symbol,
+            as_of=snapshot.as_of,
+            price=snapshot.price,
+            spread=snapshot.spread,
+            source=snapshot.source,
+        )
+
+    def _ensure_decision_price(self, decision: StrategyDecision, signal_price: Any) -> StrategyDecision:
+        if signal_price is not None:
+            return decision
+        price = self.price_fetcher.fetch_price(
+            SignalEnvelope(
+                event_ts=decision.event_ts,
+                symbol=decision.symbol,
+                payload={},
+                timeframe=decision.timeframe,
+            )
+        )
+        if price is None:
+            return decision
+        updated_params = dict(decision.params)
+        updated_params["price"] = price
+        return decision.model_copy(update={"params": updated_params})
 
     @staticmethod
     def _resolve_llm_fallback() -> str:
@@ -337,6 +496,68 @@ def _coerce_json(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _build_portfolio_snapshot(account: dict[str, str], positions: list[dict[str, str]]) -> PortfolioSnapshot:
+    equity = _optional_decimal(account.get("equity"))
+    cash = _optional_decimal(account.get("cash"))
+    buying_power = _optional_decimal(account.get("buying_power"))
+    exposure_by_symbol: dict[str, Decimal] = {}
+    total_exposure = Decimal("0")
+    for position in positions:
+        symbol = position.get("symbol")
+        if not symbol:
+            continue
+        market_value = _optional_decimal(position.get("market_value"))
+        if market_value is None:
+            continue
+        exposure_by_symbol[symbol] = exposure_by_symbol.get(symbol, Decimal("0")) + market_value
+        total_exposure += abs(market_value)
+    return PortfolioSnapshot(
+        equity=equity,
+        cash=cash,
+        buying_power=buying_power,
+        total_exposure=total_exposure,
+        exposure_by_symbol=exposure_by_symbol,
+        positions=positions,
+    )
+
+
+def _load_recent_decisions(
+    session: Session, strategy_id: str, symbol: str
+) -> list[RecentDecisionSummary]:
+    if settings.llm_recent_decisions <= 0:
+        return []
+    stmt = (
+        select(TradeDecision)
+        .where(TradeDecision.strategy_id == strategy_id)
+        .where(TradeDecision.symbol == symbol)
+        .order_by(TradeDecision.created_at.desc())
+        .limit(settings.llm_recent_decisions)
+    )
+    decisions = session.execute(stmt).scalars().all()
+    summaries: list[RecentDecisionSummary] = []
+    for decision in decisions:
+        decision_json = _coerce_json(decision.decision_json)
+        params_value: object = decision_json.get("params")
+        params_map: Mapping[str, Any] = {}
+        if isinstance(params_value, Mapping):
+            params_map = cast(Mapping[str, Any], params_value)
+        price = _optional_decimal(params_map.get("price"))
+        summaries.append(
+            RecentDecisionSummary(
+                decision_id=str(decision.id),
+                strategy_id=str(decision.strategy_id),
+                symbol=decision.symbol,
+                action=decision_json.get("action", "buy"),
+                qty=_optional_decimal(decision_json.get("qty")) or Decimal("0"),
+                status=decision.status,
+                created_at=decision.created_at,
+                rationale=decision.rationale,
+                price=price,
+            )
+        )
+    return summaries
+
+
 def _coerce_strategy_symbols(raw: object) -> set[str]:
     if raw is None:
         return set()
@@ -352,6 +573,15 @@ def _coerce_strategy_symbols(raw: object) -> set[str]:
     return set()
 
 
+def _optional_decimal(value: Any) -> Optional[Decimal]:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (ArithmeticError, ValueError):
+        return None
+
+
 class TradingScheduler:
     """Async background scheduler for trading pipeline."""
 
@@ -362,16 +592,18 @@ class TradingScheduler:
         self._pipeline: Optional[TradingPipeline] = None
 
     def _build_pipeline(self) -> TradingPipeline:
+        price_fetcher = ClickHousePriceFetcher()
         return TradingPipeline(
             alpaca_client=TorghutAlpacaClient(),
             ingestor=ClickHouseSignalIngestor(),
-            decision_engine=DecisionEngine(),
+            decision_engine=DecisionEngine(price_fetcher=price_fetcher),
             risk_engine=RiskEngine(),
             executor=OrderExecutor(),
             reconciler=Reconciler(),
             universe_resolver=UniverseResolver(),
             state=self.state,
             account_label=settings.trading_account_label,
+            price_fetcher=price_fetcher,
         )
 
     async def start(self) -> None:
