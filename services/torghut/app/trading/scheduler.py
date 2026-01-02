@@ -154,7 +154,11 @@ class TradingPipeline:
         if self.executor.execution_exists(session, decision_row):
             return
 
-        decision = self._ensure_decision_price(decision, signal_price=decision.params.get("price"))
+        decision, snapshot = self._ensure_decision_price(decision, signal_price=decision.params.get("price"))
+        if snapshot is not None:
+            params_update = decision.model_dump(mode="json").get("params", {})
+            if isinstance(params_update, Mapping):
+                self.executor.update_decision_params(session, decision_row, cast(Mapping[str, Any], params_update))
 
         decision, llm_reject_reason = self._apply_llm_review(
             session,
@@ -386,6 +390,16 @@ class TradingPipeline:
         params = decision.params or {}
         price = params.get("price") or params.get("close")
         spread: Optional[Any] = None
+        source = "decision_params"
+        snapshot_payload = params.get("price_snapshot")
+        if price is None and isinstance(snapshot_payload, Mapping):
+            snapshot_data = cast(Mapping[str, Any], snapshot_payload)
+            price = snapshot_data.get("price")
+            if spread is None:
+                spread = snapshot_data.get("spread")
+            payload_source = snapshot_data.get("source")
+            if payload_source is not None:
+                source = str(payload_source)
         imbalance = params.get("imbalance")
         if isinstance(imbalance, Mapping):
             imbalance_data = cast(Mapping[str, Any], imbalance)
@@ -397,7 +411,7 @@ class TradingPipeline:
                 as_of=decision.event_ts,
                 price=_optional_decimal(price),
                 spread=_optional_decimal(spread),
-                source="decision_params",
+                source=source,
             )
         else:
             snapshot = self.price_fetcher.fetch_market_snapshot(
@@ -418,10 +432,12 @@ class TradingPipeline:
             source=snapshot.source,
         )
 
-    def _ensure_decision_price(self, decision: StrategyDecision, signal_price: Any) -> StrategyDecision:
+    def _ensure_decision_price(
+        self, decision: StrategyDecision, signal_price: Any
+    ) -> tuple[StrategyDecision, Optional[MarketSnapshot]]:
         if signal_price is not None:
-            return decision
-        price = self.price_fetcher.fetch_price(
+            return decision, None
+        snapshot = self.price_fetcher.fetch_market_snapshot(
             SignalEnvelope(
                 event_ts=decision.event_ts,
                 symbol=decision.symbol,
@@ -429,11 +445,14 @@ class TradingPipeline:
                 timeframe=decision.timeframe,
             )
         )
-        if price is None:
-            return decision
+        if snapshot is None or snapshot.price is None:
+            return decision, None
         updated_params = dict(decision.params)
-        updated_params["price"] = price
-        return decision.model_copy(update={"params": updated_params})
+        updated_params["price"] = snapshot.price
+        updated_params["price_snapshot"] = _price_snapshot_payload(snapshot)
+        if snapshot.spread is not None and "spread" not in updated_params:
+            updated_params["spread"] = snapshot.spread
+        return decision.model_copy(update={"params": updated_params}), snapshot
 
     @staticmethod
     def _resolve_llm_fallback() -> str:
@@ -496,6 +515,15 @@ def _coerce_json(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _price_snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:
+    return {
+        "as_of": snapshot.as_of.isoformat(),
+        "price": str(snapshot.price) if snapshot.price is not None else None,
+        "spread": str(snapshot.spread) if snapshot.spread is not None else None,
+        "source": snapshot.source,
+    }
+
+
 def _build_portfolio_snapshot(account: dict[str, str], positions: list[dict[str, str]]) -> PortfolioSnapshot:
     equity = _optional_decimal(account.get("equity"))
     cash = _optional_decimal(account.get("cash"))
@@ -542,6 +570,9 @@ def _load_recent_decisions(
         if isinstance(params_value, Mapping):
             params_map = cast(Mapping[str, Any], params_value)
         price = _optional_decimal(params_map.get("price"))
+        if price is None and isinstance(params_map.get("price_snapshot"), Mapping):
+            snapshot_map = cast(Mapping[str, Any], params_map.get("price_snapshot"))
+            price = _optional_decimal(snapshot_map.get("price"))
         summaries.append(
             RecentDecisionSummary(
                 decision_id=str(decision.id),
@@ -590,6 +621,17 @@ class TradingScheduler:
         self._task: Optional[asyncio.Task[None]] = None
         self._stop_event = asyncio.Event()
         self._pipeline: Optional[TradingPipeline] = None
+
+    def llm_status(self) -> dict[str, object]:
+        circuit_snapshot = None
+        if self._pipeline and self._pipeline.llm_review_engine:
+            circuit_snapshot = self._pipeline.llm_review_engine.circuit_breaker.snapshot()
+        return {
+            "enabled": settings.llm_enabled,
+            "shadow_mode": settings.llm_shadow_mode,
+            "fail_mode": settings.llm_fail_mode,
+            "circuit": circuit_snapshot,
+        }
 
     def _build_pipeline(self) -> TradingPipeline:
         price_fetcher = ClickHousePriceFetcher()

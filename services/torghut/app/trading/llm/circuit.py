@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from ...config import settings
 
@@ -50,6 +51,16 @@ class LLMCircuitBreaker:
     def _prune(self, now: datetime) -> None:
         window_start = now - timedelta(seconds=self.window_seconds)
         self._errors = [ts for ts in self._errors if ts >= window_start]
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "open": self.is_open(),
+            "open_until": self._open_until,
+            "max_errors": self.max_errors,
+            "window_seconds": self.window_seconds,
+            "cooldown_seconds": self.cooldown_seconds,
+            "recent_error_count": len(self._errors),
+        }
 
 
 __all__ = ["LLMCircuitBreaker"]

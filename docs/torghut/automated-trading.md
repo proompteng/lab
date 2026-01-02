@@ -23,6 +23,9 @@ Pipeline:
 - `TRADING_MODE` (`paper|live`, default `paper`); live requires `TRADING_LIVE_ENABLED=true`.
 - `TRADING_SIGNAL_SOURCE` (`clickhouse`), `TRADING_SIGNAL_TABLE` (default `torghut.ta_signals`).
 - `TRADING_SIGNAL_SCHEMA` (`auto|envelope|flat`) to align ClickHouse shape with ingestion.
+  - `auto`: inspect columns (prefers `event_ts` envelope when present).
+  - `envelope`: select `event_ts, ingest_ts, symbol, payload, window, seq, source`.
+  - `flat`: select `ts, symbol, macd, macd_signal, signal, rsi, rsi14, ema, vwap, signal_json, timeframe, price, close, spread`.
 - `TRADING_PRICE_TABLE` (default `torghut.ta_microbars`) for price snapshots.
 - `TRADING_PRICE_LOOKBACK_MINUTES` for price lookups (default `5`).
 - `TA_CLICKHOUSE_URL`, `TA_CLICKHOUSE_USERNAME`, `TA_CLICKHOUSE_PASSWORD` for ClickHouse access.
@@ -122,6 +125,9 @@ Metrics (min set):
 - `llm_circuit_open_total`
 - `llm_shadow_total`
 
+`GET /trading/status` also reports LLM circuit breaker state and shadow/fail
+configuration for operational visibility.
+
 ### 8) Manifests / runtime
 Option A: run trading loop in torghut Knative service.
 Option B: create a **dedicated worker Deployment**:
@@ -162,6 +168,7 @@ uv run python services/torghut/scripts/replay_signals.py \
 - `GET /trading/decisions?symbol=&since=`
 - `GET /trading/executions?symbol=&since=`
 - `GET /trading/metrics`
+  - Decision JSON includes `params.price` + `params.price_snapshot` when prices are fetched from ClickHouse.
 
 ## Code Locations (existing + new)
 Existing:

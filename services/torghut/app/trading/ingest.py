@@ -18,6 +18,33 @@ from .models import SignalEnvelope
 
 logger = logging.getLogger(__name__)
 
+FLAT_SIGNAL_COLUMNS = [
+    "ts",
+    "symbol",
+    "macd",
+    "macd_signal",
+    "signal",
+    "rsi",
+    "rsi14",
+    "ema",
+    "vwap",
+    "signal_json",
+    "timeframe",
+    "price",
+    "close",
+    "spread",
+]
+
+ENVELOPE_SIGNAL_COLUMNS = [
+    "event_ts",
+    "ingest_ts",
+    "symbol",
+    "payload",
+    "window",
+    "seq",
+    "source",
+]
+
 
 class ClickHouseSignalIngestor:
     """Poll ClickHouse for new TA signals using an event_ts cursor."""
@@ -93,12 +120,7 @@ class ClickHouseSignalIngestor:
         cursor_str = cursor.strftime("%Y-%m-%d %H:%M:%S")
         limit = self.batch_size
         time_column = self._resolve_time_column()
-        columns = self._resolve_columns()
-        if columns:
-            select_columns = _select_columns(columns, time_column)
-            select_expr = ", ".join(select_columns)
-        else:
-            select_expr = "event_ts, ingest_ts, symbol, payload, window, seq, source"
+        select_expr = self._select_expression(time_column)
         return (
             f"SELECT {select_expr} "
             f"FROM {self.table} "
@@ -121,12 +143,7 @@ class ClickHouseSignalIngestor:
         start_str = start.strftime("%Y-%m-%d %H:%M:%S")
         end_str = end.strftime("%Y-%m-%d %H:%M:%S")
         time_column = self._resolve_time_column()
-        columns = self._resolve_columns()
-        if columns:
-            select_columns = _select_columns(columns, time_column)
-            select_expr = ", ".join(select_columns)
-        else:
-            select_expr = "event_ts, ingest_ts, symbol, payload, window, seq, source"
+        select_expr = self._select_expression(time_column)
         where_parts = [
             f"{time_column} >= toDateTime('{start_str}')",
             f"{time_column} <= toDateTime('{end_str}')",
@@ -169,6 +186,20 @@ class ClickHouseSignalIngestor:
             except json.JSONDecodeError as exc:
                 logger.warning("Failed to decode ClickHouse row: %s", exc)
         return rows
+
+    def _select_expression(self, time_column: str) -> str:
+        select_columns = self._select_columns_for_schema(time_column)
+        return ", ".join(select_columns)
+
+    def _select_columns_for_schema(self, time_column: str) -> list[str]:
+        if self.schema == "flat":
+            return _dedupe_columns([time_column, *FLAT_SIGNAL_COLUMNS])
+        if self.schema == "envelope":
+            return _dedupe_columns([time_column, *ENVELOPE_SIGNAL_COLUMNS])
+        columns = self._resolve_columns()
+        if columns:
+            return _select_columns(columns, time_column)
+        return _dedupe_columns([time_column, *ENVELOPE_SIGNAL_COLUMNS])
 
     def _resolve_columns(self) -> Optional[set[str]]:
         if self.schema != "auto":
@@ -362,6 +393,17 @@ def _select_columns(columns: set[str], time_column: str) -> list[str]:
     seen: set[str] = set()
     for col in desired:
         if col in seen or col not in columns:
+            continue
+        selected.append(col)
+        seen.add(col)
+    return selected
+
+
+def _dedupe_columns(columns: list[str]) -> list[str]:
+    selected: list[str] = []
+    seen: set[str] = set()
+    for col in columns:
+        if col in seen:
             continue
         selected.append(col)
         seen.add(col)

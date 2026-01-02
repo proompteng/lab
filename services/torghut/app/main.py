@@ -90,6 +90,7 @@ def trading_status() -> dict[str, object]:
         "last_reconcile_at": state.last_reconcile_at,
         "last_error": state.last_error,
         "metrics": state.metrics.__dict__,
+        "llm": scheduler.llm_status(),
     }
 
 

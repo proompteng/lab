@@ -210,6 +210,12 @@ The intelligence layer evaluates deterministic decisions and can veto or adjust 
 - `ta_microbars`: computed bars, partitioned by date/month; ORDER BY `(symbol, ts)`.
 - `ta_signals`: indicators and strategy outputs, partitioned by date/month; ORDER BY `(symbol, ts)`.
 
+Trading ingestion queries ClickHouse based on `TRADING_SIGNAL_SCHEMA`:
+- `auto` (default): inspect columns and choose envelope (`event_ts`) or flat (`ts`).
+- `envelope`: select only envelope columns (`event_ts`, `ingest_ts`, `symbol`, `payload`, `window`, `seq`, `source`).
+- `flat`: select only flat columns (`ts`, `symbol`, `macd`, `macd_signal`, `signal`, `rsi`, `rsi14`, `ema`, `vwap`,
+  `signal_json`, `timeframe`, `price`, `close`, `spread`).
+
 ### Postgres
 - `trade_decisions`: decision_hash unique, decision metadata, timestamps.
 - `executions`: Alpaca order ids, state transitions, reconciliation timestamps.

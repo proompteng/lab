@@ -59,6 +59,13 @@ Trading audit + metrics:
 - `GET /trading/decisions?symbol=&since=` returns recent decision rows.
 - `GET /trading/executions?symbol=&since=` returns recent executions.
 - `GET /trading/metrics` returns counters for decisions, orders, and LLM outcomes.
+- `GET /trading/status` includes LLM circuit breaker state (`llm.circuit.open`) and shadow mode flags.
+
+LLM review operations:
+- **Shadow mode**: set `LLM_ENABLED=true`, `LLM_SHADOW_MODE=true`. Reviews are stored but do not veto/adjust orders.
+- **Circuit breaker open**: `llm.circuit.open=true` in `/trading/status` means LLM calls are skipped until cooldown.
+  Inspect `llm.circuit.recent_error_count`, fix upstream API issues, then wait for cooldown to clear or restart
+  the torghut service to reset the breaker window (paper only).
 
 ## Kafka produce failures
 - Readiness should go false; inspect auth/ACL, broker reachability, and SASL secrets.
