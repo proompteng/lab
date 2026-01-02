@@ -105,6 +105,37 @@ Use TTLs to control growth and avoid full-disk incidents:
 ### Replica Recovery
 If replication metadata is lost, ClickHouse replicas can be restored using `SYSTEM RESTORE REPLICA`. (Altinity guidance)
 
+## Failure Scenarios and Recovery (Operational)
+### Alpaca WS Forwarder
+- **Symptom:** 401/403 auth failures or 406 connection limit.
+- **Detection:** readiness fails; logs show auth or 406.
+- **Recovery:** verify one replica, rotate keys, restart forwarder, confirm status topic emits `healthy`.
+
+### Kafka Produce/Consume
+- **Symptom:** produce errors, consumer lag spikes.
+- **Detection:** readiness false on forwarder, Flink lag metrics, broker errors in logs.
+- **Recovery:** verify KafkaUser/SASL secrets, broker health, restart clients after fix.
+
+### Flink Checkpoint Stall
+- **Symptom:** checkpoint age increases; job still running but lag grows.
+- **Detection:** watermark/lag dashboards, checkpoint age alert.
+- **Recovery:** verify MinIO/S3 access, restart FlinkDeployment with last-state or savepoint.
+
+### ClickHouse Disk/Replica Issues
+- **Symptom:** inserts fail, replicas read-only, increasing queue.
+- **Detection:** ClickHouse logs, `SYSTEM REPLICA STATUS`, disk alerts.
+- **Recovery:** free space (TTL/retention), restore replicas, ensure keeper metadata present.
+
+### Trading Loop Failures
+- **Symptom:** no decisions/executions, reconcile lag.
+- **Detection:** `/trading/health` and decision lag metrics.
+- **Recovery:** validate ClickHouse connectivity, Alpaca API keys, and restart trading worker.
+
+### Jangar Visualization
+- **Symptom:** empty charts or errors for TA endpoints.
+- **Detection:** `/api/torghut/ta/latest` returns error or stale data.
+- **Recovery:** verify ClickHouse DB config and API query errors; ensure `CH_DATABASE=torghut`.
+
 ## Trading Loop Design (ClickHouse-first)
 - **Signal source:** ClickHouse `ta_signals`.
 - **Decision pipeline:** deterministic decision -> optional LLM review -> risk checks -> order execution -> reconciliation.
@@ -128,6 +159,27 @@ The intelligence layer evaluates deterministic decisions and can veto or adjust 
 - `GET /trading/health` -> dependency readiness (Alpaca, ClickHouse, Postgres).
 - `GET /trading/decisions?symbol=&since=` -> decisions audit trail.
 - `GET /trading/executions?symbol=&since=` -> executions and reconciliation state.
+
+### Example Trading API Shapes
+`GET /trading/status`:
+```json
+{
+  "enabled": false,
+  "mode": "paper",
+  "last_decision_at": "2026-01-02T00:00:00Z",
+  "llm_enabled": false
+}
+```
+
+`GET /trading/health`:
+```json
+{
+  "clickhouse": "ok",
+  "alpaca": "ok",
+  "postgres": "ok",
+  "last_reconcile_at": "2026-01-02T00:00:00Z"
+}
+```
 
 ### Jangar TA API (Current)
 - `GET /api/torghut/ta/bars?symbol=&from=&to=` -> microbars.
@@ -160,6 +212,74 @@ The intelligence layer evaluates deterministic decisions and can veto or adjust 
 - `executions`: Alpaca order ids, state transitions, reconciliation timestamps.
 - `llm_decision_reviews`: model/prompt metadata and verdicts.
 
+### Example DDL (ClickHouse)
+```sql
+CREATE TABLE torghut.ta_microbars (
+  ts DateTime64(3),
+  symbol LowCardinality(String),
+  open Float64,
+  high Float64,
+  low Float64,
+  close Float64,
+  volume Float64
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(ts)
+ORDER BY (symbol, ts)
+TTL ts + INTERVAL 30 DAY
+SETTINGS ttl_only_drop_parts = 1;
+
+CREATE TABLE torghut.ta_signals (
+  ts DateTime64(3),
+  symbol LowCardinality(String),
+  ema Float64,
+  rsi Float64,
+  macd Float64,
+  vwap Float64,
+  signal_json String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(ts)
+ORDER BY (symbol, ts)
+TTL ts + INTERVAL 14 DAY
+SETTINGS ttl_only_drop_parts = 1;
+```
+
+### Example DDL (Postgres)
+```sql
+CREATE TABLE trade_decisions (
+  id uuid PRIMARY KEY,
+  decision_hash text UNIQUE NOT NULL,
+  symbol text NOT NULL,
+  side text NOT NULL,
+  qty numeric NOT NULL,
+  decision_json jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  executed_at timestamptz
+);
+
+CREATE TABLE executions (
+  id uuid PRIMARY KEY,
+  decision_id uuid REFERENCES trade_decisions(id),
+  alpaca_order_id text NOT NULL,
+  status text NOT NULL,
+  last_update_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX trade_decisions_symbol_created_at_idx
+  ON trade_decisions (symbol, created_at DESC);
+```
+
+## Backtesting and Promotion Gates
+- Maintain a reproducible backtest harness that replays ClickHouse data windows.
+- Require strategy changes to pass a baseline of metrics before paper enablement.
+- Shadow mode: log LLM decisions without affecting execution and compare against deterministic outcomes.
+- Promotion gates for live trading should require:
+  - stable veto/approve rates,
+  - bounded drawdown in paper,
+  - no increase in reconciliation errors,
+  - human review sign-off for model/prompt changes.
+
 ## SLOs and SLIs (Proposed)
 - **TA end-to-end latency p95:** 500ms target (WS -> CH).
 - **Flink checkpoint age:** <2x checkpoint interval.
@@ -167,11 +287,10 @@ The intelligence layer evaluates deterministic decisions and can veto or adjust 
 - **Jangar API latency p95:** <200ms for cached TA queries.
 
 ## Known Gaps / Future Work
-- Formal DDL and TTL definitions for ClickHouse tables, including explicit partitioning strategy.
-- Explicit API schemas for trading loop endpoints and admin controls.
 - Full disaster recovery runbook for Kafka + ClickHouse + Flink.
 - CI checks that validate schema compatibility rules for TA schemas.
-- Backtesting harness to validate strategy changes before enabling live gating.
+- Backtesting harness implementation with data replay automation and report generation.
+- Live trading promotion checklist and formal change approval process.
 - Multi-venue execution, split routing, and smart order routing (future phase).
 - LLM shadow evaluation dashboards and automated veto-precision metrics.
 
