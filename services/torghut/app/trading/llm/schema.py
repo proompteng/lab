@@ -115,6 +115,7 @@ class LLMReviewResponse(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     adjusted_qty: Optional[Decimal] = None
     adjusted_order_type: Optional[Literal["market", "limit", "stop", "stop_limit"]] = None
+    limit_price: Optional[Decimal] = None
     rationale: str
     risk_flags: list[str] = Field(default_factory=list)
 

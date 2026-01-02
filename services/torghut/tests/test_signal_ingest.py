@@ -147,7 +147,10 @@ class TestSignalIngest(TestCase):
 
         ingestor = CursorIngestor(schema="envelope", table="torghut.ta_signals", url="http://example")
         with session_local() as session:
-            ingestor.fetch_signals(session)
+            batch = ingestor.fetch_signals(session)
+            cursor = session.execute(select(TradeCursor)).scalar_one_or_none()
+            self.assertIsNone(cursor)
+            ingestor.commit_cursor(session, batch)
             cursor = session.execute(select(TradeCursor)).scalar_one()
             self.assertEqual(cursor.cursor_at, datetime(2026, 1, 1, 0, 0, 10))
             self.assertEqual(cursor.cursor_seq, 2)

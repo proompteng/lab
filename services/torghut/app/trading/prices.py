@@ -68,12 +68,12 @@ class ClickHousePriceFetcher(PriceFetcher):
         target_ts = signal.event_ts
         lookback = target_ts - timedelta(minutes=self.lookback_minutes)
         query = (
-            "SELECT ts, c, close, vwap, price, spread "
+            "SELECT event_ts, c, close, vwap, price, spread "
             f"FROM {self.table} "
             f"WHERE symbol = '{signal.symbol}' "
-            f"AND ts >= toDateTime('{lookback.strftime('%Y-%m-%d %H:%M:%S')}') "
-            f"AND ts <= toDateTime('{target_ts.strftime('%Y-%m-%d %H:%M:%S')}') "
-            "ORDER BY ts DESC "
+            f"AND event_ts >= toDateTime('{lookback.strftime('%Y-%m-%d %H:%M:%S')}') "
+            f"AND event_ts <= toDateTime('{target_ts.strftime('%Y-%m-%d %H:%M:%S')}') "
+            "ORDER BY event_ts DESC "
             "LIMIT 1 "
             "FORMAT JSONEachRow"
         )
@@ -89,12 +89,12 @@ class ClickHousePriceFetcher(PriceFetcher):
         target_ts = signal.event_ts
         lookback = target_ts - timedelta(minutes=self.lookback_minutes)
         query = (
-            "SELECT ts, c, close, vwap, price, spread "
+            "SELECT event_ts, c, close, vwap, price, spread "
             f"FROM {self.table} "
             f"WHERE symbol = '{signal.symbol}' "
-            f"AND ts >= toDateTime('{lookback.strftime('%Y-%m-%d %H:%M:%S')}') "
-            f"AND ts <= toDateTime('{target_ts.strftime('%Y-%m-%d %H:%M:%S')}') "
-            "ORDER BY ts DESC "
+            f"AND event_ts >= toDateTime('{lookback.strftime('%Y-%m-%d %H:%M:%S')}') "
+            f"AND event_ts <= toDateTime('{target_ts.strftime('%Y-%m-%d %H:%M:%S')}') "
+            "ORDER BY event_ts DESC "
             "LIMIT 1 "
             "FORMAT JSONEachRow"
         )
@@ -102,7 +102,7 @@ class ClickHousePriceFetcher(PriceFetcher):
         if not rows:
             return None
         row = rows[0]
-        as_of = _parse_ts(row.get("ts")) or signal.event_ts
+        as_of = _parse_ts(row.get("event_ts")) or _parse_ts(row.get("ts")) or signal.event_ts
         price = _select_price(row)
         spread = _optional_decimal(row.get("spread"))
         return MarketSnapshot(

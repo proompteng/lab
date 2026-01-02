@@ -102,3 +102,28 @@ class TestAlpacaClient(TestCase):
             called_kwargs = mock_data_client.call_args.kwargs
             self.assertIsNone(called_kwargs.get("url_override"))
             self.assertTrue(called_kwargs.get("sandbox"))
+
+    def test_live_mode_uses_live_endpoints(self) -> None:
+        from app import config
+
+        original = config.settings.trading_mode
+        config.settings.trading_mode = "live"
+
+        try:
+            with (
+                patch("app.alpaca_client.TradingClient") as mock_trading_client,
+                patch("app.alpaca_client.StockHistoricalDataClient") as mock_data_client,
+            ):
+                TorghutAlpacaClient(
+                    api_key="k",
+                    secret_key="s",
+                    base_url="https://api.alpaca.markets",
+                )
+
+                trading_kwargs = mock_trading_client.call_args.kwargs
+                data_kwargs = mock_data_client.call_args.kwargs
+
+                self.assertFalse(trading_kwargs.get("paper"))
+                self.assertFalse(data_kwargs.get("sandbox"))
+        finally:
+            config.settings.trading_mode = original

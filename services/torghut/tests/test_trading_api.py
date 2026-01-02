@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import get_session
 from app.main import app
+from app.trading.scheduler import TradingScheduler
 from app.config import settings
 from app.models import Base, Execution, Strategy, TradeDecision
 
@@ -102,6 +103,10 @@ class TestTradingApi(TestCase):
         original = settings.trading_enabled
         settings.trading_enabled = True
         try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            app.state.trading_scheduler = scheduler
             response = self.client.get("/trading/health")
             self.assertEqual(response.status_code, 200)
             payload = response.json()
@@ -118,6 +123,10 @@ class TestTradingApi(TestCase):
         original = settings.trading_enabled
         settings.trading_enabled = True
         try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            app.state.trading_scheduler = scheduler
             response = self.client.get("/trading/health")
             self.assertEqual(response.status_code, 503)
             payload = response.json()

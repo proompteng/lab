@@ -22,6 +22,7 @@ from app.trading.llm.schema import (
 )
 from app.trading.models import SignalEnvelope, StrategyDecision
 from app.trading.prices import PriceFetcher
+from app.trading.ingest import SignalBatch
 from app.trading.reconcile import Reconciler
 from app.trading.risk import RiskEngine
 from app.trading.scheduler import TradingPipeline, TradingState
@@ -32,8 +33,11 @@ class FakeIngestor:
     def __init__(self, signals: list[SignalEnvelope]) -> None:
         self.signals = signals
 
-    def fetch_signals(self, session: Session) -> list[SignalEnvelope]:
-        return self.signals
+    def fetch_signals(self, session: Session) -> SignalBatch:
+        return SignalBatch(signals=self.signals, cursor_at=None, cursor_seq=None)
+
+    def commit_cursor(self, session: Session, batch: SignalBatch) -> None:
+        return None
 
 
 class FakeAlpacaClient:
@@ -80,12 +84,28 @@ class FakeAlpacaClient:
         }
 
 
+class CountingAlpacaClient(FakeAlpacaClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.account_calls = 0
+        self.position_calls = 0
+
+    def get_account(self) -> dict[str, str]:
+        self.account_calls += 1
+        return super().get_account()
+
+    def list_positions(self) -> list[dict[str, str]]:
+        self.position_calls += 1
+        return super().list_positions()
+
+
 class FakeLLMReviewEngine:
     def __init__(
         self,
         verdict: str = "approve",
         adjusted_qty: Decimal | None = None,
         adjusted_order_type: str | None = None,
+        limit_price: Decimal | None = None,
         confidence: float = 0.9,
         error: Exception | None = None,
         circuit_open: bool = False,
@@ -93,6 +113,7 @@ class FakeLLMReviewEngine:
         self.verdict = verdict
         self.adjusted_qty = adjusted_qty
         self.adjusted_order_type = adjusted_order_type
+        self.limit_price = limit_price
         self.confidence = confidence
         self.error = error
         self.circuit_breaker = FakeCircuitBreaker(circuit_open)
@@ -167,6 +188,7 @@ class FakeLLMReviewEngine:
             confidence=self.confidence,
             adjusted_qty=self.adjusted_qty,
             adjusted_order_type=self.adjusted_order_type,
+            limit_price=self.limit_price,
             rationale="ok",
             risk_flags=[],
         )
@@ -363,6 +385,72 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_live_enabled = original["trading_live_enabled"]
             config.settings.trading_universe_source = original["trading_universe_source"]
             config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+
+    def test_pipeline_reuses_account_snapshot_within_reconcile_interval(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "trading_reconcile_ms": config.settings.trading_reconcile_ms,
+        }
+        config.settings.trading_enabled = False
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.trading_reconcile_ms = 60000
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                timeframe="1Min",
+            )
+
+            alpaca_client = CountingAlpacaClient()
+            pipeline = TradingPipeline(
+                alpaca_client=alpaca_client,
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+
+            pipeline.run_once()
+            pipeline.run_once()
+
+            self.assertEqual(alpaca_client.account_calls, 1)
+            self.assertEqual(alpaca_client.position_calls, 1)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original["trading_universe_source"]
+            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.trading_reconcile_ms = original["trading_reconcile_ms"]
 
     def test_pipeline_persists_price_snapshot(self) -> None:
         from app import config
@@ -637,6 +725,7 @@ class TestTradingPipeline(TestCase):
                     verdict="adjust",
                     adjusted_qty=Decimal("1.2"),
                     adjusted_order_type="limit",
+                    limit_price=Decimal("101.5"),
                 ),
             )
 
