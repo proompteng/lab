@@ -1,6 +1,7 @@
 import { open as openFile } from 'node:fs/promises'
 
-import { defineWebSocketHandler } from 'h3'
+import { createFileRoute } from '@tanstack/react-router'
+import { defineWebSocket } from 'h3'
 
 import {
   captureTerminalSnapshot,
@@ -24,6 +25,14 @@ type PeerState = {
   snapshotInFlight: boolean
 }
 
+export const Route = createFileRoute('/api/terminals/$sessionId/ws')({
+  server: {
+    handlers: {
+      GET: () => websocketResponse(),
+    },
+  },
+})
+
 const peerState = new WeakMap<object, PeerState>()
 
 const encodeBase64 = (value: string | Uint8Array) => {
@@ -37,10 +46,8 @@ const sendJson = (peer: { send: (data: string) => void }, payload: unknown) => {
   peer.send(JSON.stringify(payload))
 }
 
-const resolveSessionId = (peer: { request?: { url?: string } }) => {
-  const rawUrl = peer.request?.url
-  if (!rawUrl) return null
-  const pathname = new URL(rawUrl, 'http://localhost').pathname
+const resolveSessionId = (request: Request) => {
+  const pathname = new URL(request.url).pathname
   const match = pathname.match(/\/api\/terminals\/([^/]+)\/ws$/)
   if (!match) return null
   const candidate = formatSessionId(decodeURIComponent(match[1] ?? ''))
@@ -72,29 +79,17 @@ const readLogChunk = async (state: PeerState, peer: { send: (data: string) => vo
   sendJson(peer, { type: 'output', data: encodeBase64(buffer.subarray(0, bytesRead)) })
 }
 
-export default defineWebSocketHandler({
-  async open(peer) {
-    const sessionId = resolveSessionId(peer)
-    if (!sessionId) {
-      closeWithError(peer, 'Invalid terminal session id.')
-      return
-    }
+const websocketHooks = defineWebSocket({
+  async upgrade(request) {
+    const sessionId = resolveSessionId(request)
+    if (!sessionId) return new Response('Invalid terminal session id.', { status: 400 })
 
     const session = await getTerminalSession(sessionId)
-    if (!session) {
-      closeWithError(peer, 'Session not found.')
-      return
-    }
-    if (session.status !== 'ready') {
-      closeWithError(peer, `Session not ready (${session.status}).`)
-      return
-    }
+    if (!session) return new Response('Session not found.', { status: 404 })
+    if (session.status !== 'ready') return new Response(`Session not ready (${session.status}).`, { status: 409 })
 
     const exists = await ensureTerminalSessionExists(sessionId)
-    if (!exists) {
-      closeWithError(peer, 'Session not ready.')
-      return
-    }
+    if (!exists) return new Response('Session not ready.', { status: 409 })
 
     try {
       await ensureTerminalLogPipe(sessionId)
@@ -102,12 +97,20 @@ export default defineWebSocketHandler({
       const message = error instanceof Error ? error.message : 'Unable to attach terminal log pipe.'
       console.warn('[terminals] ws log pipe failed', { sessionId, message })
       await markTerminalSessionError(sessionId, message)
-      closeWithError(peer, message)
+      return new Response(message, { status: 500 })
+    }
+
+    return { context: { sessionId } }
+  },
+
+  async open(peer) {
+    const sessionId = typeof peer.context?.sessionId === 'string' ? peer.context.sessionId : null
+    if (!sessionId) {
+      closeWithError(peer, 'Invalid terminal session id.')
       return
     }
 
     const logPath = await getTerminalLogPath(sessionId)
-
     const state: PeerState = {
       sessionId,
       closed: false,
@@ -158,18 +161,13 @@ export default defineWebSocketHandler({
 
     let payload: unknown
     try {
-      if (typeof message === 'string') {
-        payload = JSON.parse(message)
-      } else if (message && typeof (message as { json?: () => unknown }).json === 'function') {
-        payload = await (message as { json: () => unknown }).json()
-      } else if (message && typeof (message as { text?: () => unknown }).text === 'function') {
-        const text = await (message as { text: () => unknown }).text()
-        if (typeof text === 'string') {
-          payload = JSON.parse(text)
-        }
-      }
+      payload = message.json()
     } catch {
-      return
+      try {
+        payload = JSON.parse(message.text())
+      } catch {
+        return
+      }
     }
 
     if (!payload || typeof payload !== 'object') return
@@ -239,3 +237,9 @@ export default defineWebSocketHandler({
     })
   },
 })
+
+const websocketResponse = () => {
+  const response = new Response(null, { status: 426 })
+  ;(response as Response & { crossws?: typeof websocketHooks }).crossws = websocketHooks
+  return response
+}

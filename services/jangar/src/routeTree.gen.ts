@@ -49,6 +49,7 @@ import { Route as ApiTorghutTaLatestRouteImport } from './routes/api/torghut/ta/
 import { Route as ApiTorghutTaBarsRouteImport } from './routes/api/torghut/ta/bars'
 import { Route as ApiTorghutSymbolsSymbolRouteImport } from './routes/api/torghut/symbols/$symbol'
 import { Route as ApiTerminalsSessionIdStreamRouteImport } from './routes/api/terminals/$sessionId/stream'
+import { Route as ApiTerminalsSessionIdWsRouteImport } from './routes/api/terminals/$sessionId/ws'
 import { Route as ApiTerminalsSessionIdResizeRouteImport } from './routes/api/terminals/$sessionId/resize'
 import { Route as ApiTerminalsSessionIdInputRouteImport } from './routes/api/terminals/$sessionId/input'
 import { Route as ApiTerminalsSessionIdTerminateRouteImport } from './routes/api/terminals/$sessionId/terminate'
@@ -255,6 +256,12 @@ const ApiTerminalsSessionIdStreamRoute =
     path: '/stream',
     getParentRoute: () => ApiTerminalsSessionIdRoute,
   } as any)
+const ApiTerminalsSessionIdWsRoute =
+  ApiTerminalsSessionIdWsRouteImport.update({
+    id: '/ws',
+    path: '/ws',
+    getParentRoute: () => ApiTerminalsSessionIdRoute,
+  } as any)
 const ApiTerminalsSessionIdResizeRoute =
   ApiTerminalsSessionIdResizeRouteImport.update({
     id: '/resize',
@@ -320,6 +327,7 @@ export interface FileRoutesByFullPath {
   '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
   '/api/terminals/$sessionId/resize': typeof ApiTerminalsSessionIdResizeRoute
   '/api/terminals/$sessionId/stream': typeof ApiTerminalsSessionIdStreamRoute
+  '/api/terminals/$sessionId/ws': typeof ApiTerminalsSessionIdWsRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
   '/api/torghut/ta/latest': typeof ApiTorghutTaLatestRoute
@@ -366,6 +374,7 @@ export interface FileRoutesByTo {
   '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
   '/api/terminals/$sessionId/resize': typeof ApiTerminalsSessionIdResizeRoute
   '/api/terminals/$sessionId/stream': typeof ApiTerminalsSessionIdStreamRoute
+  '/api/terminals/$sessionId/ws': typeof ApiTerminalsSessionIdWsRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
   '/api/torghut/ta/latest': typeof ApiTorghutTaLatestRoute
@@ -413,6 +422,7 @@ export interface FileRoutesById {
   '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
   '/api/terminals/$sessionId/resize': typeof ApiTerminalsSessionIdResizeRoute
   '/api/terminals/$sessionId/stream': typeof ApiTerminalsSessionIdStreamRoute
+  '/api/terminals/$sessionId/ws': typeof ApiTerminalsSessionIdWsRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
   '/api/torghut/ta/latest': typeof ApiTorghutTaLatestRoute
@@ -461,6 +471,7 @@ export interface FileRouteTypes {
     | '/api/terminals/$sessionId/terminate'
     | '/api/terminals/$sessionId/resize'
     | '/api/terminals/$sessionId/stream'
+    | '/api/terminals/$sessionId/ws'
     | '/api/torghut/symbols/$symbol'
     | '/api/torghut/ta/bars'
     | '/api/torghut/ta/latest'
@@ -507,6 +518,7 @@ export interface FileRouteTypes {
     | '/api/terminals/$sessionId/terminate'
     | '/api/terminals/$sessionId/resize'
     | '/api/terminals/$sessionId/stream'
+    | '/api/terminals/$sessionId/ws'
     | '/api/torghut/symbols/$symbol'
     | '/api/torghut/ta/bars'
     | '/api/torghut/ta/latest'
@@ -553,6 +565,7 @@ export interface FileRouteTypes {
     | '/api/terminals/$sessionId/terminate'
     | '/api/terminals/$sessionId/resize'
     | '/api/terminals/$sessionId/stream'
+    | '/api/terminals/$sessionId/ws'
     | '/api/torghut/symbols/$symbol'
     | '/api/torghut/ta/bars'
     | '/api/torghut/ta/latest'
@@ -882,6 +895,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTerminalsSessionIdStreamRouteImport
       parentRoute: typeof ApiTerminalsSessionIdRoute
     }
+    '/api/terminals/$sessionId/ws': {
+      id: '/api/terminals/$sessionId/ws'
+      path: '/ws'
+      fullPath: '/api/terminals/$sessionId/ws'
+      preLoaderRoute: typeof ApiTerminalsSessionIdWsRouteImport
+      parentRoute: typeof ApiTerminalsSessionIdRoute
+    }
     '/api/terminals/$sessionId/resize': {
       id: '/api/terminals/$sessionId/resize'
       path: '/resize'
@@ -919,6 +939,7 @@ interface ApiTerminalsSessionIdRouteChildren {
   ApiTerminalsSessionIdTerminateRoute: typeof ApiTerminalsSessionIdTerminateRoute
   ApiTerminalsSessionIdResizeRoute: typeof ApiTerminalsSessionIdResizeRoute
   ApiTerminalsSessionIdStreamRoute: typeof ApiTerminalsSessionIdStreamRoute
+  ApiTerminalsSessionIdWsRoute: typeof ApiTerminalsSessionIdWsRoute
 }
 
 const ApiTerminalsSessionIdRouteChildren: ApiTerminalsSessionIdRouteChildren = {
@@ -927,6 +948,7 @@ const ApiTerminalsSessionIdRouteChildren: ApiTerminalsSessionIdRouteChildren = {
   ApiTerminalsSessionIdTerminateRoute: ApiTerminalsSessionIdTerminateRoute,
   ApiTerminalsSessionIdResizeRoute: ApiTerminalsSessionIdResizeRoute,
   ApiTerminalsSessionIdStreamRoute: ApiTerminalsSessionIdStreamRoute,
+  ApiTerminalsSessionIdWsRoute: ApiTerminalsSessionIdWsRoute,
 }
 
 const ApiTerminalsSessionIdRouteWithChildren =
