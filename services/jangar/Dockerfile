@@ -62,9 +62,19 @@ RUN --mount=type=cache,target=/var/cache/apt \
   gnupg \
   jq \
   ripgrep \
+  tmux \
   tini \
   unzip; \
   rm -rf /var/lib/apt/lists/*
+
+# Basic tmux defaults for web terminals.
+RUN set -eux; \
+  cat <<'TMUX' > /etc/tmux.conf
+set -g default-terminal "xterm-256color"
+set -ga terminal-overrides ",xterm-256color:Tc"
+set -g mouse on
+set -g history-limit 50000
+TMUX
 
 # Install Java 25 (Temurin)
 RUN set -eux; \

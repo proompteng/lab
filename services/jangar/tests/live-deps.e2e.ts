@@ -131,4 +131,42 @@ test.describe('live deps (Tilt / remote cluster)', () => {
     await expect(page.getByText(/ECONNREFUSED|connect ECONNREFUSED|DATABASE_URL/)).toHaveCount(0)
     await expect(page.getByText('No messages yet. Waiting for the general channel to publish events.')).toBeVisible()
   })
+
+  test('terminal sessions can be created and re-opened', async ({ page, request }) => {
+    await page.goto('/terminals')
+    await expect(page.getByRole('heading', { name: 'Terminal sessions', level: 1 })).toBeVisible()
+
+    const [createResponse] = await Promise.all([
+      page.waitForResponse((response) => response.url().includes('/api/terminals?create=1')),
+      page.getByRole('button', { name: 'New session' }).click(),
+    ])
+    expect(createResponse.ok()).toBe(true)
+    const createPayload = (await createResponse.json()) as { ok?: boolean; session?: { id?: string } }
+    expect(createPayload.ok).toBe(true)
+    const sessionId = createPayload.session?.id
+    expect(sessionId).toBeTruthy()
+
+    await expect
+      .poll(
+        async () => {
+          const response = await request.get(`/api/terminals/${encodeURIComponent(sessionId ?? '')}`)
+          if (!response.ok()) return null
+          const payload = (await response.json()) as { session?: { status?: string } }
+          return payload.session?.status ?? null
+        },
+        { timeout: 90_000 },
+      )
+      .toBe('ready')
+
+    await page.getByText(`Session id: ${sessionId}`).click()
+    await page.waitForURL(new RegExp(`/terminals/${sessionId}`))
+    await expect(page.getByText('Status: connected')).toBeVisible({ timeout: 20_000 })
+
+    await page.goto('/terminals')
+    await expect(page.getByText(`Session id: ${sessionId}`)).toBeVisible()
+
+    await page.getByText(`Session id: ${sessionId}`).click()
+    await page.waitForURL(new RegExp(`/terminals/${sessionId}`))
+    await expect(page.getByText('Status: connected')).toBeVisible({ timeout: 15_000 })
+  })
 })

@@ -7,8 +7,10 @@ import {
   IconList,
   IconMessages,
   IconRobot,
+  IconTerminal2,
 } from '@tabler/icons-react'
 import { Link, useRouterState } from '@tanstack/react-router'
+import * as React from 'react'
 
 import {
   Sidebar,
@@ -35,10 +37,16 @@ type AppNavItem = {
   children?: { to: string; label: string }[]
 }
 
+type TerminalSession = {
+  id: string
+  label: string
+}
+
 const appNav: AppNavItem[] = [
   { to: '/', label: 'Home', icon: IconHome },
   { to: '/memories', label: 'Memories', icon: IconBrain },
   { to: '/codex/runs', label: 'Codex runs', icon: IconList },
+  { to: '/terminals', label: 'Terminals', icon: IconTerminal2 },
   {
     to: '/agents',
     label: 'Agents',
@@ -71,6 +79,30 @@ export function AppSidebar() {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const { state: sidebarState } = useSidebar()
   const isCollapsed = sidebarState === 'collapsed'
+  const [terminalSessions, setTerminalSessions] = React.useState<TerminalSession[]>([])
+
+  React.useEffect(() => {
+    let isMounted = true
+    const loadTerminalSessions = async () => {
+      try {
+        const response = await fetch('/api/terminals')
+        const payload = (await response.json().catch(() => null)) as
+          | { ok: true; sessions: TerminalSession[] }
+          | { ok: false; message?: string }
+          | null
+
+        if (!response.ok || !payload || !('ok' in payload) || !payload.ok) return
+        if (isMounted) setTerminalSessions(payload.sessions ?? [])
+      } catch {
+        if (isMounted) setTerminalSessions([])
+      }
+    }
+
+    void loadTerminalSessions()
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   return (
     <Sidebar collapsible="icon">
@@ -90,7 +122,14 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {appNav.map((item) => {
-                const isActive = pathname === item.to
+                const isActive = pathname === item.to || pathname.startsWith(`${item.to}/`)
+                const children =
+                  item.to === '/terminals' && terminalSessions.length > 0
+                    ? terminalSessions.map((session) => ({
+                        to: `/terminals/${session.id}`,
+                        label: session.label || session.id,
+                      }))
+                    : item.children
                 return (
                   <SidebarMenuItem key={item.to}>
                     <SidebarNavButton
@@ -100,9 +139,9 @@ export function AppSidebar() {
                       label={item.label}
                       to={item.to}
                     />
-                    {item.children ? (
+                    {children ? (
                       <SidebarMenuSub>
-                        {item.children.map((child) => (
+                        {children.map((child) => (
                           <SidebarMenuSubItem key={child.to}>
                             <SidebarMenuSubButton render={<Link to={child.to} />} isActive={pathname === child.to}>
                               {child.label}
