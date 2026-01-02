@@ -27,6 +27,9 @@ The torghut main service does **not** consume TA topics directly; it reads TA da
 
 ## High-Level Architecture
 
+The trading loop runs inside the torghut Knative service when `TRADING_ENABLED=true`. It is configured
+for paper mode by default and uses trading-specific environment variables.
+
 ```mermaid
 flowchart LR
   subgraph Market
@@ -129,7 +132,7 @@ If replication metadata is lost, ClickHouse replicas can be restored using `SYST
 ### Trading Loop Failures
 - **Symptom:** no decisions/executions, reconcile lag.
 - **Detection:** `/trading/health` and decision lag metrics.
-- **Recovery:** validate ClickHouse connectivity, Alpaca API keys, and restart trading worker.
+- **Recovery:** validate ClickHouse connectivity, Alpaca API keys, and restart torghut service.
 
 ### Jangar Visualization
 - **Symptom:** empty charts or errors for TA endpoints.
