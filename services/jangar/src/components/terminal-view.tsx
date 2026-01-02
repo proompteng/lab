@@ -37,6 +37,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
   const inputBufferRef = React.useRef('')
   const snapshotTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const snapshotPendingRef = React.useRef(false)
+  const snapshotQueuedRef = React.useRef(false)
   const shouldReconnectRef = React.useRef(true)
   const resizeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastSizeRef = React.useRef<{ cols: number; rows: number } | null>(null)
@@ -75,10 +76,15 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
 
     const requestSnapshot = () => {
       if (snapshotPendingRef.current) return
+      if (socketRef.current?.readyState !== WebSocket.OPEN) {
+        snapshotQueuedRef.current = true
+        return
+      }
       if (snapshotTimerRef.current) return
       snapshotTimerRef.current = setTimeout(() => {
         snapshotTimerRef.current = null
         snapshotPendingRef.current = true
+        snapshotQueuedRef.current = false
         sendMessage({ type: 'snapshot' })
       }, 120)
     }
@@ -132,6 +138,9 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         setStatus('connected')
         setError(null)
         sendResize()
+        if (snapshotQueuedRef.current) {
+          requestSnapshot()
+        }
         if (inputBufferRef.current) {
           flushInput()
         }
@@ -198,6 +207,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         setStatus('connecting')
         setError('Reconnecting...')
         snapshotPendingRef.current = false
+        snapshotQueuedRef.current = false
       }
 
       socket.onclose = () => {
@@ -205,6 +215,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         setStatus('connecting')
         setError('Reconnecting...')
         snapshotPendingRef.current = false
+        snapshotQueuedRef.current = false
         if (reconnectTimerRef.current) return
         const attempt = reconnectAttemptRef.current
         const delay = Math.min(10_000, 1000 * 2 ** attempt)
