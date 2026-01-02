@@ -153,7 +153,16 @@ export default defineWebSocketHandler({
 
     let payload: unknown
     try {
-      payload = await message.json()
+      if (typeof message === 'string') {
+        payload = JSON.parse(message)
+      } else if (message && typeof (message as { json?: () => unknown }).json === 'function') {
+        payload = await (message as { json: () => unknown }).json()
+      } else if (message && typeof (message as { text?: () => unknown }).text === 'function') {
+        const text = await (message as { text: () => unknown }).text()
+        if (typeof text === 'string') {
+          payload = JSON.parse(text)
+        }
+      }
     } catch {
       return
     }
