@@ -2,7 +2,12 @@ import type { ReadyCommentCommand } from '@/codex/workflow-machine'
 import { deriveRepositoryFullName, type GithubRepository } from '@/github-payload'
 import { logger } from '@/logger'
 import type { WebhookConfig } from '../../types'
-import { CODEX_READY_COMMENT_MARKER, CODEX_READY_TO_MERGE_COMMENT } from '../constants'
+import {
+  CODEX_READY_COMMENT_MARKER,
+  CODEX_READY_TO_MERGE_COMMENT,
+  CODEX_REVIEW_REQUEST_COMMENT,
+  CODEX_REVIEW_REQUEST_COMMENT_MARKER,
+} from '../constants'
 import { shouldHandlePullRequestAction } from '../helpers'
 import type { WorkflowExecutionContext, WorkflowStage } from '../workflow'
 import { executeWorkflowCommands } from '../workflow'
@@ -17,6 +22,8 @@ interface PullRequestBaseParams {
   senderLogin?: string
   skipActionCheck?: boolean
 }
+
+const CODEX_REVIEW_REQUEST_LINE_THRESHOLD = 500
 
 export const handlePullRequestEvent = async (params: PullRequestBaseParams): Promise<WorkflowStage | null> => {
   const { parsedPayload, config, executionContext, actionValue, skipActionCheck } = params
@@ -81,6 +88,59 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
 
     if (!pull.headRef || !pull.headSha || !pull.baseRef) {
       return null
+    }
+
+    const totalChanges = pull.additions + pull.deletions
+    const shouldRequestCodexReview = totalChanges > CODEX_REVIEW_REQUEST_LINE_THRESHOLD && !pull.draft
+
+    if (shouldRequestCodexReview) {
+      const reviewLookup = await executionContext.runGithub(() =>
+        executionContext.githubService.findLatestPlanComment({
+          repositoryFullName: repoFullName,
+          issueNumber: pull.number,
+          token: config.github.token,
+          apiBaseUrl: config.github.apiBaseUrl,
+          userAgent: config.github.userAgent,
+          marker: CODEX_REVIEW_REQUEST_COMMENT_MARKER,
+        }),
+      )
+
+      if (!reviewLookup.ok && reviewLookup.reason !== 'not-found') {
+        logger.warn(
+          {
+            repository: repoFullName,
+            pullNumber,
+            reason: reviewLookup.reason,
+            status: reviewLookup.status,
+          },
+          'failed to check for codex review request comment',
+        )
+      }
+
+      if (!reviewLookup.ok && reviewLookup.reason === 'not-found') {
+        const reviewCommentResult = await executionContext.runGithub(() =>
+          executionContext.githubService.createPullRequestComment({
+            repositoryFullName: repoFullName,
+            pullNumber,
+            body: CODEX_REVIEW_REQUEST_COMMENT,
+            token: config.github.token,
+            apiBaseUrl: config.github.apiBaseUrl,
+            userAgent: config.github.userAgent,
+          }),
+        )
+
+        if (!reviewCommentResult.ok) {
+          logger.warn(
+            {
+              repository: repoFullName,
+              pullNumber,
+              reason: reviewCommentResult.reason,
+              status: reviewCommentResult.status,
+            },
+            'failed to post codex review request comment',
+          )
+        }
+      }
     }
 
     const threadsResult = await executionContext.runGithub(() =>

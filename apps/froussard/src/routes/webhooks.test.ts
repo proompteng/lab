@@ -409,6 +409,9 @@ describe('createWebhookHandler', () => {
               draft: false,
               merged: false,
               state: 'open',
+              additions: 12,
+              deletions: 4,
+              changedFiles: 3,
               headRef: 'codex/issue-9-clean',
               headSha: 'cleansha',
               baseRef: 'main',
@@ -470,6 +473,9 @@ describe('createWebhookHandler', () => {
               draft: false,
               merged: false,
               state: 'open',
+              additions: 8,
+              deletions: 2,
+              changedFiles: 1,
               headRef: 'feature/new-ui',
               headSha: 'xyz789',
               baseRef: 'main',
@@ -721,6 +727,9 @@ describe('createWebhookHandler', () => {
           draft: false,
           merged: false,
           state: 'open',
+          additions: 24,
+          deletions: 6,
+          changedFiles: 4,
           headRef: 'codex/issue-9-clean',
           headSha: 'cleansha',
           baseRef: 'main',
@@ -783,6 +792,67 @@ describe('createWebhookHandler', () => {
     expect(publishedMessages.some((message) => message.topic === baseConfig.topics.codexJudge)).toBe(true)
   })
 
+  it('posts a codex review request comment for large pull requests', async () => {
+    githubServiceMock.fetchPullRequest.mockReturnValueOnce(
+      Effect.succeed({
+        ok: true as const,
+        pullRequest: {
+          number: 14,
+          title: 'Large refactor',
+          body: '',
+          htmlUrl: 'https://github.com/owner/repo/pull/14',
+          draft: false,
+          merged: false,
+          state: 'open',
+          additions: 420,
+          deletions: 120,
+          changedFiles: 18,
+          headRef: 'feature/big-change',
+          headSha: 'bigsha',
+          baseRef: 'main',
+          authorLogin: 'user',
+          mergeableState: 'clean',
+        },
+      }),
+    )
+    githubServiceMock.issueHasReaction.mockReturnValueOnce(Effect.succeed({ ok: true as const, hasReaction: false }))
+    githubServiceMock.findLatestPlanComment.mockReturnValueOnce(
+      Effect.succeed({ ok: false as const, reason: 'not-found' as const }),
+    )
+
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+    const payload = {
+      action: 'edited',
+      repository: { full_name: 'owner/repo' },
+      sender: { login: 'user' },
+      pull_request: {
+        number: 14,
+        head: { ref: 'feature/big-change', sha: 'bigsha' },
+        base: { ref: 'main', repo: { full_name: 'owner/repo' } },
+        user: { login: 'USER' },
+      },
+    }
+
+    const response = await handler(buildRequest(payload, scenarioHeaders('pull_request', 'edited')), 'github')
+
+    expect(response.status).toBe(202)
+    await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: null })
+    expect(githubServiceMock.findLatestPlanComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repositoryFullName: 'owner/repo',
+        issueNumber: 14,
+        marker: expect.stringContaining('codex:review-request'),
+      }),
+    )
+    expect(githubServiceMock.createPullRequestComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repositoryFullName: 'owner/repo',
+        pullNumber: 14,
+        body: expect.stringContaining('@codex review'),
+      }),
+    )
+  })
+
   it('does not post a ready comment when thumbs up reaction is absent', async () => {
     githubServiceMock.fetchPullRequest.mockReturnValueOnce(
       Effect.succeed({
@@ -795,6 +865,9 @@ describe('createWebhookHandler', () => {
           draft: false,
           merged: false,
           state: 'open',
+          additions: 18,
+          deletions: 3,
+          changedFiles: 2,
           headRef: 'codex/issue-10-clean',
           headSha: 'cleansha2',
           baseRef: 'main',
@@ -845,6 +918,9 @@ describe('createWebhookHandler', () => {
           draft: false,
           merged: false,
           state: 'open',
+          additions: 22,
+          deletions: 5,
+          changedFiles: 3,
           headRef: 'codex/issue-12-conflict',
           headSha: 'conflictsha',
           baseRef: 'main',
@@ -898,6 +974,9 @@ describe('createWebhookHandler', () => {
           draft: true,
           merged: false,
           state: 'open',
+          additions: 30,
+          deletions: 8,
+          changedFiles: 4,
           headRef: 'codex/issue-6-ready',
           headSha: 'def456',
           baseRef: 'main',

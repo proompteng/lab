@@ -139,6 +139,9 @@ export interface PullRequestSummary {
   baseRef: string
   authorLogin: string | null
   mergeableState?: string | null
+  additions: number
+  deletions: number
+  changedFiles: number
 }
 
 export interface FetchPullRequestOptions {
