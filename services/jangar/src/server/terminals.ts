@@ -17,6 +17,9 @@ import {
 const SESSION_PREFIX = 'jangar-terminal-'
 const WORKTREE_DIR_NAME = '.worktrees'
 const LOG_DIR = process.env.JANGAR_TERMINAL_LOG_DIR?.trim() || '/tmp/jangar-terminals'
+const DEFAULT_LOG_MAX_BYTES = 8 * 1024 * 1024
+const DEFAULT_LOG_RETAIN_BYTES = 2 * 1024 * 1024
+const MIN_LOG_RETAIN_BYTES = 256 * 1024
 const DEFAULT_BASE_REF = process.env.JANGAR_TERMINAL_BASE_REF?.trim() || 'origin/main'
 const FALLBACK_BASE_REF = 'main'
 const MAX_WORKTREE_ATTEMPTS = 6
@@ -186,6 +189,51 @@ const ensureLogFile = async (path: string) => {
   await ensureLogDir()
   const handle = await open(path, 'a')
   await handle.close()
+}
+
+const resolveTerminalLogLimits = () => {
+  const rawMax = Number.parseInt(process.env.JANGAR_TERMINAL_LOG_MAX_BYTES ?? '', 10)
+  const maxBytes = Number.isFinite(rawMax) && rawMax > 0 ? rawMax : DEFAULT_LOG_MAX_BYTES
+  const rawRetain = Number.parseInt(process.env.JANGAR_TERMINAL_LOG_RETAIN_BYTES ?? '', 10)
+  let retainBytes =
+    Number.isFinite(rawRetain) && rawRetain > 0 ? rawRetain : Math.min(DEFAULT_LOG_RETAIN_BYTES, maxBytes)
+  retainBytes = Math.min(retainBytes, maxBytes)
+  retainBytes = Math.max(retainBytes, Math.min(maxBytes, MIN_LOG_RETAIN_BYTES))
+  return { maxBytes, retainBytes }
+}
+
+export const trimTerminalLogIfNeeded = async (sessionId: string) => {
+  if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
+  const logPath = join(LOG_DIR, `${sessionId}.log`)
+  const stats = await stat(logPath).catch((error) => {
+    if (isErrno(error) && error.code === 'ENOENT') return null
+    throw error
+  })
+  if (!stats) {
+    await ensureLogFile(logPath)
+    return { trimmed: false, size: 0 }
+  }
+
+  const { maxBytes, retainBytes } = resolveTerminalLogLimits()
+  if (stats.size <= maxBytes) return { trimmed: false, size: stats.size }
+
+  const handle = await open(logPath, 'r+')
+  try {
+    const current = await handle.stat()
+    if (current.size <= maxBytes) return { trimmed: false, size: current.size }
+    const keepBytes = Math.min(retainBytes, current.size)
+    const start = Math.max(0, current.size - keepBytes)
+    const buffer = Buffer.alloc(keepBytes)
+    const { bytesRead } = await handle.read(buffer, 0, keepBytes, start)
+    await handle.truncate(0)
+    if (bytesRead > 0) {
+      await handle.write(buffer.subarray(0, bytesRead), 0, bytesRead, 0)
+    }
+    await handle.truncate(bytesRead)
+    return { trimmed: true, size: bytesRead }
+  } finally {
+    await handle.close()
+  }
 }
 
 const clearInputQueue = (sessionId: string) => {
@@ -740,6 +788,7 @@ export const ensureTerminalLogPipe = async (sessionId: string): Promise<string> 
   if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
   const logPath = join(LOG_DIR, `${sessionId}.log`)
   await ensureLogFile(logPath)
+  await trimTerminalLogIfNeeded(sessionId)
   const pipeCommand = `cat >> ${logPath}`
   const result = await runTmux(['pipe-pane', '-t', sessionId, pipeCommand], {
     label: 'tmux pipe-pane',
