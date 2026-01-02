@@ -113,6 +113,21 @@ All routes live under `services/jangar/src/routes/api/github/*` and follow the e
 ### Event Ingestion (No Polling)
 Jangar must not poll GitHub for PR state. Instead, it consumes webhook-derived events published by Froussard and updates local state used by the UI:
 
+```mermaid
+flowchart LR
+  GH[GitHub Webhooks] --> FR[Froussard]
+  subgraph Kafka[Kafka Topics]
+    RAW[github.webhook.events]
+    CJ[github.webhook.codex.judge]
+  end
+  FR -->|raw payloads| RAW
+  FR -->|filtered PR + review + CI| CJ
+  CJ --> KS[KafkaSource jangar-codex-github-events]
+  KS --> JAPI[/api/codex/github-events]
+  JAPI --> JDB[(Jangar DB)]
+  JDB --> JUI[Jangar PR Review UI]
+```
+
 - **Source of truth**: Froussard receives GitHub webhooks and propagates them via Kafka topics.
   - Raw topic: `github.webhook.events` (full webhook payloads).
   - Filtered Codex judge topic: `github.webhook.codex.judge`.
