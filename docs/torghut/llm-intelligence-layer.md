@@ -154,6 +154,10 @@ sequenceDiagram
 - Missing context (quotes/positions): reject review and fall back.
 - Circuit breaker: if error rate exceeds threshold, disable LLM globally.
 
+Runtime integration note: the review runs in `TradingPipeline._handle_decision` after persisting the decision
+row and before deterministic risk checks. Failures respect `LLM_FAIL_MODE`, with live trading always vetoing on
+LLM error.
+
 ## Risk Management Alignment
 ### NIST AI RMF (Govern, Map, Measure, Manage)
 - Govern: model inventory, access controls, and change approvals.

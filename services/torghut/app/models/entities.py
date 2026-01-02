@@ -80,6 +80,9 @@ class TradeDecision(Base, CreatedAtMixin):
 
     strategy: Mapped[Strategy] = relationship(back_populates="trade_decisions")
     executions: Mapped[List["Execution"]] = relationship(back_populates="trade_decision")
+    llm_reviews: Mapped[List["LLMDecisionReview"]] = relationship(
+        back_populates="trade_decision", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         Index("ix_trade_decisions_strategy", "strategy_id"),
@@ -166,6 +169,37 @@ class TradeCursor(Base, TimestampMixin):
     cursor_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class LLMDecisionReview(Base, CreatedAtMixin):
+    """Audit record for LLM review of a trade decision."""
+
+    __tablename__ = "llm_decision_reviews"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    trade_decision_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("trade_decisions.id", ondelete="CASCADE"), nullable=False
+    )
+    model: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    input_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
+    response_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
+    verdict: Mapped[str] = mapped_column(String(length=16), nullable=False)
+    confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 4), nullable=True)
+    adjusted_qty: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    adjusted_order_type: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
+    rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    risk_flags: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    tokens_prompt: Mapped[Optional[int]] = mapped_column(nullable=True)
+    tokens_completion: Mapped[Optional[int]] = mapped_column(nullable=True)
+
+    trade_decision: Mapped[TradeDecision] = relationship(back_populates="llm_reviews")
+
+    __table_args__ = (
+        Index("ix_llm_decision_reviews_trade_decision_id", "trade_decision_id"),
+        Index("ix_llm_decision_reviews_verdict", "verdict"),
+        Index("ix_llm_decision_reviews_created_at", "created_at"),
+    )
+
+
 __all__ = [
     "Strategy",
     "TradeDecision",
@@ -173,6 +207,7 @@ __all__ = [
     "PositionSnapshot",
     "ToolRunLog",
     "TradeCursor",
+    "LLMDecisionReview",
     "TimestampMixin",
     "CreatedAtMixin",
     "JSONType",

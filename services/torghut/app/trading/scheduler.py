@@ -7,6 +7,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any, Optional, cast
 
 from sqlalchemy import select
@@ -15,11 +16,12 @@ from sqlalchemy.orm import Session
 from ..alpaca_client import TorghutAlpacaClient
 from ..config import settings
 from ..db import SessionLocal
-from ..models import Strategy
+from ..models import LLMDecisionReview, Strategy, TradeDecision
 from ..snapshots import snapshot_account_and_positions
 from .decisions import DecisionEngine
 from .execution import OrderExecutor
 from .ingest import ClickHouseSignalIngestor
+from .llm import LLMReviewEngine, apply_policy
 from .models import StrategyDecision
 from .reconcile import Reconciler
 from .risk import RiskEngine
@@ -60,6 +62,7 @@ class TradingPipeline:
         state: TradingState,
         account_label: str,
         session_factory: Callable[[], Session] = SessionLocal,
+        llm_review_engine: Optional[LLMReviewEngine] = None,
     ) -> None:
         self.alpaca_client = alpaca_client
         self.ingestor = ingestor
@@ -71,6 +74,12 @@ class TradingPipeline:
         self.state = state
         self.account_label = account_label
         self.session_factory = session_factory
+        if llm_review_engine is not None:
+            self.llm_review_engine = llm_review_engine
+        elif settings.llm_enabled:
+            self.llm_review_engine = LLMReviewEngine()
+        else:
+            self.llm_review_engine = None
 
     def run_once(self) -> None:
         with self.session_factory() as session:
@@ -133,6 +142,18 @@ class TradingPipeline:
         if self.executor.execution_exists(session, decision_row):
             return
 
+        decision, llm_reject_reason = self._apply_llm_review(
+            session,
+            decision,
+            decision_row,
+            account,
+            positions,
+        )
+        if llm_reject_reason:
+            self.state.metrics.orders_rejected_total += 1
+            self.executor.mark_rejected(session, decision_row, llm_reject_reason)
+            return
+
         verdict = self.risk_engine.evaluate(session, decision, strategy, account, positions, symbol_allowlist)
         if not verdict.approved:
             self.state.metrics.orders_rejected_total += 1
@@ -170,6 +191,129 @@ class TradingPipeline:
     def _load_strategies(session: Session) -> list[Strategy]:
         stmt = select(Strategy).where(Strategy.enabled.is_(True))
         return list(session.execute(stmt).scalars().all())
+
+    def _apply_llm_review(
+        self,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        account: dict[str, str],
+        positions: list[dict[str, str]],
+    ) -> tuple[StrategyDecision, Optional[str]]:
+        if not settings.llm_enabled:
+            return decision, None
+
+        engine = self.llm_review_engine or LLMReviewEngine()
+        request_json: dict[str, Any] = {}
+        try:
+            request = engine.build_request(decision, account, positions)
+            request_json = request.model_dump(mode="json")
+            outcome = engine.review(decision, account, positions)
+            policy_outcome = apply_policy(decision, outcome.response)
+
+            response_json = dict(outcome.response_json)
+            if policy_outcome.reason:
+                response_json["policy_override"] = policy_outcome.reason
+                response_json["policy_verdict"] = policy_outcome.verdict
+
+            adjusted_qty = None
+            adjusted_order_type = None
+            if policy_outcome.verdict == "adjust":
+                adjusted_qty = Decimal(str(policy_outcome.decision.qty))
+                adjusted_order_type = policy_outcome.decision.order_type
+
+            self._persist_llm_review(
+                session=session,
+                decision_row=decision_row,
+                model=outcome.model,
+                prompt_version=outcome.prompt_version,
+                request_json=outcome.request_json,
+                response_json=response_json,
+                verdict=policy_outcome.verdict,
+                confidence=outcome.response.confidence,
+                adjusted_qty=adjusted_qty,
+                adjusted_order_type=adjusted_order_type,
+                rationale=outcome.response.rationale,
+                risk_flags=outcome.response.risk_flags,
+                tokens_prompt=outcome.tokens_prompt,
+                tokens_completion=outcome.tokens_completion,
+            )
+
+            if policy_outcome.verdict == "veto":
+                return decision, policy_outcome.reason or "llm_veto"
+
+            return policy_outcome.decision, None
+        except Exception as exc:
+            fallback = self._resolve_llm_fallback()
+            verdict = "veto" if fallback == "veto" else "approve"
+            response_json = {
+                "error": str(exc),
+                "fallback": fallback,
+            }
+            if not request_json:
+                request_json = {"decision": decision.model_dump(mode="json")}
+            self._persist_llm_review(
+                session=session,
+                decision_row=decision_row,
+                model=settings.llm_model,
+                prompt_version=settings.llm_prompt_version,
+                request_json=request_json,
+                response_json=response_json,
+                verdict=verdict,
+                confidence=None,
+                adjusted_qty=None,
+                adjusted_order_type=None,
+                rationale=f"llm_error_{fallback}",
+                risk_flags=[type(exc).__name__],
+                tokens_prompt=None,
+                tokens_completion=None,
+            )
+            if fallback == "veto":
+                logger.warning("LLM review failed; vetoing decision_id=%s error=%s", decision_row.id, exc)
+                return decision, "llm_error"
+            logger.warning("LLM review failed; pass-through decision_id=%s error=%s", decision_row.id, exc)
+            return decision, None
+
+    @staticmethod
+    def _resolve_llm_fallback() -> str:
+        if settings.trading_mode == "live":
+            return "veto"
+        return settings.llm_fail_mode
+
+    @staticmethod
+    def _persist_llm_review(
+        session: Session,
+        decision_row: TradeDecision,
+        model: str,
+        prompt_version: str,
+        request_json: dict[str, Any],
+        response_json: dict[str, Any],
+        verdict: str,
+        confidence: Optional[float],
+        adjusted_qty: Optional[Decimal],
+        adjusted_order_type: Optional[str],
+        rationale: Optional[str],
+        risk_flags: list[str],
+        tokens_prompt: Optional[int],
+        tokens_completion: Optional[int],
+    ) -> None:
+        review = LLMDecisionReview(
+            trade_decision_id=decision_row.id,
+            model=model,
+            prompt_version=prompt_version,
+            input_json=request_json,
+            response_json=response_json,
+            verdict=verdict,
+            confidence=Decimal(str(confidence)) if confidence is not None else None,
+            adjusted_qty=adjusted_qty,
+            adjusted_order_type=adjusted_order_type,
+            rationale=rationale,
+            risk_flags=risk_flags,
+            tokens_prompt=tokens_prompt,
+            tokens_completion=tokens_completion,
+        )
+        session.add(review)
+        session.commit()
 
 
 def _coerce_strategy_symbols(raw: object) -> set[str]:
