@@ -117,8 +117,8 @@ sequenceDiagram
 
 ### LLMReviewRequest
 - decision: StrategyDecision
-- portfolio_snapshot: positions, exposure, pnl
-- market_snapshot: last price, spread, volatility bucket
+- portfolio: positions, exposure, cash/equity
+- market: last price, spread (if available)
 - recent_decisions: last N decisions for symbol/strategy
 - policy: adjustment bounds, live/paper mode
 - prompt_version
@@ -136,7 +136,7 @@ sequenceDiagram
 ```
 
 ## Prompting and Output Control
-- Use a versioned system prompt with explicit schema contract.
+- Use a versioned system prompt with explicit schema contract (stored in `services/torghut/app/trading/llm/prompt_templates/`).
 - Provide only numeric/structured context from trusted sources.
 - Avoid free-form user input in prompt (prevents injection).
 - Require concise rationale; disallow chain-of-thought in storage.
@@ -152,7 +152,7 @@ sequenceDiagram
 - Timeout or parse error: veto in live, deterministic pass-through in paper.
 - Low confidence: veto or downgrade to hold, based on strategy policy.
 - Missing context (quotes/positions): reject review and fall back.
-- Circuit breaker: if error rate exceeds threshold, disable LLM globally.
+- Circuit breaker: if error rate exceeds threshold in the sliding window, disable LLM temporarily.
 
 Runtime integration note: the review runs in `TradingPipeline._handle_decision` after persisting the decision
 row and before deterministic risk checks. Failures respect `LLM_FAIL_MODE`, with live trading always vetoing on
@@ -232,6 +232,11 @@ Add to `services/torghut/app/config.py`:
 - LLM_FAIL_MODE (enum: veto|pass_through)
 - LLM_MIN_CONFIDENCE (float)
 - LLM_ADJUSTMENT_ALLOWED (bool)
+- LLM_SHADOW_MODE (bool)
+- LLM_RECENT_DECISIONS (int)
+- LLM_CIRCUIT_MAX_ERRORS (int)
+- LLM_CIRCUIT_WINDOW_SECONDS (int)
+- LLM_CIRCUIT_COOLDOWN_SECONDS (int)
 
 ## Code Layout (proposed)
 - services/torghut/app/trading/llm/

@@ -233,19 +233,35 @@ TTL ts + INTERVAL 30 DAY
 SETTINGS ttl_only_drop_parts = 1;
 
 CREATE TABLE torghut.ta_signals (
-  ts DateTime64(3),
+  event_ts DateTime64(3),
+  ingest_ts DateTime64(3),
   symbol LowCardinality(String),
-  ema Float64,
-  rsi Float64,
-  macd Float64,
-  vwap Float64,
-  signal_json String
+  window String,
+  payload String,
+  seq UInt64,
+  source String
 )
 ENGINE = MergeTree
-PARTITION BY toYYYYMM(ts)
-ORDER BY (symbol, ts)
-TTL ts + INTERVAL 14 DAY
+PARTITION BY toYYYYMM(event_ts)
+ORDER BY (symbol, event_ts)
+TTL event_ts + INTERVAL 14 DAY
 SETTINGS ttl_only_drop_parts = 1;
+```
+
+### Backward-compatible flat view (optional)
+If you must preserve a flat consumer (ts/macd/rsi/etc), create a view that projects
+the envelope payload into columns and alias `event_ts` to `ts`.
+
+```sql
+CREATE VIEW torghut.ta_signals_flat AS
+SELECT
+  event_ts AS ts,
+  symbol,
+  JSONExtractFloat(payload, 'rsi14') AS rsi,
+  JSONExtractFloat(payload, 'macd.macd') AS macd,
+  JSONExtractFloat(payload, 'macd.signal') AS macd_signal,
+  payload AS signal_json
+FROM torghut.ta_signals;
 ```
 
 ### Example DDL (Postgres)
