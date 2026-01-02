@@ -756,7 +756,11 @@ export const captureTerminalSnapshot = async (sessionId: string, lines = 2000): 
   if (result.exitCode !== 0) {
     throw new Error(result.stderr.trim() || 'Unable to capture tmux pane')
   }
-  return result.stdout
+  const trimmedLines = result.stdout
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+$/g, ''))
+    .join('\n')
+  return trimmedLines.replace(/\n+$/g, '')
 }
 
 export const ensureTerminalSessionExists = async (sessionId: string): Promise<boolean> => {
