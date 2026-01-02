@@ -35,8 +35,11 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
   const reconnectAttemptRef = React.useRef(0)
   const resizeObserverRef = React.useRef<ResizeObserver | null>(null)
   const inputBufferRef = React.useRef('')
+  const snapshotTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const snapshotPendingRef = React.useRef(false)
   const shouldReconnectRef = React.useRef(true)
   const resizeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastSizeRef = React.useRef<{ cols: number; rows: number } | null>(null)
 
   const [status, setStatus] = React.useState<'connecting' | 'connected' | 'error'>('connecting')
   const [error, setError] = React.useState<string | null>(null)
@@ -70,6 +73,16 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       sendMessage({ type: 'resize', cols: terminal.cols, rows: terminal.rows })
     }
 
+    const requestSnapshot = () => {
+      if (snapshotPendingRef.current) return
+      if (snapshotTimerRef.current) return
+      snapshotTimerRef.current = setTimeout(() => {
+        snapshotTimerRef.current = null
+        snapshotPendingRef.current = true
+        sendMessage({ type: 'snapshot' })
+      }, 120)
+    }
+
     const refreshLayout = () => {
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current)
       resizeTimerRef.current = setTimeout(() => {
@@ -77,9 +90,31 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         const terminal = terminalRef.current
         const fitAddon = fitRef.current
         if (!terminal || !fitAddon) return
-        fitAddon.fit()
+        const propose = (fitAddon as { proposeDimensions?: () => { cols: number; rows: number } | null })
+          .proposeDimensions
+        const proposed = typeof propose === 'function' ? propose() : null
+
+        if (proposed?.cols && proposed?.rows) {
+          const nextCols = Math.max(20, proposed.cols)
+          const nextRows = Math.max(6, proposed.rows)
+          const lastSize = lastSizeRef.current
+          const changed = nextCols !== terminal.cols || nextRows !== terminal.rows
+
+          if (changed) {
+            terminal.resize(nextCols, nextRows)
+            lastSizeRef.current = { cols: nextCols, rows: nextRows }
+            sendResize()
+            requestSnapshot()
+          } else if (!lastSize) {
+            lastSizeRef.current = { cols: terminal.cols, rows: terminal.rows }
+          }
+        } else {
+          fitAddon.fit()
+          sendResize()
+          requestSnapshot()
+        }
+
         terminal.refresh(0, Math.max(0, terminal.rows - 1))
-        sendResize()
       }, 50)
     }
 
@@ -115,8 +150,12 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
           const text = decoder.decode(base64ToBytes(payload.data))
           if (text) {
             terminalRef.current.reset()
-            terminalRef.current.write(text)
+            terminalRef.current.write(text, () => {
+              terminalRef.current?.scrollToBottom()
+              terminalRef.current?.focus()
+            })
           }
+          snapshotPendingRef.current = false
           return
         }
         if (payload.type === 'output' && payload.data) {
@@ -139,12 +178,14 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         if (!shouldReconnectRef.current) return
         setStatus('connecting')
         setError('Reconnecting...')
+        snapshotPendingRef.current = false
       }
 
       socket.onclose = () => {
         if (!shouldReconnectRef.current || isDisposed) return
         setStatus('connecting')
         setError('Reconnecting...')
+        snapshotPendingRef.current = false
         if (reconnectTimerRef.current) return
         const attempt = reconnectAttemptRef.current
         const delay = Math.min(10_000, 1000 * 2 ** attempt)
@@ -201,6 +242,13 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       sendResize()
       refreshLayout()
 
+      const fonts = document.fonts?.ready
+      if (fonts) {
+        fonts.then(() => {
+          refreshLayout()
+        })
+      }
+
       const handleVisibility = () => {
         if (document.visibilityState === 'visible') {
           refreshLayout()
@@ -241,6 +289,10 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current)
         reconnectTimerRef.current = null
+      }
+      if (snapshotTimerRef.current) {
+        clearTimeout(snapshotTimerRef.current)
+        snapshotTimerRef.current = null
       }
       if (resizeTimerRef.current) {
         clearTimeout(resizeTimerRef.current)

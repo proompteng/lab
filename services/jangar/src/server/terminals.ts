@@ -6,13 +6,12 @@ import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
-  createTerminalSessionRecord,
   deleteTerminalSessionRecord,
   getTerminalSessionRecord,
   listTerminalSessionRecords,
+  type TerminalSessionStatus,
   updateTerminalSessionRecord,
   upsertTerminalSessionRecord,
-  type TerminalSessionStatus,
 } from '~/server/terminal-sessions-store'
 
 const SESSION_PREFIX = 'jangar-terminal-'
@@ -27,9 +26,19 @@ const MAIN_FETCH_ENABLED = (process.env.JANGAR_TERMINAL_FETCH_MAIN ?? 'true') !=
 const TMUX_TIMEOUT_MS = 10_000
 const FETCH_TIMEOUT_MS = 30_000
 const WORKTREE_TIMEOUT_MS = 60_000
+const INPUT_FLUSH_MS = 12
+const INPUT_BUFFER_MAX = 2048
 const TMUX_TMPDIR =
   process.env.JANGAR_TMUX_TMPDIR?.trim() || process.env.TMUX_TMPDIR?.trim() || process.env.TMPDIR?.trim() || '/tmp'
 const TMUX_SOCKET_NAME = process.env.JANGAR_TMUX_SOCKET?.trim() || 'default'
+
+type InputQueueState = {
+  buffer: string
+  timer: ReturnType<typeof setTimeout> | null
+  flushing: boolean
+}
+
+const inputQueue = new Map<string, InputQueueState>()
 
 export type TerminalSession = {
   id: string
@@ -177,6 +186,44 @@ const ensureLogFile = async (path: string) => {
   await ensureLogDir()
   const handle = await open(path, 'a')
   await handle.close()
+}
+
+const clearInputQueue = (sessionId: string) => {
+  const state = inputQueue.get(sessionId)
+  if (state?.timer) clearTimeout(state.timer)
+  inputQueue.delete(sessionId)
+}
+
+const flushInputQueue = async (sessionId: string) => {
+  const state = inputQueue.get(sessionId)
+  if (!state || state.flushing) return
+  if (!state.buffer) {
+    if (state.timer) {
+      clearTimeout(state.timer)
+      state.timer = null
+    }
+    return
+  }
+
+  state.flushing = true
+  const payload = state.buffer
+  state.buffer = ''
+
+  try {
+    await sendInputToTmux(sessionId, payload)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to send input to tmux'
+    console.warn('[terminals] input flush failed', { sessionId, message })
+  } finally {
+    state.flushing = false
+  }
+
+  if (state.buffer) {
+    state.timer = setTimeout(() => {
+      state.timer = null
+      void flushInputQueue(sessionId)
+    }, INPUT_FLUSH_MS)
+  }
 }
 
 const buildSessionId = (suffix: string) => `${SESSION_PREFIX}${suffix}`
@@ -582,6 +629,21 @@ const recordSessionStatus = async (
   return record
 }
 
+export const markTerminalSessionError = async (sessionId: string, message: string) => {
+  const record = await getTerminalSessionRecord(sessionId)
+  if (!record || record.status === 'closed') return null
+  return updateTerminalSessionRecord(sessionId, {
+    status: 'error',
+    worktreeName: record.worktreeName,
+    worktreePath: record.worktreePath,
+    tmuxSocket: TMUX_SOCKET_NAME,
+    errorMessage: message,
+    readyAt: record.readyAt,
+    closedAt: record.closedAt,
+    metadata: record.metadata,
+  })
+}
+
 const provisionTerminalSession = async ({ sessionId, worktreeName, worktreePath }: PlannedSession) => {
   try {
     const repoRoot = resolveCodexBaseCwd()
@@ -721,6 +783,8 @@ export const terminateTerminalSession = async (sessionId: string) => {
     }
   }
 
+  clearInputQueue(sessionId)
+
   await upsertTerminalSessionRecord({
     id: sessionId,
     status: 'closed',
@@ -760,13 +824,43 @@ export const deleteTerminalSession = async (sessionId: string) => {
 
   await rm(join(LOG_DIR, `${sessionId}.log`), { force: true })
   await deleteTerminalSessionRecord(sessionId)
+  clearInputQueue(sessionId)
+}
+
+const sendInputToTmux = async (sessionId: string, input: string) => {
+  if (!input) return
+  const result = await runTmux(['send-keys', '-t', sessionId, '-l', '--', input], { label: 'tmux send-keys' })
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || 'Unable to send input to tmux')
+  }
 }
 
 export const sendTerminalInput = async (sessionId: string, input: string) => {
   if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
-  const result = await runTmux(['send-keys', '-t', sessionId, '-l', '--', input], { label: 'tmux send-keys' })
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr.trim() || 'Unable to send input to tmux')
+  await sendInputToTmux(sessionId, input)
+}
+
+export const queueTerminalInput = (sessionId: string, input: string) => {
+  if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
+  if (!input) return
+  const state = inputQueue.get(sessionId) ?? { buffer: '', timer: null, flushing: false }
+  state.buffer += input
+  inputQueue.set(sessionId, state)
+
+  if (state.buffer.length >= INPUT_BUFFER_MAX) {
+    if (state.timer) {
+      clearTimeout(state.timer)
+      state.timer = null
+    }
+    void flushInputQueue(sessionId)
+    return
+  }
+
+  if (!state.timer) {
+    state.timer = setTimeout(() => {
+      state.timer = null
+      void flushInputQueue(sessionId)
+    }, INPUT_FLUSH_MS)
   }
 }
 

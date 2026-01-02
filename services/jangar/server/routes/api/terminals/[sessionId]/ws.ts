@@ -10,8 +10,9 @@ import {
   getTerminalLogPath,
   getTerminalSession,
   isTerminalSessionId,
+  markTerminalSessionError,
+  queueTerminalInput,
   resizeTerminalSession,
-  sendTerminalInput,
 } from '~/server/terminals'
 
 type PeerState = {
@@ -20,6 +21,7 @@ type PeerState = {
   handle: Awaited<ReturnType<typeof openFile>> | null
   offset: number
   poller: ReturnType<typeof setInterval> | null
+  snapshotInFlight: boolean
 }
 
 const peerState = new WeakMap<object, PeerState>()
@@ -99,6 +101,7 @@ export default defineWebSocketHandler({
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to attach terminal log pipe.'
       console.warn('[terminals] ws log pipe failed', { sessionId, message })
+      await markTerminalSessionError(sessionId, message)
       closeWithError(peer, message)
       return
     }
@@ -111,6 +114,7 @@ export default defineWebSocketHandler({
       handle: null,
       offset: 0,
       poller: null,
+      snapshotInFlight: false,
     }
     peerState.set(peer, state)
 
@@ -123,6 +127,7 @@ export default defineWebSocketHandler({
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to open terminal log.'
       console.warn('[terminals] ws log open failed', { sessionId, message })
+      await markTerminalSessionError(sessionId, message)
       closeWithError(peer, message)
       return
     }
@@ -172,7 +177,7 @@ export default defineWebSocketHandler({
 
     if (data.type === 'input' && typeof data.data === 'string') {
       try {
-        await sendTerminalInput(state.sessionId, decodeBase64(data.data))
+        queueTerminalInput(state.sessionId, decodeBase64(data.data))
       } catch (error) {
         const messageText = error instanceof Error ? error.message : 'Unable to send input.'
         console.warn('[terminals] ws input failed', { sessionId: state.sessionId, message: messageText })
@@ -189,6 +194,23 @@ export default defineWebSocketHandler({
       } catch (error) {
         const messageText = error instanceof Error ? error.message : 'Unable to resize terminal.'
         console.warn('[terminals] ws resize failed', { sessionId: state.sessionId, message: messageText })
+      }
+    }
+
+    if (data.type === 'snapshot') {
+      if (state.snapshotInFlight) return
+      state.snapshotInFlight = true
+      try {
+        const snapshot = await captureTerminalSnapshot(state.sessionId, 2000)
+        if (snapshot.trim().length > 0) {
+          sendJson(peer, { type: 'snapshot', data: encodeBase64(snapshot) })
+        }
+      } catch (error) {
+        const messageText = error instanceof Error ? error.message : 'Unable to capture terminal snapshot.'
+        console.warn('[terminals] ws snapshot failed', { sessionId: state.sessionId, message: messageText })
+        sendJson(peer, { type: 'error', message: messageText, fatal: false })
+      } finally {
+        state.snapshotInFlight = false
       }
     }
   },
