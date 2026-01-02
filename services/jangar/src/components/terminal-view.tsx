@@ -78,6 +78,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       if (isDisposed || !containerRef.current) return
 
       const terminal = new Terminal({
+        convertEol: true,
         cursorBlink: true,
         fontFamily:
           '"JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono"',
