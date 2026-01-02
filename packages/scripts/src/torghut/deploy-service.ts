@@ -11,8 +11,10 @@ import { buildAndPushDockerImage, inspectImageDigest, inspectImageDigestForPlatf
 import { buildImage } from './build-image'
 
 const manifestPath = resolve(repoRoot, 'argocd/applications/torghut/knative-service.yaml')
+const tradingManifestPath = resolve(repoRoot, 'argocd/applications/torghut/trading/knative-service.yaml')
 const websocketDeploymentPath = resolve(repoRoot, 'argocd/applications/torghut/ws/deployment.yaml')
 const websocketKustomizePath = resolve(repoRoot, 'argocd/applications/torghut/ws')
+const tradingKustomizePath = resolve(repoRoot, 'argocd/applications/torghut/trading')
 const taDeploymentPath = resolve(
   repoRoot,
   process.env.TORGHUT_TA_DEPLOYMENT_PATH ?? 'argocd/applications/torghut/ta/flinkdeployment.yaml',
@@ -291,6 +293,45 @@ const updateManifest = (image: string, version: string, commit: string) => {
   console.log(`Updated ${manifestPath} with image ${image}`)
 }
 
+const updateTradingManifest = (image: string, version: string, commit: string) => {
+  const raw = readFileSync(tradingManifestPath, 'utf8')
+  const doc = YAML.parse(raw)
+
+  const containers:
+    | Array<{ name?: string; image?: string; env?: Array<{ name?: string; value?: string }> }>
+    | undefined = doc?.spec?.template?.spec?.containers
+
+  if (!containers || containers.length === 0) {
+    throw new Error('Unable to locate torghut-trading container in manifest')
+  }
+
+  const container = containers.find((item) => item?.name === 'user-container') ?? containers[0]
+  container.image = image
+  container.env ??= []
+
+  const ensureEnv = (name: string, value: string) => {
+    const existing = container.env?.find((entry) => entry?.name === name)
+    if (existing) {
+      existing.value = value
+    } else {
+      container.env?.push({ name, value })
+    }
+  }
+
+  ensureEnv('TORGHUT_VERSION', version)
+  ensureEnv('TORGHUT_COMMIT', commit)
+
+  doc.spec ??= {}
+  doc.spec.template ??= {}
+  doc.spec.template.metadata ??= {}
+  doc.spec.template.metadata.annotations ??= {}
+  doc.spec.template.metadata.annotations['client.knative.dev/updateTimestamp'] = new Date().toISOString()
+
+  const updated = YAML.stringify(doc, { lineWidth: 120 })
+  writeFileSync(tradingManifestPath, updated)
+  console.log(`Updated ${tradingManifestPath} with image ${image}`)
+}
+
 const buildWebsocketImage = async () => {
   const registry = process.env.TORGHUT_WS_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = process.env.TORGHUT_WS_IMAGE_REPOSITORY ?? 'lab/torghut-ws'
@@ -487,6 +528,13 @@ const applyManifest = async () => {
   ])
 }
 
+const applyTradingResources = async () => {
+  if (!existsSync(tradingKustomizePath)) {
+    fatal(`Trading kustomize directory not found at ${tradingKustomizePath}.`)
+  }
+  await run('kubectl', ['apply', '-k', tradingKustomizePath])
+}
+
 const applyWebsocketResources = async () => {
   const waitTimeout = '300s'
   await run('kubectl', ['apply', '-k', websocketKustomizePath])
@@ -559,10 +607,12 @@ const main = async () => {
   const taDigestRef = inspectImageDigestForPlatform(taImage.image, taPlatform) ?? inspectImageDigest(taImage.image)
 
   updateManifest(digestRef, version, commit)
+  updateTradingManifest(digestRef, version, commit)
   updateWebsocketDeployment(websocketDigestRef, version, commit)
   updateTechnicalAnalysisDeployment(taDigestRef, version, commit)
   await runMigrations()
   await applyManifest()
+  await applyTradingResources()
   await applyWebsocketResources()
   await applyTechnicalAnalysisResources()
 
