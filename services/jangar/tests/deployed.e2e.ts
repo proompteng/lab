@@ -68,6 +68,10 @@ const trackTerminalWebSockets = (page: import('@playwright/test').Page) => {
   return { waitFor, wasClosed: (sessionId: string) => closed.has(sessionId) }
 }
 
+const waitForHydration = async (page: import('@playwright/test').Page) => {
+  await page.waitForFunction(() => document.documentElement.dataset.hydrated === 'true')
+}
+
 const assertWebSocketStaysOpen = async (
   page: import('@playwright/test').Page,
   status: { wasClosed: () => boolean },
@@ -217,6 +221,7 @@ test.describe('deployed jangar e2e', () => {
 
     await page.goto('/terminals')
     await expect(page.getByRole('heading', { name: 'Terminal sessions', level: 1 })).toBeVisible()
+    await waitForHydration(page)
     await expect(page.getByRole('button', { name: 'New session' })).toBeEnabled()
 
     const createResponse = await request.get('/api/terminals?create=1')
@@ -305,9 +310,15 @@ test.describe('deployed jangar e2e', () => {
 
     await page.goto('/terminals')
     await expect(page.getByRole('heading', { name: 'Terminal sessions', level: 1 })).toBeVisible()
+    await waitForHydration(page)
 
     const [createResponse] = await Promise.all([
-      page.waitForResponse((response) => response.url().includes('/api/terminals?create=1')),
+      page.waitForResponse((response) => {
+        const url = response.url()
+        if (!url.includes('/api/terminals')) return false
+        if (url.includes('create=1')) return true
+        return response.request().method() === 'POST'
+      }),
       page.getByRole('button', { name: 'New session' }).click(),
     ])
     expect(createResponse.ok()).toBe(true)

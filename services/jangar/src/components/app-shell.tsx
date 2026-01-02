@@ -1,5 +1,5 @@
 import { Link, useRouterState } from '@tanstack/react-router'
-import type * as React from 'react'
+import * as React from 'react'
 
 import { AppSidebar } from '@/components/app-sidebar'
 import {
@@ -16,6 +16,13 @@ import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 export function AppShell({ mainId, children }: { mainId: string; children: React.ReactNode }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const breadcrumbs = buildBreadcrumbs(pathname)
+
+  React.useEffect(() => {
+    document.documentElement.dataset.hydrated = 'true'
+    return () => {
+      delete document.documentElement.dataset.hydrated
+    }
+  }, [])
 
   return (
     <SidebarProvider>
