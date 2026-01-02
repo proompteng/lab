@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS torghut.ta_microbars ON CLUSTER default
 ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/ta_microbars', '{replica}', ingest_ts)
 PARTITION BY toDate(event_ts)
 ORDER BY (symbol, event_ts, seq)
-TTL toDateTime(event_ts) + INTERVAL 14 DAY
+TTL toDateTime(event_ts) + INTERVAL 30 DAY
 SETTINGS index_granularity = 8192;
 
 CREATE TABLE IF NOT EXISTS torghut.ta_signals ON CLUSTER default
@@ -61,5 +61,5 @@ CREATE TABLE IF NOT EXISTS torghut.ta_signals ON CLUSTER default
 ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/ta_signals', '{replica}', ingest_ts)
 PARTITION BY toDate(event_ts)
 ORDER BY (symbol, event_ts, seq)
-TTL toDateTime(event_ts) + INTERVAL 30 DAY
+TTL toDateTime(event_ts) + INTERVAL 14 DAY
 SETTINGS index_granularity = 8192;
