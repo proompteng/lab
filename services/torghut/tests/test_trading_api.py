@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 from unittest import TestCase
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -93,3 +94,23 @@ class TestTradingApi(TestCase):
         payload = response.json()
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["symbol"], "AAPL")
+
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    def test_trading_health_ok(self, _mock_clickhouse: object, _mock_alpaca: object) -> None:
+        response = self.client.get("/trading/health")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertTrue(payload["dependencies"]["postgres"]["ok"])
+        self.assertTrue(payload["dependencies"]["clickhouse"]["ok"])
+        self.assertTrue(payload["dependencies"]["alpaca"]["ok"])
+
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": False, "detail": "down"})
+    def test_trading_health_dependency_failure(self, _mock_clickhouse: object, _mock_alpaca: object) -> None:
+        response = self.client.get("/trading/health")
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["status"], "degraded")
+        self.assertFalse(payload["dependencies"]["clickhouse"]["ok"])
