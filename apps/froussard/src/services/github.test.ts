@@ -573,6 +573,9 @@ describe('fetchPullRequest', () => {
           draft: false,
           merged: false,
           state: 'open',
+          additions: 123,
+          deletions: 45,
+          changed_files: 9,
           head: { ref: 'feature/api', sha: 'abc123' },
           base: { ref: 'main' },
           user: { login: 'octocat' },
@@ -601,6 +604,9 @@ describe('fetchPullRequest', () => {
       baseRef: 'main',
       authorLogin: 'octocat',
       mergeableState: 'clean',
+      additions: 123,
+      deletions: 45,
+      changedFiles: 9,
     })
     expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
