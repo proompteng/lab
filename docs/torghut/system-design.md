@@ -27,6 +27,10 @@ The torghut main service does **not** consume TA topics directly; it reads TA da
 
 ## High-Level Architecture
 
+The trading loop runs in a dedicated Knative service (`torghut-trading`) so it stays active even if the
+main API is scaled independently. The worker is configured for paper mode by default and uses the
+same torghut container image with trading-specific environment variables.
+
 ```mermaid
 flowchart LR
   subgraph Market

@@ -33,6 +33,26 @@ Rollback:
 - Force close lingering connections by restarting the Deployment.
 - Confirm status topic transitions to `healthy` and logs show successful subscribe.
 
+## Trading worker (paper mode)
+Prerequisites:
+- ClickHouse access: ensure `torghut-clickhouse-auth` secret is present and valid.
+- Database schema: `trade_decisions`, `executions`, and cursor tables must exist; run migrations via the torghut deploy script
+  before enabling trading in a new environment (do not run live migrations without explicit approval).
+- Alpaca keys: optional for startup, but required to submit paper or live orders; set `APCA_API_KEY_ID` and
+  `APCA_API_SECRET_KEY` in `torghut-secrets` when executing orders.
+
+Enable trading worker:
+1) Confirm `argocd/applications/torghut/trading/knative-service.yaml` has `TRADING_ENABLED=true`,
+   `TRADING_MODE=paper`, and `TRADING_LIVE_ENABLED=false`.
+2) Ensure `JANGAR_SYMBOLS_URL` is reachable (or switch to `TRADING_UNIVERSE_SOURCE=static` + `TRADING_STATIC_SYMBOLS`).
+3) Sync the Argo CD application for torghut.
+4) Verify `kubectl -n torghut get ksvc torghut-trading` is Ready and `GET /trading/status` returns enabled `true`.
+
+Disable trading worker:
+1) Set `TRADING_ENABLED=false` (and optionally set `minScale: "0"` if you want the worker to idle).
+2) Sync the Argo CD application for torghut.
+3) Verify `/trading/status` reports enabled `false` and no new decisions are written.
+
 ## Kafka produce failures
 - Readiness should go false; inspect auth/ACL, broker reachability, and SASL secrets.
 - After fixes, rolling restart the kotlin-ws service; confirm status messages return to healthy.
