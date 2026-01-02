@@ -158,14 +158,16 @@ test.describe('live deps (Tilt / remote cluster)', () => {
       )
       .toBe('ready')
 
-    await page.getByText(`Session id: ${sessionId}`).click()
+    const row = page.locator(`[data-session-id="${sessionId}"]`)
+    await expect(row).toBeVisible()
+    await row.getByRole('link').click()
     await page.waitForURL(new RegExp(`/terminals/${sessionId}`))
     await expect(page.getByText('Status: connected')).toBeVisible({ timeout: 20_000 })
 
     await page.goto('/terminals')
-    await expect(page.getByText(`Session id: ${sessionId}`)).toBeVisible()
+    await expect(page.locator(`[data-session-id="${sessionId}"]`)).toBeVisible()
 
-    await page.getByText(`Session id: ${sessionId}`).click()
+    await page.locator(`[data-session-id="${sessionId}"]`).getByRole('link').click()
     await page.waitForURL(new RegExp(`/terminals/${sessionId}`))
     await expect(page.getByText('Status: connected')).toBeVisible({ timeout: 15_000 })
   })

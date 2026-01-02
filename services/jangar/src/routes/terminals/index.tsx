@@ -52,11 +52,41 @@ function TerminalsIndexPage() {
   const [error, setError] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
   const [isCreating, setIsCreating] = React.useState(false)
+  const [toast, setToast] = React.useState<{ message: string; tone?: 'success' | 'error' } | null>(null)
+  const [deletingSessions, setDeletingSessions] = React.useState<Record<string, boolean>>({})
   const [showClosed, setShowClosed] = React.useState(false)
   const isInitialLoading = isLoading && sessions.length === 0
   const showPendingRow = isCreating && !sessions.some((session) => session.status === 'creating')
   const tableColumns =
     'grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,0.6fr)_minmax(0,0.6fr)_minmax(0,0.5fr)]'
+  const toastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const pushToast = React.useCallback((message: string, tone: 'success' | 'error' = 'success') => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    setToast({ message, tone })
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null)
+      toastTimerRef.current = null
+    }, 3500)
+  }, [])
+
+  React.useEffect(() => {
+    const stored = sessionStorage.getItem('jangar-terminal-toast')
+    if (!stored) return
+    sessionStorage.removeItem('jangar-terminal-toast')
+    try {
+      const parsed = JSON.parse(stored) as { message: string; tone?: 'success' | 'error' }
+      if (parsed?.message) pushToast(parsed.message, parsed.tone ?? 'success')
+    } catch {
+      // ignore
+    }
+  }, [pushToast])
+
+  React.useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    }
+  }, [])
 
   const loadSessions = React.useCallback(async () => {
     setIsLoading(true)
@@ -102,6 +132,7 @@ function TerminalsIndexPage() {
 
       const session = payload.session
       setSessions((prev) => [session, ...prev])
+      window.dispatchEvent(new Event('terminals:refresh'))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to create terminal session.')
     } finally {
@@ -109,21 +140,38 @@ function TerminalsIndexPage() {
     }
   }, [])
 
-  const deleteSession = React.useCallback(async (sessionId: string) => {
-    setError(null)
-    try {
-      const response = await fetch(`/api/terminals/${encodeURIComponent(sessionId)}/delete`, {
-        method: 'POST',
-      })
-      const payload = (await response.json().catch(() => null)) as { ok?: boolean; message?: string } | null
-      if (!response.ok || !payload?.ok) {
-        throw new Error(payload?.message || 'Unable to delete session.')
+  const deleteSession = React.useCallback(
+    async (sessionId: string) => {
+      setError(null)
+      setDeletingSessions((prev) => ({ ...prev, [sessionId]: true }))
+      try {
+        const response = await fetch(`/api/terminals/${encodeURIComponent(sessionId)}/delete`, {
+          method: 'POST',
+        })
+        const payload = (await response.json().catch(() => null)) as { ok?: boolean; message?: string } | null
+        if (!response.ok || !payload?.ok) {
+          throw new Error(payload?.message || 'Unable to delete session.')
+        }
+        setSessions((prev) => prev.filter((session) => session.id !== sessionId))
+        setDeletingSessions((prev) => {
+          const next = { ...prev }
+          delete next[sessionId]
+          return next
+        })
+        window.dispatchEvent(new Event('terminals:refresh'))
+        pushToast('Terminal session deleted.', 'success')
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unable to delete terminal session.')
+        setDeletingSessions((prev) => {
+          const next = { ...prev }
+          delete next[sessionId]
+          return next
+        })
+        pushToast('Failed to delete terminal session.', 'error')
       }
-      setSessions((prev) => prev.filter((session) => session.id !== sessionId))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to delete terminal session.')
-    }
-  }, [])
+    },
+    [pushToast],
+  )
 
   React.useEffect(() => {
     void loadSessions()
@@ -275,14 +323,17 @@ function TerminalsIndexPage() {
               {sessions.map((session) => {
                 const meta = statusMeta(session.status)
                 const rowTone = session.status === 'ready' ? 'hover:bg-muted/20' : 'opacity-70'
+                const isDeleting = Boolean(deletingSessions[session.id])
                 return (
                   <div
                     key={session.id}
                     className={cn(
-                      'grid gap-4 px-4 py-4 border-b border-border last:border-b-0 text-sm text-foreground transition',
+                      'relative grid gap-4 px-4 py-4 border-b border-border last:border-b-0 text-sm text-foreground transition',
                       tableColumns,
                       rowTone,
                     )}
+                    data-session-id={session.id}
+                    data-session-status={session.status}
                   >
                     <div className="space-y-1">
                       <Link
@@ -326,12 +377,13 @@ function TerminalsIndexPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
+                                disabled={isDeleting}
                                 onClick={(event) => {
                                   event.preventDefault()
                                   event.stopPropagation()
                                 }}
                               >
-                                Delete
+                                {isDeleting ? 'Deleting...' : 'Delete'}
                               </Button>
                             }
                           />
@@ -344,10 +396,13 @@ function TerminalsIndexPage() {
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogCancel className="min-w-[96px]" size="sm">
+                                Cancel
+                              </AlertDialogCancel>
                               <AlertDialogAction
                                 variant="destructive"
                                 size="sm"
+                                className="min-w-[96px]"
                                 onClick={(event) => {
                                   event.preventDefault()
                                   event.stopPropagation()
@@ -361,6 +416,9 @@ function TerminalsIndexPage() {
                         </AlertDialog>
                       )}
                     </div>
+                    {isDeleting ? (
+                      <div className="absolute inset-x-0 bottom-0 h-0.5 bg-emerald-400/70 animate-pulse" />
+                    ) : null}
                   </div>
                 )
               })}
@@ -368,6 +426,19 @@ function TerminalsIndexPage() {
           </ScrollArea>
         )}
       </section>
+      {toast ? (
+        <div
+          className={cn(
+            'fixed bottom-6 right-6 z-50 rounded-none border px-3 py-2 text-xs shadow-lg',
+            toast.tone === 'error'
+              ? 'border-destructive/60 bg-destructive/10 text-destructive'
+              : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200',
+          )}
+          role="status"
+        >
+          {toast.message}
+        </div>
+      ) : null}
     </main>
   )
 }

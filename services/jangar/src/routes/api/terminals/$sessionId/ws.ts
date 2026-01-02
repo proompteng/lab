@@ -135,17 +135,6 @@ const websocketHooks = defineWebSocket({
       return
     }
 
-    try {
-      const snapshot = await captureTerminalSnapshot(sessionId, 2000)
-      if (snapshot.trim().length > 0) {
-        sendJson(peer, { type: 'snapshot', data: encodeBase64(snapshot) })
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to capture terminal snapshot.'
-      console.warn('[terminals] ws snapshot failed', { sessionId, message })
-      sendJson(peer, { type: 'error', message, fatal: false })
-    }
-
     state.poller = setInterval(() => {
       void readLogChunk(state, peer).catch((error) => {
         const message = error instanceof Error ? error.message : 'Unable to read terminal log.'

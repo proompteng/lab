@@ -99,8 +99,13 @@ export function AppSidebar() {
     }
 
     void loadTerminalSessions()
+    const handleRefresh = () => {
+      void loadTerminalSessions()
+    }
+    window.addEventListener('terminals:refresh', handleRefresh)
     return () => {
       isMounted = false
+      window.removeEventListener('terminals:refresh', handleRefresh)
     }
   }, [])
 

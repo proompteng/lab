@@ -35,19 +35,21 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
   const reconnectAttemptRef = React.useRef(0)
   const resizeObserverRef = React.useRef<ResizeObserver | null>(null)
   const inputBufferRef = React.useRef('')
+  const inputFlushTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const snapshotTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const snapshotPendingRef = React.useRef(false)
-  const snapshotQueuedRef = React.useRef(false)
   const shouldReconnectRef = React.useRef(true)
   const resizeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastSizeRef = React.useRef<{ cols: number; rows: number } | null>(null)
+  const outputQueueRef = React.useRef<string[]>([])
+  const snapshotApplyingRef = React.useRef(false)
 
   const [status, setStatus] = React.useState<'connecting' | 'connected' | 'error'>('connecting')
   const [error, setError] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     let isDisposed = false
-    const decoder = new TextDecoder()
+    const outputDecoder = new TextDecoder()
+    const snapshotDecoder = new TextDecoder()
     shouldReconnectRef.current = true
 
     const buildSocketUrl = () => {
@@ -63,6 +65,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
 
     const flushInput = () => {
       if (!inputBufferRef.current) return
+      if (socketRef.current?.readyState !== WebSocket.OPEN) return
       const data = inputBufferRef.current
       inputBufferRef.current = ''
       sendMessage({ type: 'input', data: encodeInput(data) })
@@ -74,53 +77,36 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       sendMessage({ type: 'resize', cols: terminal.cols, rows: terminal.rows })
     }
 
-    const requestSnapshot = () => {
-      if (snapshotPendingRef.current) return
-      if (socketRef.current?.readyState !== WebSocket.OPEN) {
-        snapshotQueuedRef.current = true
-        return
-      }
-      if (snapshotTimerRef.current) return
+    const scheduleSnapshot = (delayMs = 180) => {
+      if (snapshotTimerRef.current) clearTimeout(snapshotTimerRef.current)
       snapshotTimerRef.current = setTimeout(() => {
         snapshotTimerRef.current = null
-        snapshotPendingRef.current = true
-        snapshotQueuedRef.current = false
-        sendMessage({ type: 'snapshot' })
-      }, 120)
+        if (socketRef.current?.readyState === WebSocket.OPEN) {
+          sendMessage({ type: 'snapshot' })
+        }
+      }, delayMs)
     }
 
     const refreshLayout = () => {
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current)
       resizeTimerRef.current = setTimeout(() => {
         resizeTimerRef.current = null
+        const container = containerRef.current
+        if (!container) return
+        const { width, height } = container.getBoundingClientRect()
+        if (width < 2 || height < 2) return
         const terminal = terminalRef.current
         const fitAddon = fitRef.current
         if (!terminal || !fitAddon) return
-        const propose = (fitAddon as { proposeDimensions?: () => { cols: number; rows: number } | null })
-          .proposeDimensions
-        const proposed = typeof propose === 'function' ? propose() : null
 
-        if (proposed?.cols && proposed?.rows) {
-          const nextCols = Math.max(20, proposed.cols)
-          const nextRows = Math.max(6, proposed.rows)
-          const lastSize = lastSizeRef.current
-          const changed = nextCols !== terminal.cols || nextRows !== terminal.rows
-
-          if (changed) {
-            terminal.resize(nextCols, nextRows)
-            lastSizeRef.current = { cols: nextCols, rows: nextRows }
-            sendResize()
-            requestSnapshot()
-          } else if (!lastSize) {
-            lastSizeRef.current = { cols: terminal.cols, rows: terminal.rows }
-          }
-        } else {
-          fitAddon.fit()
+        fitAddon.fit()
+        const nextSize = { cols: terminal.cols, rows: terminal.rows }
+        const lastSize = lastSizeRef.current
+        if (!lastSize || nextSize.cols !== lastSize.cols || nextSize.rows !== lastSize.rows) {
+          lastSizeRef.current = nextSize
           sendResize()
-          requestSnapshot()
+          scheduleSnapshot()
         }
-
-        terminal.refresh(0, Math.max(0, terminal.rows - 1))
       }, 50)
     }
 
@@ -137,13 +123,20 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         reconnectAttemptRef.current = 0
         setStatus('connected')
         setError(null)
-        sendResize()
-        if (snapshotQueuedRef.current) {
-          requestSnapshot()
-        }
+        refreshLayout()
+        scheduleSnapshot()
         if (inputBufferRef.current) {
           flushInput()
         }
+      }
+
+      const flushQueuedOutput = () => {
+        if (snapshotApplyingRef.current) return
+        const terminal = terminalRef.current
+        if (!terminal || outputQueueRef.current.length === 0) return
+        const payload = outputQueueRef.current.join('')
+        outputQueueRef.current = []
+        terminal.write(payload)
       }
 
       const handleMessage = (raw: string) => {
@@ -156,20 +149,28 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         }
         if (!payload) return
         if (payload.type === 'snapshot' && payload.data) {
-          const text = decoder.decode(base64ToBytes(payload.data))
+          const terminal = terminalRef.current
+          if (!terminal) return
+          const text = snapshotDecoder.decode(base64ToBytes(payload.data))
           if (text) {
-            terminalRef.current.reset()
-            terminalRef.current.write(text, () => {
-              terminalRef.current?.scrollToBottom()
-              terminalRef.current?.focus()
+            snapshotApplyingRef.current = true
+            terminal.write(`\u001b[2J\u001b[H${text}`, () => {
+              snapshotApplyingRef.current = false
+              terminal.scrollToBottom()
+              terminal.focus()
+              flushQueuedOutput()
             })
           }
-          snapshotPendingRef.current = false
           return
         }
         if (payload.type === 'output' && payload.data) {
-          const text = decoder.decode(base64ToBytes(payload.data))
-          if (text) terminalRef.current.write(text)
+          const text = outputDecoder.decode(base64ToBytes(payload.data))
+          if (!text) return
+          if (snapshotApplyingRef.current) {
+            outputQueueRef.current.push(text)
+            return
+          }
+          terminalRef.current.write(text)
           return
         }
         if (payload.type === 'error') {
@@ -206,16 +207,12 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         if (!shouldReconnectRef.current) return
         setStatus('connecting')
         setError('Reconnecting...')
-        snapshotPendingRef.current = false
-        snapshotQueuedRef.current = false
       }
 
       socket.onclose = () => {
         if (!shouldReconnectRef.current || isDisposed) return
         setStatus('connecting')
         setError('Reconnecting...')
-        snapshotPendingRef.current = false
-        snapshotQueuedRef.current = false
         if (reconnectTimerRef.current) return
         const attempt = reconnectAttemptRef.current
         const delay = Math.min(10_000, 1000 * 2 ** attempt)
@@ -234,7 +231,6 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       if (isDisposed || !containerRef.current) return
 
       const terminal = new Terminal({
-        convertEol: true,
         cursorBlink: true,
         fontFamily:
           '"JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono"',
@@ -263,11 +259,23 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       containerRef.current.addEventListener('pointerdown', handleFocus)
 
       terminal.onData((data: string) => {
-        if (socketRef.current?.readyState === WebSocket.OPEN) {
-          sendMessage({ type: 'input', data: encodeInput(data) })
+        inputBufferRef.current += data
+        if (inputBufferRef.current.length > 2048) {
+          if (inputFlushTimerRef.current) {
+            clearTimeout(inputFlushTimerRef.current)
+            inputFlushTimerRef.current = null
+          }
+          if (socketRef.current?.readyState === WebSocket.OPEN) {
+            flushInput()
+          }
           return
         }
-        inputBufferRef.current += data
+        if (socketRef.current?.readyState !== WebSocket.OPEN) return
+        if (inputFlushTimerRef.current) return
+        inputFlushTimerRef.current = setTimeout(() => {
+          inputFlushTimerRef.current = null
+          flushInput()
+        }, 12)
       })
 
       resizeObserverRef.current = new ResizeObserver(() => {
@@ -287,11 +295,13 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       const handleVisibility = () => {
         if (document.visibilityState === 'visible') {
           refreshLayout()
+          scheduleSnapshot(240)
         }
       }
 
       const handleWindowFocus = () => {
         refreshLayout()
+        scheduleSnapshot(240)
       }
 
       const handleWindowResize = () => {
@@ -330,6 +340,10 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         clearTimeout(snapshotTimerRef.current)
         snapshotTimerRef.current = null
       }
+      if (inputFlushTimerRef.current) {
+        clearTimeout(inputFlushTimerRef.current)
+        inputFlushTimerRef.current = null
+      }
       if (resizeTimerRef.current) {
         clearTimeout(resizeTimerRef.current)
         resizeTimerRef.current = null
@@ -367,7 +381,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         </span>
         {error ? <span className="text-destructive">{error}</span> : null}
       </div>
-      <div ref={containerRef} className="flex flex-1 min-h-0" />
+      <div ref={containerRef} className="flex flex-1 min-h-0" data-testid="terminal-canvas" />
       {isConnecting ? (
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-xs text-muted-foreground">
           <div className="flex items-center gap-2">

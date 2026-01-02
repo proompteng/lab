@@ -463,7 +463,7 @@ const reconcileRecordStatus = async (
     return updated ?? record
   }
 
-  if (!tmuxSession && record.status === 'error' && record.readyAt) {
+  if (!tmuxSession && record.status === 'error') {
     const updated = await updateTerminalSessionRecord(record.id, {
       status: 'closed',
       worktreeName: record.worktreeName,
@@ -750,17 +750,34 @@ export const ensureTerminalLogPipe = async (sessionId: string): Promise<string> 
   return logPath
 }
 
+const fetchTerminalCursor = async (sessionId: string) => {
+  const result = await runTmux(['display-message', '-p', '-t', sessionId, '#{cursor_x} #{cursor_y}'], {
+    label: 'tmux display-message',
+  })
+  if (result.exitCode !== 0) return null
+  const [xRaw, yRaw] = result.stdout.trim().split(/\s+/)
+  const x = Number.parseInt(xRaw ?? '', 10)
+  const y = Number.parseInt(yRaw ?? '', 10)
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+  return { x, y }
+}
+
 export const captureTerminalSnapshot = async (sessionId: string, lines = 2000): Promise<string> => {
   if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
-  const result = await runTmux(['capture-pane', '-ep', '-S', `-${lines}`, '-t', sessionId])
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr.trim() || 'Unable to capture tmux pane')
+  const [captureResult, cursor] = await Promise.all([
+    runTmux(['capture-pane', '-ep', '-S', `-${lines}`, '-t', sessionId]),
+    fetchTerminalCursor(sessionId).catch(() => null),
+  ])
+  if (captureResult.exitCode !== 0) {
+    throw new Error(captureResult.stderr.trim() || 'Unable to capture tmux pane')
   }
-  const trimmedLines = result.stdout
-    .split('\n')
-    .map((line) => line.replace(/[ \t]+$/g, ''))
-    .join('\n')
-  return trimmedLines.replace(/\n+$/g, '')
+  let snapshot = captureResult.stdout.replace(/\n+$/g, '')
+  if (cursor) {
+    const row = Math.max(1, cursor.y + 1)
+    const col = Math.max(1, cursor.x + 1)
+    snapshot += `\u001b[${row};${col}H`
+  }
+  return snapshot
 }
 
 export const ensureTerminalSessionExists = async (sessionId: string): Promise<boolean> => {

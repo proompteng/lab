@@ -276,7 +276,7 @@ test.describe('deployed jangar e2e', () => {
 
     await page.getByRole('link', { name: 'All sessions' }).click()
     await expect(page).toHaveURL(/\/terminals\/?$/)
-    const listRow = page.locator('li', { hasText: sessionId })
+    const listRow = page.locator(`[data-session-id="${sessionId}"]`)
     await expect(listRow).toBeVisible()
     await expect(listRow.getByText('Ready', { exact: true })).toBeVisible({ timeout: 30_000 })
     await listRow.getByRole('link').click()
@@ -328,7 +328,7 @@ test.describe('deployed jangar e2e', () => {
     expect(sessionId).toMatch(/^jangar-terminal-/)
 
     await page.getByRole('button', { name: 'Refresh' }).click()
-    const row = page.locator('li', { hasText: sessionId })
+    const row = page.locator(`[data-session-id="${sessionId}"]`)
     await expect(row).toBeVisible()
     await expect(row.getByText('Creating', { exact: true })).toBeVisible()
     await expect.poll(() => fetchSessionStatus(sessionId), { timeout: 90_000 }).toBe('ready')
@@ -342,19 +342,19 @@ test.describe('deployed jangar e2e', () => {
     await assertWebSocketStaysOpen(page, wsStatus, 6000)
 
     const marker = `ui-e2e-${Date.now()}`
-    const terminal = page.locator('.xterm')
+    const terminal = page.getByTestId('terminal-canvas')
     await terminal.click()
     await page.keyboard.type(`echo ${marker}`)
     await page.keyboard.press('Enter')
 
     const start = Date.now()
-    await expect(page.locator('.xterm-rows')).toContainText(marker, { timeout: 5000 })
-    expect(Date.now() - start).toBeLessThan(5000)
+    await expect(page.locator('.xterm-rows')).toContainText(marker, { timeout: 2500 })
+    expect(Date.now() - start).toBeLessThan(2500)
     await expect.poll(() => fetchTerminalSnapshot(sessionId), { timeout: 20_000 }).toContain(marker)
 
     await page.getByRole('link', { name: 'All sessions' }).click()
     await expect(page).toHaveURL(/\/terminals\/?$/)
-    const listRow = page.locator('li', { hasText: sessionId })
+    const listRow = page.locator(`[data-session-id="${sessionId}"]`)
     await expect(listRow).toBeVisible()
     await expect(listRow.getByText('Ready', { exact: true })).toBeVisible({ timeout: 30_000 })
     await listRow.getByRole('link').click()
@@ -373,9 +373,12 @@ test.describe('deployed jangar e2e', () => {
     await expect(page.getByText(`Session id: ${sessionId}`)).toBeHidden()
 
     await page.getByRole('button', { name: 'Show closed' }).click()
-    const closedRow = page.locator('li', { hasText: sessionId })
+    const closedRow = page.locator(`[data-session-id="${sessionId}"]`)
     await expect(closedRow).toBeVisible()
     await closedRow.getByRole('button', { name: 'Delete' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Delete terminal session?' })
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: 'Delete' }).click()
     await expect(closedRow).toHaveCount(0)
 
     expect(inputRequests).toEqual([])
