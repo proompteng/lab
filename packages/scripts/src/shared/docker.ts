@@ -152,6 +152,52 @@ export const inspectImageDigest = (image: string): string => {
   throw new Error(`Unable to determine digest for image ${image}`)
 }
 
+export const inspectImageDigestForPlatform = (image: string, platform: string): string | undefined => {
+  ensureCli('docker')
+  const inspect = spawnSyncImpl(['docker', 'buildx', 'imagetools', 'inspect', '--format', '{{json .}}', image], {
+    cwd: repoRoot,
+  })
+
+  if (inspect.exitCode !== 0) {
+    return undefined
+  }
+
+  try {
+    const parsed = JSON.parse(inspect.stdout.toString()) as {
+      manifest?: {
+        manifests?: Array<{
+          digest?: string
+          platform?: { os?: string; architecture?: string; variant?: string }
+        }>
+      }
+    }
+    const target = parsePlatform(platform)
+    if (!target) {
+      return undefined
+    }
+
+    const manifest = parsed.manifest?.manifests?.find((entry) => {
+      const entryPlatform = entry.platform
+      if (!entryPlatform) return false
+      if (entryPlatform.os !== target.os) return false
+      if (entryPlatform.architecture !== target.architecture) return false
+      if (target.variant && entryPlatform.variant && entryPlatform.variant !== target.variant) return false
+      if (target.variant && !entryPlatform.variant) return false
+      return true
+    })
+
+    const digest = manifest?.digest?.trim()
+    if (!digest) {
+      return undefined
+    }
+    const repository = getRepositoryFromReference(image)
+    return `${repository}@${digest}`
+  } catch (error) {
+    console.error('Failed to parse docker imagetools inspect output', error)
+    return undefined
+  }
+}
+
 const inspectLocalImageDigest = (image: string): string | undefined => {
   const inspect = spawnSyncImpl(['docker', 'image', 'inspect', '--format', '{{json .RepoDigests}}', image], {
     cwd: repoRoot,
@@ -211,6 +257,25 @@ const getRepositoryFromReference = (reference: string): string => {
   }
 
   return withoutDigest
+}
+
+const parsePlatform = (platform: string): { os: string; architecture: string; variant?: string } | undefined => {
+  const cleaned = platform.trim()
+  if (!cleaned) {
+    return undefined
+  }
+
+  const parts = cleaned.split('/')
+  if (parts.length < 2) {
+    return undefined
+  }
+
+  const [os, architecture, variant] = parts
+  if (!os || !architecture) {
+    return undefined
+  }
+
+  return { os, architecture, variant }
 }
 
 const setSpawnSync = (fn?: SpawnSync) => {

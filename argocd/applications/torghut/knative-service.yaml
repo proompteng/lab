@@ -23,7 +23,7 @@ spec:
       timeoutSeconds: 60
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/lab/torghut:a35c56a1
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:d9d786aa085b82cb6a05697b61e212834b8160461208ba6ee3345869b126dbf9
           imagePullPolicy: Always
           ports:
             - name: http1
