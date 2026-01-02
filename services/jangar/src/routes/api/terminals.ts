@@ -29,7 +29,8 @@ const listSessionsHandler = async (request: Request) => {
       const status = session.status === 'creating' ? 202 : 201
       return jsonResponse({ ok: true, session }, status)
     }
-    const sessions = await listTerminalSessions()
+    const includeClosed = url.searchParams.get('includeClosed') === '1'
+    const sessions = await listTerminalSessions({ includeClosed })
     return jsonResponse({ ok: true, sessions })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to list terminal sessions'

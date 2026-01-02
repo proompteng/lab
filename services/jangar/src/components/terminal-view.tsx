@@ -34,8 +34,6 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
   const resizeObserverRef = React.useRef<ResizeObserver | null>(null)
   const inputBufferRef = React.useRef('')
   const inputTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pendingEchoRef = React.useRef('')
-  const pendingEchoTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [status, setStatus] = React.useState<'connecting' | 'connected' | 'error'>('connecting')
   const [error, setError] = React.useState<string | null>(null)
@@ -52,6 +50,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ data: encodeInput(data) }),
+        keepalive: true,
       }).catch(() => undefined)
     }
 
@@ -63,40 +62,6 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       }, 16)
     }
 
-    const schedulePendingEchoClear = () => {
-      if (pendingEchoTimerRef.current) clearTimeout(pendingEchoTimerRef.current)
-      pendingEchoTimerRef.current = setTimeout(() => {
-        pendingEchoRef.current = ''
-        pendingEchoTimerRef.current = null
-      }, 750)
-    }
-
-    const applyLocalEcho = (terminal: import('xterm').Terminal, data: string) => {
-      if (data.includes('\x1b')) return
-      if (data === '\x7f') {
-        if (pendingEchoRef.current.length > 0) {
-          pendingEchoRef.current = pendingEchoRef.current.slice(0, -1)
-        }
-        terminal.write('\b \b')
-        schedulePendingEchoClear()
-        return
-      }
-      pendingEchoRef.current += data
-      terminal.write(data)
-      schedulePendingEchoClear()
-    }
-
-    const stripLocalEcho = (payload: string) => {
-      const pending = pendingEchoRef.current
-      if (!pending) return payload
-      let index = 0
-      const max = Math.min(pending.length, payload.length)
-      while (index < max && pending[index] === payload[index]) index += 1
-      if (index === 0) return payload
-      pendingEchoRef.current = pending.slice(index)
-      return payload.slice(index)
-    }
-
     const sendResize = () => {
       const terminal = terminalRef.current
       if (!terminal) return
@@ -104,6 +69,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ cols: terminal.cols, rows: terminal.rows }),
+        keepalive: true,
       }).catch(() => undefined)
     }
 
@@ -113,10 +79,10 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
 
       const terminal = new Terminal({
         cursorBlink: true,
-        convertEol: true,
         fontFamily:
           '"JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono"',
         fontSize: 12,
+        scrollback: 2000,
         theme: {
           background: '#0b0d0f',
           foreground: '#e2e8f0',
@@ -141,7 +107,6 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         } else {
           scheduleInputFlush()
         }
-        applyLocalEcho(terminal, data)
       })
 
       resizeObserverRef.current = new ResizeObserver(() => {
@@ -156,22 +121,24 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
 
       eventSource.onopen = () => {
         setStatus('connected')
+        setError(null)
       }
 
       eventSource.addEventListener('snapshot', (event) => {
         const payload = (event as MessageEvent).data
         if (!payload || !terminalRef.current) return
         const text = decoder.decode(base64ToBytes(payload))
-        const output = stripLocalEcho(text)
-        if (output) terminalRef.current.write(output)
+        if (text) {
+          terminalRef.current.reset()
+          terminalRef.current.write(text)
+        }
       })
 
       eventSource.addEventListener('output', (event) => {
         const payload = (event as MessageEvent).data
         if (!payload || !terminalRef.current) return
         const text = decoder.decode(base64ToBytes(payload))
-        const output = stripLocalEcho(text)
-        if (output) terminalRef.current.write(output)
+        if (text) terminalRef.current.write(text)
       })
 
       eventSource.addEventListener('server-error', (event) => {
@@ -183,9 +150,8 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       })
 
       eventSource.onerror = () => {
-        setStatus('error')
-        setError('Connection lost. Refresh to retry.')
-        eventSource.close()
+        setStatus('connecting')
+        setError('Reconnecting...')
       }
     }
 
@@ -196,10 +162,6 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       if (inputTimerRef.current) {
         clearTimeout(inputTimerRef.current)
         inputTimerRef.current = null
-      }
-      if (pendingEchoTimerRef.current) {
-        clearTimeout(pendingEchoTimerRef.current)
-        pendingEchoTimerRef.current = null
       }
       if (eventSourceRef.current) {
         eventSourceRef.current.close()

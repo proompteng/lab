@@ -189,3 +189,10 @@ export const updateTerminalSessionRecord = async (
     .executeTakeFirst()
   return row ? mapRow(row) : null
 }
+
+export const deleteTerminalSessionRecord = async (id: string) => {
+  const db = await resolveDb()
+  if (!db) return null
+  const row = await db.deleteFrom(`${SCHEMA}.${TABLE}`).where('id', '=', id).returningAll().executeTakeFirst()
+  return row ? mapRow(row) : null
+}

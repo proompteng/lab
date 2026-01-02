@@ -59,6 +59,36 @@ const fetchTerminalSnapshot = async (sessionId: string, timeoutMs = 8000) => {
   }
 }
 
+const assertSseStaysOpen = async (sessionId: string, durationMs = 15000) => {
+  let closedEarly = false
+  let canceled = false
+
+  const response = await fetch(`${baseURL}/api/terminals/${encodeURIComponent(sessionId)}/stream`)
+  if (!response.ok || !response.body) {
+    throw new Error(`stream status ${response.status}`)
+  }
+
+  const reader = response.body.getReader()
+  const readLoop = (async () => {
+    while (true) {
+      const { done } = await reader.read()
+      if (done) {
+        if (!canceled) closedEarly = true
+        break
+      }
+    }
+  })()
+
+  await new Promise((resolve) => setTimeout(resolve, durationMs))
+  canceled = true
+  await reader.cancel()
+  await readLoop.catch(() => undefined)
+
+  if (closedEarly) {
+    throw new Error('SSE stream closed before timeout')
+  }
+}
+
 test.describe('deployed jangar e2e', () => {
   test.skip(
     !shouldRun,
@@ -118,6 +148,7 @@ test.describe('deployed jangar e2e', () => {
     expect(sessionPayload.session?.status).toBe('ready')
 
     await expect(page.getByText('Status: connected', { exact: false })).toBeVisible({ timeout: 20_000 })
+    await assertSseStaysOpen(sessionId, 12_000)
 
     const marker = `e2e-${Date.now()}`
     const inputResponse = await request.post(`/api/terminals/${encodeURIComponent(sessionId)}/input`, {
@@ -131,9 +162,10 @@ test.describe('deployed jangar e2e', () => {
 
     await page.getByRole('link', { name: 'All sessions' }).click()
     await expect(page).toHaveURL(/\/terminals\/?$/)
-    await expect(page.getByText(`Session id: ${sessionId}`)).toBeVisible()
-
-    await page.getByText(`Session id: ${sessionId}`).click()
+    const listRow = page.locator('li', { hasText: sessionId })
+    await expect(listRow).toBeVisible()
+    await expect(listRow.getByText('Ready', { exact: true })).toBeVisible({ timeout: 30_000 })
+    await listRow.getByRole('link').click()
     await expect(page).toHaveURL(new RegExp(`/terminals/${sessionId}$`))
     await expect.poll(() => fetchTerminalSnapshot(sessionId), { timeout: 20_000 }).toContain(marker)
 
@@ -169,14 +201,17 @@ test.describe('deployed jangar e2e', () => {
     const sessionId = createPayload.session?.id ?? ''
     expect(sessionId).toMatch(/^jangar-terminal-/)
 
-    await expect(page.getByText(`Session id: ${sessionId}`)).toBeVisible()
-    await expect(page.getByText('Creating', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Refresh' }).click()
+    const row = page.locator('li', { hasText: sessionId })
+    await expect(row).toBeVisible()
+    await expect(row.getByText('Creating', { exact: true })).toBeVisible()
     await expect.poll(() => fetchSessionStatus(sessionId), { timeout: 90_000 }).toBe('ready')
+    await expect(row.getByText('Ready', { exact: true })).toBeVisible({ timeout: 30_000 })
 
-    await page.getByText(`Session id: ${sessionId}`).click()
+    await row.getByRole('link').click()
     await expect(page).toHaveURL(new RegExp(`/terminals/${sessionId}$`))
     await expect(page.getByText('Status: connected', { exact: false })).toBeVisible({ timeout: 20_000 })
-    await expect(page.getByText('Connection lost. Refresh to retry.')).toBeHidden()
+    await expect(page.getByText('Connection lost. Refresh to retry.')).toHaveCount(0)
 
     const marker = `ui-e2e-${Date.now()}`
     const terminal = page.locator('.xterm')
@@ -189,9 +224,10 @@ test.describe('deployed jangar e2e', () => {
 
     await page.getByRole('link', { name: 'All sessions' }).click()
     await expect(page).toHaveURL(/\/terminals\/?$/)
-    await expect(page.getByText(`Session id: ${sessionId}`)).toBeVisible()
-
-    await page.getByText(`Session id: ${sessionId}`).click()
+    const listRow = page.locator('li', { hasText: sessionId })
+    await expect(listRow).toBeVisible()
+    await expect(listRow.getByText('Ready', { exact: true })).toBeVisible({ timeout: 30_000 })
+    await listRow.getByRole('link').click()
     await expect(page).toHaveURL(new RegExp(`/terminals/${sessionId}$`))
     await expect(page.getByText('Status: connected', { exact: false })).toBeVisible({ timeout: 20_000 })
     await expect.poll(() => fetchTerminalSnapshot(sessionId), { timeout: 20_000 }).toContain(marker)
@@ -204,9 +240,12 @@ test.describe('deployed jangar e2e', () => {
     await page.getByRole('button', { name: 'Terminate session' }).click()
     await expect(page).toHaveURL(/\/terminals\/?$/)
     await expect.poll(() => fetchSessionStatus(sessionId), { timeout: 30_000 }).toBe('closed')
-    const row = page.locator('li', { hasText: sessionId })
-    await expect(row).toContainText('Closed')
-    await page.getByText(`Session id: ${sessionId}`).click()
-    await expect(page).toHaveURL(/\/terminals\/?$/)
+    await expect(page.getByText(`Session id: ${sessionId}`)).toBeHidden()
+
+    await page.getByRole('button', { name: 'Show closed' }).click()
+    const closedRow = page.locator('li', { hasText: sessionId })
+    await expect(closedRow).toBeVisible()
+    await closedRow.getByRole('button', { name: 'Delete' }).click()
+    await expect(closedRow).toHaveCount(0)
   })
 })

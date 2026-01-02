@@ -1,12 +1,13 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, open, stat } from 'node:fs/promises'
+import { mkdir, open, rm, stat } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
   createTerminalSessionRecord,
+  deleteTerminalSessionRecord,
   getTerminalSessionRecord,
   listTerminalSessionRecords,
   updateTerminalSessionRecord,
@@ -187,6 +188,14 @@ const buildWorktreePath = (worktreeName: string) => join(resolveWorktreeRoot(), 
 const normalizeSuffix = (value: string) => value.toLowerCase().replace(/[^a-z0-9-]/g, '-')
 
 const generateSuffix = () => normalizeSuffix(randomUUID().slice(0, 8))
+
+const isSafeWorktreePath = (worktreePath: string | null, worktreeName: string | null) => {
+  if (!worktreePath || !worktreeName) return false
+  const root = resolveWorktreeRoot()
+  const resolved = resolve(worktreePath)
+  if (!resolved.startsWith(`${root}${sep}`)) return false
+  return resolved.endsWith(`${sep}${worktreeName}`)
+}
 
 const shouldSkipGitWorktree = () => {
   if (process.env.NODE_ENV === 'test') return true
@@ -410,7 +419,7 @@ const reconcileRecordStatus = async (
   return record
 }
 
-export const listTerminalSessions = async (): Promise<TerminalSession[]> => {
+export const listTerminalSessions = async (options: { includeClosed?: boolean } = {}): Promise<TerminalSession[]> => {
   const [tmuxSessions, records] = await Promise.all([listTmuxSessions(), listTerminalSessionRecords()])
   const tmuxMap = new Map(tmuxSessions.map((session) => [session.id, session]))
   const recordIds = new Set(records.map((record) => record.id))
@@ -453,7 +462,9 @@ export const listTerminalSessions = async (): Promise<TerminalSession[]> => {
     )
   }
 
-  return sessions.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
+  const ordered = sessions.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
+  if (options.includeClosed) return ordered
+  return ordered.filter((session) => session.status !== 'closed')
 }
 
 export const getTerminalSession = async (sessionId: string): Promise<TerminalSession | null> => {
@@ -653,7 +664,9 @@ export const ensureTerminalLogPipe = async (sessionId: string): Promise<string> 
   if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
   const logPath = join(LOG_DIR, `${sessionId}.log`)
   await ensureLogFile(logPath)
-  const result = await runTmux(['pipe-pane', '-o', '-t', sessionId, `cat >> ${logPath}`])
+  const result = await runTmux(['pipe-pane', '-t', sessionId, `cat >> ${logPath}`], {
+    label: 'tmux pipe-pane',
+  })
   if (result.exitCode !== 0) {
     throw new Error(result.stderr.trim() || 'Unable to attach tmux log pipe')
   }
@@ -718,6 +731,34 @@ export const terminateTerminalSession = async (sessionId: string) => {
     closedAt: new Date().toISOString(),
     metadata: record?.metadata ?? {},
   })
+}
+
+export const deleteTerminalSession = async (sessionId: string) => {
+  if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
+
+  const record = await getTerminalSessionRecord(sessionId)
+  const hasSession = await runTmux(['has-session', '-t', sessionId], { label: 'tmux has-session' })
+  if (hasSession.exitCode === 0) {
+    throw new Error('Session is still running. Terminate it before deleting.')
+  }
+
+  if (record?.worktreePath && isSafeWorktreePath(record.worktreePath, record.worktreeName)) {
+    const repoRoot = resolveCodexBaseCwd()
+    const removeResult = await runGit(['worktree', 'remove', '--force', record.worktreePath], repoRoot, {
+      timeoutMs: WORKTREE_TIMEOUT_MS,
+      label: 'git worktree remove',
+    })
+    if (removeResult.exitCode !== 0) {
+      console.warn('[terminals] git worktree remove failed', {
+        sessionId,
+        stderr: removeResult.stderr.trim(),
+      })
+      await rm(record.worktreePath, { recursive: true, force: true })
+    }
+  }
+
+  await rm(join(LOG_DIR, `${sessionId}.log`), { force: true })
+  await deleteTerminalSessionRecord(sessionId)
 }
 
 export const sendTerminalInput = async (sessionId: string, input: string) => {

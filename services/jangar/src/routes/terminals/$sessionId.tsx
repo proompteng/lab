@@ -43,6 +43,7 @@ function TerminalSessionPage() {
   const [error, setError] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(true)
   const [isTerminating, setIsTerminating] = React.useState(false)
+  const [isDeleting, setIsDeleting] = React.useState(false)
 
   const loadSession = React.useCallback(async () => {
     setIsLoading(true)
@@ -122,7 +123,7 @@ function TerminalSessionPage() {
           </Button>
           <Button
             variant="destructive"
-            disabled={isTerminating || session?.status === 'creating'}
+            disabled={isTerminating || session?.status !== 'ready'}
             onClick={async () => {
               if (!session) return
               setIsTerminating(true)
@@ -145,6 +146,33 @@ function TerminalSessionPage() {
           >
             {isTerminating ? 'Terminating...' : 'Terminate session'}
           </Button>
+          {(session?.status === 'closed' || session?.status === 'error') && (
+            <Button
+              variant="outline"
+              disabled={isDeleting}
+              onClick={async () => {
+                if (!session) return
+                setIsDeleting(true)
+                setError(null)
+                try {
+                  const response = await fetch(`/api/terminals/${encodeURIComponent(session.id)}/delete`, {
+                    method: 'POST',
+                  })
+                  const payload = (await response.json().catch(() => null)) as { ok?: boolean; message?: string } | null
+                  if (!response.ok || !payload?.ok) {
+                    throw new Error(payload?.message ?? 'Unable to delete session.')
+                  }
+                  await navigate({ to: '/terminals' })
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : 'Unable to delete session.')
+                } finally {
+                  setIsDeleting(false)
+                }
+              }}
+            >
+              {isDeleting ? 'Deleting...' : 'Delete session'}
+            </Button>
+          )}
           <Button variant="outline" onClick={loadSession} disabled={isLoading}>
             Refresh
           </Button>

@@ -39,12 +39,13 @@ function TerminalsIndexPage() {
   const [error, setError] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
   const [isCreating, setIsCreating] = React.useState(false)
+  const [showClosed, setShowClosed] = React.useState(false)
 
   const loadSessions = React.useCallback(async () => {
     setIsLoading(true)
     setError(null)
     try {
-      const response = await fetch('/api/terminals')
+      const response = await fetch(showClosed ? '/api/terminals?includeClosed=1' : '/api/terminals')
       const payload = (await response.json().catch(() => null)) as
         | { ok: true; sessions: TerminalSession[] }
         | { ok: false; message?: string }
@@ -62,7 +63,7 @@ function TerminalsIndexPage() {
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [showClosed])
 
   const createSession = React.useCallback(async () => {
     setIsCreating(true)
@@ -88,6 +89,22 @@ function TerminalsIndexPage() {
       setError(err instanceof Error ? err.message : 'Unable to create terminal session.')
     } finally {
       setIsCreating(false)
+    }
+  }, [])
+
+  const deleteSession = React.useCallback(async (sessionId: string) => {
+    setError(null)
+    try {
+      const response = await fetch(`/api/terminals/${encodeURIComponent(sessionId)}/delete`, {
+        method: 'POST',
+      })
+      const payload = (await response.json().catch(() => null)) as { ok?: boolean; message?: string } | null
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.message || 'Unable to delete session.')
+      }
+      setSessions((prev) => prev.filter((session) => session.id !== sessionId))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to delete terminal session.')
     }
   }, [])
 
@@ -127,6 +144,9 @@ function TerminalsIndexPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={() => setShowClosed((prev) => !prev)} disabled={isLoading}>
+            {showClosed ? 'Hide closed' : 'Show closed'}
+          </Button>
           <Button variant="outline" onClick={loadSessions} disabled={isLoading}>
             Refresh
           </Button>
@@ -161,30 +181,48 @@ function TerminalsIndexPage() {
                 {(() => {
                   const meta = statusMeta(session.status)
                   return (
-                    <Link
-                      to="/terminals/$sessionId"
-                      params={{ sessionId: session.id }}
-                      onClick={(event) => {
-                        if (session.status !== 'ready') {
-                          event.preventDefault()
-                        }
-                      }}
-                      aria-disabled={session.status !== 'ready'}
+                    <div
                       className={cn(
                         'flex flex-col gap-2 p-4 transition',
-                        session.status === 'ready' ? 'hover:bg-muted/20' : 'cursor-not-allowed opacity-70',
+                        session.status === 'ready' ? 'hover:bg-muted/20' : 'opacity-70',
                       )}
                     >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="space-y-1">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <Link
+                          to="/terminals/$sessionId"
+                          params={{ sessionId: session.id }}
+                          onClick={(event) => {
+                            if (session.status !== 'ready') {
+                              event.preventDefault()
+                            }
+                          }}
+                          aria-disabled={session.status !== 'ready'}
+                          className={cn(
+                            'flex-1 space-y-1',
+                            session.status === 'ready' ? 'cursor-pointer' : 'cursor-not-allowed',
+                          )}
+                        >
                           <div className="text-sm font-semibold text-foreground">{session.label}</div>
                           <div className="text-xs text-muted-foreground">
                             {session.worktreePath ?? 'Unknown worktree'}
                           </div>
-                        </div>
+                        </Link>
                         <div className="flex flex-col items-end gap-1 text-xs text-muted-foreground">
                           <span>{formatDateTime(session.createdAt)}</span>
                           <span>{session.attached ? 'Attached' : 'Detached'}</span>
+                          {(session.status === 'closed' || session.status === 'error') && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(event) => {
+                                event.preventDefault()
+                                event.stopPropagation()
+                                void deleteSession(session.id)
+                              }}
+                            >
+                              Delete
+                            </Button>
+                          )}
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -197,7 +235,7 @@ function TerminalsIndexPage() {
                       {session.status === 'error' && session.errorMessage ? (
                         <div className="text-xs text-destructive">{session.errorMessage}</div>
                       ) : null}
-                    </Link>
+                    </div>
                   )
                 })()}
               </li>

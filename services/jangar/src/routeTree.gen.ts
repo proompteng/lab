@@ -52,6 +52,7 @@ import { Route as ApiTerminalsSessionIdStreamRouteImport } from './routes/api/te
 import { Route as ApiTerminalsSessionIdResizeRouteImport } from './routes/api/terminals/$sessionId/resize'
 import { Route as ApiTerminalsSessionIdInputRouteImport } from './routes/api/terminals/$sessionId/input'
 import { Route as ApiTerminalsSessionIdTerminateRouteImport } from './routes/api/terminals/$sessionId/terminate'
+import { Route as ApiTerminalsSessionIdDeleteRouteImport } from './routes/api/terminals/$sessionId/delete'
 
 const MemoriesRoute = MemoriesRouteImport.update({
   id: '/memories',
@@ -272,6 +273,12 @@ const ApiTerminalsSessionIdTerminateRoute =
     path: '/terminate',
     getParentRoute: () => ApiTerminalsSessionIdRoute,
   } as any)
+const ApiTerminalsSessionIdDeleteRoute =
+  ApiTerminalsSessionIdDeleteRouteImport.update({
+    id: '/delete',
+    path: '/delete',
+    getParentRoute: () => ApiTerminalsSessionIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -309,6 +316,7 @@ export interface FileRoutesByFullPath {
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/api/terminals/$sessionId/input': typeof ApiTerminalsSessionIdInputRoute
+  '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
   '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
   '/api/terminals/$sessionId/resize': typeof ApiTerminalsSessionIdResizeRoute
   '/api/terminals/$sessionId/stream': typeof ApiTerminalsSessionIdStreamRoute
@@ -354,6 +362,7 @@ export interface FileRoutesByTo {
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/api/terminals/$sessionId/input': typeof ApiTerminalsSessionIdInputRoute
+  '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
   '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
   '/api/terminals/$sessionId/resize': typeof ApiTerminalsSessionIdResizeRoute
   '/api/terminals/$sessionId/stream': typeof ApiTerminalsSessionIdStreamRoute
@@ -400,6 +409,7 @@ export interface FileRoutesById {
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/api/terminals/$sessionId/input': typeof ApiTerminalsSessionIdInputRoute
+  '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
   '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
   '/api/terminals/$sessionId/resize': typeof ApiTerminalsSessionIdResizeRoute
   '/api/terminals/$sessionId/stream': typeof ApiTerminalsSessionIdStreamRoute
@@ -447,6 +457,7 @@ export interface FileRouteTypes {
     | '/api/torghut/symbols'
     | '/openai/v1/models'
     | '/api/terminals/$sessionId/input'
+    | '/api/terminals/$sessionId/delete'
     | '/api/terminals/$sessionId/terminate'
     | '/api/terminals/$sessionId/resize'
     | '/api/terminals/$sessionId/stream'
@@ -492,6 +503,7 @@ export interface FileRouteTypes {
     | '/api/torghut/symbols'
     | '/openai/v1/models'
     | '/api/terminals/$sessionId/input'
+    | '/api/terminals/$sessionId/delete'
     | '/api/terminals/$sessionId/terminate'
     | '/api/terminals/$sessionId/resize'
     | '/api/terminals/$sessionId/stream'
@@ -537,6 +549,7 @@ export interface FileRouteTypes {
     | '/api/torghut/symbols'
     | '/openai/v1/models'
     | '/api/terminals/$sessionId/input'
+    | '/api/terminals/$sessionId/delete'
     | '/api/terminals/$sessionId/terminate'
     | '/api/terminals/$sessionId/resize'
     | '/api/terminals/$sessionId/stream'
@@ -883,6 +896,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTerminalsSessionIdInputRouteImport
       parentRoute: typeof ApiTerminalsSessionIdRoute
     }
+    '/api/terminals/$sessionId/delete': {
+      id: '/api/terminals/$sessionId/delete'
+      path: '/delete'
+      fullPath: '/api/terminals/$sessionId/delete'
+      preLoaderRoute: typeof ApiTerminalsSessionIdDeleteRouteImport
+      parentRoute: typeof ApiTerminalsSessionIdRoute
+    }
     '/api/terminals/$sessionId/terminate': {
       id: '/api/terminals/$sessionId/terminate'
       path: '/terminate'
@@ -895,6 +915,7 @@ declare module '@tanstack/react-router' {
 
 interface ApiTerminalsSessionIdRouteChildren {
   ApiTerminalsSessionIdInputRoute: typeof ApiTerminalsSessionIdInputRoute
+  ApiTerminalsSessionIdDeleteRoute: typeof ApiTerminalsSessionIdDeleteRoute
   ApiTerminalsSessionIdTerminateRoute: typeof ApiTerminalsSessionIdTerminateRoute
   ApiTerminalsSessionIdResizeRoute: typeof ApiTerminalsSessionIdResizeRoute
   ApiTerminalsSessionIdStreamRoute: typeof ApiTerminalsSessionIdStreamRoute
@@ -902,6 +923,7 @@ interface ApiTerminalsSessionIdRouteChildren {
 
 const ApiTerminalsSessionIdRouteChildren: ApiTerminalsSessionIdRouteChildren = {
   ApiTerminalsSessionIdInputRoute: ApiTerminalsSessionIdInputRoute,
+  ApiTerminalsSessionIdDeleteRoute: ApiTerminalsSessionIdDeleteRoute,
   ApiTerminalsSessionIdTerminateRoute: ApiTerminalsSessionIdTerminateRoute,
   ApiTerminalsSessionIdResizeRoute: ApiTerminalsSessionIdResizeRoute,
   ApiTerminalsSessionIdStreamRoute: ApiTerminalsSessionIdStreamRoute,
