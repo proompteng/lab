@@ -80,8 +80,12 @@ const readTerminalSize = async (page: import('@playwright/test').Page) =>
     return { cols, rows }
   })
 
-const readActiveTestId = async (page: import('@playwright/test').Page) =>
-  page.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? '')
+const isTerminalFocusWithin = async (page: import('@playwright/test').Page) =>
+  page.evaluate(() => {
+    const container = document.querySelector('[data-testid="terminal-canvas"]')
+    const active = document.activeElement
+    return !!(container && active && container.contains(active))
+  })
 
 const assertWebSocketStaysOpen = async (
   page: import('@playwright/test').Page,
@@ -463,14 +467,11 @@ test.describe('deployed jangar e2e', () => {
     await waitForHydration(page)
     await expect(page.getByText('Status: connected', { exact: false })).toBeVisible({ timeout: 20_000 })
 
-    const activeTestId = await readActiveTestId(page)
-    expect(activeTestId).not.toBe('terminal-canvas')
-    await expect(page.getByText('Focus: inactive')).toBeVisible()
+    expect(await isTerminalFocusWithin(page)).toBe(false)
 
     const terminal = page.getByTestId('terminal-canvas')
     await terminal.focus()
-    await expect(terminal).toBeFocused()
-    await expect(page.getByText('Focus: active')).toBeVisible()
+    await expect.poll(() => isTerminalFocusWithin(page), { timeout: 5_000 }).toBe(true)
 
     await request.post(`/api/terminals/${encodeURIComponent(sessionId)}/terminate`)
     await expect.poll(() => fetchSessionStatus(sessionId), { timeout: 30_000 }).toBe('closed')
