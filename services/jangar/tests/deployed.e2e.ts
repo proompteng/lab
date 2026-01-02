@@ -80,6 +80,13 @@ const readTerminalSize = async (page: import('@playwright/test').Page) =>
     return { cols, rows }
   })
 
+const isTerminalFocusWithin = async (page: import('@playwright/test').Page) =>
+  page.evaluate(() => {
+    const container = document.querySelector('[data-testid="terminal-canvas"]')
+    const active = document.activeElement
+    return !!(container && active && container.contains(active))
+  })
+
 const assertWebSocketStaysOpen = async (
   page: import('@playwright/test').Page,
   status: { wasClosed: () => boolean },
@@ -440,6 +447,31 @@ test.describe('deployed jangar e2e', () => {
     await expect(page.locator('.xterm-rows')).toContainText('LINE-1:', { timeout: 5_000 })
 
     await page.keyboard.press('Enter')
+
+    await request.post(`/api/terminals/${encodeURIComponent(sessionId)}/terminate`)
+    await expect.poll(() => fetchSessionStatus(sessionId), { timeout: 30_000 }).toBe('closed')
+  })
+
+  test('terminal focus UX is keyboard focusable without auto-focus', async ({ page, request }) => {
+    test.setTimeout(120_000)
+
+    const createResponse = await request.get('/api/terminals?create=1')
+    expect(createResponse.ok()).toBe(true)
+    const createPayload = (await createResponse.json()) as { ok?: boolean; session?: { id?: string } }
+    expect(createPayload.ok).toBe(true)
+    const sessionId = createPayload.session?.id ?? ''
+    expect(sessionId).toMatch(/^jangar-terminal-/)
+    await expect.poll(() => fetchSessionStatus(sessionId), { timeout: 90_000 }).toBe('ready')
+
+    await page.goto(`/terminals/${sessionId}`)
+    await waitForHydration(page)
+    await expect(page.getByText('Status: connected', { exact: false })).toBeVisible({ timeout: 20_000 })
+
+    expect(await isTerminalFocusWithin(page)).toBe(false)
+
+    const terminal = page.getByTestId('terminal-canvas')
+    await terminal.focus()
+    await expect.poll(() => isTerminalFocusWithin(page), { timeout: 5_000 }).toBe(true)
 
     await request.post(`/api/terminals/${encodeURIComponent(sessionId)}/terminate`)
     await expect.poll(() => fetchSessionStatus(sessionId), { timeout: 30_000 }).toBe('closed')

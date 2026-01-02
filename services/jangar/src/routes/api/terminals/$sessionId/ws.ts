@@ -1,14 +1,12 @@
-import { open as openFile } from 'node:fs/promises'
-
 import { createFileRoute } from '@tanstack/react-router'
 import { defineWebSocket } from 'h3'
 
+import { type TailerPeer, TerminalLogTailer } from '~/server/terminal-log-tailer'
 import {
   captureTerminalSnapshot,
   ensureTerminalLogPipe,
   ensureTerminalSessionExists,
   formatSessionId,
-  getTerminalLogPath,
   getTerminalSession,
   isTerminalSessionId,
   markTerminalSessionError,
@@ -19,10 +17,7 @@ import {
 type PeerState = {
   sessionId: string
   closed: boolean
-  handle: Awaited<ReturnType<typeof openFile>> | null
-  offset: number
-  poller: ReturnType<typeof setInterval> | null
-  snapshotInFlight: boolean
+  tailerPeer: TailerPeer | null
 }
 
 type WebSocketPeer = {
@@ -52,6 +47,30 @@ export const Route = createFileRoute('/api/terminals/$sessionId/ws')({
 })
 
 const peerState = new WeakMap<object, PeerState>()
+const sessionTailers = new Map<string, TerminalLogTailer>()
+
+type SnapshotRequest = {
+  peer: WebSocketPeer
+  seq: number | null
+  cols: number
+  rows: number
+}
+
+type SnapshotState = {
+  inFlight: boolean
+  cooldownUntil: number
+  timer: ReturnType<typeof setTimeout> | null
+  pending: Map<WebSocketPeer, SnapshotRequest>
+}
+
+const snapshotStates = new Map<string, SnapshotState>()
+const SNAPSHOT_MIN_INTERVAL_MS = 750
+const cleanupSnapshotState = (sessionId: string) => {
+  const state = snapshotStates.get(sessionId)
+  if (!state) return
+  if (state.timer) clearTimeout(state.timer)
+  snapshotStates.delete(sessionId)
+}
 
 const encodeBase64 = (value: string | Uint8Array) => {
   if (typeof value === 'string') return Buffer.from(value, 'utf8').toString('base64')
@@ -86,20 +105,80 @@ const closeWithError = (peer: WebSocketPeer, message: string) => {
   peer.close(1008, message)
 }
 
-const readLogChunk = async (state: PeerState, peer: WebSocketPeer) => {
-  if (state.closed || !state.handle) return
-  const stats = await state.handle.stat()
-  if (stats.size < state.offset) {
-    state.offset = stats.size
+const getTailer = (sessionId: string) => {
+  let tailer = sessionTailers.get(sessionId)
+  if (!tailer) {
+    tailer = new TerminalLogTailer(sessionId)
+    sessionTailers.set(sessionId, tailer)
   }
-  if (stats.size === state.offset) return
-  const remaining = stats.size - state.offset
-  const chunkSize = Math.min(remaining, 64 * 1024)
-  const buffer = Buffer.alloc(chunkSize)
-  const { bytesRead } = await state.handle.read(buffer, 0, chunkSize, state.offset)
-  if (!bytesRead) return
-  state.offset += bytesRead
-  sendJson(peer, { type: 'output', data: encodeBase64(buffer.subarray(0, bytesRead)) })
+  return tailer
+}
+
+const getSnapshotState = (sessionId: string) => {
+  let state = snapshotStates.get(sessionId)
+  if (!state) {
+    state = { inFlight: false, cooldownUntil: 0, timer: null, pending: new Map() }
+    snapshotStates.set(sessionId, state)
+  }
+  return state
+}
+
+const queueSnapshot = (sessionId: string, request: SnapshotRequest) => {
+  const state = getSnapshotState(sessionId)
+  state.pending.set(request.peer, request)
+  scheduleSnapshot(sessionId, state)
+}
+
+const scheduleSnapshot = (sessionId: string, state: SnapshotState) => {
+  if (state.inFlight || state.timer) return
+  const delay = Math.max(0, state.cooldownUntil - Date.now())
+  state.timer = setTimeout(() => {
+    state.timer = null
+    void runSnapshot(sessionId, state)
+  }, delay)
+}
+
+const runSnapshot = async (sessionId: string, state: SnapshotState) => {
+  if (state.inFlight || state.pending.size === 0) return
+  state.inFlight = true
+  const requests = Array.from(state.pending.values())
+  state.pending.clear()
+  const latest = requests[requests.length - 1]
+
+  try {
+    const cols = latest ? latest.cols : Number.NaN
+    const rows = latest ? latest.rows : Number.NaN
+    if (Number.isFinite(cols) && Number.isFinite(rows)) {
+      await resizeTerminalSession(sessionId, cols, rows)
+    }
+    const snapshot = await captureTerminalSnapshot(sessionId, 2000)
+    if (snapshot.trim().length > 0) {
+      const data = encodeBase64(snapshot)
+      for (const request of requests) {
+        if (peerState.get(request.peer)?.closed) continue
+        const payload: Record<string, unknown> = { type: 'snapshot', data }
+        if (request.seq !== null) payload.seq = request.seq
+        if (Number.isFinite(cols) && Number.isFinite(rows)) {
+          payload.cols = cols
+          payload.rows = rows
+        }
+        sendJson(request.peer, payload)
+      }
+    }
+  } catch (error) {
+    const messageText = error instanceof Error ? error.message : 'Unable to capture terminal snapshot.'
+    console.warn('[terminals] ws snapshot failed', { sessionId, message: messageText })
+    for (const request of requests) {
+      if (peerState.get(request.peer)?.closed) continue
+      sendJson(request.peer, { type: 'error', message: messageText, fatal: false })
+    }
+  } finally {
+    state.inFlight = false
+    state.cooldownUntil = Date.now() + SNAPSHOT_MIN_INTERVAL_MS
+    if (state.pending.size > 0) {
+      scheduleSnapshot(sessionId, state)
+    }
+  }
 }
 
 const websocketHooks = defineWebSocket({
@@ -143,38 +222,29 @@ const websocketHooks = defineWebSocket({
       return
     }
 
-    const logPath = await getTerminalLogPath(sessionId)
     const state: PeerState = {
       sessionId,
       closed: false,
-      handle: null,
-      offset: 0,
-      poller: null,
-      snapshotInFlight: false,
+      tailerPeer: null,
     }
     peerState.set(peer, state)
 
     console.info('[terminals] ws open', { sessionId })
 
     try {
-      state.handle = await openFile(logPath, 'r')
-      const stats = await state.handle.stat()
-      state.offset = stats.size
+      const tailer = getTailer(sessionId)
+      const tailerPeer: TailerPeer = {
+        send: (payload) => sendJson(peer, payload),
+      }
+      state.tailerPeer = tailerPeer
+      await tailer.addPeer(tailerPeer)
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to open terminal log.'
-      console.warn('[terminals] ws log open failed', { sessionId, message })
+      const message = error instanceof Error ? error.message : 'Unable to read terminal log.'
+      console.warn('[terminals] ws log attach failed', { sessionId, message })
       await markTerminalSessionError(sessionId, message)
       closeWithError(peer, message)
       return
     }
-
-    state.poller = setInterval(() => {
-      void readLogChunk(state, peer).catch((error) => {
-        const message = error instanceof Error ? error.message : 'Unable to read terminal log.'
-        console.warn('[terminals] ws log read failed', { sessionId, message })
-        sendJson(peer, { type: 'error', message, fatal: false })
-      })
-    }, 25)
   },
 
   async message(peer: WebSocketPeer, message: WebSocketMessage) {
@@ -218,32 +288,10 @@ const websocketHooks = defineWebSocket({
     }
 
     if (data.type === 'snapshot') {
-      if (state.snapshotInFlight) return
       const seq = typeof data.seq === 'number' ? data.seq : null
       const cols = typeof data.cols === 'number' ? data.cols : Number.NaN
       const rows = typeof data.rows === 'number' ? data.rows : Number.NaN
-      state.snapshotInFlight = true
-      try {
-        if (Number.isFinite(cols) && Number.isFinite(rows)) {
-          await resizeTerminalSession(state.sessionId, cols, rows)
-        }
-        const snapshot = await captureTerminalSnapshot(state.sessionId, 2000)
-        if (snapshot.trim().length > 0) {
-          const payload: Record<string, unknown> = { type: 'snapshot', data: encodeBase64(snapshot) }
-          if (seq !== null) payload.seq = seq
-          if (Number.isFinite(cols) && Number.isFinite(rows)) {
-            payload.cols = cols
-            payload.rows = rows
-          }
-          sendJson(peer, payload)
-        }
-      } catch (error) {
-        const messageText = error instanceof Error ? error.message : 'Unable to capture terminal snapshot.'
-        console.warn('[terminals] ws snapshot failed', { sessionId: state.sessionId, message: messageText })
-        sendJson(peer, { type: 'error', message: messageText, fatal: false })
-      } finally {
-        state.snapshotInFlight = false
-      }
+      queueSnapshot(state.sessionId, { peer, seq, cols, rows })
     }
   },
 
@@ -251,14 +299,18 @@ const websocketHooks = defineWebSocket({
     const state = peerState.get(peer)
     if (!state) return
     state.closed = true
-    if (state.poller) clearInterval(state.poller)
-    if (state.handle) {
-      try {
-        await state.handle.close()
-      } catch {
-        // ignore
+    if (state.tailerPeer) {
+      const tailer = sessionTailers.get(state.sessionId)
+      tailer?.removePeer(state.tailerPeer)
+      if (tailer && tailer.getPeerCount() === 0) {
+        tailer.dispose()
+        sessionTailers.delete(state.sessionId)
+        cleanupSnapshotState(state.sessionId)
       }
+      state.tailerPeer = null
     }
+    const snapshotState = snapshotStates.get(state.sessionId)
+    snapshotState?.pending.delete(peer)
     console.info('[terminals] ws closed', { sessionId: state.sessionId })
     peerState.delete(peer)
   },

@@ -44,7 +44,6 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
   const latestSnapshotSeqRef = React.useRef(0)
   const outputQueueRef = React.useRef<string[]>([])
   const snapshotApplyingRef = React.useRef(false)
-  const pendingResyncRef = React.useRef(false)
 
   const [status, setStatus] = React.useState<'connecting' | 'connected' | 'error'>('connecting')
   const [error, setError] = React.useState<string | null>(null)
@@ -87,10 +86,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       if (snapshotTimerRef.current) clearTimeout(snapshotTimerRef.current)
       snapshotTimerRef.current = setTimeout(() => {
         snapshotTimerRef.current = null
-        if (!isPageVisible()) {
-          pendingResyncRef.current = true
-          return
-        }
+        if (!isPageVisible()) return
         if (socketRef.current?.readyState !== WebSocket.OPEN) return
         const terminal = terminalRef.current
         if (!terminal) return
@@ -105,10 +101,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current)
       resizeTimerRef.current = setTimeout(() => {
         resizeTimerRef.current = null
-        if (!isPageVisible()) {
-          pendingResyncRef.current = true
-          return
-        }
+        if (!isPageVisible()) return
         const container = containerRef.current
         if (!container) return
         const { width, height } = container.getBoundingClientRect()
@@ -131,7 +124,6 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
     }
 
     const forceResync = (delayMs = 240) => {
-      pendingResyncRef.current = false
       lastSizeRef.current = null
       refreshLayout(true)
       scheduleSnapshot(delayMs)
@@ -196,7 +188,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
           const text = snapshotDecoder.decode(base64ToBytes(payload.data))
           if (text) {
             snapshotApplyingRef.current = true
-            terminal.write(`\u001b[2J\u001b[H${text}`, () => {
+            terminal.write(`\u001b[2J\u001b[3J\u001b[H${text}`, () => {
               snapshotApplyingRef.current = false
               terminal.scrollToBottom()
               flushQueuedOutput()
@@ -289,15 +281,18 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       terminal.loadAddon(fitAddon)
       terminal.open(containerRef.current)
       fitAddon.fit()
-      terminal.focus()
 
       terminalRef.current = terminal
       fitRef.current = fitAddon
 
-      const handleFocus = () => {
+      const handleContainerFocus = () => terminal.focus()
+      const handlePointerDown = () => {
+        containerRef.current?.focus({ preventScroll: true })
         terminal.focus()
       }
-      containerRef.current.addEventListener('pointerdown', handleFocus)
+
+      containerRef.current.addEventListener('focus', handleContainerFocus)
+      containerRef.current.addEventListener('pointerdown', handlePointerDown)
 
       terminal.onData((data: string) => {
         inputBufferRef.current += data
@@ -336,8 +331,6 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       const handleVisibility = () => {
         if (document.visibilityState === 'visible') {
           forceResync(260)
-        } else {
-          pendingResyncRef.current = true
         }
       }
 
@@ -357,7 +350,8 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       attachSocket()
 
       return () => {
-        containerRef.current?.removeEventListener('pointerdown', handleFocus)
+        containerRef.current?.removeEventListener('focus', handleContainerFocus)
+        containerRef.current?.removeEventListener('pointerdown', handlePointerDown)
         document.removeEventListener('visibilitychange', handleVisibility)
         window.removeEventListener('focus', handleWindowFocus)
         window.removeEventListener('resize', handleWindowResize)
@@ -422,7 +416,15 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         </span>
         {error ? <span className="text-destructive">{error}</span> : null}
       </div>
-      <div ref={containerRef} className="flex flex-1 min-h-0" data-testid="terminal-canvas" />
+      <div
+        ref={containerRef}
+        className="flex flex-1 min-h-0 bg-transparent outline-none focus-within:ring-2 focus-within:ring-zinc-500/70 focus-within:ring-inset"
+        data-testid="terminal-canvas"
+        role="application"
+        aria-label="Terminal"
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: xterm mounts its own input; container must be focusable.
+        tabIndex={0}
+      />
       {isConnecting ? (
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-xs text-muted-foreground">
           <div className="flex items-center gap-2">
