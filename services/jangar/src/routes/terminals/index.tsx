@@ -2,6 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   AlertDialog,
@@ -54,6 +55,8 @@ function TerminalsIndexPage() {
   const [showClosed, setShowClosed] = React.useState(false)
   const isInitialLoading = isLoading && sessions.length === 0
   const showPendingRow = isCreating && !sessions.some((session) => session.status === 'creating')
+  const tableColumns =
+    'grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,0.6fr)_minmax(0,0.6fr)_minmax(0,0.5fr)]'
 
   const loadSessions = React.useCallback(async () => {
     setIsLoading(true)
@@ -148,7 +151,7 @@ function TerminalsIndexPage() {
   }
 
   return (
-    <main className="mx-auto space-y-6 p-6 w-full max-w-6xl">
+    <main className="mx-auto flex flex-col gap-6 p-6 w-full max-w-6xl min-h-svh overflow-hidden">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-2">
           <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Terminals</p>
@@ -190,160 +193,181 @@ function TerminalsIndexPage() {
         </div>
       ) : null}
 
-      {isInitialLoading ? (
-        <section className="overflow-hidden rounded-none border border-border bg-card">
-          <ul>
-            {Array.from({ length: 4 }, (_, index) => (
-              <li key={`skeleton-${index}`} className="border-b border-border last:border-b-0">
-                <div className="flex flex-col gap-2 p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="flex-1 space-y-2">
-                      <Skeleton className="h-4 w-28" />
-                      <Skeleton className="h-3 w-64" />
-                    </div>
-                    <div className="flex flex-col items-end gap-2">
-                      <Skeleton className="h-3 w-20" />
-                      <Skeleton className="h-3 w-16" />
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <Skeleton className="h-3 w-36" />
-                    <Skeleton className="h-3 w-16" />
-                  </div>
+      <section className="flex flex-1 min-h-0 rounded-none border border-border bg-card">
+        {isInitialLoading ? (
+          <div className="w-full">
+            <div
+              className={cn(
+                'grid gap-4 border-b border-border px-4 py-3 text-[11px] uppercase tracking-widest text-muted-foreground',
+                tableColumns,
+              )}
+            >
+              <span>Session</span>
+              <span>Worktree</span>
+              <span>Created</span>
+              <span>State</span>
+              <span>Status</span>
+              <span className="text-right">Actions</span>
+            </div>
+            {Array.from({ length: 6 }, (_, index) => (
+              <div
+                key={`skeleton-${index}`}
+                className={cn('grid gap-4 px-4 py-4 border-b border-border last:border-b-0', tableColumns)}
+              >
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-28" />
+                  <Skeleton className="h-3 w-40" />
                 </div>
-              </li>
+                <Skeleton className="h-3 w-48" />
+                <Skeleton className="h-3 w-24" />
+                <Skeleton className="h-3 w-16" />
+                <Skeleton className="h-3 w-20" />
+                <div className="flex justify-end">
+                  <Skeleton className="h-8 w-20" />
+                </div>
+              </div>
             ))}
-          </ul>
-        </section>
-      ) : sessions.length === 0 ? (
-        <section className="rounded-none border border-border bg-card p-6 text-xs text-muted-foreground">
-          No terminal sessions yet. Create one to get started.
-        </section>
-      ) : (
-        <section className="overflow-hidden rounded-none border border-border bg-card">
-          <ul>
-            {showPendingRow ? (
-              <li className="border-b border-border">
-                <div className="flex flex-col gap-3 p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="flex-1 space-y-2">
-                      <div className="inline-flex items-center gap-2 text-xs text-amber-400">
-                        <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
-                        Provisioning session...
-                      </div>
-                      <Skeleton className="h-4 w-40" />
-                      <Skeleton className="h-3 w-64" />
+          </div>
+        ) : sessions.length === 0 ? (
+          <div className="p-6 text-xs text-muted-foreground">No terminal sessions yet. Create one to get started.</div>
+        ) : (
+          <ScrollArea className="w-full">
+            <div className="min-w-0">
+              <div
+                className={cn(
+                  'grid gap-4 border-b border-border px-4 py-3 text-[11px] uppercase tracking-widest text-muted-foreground',
+                  tableColumns,
+                )}
+              >
+                <span>Session</span>
+                <span>Worktree</span>
+                <span>Created</span>
+                <span>State</span>
+                <span>Status</span>
+                <span className="text-right">Actions</span>
+              </div>
+              {showPendingRow ? (
+                <div
+                  className={cn(
+                    'grid gap-4 px-4 py-4 border-b border-border text-xs text-muted-foreground',
+                    tableColumns,
+                  )}
+                >
+                  <div className="space-y-2">
+                    <div className="inline-flex items-center gap-2 text-amber-400">
+                      <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
+                      Provisioning session...
                     </div>
-                    <div className="flex flex-col items-end gap-2">
-                      <Skeleton className="h-3 w-20" />
-                      <Skeleton className="h-3 w-16" />
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <Skeleton className="h-3 w-36" />
-                    <div className="flex items-center gap-2 text-xs text-amber-400">
-                      <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
-                      Creating
-                    </div>
+                  </div>
+                  <Skeleton className="h-3 w-44" />
+                  <Skeleton className="h-3 w-20" />
+                  <span className="text-amber-400">Creating</span>
+                  <span className="inline-flex items-center gap-2 text-amber-400">
+                    <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+                    Creating
+                  </span>
+                  <div className="flex justify-end">
+                    <Skeleton className="h-8 w-20" />
                   </div>
                 </div>
-              </li>
-            ) : null}
-            {sessions.map((session) => (
-              <li key={session.id} className="border-b border-border last:border-b-0">
-                {(() => {
-                  const meta = statusMeta(session.status)
-                  return (
-                    <div
-                      className={cn(
-                        'flex flex-col gap-2 p-4 transition',
-                        session.status === 'ready' ? 'hover:bg-muted/20' : 'opacity-70',
-                      )}
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <Link
-                          to="/terminals/$sessionId"
-                          params={{ sessionId: session.id }}
-                          onClick={(event) => {
-                            if (session.status !== 'ready') {
-                              event.preventDefault()
-                            }
-                          }}
-                          aria-disabled={session.status !== 'ready'}
-                          className={cn(
-                            'flex-1 space-y-1',
-                            session.status === 'ready' ? 'cursor-pointer' : 'cursor-not-allowed',
-                          )}
-                        >
-                          <div className="text-sm font-semibold text-foreground">{session.label}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {session.worktreePath ?? 'Unknown worktree'}
-                          </div>
-                        </Link>
-                        <div className="flex flex-col items-end gap-1 text-xs text-muted-foreground">
-                          <span>{formatDateTime(session.createdAt)}</span>
-                          <span>{session.attached ? 'Attached' : 'Detached'}</span>
-                          {(session.status === 'closed' || session.status === 'error') && (
-                            <AlertDialog>
-                              <AlertDialogTrigger
-                                render={
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={(event) => {
-                                      event.preventDefault()
-                                      event.stopPropagation()
-                                    }}
-                                  >
-                                    Delete
-                                  </Button>
-                                }
-                              />
-                              <AlertDialogContent size="sm">
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Delete terminal session?</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    This permanently removes the session record and deletes its worktree files. This
-                                    cannot be undone.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                  <AlertDialogAction
-                                    variant="destructive"
-                                    size="sm"
-                                    onClick={(event) => {
-                                      event.preventDefault()
-                                      event.stopPropagation()
-                                      void deleteSession(session.id)
-                                    }}
-                                  >
-                                    Delete
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                        <span>Session id: {session.id}</span>
-                        <span className={cn('flex items-center gap-2', meta.tone)}>
-                          <span className={cn('h-2 w-2 rounded-full', meta.dot)} />
-                          {meta.label}
-                        </span>
+              ) : null}
+              {sessions.map((session) => {
+                const meta = statusMeta(session.status)
+                const rowTone = session.status === 'ready' ? 'hover:bg-muted/20' : 'opacity-70'
+                return (
+                  <div
+                    key={session.id}
+                    className={cn(
+                      'grid gap-4 px-4 py-4 border-b border-border last:border-b-0 text-sm text-foreground transition',
+                      tableColumns,
+                      rowTone,
+                    )}
+                  >
+                    <div className="space-y-1">
+                      <Link
+                        to="/terminals/$sessionId"
+                        params={{ sessionId: session.id }}
+                        onClick={(event) => {
+                          if (session.status !== 'ready') event.preventDefault()
+                        }}
+                        aria-disabled={session.status !== 'ready'}
+                        className={cn(
+                          'block text-sm font-semibold truncate',
+                          session.status === 'ready' ? 'cursor-pointer' : 'cursor-not-allowed',
+                        )}
+                      >
+                        {session.label}
+                      </Link>
+                      <div className="text-xs text-muted-foreground truncate" title={session.id}>
+                        Session id: {session.id}
                       </div>
                       {session.status === 'error' && session.errorMessage ? (
                         <div className="text-xs text-destructive">{session.errorMessage}</div>
                       ) : null}
                     </div>
-                  )
-                })()}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+                    <div
+                      className="text-xs text-muted-foreground truncate"
+                      title={session.worktreePath ?? 'Unknown worktree'}
+                    >
+                      {session.worktreePath ?? 'Unknown worktree'}
+                    </div>
+                    <div className="text-xs text-muted-foreground">{formatDateTime(session.createdAt)}</div>
+                    <div className="text-xs text-muted-foreground">{session.attached ? 'Attached' : 'Detached'}</div>
+                    <div className={cn('inline-flex items-center gap-2 text-xs', meta.tone)}>
+                      <span className={cn('h-2 w-2 rounded-full', meta.dot)} />
+                      {meta.label}
+                    </div>
+                    <div className="flex justify-end">
+                      {(session.status === 'closed' || session.status === 'error') && (
+                        <AlertDialog>
+                          <AlertDialogTrigger
+                            render={
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(event) => {
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                }}
+                              >
+                                Delete
+                              </Button>
+                            }
+                          />
+                          <AlertDialogContent size="sm">
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Delete terminal session?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This permanently removes the session record and deletes its worktree files. This cannot
+                                be undone.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                variant="destructive"
+                                size="sm"
+                                onClick={(event) => {
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                  void deleteSession(session.id)
+                                }}
+                              >
+                                Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </ScrollArea>
+        )}
+      </section>
     </main>
   )
 }
