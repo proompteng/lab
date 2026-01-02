@@ -72,10 +72,20 @@ Notes:
 The authoritative ClickHouse table for TA signals uses the envelope fields:
 - `event_ts`, `ingest_ts`, `symbol`, `window`, `payload`, `seq`, `source`
 
-Trading ingestion will read the envelope shape by default. For legacy flat tables
-(`ts`, `macd`, `rsi`, `vwap`, `signal_json`), set `TRADING_SIGNAL_SCHEMA=flat` and
-ensure `ts` is present. Prefer creating a view that aliases the envelope table to
-flat columns if you have older consumers.
+Trading ingestion schema selection:
+- `TRADING_SIGNAL_SCHEMA=auto` (default): inspect ClickHouse columns and choose
+  `event_ts`-based envelope or `ts`-based flat columns.
+- `TRADING_SIGNAL_SCHEMA=envelope`: select **only** envelope columns
+  (`event_ts`, `ingest_ts`, `symbol`, `payload`, `window`, `seq`, `source`) and
+  query by `event_ts`.
+- `TRADING_SIGNAL_SCHEMA=flat`: select **only** flat columns and query by `ts`.
+  Required columns: `ts`, `symbol`, `macd`, `macd_signal` or `signal`, `rsi` or
+  `rsi14`, plus optional `ema`, `vwap`, `signal_json`, `timeframe`, `price`,
+  `close`, `spread`.
+
+Prefer creating a view that aliases the envelope table to flat columns if you
+have older consumers or dashboards. This keeps storage in the envelope schema
+while supporting flat readers.
 
 ## Avro subject naming
 - Use TopicNameStrategy (default) or per-topic subject: `<topic>-value`.

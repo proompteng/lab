@@ -153,6 +153,7 @@ sequenceDiagram
 - Low confidence: veto or downgrade to hold, based on strategy policy.
 - Missing context (quotes/positions): reject review and fall back.
 - Circuit breaker: if error rate exceeds threshold in the sliding window, disable LLM temporarily.
+- Shadow mode: record reviews and metrics but do not alter execution flow.
 
 Runtime integration note: the review runs in `TradingPipeline._handle_decision` after persisting the decision
 row and before deterministic risk checks. Failures respect `LLM_FAIL_MODE`, with live trading always vetoing on
@@ -185,7 +186,10 @@ Map risks to OWASP LLM Top 10 classes and mitigations:
 
 ## Observability
 - Structured logs: decision_id, model, prompt_version, verdict, confidence.
-- Metrics: llm_requests_total, llm_veto_total, llm_adjust_total, llm_error_total.
+- Metrics: llm_requests_total, llm_veto_total, llm_adjust_total, llm_error_total,
+  llm_circuit_open_total, llm_shadow_total.
+- `/trading/status` surfaces LLM circuit breaker state (`open`, `open_until`, `recent_error_count`)
+  alongside shadow/fail configuration for ops dashboards.
 - Cost tracking: tokens_prompt, tokens_completion, dollars_estimate.
 
 ## Storage Schema Additions
