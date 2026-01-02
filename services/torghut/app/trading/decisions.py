@@ -9,12 +9,16 @@ from typing import Any, Iterable, Optional, cast
 from ..config import settings
 from ..models import Strategy
 from .models import SignalEnvelope, StrategyDecision
+from .prices import PriceFetcher
 
 logger = logging.getLogger(__name__)
 
 
 class DecisionEngine:
     """Evaluate TA signals against configured strategies."""
+
+    def __init__(self, price_fetcher: Optional[PriceFetcher] = None) -> None:
+        self.price_fetcher = price_fetcher
 
     def evaluate(self, signal: SignalEnvelope, strategies: Iterable[Strategy]) -> list[StrategyDecision]:
         decisions: list[StrategyDecision] = []
@@ -53,6 +57,8 @@ class DecisionEngine:
 
         qty = Decimal(str(settings.trading_default_qty))
         price = _extract_price(payload)
+        if price is None and self.price_fetcher is not None:
+            price = self.price_fetcher.fetch_price(signal)
 
         return StrategyDecision(
             strategy_id=str(strategy.id),

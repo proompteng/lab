@@ -30,6 +30,7 @@ class ClickHouseSignalIngestor:
         table: Optional[str] = None,
         batch_size: Optional[int] = None,
         initial_lookback_minutes: Optional[int] = None,
+        schema: Optional[str] = None,
     ) -> None:
         self.url = (url or settings.trading_clickhouse_url or "").rstrip("/")
         self.username = username or settings.trading_clickhouse_username
@@ -37,6 +38,9 @@ class ClickHouseSignalIngestor:
         self.table = table or settings.trading_signal_table
         self.batch_size = batch_size or settings.trading_signal_batch_size
         self.initial_lookback_minutes = initial_lookback_minutes or settings.trading_signal_lookback_minutes
+        self.schema = schema or settings.trading_signal_schema
+        self._columns: Optional[set[str]] = None
+        self._time_column: Optional[str] = None
 
     def fetch_signals(self, session: Session) -> list[SignalEnvelope]:
         if not self.url:
@@ -50,23 +54,9 @@ class ClickHouseSignalIngestor:
 
         max_event_ts: Optional[datetime] = None
         for row in rows:
-            event_ts = _parse_ts(row.get("event_ts"))
-            symbol = row.get("symbol")
-            if event_ts is None or not isinstance(symbol, str):
+            signal = self.parse_row(row)
+            if signal is None:
                 logger.warning("Skipping signal with missing event_ts or symbol")
-                continue
-            try:
-                signal = SignalEnvelope(
-                    event_ts=event_ts,
-                    ingest_ts=_parse_ts(row.get("ingest_ts")),
-                    symbol=symbol,
-                    payload=_normalize_payload(row.get("payload")),
-                    timeframe=_coerce_timeframe(row),
-                    seq=row.get("seq"),
-                    source=row.get("source"),
-                )
-            except Exception as exc:
-                logger.warning("Skipping invalid signal row: %s", exc)
                 continue
             signals.append(signal)
             if max_event_ts is None or signal.event_ts > max_event_ts:
@@ -77,17 +67,85 @@ class ClickHouseSignalIngestor:
 
         return signals
 
+    def parse_row(self, row: dict[str, Any]) -> Optional[SignalEnvelope]:
+        event_ts = _parse_ts(row.get("event_ts")) or _parse_ts(row.get("ts")) or _parse_ts(row.get("timestamp"))
+        symbol = row.get("symbol")
+        if event_ts is None or not isinstance(symbol, str):
+            return None
+        try:
+            payload = _normalize_payload(row.get("payload"))
+            if not payload:
+                payload = _payload_from_flat_row(row)
+            return SignalEnvelope(
+                event_ts=event_ts,
+                ingest_ts=_parse_ts(row.get("ingest_ts")),
+                symbol=symbol,
+                payload=payload,
+                timeframe=_coerce_timeframe(row, payload),
+                seq=row.get("seq"),
+                source=row.get("source"),
+            )
+        except Exception as exc:
+            logger.warning("Skipping invalid signal row: %s", exc)
+            return None
+
     def _build_query(self, cursor: datetime) -> str:
         cursor_str = cursor.strftime("%Y-%m-%d %H:%M:%S")
         limit = self.batch_size
+        time_column = self._resolve_time_column()
+        columns = self._resolve_columns()
+        if columns:
+            select_columns = _select_columns(columns, time_column)
+            select_expr = ", ".join(select_columns)
+        else:
+            select_expr = "event_ts, ingest_ts, symbol, payload, window, seq, source"
         return (
-            "SELECT event_ts, ingest_ts, symbol, payload, window, seq, source "
+            f"SELECT {select_expr} "
             f"FROM {self.table} "
-            f"WHERE event_ts > toDateTime('{cursor_str}') "
-            "ORDER BY event_ts ASC "
+            f"WHERE {time_column} > toDateTime('{cursor_str}') "
+            f"ORDER BY {time_column} ASC "
             f"LIMIT {limit} "
             "FORMAT JSONEachRow"
         )
+
+    def fetch_signals_between(
+        self,
+        start: datetime,
+        end: datetime,
+        symbol: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> list[SignalEnvelope]:
+        if not self.url:
+            logger.warning("ClickHouse URL missing; skipping signal replay")
+            return []
+        start_str = start.strftime("%Y-%m-%d %H:%M:%S")
+        end_str = end.strftime("%Y-%m-%d %H:%M:%S")
+        time_column = self._resolve_time_column()
+        columns = self._resolve_columns()
+        if columns:
+            select_columns = _select_columns(columns, time_column)
+            select_expr = ", ".join(select_columns)
+        else:
+            select_expr = "event_ts, ingest_ts, symbol, payload, window, seq, source"
+        where_parts = [
+            f"{time_column} >= toDateTime('{start_str}')",
+            f"{time_column} <= toDateTime('{end_str}')",
+        ]
+        if symbol:
+            where_parts.append(f"symbol = '{symbol}'")
+        limit_clause = f"LIMIT {limit}" if limit else ""
+        query = (
+            f"SELECT {select_expr} FROM {self.table} WHERE {' AND '.join(where_parts)} "
+            f"ORDER BY {time_column} ASC {limit_clause} FORMAT JSONEachRow"
+        )
+        rows = self._query_clickhouse(query)
+        signals: list[SignalEnvelope] = []
+        for row in rows:
+            signal = self.parse_row(row)
+            if signal is None:
+                continue
+            signals.append(signal)
+        return signals
 
     def _query_clickhouse(self, query: str) -> list[dict[str, Any]]:
         params = {"query": query}
@@ -111,6 +169,47 @@ class ClickHouseSignalIngestor:
             except json.JSONDecodeError as exc:
                 logger.warning("Failed to decode ClickHouse row: %s", exc)
         return rows
+
+    def _resolve_columns(self) -> Optional[set[str]]:
+        if self.schema != "auto":
+            return None
+        if self._columns is not None:
+            return self._columns
+        database, table = _split_table(self.table)
+        query = (
+            "SELECT name FROM system.columns "
+            f"WHERE database = '{database}' AND table = '{table}' "
+            "FORMAT JSONEachRow"
+        )
+        try:
+            rows = self._query_clickhouse(query)
+        except Exception as exc:
+            logger.warning("Failed to detect ClickHouse schema: %s", exc)
+            self._columns = None
+            return None
+        self._columns = {str(row.get("name")) for row in rows if row.get("name")}
+        return self._columns
+
+    def _resolve_time_column(self) -> str:
+        if self._time_column:
+            return self._time_column
+        if self.schema == "flat":
+            self._time_column = "ts"
+            return self._time_column
+        if self.schema == "envelope":
+            self._time_column = "event_ts"
+            return self._time_column
+        columns = self._resolve_columns()
+        if columns:
+            if "event_ts" in columns:
+                self._time_column = "event_ts"
+            elif "ts" in columns:
+                self._time_column = "ts"
+            else:
+                self._time_column = "event_ts"
+        else:
+            self._time_column = "event_ts"
+        return self._time_column
 
     def _get_cursor(self, session: Session) -> datetime:
         stmt = select(TradeCursor).where(TradeCursor.source == "clickhouse")
@@ -152,7 +251,7 @@ def _parse_ts(value: Any) -> Optional[datetime]:
     return None
 
 
-def _coerce_timeframe(row: dict[str, Any]) -> Optional[str]:
+def _coerce_timeframe(row: dict[str, Any], payload: dict[str, Any]) -> Optional[str]:
     window = row.get("window")
     size: Optional[str] = None
     if isinstance(window, dict):
@@ -160,12 +259,13 @@ def _coerce_timeframe(row: dict[str, Any]) -> Optional[str]:
         raw_size = window_dict.get("size")
         if isinstance(raw_size, str):
             size = raw_size
-    payload = row.get("payload")
-    if isinstance(payload, dict):
-        payload_dict = cast(dict[str, Any], payload)
-        timeframe = payload_dict.get("timeframe")
+    if payload:
+        timeframe = payload.get("timeframe")
         if isinstance(timeframe, str):
             return timeframe
+    timeframe = row.get("timeframe")
+    if isinstance(timeframe, str):
+        return timeframe
     if size == "PT1S":
         return "1Sec"
     if size == "PT1M":
@@ -186,6 +286,93 @@ def _normalize_payload(payload: Any) -> dict[str, Any]:
         if isinstance(decoded, dict):
             return cast(dict[str, Any], decoded)
     return {}
+
+
+def _payload_from_flat_row(row: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    signal_json = row.get("signal_json")
+    if isinstance(signal_json, str):
+        try:
+            decoded = json.loads(signal_json)
+        except json.JSONDecodeError:
+            decoded = None
+        if isinstance(decoded, dict):
+            payload.update(cast(dict[str, Any], decoded))
+
+    macd_val = row.get("macd")
+    signal_val = row.get("macd_signal") or row.get("signal")
+    if macd_val is not None or signal_val is not None:
+        payload.setdefault("macd", {})
+        if isinstance(payload["macd"], dict):
+            if macd_val is not None:
+                payload["macd"]["macd"] = macd_val
+            if signal_val is not None:
+                payload["macd"]["signal"] = signal_val
+        else:
+            payload["macd"] = {"macd": macd_val, "signal": signal_val}
+
+    for key in ("rsi", "rsi14"):
+        if row.get(key) is not None and key not in payload:
+            payload[key] = row.get(key)
+
+    ema_val = row.get("ema")
+    if ema_val is not None and "ema" not in payload:
+        payload["ema"] = ema_val
+
+    vwap_val = row.get("vwap")
+    if vwap_val is not None and "vwap" not in payload:
+        payload["vwap"] = vwap_val
+
+    for key in ("price", "close"):
+        if row.get(key) is not None and key not in payload:
+            payload[key] = row.get(key)
+
+    imbalance_spread = row.get("spread")
+    if imbalance_spread is not None and "imbalance" not in payload:
+        payload["imbalance"] = {"spread": imbalance_spread}
+
+    return payload
+
+
+def _select_columns(columns: set[str], time_column: str) -> list[str]:
+    desired = [
+        time_column,
+        "event_ts",
+        "ts",
+        "ingest_ts",
+        "symbol",
+        "payload",
+        "window",
+        "seq",
+        "source",
+        "timeframe",
+        "macd",
+        "macd_signal",
+        "signal",
+        "rsi",
+        "rsi14",
+        "ema",
+        "vwap",
+        "signal_json",
+        "close",
+        "price",
+        "spread",
+    ]
+    selected: list[str] = []
+    seen: set[str] = set()
+    for col in desired:
+        if col in seen or col not in columns:
+            continue
+        selected.append(col)
+        seen.add(col)
+    return selected
+
+
+def _split_table(table: str) -> tuple[str, str]:
+    if "." in table:
+        database, raw_table = table.split(".", 1)
+        return database, raw_table
+    return "default", table
 
 
 __all__ = ["ClickHouseSignalIngestor"]

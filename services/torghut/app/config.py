@@ -29,8 +29,13 @@ class Settings(BaseSettings):
     trading_live_enabled: bool = Field(default=False, alias="TRADING_LIVE_ENABLED")
     trading_signal_source: Literal["clickhouse"] = Field(default="clickhouse", alias="TRADING_SIGNAL_SOURCE")
     trading_signal_table: str = Field(default="torghut.ta_signals", alias="TRADING_SIGNAL_TABLE")
+    trading_signal_schema: Literal["auto", "envelope", "flat"] = Field(
+        default="auto", alias="TRADING_SIGNAL_SCHEMA"
+    )
     trading_signal_batch_size: int = Field(default=500, alias="TRADING_SIGNAL_BATCH_SIZE")
     trading_signal_lookback_minutes: int = Field(default=15, alias="TRADING_SIGNAL_LOOKBACK_MINUTES")
+    trading_price_table: str = Field(default="torghut.ta_microbars", alias="TRADING_PRICE_TABLE")
+    trading_price_lookback_minutes: int = Field(default=5, alias="TRADING_PRICE_LOOKBACK_MINUTES")
     trading_poll_ms: int = Field(default=5000, alias="TRADING_POLL_MS")
     trading_reconcile_ms: int = Field(default=15000, alias="TRADING_RECONCILE_MS")
     trading_universe_source: Literal["jangar", "static"] = Field(
@@ -65,6 +70,11 @@ class Settings(BaseSettings):
     llm_adjustment_allowed: bool = Field(default=False, alias="LLM_ADJUSTMENT_ALLOWED")
     llm_max_qty_multiplier: float = Field(default=1.25, alias="LLM_MAX_QTY_MULTIPLIER")
     llm_min_qty_multiplier: float = Field(default=0.5, alias="LLM_MIN_QTY_MULTIPLIER")
+    llm_shadow_mode: bool = Field(default=False, alias="LLM_SHADOW_MODE")
+    llm_recent_decisions: int = Field(default=5, alias="LLM_RECENT_DECISIONS")
+    llm_circuit_max_errors: int = Field(default=3, alias="LLM_CIRCUIT_MAX_ERRORS")
+    llm_circuit_window_seconds: int = Field(default=300, alias="LLM_CIRCUIT_WINDOW_SECONDS")
+    llm_circuit_cooldown_seconds: int = Field(default=600, alias="LLM_CIRCUIT_COOLDOWN_SECONDS")
 
     model_config = SettingsConfigDict(
         env_file=".env",
