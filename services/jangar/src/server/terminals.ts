@@ -664,7 +664,8 @@ export const ensureTerminalLogPipe = async (sessionId: string): Promise<string> 
   if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
   const logPath = join(LOG_DIR, `${sessionId}.log`)
   await ensureLogFile(logPath)
-  const result = await runTmux(['pipe-pane', '-t', sessionId, `cat >> ${logPath}`], {
+  const pipeCommand = `stdbuf -o0 -e0 cat >> ${logPath}`
+  const result = await runTmux(['pipe-pane', '-o', '-t', sessionId, pipeCommand], {
     label: 'tmux pipe-pane',
   })
   if (result.exitCode !== 0) {
