@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
+import { toast } from 'sonner'
 
 import { TerminalView } from '@/components/terminal-view'
 import {
@@ -56,24 +57,7 @@ function TerminalSessionPage() {
   const [isLoading, setIsLoading] = React.useState(true)
   const [isTerminating, setIsTerminating] = React.useState(false)
   const [isDeleting, setIsDeleting] = React.useState(false)
-  const [toast, setToast] = React.useState<{ message: string; tone?: 'success' | 'error' } | null>(null)
-  const toastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const isInitialLoading = isLoading && !session && !error
-
-  const pushToast = React.useCallback((message: string, tone: 'success' | 'error' = 'success') => {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-    setToast({ message, tone })
-    toastTimerRef.current = setTimeout(() => {
-      setToast(null)
-      toastTimerRef.current = null
-    }, 3500)
-  }, [])
-
-  React.useEffect(() => {
-    return () => {
-      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-    }
-  }, [])
 
   const loadSession = React.useCallback(async () => {
     setIsLoading(true)
@@ -235,14 +219,11 @@ function TerminalSessionPage() {
                           throw new Error(payload?.message ?? 'Unable to delete session.')
                         }
                         window.dispatchEvent(new Event('terminals:refresh'))
-                        sessionStorage.setItem(
-                          'jangar-terminal-toast',
-                          JSON.stringify({ message: 'Terminal session deleted.', tone: 'success' }),
-                        )
+                        toast.success('Terminal session deleted.')
                         await navigate({ to: '/terminals' })
                       } catch (err) {
                         setError(err instanceof Error ? err.message : 'Unable to delete session.')
-                        pushToast('Failed to delete terminal session.', 'error')
+                        toast.error('Failed to delete terminal session.')
                       } finally {
                         setIsDeleting(false)
                       }
@@ -306,17 +287,6 @@ function TerminalSessionPage() {
           </div>
         )}
       </section>
-      {toast ? (
-        <output
-          className={`fixed bottom-6 right-6 z-50 rounded-none border px-3 py-2 text-xs shadow-lg ${
-            toast.tone === 'error'
-              ? 'border-destructive/60 bg-destructive/10 text-destructive'
-              : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
-          }`}
-        >
-          {toast.message}
-        </output>
-      ) : null}
     </main>
   )
 }

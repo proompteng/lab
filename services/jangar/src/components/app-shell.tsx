@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/breadcrumb'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
+import { Toaster } from '@/components/ui/sonner'
 
 export function AppShell({ mainId, children }: { mainId: string; children: React.ReactNode }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
@@ -53,6 +54,7 @@ export function AppShell({ mainId, children }: { mainId: string; children: React
           <ScrollArea className="h-full">{children}</ScrollArea>
         </div>
       </div>
+      <Toaster richColors position="top-right" />
     </SidebarProvider>
   )
 }
