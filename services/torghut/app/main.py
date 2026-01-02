@@ -198,8 +198,11 @@ def trading_health(session: Session = Depends(get_session)) -> JSONResponse:
     scheduler_ok = True
     scheduler_detail = "ok"
     if settings.trading_enabled and not scheduler.state.running:
-        scheduler_ok = False
-        scheduler_detail = "trading loop not running"
+        if scheduler.state.last_run_at is None:
+            scheduler_detail = "trading loop not started"
+        else:
+            scheduler_ok = False
+            scheduler_detail = "trading loop not running"
 
     postgres_status = _check_postgres(session)
     if settings.trading_enabled:
