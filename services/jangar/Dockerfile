@@ -62,9 +62,19 @@ RUN --mount=type=cache,target=/var/cache/apt \
   gnupg \
   jq \
   ripgrep \
+  tmux \
   tini \
   unzip; \
   rm -rf /var/lib/apt/lists/*
+
+# Basic tmux defaults for web terminals.
+RUN set -eux; \
+  cat <<'TMUX' > /etc/tmux.conf
+set -g default-terminal "xterm-256color"
+set -ga terminal-overrides ",xterm-256color:Tc"
+set -g mouse on
+set -g history-limit 50000
+TMUX
 
 # Install Java 25 (Temurin)
 RUN set -eux; \
@@ -442,6 +452,8 @@ COPY full/ .
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
 COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
 WORKDIR /app/services/jangar
+ARG JANGAR_BUILD_NODE_OPTIONS="--max-old-space-size=1536"
+ENV NODE_OPTIONS=${JANGAR_BUILD_NODE_OPTIONS}
 RUN bun run start:build
 
 FROM tools AS jangar-deps-prod

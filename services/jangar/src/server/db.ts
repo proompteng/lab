@@ -191,6 +191,20 @@ type TorghutSymbols = {
   updated_at: Generated<Timestamp>
 }
 
+type TerminalSessions = {
+  id: string
+  status: string
+  worktree_name: string | null
+  worktree_path: string | null
+  tmux_socket: string | null
+  error_message: string | null
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+  ready_at: Timestamp | null
+  closed_at: Timestamp | null
+  metadata: JsonValue
+}
+
 type CodexJudgeRuns = {
   id: Generated<string>
   repository: string
@@ -309,6 +323,7 @@ export type Database = {
   'atlas.ingestion_targets': AtlasIngestionTargets
   'memories.entries': MemoriesEntries
   torghut_symbols: TorghutSymbols
+  'terminals.sessions': TerminalSessions
   'codex_judge.runs': CodexJudgeRuns
   'codex_judge.artifacts': CodexJudgeArtifacts
   'codex_judge.evaluations': CodexJudgeEvaluations
