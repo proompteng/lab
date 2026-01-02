@@ -2,6 +2,17 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/terminals/')({
@@ -211,17 +222,45 @@ function TerminalsIndexPage() {
                           <span>{formatDateTime(session.createdAt)}</span>
                           <span>{session.attached ? 'Attached' : 'Detached'}</span>
                           {(session.status === 'closed' || session.status === 'error') && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={(event) => {
-                                event.preventDefault()
-                                event.stopPropagation()
-                                void deleteSession(session.id)
-                              }}
-                            >
-                              Delete
-                            </Button>
+                            <AlertDialog>
+                              <AlertDialogTrigger
+                                render={
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={(event) => {
+                                      event.preventDefault()
+                                      event.stopPropagation()
+                                    }}
+                                  >
+                                    Delete
+                                  </Button>
+                                }
+                              />
+                              <AlertDialogContent size="sm">
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Delete terminal session?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    This permanently removes the session record and deletes its worktree files. This
+                                    cannot be undone.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    variant="destructive"
+                                    size="sm"
+                                    onClick={(event) => {
+                                      event.preventDefault()
+                                      event.stopPropagation()
+                                      void deleteSession(session.id)
+                                    }}
+                                  >
+                                    Delete
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
                           )}
                         </div>
                       </div>

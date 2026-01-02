@@ -3,6 +3,17 @@ import * as React from 'react'
 
 import { TerminalView } from '@/components/terminal-view'
 import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 
 export const Route = createFileRoute('/terminals/$sessionId')({
   component: TerminalSessionPage,
@@ -147,31 +158,54 @@ function TerminalSessionPage() {
             {isTerminating ? 'Terminating...' : 'Terminate session'}
           </Button>
           {(session?.status === 'closed' || session?.status === 'error') && (
-            <Button
-              variant="outline"
-              disabled={isDeleting}
-              onClick={async () => {
-                if (!session) return
-                setIsDeleting(true)
-                setError(null)
-                try {
-                  const response = await fetch(`/api/terminals/${encodeURIComponent(session.id)}/delete`, {
-                    method: 'POST',
-                  })
-                  const payload = (await response.json().catch(() => null)) as { ok?: boolean; message?: string } | null
-                  if (!response.ok || !payload?.ok) {
-                    throw new Error(payload?.message ?? 'Unable to delete session.')
-                  }
-                  await navigate({ to: '/terminals' })
-                } catch (err) {
-                  setError(err instanceof Error ? err.message : 'Unable to delete session.')
-                } finally {
-                  setIsDeleting(false)
+            <AlertDialog>
+              <AlertDialogTrigger
+                render={
+                  <Button variant="outline" disabled={isDeleting}>
+                    {isDeleting ? 'Deleting...' : 'Delete session'}
+                  </Button>
                 }
-              }}
-            >
-              {isDeleting ? 'Deleting...' : 'Delete session'}
-            </Button>
+              />
+              <AlertDialogContent size="sm">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete terminal session?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This permanently removes the session record and deletes its worktree files. This action cannot be
+                    undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    variant="destructive"
+                    onClick={async () => {
+                      if (!session) return
+                      setIsDeleting(true)
+                      setError(null)
+                      try {
+                        const response = await fetch(`/api/terminals/${encodeURIComponent(session.id)}/delete`, {
+                          method: 'POST',
+                        })
+                        const payload = (await response.json().catch(() => null)) as {
+                          ok?: boolean
+                          message?: string
+                        } | null
+                        if (!response.ok || !payload?.ok) {
+                          throw new Error(payload?.message ?? 'Unable to delete session.')
+                        }
+                        await navigate({ to: '/terminals' })
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : 'Unable to delete session.')
+                      } finally {
+                        setIsDeleting(false)
+                      }
+                    }}
+                  >
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           )}
           <Button variant="outline" onClick={loadSession} disabled={isLoading}>
             Refresh
