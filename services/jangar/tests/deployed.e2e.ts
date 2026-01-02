@@ -72,6 +72,14 @@ const waitForHydration = async (page: import('@playwright/test').Page) => {
   await page.waitForFunction(() => document.documentElement.dataset.hydrated === 'true')
 }
 
+const readTerminalSize = async (page: import('@playwright/test').Page) =>
+  page.evaluate(() => {
+    const el = document.querySelector('[data-testid="terminal-canvas"]') as HTMLElement | null
+    const cols = Number(el?.dataset.termCols ?? 0)
+    const rows = Number(el?.dataset.termRows ?? 0)
+    return { cols, rows }
+  })
+
 const assertWebSocketStaysOpen = async (
   page: import('@playwright/test').Page,
   status: { wasClosed: () => boolean },
@@ -383,5 +391,57 @@ test.describe('deployed jangar e2e', () => {
 
     expect(inputRequests).toEqual([])
     expect(apiFailures).toEqual([])
+  })
+
+  test('terminal stays visually stable across blur/focus', async ({ page, context, request }) => {
+    test.setTimeout(120_000)
+
+    const createResponse = await request.get('/api/terminals?create=1')
+    expect(createResponse.ok()).toBe(true)
+    const createPayload = (await createResponse.json()) as {
+      ok: boolean
+      session?: { id: string; status?: string }
+      message?: string
+    }
+    expect(createPayload.ok).toBe(true)
+    if (!createPayload.session?.id) {
+      throw new Error(`Terminal session creation returned no id: ${createPayload.message ?? 'unknown error'}`)
+    }
+    const sessionId = createPayload.session.id
+    await expect.poll(() => fetchSessionStatus(sessionId), { timeout: 90_000 }).toBe('ready')
+
+    await page.goto(`/terminals/${sessionId}`)
+    await waitForHydration(page)
+    await expect(page.getByText('Status: connected', { exact: false })).toBeVisible({ timeout: 20_000 })
+
+    const terminal = page.getByTestId('terminal-canvas')
+    await terminal.click()
+    const drawCmd =
+      "printf '\\033[2J\\033[H'; printf 'LINE-1: 012345678901234567890123456789012345678901234567890123456789\\n'; printf 'LINE-2: 012345678901234567890123456789012345678901234567890123456789\\n'; read -n 1 -s"
+    await page.keyboard.type(drawCmd)
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.xterm-rows')).toContainText('LINE-1:', { timeout: 10_000 })
+
+    await expect.poll(async () => (await readTerminalSize(page)).cols, { timeout: 10_000 }).toBeGreaterThan(0)
+    await expect.poll(async () => (await readTerminalSize(page)).rows, { timeout: 10_000 }).toBeGreaterThan(0)
+    const sizeBefore = await readTerminalSize(page)
+    expect(sizeBefore.cols).toBeGreaterThan(0)
+    expect(sizeBefore.rows).toBeGreaterThan(0)
+
+    const other = await context.newPage()
+    await other.goto('about:blank')
+    await other.bringToFront()
+    await page.waitForTimeout(800)
+    await page.bringToFront()
+    await page.waitForTimeout(800)
+
+    const sizeAfter = await readTerminalSize(page)
+    expect(sizeAfter).toEqual(sizeBefore)
+    await expect(page.locator('.xterm-rows')).toContainText('LINE-1:', { timeout: 5_000 })
+
+    await page.keyboard.press('Enter')
+
+    await request.post(`/api/terminals/${encodeURIComponent(sessionId)}/terminate`)
+    await expect.poll(() => fetchSessionStatus(sessionId), { timeout: 30_000 }).toBe('closed')
   })
 })

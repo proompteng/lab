@@ -40,8 +40,11 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
   const shouldReconnectRef = React.useRef(true)
   const resizeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastSizeRef = React.useRef<{ cols: number; rows: number } | null>(null)
+  const snapshotSeqRef = React.useRef(0)
+  const latestSnapshotSeqRef = React.useRef(0)
   const outputQueueRef = React.useRef<string[]>([])
   const snapshotApplyingRef = React.useRef(false)
+  const pendingResyncRef = React.useRef(false)
 
   const [status, setStatus] = React.useState<'connecting' | 'connected' | 'error'>('connecting')
   const [error, setError] = React.useState<string | null>(null)
@@ -51,6 +54,8 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
     const outputDecoder = new TextDecoder()
     const snapshotDecoder = new TextDecoder()
     shouldReconnectRef.current = true
+
+    const isPageVisible = () => document.visibilityState === 'visible'
 
     const buildSocketUrl = () => {
       const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
@@ -82,16 +87,28 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       if (snapshotTimerRef.current) clearTimeout(snapshotTimerRef.current)
       snapshotTimerRef.current = setTimeout(() => {
         snapshotTimerRef.current = null
-        if (socketRef.current?.readyState === WebSocket.OPEN) {
-          sendMessage({ type: 'snapshot' })
+        if (!isPageVisible()) {
+          pendingResyncRef.current = true
+          return
         }
+        if (socketRef.current?.readyState !== WebSocket.OPEN) return
+        const terminal = terminalRef.current
+        if (!terminal) return
+        const seq = snapshotSeqRef.current + 1
+        snapshotSeqRef.current = seq
+        latestSnapshotSeqRef.current = seq
+        sendMessage({ type: 'snapshot', seq, cols: terminal.cols, rows: terminal.rows })
       }, delayMs)
     }
 
-    const refreshLayout = () => {
+    const refreshLayout = (force = false) => {
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current)
       resizeTimerRef.current = setTimeout(() => {
         resizeTimerRef.current = null
+        if (!isPageVisible()) {
+          pendingResyncRef.current = true
+          return
+        }
         const container = containerRef.current
         if (!container) return
         const { width, height } = container.getBoundingClientRect()
@@ -102,13 +119,22 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
 
         fitAddon.fit()
         const nextSize = { cols: terminal.cols, rows: terminal.rows }
+        container.dataset.termCols = `${nextSize.cols}`
+        container.dataset.termRows = `${nextSize.rows}`
         const lastSize = lastSizeRef.current
-        if (!lastSize || nextSize.cols !== lastSize.cols || nextSize.rows !== lastSize.rows) {
+        if (force || !lastSize || nextSize.cols !== lastSize.cols || nextSize.rows !== lastSize.rows) {
           lastSizeRef.current = nextSize
           sendResize()
           scheduleSnapshot()
         }
       }, 50)
+    }
+
+    const forceResync = (delayMs = 240) => {
+      pendingResyncRef.current = false
+      lastSizeRef.current = null
+      refreshLayout(true)
+      scheduleSnapshot(delayMs)
     }
 
     const attachSocket = () => {
@@ -124,8 +150,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         reconnectAttemptRef.current = 0
         setStatus('connected')
         setError(null)
-        refreshLayout()
-        scheduleSnapshot()
+        forceResync(140)
         if (inputBufferRef.current) {
           flushInput()
         }
@@ -150,15 +175,22 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         }
         if (!payload) return
         if (payload.type === 'snapshot' && payload.data) {
+          const seq = typeof payload.seq === 'number' ? payload.seq : null
+          if (seq !== null && seq !== latestSnapshotSeqRef.current) return
+          const expectedCols = typeof payload.cols === 'number' ? payload.cols : null
+          const expectedRows = typeof payload.rows === 'number' ? payload.rows : null
           const terminal = terminalRef.current
           if (!terminal) return
+          if (expectedCols && expectedRows && (terminal.cols !== expectedCols || terminal.rows !== expectedRows)) {
+            scheduleSnapshot(120)
+            return
+          }
           const text = snapshotDecoder.decode(base64ToBytes(payload.data))
           if (text) {
             snapshotApplyingRef.current = true
             terminal.write(`\u001b[2J\u001b[H${text}`, () => {
               snapshotApplyingRef.current = false
               terminal.scrollToBottom()
-              terminal.focus()
               flushQueuedOutput()
             })
           }
@@ -284,25 +316,25 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       })
       resizeObserverRef.current.observe(containerRef.current)
       sendResize()
-      refreshLayout()
+      refreshLayout(true)
 
       const fonts = document.fonts?.ready
       if (fonts) {
         fonts.then(() => {
-          refreshLayout()
+          refreshLayout(true)
         })
       }
 
       const handleVisibility = () => {
         if (document.visibilityState === 'visible') {
-          refreshLayout()
-          scheduleSnapshot(240)
+          forceResync(260)
+        } else {
+          pendingResyncRef.current = true
         }
       }
 
       const handleWindowFocus = () => {
-        refreshLayout()
-        scheduleSnapshot(240)
+        forceResync(260)
       }
 
       const handleWindowResize = () => {

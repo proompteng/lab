@@ -219,11 +219,23 @@ const websocketHooks = defineWebSocket({
 
     if (data.type === 'snapshot') {
       if (state.snapshotInFlight) return
+      const seq = typeof data.seq === 'number' ? data.seq : null
+      const cols = typeof data.cols === 'number' ? data.cols : Number.NaN
+      const rows = typeof data.rows === 'number' ? data.rows : Number.NaN
       state.snapshotInFlight = true
       try {
+        if (Number.isFinite(cols) && Number.isFinite(rows)) {
+          await resizeTerminalSession(state.sessionId, cols, rows)
+        }
         const snapshot = await captureTerminalSnapshot(state.sessionId, 2000)
         if (snapshot.trim().length > 0) {
-          sendJson(peer, { type: 'snapshot', data: encodeBase64(snapshot) })
+          const payload: Record<string, unknown> = { type: 'snapshot', data: encodeBase64(snapshot) }
+          if (seq !== null) payload.seq = seq
+          if (Number.isFinite(cols) && Number.isFinite(rows)) {
+            payload.cols = cols
+            payload.rows = rows
+          }
+          sendJson(peer, payload)
         }
       } catch (error) {
         const messageText = error instanceof Error ? error.message : 'Unable to capture terminal snapshot.'
