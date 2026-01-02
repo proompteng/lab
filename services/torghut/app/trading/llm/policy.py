@@ -58,10 +58,18 @@ def apply_policy(decision: StrategyDecision, review: LLMReviewResponse) -> Polic
     if adjusted_order_type not in allowed_order_types(decision.order_type):
         return PolicyOutcome("veto", decision, "llm_adjustment_order_type_not_allowed")
 
+    limit_price = decision.limit_price
+    if adjusted_order_type in {"limit", "stop_limit"}:
+        if review.limit_price is not None:
+            limit_price = Decimal(str(review.limit_price))
+        elif adjusted_order_type != decision.order_type or limit_price is None:
+            return PolicyOutcome("veto", decision, "llm_adjustment_missing_limit_price")
+
     updated = decision.model_copy(
         update={
             "qty": adjusted_qty_dec,
             "order_type": adjusted_order_type,
+            "limit_price": limit_price,
         }
     )
     return PolicyOutcome("adjust", updated)

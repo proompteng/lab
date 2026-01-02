@@ -6,6 +6,7 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
 from typing import Any, Optional, cast
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -48,6 +49,13 @@ ENVELOPE_SIGNAL_COLUMNS = [
 ]
 
 
+@dataclass(frozen=True)
+class SignalBatch:
+    signals: list[SignalEnvelope]
+    cursor_at: Optional[datetime]
+    cursor_seq: Optional[int]
+
+
 class ClickHouseSignalIngestor:
     """Poll ClickHouse for new TA signals using an event_ts cursor."""
 
@@ -71,10 +79,10 @@ class ClickHouseSignalIngestor:
         self._columns: Optional[set[str]] = None
         self._time_column: Optional[str] = None
 
-    def fetch_signals(self, session: Session) -> list[SignalEnvelope]:
+    def fetch_signals(self, session: Session) -> "SignalBatch":
         if not self.url:
             logger.warning("ClickHouse URL missing; skipping signal ingestion")
-            return []
+            return SignalBatch(signals=[], cursor_at=None, cursor_seq=None)
 
         cursor_at, cursor_seq = self._get_cursor(session)
         query = self._build_query(cursor_at, cursor_seq)
@@ -97,10 +105,12 @@ class ClickHouseSignalIngestor:
                 if candidate_seq is not None and (max_seq is None or candidate_seq > max_seq):
                     max_seq = candidate_seq
 
-        if max_event_ts is not None:
-            self._set_cursor(session, max_event_ts, max_seq)
+        return SignalBatch(signals=signals, cursor_at=max_event_ts, cursor_seq=max_seq)
 
-        return signals
+    def commit_cursor(self, session: Session, batch: "SignalBatch") -> None:
+        if batch.cursor_at is None:
+            return
+        self._set_cursor(session, batch.cursor_at, batch.cursor_seq)
 
     def parse_row(self, row: dict[str, Any]) -> Optional[SignalEnvelope]:
         event_ts = _parse_ts(row.get("event_ts")) or _parse_ts(row.get("ts")) or _parse_ts(row.get("timestamp"))
@@ -500,4 +510,4 @@ def _split_table(table: str) -> tuple[str, str]:
     return "default", table
 
 
-__all__ = ["ClickHouseSignalIngestor"]
+__all__ = ["ClickHouseSignalIngestor", "SignalBatch"]

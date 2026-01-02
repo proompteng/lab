@@ -86,6 +86,8 @@ class TradingPipeline:
         self.account_label = account_label
         self.session_factory = session_factory
         self.price_fetcher = price_fetcher or ClickHousePriceFetcher()
+        self._snapshot_cache = None
+        self._snapshot_cached_at: Optional[datetime] = None
         if llm_review_engine is not None:
             self.llm_review_engine = llm_review_engine
         elif settings.llm_enabled:
@@ -100,11 +102,11 @@ class TradingPipeline:
                 logger.info("No enabled strategies found; skipping trading cycle")
                 return
 
-            signals = self.ingestor.fetch_signals(session)
-            if not signals:
+            batch = self.ingestor.fetch_signals(session)
+            if not batch.signals:
                 return
 
-            account_snapshot = snapshot_account_and_positions(session, self.alpaca_client, self.account_label)
+            account_snapshot = self._get_account_snapshot(session)
             account = {
                 "equity": str(account_snapshot.equity),
                 "cash": str(account_snapshot.cash),
@@ -114,13 +116,19 @@ class TradingPipeline:
 
             allowed_symbols = self.universe_resolver.get_symbols()
 
-            for signal in signals:
-                decisions = self.decision_engine.evaluate(signal, strategies)
-                if not decisions:
-                    continue
-                for decision in decisions:
-                    self.state.metrics.decisions_total += 1
-                    self._handle_decision(session, decision, strategies, account, positions, allowed_symbols)
+            try:
+                for signal in batch.signals:
+                    decisions = self.decision_engine.evaluate(signal, strategies)
+                    if not decisions:
+                        continue
+                    for decision in decisions:
+                        self.state.metrics.decisions_total += 1
+                        self._handle_decision(session, decision, strategies, account, positions, allowed_symbols)
+            except Exception:
+                logger.exception("Trading cycle failed before cursor commit")
+                raise
+            else:
+                self.ingestor.commit_cursor(session, batch)
 
     def reconcile(self) -> int:
         with self.session_factory() as session:
@@ -459,6 +467,18 @@ class TradingPipeline:
         if settings.trading_mode == "live":
             return "veto"
         return settings.llm_fail_mode
+
+    def _get_account_snapshot(self, session: Session):
+        now = datetime.now(timezone.utc)
+        snapshot_ttl = timedelta(milliseconds=settings.trading_reconcile_ms)
+        if self._snapshot_cache and self._snapshot_cached_at:
+            if now - self._snapshot_cached_at < snapshot_ttl:
+                return self._snapshot_cache
+        # Reuse snapshots within the reconcile interval to reduce Alpaca and DB churn.
+        snapshot = snapshot_account_and_positions(session, self.alpaca_client, self.account_label)
+        self._snapshot_cache = snapshot
+        self._snapshot_cached_at = now
+        return snapshot
 
     @staticmethod
     def _persist_llm_review(

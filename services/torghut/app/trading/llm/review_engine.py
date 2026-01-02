@@ -31,6 +31,7 @@ _SYSTEM_PROMPT = (
     "Respond ONLY with a JSON object matching the required schema. "
     "Decide whether to approve, veto, or adjust the decision. "
     "If adjusting, propose qty and optionally order_type within policy bounds. "
+    "If adjusting order_type to limit or stop_limit, include limit_price. "
     "Provide a concise rationale (<= 280 chars). "
     "Do not include chain-of-thought or extra keys."
 )

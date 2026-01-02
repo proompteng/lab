@@ -25,7 +25,7 @@ class TestClickHousePriceFetcher(TestCase):
             payload={},
         )
         fetcher = FakeClickHousePriceFetcher(
-            [{"ts": "2026-01-01T00:00:00Z", "c": "101.25", "vwap": "99.9"}]
+            [{"event_ts": "2026-01-01T00:00:00Z", "c": "101.25", "vwap": "99.9"}]
         )
         price = fetcher.fetch_price(signal)
         self.assertEqual(price, Decimal("101.25"))
@@ -37,7 +37,7 @@ class TestClickHousePriceFetcher(TestCase):
             payload={},
         )
         fetcher = FakeClickHousePriceFetcher(
-            [{"ts": "2026-01-01T00:00:00Z", "c": 102.5, "price": 100}]
+            [{"event_ts": "2026-01-01T00:00:00Z", "c": 102.5, "price": 100}]
         )
         snapshot = fetcher.fetch_market_snapshot(signal)
         self.assertIsNotNone(snapshot)

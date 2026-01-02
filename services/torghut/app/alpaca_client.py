@@ -38,11 +38,13 @@ class TorghutAlpacaClient:
         base = base_url or settings.apca_api_base_url
         data_base = settings.apca_data_api_base_url
 
+        is_live = settings.trading_mode == "live"
+
         # Default to paper trading; override URL if provided.
         self.trading = trading_client or TradingClient(
             api_key=key,
             secret_key=secret,
-            paper=True,
+            paper=not is_live,
             url_override=base,
         )
 
@@ -51,7 +53,7 @@ class TorghutAlpacaClient:
             api_key=key,
             secret_key=secret,
             url_override=data_base,
-            sandbox=True,
+            sandbox=not is_live,
         )
 
     # ------------------- Trading helpers -------------------
