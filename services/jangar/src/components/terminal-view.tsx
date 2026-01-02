@@ -257,6 +257,11 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       terminalRef.current = terminal
       fitRef.current = fitAddon
 
+      const handleFocus = () => {
+        terminal.focus()
+      }
+      containerRef.current.addEventListener('pointerdown', handleFocus)
+
       terminal.onData((data: string) => {
         if (socketRef.current?.readyState === WebSocket.OPEN) {
           sendMessage({ type: 'input', data: encodeInput(data) })
@@ -301,6 +306,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       attachSocket()
 
       return () => {
+        containerRef.current?.removeEventListener('pointerdown', handleFocus)
         document.removeEventListener('visibilitychange', handleVisibility)
         window.removeEventListener('focus', handleWindowFocus)
         window.removeEventListener('resize', handleWindowResize)
