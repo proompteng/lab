@@ -3,6 +3,53 @@ import { expect, test } from '@playwright/test'
 const baseURL = process.env.JANGAR_DEPLOYED_BASE_URL ?? 'http://jangar'
 const shouldRun = process.env.PLAYWRIGHT_DEPLOYED === '1'
 
+const trackApiFailures = (page: import('@playwright/test').Page) => {
+  const failures: string[] = []
+  page.on('response', (response) => {
+    const url = response.url()
+    if (!url.includes('/api/terminals')) return
+    if (response.ok()) return
+    failures.push(`${response.status()} ${url}`)
+  })
+  page.on('requestfailed', (request) => {
+    const url = request.url()
+    if (!url.includes('/api/terminals')) return
+    const errorText = request.failure()?.errorText ?? ''
+    if (url.includes('/stream') && /aborted|cancelled|canceled|ERR_ABORTED/i.test(errorText)) {
+      return
+    }
+    failures.push(`FAILED ${url} ${errorText}`.trim())
+  })
+  return failures
+}
+
+const assertUiSseStable = async (page: import('@playwright/test').Page, sessionId: string, durationMs = 8000) => {
+  await page.evaluate(
+    ({ id, duration }) =>
+      new Promise<void>((resolve, reject) => {
+        const source = new EventSource(`/api/terminals/${encodeURIComponent(id)}/stream`)
+        let open = false
+        const timeout = window.setTimeout(() => {
+          source.close()
+          if (open) {
+            resolve()
+          } else {
+            reject(new Error('SSE did not open in time'))
+          }
+        }, duration)
+        source.onopen = () => {
+          open = true
+        }
+        source.onerror = () => {
+          window.clearTimeout(timeout)
+          source.close()
+          reject(new Error('SSE error event fired'))
+        }
+      }),
+    { id: sessionId, duration: durationMs },
+  )
+}
+
 const fetchSessionStatus = async (sessionId: string) => {
   const response = await fetch(`${baseURL}/api/terminals/${encodeURIComponent(sessionId)}`)
   if (!response.ok) return null
@@ -108,6 +155,7 @@ test.describe('deployed jangar e2e', () => {
 
   test('terminal session lifecycle end-to-end', async ({ page, request }) => {
     test.setTimeout(120_000)
+    const apiFailures = trackApiFailures(page)
 
     await page.goto('/terminals')
     await expect(page.getByRole('heading', { name: 'Terminal sessions', level: 1 })).toBeVisible()
@@ -149,6 +197,7 @@ test.describe('deployed jangar e2e', () => {
 
     await expect(page.getByText('Status: connected', { exact: false })).toBeVisible({ timeout: 20_000 })
     await assertSseStaysOpen(sessionId, 12_000)
+    await assertUiSseStable(page, sessionId)
 
     const marker = `e2e-${Date.now()}`
     const inputResponse = await request.post(`/api/terminals/${encodeURIComponent(sessionId)}/input`, {
@@ -181,12 +230,15 @@ test.describe('deployed jangar e2e', () => {
     expect(resizeResponse.ok()).toBe(true)
     const resizePayload = (await resizeResponse.json()) as { ok: boolean }
     expect(resizePayload.ok).toBe(true)
+
+    expect(apiFailures).toEqual([])
   })
 
   test('terminal session created from UI stays connected, accepts input, and restores after reconnect', async ({
     page,
   }) => {
     test.setTimeout(120_000)
+    const apiFailures = trackApiFailures(page)
 
     await page.goto('/terminals')
     await expect(page.getByRole('heading', { name: 'Terminal sessions', level: 1 })).toBeVisible()
@@ -212,6 +264,7 @@ test.describe('deployed jangar e2e', () => {
     await expect(page).toHaveURL(new RegExp(`/terminals/${sessionId}$`))
     await expect(page.getByText('Status: connected', { exact: false })).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText('Connection lost. Refresh to retry.')).toHaveCount(0)
+    await assertUiSseStable(page, sessionId)
 
     const marker = `ui-e2e-${Date.now()}`
     const terminal = page.locator('.xterm')
@@ -219,7 +272,9 @@ test.describe('deployed jangar e2e', () => {
     await page.keyboard.type(`echo ${marker}`)
     await page.keyboard.press('Enter')
 
-    await expect(page.locator('.xterm-rows')).toContainText(marker, { timeout: 20_000 })
+    const start = Date.now()
+    await expect(page.locator('.xterm-rows')).toContainText(marker, { timeout: 5000 })
+    expect(Date.now() - start).toBeLessThan(5000)
     await expect.poll(() => fetchTerminalSnapshot(sessionId), { timeout: 20_000 }).toContain(marker)
 
     await page.getByRole('link', { name: 'All sessions' }).click()
@@ -247,5 +302,7 @@ test.describe('deployed jangar e2e', () => {
     await expect(closedRow).toBeVisible()
     await closedRow.getByRole('button', { name: 'Delete' }).click()
     await expect(closedRow).toHaveCount(0)
+
+    expect(apiFailures).toEqual([])
   })
 })
