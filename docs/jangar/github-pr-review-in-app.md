@@ -123,7 +123,7 @@ flowchart LR
   FR -->|raw payloads| RAW
   FR -->|filtered PR + review + CI| CJ
   CJ --> KS[KafkaSource jangar-codex-github-events]
-  KS --> JAPI[/api/codex/github-events]
+  KS --> JAPI["/api/codex/github-events"]
   JAPI --> JDB[(Jangar DB)]
   JDB --> JUI[Jangar PR Review UI]
 ```
