@@ -2,14 +2,19 @@
 
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
 from datetime import datetime
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
+from .alpaca_client import TorghutAlpacaClient
 from .config import settings
 from .db import ensure_schema, get_session, ping
 from .models import Execution, TradeDecision
@@ -80,7 +85,10 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, bool]:
 def trading_status() -> dict[str, object]:
     """Return trading loop status and metrics."""
 
-    scheduler: TradingScheduler = app.state.trading_scheduler
+    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    if scheduler is None:
+        scheduler = TradingScheduler()
+        app.state.trading_scheduler = scheduler
     state = scheduler.state
     return {
         "enabled": settings.trading_enabled,
@@ -98,7 +106,10 @@ def trading_status() -> dict[str, object]:
 def trading_metrics() -> dict[str, object]:
     """Expose trading metrics counters."""
 
-    scheduler: TradingScheduler = app.state.trading_scheduler
+    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    if scheduler is None:
+        scheduler = TradingScheduler()
+        app.state.trading_scheduler = scheduler
     metrics = scheduler.state.metrics
     return {"metrics": metrics.__dict__}
 
@@ -177,10 +188,87 @@ def trading_executions(
 
 
 @app.get("/trading/health")
-def trading_health() -> dict[str, str]:
-    """Basic trading loop health signal."""
+def trading_health(session: Session = Depends(get_session)) -> JSONResponse:
+    """Trading loop health including dependency readiness."""
 
-    scheduler: TradingScheduler = app.state.trading_scheduler
+    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    if scheduler is None:
+        scheduler = TradingScheduler()
+        app.state.trading_scheduler = scheduler
+    scheduler_ok = True
+    scheduler_detail = "ok"
     if settings.trading_enabled and not scheduler.state.running:
-        raise HTTPException(status_code=503, detail="trading loop not running")
-    return {"status": "ok"}
+        scheduler_ok = False
+        scheduler_detail = "trading loop not running"
+
+    postgres_status = _check_postgres(session)
+    if settings.trading_enabled:
+        clickhouse_status = _check_clickhouse()
+        alpaca_status = _check_alpaca()
+    else:
+        clickhouse_status = {"ok": True, "detail": "skipped (trading disabled)"}
+        alpaca_status = {"ok": True, "detail": "skipped (trading disabled)"}
+
+    dependencies = {
+        "postgres": postgres_status,
+        "clickhouse": clickhouse_status,
+        "alpaca": alpaca_status,
+    }
+
+    overall_ok = scheduler_ok and all(dep["ok"] for dep in dependencies.values())
+    status = "ok" if overall_ok else "degraded"
+
+    payload = {
+        "status": status,
+        "scheduler": {"ok": scheduler_ok, "detail": scheduler_detail},
+        "dependencies": dependencies,
+    }
+
+    status_code = 200 if overall_ok else 503
+    return JSONResponse(status_code=status_code, content=jsonable_encoder(payload))
+
+
+def _check_postgres(session: Session) -> dict[str, object]:
+    try:
+        ping(session)
+    except SQLAlchemyError as exc:
+        return {"ok": False, "detail": f"postgres error: {exc}"}
+    return {"ok": True, "detail": "ok"}
+
+
+def _check_clickhouse() -> dict[str, object]:
+    if not settings.trading_clickhouse_url:
+        return {"ok": False, "detail": "clickhouse url missing"}
+    query = "SELECT 1 FORMAT JSONEachRow"
+    params = {"query": query}
+    request = Request(
+        f"{settings.trading_clickhouse_url.rstrip('/')}/?{urlencode(params)}",
+        headers={"Content-Type": "text/plain"},
+    )
+    if settings.trading_clickhouse_username:
+        request.add_header("X-ClickHouse-User", settings.trading_clickhouse_username)
+    if settings.trading_clickhouse_password:
+        request.add_header("X-ClickHouse-Key", settings.trading_clickhouse_password)
+    try:
+        with urlopen(request, timeout=settings.trading_clickhouse_timeout_seconds) as response:
+            payload = response.read().decode("utf-8")
+    except Exception as exc:  # pragma: no cover - depends on network
+        return {"ok": False, "detail": f"clickhouse error: {exc}"}
+    if not payload.strip():
+        return {"ok": False, "detail": "clickhouse empty response"}
+    return {"ok": True, "detail": "ok"}
+
+
+def _check_alpaca() -> dict[str, object]:
+    if not settings.apca_api_key_id or not settings.apca_api_secret_key:
+        return {"ok": False, "detail": "alpaca keys missing"}
+    client = TorghutAlpacaClient()
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(client.get_account)
+            future.result(timeout=2)
+    except TimeoutError:
+        return {"ok": False, "detail": "alpaca timeout"}
+    except Exception as exc:  # pragma: no cover - depends on network
+        return {"ok": False, "detail": f"alpaca error: {exc}"}
+    return {"ok": True, "detail": "ok"}

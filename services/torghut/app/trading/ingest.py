@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, cast
 from urllib.parse import urlencode
@@ -40,7 +41,8 @@ ENVELOPE_SIGNAL_COLUMNS = [
     "ingest_ts",
     "symbol",
     "payload",
-    "window",
+    "window_size",
+    "window_step",
     "seq",
     "source",
 ]
@@ -74,12 +76,13 @@ class ClickHouseSignalIngestor:
             logger.warning("ClickHouse URL missing; skipping signal ingestion")
             return []
 
-        cursor = self._get_cursor(session)
-        query = self._build_query(cursor)
+        cursor_at, cursor_seq = self._get_cursor(session)
+        query = self._build_query(cursor_at, cursor_seq)
         rows = self._query_clickhouse(query)
         signals: list[SignalEnvelope] = []
 
         max_event_ts: Optional[datetime] = None
+        max_seq: Optional[int] = None
         for row in rows:
             signal = self.parse_row(row)
             if signal is None:
@@ -88,9 +91,14 @@ class ClickHouseSignalIngestor:
             signals.append(signal)
             if max_event_ts is None or signal.event_ts > max_event_ts:
                 max_event_ts = signal.event_ts
+                max_seq = _coerce_seq(signal.seq)
+            elif signal.event_ts == max_event_ts:
+                candidate_seq = _coerce_seq(signal.seq)
+                if candidate_seq is not None and (max_seq is None or candidate_seq > max_seq):
+                    max_seq = candidate_seq
 
         if max_event_ts is not None:
-            self._set_cursor(session, max_event_ts)
+            self._set_cursor(session, max_event_ts, max_seq)
 
         return signals
 
@@ -116,16 +124,25 @@ class ClickHouseSignalIngestor:
             logger.warning("Skipping invalid signal row: %s", exc)
             return None
 
-    def _build_query(self, cursor: datetime) -> str:
-        cursor_str = cursor.strftime("%Y-%m-%d %H:%M:%S")
+    def _build_query(self, cursor_at: datetime, cursor_seq: Optional[int]) -> str:
+        cursor_str = cursor_at.strftime("%Y-%m-%d %H:%M:%S")
         limit = self.batch_size
         time_column = self._resolve_time_column()
         select_expr = self._select_expression(time_column)
+        where_clause = f"{time_column} > toDateTime('{cursor_str}')"
+        order_clause = f"{time_column} ASC"
+        if time_column == "event_ts" and self._supports_seq():
+            order_clause = f"{time_column} ASC, seq ASC"
+            if cursor_seq is not None:
+                where_clause = (
+                    f"({time_column} > toDateTime('{cursor_str}') OR "
+                    f"({time_column} = toDateTime('{cursor_str}') AND seq > {cursor_seq}))"
+                )
         return (
             f"SELECT {select_expr} "
             f"FROM {self.table} "
-            f"WHERE {time_column} > toDateTime('{cursor_str}') "
-            f"ORDER BY {time_column} ASC "
+            f"WHERE {where_clause} "
+            f"ORDER BY {order_clause} "
             f"LIMIT {limit} "
             "FORMAT JSONEachRow"
         )
@@ -151,9 +168,12 @@ class ClickHouseSignalIngestor:
         if symbol:
             where_parts.append(f"symbol = '{symbol}'")
         limit_clause = f"LIMIT {limit}" if limit else ""
+        order_clause = f"{time_column} ASC"
+        if time_column == "event_ts" and self._supports_seq():
+            order_clause = f"{time_column} ASC, seq ASC"
         query = (
             f"SELECT {select_expr} FROM {self.table} WHERE {' AND '.join(where_parts)} "
-            f"ORDER BY {time_column} ASC {limit_clause} FORMAT JSONEachRow"
+            f"ORDER BY {order_clause} {limit_clause} FORMAT JSONEachRow"
         )
         rows = self._query_clickhouse(query)
         signals: list[SignalEnvelope] = []
@@ -193,16 +213,24 @@ class ClickHouseSignalIngestor:
 
     def _select_columns_for_schema(self, time_column: str) -> list[str]:
         if self.schema == "flat":
+            columns = self._resolve_columns(force=True)
+            if columns:
+                return _select_columns(columns, time_column)
             return _dedupe_columns([time_column, *FLAT_SIGNAL_COLUMNS])
         if self.schema == "envelope":
+            columns = self._resolve_columns(force=True)
+            if columns:
+                return _select_columns(columns, time_column)
             return _dedupe_columns([time_column, *ENVELOPE_SIGNAL_COLUMNS])
         columns = self._resolve_columns()
         if columns:
             return _select_columns(columns, time_column)
         return _dedupe_columns([time_column, *ENVELOPE_SIGNAL_COLUMNS])
 
-    def _resolve_columns(self) -> Optional[set[str]]:
-        if self.schema != "auto":
+    def _resolve_columns(self, force: bool = False) -> Optional[set[str]]:
+        if self.schema != "auto" and not force:
+            return None
+        if not self.url:
             return None
         if self._columns is not None:
             return self._columns
@@ -218,7 +246,13 @@ class ClickHouseSignalIngestor:
             logger.warning("Failed to detect ClickHouse schema: %s", exc)
             self._columns = None
             return None
+        if not rows:
+            self._columns = None
+            return None
         self._columns = {str(row.get("name")) for row in rows if row.get("name")}
+        if not self._columns:
+            self._columns = None
+            return None
         return self._columns
 
     def _resolve_time_column(self) -> str:
@@ -242,25 +276,34 @@ class ClickHouseSignalIngestor:
             self._time_column = "event_ts"
         return self._time_column
 
-    def _get_cursor(self, session: Session) -> datetime:
+    def _get_cursor(self, session: Session) -> tuple[datetime, Optional[int]]:
         stmt = select(TradeCursor).where(TradeCursor.source == "clickhouse")
         cursor_row = session.execute(stmt).scalar_one_or_none()
         if cursor_row:
-            return cursor_row.cursor_at
+            return cursor_row.cursor_at, cursor_row.cursor_seq
 
         lookback = timedelta(minutes=self.initial_lookback_minutes)
-        return datetime.now(timezone.utc) - lookback
+        return datetime.now(timezone.utc) - lookback, None
 
-    def _set_cursor(self, session: Session, cursor_at: datetime) -> None:
+    def _set_cursor(self, session: Session, cursor_at: datetime, cursor_seq: Optional[int]) -> None:
         stmt = select(TradeCursor).where(TradeCursor.source == "clickhouse")
         cursor_row = session.execute(stmt).scalar_one_or_none()
         if cursor_row:
             cursor_row.cursor_at = cursor_at
+            cursor_row.cursor_seq = cursor_seq
             session.add(cursor_row)
         else:
-            cursor_row = TradeCursor(source="clickhouse", cursor_at=cursor_at)
+            cursor_row = TradeCursor(source="clickhouse", cursor_at=cursor_at, cursor_seq=cursor_seq)
             session.add(cursor_row)
         session.commit()
+
+    def _supports_seq(self) -> bool:
+        if self.schema == "flat":
+            return False
+        columns = self._resolve_columns(force=True)
+        if columns is None:
+            return True
+        return "seq" in columns
 
 
 def _parse_ts(value: Any) -> Optional[datetime]:
@@ -290,6 +333,14 @@ def _coerce_timeframe(row: dict[str, Any], payload: dict[str, Any]) -> Optional[
         raw_size = window_dict.get("size")
         if isinstance(raw_size, str):
             size = raw_size
+    if size is None:
+        raw_size = row.get("window_size")
+        if isinstance(raw_size, str):
+            size = raw_size
+    if size is None:
+        raw_step = row.get("window_step")
+        if isinstance(raw_step, str):
+            size = raw_step
     if payload:
         timeframe = payload.get("timeframe")
         if isinstance(timeframe, str):
@@ -297,10 +348,23 @@ def _coerce_timeframe(row: dict[str, Any], payload: dict[str, Any]) -> Optional[
     timeframe = row.get("timeframe")
     if isinstance(timeframe, str):
         return timeframe
-    if size == "PT1S":
-        return "1Sec"
-    if size == "PT1M":
-        return "1Min"
+    return _timeframe_from_iso_duration(size)
+
+
+def _timeframe_from_iso_duration(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    match = re.fullmatch(r"PT(\d+)([SMH])", value)
+    if not match:
+        return None
+    amount = int(match.group(1))
+    unit = match.group(2)
+    if unit == "S":
+        return f"{amount}Sec"
+    if unit == "M":
+        return f"{amount}Min"
+    if unit == "H":
+        return f"{amount}Hour"
     return None
 
 
@@ -365,6 +429,23 @@ def _payload_from_flat_row(row: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _coerce_seq(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
 def _select_columns(columns: set[str], time_column: str) -> list[str]:
     desired = [
         time_column,
@@ -374,6 +455,8 @@ def _select_columns(columns: set[str], time_column: str) -> list[str]:
         "symbol",
         "payload",
         "window",
+        "window_size",
+        "window_step",
         "seq",
         "source",
         "timeframe",

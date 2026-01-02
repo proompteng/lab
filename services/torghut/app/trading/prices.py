@@ -68,7 +68,7 @@ class ClickHousePriceFetcher(PriceFetcher):
         target_ts = signal.event_ts
         lookback = target_ts - timedelta(minutes=self.lookback_minutes)
         query = (
-            "SELECT ts, close, vwap, price, spread "
+            "SELECT ts, c, close, vwap, price, spread "
             f"FROM {self.table} "
             f"WHERE symbol = '{signal.symbol}' "
             f"AND ts >= toDateTime('{lookback.strftime('%Y-%m-%d %H:%M:%S')}') "
@@ -81,10 +81,7 @@ class ClickHousePriceFetcher(PriceFetcher):
         if not rows:
             return None
         row = rows[0]
-        price = _optional_decimal(row.get("close")) or _optional_decimal(row.get("price")) or _optional_decimal(
-            row.get("vwap")
-        )
-        return price
+        return _select_price(row)
 
     def fetch_market_snapshot(self, signal: SignalEnvelope) -> Optional[MarketSnapshot]:
         if not self.url:
@@ -92,7 +89,7 @@ class ClickHousePriceFetcher(PriceFetcher):
         target_ts = signal.event_ts
         lookback = target_ts - timedelta(minutes=self.lookback_minutes)
         query = (
-            "SELECT ts, close, vwap, price, spread "
+            "SELECT ts, c, close, vwap, price, spread "
             f"FROM {self.table} "
             f"WHERE symbol = '{signal.symbol}' "
             f"AND ts >= toDateTime('{lookback.strftime('%Y-%m-%d %H:%M:%S')}') "
@@ -106,9 +103,7 @@ class ClickHousePriceFetcher(PriceFetcher):
             return None
         row = rows[0]
         as_of = _parse_ts(row.get("ts")) or signal.event_ts
-        price = _optional_decimal(row.get("close")) or _optional_decimal(row.get("price")) or _optional_decimal(
-            row.get("vwap")
-        )
+        price = _select_price(row)
         spread = _optional_decimal(row.get("spread"))
         return MarketSnapshot(
             symbol=signal.symbol,
@@ -168,6 +163,15 @@ def _parse_ts(value: Any) -> Optional[datetime]:
             return parsed.replace(tzinfo=timezone.utc)
         return parsed
     return None
+
+
+def _select_price(row: dict[str, Any]) -> Optional[Decimal]:
+    return (
+        _optional_decimal(row.get("c"))
+        or _optional_decimal(row.get("close"))
+        or _optional_decimal(row.get("price"))
+        or _optional_decimal(row.get("vwap"))
+    )
 
 
 __all__ = ["ClickHousePriceFetcher", "MarketSnapshot", "PriceFetcher"]
