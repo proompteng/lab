@@ -6,7 +6,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, cast
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from sqlalchemy import select
@@ -31,7 +31,7 @@ class ClickHouseSignalIngestor:
         batch_size: Optional[int] = None,
         initial_lookback_minutes: Optional[int] = None,
     ) -> None:
-        self.url = _normalize_clickhouse_url(url or settings.trading_clickhouse_url or "").rstrip("/")
+        self.url = (url or settings.trading_clickhouse_url or "").rstrip("/")
         self.username = username or settings.trading_clickhouse_username
         self.password = password or settings.trading_clickhouse_password
         self.table = table or settings.trading_signal_table
@@ -186,20 +186,6 @@ def _normalize_payload(payload: Any) -> dict[str, Any]:
         if isinstance(decoded, dict):
             return cast(dict[str, Any], decoded)
     return {}
-
-
-def _normalize_clickhouse_url(url: str) -> str:
-    if not url:
-        return ""
-    normalized = url
-    if normalized.startswith("jdbc:"):
-        normalized = normalized.removeprefix("jdbc:")
-    if normalized.startswith("clickhouse://"):
-        normalized = normalized.replace("clickhouse://", "http://", 1)
-    parsed = urlparse(normalized)
-    if parsed.scheme in {"http", "https"} and parsed.netloc:
-        return f"{parsed.scheme}://{parsed.netloc}"
-    return normalized
 
 
 __all__ = ["ClickHouseSignalIngestor"]

@@ -39,20 +39,20 @@ spec:
             - name: APCA_API_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: torghut-secrets
-                  key: apca-api-key-id
+                  name: torghut-alpaca
+                  key: APCA_API_KEY_ID
                   optional: true
             - name: APCA_API_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: torghut-secrets
-                  key: apca-api-secret-key
+                  name: torghut-alpaca
+                  key: APCA_API_SECRET_KEY
                   optional: true
             - name: APCA_API_BASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: torghut-secrets
-                  key: apca-api-base-url
+                  name: torghut-alpaca
+                  key: APCA_API_BASE_URL
                   optional: true
             - name: CLICKHOUSE_HOST
               value: torghut-clickhouse.torghut.svc.cluster.local
@@ -71,6 +71,35 @@ spec:
               value: "false"
             - name: CLICKHOUSE_TIMEOUT_SECONDS
               value: "10"
+            - name: TRADING_ENABLED
+              value: "true"
+            - name: TRADING_MODE
+              value: paper
+            - name: TRADING_LIVE_ENABLED
+              value: "false"
+            - name: TRADING_SIGNAL_SOURCE
+              value: clickhouse
+            - name: TRADING_SIGNAL_TABLE
+              value: torghut.ta_signals
+            - name: TRADING_SIGNAL_LOOKBACK_MINUTES
+              value: "15"
+            - name: TRADING_POLL_MS
+              value: "5000"
+            - name: TRADING_RECONCILE_MS
+              value: "15000"
+            - name: TRADING_UNIVERSE_SOURCE
+              value: jangar
+            - name: JANGAR_SYMBOLS_URL
+              value: http://jangar.jangar.svc.cluster.local/api/torghut/symbols
+            - name: TA_CLICKHOUSE_URL
+              value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
+            - name: TA_CLICKHOUSE_USERNAME
+              value: torghut
+            - name: TA_CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
             - name: TORGHUT_VERSION
               value: v0.386.0-6-ga35c56a1
             - name: TORGHUT_COMMIT
