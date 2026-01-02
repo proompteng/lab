@@ -267,7 +267,7 @@ function TerminalSessionPage() {
             <Skeleton className="h-64 w-full" />
           </div>
         ) : session?.status === 'ready' ? (
-          <TerminalView sessionId={sessionId} />
+          <TerminalView sessionId={session?.id ?? sessionId} />
         ) : session?.status === 'error' ? (
           <div className="rounded-none border border-destructive/40 bg-destructive/10 p-4 text-xs text-destructive">
             {session.errorMessage ?? 'Terminal session failed to start. Refresh to retry.'}

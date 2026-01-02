@@ -29,6 +29,7 @@ type WebSocketPeer = {
   send: (data: string) => void
   close: (code?: number, reason?: string) => void
   context?: { sessionId?: string }
+  request?: Request | { url?: string } | null
 }
 
 type WebSocketMessage = {
@@ -63,13 +64,21 @@ const sendJson = (peer: WebSocketPeer, payload: unknown) => {
   peer.send(JSON.stringify(payload))
 }
 
-const resolveSessionId = (url: string) => {
-  const pathname = new URL(url, 'http://localhost').pathname
-  const match = pathname.match(/\/api\/terminals\/([^/]+)\/ws$/)
-  if (!match) return null
-  const candidate = formatSessionId(decodeURIComponent(match[1] ?? ''))
+const resolveSessionIdFromUrl = (url: string) => {
+  const parsed = new URL(url, 'http://localhost')
+  const match = parsed.pathname.match(/\/api\/terminals\/([^/]+)\/ws$/)
+  let candidate = match ? decodeURIComponent(match[1] ?? '') : (parsed.searchParams.get('sessionId') ?? '')
+  candidate = formatSessionId(candidate)
   if (!candidate || !isTerminalSessionId(candidate)) return null
   return candidate
+}
+
+const resolveSessionIdFromRequest = (
+  request: WebSocketUpgradeRequest | Request | WebSocketPeer['request'] | null | undefined,
+) => {
+  const url = request && typeof request === 'object' && 'url' in request ? request.url : ''
+  if (!url) return null
+  return resolveSessionIdFromUrl(url)
 }
 
 const closeWithError = (peer: WebSocketPeer, message: string) => {
@@ -95,8 +104,12 @@ const readLogChunk = async (state: PeerState, peer: WebSocketPeer) => {
 
 const websocketHooks = defineWebSocket({
   async upgrade(request: WebSocketUpgradeRequest) {
-    const sessionId = resolveSessionId(request.url)
-    if (!sessionId) return new Response('Invalid terminal session id.', { status: 400 })
+    const sessionId = resolveSessionIdFromRequest(request)
+    if (!sessionId) {
+      const url = typeof request?.url === 'string' ? request.url : 'unknown'
+      console.warn('[terminals] ws upgrade invalid session id', { url })
+      return new Response('Invalid terminal session id.', { status: 400 })
+    }
 
     const session = await getTerminalSession(sessionId)
     if (!session) return new Response('Session not found.', { status: 404 })
@@ -120,8 +133,12 @@ const websocketHooks = defineWebSocket({
   },
 
   async open(peer: WebSocketPeer) {
-    const sessionId = typeof peer.context?.sessionId === 'string' ? peer.context.sessionId : null
+    let sessionId = typeof peer.context?.sessionId === 'string' ? peer.context.sessionId : null
     if (!sessionId) {
+      sessionId = resolveSessionIdFromRequest(peer.request)
+    }
+    if (!sessionId) {
+      console.warn('[terminals] ws open missing session id', { url: peer.request?.url })
       closeWithError(peer, 'Invalid terminal session id.')
       return
     }

@@ -54,7 +54,8 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
 
     const buildSocketUrl = () => {
       const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-      return `${protocol}://${window.location.host}/api/terminals/${encodeURIComponent(sessionId)}/ws`
+      const encoded = encodeURIComponent(sessionId)
+      return `${protocol}://${window.location.host}/api/terminals/${encoded}/ws?sessionId=${encoded}`
     }
 
     const sendMessage = (payload: unknown) => {
