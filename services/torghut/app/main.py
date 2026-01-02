@@ -202,8 +202,12 @@ def trading_health(session: Session = Depends(get_session)) -> JSONResponse:
         scheduler_detail = "trading loop not running"
 
     postgres_status = _check_postgres(session)
-    clickhouse_status = _check_clickhouse()
-    alpaca_status = _check_alpaca()
+    if settings.trading_enabled:
+        clickhouse_status = _check_clickhouse()
+        alpaca_status = _check_alpaca()
+    else:
+        clickhouse_status = {"ok": True, "detail": "skipped (trading disabled)"}
+        alpaca_status = {"ok": True, "detail": "skipped (trading disabled)"}
 
     dependencies = {
         "postgres": postgres_status,
