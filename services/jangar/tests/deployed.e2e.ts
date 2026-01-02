@@ -34,16 +34,38 @@ const trackInputRequests = (page: import('@playwright/test').Page) => {
   return inputs
 }
 
-const waitForTerminalWebSocket = async (page: import('@playwright/test').Page, sessionId: string) => {
-  const ws = await page.waitForEvent('websocket', {
-    predicate: (socket) => socket.url().includes(`/api/terminals/${encodeURIComponent(sessionId)}/ws`),
-    timeout: 20_000,
+const trackTerminalWebSockets = (page: import('@playwright/test').Page) => {
+  const sockets = new Map<string, import('@playwright/test').WebSocket>()
+  const closed = new Set<string>()
+
+  page.on('websocket', (socket) => {
+    const match = socket.url().match(/\/api\/terminals\/([^/]+)\/ws/)
+    if (!match) return
+    const sessionId = decodeURIComponent(match[1] ?? '')
+    if (!sessionId) return
+    sockets.set(sessionId, socket)
+    socket.on('close', () => {
+      closed.add(sessionId)
+    })
   })
-  let closed = false
-  ws.on('close', () => {
-    closed = true
-  })
-  return { ws, wasClosed: () => closed }
+
+  const waitFor = async (sessionId: string) => {
+    const existing = sockets.get(sessionId)
+    if (existing) {
+      return { ws: existing, wasClosed: () => closed.has(sessionId) }
+    }
+    await page.waitForEvent('websocket', {
+      predicate: (socket) => socket.url().includes(`/api/terminals/${encodeURIComponent(sessionId)}/ws`),
+      timeout: 20_000,
+    })
+    const socket = sockets.get(sessionId)
+    if (!socket) {
+      throw new Error('Terminal websocket opened but could not be tracked')
+    }
+    return { ws: socket, wasClosed: () => closed.has(sessionId) }
+  }
+
+  return { waitFor, wasClosed: (sessionId: string) => closed.has(sessionId) }
 }
 
 const assertWebSocketStaysOpen = async (
@@ -191,6 +213,7 @@ test.describe('deployed jangar e2e', () => {
     test.setTimeout(120_000)
     const apiFailures = trackApiFailures(page)
     const inputRequests = trackInputRequests(page)
+    const wsTracker = trackTerminalWebSockets(page)
 
     await page.goto('/terminals')
     await expect(page.getByRole('heading', { name: 'Terminal sessions', level: 1 })).toBeVisible()
@@ -231,7 +254,7 @@ test.describe('deployed jangar e2e', () => {
     expect(sessionPayload.session?.status).toBe('ready')
 
     await expect(page.getByText('Status: connected', { exact: false })).toBeVisible({ timeout: 20_000 })
-    const wsStatus = await waitForTerminalWebSocket(page, sessionId)
+    const wsStatus = await wsTracker.waitFor(sessionId)
     await assertWebSocketStaysOpen(page, wsStatus, 6000)
     await assertSseStaysOpen(sessionId, 12_000)
     await assertUiSseStable(page, sessionId)
@@ -278,6 +301,7 @@ test.describe('deployed jangar e2e', () => {
     test.setTimeout(120_000)
     const apiFailures = trackApiFailures(page)
     const inputRequests = trackInputRequests(page)
+    const wsTracker = trackTerminalWebSockets(page)
 
     await page.goto('/terminals')
     await expect(page.getByRole('heading', { name: 'Terminal sessions', level: 1 })).toBeVisible()
@@ -303,7 +327,7 @@ test.describe('deployed jangar e2e', () => {
     await expect(page).toHaveURL(new RegExp(`/terminals/${sessionId}$`))
     await expect(page.getByText('Status: connected', { exact: false })).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText('Connection lost. Refresh to retry.')).toHaveCount(0)
-    const wsStatus = await waitForTerminalWebSocket(page, sessionId)
+    const wsStatus = await wsTracker.waitFor(sessionId)
     await assertWebSocketStaysOpen(page, wsStatus, 6000)
 
     const marker = `ui-e2e-${Date.now()}`
