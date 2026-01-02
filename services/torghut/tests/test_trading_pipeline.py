@@ -364,6 +364,75 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_universe_source = original["trading_universe_source"]
             config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
 
+    def test_pipeline_persists_price_snapshot(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25},
+                timeframe="1Min",
+            )
+
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+                price_fetcher=FakePriceFetcher(Decimal("101.5")),
+            )
+
+            pipeline.run_once()
+
+            with self.session_local() as session:
+                decisions = session.execute(select(TradeDecision)).scalars().all()
+                self.assertEqual(len(decisions), 1)
+                decision_json = decisions[0].decision_json
+                params = decision_json.get("params", {})
+                self.assertEqual(params.get("price"), "101.5")
+                snapshot = params.get("price_snapshot", {})
+                self.assertEqual(snapshot.get("price"), "101.5")
+                self.assertEqual(snapshot.get("source"), "price_fetcher")
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original["trading_universe_source"]
+            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+
     def test_pipeline_llm_approve(self) -> None:
         from app import config
 
@@ -838,6 +907,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(len(reviews), 1)
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(len(executions), 1)
+                self.assertEqual(pipeline.state.metrics.llm_circuit_open_total, 1)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]

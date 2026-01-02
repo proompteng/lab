@@ -107,6 +107,24 @@ class OrderExecutor:
         session.add(decision_row)
         session.commit()
 
+    def update_decision_params(
+        self,
+        session: Session,
+        decision_row: TradeDecision,
+        params_update: Mapping[str, Any],
+    ) -> None:
+        decision_json = _coerce_json(decision_row.decision_json)
+        params_value = decision_json.get("params")
+        if isinstance(params_value, Mapping):
+            params = dict(cast(Mapping[str, Any], params_value))
+        else:
+            params = {}
+        params.update(params_update)
+        decision_json["params"] = params
+        decision_row.decision_json = decision_json
+        session.add(decision_row)
+        session.commit()
+
 
 def _coerce_json(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
