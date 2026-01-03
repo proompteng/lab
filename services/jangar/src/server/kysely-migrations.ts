@@ -6,8 +6,8 @@ import * as codexJudgeTimeoutsMigration from '~/server/migrations/20251229_codex
 import * as rerunSubmissionsMigration from '~/server/migrations/20251229_codex_rerun_submissions'
 import * as workflowCommsAgentMessagesMigration from '~/server/migrations/20251229_workflow_comms_agent_messages'
 import * as codexJudgeWebhookIndexesMigration from '~/server/migrations/20251230_codex_judge_webhook_indexes'
-import * as jangarGithubPrReviewMigration from '~/server/migrations/20260103_jangar_github_pr_review'
 import * as terminalSessionsMigration from '~/server/migrations/20260102_terminal_sessions'
+import * as jangarGithubPrReviewMigration from '~/server/migrations/20260103_jangar_github_pr_review'
 
 type MigrationMap = Record<string, Migration>
 
