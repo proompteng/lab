@@ -19,6 +19,7 @@ import { Route as AgentsIndexRouteImport } from './routes/agents/index'
 import { Route as TorghutVisualsRouteImport } from './routes/torghut/visuals'
 import { Route as TorghutSymbolsRouteImport } from './routes/torghut/symbols'
 import { Route as TerminalsSessionIdRouteImport } from './routes/terminals/$sessionId'
+import { Route as GithubPullsRouteImport } from './routes/github/pulls'
 import { Route as CodexSearchRouteImport } from './routes/codex/search'
 import { Route as CodexRunsRouteImport } from './routes/codex/runs'
 import { Route as AtlasSearchRouteImport } from './routes/atlas/search'
@@ -32,9 +33,11 @@ import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as ApiEnrichRouteImport } from './routes/api/enrich'
 import { Route as AgentsGeneralRouteImport } from './routes/agents/general'
 import { Route as AgentsRunIdRouteImport } from './routes/agents/$runId'
+import { Route as GithubPullsIndexRouteImport } from './routes/github/pulls/index'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
 import { Route as ApiTorghutSymbolsRouteImport } from './routes/api/torghut/symbols'
 import { Route as ApiTerminalsSessionIdRouteImport } from './routes/api/terminals/$sessionId'
+import { Route as ApiGithubPullsRouteImport } from './routes/api/github/pulls'
 import { Route as ApiCodexRunsRouteImport } from './routes/api/codex/runs'
 import { Route as ApiCodexRunCompleteRouteImport } from './routes/api/codex/run-complete'
 import { Route as ApiCodexNotifyRouteImport } from './routes/api/codex/notify'
@@ -58,6 +61,13 @@ import { Route as ApiTerminalsSessionIdInputRouteImport } from './routes/api/ter
 import { Route as ApiTerminalsSessionIdDeleteRouteImport } from './routes/api/terminals/$sessionId/delete'
 import { Route as ApiCodexRunsRecentRouteImport } from './routes/api/codex/runs/recent'
 import { Route as ApiCodexRunsListRouteImport } from './routes/api/codex/runs/list'
+import { Route as GithubPullsOwnerRepoNumberRouteImport } from './routes/github/pulls/$owner/$repo/$number'
+import { Route as ApiGithubPullsOwnerRepoNumberRouteImport } from './routes/api/github/pulls/$owner/$repo/$number'
+import { Route as ApiGithubPullsOwnerRepoNumberThreadsRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/threads'
+import { Route as ApiGithubPullsOwnerRepoNumberReviewRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/review'
+import { Route as ApiGithubPullsOwnerRepoNumberMergeRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/merge'
+import { Route as ApiGithubPullsOwnerRepoNumberFilesRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/files'
+import { Route as ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve'
 
 const MemoriesRoute = MemoriesRouteImport.update({
   id: '/memories',
@@ -107,6 +117,11 @@ const TorghutSymbolsRoute = TorghutSymbolsRouteImport.update({
 const TerminalsSessionIdRoute = TerminalsSessionIdRouteImport.update({
   id: '/terminals/$sessionId',
   path: '/terminals/$sessionId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GithubPullsRoute = GithubPullsRouteImport.update({
+  id: '/github/pulls',
+  path: '/github/pulls',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CodexSearchRoute = CodexSearchRouteImport.update({
@@ -174,6 +189,11 @@ const AgentsRunIdRoute = AgentsRunIdRouteImport.update({
   path: '/agents/$runId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const GithubPullsIndexRoute = GithubPullsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => GithubPullsRoute,
+} as any)
 const OpenaiV1ModelsRoute = OpenaiV1ModelsRouteImport.update({
   id: '/openai/v1/models',
   path: '/openai/v1/models',
@@ -188,6 +208,11 @@ const ApiTerminalsSessionIdRoute = ApiTerminalsSessionIdRouteImport.update({
   id: '/$sessionId',
   path: '/$sessionId',
   getParentRoute: () => ApiTerminalsRoute,
+} as any)
+const ApiGithubPullsRoute = ApiGithubPullsRouteImport.update({
+  id: '/api/github/pulls',
+  path: '/api/github/pulls',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ApiCodexRunsRoute = ApiCodexRunsRouteImport.update({
   id: '/api/codex/runs',
@@ -309,6 +334,48 @@ const ApiCodexRunsListRoute = ApiCodexRunsListRouteImport.update({
   path: '/list',
   getParentRoute: () => ApiCodexRunsRoute,
 } as any)
+const GithubPullsOwnerRepoNumberRoute =
+  GithubPullsOwnerRepoNumberRouteImport.update({
+    id: '/$owner/$repo/$number',
+    path: '/$owner/$repo/$number',
+    getParentRoute: () => GithubPullsRoute,
+  } as any)
+const ApiGithubPullsOwnerRepoNumberRoute =
+  ApiGithubPullsOwnerRepoNumberRouteImport.update({
+    id: '/$owner/$repo/$number',
+    path: '/$owner/$repo/$number',
+    getParentRoute: () => ApiGithubPullsRoute,
+  } as any)
+const ApiGithubPullsOwnerRepoNumberThreadsRoute =
+  ApiGithubPullsOwnerRepoNumberThreadsRouteImport.update({
+    id: '/threads',
+    path: '/threads',
+    getParentRoute: () => ApiGithubPullsOwnerRepoNumberRoute,
+  } as any)
+const ApiGithubPullsOwnerRepoNumberReviewRoute =
+  ApiGithubPullsOwnerRepoNumberReviewRouteImport.update({
+    id: '/review',
+    path: '/review',
+    getParentRoute: () => ApiGithubPullsOwnerRepoNumberRoute,
+  } as any)
+const ApiGithubPullsOwnerRepoNumberMergeRoute =
+  ApiGithubPullsOwnerRepoNumberMergeRouteImport.update({
+    id: '/merge',
+    path: '/merge',
+    getParentRoute: () => ApiGithubPullsOwnerRepoNumberRoute,
+  } as any)
+const ApiGithubPullsOwnerRepoNumberFilesRoute =
+  ApiGithubPullsOwnerRepoNumberFilesRouteImport.update({
+    id: '/files',
+    path: '/files',
+    getParentRoute: () => ApiGithubPullsOwnerRepoNumberRoute,
+  } as any)
+const ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRoute =
+  ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRouteImport.update({
+    id: '/$threadId/resolve',
+    path: '/$threadId/resolve',
+    getParentRoute: () => ApiGithubPullsOwnerRepoNumberThreadsRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -328,6 +395,7 @@ export interface FileRoutesByFullPath {
   '/atlas/search': typeof AtlasSearchRoute
   '/codex/runs': typeof CodexRunsRoute
   '/codex/search': typeof CodexSearchRoute
+  '/github/pulls': typeof GithubPullsRouteWithChildren
   '/terminals/$sessionId': typeof TerminalsSessionIdRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
@@ -344,9 +412,11 @@ export interface FileRoutesByFullPath {
   '/api/codex/notify': typeof ApiCodexNotifyRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
+  '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
+  '/github/pulls/': typeof GithubPullsIndexRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -360,6 +430,13 @@ export interface FileRoutesByFullPath {
   '/api/torghut/ta/latest': typeof ApiTorghutTaLatestRoute
   '/api/torghut/ta/signals': typeof ApiTorghutTaSignalsRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
+  '/github/pulls/$owner/$repo/$number': typeof GithubPullsOwnerRepoNumberRoute
+  '/api/github/pulls/$owner/$repo/$number': typeof ApiGithubPullsOwnerRepoNumberRouteWithChildren
+  '/api/github/pulls/$owner/$repo/$number/files': typeof ApiGithubPullsOwnerRepoNumberFilesRoute
+  '/api/github/pulls/$owner/$repo/$number/merge': typeof ApiGithubPullsOwnerRepoNumberMergeRoute
+  '/api/github/pulls/$owner/$repo/$number/review': typeof ApiGithubPullsOwnerRepoNumberReviewRoute
+  '/api/github/pulls/$owner/$repo/$number/threads': typeof ApiGithubPullsOwnerRepoNumberThreadsRouteWithChildren
+  '/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve': typeof ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -395,9 +472,11 @@ export interface FileRoutesByTo {
   '/api/codex/notify': typeof ApiCodexNotifyRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
+  '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
+  '/github/pulls': typeof GithubPullsIndexRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -411,6 +490,13 @@ export interface FileRoutesByTo {
   '/api/torghut/ta/latest': typeof ApiTorghutTaLatestRoute
   '/api/torghut/ta/signals': typeof ApiTorghutTaSignalsRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
+  '/github/pulls/$owner/$repo/$number': typeof GithubPullsOwnerRepoNumberRoute
+  '/api/github/pulls/$owner/$repo/$number': typeof ApiGithubPullsOwnerRepoNumberRouteWithChildren
+  '/api/github/pulls/$owner/$repo/$number/files': typeof ApiGithubPullsOwnerRepoNumberFilesRoute
+  '/api/github/pulls/$owner/$repo/$number/merge': typeof ApiGithubPullsOwnerRepoNumberMergeRoute
+  '/api/github/pulls/$owner/$repo/$number/review': typeof ApiGithubPullsOwnerRepoNumberReviewRoute
+  '/api/github/pulls/$owner/$repo/$number/threads': typeof ApiGithubPullsOwnerRepoNumberThreadsRouteWithChildren
+  '/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve': typeof ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -431,6 +517,7 @@ export interface FileRoutesById {
   '/atlas/search': typeof AtlasSearchRoute
   '/codex/runs': typeof CodexRunsRoute
   '/codex/search': typeof CodexSearchRoute
+  '/github/pulls': typeof GithubPullsRouteWithChildren
   '/terminals/$sessionId': typeof TerminalsSessionIdRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
@@ -447,9 +534,11 @@ export interface FileRoutesById {
   '/api/codex/notify': typeof ApiCodexNotifyRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
+  '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
+  '/github/pulls/': typeof GithubPullsIndexRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -463,6 +552,13 @@ export interface FileRoutesById {
   '/api/torghut/ta/latest': typeof ApiTorghutTaLatestRoute
   '/api/torghut/ta/signals': typeof ApiTorghutTaSignalsRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
+  '/github/pulls/$owner/$repo/$number': typeof GithubPullsOwnerRepoNumberRoute
+  '/api/github/pulls/$owner/$repo/$number': typeof ApiGithubPullsOwnerRepoNumberRouteWithChildren
+  '/api/github/pulls/$owner/$repo/$number/files': typeof ApiGithubPullsOwnerRepoNumberFilesRoute
+  '/api/github/pulls/$owner/$repo/$number/merge': typeof ApiGithubPullsOwnerRepoNumberMergeRoute
+  '/api/github/pulls/$owner/$repo/$number/review': typeof ApiGithubPullsOwnerRepoNumberReviewRoute
+  '/api/github/pulls/$owner/$repo/$number/threads': typeof ApiGithubPullsOwnerRepoNumberThreadsRouteWithChildren
+  '/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve': typeof ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -484,6 +580,7 @@ export interface FileRouteTypes {
     | '/atlas/search'
     | '/codex/runs'
     | '/codex/search'
+    | '/github/pulls'
     | '/terminals/$sessionId'
     | '/torghut/symbols'
     | '/torghut/visuals'
@@ -500,9 +597,11 @@ export interface FileRouteTypes {
     | '/api/codex/notify'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
+    | '/api/github/pulls'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
+    | '/github/pulls/'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -516,6 +615,13 @@ export interface FileRouteTypes {
     | '/api/torghut/ta/latest'
     | '/api/torghut/ta/signals'
     | '/openai/v1/chat/completions'
+    | '/github/pulls/$owner/$repo/$number'
+    | '/api/github/pulls/$owner/$repo/$number'
+    | '/api/github/pulls/$owner/$repo/$number/files'
+    | '/api/github/pulls/$owner/$repo/$number/merge'
+    | '/api/github/pulls/$owner/$repo/$number/review'
+    | '/api/github/pulls/$owner/$repo/$number/threads'
+    | '/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -551,9 +657,11 @@ export interface FileRouteTypes {
     | '/api/codex/notify'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
+    | '/api/github/pulls'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
+    | '/github/pulls'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -567,6 +675,13 @@ export interface FileRouteTypes {
     | '/api/torghut/ta/latest'
     | '/api/torghut/ta/signals'
     | '/openai/v1/chat/completions'
+    | '/github/pulls/$owner/$repo/$number'
+    | '/api/github/pulls/$owner/$repo/$number'
+    | '/api/github/pulls/$owner/$repo/$number/files'
+    | '/api/github/pulls/$owner/$repo/$number/merge'
+    | '/api/github/pulls/$owner/$repo/$number/review'
+    | '/api/github/pulls/$owner/$repo/$number/threads'
+    | '/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve'
   id:
     | '__root__'
     | '/'
@@ -586,6 +701,7 @@ export interface FileRouteTypes {
     | '/atlas/search'
     | '/codex/runs'
     | '/codex/search'
+    | '/github/pulls'
     | '/terminals/$sessionId'
     | '/torghut/symbols'
     | '/torghut/visuals'
@@ -602,9 +718,11 @@ export interface FileRouteTypes {
     | '/api/codex/notify'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
+    | '/api/github/pulls'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
+    | '/github/pulls/'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -618,6 +736,13 @@ export interface FileRouteTypes {
     | '/api/torghut/ta/latest'
     | '/api/torghut/ta/signals'
     | '/openai/v1/chat/completions'
+    | '/github/pulls/$owner/$repo/$number'
+    | '/api/github/pulls/$owner/$repo/$number'
+    | '/api/github/pulls/$owner/$repo/$number/files'
+    | '/api/github/pulls/$owner/$repo/$number/merge'
+    | '/api/github/pulls/$owner/$repo/$number/review'
+    | '/api/github/pulls/$owner/$repo/$number/threads'
+    | '/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -638,6 +763,7 @@ export interface RootRouteChildren {
   AtlasSearchRoute: typeof AtlasSearchRoute
   CodexRunsRoute: typeof CodexRunsRoute
   CodexSearchRoute: typeof CodexSearchRoute
+  GithubPullsRoute: typeof GithubPullsRouteWithChildren
   TerminalsSessionIdRoute: typeof TerminalsSessionIdRoute
   TorghutSymbolsRoute: typeof TorghutSymbolsRoute
   TorghutVisualsRoute: typeof TorghutVisualsRoute
@@ -654,6 +780,7 @@ export interface RootRouteChildren {
   ApiCodexNotifyRoute: typeof ApiCodexNotifyRoute
   ApiCodexRunCompleteRoute: typeof ApiCodexRunCompleteRoute
   ApiCodexRunsRoute: typeof ApiCodexRunsRouteWithChildren
+  ApiGithubPullsRoute: typeof ApiGithubPullsRouteWithChildren
   ApiTorghutSymbolsRoute: typeof ApiTorghutSymbolsRouteWithChildren
   OpenaiV1ModelsRoute: typeof OpenaiV1ModelsRoute
   ApiTorghutTaBarsRoute: typeof ApiTorghutTaBarsRoute
@@ -732,6 +859,13 @@ declare module '@tanstack/react-router' {
       path: '/terminals/$sessionId'
       fullPath: '/terminals/$sessionId'
       preLoaderRoute: typeof TerminalsSessionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/github/pulls': {
+      id: '/github/pulls'
+      path: '/github/pulls'
+      fullPath: '/github/pulls'
+      preLoaderRoute: typeof GithubPullsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/codex/search': {
@@ -825,6 +959,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentsRunIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/github/pulls/': {
+      id: '/github/pulls/'
+      path: '/'
+      fullPath: '/github/pulls/'
+      preLoaderRoute: typeof GithubPullsIndexRouteImport
+      parentRoute: typeof GithubPullsRoute
+    }
     '/openai/v1/models': {
       id: '/openai/v1/models'
       path: '/openai/v1/models'
@@ -845,6 +986,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/terminals/$sessionId'
       preLoaderRoute: typeof ApiTerminalsSessionIdRouteImport
       parentRoute: typeof ApiTerminalsRoute
+    }
+    '/api/github/pulls': {
+      id: '/api/github/pulls'
+      path: '/api/github/pulls'
+      fullPath: '/api/github/pulls'
+      preLoaderRoute: typeof ApiGithubPullsRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/codex/runs': {
       id: '/api/codex/runs'
@@ -1007,6 +1155,55 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCodexRunsListRouteImport
       parentRoute: typeof ApiCodexRunsRoute
     }
+    '/github/pulls/$owner/$repo/$number': {
+      id: '/github/pulls/$owner/$repo/$number'
+      path: '/$owner/$repo/$number'
+      fullPath: '/github/pulls/$owner/$repo/$number'
+      preLoaderRoute: typeof GithubPullsOwnerRepoNumberRouteImport
+      parentRoute: typeof GithubPullsRoute
+    }
+    '/api/github/pulls/$owner/$repo/$number': {
+      id: '/api/github/pulls/$owner/$repo/$number'
+      path: '/$owner/$repo/$number'
+      fullPath: '/api/github/pulls/$owner/$repo/$number'
+      preLoaderRoute: typeof ApiGithubPullsOwnerRepoNumberRouteImport
+      parentRoute: typeof ApiGithubPullsRoute
+    }
+    '/api/github/pulls/$owner/$repo/$number/threads': {
+      id: '/api/github/pulls/$owner/$repo/$number/threads'
+      path: '/threads'
+      fullPath: '/api/github/pulls/$owner/$repo/$number/threads'
+      preLoaderRoute: typeof ApiGithubPullsOwnerRepoNumberThreadsRouteImport
+      parentRoute: typeof ApiGithubPullsOwnerRepoNumberRoute
+    }
+    '/api/github/pulls/$owner/$repo/$number/review': {
+      id: '/api/github/pulls/$owner/$repo/$number/review'
+      path: '/review'
+      fullPath: '/api/github/pulls/$owner/$repo/$number/review'
+      preLoaderRoute: typeof ApiGithubPullsOwnerRepoNumberReviewRouteImport
+      parentRoute: typeof ApiGithubPullsOwnerRepoNumberRoute
+    }
+    '/api/github/pulls/$owner/$repo/$number/merge': {
+      id: '/api/github/pulls/$owner/$repo/$number/merge'
+      path: '/merge'
+      fullPath: '/api/github/pulls/$owner/$repo/$number/merge'
+      preLoaderRoute: typeof ApiGithubPullsOwnerRepoNumberMergeRouteImport
+      parentRoute: typeof ApiGithubPullsOwnerRepoNumberRoute
+    }
+    '/api/github/pulls/$owner/$repo/$number/files': {
+      id: '/api/github/pulls/$owner/$repo/$number/files'
+      path: '/files'
+      fullPath: '/api/github/pulls/$owner/$repo/$number/files'
+      preLoaderRoute: typeof ApiGithubPullsOwnerRepoNumberFilesRouteImport
+      parentRoute: typeof ApiGithubPullsOwnerRepoNumberRoute
+    }
+    '/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve': {
+      id: '/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve'
+      path: '/$threadId/resolve'
+      fullPath: '/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve'
+      preLoaderRoute: typeof ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRouteImport
+      parentRoute: typeof ApiGithubPullsOwnerRepoNumberThreadsRoute
+    }
   }
 }
 
@@ -1045,6 +1242,20 @@ const ApiTerminalsRouteWithChildren = ApiTerminalsRoute._addFileChildren(
   ApiTerminalsRouteChildren,
 )
 
+interface GithubPullsRouteChildren {
+  GithubPullsIndexRoute: typeof GithubPullsIndexRoute
+  GithubPullsOwnerRepoNumberRoute: typeof GithubPullsOwnerRepoNumberRoute
+}
+
+const GithubPullsRouteChildren: GithubPullsRouteChildren = {
+  GithubPullsIndexRoute: GithubPullsIndexRoute,
+  GithubPullsOwnerRepoNumberRoute: GithubPullsOwnerRepoNumberRoute,
+}
+
+const GithubPullsRouteWithChildren = GithubPullsRoute._addFileChildren(
+  GithubPullsRouteChildren,
+)
+
 interface ApiCodexRunsRouteChildren {
   ApiCodexRunsListRoute: typeof ApiCodexRunsListRoute
   ApiCodexRunsRecentRoute: typeof ApiCodexRunsRecentRoute
@@ -1057,6 +1268,58 @@ const ApiCodexRunsRouteChildren: ApiCodexRunsRouteChildren = {
 
 const ApiCodexRunsRouteWithChildren = ApiCodexRunsRoute._addFileChildren(
   ApiCodexRunsRouteChildren,
+)
+
+interface ApiGithubPullsOwnerRepoNumberThreadsRouteChildren {
+  ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRoute: typeof ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRoute
+}
+
+const ApiGithubPullsOwnerRepoNumberThreadsRouteChildren: ApiGithubPullsOwnerRepoNumberThreadsRouteChildren =
+  {
+    ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRoute:
+      ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRoute,
+  }
+
+const ApiGithubPullsOwnerRepoNumberThreadsRouteWithChildren =
+  ApiGithubPullsOwnerRepoNumberThreadsRoute._addFileChildren(
+    ApiGithubPullsOwnerRepoNumberThreadsRouteChildren,
+  )
+
+interface ApiGithubPullsOwnerRepoNumberRouteChildren {
+  ApiGithubPullsOwnerRepoNumberFilesRoute: typeof ApiGithubPullsOwnerRepoNumberFilesRoute
+  ApiGithubPullsOwnerRepoNumberMergeRoute: typeof ApiGithubPullsOwnerRepoNumberMergeRoute
+  ApiGithubPullsOwnerRepoNumberReviewRoute: typeof ApiGithubPullsOwnerRepoNumberReviewRoute
+  ApiGithubPullsOwnerRepoNumberThreadsRoute: typeof ApiGithubPullsOwnerRepoNumberThreadsRouteWithChildren
+}
+
+const ApiGithubPullsOwnerRepoNumberRouteChildren: ApiGithubPullsOwnerRepoNumberRouteChildren =
+  {
+    ApiGithubPullsOwnerRepoNumberFilesRoute:
+      ApiGithubPullsOwnerRepoNumberFilesRoute,
+    ApiGithubPullsOwnerRepoNumberMergeRoute:
+      ApiGithubPullsOwnerRepoNumberMergeRoute,
+    ApiGithubPullsOwnerRepoNumberReviewRoute:
+      ApiGithubPullsOwnerRepoNumberReviewRoute,
+    ApiGithubPullsOwnerRepoNumberThreadsRoute:
+      ApiGithubPullsOwnerRepoNumberThreadsRouteWithChildren,
+  }
+
+const ApiGithubPullsOwnerRepoNumberRouteWithChildren =
+  ApiGithubPullsOwnerRepoNumberRoute._addFileChildren(
+    ApiGithubPullsOwnerRepoNumberRouteChildren,
+  )
+
+interface ApiGithubPullsRouteChildren {
+  ApiGithubPullsOwnerRepoNumberRoute: typeof ApiGithubPullsOwnerRepoNumberRouteWithChildren
+}
+
+const ApiGithubPullsRouteChildren: ApiGithubPullsRouteChildren = {
+  ApiGithubPullsOwnerRepoNumberRoute:
+    ApiGithubPullsOwnerRepoNumberRouteWithChildren,
+}
+
+const ApiGithubPullsRouteWithChildren = ApiGithubPullsRoute._addFileChildren(
+  ApiGithubPullsRouteChildren,
 )
 
 interface ApiTorghutSymbolsRouteChildren {
@@ -1088,6 +1351,7 @@ const rootRouteChildren: RootRouteChildren = {
   AtlasSearchRoute: AtlasSearchRoute,
   CodexRunsRoute: CodexRunsRoute,
   CodexSearchRoute: CodexSearchRoute,
+  GithubPullsRoute: GithubPullsRouteWithChildren,
   TerminalsSessionIdRoute: TerminalsSessionIdRoute,
   TorghutSymbolsRoute: TorghutSymbolsRoute,
   TorghutVisualsRoute: TorghutVisualsRoute,
@@ -1104,6 +1368,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiCodexNotifyRoute: ApiCodexNotifyRoute,
   ApiCodexRunCompleteRoute: ApiCodexRunCompleteRoute,
   ApiCodexRunsRoute: ApiCodexRunsRouteWithChildren,
+  ApiGithubPullsRoute: ApiGithubPullsRouteWithChildren,
   ApiTorghutSymbolsRoute: ApiTorghutSymbolsRouteWithChildren,
   OpenaiV1ModelsRoute: OpenaiV1ModelsRoute,
   ApiTorghutTaBarsRoute: ApiTorghutTaBarsRoute,
