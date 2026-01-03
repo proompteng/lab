@@ -31,7 +31,9 @@ Pipeline:
 - `TA_CLICKHOUSE_URL`, `TA_CLICKHOUSE_USERNAME`, `TA_CLICKHOUSE_PASSWORD` for ClickHouse access.
 - `TRADING_POLL_MS` and `TRADING_RECONCILE_MS` for loop intervals.
 - `TRADING_UNIVERSE_SOURCE` (`jangar|static`), `JANGAR_SYMBOLS_URL`, `TRADING_STATIC_SYMBOLS`.
+- `TRADING_ACCOUNT_LABEL` (defaults to `TRADING_MODE` when unset) for audit tagging.
 - Optional risk defaults: `TRADING_MAX_NOTIONAL_PER_TRADE`, `TRADING_MAX_POSITION_PCT_EQUITY`.
+- Shorts policy: `TRADING_ALLOW_SHORTS` (default `false`).
 - LLM controls: `LLM_ENABLED`, `LLM_SHADOW_MODE`, `LLM_PROMPT_VERSION`, `LLM_RECENT_DECISIONS`,
   `LLM_CIRCUIT_MAX_ERRORS`, `LLM_CIRCUIT_WINDOW_SECONDS`, `LLM_CIRCUIT_COOLDOWN_SECONDS`.
 SignalIngestor -> DecisionEngine -> RiskEngine -> OrderExecutor -> Reconciler
@@ -154,15 +156,9 @@ uv run python services/torghut/scripts/seed_strategy.py \
 ```
 
 ## Replay / backtest hook
-Replay ClickHouse signals through the decision engine without executing orders:
-```
-uv run python services/torghut/scripts/replay_signals.py \
-  --start 2026-01-01T00:00:00Z \
-  --end 2026-01-01T01:00:00Z \
-  --symbol AAPL \
-  --limit 200 \
-  --apply-risk
-```
+Replay ClickHouse signals through the decision engine without executing orders by
+calling `ClickHouseSignalIngestor.fetch_signals_between(...)` in a one-off script
+or notebook (no dedicated replay script is shipped today).
 
 ## Trading audit APIs
 - `GET /trading/decisions?symbol=&since=`

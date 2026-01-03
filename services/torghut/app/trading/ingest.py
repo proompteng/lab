@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..models import TradeCursor
+from .clickhouse import normalize_symbol, to_datetime64
 from .models import SignalEnvelope
 
 logger = logging.getLogger(__name__)
@@ -135,18 +136,18 @@ class ClickHouseSignalIngestor:
             return None
 
     def _build_query(self, cursor_at: datetime, cursor_seq: Optional[int]) -> str:
-        cursor_str = cursor_at.strftime("%Y-%m-%d %H:%M:%S")
+        cursor_expr = to_datetime64(cursor_at)
         limit = self.batch_size
         time_column = self._resolve_time_column()
         select_expr = self._select_expression(time_column)
-        where_clause = f"{time_column} > toDateTime('{cursor_str}')"
+        where_clause = f"{time_column} > {cursor_expr}"
         order_clause = f"{time_column} ASC"
         if time_column == "event_ts" and self._supports_seq():
             order_clause = f"{time_column} ASC, seq ASC"
             if cursor_seq is not None:
                 where_clause = (
-                    f"({time_column} > toDateTime('{cursor_str}') OR "
-                    f"({time_column} = toDateTime('{cursor_str}') AND seq > {cursor_seq}))"
+                    f"({time_column} > {cursor_expr} OR "
+                    f"({time_column} = {cursor_expr} AND seq > {cursor_seq}))"
                 )
         return (
             f"SELECT {select_expr} "
@@ -167,16 +168,20 @@ class ClickHouseSignalIngestor:
         if not self.url:
             logger.warning("ClickHouse URL missing; skipping signal replay")
             return []
-        start_str = start.strftime("%Y-%m-%d %H:%M:%S")
-        end_str = end.strftime("%Y-%m-%d %H:%M:%S")
+        normalized_symbol: Optional[str] = None
+        if symbol:
+            normalized_symbol = normalize_symbol(symbol)
+            if normalized_symbol is None:
+                logger.warning("Invalid symbol for signal replay: %s", symbol)
+                return []
         time_column = self._resolve_time_column()
         select_expr = self._select_expression(time_column)
         where_parts = [
-            f"{time_column} >= toDateTime('{start_str}')",
-            f"{time_column} <= toDateTime('{end_str}')",
+            f"{time_column} >= {to_datetime64(start)}",
+            f"{time_column} <= {to_datetime64(end)}",
         ]
-        if symbol:
-            where_parts.append(f"symbol = '{symbol}'")
+        if normalized_symbol:
+            where_parts.append(f"symbol = '{normalized_symbol}'")
         limit_clause = f"LIMIT {limit}" if limit else ""
         order_clause = f"{time_column} ASC"
         if time_column == "event_ts" and self._supports_seq():

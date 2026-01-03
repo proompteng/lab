@@ -144,17 +144,18 @@ class TradingPipeline:
         strategies: list[Strategy],
         account: dict[str, str],
         positions: list[dict[str, str]],
-        allowed_symbols: Optional[set[str]],
+        allowed_symbols: set[str],
     ) -> None:
         strategy = next((s for s in strategies if str(s.id) == decision.strategy_id), None)
         if strategy is None:
             return
 
         strategy_symbols = _coerce_strategy_symbols(strategy.universe_symbols)
-        if strategy_symbols and allowed_symbols:
-            symbol_allowlist = strategy_symbols & allowed_symbols
-        elif strategy_symbols:
-            symbol_allowlist = strategy_symbols
+        if strategy_symbols:
+            if allowed_symbols:
+                symbol_allowlist = strategy_symbols & allowed_symbols
+            else:
+                symbol_allowlist = strategy_symbols
         else:
             symbol_allowlist = allowed_symbols
 
@@ -698,7 +699,7 @@ class TradingScheduler:
             try:
                 if self._pipeline is None:
                     raise RuntimeError("trading_pipeline_not_initialized")
-                self._pipeline.run_once()
+                await asyncio.to_thread(self._pipeline.run_once)
                 self.state.last_run_at = datetime.now(timezone.utc)
             except Exception as exc:  # pragma: no cover - loop guard
                 logger.exception("Trading loop failed: %s", exc)
@@ -709,7 +710,7 @@ class TradingScheduler:
                 try:
                     if self._pipeline is None:
                         raise RuntimeError("trading_pipeline_not_initialized")
-                    updates = self._pipeline.reconcile()
+                    updates = await asyncio.to_thread(self._pipeline.reconcile)
                     if updates:
                         logger.info("Reconciled %s executions", updates)
                     self.state.last_reconcile_at = datetime.now(timezone.utc)

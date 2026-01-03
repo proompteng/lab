@@ -63,7 +63,7 @@ class TestSignalIngest(TestCase):
         self.assertIn("SELECT ts, symbol, macd, macd_signal, signal, rsi, rsi14, ema, vwap", query)
         self.assertIn("signal_json, timeframe, price, close, spread", query)
         self.assertIn("FROM torghut.ta_signals", query)
-        self.assertIn("WHERE ts > toDateTime", query)
+        self.assertIn("WHERE ts > toDateTime64", query)
         self.assertNotIn("payload", query)
         self.assertIn("ORDER BY ts ASC", query)
 
@@ -72,14 +72,14 @@ class TestSignalIngest(TestCase):
         query = ingestor._build_query(datetime(2026, 1, 1, tzinfo=timezone.utc), None)
         self.assertIn("SELECT event_ts, ingest_ts, symbol, payload, window_size, window_step, seq, source", query)
         self.assertIn("FROM torghut.ta_signals", query)
-        self.assertIn("WHERE event_ts > toDateTime", query)
+        self.assertIn("WHERE event_ts > toDateTime64", query)
         self.assertIn("ORDER BY event_ts ASC, seq ASC", query)
         self.assertNotIn("signal_json", query)
 
     def test_build_query_envelope_schema_with_cursor_seq(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="envelope", table="torghut.ta_signals")
         query = ingestor._build_query(datetime(2026, 1, 1, tzinfo=timezone.utc), 42)
-        self.assertIn("event_ts = toDateTime", query)
+        self.assertIn("event_ts = toDateTime64", query)
         self.assertIn("seq > 42", query)
         self.assertIn("ORDER BY event_ts ASC, seq ASC", query)
 
@@ -93,8 +93,8 @@ class TestSignalIngest(TestCase):
         assert ingestor.last_query is not None
         self.assertIn("SELECT ts, symbol, macd, macd_signal, signal, rsi, rsi14, ema, vwap", ingestor.last_query)
         self.assertIn("signal_json, timeframe, price, close, spread", ingestor.last_query)
-        self.assertIn("WHERE ts >= toDateTime", ingestor.last_query)
-        self.assertIn("AND ts <= toDateTime", ingestor.last_query)
+        self.assertIn("WHERE ts >= toDateTime64", ingestor.last_query)
+        self.assertIn("AND ts <= toDateTime64", ingestor.last_query)
 
         envelope_ingestor = CapturingIngestor(schema="envelope", table="torghut.ta_signals", url="http://example")
         envelope_ingestor.fetch_signals_between(
@@ -107,8 +107,8 @@ class TestSignalIngest(TestCase):
             "SELECT event_ts, ingest_ts, symbol, payload, window_size, window_step, seq, source",
             envelope_ingestor.last_query,
         )
-        self.assertIn("WHERE event_ts >= toDateTime", envelope_ingestor.last_query)
-        self.assertIn("AND event_ts <= toDateTime", envelope_ingestor.last_query)
+        self.assertIn("WHERE event_ts >= toDateTime64", envelope_ingestor.last_query)
+        self.assertIn("AND event_ts <= toDateTime64", envelope_ingestor.last_query)
         self.assertIn("ORDER BY event_ts ASC, seq ASC", envelope_ingestor.last_query)
 
     def test_parse_window_size_timeframe(self) -> None:
@@ -154,3 +154,13 @@ class TestSignalIngest(TestCase):
             cursor = session.execute(select(TradeCursor)).scalar_one()
             self.assertEqual(cursor.cursor_at, datetime(2026, 1, 1, 0, 0, 10))
             self.assertEqual(cursor.cursor_seq, 2)
+
+    def test_fetch_signals_between_rejects_invalid_symbol(self) -> None:
+        ingestor = CapturingIngestor(schema="flat", table="torghut.ta_signals", url="http://example")
+        signals = ingestor.fetch_signals_between(
+            start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            end=datetime(2026, 1, 1, 1, tzinfo=timezone.utc),
+            symbol="AAPL'; DROP",
+        )
+        self.assertEqual(signals, [])
+        self.assertIsNone(ingestor.last_query)

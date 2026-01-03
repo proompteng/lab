@@ -1,7 +1,7 @@
 """Application configuration for the torghut service."""
 
 from functools import lru_cache
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -52,6 +52,7 @@ class Settings(BaseSettings):
         default=None, alias="TRADING_MAX_POSITION_PCT_EQUITY"
     )
     trading_cooldown_seconds: int = Field(default=0, alias="TRADING_COOLDOWN_SECONDS")
+    trading_allow_shorts: bool = Field(default=False, alias="TRADING_ALLOW_SHORTS")
     trading_account_label: str = Field(default="paper", alias="TRADING_ACCOUNT_LABEL")
     trading_jangar_symbols_url: Optional[str] = Field(default=None, alias="JANGAR_SYMBOLS_URL")
     trading_clickhouse_url: Optional[str] = Field(default=None, alias="TA_CLICKHOUSE_URL")
@@ -82,6 +83,10 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    def model_post_init(self, __context: Any) -> None:
+        if "trading_account_label" not in self.model_fields_set:
+            self.trading_account_label = self.trading_mode
 
     @property
     def sqlalchemy_dsn(self) -> str:
