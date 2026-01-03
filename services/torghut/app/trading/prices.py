@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from ..config import settings
+from .clickhouse import normalize_symbol, to_datetime64
 from .models import SignalEnvelope
 
 logger = logging.getLogger(__name__)
@@ -65,14 +66,18 @@ class ClickHousePriceFetcher(PriceFetcher):
     def fetch_price(self, signal: SignalEnvelope) -> Optional[Decimal]:
         if not self.url:
             return None
+        symbol = normalize_symbol(signal.symbol)
+        if symbol is None:
+            logger.warning("Invalid symbol for price lookup: %s", signal.symbol)
+            return None
         target_ts = signal.event_ts
         lookback = target_ts - timedelta(minutes=self.lookback_minutes)
         query = (
-            "SELECT event_ts, c, close, vwap, price, spread "
+            "SELECT event_ts, c, vwap "
             f"FROM {self.table} "
-            f"WHERE symbol = '{signal.symbol}' "
-            f"AND event_ts >= toDateTime('{lookback.strftime('%Y-%m-%d %H:%M:%S')}') "
-            f"AND event_ts <= toDateTime('{target_ts.strftime('%Y-%m-%d %H:%M:%S')}') "
+            f"WHERE symbol = '{symbol}' "
+            f"AND event_ts >= {to_datetime64(lookback)} "
+            f"AND event_ts <= {to_datetime64(target_ts)} "
             "ORDER BY event_ts DESC "
             "LIMIT 1 "
             "FORMAT JSONEachRow"
@@ -86,14 +91,18 @@ class ClickHousePriceFetcher(PriceFetcher):
     def fetch_market_snapshot(self, signal: SignalEnvelope) -> Optional[MarketSnapshot]:
         if not self.url:
             return None
+        symbol = normalize_symbol(signal.symbol)
+        if symbol is None:
+            logger.warning("Invalid symbol for price snapshot: %s", signal.symbol)
+            return None
         target_ts = signal.event_ts
         lookback = target_ts - timedelta(minutes=self.lookback_minutes)
         query = (
-            "SELECT event_ts, c, close, vwap, price, spread "
+            "SELECT event_ts, c, vwap "
             f"FROM {self.table} "
-            f"WHERE symbol = '{signal.symbol}' "
-            f"AND event_ts >= toDateTime('{lookback.strftime('%Y-%m-%d %H:%M:%S')}') "
-            f"AND event_ts <= toDateTime('{target_ts.strftime('%Y-%m-%d %H:%M:%S')}') "
+            f"WHERE symbol = '{symbol}' "
+            f"AND event_ts >= {to_datetime64(lookback)} "
+            f"AND event_ts <= {to_datetime64(target_ts)} "
             "ORDER BY event_ts DESC "
             "LIMIT 1 "
             "FORMAT JSONEachRow"
@@ -106,7 +115,7 @@ class ClickHousePriceFetcher(PriceFetcher):
         price = _select_price(row)
         spread = _optional_decimal(row.get("spread"))
         return MarketSnapshot(
-            symbol=signal.symbol,
+            symbol=symbol,
             as_of=as_of,
             price=price,
             spread=spread,
@@ -168,9 +177,9 @@ def _parse_ts(value: Any) -> Optional[datetime]:
 def _select_price(row: dict[str, Any]) -> Optional[Decimal]:
     return (
         _optional_decimal(row.get("c"))
+        or _optional_decimal(row.get("vwap"))
         or _optional_decimal(row.get("close"))
         or _optional_decimal(row.get("price"))
-        or _optional_decimal(row.get("vwap"))
     )
 
 

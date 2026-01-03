@@ -25,7 +25,14 @@ class DecisionEngine:
         for strategy in strategies:
             if not strategy.enabled:
                 continue
-            if signal.timeframe and signal.timeframe != strategy.base_timeframe:
+            if signal.timeframe is None:
+                logger.debug(
+                    "Skipping strategy %s due to missing signal timeframe for symbol %s",
+                    strategy.id,
+                    signal.symbol,
+                )
+                continue
+            if signal.timeframe != strategy.base_timeframe:
                 continue
             decision = self._evaluate_strategy(signal, strategy)
             if decision:
@@ -64,7 +71,7 @@ class DecisionEngine:
             strategy_id=str(strategy.id),
             symbol=signal.symbol,
             event_ts=signal.event_ts,
-            timeframe=signal.timeframe or strategy.base_timeframe,
+            timeframe=signal.timeframe,
             action=action,
             qty=qty,
             order_type="market",
