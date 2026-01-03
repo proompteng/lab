@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import yaml
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -54,7 +54,7 @@ class StrategyCatalogConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    strategies: list[StrategyConfig] = Field(default_factory=list)
+    strategies: list[StrategyConfig]
 
 
 @dataclass
@@ -113,7 +113,7 @@ class StrategyCatalog:
         return applied > 0
 
 
-def _load_catalog_payload(path: Path) -> tuple[str, object]:
+def _load_catalog_payload(path: Path) -> tuple[str, Any]:
     raw = path.read_text(encoding="utf-8")
     if not raw.strip():
         return raw, []
@@ -129,11 +129,12 @@ def _load_catalog_payload(path: Path) -> tuple[str, object]:
     return raw, payload
 
 
-def _parse_catalog_payload(payload: object) -> StrategyCatalogConfig:
+def _parse_catalog_payload(payload: Any) -> StrategyCatalogConfig:
     if payload is None:
-        return StrategyCatalogConfig()
-    if isinstance(payload, dict) and "strategies" in payload:
-        payload = payload["strategies"]
+        return StrategyCatalogConfig(strategies=[])
+    if isinstance(payload, dict):
+        payload_map = cast(dict[str, Any], payload)
+        payload = payload_map.get("strategies", payload_map)
     if isinstance(payload, list):
         return StrategyCatalogConfig.model_validate({"strategies": payload})
     raise ValueError("strategy catalog must be a list or contain a 'strategies' key")
