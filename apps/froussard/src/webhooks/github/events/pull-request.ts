@@ -23,7 +23,7 @@ interface PullRequestBaseParams {
   skipActionCheck?: boolean
 }
 
-const CODEX_REVIEW_REQUEST_LINE_THRESHOLD = 500
+const CODEX_REVIEW_REQUEST_LINE_THRESHOLD = 1000
 
 export const handlePullRequestEvent = async (params: PullRequestBaseParams): Promise<WorkflowStage | null> => {
   const { parsedPayload, config, executionContext, actionValue, skipActionCheck } = params
