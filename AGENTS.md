@@ -76,6 +76,9 @@
 - Use squash merges for pull requests.
 - Use `gh pr merge 2202 --squash -R proompteng/lab` (no `--delete-branch`; avoids worktree checkout conflicts).
 
+## CI/CD
+- Wait until all checks are green before reporting that a PR is ready (example: `gh pr checks 2298 --watch -R proompteng/lab`).
+
 ## Generated Artifacts & Safety
 - Do not edit generated directories (`dist/`, `build/`, `_generated`) or lockfiles (`bun.lock`, `bun.lockb`); regenerate via the owning tool.
 - Default to GitOps (edit `argocd/` manifests and let Argo CD sync). Only apply directly to the cluster when explicitly asked or in an emergency, and document the deviation.
