@@ -40,6 +40,9 @@ class DecisionEngine:
         return decisions
 
     def _evaluate_strategy(self, signal: SignalEnvelope, strategy: Strategy) -> Optional[StrategyDecision]:
+        timeframe = signal.timeframe
+        if timeframe is None:
+            return None
         payload = signal.payload or {}
         macd, macd_signal = _extract_macd(payload)
         rsi = _extract_rsi(payload)
@@ -71,7 +74,7 @@ class DecisionEngine:
             strategy_id=str(strategy.id),
             symbol=signal.symbol,
             event_ts=signal.event_ts,
-            timeframe=signal.timeframe,
+            timeframe=timeframe,
             action=action,
             qty=qty,
             order_type="market",
