@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torghut-strategy-config
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: strategy-catalog
+    app.kubernetes.io/part-of: lab
+data:
+  strategies.yaml: |
+    strategies:
+      - name: macd-rsi-default
+        description: MACD/RSI demo strategy
+        enabled: true
+        base_timeframe: "1Min"
+        universe_type: static
+        symbols:
+          - AAPL
+          - MSFT
+        max_notional_per_trade: 500
+        max_position_pct_equity: 0.05

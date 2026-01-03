@@ -18,13 +18,13 @@ spec:
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
-        client.knative.dev/updateTimestamp: 2026-01-03T01:14:20.717Z
+        client.knative.dev/updateTimestamp: 2026-01-03T02:01:06.169Z
     spec:
       containerConcurrency: 0
       timeoutSeconds: 60
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:3e4efcb4594881547220be80d521449d42d914fb162a092468788bfffa969e59
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:7c8d1938600f7f6f9cabcb85342fde59b11ed5404fadb9d5bbe3fa63d6475d76
           imagePullPolicy: Always
           ports:
             - name: http1
@@ -88,6 +88,12 @@ spec:
               value: "5000"
             - name: TRADING_RECONCILE_MS
               value: "15000"
+            - name: TRADING_STRATEGY_CONFIG_PATH
+              value: /etc/torghut/strategies.yaml
+            - name: TRADING_STRATEGY_CONFIG_MODE
+              value: sync
+            - name: TRADING_STRATEGY_RELOAD_SECONDS
+              value: "10"
             - name: TRADING_UNIVERSE_SOURCE
               value: jangar
             - name: JANGAR_SYMBOLS_URL
@@ -102,9 +108,9 @@ spec:
                   name: torghut-clickhouse-auth
                   key: torghut_password
             - name: TORGHUT_VERSION
-              value: v0.390.3-2-g4d8bf918
+              value: v0.390.5-1-g4f8acc4b3
             - name: TORGHUT_COMMIT
-              value: 4d8bf91862023ac78551b8e62550600c2459f3a1
+              value: 4f8acc4b3faa9b5cfa003c2e270a67f2f18b334e
           livenessProbe:
             httpGet:
               path: /healthz
@@ -120,3 +126,11 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+          volumeMounts:
+            - name: strategy-config
+              mountPath: /etc/torghut
+              readOnly: true
+      volumes:
+        - name: strategy-config
+          configMap:
+            name: torghut-strategy-config
