@@ -54,6 +54,116 @@ const modelsResponse = {
   ],
 }
 const healthResponse = { status: 'ok', service: 'jangar' }
+const githubPullsResponse = {
+  ok: true,
+  items: [
+    {
+      repository: 'proompteng/lab',
+      number: 42,
+      title: 'feat: add new PR review UI',
+      body: null,
+      state: 'open',
+      merged: false,
+      mergedAt: null,
+      draft: false,
+      authorLogin: 'octocat',
+      authorAvatarUrl: null,
+      htmlUrl: 'https://github.com/proompteng/lab/pull/42',
+      headRef: 'feature/pr-ui',
+      headSha: 'abc123',
+      baseRef: 'main',
+      baseSha: 'def456',
+      mergeable: true,
+      mergeableState: 'clean',
+      labels: ['frontend'],
+      additions: 12,
+      deletions: 3,
+      changedFiles: 2,
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-02T00:00:00.000Z',
+      receivedAt: '2024-01-02T00:00:00.000Z',
+      review: { decision: 'approved', requestedChanges: false, unresolvedThreadsCount: 0, latestReviewedAt: null },
+      checks: {
+        status: 'success',
+        detailsUrl: null,
+        totalCount: 1,
+        successCount: 1,
+        failureCount: 0,
+        pendingCount: 0,
+        runs: [],
+      },
+    },
+  ],
+  nextCursor: null,
+  capabilities: { reviewsWriteEnabled: false, mergeWriteEnabled: false },
+  repositoriesAllowed: ['proompteng/lab'],
+}
+const githubPullDetailResponse = {
+  ok: true,
+  pull: githubPullsResponse.items[0],
+  review: githubPullsResponse.items[0].review,
+  checks: githubPullsResponse.items[0].checks,
+  issueComments: [
+    {
+      commentId: '9001',
+      authorLogin: 'octocat',
+      body: 'Please review the latest changes.',
+      createdAt: '2024-01-02T00:00:00.000Z',
+      updatedAt: '2024-01-02T00:00:00.000Z',
+      url: 'https://github.com/proompteng/lab/pull/42#issuecomment-1',
+    },
+  ],
+  capabilities: { reviewsWriteEnabled: false, mergeWriteEnabled: false },
+}
+const githubPullFilesResponse = {
+  ok: true,
+  files: [
+    {
+      path: 'services/jangar/src/routes/github/pulls.tsx',
+      status: 'modified',
+      additions: 10,
+      deletions: 2,
+      changes: 12,
+      patch: '@@ -1,1 +1,2 @@',
+      blobUrl: null,
+      rawUrl: null,
+      sha: null,
+      previousFilename: null,
+    },
+  ],
+}
+const githubPullThreadsResponse = {
+  ok: true,
+  threads: [
+    {
+      threadKey: '55',
+      threadId: null,
+      isResolved: false,
+      path: 'services/jangar/src/routes/github/pulls.tsx',
+      line: 12,
+      side: 'RIGHT',
+      startLine: null,
+      authorLogin: 'reviewer',
+      createdAt: '2024-01-02T00:00:00.000Z',
+      updatedAt: '2024-01-02T00:00:00.000Z',
+      comments: [
+        {
+          commentId: '777',
+          authorLogin: 'reviewer',
+          body: 'Consider simplifying this block.',
+          createdAt: '2024-01-02T00:00:00.000Z',
+          updatedAt: '2024-01-02T00:00:00.000Z',
+          path: 'services/jangar/src/routes/github/pulls.tsx',
+          line: 12,
+          side: 'RIGHT',
+          startLine: null,
+          diffHunk: '@@ -1,1 +1,2 @@',
+          url: 'https://github.com/proompteng/lab/pull/42#discussion_r1',
+        },
+      ],
+    },
+  ],
+}
 
 const disableMotionStyles = `
   *, *::before, *::after {
@@ -75,6 +185,10 @@ test.beforeEach(async ({ page }) => {
       atlasPathsValue,
       modelsValue,
       healthValue,
+      githubPullsResponseValue,
+      githubPullDetailResponseValue,
+      githubPullFilesResponseValue,
+      githubPullThreadsResponseValue,
     }) => {
       const originalFetch = window.fetch.bind(window)
       window.fetch = async (input, init) => {
@@ -114,6 +228,11 @@ test.beforeEach(async ({ page }) => {
         if (pathname === '/api/enrich') return jsonResponse({ ok: true })
         if (pathname === '/openai/v1/models') return jsonResponse(modelsValue)
         if (pathname === '/health') return jsonResponse(healthValue)
+        if (pathname === '/api/github/pulls') return jsonResponse(githubPullsResponseValue)
+        if (pathname === '/api/github/pulls/proompteng/lab/42') return jsonResponse(githubPullDetailResponseValue)
+        if (pathname === '/api/github/pulls/proompteng/lab/42/files') return jsonResponse(githubPullFilesResponseValue)
+        if (pathname === '/api/github/pulls/proompteng/lab/42/threads')
+          return jsonResponse(githubPullThreadsResponseValue)
 
         return originalFetch(input, init)
       }
@@ -126,6 +245,10 @@ test.beforeEach(async ({ page }) => {
       atlasPathsValue: atlasPathsResponse,
       modelsValue: modelsResponse,
       healthValue: healthResponse,
+      githubPullsResponseValue: githubPullsResponse,
+      githubPullDetailResponseValue: githubPullDetailResponse,
+      githubPullFilesResponseValue: githubPullFilesResponse,
+      githubPullThreadsResponseValue: githubPullThreadsResponse,
     },
   )
 
@@ -148,7 +271,7 @@ test('memories route screenshot', async ({ page }) => {
 test('atlas search route screenshot', async ({ page }) => {
   await page.goto('/atlas/search?query=kysely&repository=proompteng/lab&ref=main')
   await expect(page.getByRole('heading', { name: 'Search' })).toBeVisible()
-  await expect(page.getByRole('cell', { name: 'services/jangar/src/server/atlas-store.ts' })).toBeVisible()
+  await expect(page.getByText('services/jangar/src/server/atlas-store.ts')).toBeVisible()
   await expect(page).toHaveScreenshot('atlas-search.png', { fullPage: true, animations: 'disabled' })
 })
 
@@ -184,4 +307,18 @@ test('torghut symbols route screenshot', async ({ page }) => {
   await page.goto('/torghut/symbols')
   await expect(page.getByRole('cell', { name: 'AAPL' })).toBeVisible()
   await expect(page).toHaveScreenshot('torghut-symbols.png', { fullPage: true, animations: 'disabled' })
+})
+
+test('github pulls route screenshot', async ({ page }) => {
+  await page.goto('/github/pulls')
+  await expect(page.getByRole('heading', { name: 'PR reviews' })).toBeVisible()
+  await expect(page.getByRole('cell', { name: 'proompteng/lab#42' })).toBeVisible()
+  await expect(page).toHaveScreenshot('github-pulls.png', { fullPage: true, animations: 'disabled' })
+})
+
+test('github pull detail route screenshot', async ({ page }) => {
+  await page.goto('/github/pulls/proompteng/lab/42')
+  await expect(page.getByRole('heading', { name: 'feat: add new PR review UI' })).toBeVisible()
+  await expect(page.getByText('Merge controls')).toBeVisible()
+  await expect(page).toHaveScreenshot('github-pull-detail.png', { fullPage: true, animations: 'disabled' })
 })

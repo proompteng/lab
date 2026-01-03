@@ -76,6 +76,60 @@ export type CreatePullRequestInput = {
   body: string
 }
 
+export type PullRequestFile = {
+  path: string
+  status: string | null
+  additions: number | null
+  deletions: number | null
+  changes: number | null
+  patch: string | null
+  blobUrl: string | null
+  rawUrl: string | null
+  sha: string | null
+  previousFilename: string | null
+}
+
+export type SubmitReviewInput = {
+  owner: string
+  repo: string
+  number: number
+  event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'
+  body?: string | null
+  comments?: Array<{
+    path: string
+    line: number
+    side: 'LEFT' | 'RIGHT'
+    body: string
+    startLine?: number
+    startSide?: 'LEFT' | 'RIGHT'
+  }>
+}
+
+export type ResolveReviewThreadInput = {
+  threadId: string
+  resolve: boolean
+}
+
+export type MergePullRequestInput = {
+  owner: string
+  repo: string
+  number: number
+  method: 'merge' | 'squash' | 'rebase'
+  commitTitle?: string
+  commitMessage?: string
+}
+
+export type DeleteBranchInput = {
+  owner: string
+  repo: string
+  branch: string
+}
+
+export type ReviewThreadLookup = {
+  threadId: string | null
+  isResolved: boolean | null
+}
+
 export type CreateBranchInput = {
   owner: string
   repo: string
@@ -602,6 +656,105 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
     return { status, unresolvedThreads, requestedChanges, reviewComments, issueComments }
   }
 
+  const getPullRequestFiles = async (owner: string, repo: string, number: number): Promise<PullRequestFile[]> => {
+    const files: PullRequestFile[] = []
+    for (let page = 1; page <= 20; page += 1) {
+      const data = (await rest(`/repos/${owner}/${repo}/pulls/${number}/files?per_page=100&page=${page}`)) as Array<
+        Record<string, unknown>
+      >
+      if (!Array.isArray(data) || data.length === 0) break
+      for (const entry of data) {
+        const path = typeof entry.filename === 'string' ? entry.filename : ''
+        if (!path) continue
+        files.push({
+          path,
+          status: typeof entry.status === 'string' ? entry.status : null,
+          additions: typeof entry.additions === 'number' ? entry.additions : null,
+          deletions: typeof entry.deletions === 'number' ? entry.deletions : null,
+          changes: typeof entry.changes === 'number' ? entry.changes : null,
+          patch: typeof entry.patch === 'string' ? entry.patch : null,
+          blobUrl: typeof entry.blob_url === 'string' ? entry.blob_url : null,
+          rawUrl: typeof entry.raw_url === 'string' ? entry.raw_url : null,
+          sha: typeof entry.sha === 'string' ? entry.sha : null,
+          previousFilename: typeof entry.previous_filename === 'string' ? entry.previous_filename : null,
+        })
+      }
+      if (data.length < 100) break
+    }
+    return files
+  }
+
+  const submitReview = async ({ owner, repo, number, event, body, comments }: SubmitReviewInput) => {
+    const payload: Record<string, unknown> = { event }
+    if (body) payload.body = body
+    if (comments && comments.length > 0) {
+      payload.comments = comments.map((comment) => ({
+        path: comment.path,
+        line: comment.line,
+        side: comment.side,
+        body: comment.body,
+        ...(comment.startLine ? { start_line: comment.startLine } : {}),
+        ...(comment.startSide ? { start_side: comment.startSide } : {}),
+      }))
+    }
+    return rest(`/repos/${owner}/${repo}/pulls/${number}/reviews`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+  }
+
+  const resolveReviewThread = async ({ threadId, resolve }: ResolveReviewThreadInput) => {
+    const mutation = resolve
+      ? `mutation($threadId: ID!) { resolveReviewThread(input: { threadId: $threadId }) { thread { id isResolved } } }`
+      : `mutation($threadId: ID!) { unresolveReviewThread(input: { threadId: $threadId }) { thread { id isResolved } } }`
+    const response = (await graphql(mutation, { threadId })) as Record<string, unknown>
+    const data = response.data as Record<string, unknown> | undefined
+    const node = resolve
+      ? (data?.resolveReviewThread as Record<string, unknown> | undefined)
+      : (data?.unresolveReviewThread as Record<string, unknown> | undefined)
+    const thread = node?.thread as Record<string, unknown> | undefined
+    return {
+      id: typeof thread?.id === 'string' ? thread.id : null,
+      isResolved: typeof thread?.isResolved === 'boolean' ? thread.isResolved : null,
+    }
+  }
+
+  const getReviewThreadForComment = async (commentId: string): Promise<ReviewThreadLookup> => {
+    const query = `query($id: ID!) { node(id: $id) { ... on PullRequestReviewComment { pullRequestReviewThread { id isResolved } } } }`
+    const response = (await graphql(query, { id: commentId })) as Record<string, unknown>
+    const data = response.data as Record<string, unknown> | undefined
+    const node = data?.node as Record<string, unknown> | undefined
+    const thread = node?.pullRequestReviewThread as Record<string, unknown> | undefined
+    return {
+      threadId: typeof thread?.id === 'string' ? thread.id : null,
+      isResolved: typeof thread?.isResolved === 'boolean' ? thread.isResolved : null,
+    }
+  }
+
+  const mergePullRequest = async ({
+    owner,
+    repo,
+    number,
+    method,
+    commitTitle,
+    commitMessage,
+  }: MergePullRequestInput) => {
+    const payload: Record<string, unknown> = { merge_method: method }
+    if (commitTitle) payload.commit_title = commitTitle
+    if (commitMessage) payload.commit_message = commitMessage
+    return rest(`/repos/${owner}/${repo}/pulls/${number}/merge`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+  }
+
+  const deleteBranch = async ({ owner, repo, branch }: DeleteBranchInput) => {
+    const ref = encodeURIComponent(`heads/${branch}`)
+    return rest(`/repos/${owner}/${repo}/git/refs/${ref}`, { method: 'DELETE' })
+  }
+
   const getRefSha = async (owner: string, repo: string, ref: string) => {
     const data = (await rest(`/repos/${owner}/${repo}/git/ref/${encodeURIComponent(ref)}`)) as Record<string, unknown>
     const object = data.object as Record<string, unknown>
@@ -651,6 +804,12 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
     getCheckRuns,
     getPullRequestDiff,
     getReviewSummary,
+    getPullRequestFiles,
+    submitReview,
+    resolveReviewThread,
+    getReviewThreadForComment,
+    mergePullRequest,
+    deleteBranch,
     getRefSha,
     getFile,
     updateFile,

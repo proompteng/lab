@@ -22,6 +22,9 @@ type JangarMetrics = {
   agentCommsIngestErrors: Counter
   agentCommsInsertDurationMs: Histogram
   agentCommsBatchSize: Histogram
+  githubReviewsSubmitted: Counter
+  githubMergeAttempts: Counter
+  githubMergeFailures: Counter
 }
 
 type MetricsState = {
@@ -78,6 +81,21 @@ export const recordAgentCommsBatch = (count: number, durationMs: number) => {
 export const recordAgentCommsError = (stage: AgentCommsErrorStage) => {
   if (!metricsState.enabled) return
   recordCounter(metricsState.metrics?.agentCommsIngestErrors, 1, { stage })
+}
+
+export const recordGithubReviewSubmitted = (outcome: string) => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.githubReviewsSubmitted, 1, { outcome })
+}
+
+export const recordGithubMergeAttempt = () => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.githubMergeAttempts, 1)
+}
+
+export const recordGithubMergeFailure = () => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.githubMergeFailures, 1)
 }
 
 type OtlpProtocol = 'http/json' | 'http/protobuf' | 'grpc'
@@ -243,6 +261,15 @@ const createMetricsState = (): MetricsState => {
       }),
       agentCommsBatchSize: meter.createHistogram('jangar_agent_comms_batch_size', {
         description: 'Batch size for agent comms inserts.',
+      }),
+      githubReviewsSubmitted: meter.createCounter('jangar_github_review_submitted_total', {
+        description: 'Count of GitHub review submissions by outcome.',
+      }),
+      githubMergeAttempts: meter.createCounter('jangar_github_merge_attempts_total', {
+        description: 'Count of GitHub merge attempts initiated from Jangar.',
+      }),
+      githubMergeFailures: meter.createCounter('jangar_github_merge_failures_total', {
+        description: 'Count of GitHub merge attempts that failed.',
       }),
     }
 

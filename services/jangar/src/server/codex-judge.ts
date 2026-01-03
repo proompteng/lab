@@ -18,6 +18,7 @@ import { loadCodexJudgeConfig } from '~/server/codex-judge-config'
 import { evaluateDeterministicGates } from '~/server/codex-judge-gates'
 import { type CodexEvaluationRecord, type CodexRunRecord, createCodexJudgeStore } from '~/server/codex-judge-store'
 import { createGitHubClient, GitHubRateLimitError, type PullRequest, type ReviewSummary } from '~/server/github-client'
+import { ingestGithubReviewEvent } from '~/server/github-review-ingest'
 import { createPostgresMemoriesStore } from '~/server/memories-store'
 
 type MemoryStoreFactory = () => ReturnType<typeof createPostgresMemoriesStore>
@@ -1405,18 +1406,28 @@ export const handleGithubWebhookEvent = async (payload: Record<string, unknown>)
     return { ok: false, reason: 'unsupported_event', event: parsed.event || null }
   }
 
+  const receivedAt =
+    normalizeOptionalString(payload.receivedAt ?? payload.received_at) ??
+    normalizeOptionalString((payload.payload as Record<string, unknown> | undefined)?.receivedAt) ??
+    normalizeOptionalString((payload.payload as Record<string, unknown> | undefined)?.received_at) ??
+    null
+  const reviewIngest = await ingestGithubReviewEvent({
+    ...parsed,
+    receivedAt,
+  })
+
   if (parsed.event === 'check_run' || parsed.event === 'check_suite') {
     const result = await handleCheckStreamEvent(parsed)
-    return { ok: true, event: parsed.event, action: parsed.action, ...result }
+    return { ok: true, event: parsed.event, action: parsed.action, reviewIngest, ...result }
   }
 
   if (parsed.event === 'pull_request') {
     const result = await handlePullRequestStreamEvent(parsed)
-    return { ok: true, event: parsed.event, action: parsed.action, ...result }
+    return { ok: true, event: parsed.event, action: parsed.action, reviewIngest, ...result }
   }
 
   const result = await handleReviewStreamEvent(parsed)
-  return { ok: true, event: parsed.event, action: parsed.action, ...result }
+  return { ok: true, event: parsed.event, action: parsed.action, reviewIngest, ...result }
 }
 
 type MinioConfig = {

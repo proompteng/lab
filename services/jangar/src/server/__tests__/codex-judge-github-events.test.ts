@@ -37,6 +37,31 @@ const globalState = globalThis as typeof globalThis & {
     promptTuningWindowHours: number
     promptTuningCooldownHours: number
   }
+  __githubReviewStoreMock?: {
+    recordEvent: ReturnType<typeof vi.fn>
+    upsertPrState: ReturnType<typeof vi.fn>
+    upsertReviewState: ReturnType<typeof vi.fn>
+    upsertCheckState: ReturnType<typeof vi.fn>
+    upsertReviewThread: ReturnType<typeof vi.fn>
+    upsertReviewComment: ReturnType<typeof vi.fn>
+    upsertIssueComment: ReturnType<typeof vi.fn>
+    upsertPrFiles: ReturnType<typeof vi.fn>
+    listFiles: ReturnType<typeof vi.fn>
+    getUnresolvedThreadCount: ReturnType<typeof vi.fn>
+    updateUnresolvedThreadCount: ReturnType<typeof vi.fn>
+  }
+  __githubReviewConfigMock?: {
+    githubToken: string | null
+    githubApiBaseUrl: string
+    reposAllowed: string[]
+    reviewsWriteEnabled: boolean
+    mergeWriteEnabled: boolean
+    mergeForceEnabled: boolean
+    filesBackfillEnabled: boolean
+  }
+  __githubReviewGithubMock?: {
+    getPullRequestFiles: ReturnType<typeof vi.fn>
+  }
 }
 
 const requireMock = <T>(value: T | undefined, name: string): T => {
@@ -79,6 +104,34 @@ const configMock = {
   promptTuningFailureThreshold: 3,
   promptTuningWindowHours: 24,
   promptTuningCooldownHours: 6,
+}
+
+const githubReviewStoreMock = {
+  recordEvent: vi.fn(async () => ({ inserted: true })),
+  upsertPrState: vi.fn(async () => {}),
+  upsertReviewState: vi.fn(async () => {}),
+  upsertCheckState: vi.fn(async () => ({})),
+  upsertReviewThread: vi.fn(async () => {}),
+  upsertReviewComment: vi.fn(async () => {}),
+  upsertIssueComment: vi.fn(async () => {}),
+  upsertPrFiles: vi.fn(async () => {}),
+  listFiles: vi.fn(async () => []),
+  getUnresolvedThreadCount: vi.fn(async () => 0),
+  updateUnresolvedThreadCount: vi.fn(async () => {}),
+}
+
+const githubReviewConfigMock = {
+  githubToken: null,
+  githubApiBaseUrl: 'https://api.github.com',
+  reposAllowed: ['proompteng/lab'],
+  reviewsWriteEnabled: false,
+  mergeWriteEnabled: false,
+  mergeForceEnabled: false,
+  filesBackfillEnabled: false,
+}
+
+const githubReviewGithubMock = {
+  getPullRequestFiles: vi.fn(async () => []),
 }
 
 if (!globalState.__codexJudgeStoreMock) {
@@ -177,6 +230,15 @@ describe('codex-judge GitHub webhook stream handling', () => {
     })
     Object.assign(requireMock(globalState.__codexJudgeGithubMock, 'github'), githubMock)
     Object.assign(requireMock(globalState.__codexJudgeConfigMock, 'config'), configMock)
+    Object.values(githubReviewStoreMock).forEach((value) => {
+      if (typeof value === 'function') {
+        ;(value as ReturnType<typeof vi.fn>).mockClear?.()
+      }
+    })
+    Object.assign(githubReviewGithubMock, { getPullRequestFiles: vi.fn(async () => []) })
+    globalState.__githubReviewStoreMock = githubReviewStoreMock
+    globalState.__githubReviewConfigMock = githubReviewConfigMock
+    globalState.__githubReviewGithubMock = githubReviewGithubMock
   })
 
   afterEach(() => {
