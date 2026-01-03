@@ -3,7 +3,6 @@ import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   type CodexArtifactRecord,
   type CodexEvaluationRecord,
@@ -237,36 +236,30 @@ function CodexRunsPage() {
               <label className="text-xs font-medium" htmlFor={issueId}>
                 Issue number
               </label>
-              <Select value={issueNumber || undefined} onValueChange={(value) => setIssueNumber(value ?? '')}>
-                <SelectTrigger id={issueId} aria-invalid={Boolean(formError)}>
-                  {issueNumber ? <SelectValue /> : <span className="text-muted-foreground">Select issue</span>}
-                </SelectTrigger>
-                <SelectContent className="max-h-72">
-                  {issueOptions.length === 0 ? (
-                    <SelectItem value="__empty" disabled>
-                      {issueStatus === 'loading' ? 'Loading issues…' : 'No issues found'}
-                    </SelectItem>
-                  ) : null}
-                  {issueOptions.map((issue) => (
-                    <SelectItem key={issue.issueNumber} value={issue.issueNumber.toString()}>
-                      <span className="flex w-full items-center justify-between gap-2">
-                        <span>#{issue.issueNumber}</span>
-                        <span className="text-xs text-muted-foreground tabular-nums">{issue.runCount} runs</span>
-                      </span>
-                    </SelectItem>
-                  ))}
-                  {issueNumber &&
-                  issueNumber !== '__empty' &&
-                  issueOptions.every((issue) => issue.issueNumber.toString() !== issueNumber) ? (
-                    <SelectItem value={issueNumber}>
-                      <span className="flex w-full items-center justify-between gap-2">
-                        <span>#{issueNumber}</span>
-                        <span className="text-xs text-muted-foreground">Not in list</span>
-                      </span>
-                    </SelectItem>
-                  ) : null}
-                </SelectContent>
-              </Select>
+              <Input
+                id={issueId}
+                name="issueNumber"
+                value={issueNumber}
+                onChange={(event) => setIssueNumber(event.target.value)}
+                placeholder="2151"
+                inputMode="numeric"
+                aria-invalid={Boolean(formError)}
+                list={`${issueId}-options`}
+              />
+              <datalist id={`${issueId}-options`}>
+                {issueOptions.map((issue) => (
+                  <option key={issue.issueNumber} value={issue.issueNumber.toString()}>
+                    #{issue.issueNumber} · {issue.runCount} runs
+                  </option>
+                ))}
+              </datalist>
+              <p className="text-xs text-muted-foreground">
+                {issueStatus === 'loading'
+                  ? 'Loading recent issues…'
+                  : repository.trim().length === 0
+                    ? 'Enter a repository to load issues. You can still type any issue number.'
+                    : `Showing ${issueOptions.length} recent issues. You can type any issue number.`}
+              </p>
               {issueStatus === 'error' ? (
                 <p className="text-xs text-destructive" role="alert">
                   {issueError ?? 'Unable to load issues.'}
