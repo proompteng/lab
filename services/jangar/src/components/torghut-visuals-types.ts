@@ -43,10 +43,14 @@ export type TorghutSignal = {
     signal: number
     hist?: number
   }
+  macd_signal?: number
+  macd_hist?: number
   ema?: {
     ema12: number
     ema26: number
   }
+  ema12?: number
+  ema26?: number
   rsi14?: number
   rsi_14?: number
   boll?: {
@@ -54,10 +58,15 @@ export type TorghutSignal = {
     upper: number
     lower: number
   }
+  boll_mid?: number
+  boll_upper?: number
+  boll_lower?: number
   vwap?: {
     session: number
     w5m?: number
   }
+  vwap_session?: number
+  vwap_w5m?: number
   vol_realized?: {
     w60s?: number
   }

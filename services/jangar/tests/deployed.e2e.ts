@@ -228,6 +228,89 @@ test.describe('deployed jangar e2e', () => {
     await expect(page.getByRole('heading', { name: 'Terminal sessions', level: 1 })).toBeVisible()
   })
 
+  test('torghut visuals render overlays and signals', async ({ page, request }) => {
+    test.setTimeout(120_000)
+
+    await page.goto('/torghut/visuals')
+    await expect(page.getByRole('heading', { name: 'Visuals', level: 1 })).toBeVisible()
+    await waitForHydration(page)
+
+    const symbolSelect = page.locator('#torghut-symbol')
+    await expect(symbolSelect).toBeEnabled()
+
+    await page.locator('#torghut-range').selectOption('1d')
+    await page.locator('#torghut-resolution').selectOption('1m')
+
+    const symbol = await symbolSelect.inputValue()
+    const now = new Date()
+    const from = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+    const params = new URLSearchParams({
+      symbol,
+      range: '1d',
+      resolution: '1m',
+      limit: '500',
+      refresh: '0',
+      from: from.toISOString(),
+      to: now.toISOString(),
+    })
+
+    const barsResponse = await request.get(`/api/torghut/ta/bars?${params.toString()}`)
+    expect(barsResponse.ok()).toBe(true)
+    const barsPayload = (await barsResponse.json()) as { items?: unknown[] }
+    const bars = Array.isArray(barsPayload.items) ? barsPayload.items : []
+    expect(bars.length).toBeGreaterThan(0)
+
+    const signalsResponse = await request.get(`/api/torghut/ta/signals?${params.toString()}`)
+    expect(signalsResponse.ok()).toBe(true)
+    const signalsPayload = (await signalsResponse.json()) as { items?: Array<Record<string, unknown>> }
+    const signals = Array.isArray(signalsPayload.items) ? signalsPayload.items : []
+    expect(signals.length).toBeGreaterThan(0)
+    expect(
+      signals.some(
+        (item) => typeof item.ema12 === 'number' || typeof (item.ema as Record<string, unknown>)?.ema12 === 'number',
+      ),
+    ).toBe(true)
+    expect(
+      signals.some(
+        (item) =>
+          typeof item.boll_mid === 'number' ||
+          typeof (item.boll as Record<string, unknown>)?.mid === 'number' ||
+          typeof (item.boll as Record<string, unknown>)?.upper === 'number',
+      ),
+    ).toBe(true)
+    expect(
+      signals.some(
+        (item) => typeof item.macd === 'number' || typeof (item.macd as Record<string, unknown>)?.macd === 'number',
+      ),
+    ).toBe(true)
+    expect(signals.some((item) => typeof item.rsi14 === 'number' || typeof item.rsi_14 === 'number')).toBe(true)
+
+    await page.getByRole('checkbox', { name: 'EMA 12/26' }).check()
+    await page.getByRole('checkbox', { name: 'Bollinger' }).check()
+    await page.getByRole('checkbox', { name: 'MACD' }).check()
+    await page.getByRole('checkbox', { name: 'RSI' }).check()
+
+    const priceChart = page.getByRole('img', { name: 'Candlestick chart with indicator overlays' })
+    const signalChart = page.getByRole('img', { name: 'Indicator chart for MACD and RSI' })
+
+    await expect(priceChart).toBeVisible()
+    await expect(signalChart).toBeVisible()
+
+    await expect(page.getByText('No candles for this range.')).toHaveCount(0)
+    await expect(page.getByText('Enable MACD or RSI to render the indicator panel.')).toHaveCount(0)
+    await expect(page.getByText('No indicator points for this window.')).toHaveCount(0)
+
+    await expect
+      .poll(async () => Number((await priceChart.getAttribute('data-candle-count')) ?? 0), { timeout: 20_000 })
+      .toBeGreaterThan(0)
+    await expect
+      .poll(async () => Number((await priceChart.getAttribute('data-overlay-count')) ?? 0), { timeout: 20_000 })
+      .toBeGreaterThan(0)
+    await expect
+      .poll(async () => Number((await signalChart.getAttribute('data-signal-count')) ?? 0), { timeout: 20_000 })
+      .toBeGreaterThan(0)
+  })
+
   test('terminal session lifecycle end-to-end', async ({ page, request }) => {
     test.setTimeout(120_000)
     const apiFailures = trackApiFailures(page)

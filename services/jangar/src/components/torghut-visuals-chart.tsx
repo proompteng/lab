@@ -47,13 +47,32 @@ export function TorghutVisualsChart({ bars, signals, indicators, className }: To
   const overlays = React.useMemo(() => buildOverlays(signals), [signals])
   const oscillators = React.useMemo(() => buildOscillators(signals), [signals])
   const showSignals = indicators.macd || indicators.rsi
+  const overlayCount = React.useMemo(() => {
+    let count = 0
+    if (indicators.ema) count += overlays.ema12.length + overlays.ema26.length
+    if (indicators.boll) count += overlays.bollUpper.length + overlays.bollMid.length + overlays.bollLower.length
+    if (indicators.vwap) count += overlays.vwapSession.length + overlays.vwapW5m.length
+    return count
+  }, [indicators, overlays])
+  const oscillatorCount = React.useMemo(() => {
+    let count = 0
+    if (indicators.macd) count += oscillators.macd.length + oscillators.macdSignal.length
+    if (indicators.rsi) count += oscillators.rsi.length
+    return count
+  }, [indicators, oscillators])
 
   return (
     <div className={cn('space-y-4', className)}>
       <div className="space-y-2">
         <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Price</div>
         <div className="relative rounded-none border bg-background">
-          <PriceChart candles={candleData} overlays={overlays} indicators={indicators} />
+          <PriceChart
+            candles={candleData}
+            overlays={overlays}
+            indicators={indicators}
+            overlayCount={overlayCount}
+            candleCount={candleData.length}
+          />
           {candleData.length === 0 ? (
             <div className="pointer-events-none absolute inset-0 grid place-items-center text-xs text-muted-foreground">
               No candles for this range.
@@ -66,7 +85,7 @@ export function TorghutVisualsChart({ bars, signals, indicators, className }: To
         <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Signals</div>
         {showSignals ? (
           <div className="relative rounded-none border bg-background">
-            <SignalChart oscillators={oscillators} indicators={indicators} />
+            <SignalChart oscillators={oscillators} indicators={indicators} signalCount={oscillatorCount} />
             {oscillators.macd.length === 0 && oscillators.rsi.length === 0 ? (
               <div className="pointer-events-none absolute inset-0 grid place-items-center text-xs text-muted-foreground">
                 No indicator points for this window.
@@ -87,10 +106,14 @@ function PriceChart({
   candles,
   overlays,
   indicators,
+  overlayCount,
+  candleCount,
 }: {
   candles: CandlePoint[]
   overlays: OverlaySeriesData
   indicators: IndicatorState
+  overlayCount: number
+  candleCount: number
 }) {
   const containerRef = React.useRef<HTMLDivElement | null>(null)
   const chartRef = React.useRef<EChartsInstance | null>(null)
@@ -135,11 +158,21 @@ function PriceChart({
       className="min-h-[18rem] w-full"
       role="img"
       aria-label="Candlestick chart with indicator overlays"
+      data-overlay-count={overlayCount}
+      data-candle-count={candleCount}
     />
   )
 }
 
-function SignalChart({ oscillators, indicators }: { oscillators: OscillatorSeriesData; indicators: IndicatorState }) {
+function SignalChart({
+  oscillators,
+  indicators,
+  signalCount,
+}: {
+  oscillators: OscillatorSeriesData
+  indicators: IndicatorState
+  signalCount: number
+}) {
   const containerRef = React.useRef<HTMLDivElement | null>(null)
   const chartRef = React.useRef<EChartsInstance | null>(null)
   const resizeRef = React.useRef<ResizeObserver | null>(null)
@@ -178,7 +211,13 @@ function SignalChart({ oscillators, indicators }: { oscillators: OscillatorSerie
   }, [option])
 
   return (
-    <div ref={containerRef} className="min-h-[14rem] w-full" role="img" aria-label="Indicator chart for MACD and RSI" />
+    <div
+      ref={containerRef}
+      className="min-h-[14rem] w-full"
+      role="img"
+      aria-label="Indicator chart for MACD and RSI"
+      data-signal-count={signalCount}
+    />
   )
 }
 
@@ -210,28 +249,22 @@ const buildOverlays = (signals: TorghutSignal[]): OverlaySeriesData => {
     const time = toTimestamp(signal.event_ts ?? signal.eventTs ?? signal.ts ?? signal.time)
     if (!time) continue
 
-    if (signal.ema) {
-      const ema12Value = toNumber(signal.ema.ema12)
-      const ema26Value = toNumber(signal.ema.ema26)
-      if (ema12Value !== null) ema12.push({ time, value: ema12Value })
-      if (ema26Value !== null) ema26.push({ time, value: ema26Value })
-    }
+    const ema12Value = toNumber(signal.ema?.ema12 ?? signal.ema12)
+    const ema26Value = toNumber(signal.ema?.ema26 ?? signal.ema26)
+    if (ema12Value !== null) ema12.push({ time, value: ema12Value })
+    if (ema26Value !== null) ema26.push({ time, value: ema26Value })
 
-    if (signal.boll) {
-      const upper = toNumber(signal.boll.upper)
-      const mid = toNumber(signal.boll.mid)
-      const lower = toNumber(signal.boll.lower)
-      if (upper !== null) bollUpper.push({ time, value: upper })
-      if (mid !== null) bollMid.push({ time, value: mid })
-      if (lower !== null) bollLower.push({ time, value: lower })
-    }
+    const upper = toNumber(signal.boll?.upper ?? signal.boll_upper)
+    const mid = toNumber(signal.boll?.mid ?? signal.boll_mid)
+    const lower = toNumber(signal.boll?.lower ?? signal.boll_lower)
+    if (upper !== null) bollUpper.push({ time, value: upper })
+    if (mid !== null) bollMid.push({ time, value: mid })
+    if (lower !== null) bollLower.push({ time, value: lower })
 
-    if (signal.vwap) {
-      const session = toNumber(signal.vwap.session)
-      const w5m = toNumber(signal.vwap.w5m)
-      if (session !== null) vwapSession.push({ time, value: session })
-      if (w5m !== null) vwapW5m.push({ time, value: w5m })
-    }
+    const session = toNumber(signal.vwap?.session ?? signal.vwap_session)
+    const w5m = toNumber(signal.vwap?.w5m ?? signal.vwap_w5m)
+    if (session !== null) vwapSession.push({ time, value: session })
+    if (w5m !== null) vwapW5m.push({ time, value: w5m })
   }
 
   return {
@@ -254,12 +287,12 @@ const buildOscillators = (signals: TorghutSignal[]): OscillatorSeriesData => {
     const time = toTimestamp(signal.event_ts ?? signal.eventTs ?? signal.ts ?? signal.time)
     if (!time) continue
 
-    if (signal.macd) {
-      const macdValue = toNumber(signal.macd.macd)
-      const macdSignalValue = toNumber(signal.macd.signal)
-      if (macdValue !== null) macd.push({ time, value: macdValue })
-      if (macdSignalValue !== null) macdSignal.push({ time, value: macdSignalValue })
-    }
+    const macdValue = toNumber(
+      typeof (signal as { macd?: unknown }).macd === 'number' ? (signal as { macd?: number }).macd : signal.macd?.macd,
+    )
+    const macdSignalValue = toNumber(signal.macd?.signal ?? signal.macd_signal)
+    if (macdValue !== null) macd.push({ time, value: macdValue })
+    if (macdSignalValue !== null) macdSignal.push({ time, value: macdSignalValue })
 
     const rsiValue = toNumber(signal.rsi14 ?? signal.rsi_14)
     if (rsiValue !== null) rsi.push({ time, value: rsiValue })
