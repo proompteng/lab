@@ -31,6 +31,34 @@ export type CodexRunRecord = {
   finishedAt: string | null
 }
 
+export type CodexRunSummaryRecord = {
+  id: string
+  repository: string
+  issueNumber: number
+  branch: string
+  attempt: number
+  workflowName: string
+  workflowNamespace: string | null
+  stage: string | null
+  status: string
+  phase: string | null
+  commitSha: string | null
+  prNumber: number | null
+  prUrl: string | null
+  ciStatus: string | null
+  reviewStatus: string | null
+  createdAt: string
+  updatedAt: string
+  startedAt: string | null
+  finishedAt: string | null
+}
+
+export type CodexIssueSummaryRecord = {
+  issueNumber: number
+  runCount: number
+  lastSeenAt: string
+}
+
 export type CodexArtifactRecord = {
   id: string
   runId: string
@@ -74,6 +102,18 @@ export type CodexRunHistory = {
   runs: CodexRunHistoryEntry[]
   stats: CodexRunStats
 }
+
+export type CodexIssueSummaryResult =
+  | { ok: true; issues: CodexIssueSummaryRecord[]; raw?: unknown }
+  | { ok: false; message: string; status?: number; raw?: unknown }
+
+export type CodexRecentRunsResult =
+  | { ok: true; runs: CodexRunSummaryRecord[]; raw?: unknown }
+  | { ok: false; message: string; status?: number; raw?: unknown }
+
+export type CodexRunsPageResult =
+  | { ok: true; runs: CodexRunSummaryRecord[]; total: number; raw?: unknown }
+  | { ok: false; message: string; status?: number; raw?: unknown }
 
 export type CodexRunHistoryParams = {
   repository: string
@@ -177,6 +217,155 @@ export const fetchCodexRunHistory = async (params: CodexRunHistoryParams): Promi
       runs: Array.isArray(record.runs) ? (record.runs as CodexRunHistoryEntry[]) : [],
       stats: normalizeStats(record.stats),
     },
+    raw: payload ?? undefined,
+  }
+}
+
+export const fetchCodexIssueSummaries = async (params: {
+  repository: string
+  limit?: number
+  signal?: AbortSignal
+}): Promise<CodexIssueSummaryResult> => {
+  const searchParams = new URLSearchParams({ repository: params.repository })
+  if (params.limit) {
+    searchParams.set('limit', params.limit.toString())
+  }
+
+  const response = await fetch(`/api/codex/issues?${searchParams.toString()}`, { signal: params.signal })
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      message: extractErrorMessage(payload) ?? `Request failed (${response.status})`,
+      raw: payload ?? undefined,
+    }
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    return { ok: false, message: 'Unexpected response format.', raw: payload ?? undefined }
+  }
+
+  const record = payload as Record<string, unknown>
+  if (record.ok === false) {
+    return {
+      ok: false,
+      message: extractErrorMessage(payload) ?? 'Request failed.',
+      raw: payload ?? undefined,
+    }
+  }
+
+  return {
+    ok: true,
+    issues: Array.isArray(record.issues) ? (record.issues as CodexIssueSummaryRecord[]) : [],
+    raw: payload ?? undefined,
+  }
+}
+
+export const fetchCodexRecentRuns = async (params: {
+  repository?: string
+  limit?: number
+  signal?: AbortSignal
+}): Promise<CodexRecentRunsResult> => {
+  const searchParams = new URLSearchParams()
+  if (params.repository) {
+    searchParams.set('repository', params.repository)
+  }
+  if (params.limit) {
+    searchParams.set('limit', params.limit.toString())
+  }
+
+  const response = await fetch(`/api/codex/runs/recent?${searchParams.toString()}`, { signal: params.signal })
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      message: extractErrorMessage(payload) ?? `Request failed (${response.status})`,
+      raw: payload ?? undefined,
+    }
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    return { ok: false, message: 'Unexpected response format.', raw: payload ?? undefined }
+  }
+
+  const record = payload as Record<string, unknown>
+  if (record.ok === false) {
+    return {
+      ok: false,
+      message: extractErrorMessage(payload) ?? 'Request failed.',
+      raw: payload ?? undefined,
+    }
+  }
+
+  return {
+    ok: true,
+    runs: Array.isArray(record.runs) ? (record.runs as CodexRunSummaryRecord[]) : [],
+    raw: payload ?? undefined,
+  }
+}
+
+export const fetchCodexRunsPage = async (params: {
+  repository?: string
+  page: number
+  pageSize: number
+  signal?: AbortSignal
+}): Promise<CodexRunsPageResult> => {
+  const searchParams = new URLSearchParams({
+    page: params.page.toString(),
+    pageSize: params.pageSize.toString(),
+  })
+  if (params.repository) {
+    searchParams.set('repository', params.repository)
+  }
+
+  const response = await fetch(`/api/codex/runs/list?${searchParams.toString()}`, { signal: params.signal })
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      message: extractErrorMessage(payload) ?? `Request failed (${response.status})`,
+      raw: payload ?? undefined,
+    }
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    return { ok: false, message: 'Unexpected response format.', raw: payload ?? undefined }
+  }
+
+  const record = payload as Record<string, unknown>
+  if (record.ok === false) {
+    return {
+      ok: false,
+      message: extractErrorMessage(payload) ?? 'Request failed.',
+      raw: payload ?? undefined,
+    }
+  }
+
+  return {
+    ok: true,
+    runs: Array.isArray(record.runs) ? (record.runs as CodexRunSummaryRecord[]) : [],
+    total: typeof record.total === 'number' && Number.isFinite(record.total) ? record.total : 0,
     raw: payload ?? undefined,
   }
 }

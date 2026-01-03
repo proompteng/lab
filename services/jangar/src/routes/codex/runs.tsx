@@ -1,27 +1,29 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
-  type CodexArtifactRecord,
-  type CodexEvaluationRecord,
-  type CodexRunHistory,
-  type CodexRunHistoryEntry,
-  type CodexRunStats,
-  fetchCodexRunHistory,
-} from '@/data/codex'
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from '@/components/ui/pagination'
+import { type CodexRunSummaryRecord, fetchCodexRunsPage } from '@/data/codex'
 import { cn } from '@/lib/utils'
 
 type CodexRunsSearchState = {
   repository: string
-  issueNumber: number | null
-  branch: string
-  limit: number
+  page: number
+  pageSize: number
 }
 
-const DEFAULT_LIMIT = 50
-const MAX_LIMIT = 100
+const DEFAULT_PAGE = 1
+const DEFAULT_PAGE_SIZE = 50
+const MAX_PAGE_SIZE = 200
+const DEFAULT_SEARCH_LIMIT = 50
 
 const parseSearchNumber = (value: unknown) => {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -36,12 +38,12 @@ const parseSearchNumber = (value: unknown) => {
 
 export const Route = createFileRoute('/codex/runs')({
   validateSearch: (search: Record<string, unknown>): CodexRunsSearchState => {
-    const limitRaw = parseSearchNumber(search.limit) ?? DEFAULT_LIMIT
+    const pageRaw = parseSearchNumber(search.page) ?? DEFAULT_PAGE
+    const pageSizeRaw = parseSearchNumber(search.pageSize) ?? DEFAULT_PAGE_SIZE
     return {
       repository: typeof search.repository === 'string' ? search.repository : '',
-      issueNumber: parseSearchNumber(search.issueNumber),
-      branch: typeof search.branch === 'string' ? search.branch : '',
-      limit: Math.min(limitRaw, MAX_LIMIT),
+      page: Math.max(pageRaw, 1),
+      pageSize: Math.min(pageSizeRaw, MAX_PAGE_SIZE),
     }
   },
   component: CodexRunsPage,
@@ -52,102 +54,104 @@ function CodexRunsPage() {
   const navigate = Route.useNavigate()
 
   const [repository, setRepository] = React.useState(searchState.repository)
-  const [issueNumber, setIssueNumber] = React.useState(
-    searchState.issueNumber ? searchState.issueNumber.toString() : '',
-  )
-  const [branch, setBranch] = React.useState(searchState.branch)
-  const [limit, setLimit] = React.useState(searchState.limit.toString())
-
-  const [history, setHistory] = React.useState<CodexRunHistory | null>(null)
+  const [pageSize, setPageSize] = React.useState(searchState.pageSize.toString())
+  const [runs, setRuns] = React.useState<CodexRunSummaryRecord[]>([])
+  const [total, setTotal] = React.useState(0)
   const [status, setStatus] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [formError, setFormError] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
 
   const repositoryId = React.useId()
-  const issueId = React.useId()
-  const branchId = React.useId()
-  const limitId = React.useId()
+  const pageSizeId = React.useId()
 
   const repositoryRef = React.useRef<HTMLInputElement | null>(null)
-  const issueRef = React.useRef<HTMLInputElement | null>(null)
 
   React.useEffect(() => {
     setRepository(searchState.repository)
-    setIssueNumber(searchState.issueNumber ? searchState.issueNumber.toString() : '')
-    setBranch(searchState.branch)
-    setLimit(searchState.limit.toString())
-  }, [searchState])
+    setPageSize(searchState.pageSize.toString())
+  }, [searchState.pageSize, searchState.repository])
 
-  const loadRuns = React.useCallback(
-    async (params: { repository: string; issueNumber: number; branch?: string; limit: number }) => {
-      setIsLoading(true)
-      setError(null)
-      setStatus(null)
-      try {
-        const result = await fetchCodexRunHistory(params)
-        if (!result.ok) {
-          setHistory(null)
-          setError(result.message)
-          return
-        }
-        setHistory(result.history)
-        setStatus(
-          result.history.runs.length === 0
-            ? 'No runs found for this issue.'
-            : `Loaded ${result.history.runs.length} runs.`,
-        )
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err)
-        setHistory(null)
-        setError(message)
-      } finally {
-        setIsLoading(false)
+  const loadRuns = React.useCallback(async (params: { repository?: string; page: number; pageSize: number }) => {
+    setIsLoading(true)
+    setError(null)
+    setStatus(null)
+    try {
+      const result = await fetchCodexRunsPage({
+        repository: params.repository,
+        page: params.page,
+        pageSize: params.pageSize,
+      })
+      if (!result.ok) {
+        setRuns([])
+        setTotal(0)
+        setError(result.message)
+        return
       }
-    },
-    [],
-  )
+      setRuns(result.runs)
+      setTotal(result.total)
+      setStatus(result.runs.length === 0 ? 'No runs found.' : `Loaded ${result.runs.length} runs.`)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      setRuns([])
+      setTotal(0)
+      setError(message)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
 
   React.useEffect(() => {
-    if (!searchState.repository || !searchState.issueNumber) {
-      setHistory(null)
-      setStatus(null)
-      return
-    }
-
+    const trimmedRepository = searchState.repository.trim()
     void loadRuns({
-      repository: searchState.repository,
-      issueNumber: searchState.issueNumber,
-      branch: searchState.branch.trim() || undefined,
-      limit: searchState.limit,
+      repository: trimmedRepository.length > 0 ? trimmedRepository : undefined,
+      page: searchState.page,
+      pageSize: searchState.pageSize,
     })
-  }, [loadRuns, searchState])
+  }, [loadRuns, searchState.page, searchState.pageSize, searchState.repository])
+
+  const totalPages = Math.max(1, Math.ceil(total / searchState.pageSize))
+  const clampedPage = Math.min(searchState.page, totalPages)
+  const isFirstPage = clampedPage <= 1
+  const isLastPage = clampedPage >= totalPages
+  const pageStartIndex = total > 0 ? (clampedPage - 1) * searchState.pageSize : 0
+  const rangeStart = total > 0 ? pageStartIndex + 1 : 0
+  const rangeEnd = total > 0 ? Math.min(pageStartIndex + runs.length, total) : 0
+  const pageNumbers = React.useMemo(() => {
+    if (totalPages <= 1) return [1]
+    const windowSize = 5
+    const start = Math.max(1, Math.min(clampedPage - 2, totalPages - windowSize + 1))
+    const count = Math.min(totalPages, windowSize)
+    return Array.from({ length: count }, (_, index) => start + index)
+  }, [clampedPage, totalPages])
+  const rangeLabel = total === 0 ? 'No runs yet.' : `${rangeStart}-${rangeEnd} of ${total}`
+  const pageLabel = totalPages > 1 ? `Page ${clampedPage}/${totalPages}` : 'Page 1'
+
+  const goToPage = React.useCallback(
+    (page: number) => {
+      void navigate({
+        search: {
+          repository: searchState.repository,
+          page,
+          pageSize: searchState.pageSize,
+        },
+      })
+    },
+    [navigate, searchState.pageSize, searchState.repository],
+  )
 
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setFormError(null)
 
     const trimmedRepository = repository.trim()
-    const parsedIssue = parseSearchNumber(issueNumber)
-    const parsedLimit = parseSearchNumber(limit) ?? DEFAULT_LIMIT
-
-    if (!trimmedRepository) {
-      setFormError('Repository is required.')
-      repositoryRef.current?.focus()
-      return
-    }
-    if (!parsedIssue) {
-      setFormError('Issue number is required.')
-      issueRef.current?.focus()
-      return
-    }
+    const parsedPageSize = parseSearchNumber(pageSize) ?? DEFAULT_PAGE_SIZE
 
     void navigate({
       search: {
         repository: trimmedRepository,
-        issueNumber: parsedIssue,
-        branch: branch.trim(),
-        limit: Math.min(parsedLimit, MAX_LIMIT),
+        page: DEFAULT_PAGE,
+        pageSize: Math.min(parsedPageSize, MAX_PAGE_SIZE),
       },
     })
   }
@@ -157,20 +161,20 @@ function CodexRunsPage() {
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-2">
           <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Codex</p>
-          <h1 className="text-lg font-semibold">Run history</h1>
-          <p className="text-xs text-muted-foreground">Query Codex judge runs by repository and issue.</p>
+          <h1 className="text-lg font-semibold">All runs</h1>
+          <p className="text-xs text-muted-foreground">Browse all Codex judge runs across repositories.</p>
         </div>
         <div className="text-xs text-muted-foreground">
-          {history ? <span className="tabular-nums">{history.runs.length}</span> : '—'} runs loaded
+          <span className="tabular-nums">{total}</span> total runs
         </div>
       </header>
 
       <section className="rounded-none p-4 border bg-card">
         <form className="space-y-3" onSubmit={submit}>
-          <div className="grid md:grid-cols-4 gap-3">
+          <div className="grid md:grid-cols-3 gap-3">
             <div className="space-y-1">
               <label className="text-xs font-medium" htmlFor={repositoryId}>
-                Repository
+                Repository (optional)
               </label>
               <Input
                 ref={repositoryRef}
@@ -184,43 +188,15 @@ function CodexRunsPage() {
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium" htmlFor={issueId}>
-                Issue number
+              <label className="text-xs font-medium" htmlFor={pageSizeId}>
+                Rows per page
               </label>
               <Input
-                ref={issueRef}
-                id={issueId}
-                name="issueNumber"
-                value={issueNumber}
-                onChange={(event) => setIssueNumber(event.target.value)}
-                placeholder="2151"
-                inputMode="numeric"
-                aria-invalid={Boolean(formError)}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium" htmlFor={branchId}>
-                Branch (optional)
-              </label>
-              <Input
-                id={branchId}
-                name="branch"
-                value={branch}
-                onChange={(event) => setBranch(event.target.value)}
-                placeholder="main"
-                autoComplete="off"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium" htmlFor={limitId}>
-                Limit
-              </label>
-              <Input
-                id={limitId}
-                name="limit"
-                value={limit}
-                onChange={(event) => setLimit(event.target.value)}
-                placeholder={DEFAULT_LIMIT.toString()}
+                id={pageSizeId}
+                name="pageSize"
+                value={pageSize}
+                onChange={(event) => setPageSize(event.target.value)}
+                placeholder={DEFAULT_PAGE_SIZE.toString()}
                 inputMode="numeric"
               />
             </div>
@@ -230,7 +206,7 @@ function CodexRunsPage() {
               {isLoading ? 'Loading…' : 'Load runs'}
             </Button>
             <span>
-              Default limit {DEFAULT_LIMIT}, max {MAX_LIMIT}.
+              Default size {DEFAULT_PAGE_SIZE}, max {MAX_PAGE_SIZE}.
             </span>
           </div>
           {formError ? (
@@ -253,211 +229,122 @@ function CodexRunsPage() {
         </div>
       ) : null}
 
-      {history ? (
-        <section className="space-y-6">
-          <StatsSection stats={history.stats} />
-          <RunsSection runs={history.runs} />
-        </section>
-      ) : (
-        <section className="rounded-none p-6 text-center text-xs border border-dashed bg-card text-muted-foreground">
-          Enter a repository and issue number to load Codex run history.
-        </section>
-      )}
-    </main>
-  )
-}
-
-function StatsSection({ stats }: { stats: CodexRunStats }) {
-  const failureReasons = Object.entries(stats.failureReasonCounts ?? {})
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 6)
-
-  return (
-    <section className="space-y-3">
-      <header className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">Summary stats</h2>
-        <span className="text-xs text-muted-foreground">Aggregated across visible runs</span>
-      </header>
-      <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
-        <StatCard label="Completion rate" value={formatPercent(stats.completionRate)} />
-        <StatCard label="Avg attempts" value={formatNumber(stats.avgAttemptsPerIssue)} />
-        <StatCard label="Avg judge confidence" value={formatPercent(stats.avgJudgeConfidence)} />
-        <StatCard label="Avg CI duration" value={formatDuration(stats.avgCiDurationSeconds)} />
-      </div>
-      <div className="rounded-none p-4 border bg-card">
-        <div className="text-xs font-medium text-muted-foreground">Failure reasons</div>
-        {failureReasons.length === 0 ? (
-          <div className="mt-2 text-xs text-muted-foreground">No failure reasons recorded.</div>
+      <section className="rounded-none border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 text-xs text-muted-foreground">
+          <span>{rangeLabel}</span>
+          <span>{pageLabel}</span>
+        </div>
+        {runs.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-xs">
+              <thead className="bg-muted/40 text-muted-foreground">
+                <tr className="border-b">
+                  <th className="px-3 py-2 text-left font-medium">Issue</th>
+                  <th className="px-3 py-2 text-left font-medium">Repository</th>
+                  <th className="px-3 py-2 text-left font-medium">Attempt</th>
+                  <th className="px-3 py-2 text-left font-medium">Status</th>
+                  <th className="px-3 py-2 text-left font-medium">Stage / Phase</th>
+                  <th className="px-3 py-2 text-left font-medium">Workflow</th>
+                  <th className="px-3 py-2 text-left font-medium">Branch</th>
+                  <th className="px-3 py-2 text-left font-medium">PR</th>
+                  <th className="px-3 py-2 text-left font-medium">CI</th>
+                  <th className="px-3 py-2 text-left font-medium">Review</th>
+                  <th className="px-3 py-2 text-left font-medium">Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.map((run) => (
+                  <tr key={run.id} className="border-b last:border-0">
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <Link
+                        to="/codex/search"
+                        search={{
+                          repository: run.repository,
+                          issueNumber: run.issueNumber,
+                          branch: '',
+                          limit: DEFAULT_SEARCH_LIMIT,
+                        }}
+                        className="text-primary hover:underline"
+                      >
+                        #{run.issueNumber}
+                      </Link>
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.repository}</td>
+                    <td className="px-3 py-2 whitespace-nowrap tabular-nums">#{run.attempt}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <StatusPill value={run.status} />
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                      {run.stage ?? '—'} / {run.phase ?? '—'}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <div className="text-foreground">{run.workflowName}</div>
+                      {run.workflowNamespace ? (
+                        <div className="text-muted-foreground">{run.workflowNamespace}</div>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.branch}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {run.prUrl ? (
+                        <ExternalLink href={run.prUrl}>PR #{run.prNumber ?? '—'}</ExternalLink>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.ciStatus ?? '—'}</td>
+                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.reviewStatus ?? '—'}</td>
+                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                      {formatDateTime(run.createdAt)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
-          <ul className="mt-2 space-y-1 text-xs">
-            {failureReasons.map(([reason, count]) => (
-              <li key={reason} className="flex items-center justify-between gap-2">
-                <span className="text-foreground">{reason}</span>
-                <span className="tabular-nums text-muted-foreground">{count}</span>
-              </li>
-            ))}
-          </ul>
+          <div className="p-6 text-center text-xs text-muted-foreground">No runs loaded yet.</div>
         )}
-      </div>
-    </section>
-  )
-}
-
-function StatCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-none p-4 border bg-card">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="text-lg font-semibold tabular-nums">{value}</div>
-    </div>
-  )
-}
-
-function RunsSection({ runs }: { runs: CodexRunHistoryEntry[] }) {
-  return (
-    <section className="space-y-3">
-      <header className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">Runs</h2>
-        <span className="text-xs text-muted-foreground">Ordered by attempt</span>
-      </header>
-      {runs.length === 0 ? (
-        <div className="rounded-none p-6 text-center text-xs border bg-card text-muted-foreground">
-          No runs found for this issue.
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {runs.map((entry) => (
-            <RunCard key={entry.run.id} entry={entry} />
-          ))}
-        </div>
-      )}
-    </section>
-  )
-}
-
-function RunCard({ entry }: { entry: CodexRunHistoryEntry }) {
-  const { run, artifacts, evaluation } = entry
-
-  return (
-    <article className="rounded-none p-4 border bg-card">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-muted-foreground">Attempt</span>
-            <span className="text-sm font-semibold tabular-nums">#{run.attempt}</span>
-            <StatusPill value={run.status} />
-            {run.phase ? <StatusPill value={run.phase} tone="muted" /> : null}
-            {run.stage ? <StatusPill value={run.stage} tone="muted" /> : null}
+        {totalPages > 1 ? (
+          <div className="border-t px-3 py-2">
+            <Pagination>
+              <PaginationContent>
+                <PaginationItem>
+                  <PaginationPrevious
+                    aria-disabled={isFirstPage}
+                    className={isFirstPage ? 'pointer-events-none opacity-50' : undefined}
+                    onClick={() => {
+                      if (isFirstPage) return
+                      goToPage(Math.max(1, clampedPage - 1))
+                    }}
+                  />
+                </PaginationItem>
+              </PaginationContent>
+              <PaginationContent>
+                {pageNumbers.map((page) => (
+                  <PaginationItem key={page}>
+                    <PaginationLink isActive={page === clampedPage} onClick={() => goToPage(page)}>
+                      {page}
+                    </PaginationLink>
+                  </PaginationItem>
+                ))}
+              </PaginationContent>
+              <PaginationContent>
+                <PaginationItem>
+                  <PaginationNext
+                    aria-disabled={isLastPage}
+                    className={isLastPage ? 'pointer-events-none opacity-50' : undefined}
+                    onClick={() => {
+                      if (isLastPage) return
+                      goToPage(Math.min(totalPages, clampedPage + 1))
+                    }}
+                  />
+                </PaginationItem>
+              </PaginationContent>
+            </Pagination>
           </div>
-          <div className="text-xs text-muted-foreground">
-            Workflow <span className="text-foreground">{run.workflowName}</span>
-            {run.workflowNamespace ? <span className="text-muted-foreground"> / {run.workflowNamespace}</span> : null}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            Branch <span className="text-foreground">{run.branch}</span>
-          </div>
-        </div>
-        <div className="space-y-1 text-xs text-muted-foreground">
-          <div>
-            Created <span className="tabular-nums">{formatDateTime(run.createdAt)}</span>
-          </div>
-          <div>
-            Started <span className="tabular-nums">{formatDateTime(run.startedAt)}</span>
-          </div>
-          <div>
-            Finished <span className="tabular-nums">{formatDateTime(run.finishedAt)}</span>
-          </div>
-        </div>
-      </header>
-
-      <div className="grid lg:grid-cols-2 mt-4 gap-4">
-        <div className="space-y-3">
-          <DetailBlock label="CI status">
-            <div className="font-medium text-foreground">{run.ciStatus ?? '—'}</div>
-            {run.ciUrl ? (
-              <ExternalLink href={run.ciUrl}>Open CI</ExternalLink>
-            ) : (
-              <div className="text-muted-foreground">No CI link provided.</div>
-            )}
-            {run.ciStatusUpdatedAt ? (
-              <div className="text-muted-foreground">Updated {formatDateTime(run.ciStatusUpdatedAt)}</div>
-            ) : null}
-          </DetailBlock>
-
-          <DetailBlock label="Review status">
-            <div className="font-medium text-foreground">{run.reviewStatus ?? '—'}</div>
-            <div className="text-muted-foreground">{formatReviewSummary(run.reviewSummary)}</div>
-            {run.reviewStatusUpdatedAt ? (
-              <div className="text-muted-foreground">Updated {formatDateTime(run.reviewStatusUpdatedAt)}</div>
-            ) : null}
-          </DetailBlock>
-
-          <DetailBlock label="PR / commit">
-            {run.prUrl ? (
-              <ExternalLink href={run.prUrl}>PR #{run.prNumber ?? '—'}</ExternalLink>
-            ) : (
-              <div className="text-muted-foreground">No PR link.</div>
-            )}
-            <div className="text-muted-foreground">Commit {run.commitSha ?? '—'}</div>
-          </DetailBlock>
-        </div>
-
-        <div className="space-y-3">
-          <EvaluationBlock evaluation={evaluation} />
-          <ArtifactsBlock artifacts={artifacts} />
-        </div>
-      </div>
-    </article>
-  )
-}
-
-function EvaluationBlock({ evaluation }: { evaluation: CodexEvaluationRecord | null }) {
-  return (
-    <DetailBlock label="Evaluation">
-      <div className="font-medium text-foreground">{evaluation?.decision ?? '—'}</div>
-      <div className="text-muted-foreground">Confidence {formatPercent(evaluation?.confidence ?? null)}</div>
-      {evaluation?.nextPrompt ? (
-        <div
-          className="rounded-none p-2 text-[11px] border bg-background text-muted-foreground"
-          title={evaluation.nextPrompt}
-        >
-          {truncateText(evaluation.nextPrompt, 240)}
-        </div>
-      ) : (
-        <div className="text-muted-foreground">No next prompt captured.</div>
-      )}
-    </DetailBlock>
-  )
-}
-
-function ArtifactsBlock({ artifacts }: { artifacts: CodexArtifactRecord[] }) {
-  return (
-    <DetailBlock label="Artifacts">
-      {artifacts.length === 0 ? (
-        <div className="text-muted-foreground">No artifacts attached.</div>
-      ) : (
-        <ul className="space-y-1 text-xs">
-          {artifacts.map((artifact) => (
-            <li key={artifact.id} className="flex flex-wrap items-center gap-2">
-              <span className="font-medium text-foreground">{artifact.name || 'artifact'}</span>
-              {artifact.url ? (
-                <ExternalLink href={artifact.url}>Open</ExternalLink>
-              ) : (
-                <span className="text-muted-foreground">{artifact.key}</span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </DetailBlock>
-  )
-}
-
-function DetailBlock({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-1 text-xs">
-      <div className="text-muted-foreground">{label}</div>
-      {children}
-    </div>
+        ) : null}
+      </section>
+    </main>
   )
 }
 
@@ -495,52 +382,4 @@ const formatDateTime = (value: string | null) => {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return dateFormatter.format(date)
-}
-
-const percentFormatter = new Intl.NumberFormat(undefined, { style: 'percent', maximumFractionDigits: 1 })
-const numberFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 })
-
-const formatPercent = (value: number | null) => {
-  if (value == null || !Number.isFinite(value)) return '—'
-  return percentFormatter.format(value)
-}
-
-const formatNumber = (value: number | null) => {
-  if (value == null || !Number.isFinite(value)) return '—'
-  return numberFormatter.format(value)
-}
-
-const formatDuration = (value: number | null) => {
-  if (value == null || !Number.isFinite(value)) return '—'
-  const rounded = Math.round(value)
-  const hours = Math.floor(rounded / 3600)
-  const minutes = Math.floor((rounded % 3600) / 60)
-  const seconds = rounded % 60
-  const parts = []
-  if (hours > 0) {
-    parts.push(`${hours}h`)
-  }
-  if (minutes > 0 || hours > 0) {
-    parts.push(`${minutes}m`)
-  }
-  parts.push(`${seconds}s`)
-  return parts.join(' ')
-}
-
-const truncateText = (value: string, maxLength: number) => {
-  if (value.length <= maxLength) return value
-  return `${value.slice(0, maxLength)}…`
-}
-
-const formatReviewSummary = (summary: Record<string, unknown>) => {
-  if (!summary || Object.keys(summary).length === 0) {
-    return 'No review summary.'
-  }
-  if (typeof summary.summary === 'string') {
-    return truncateText(summary.summary, 200)
-  }
-  if (typeof summary.message === 'string') {
-    return truncateText(summary.message, 200)
-  }
-  return truncateText(JSON.stringify(summary), 200)
 }

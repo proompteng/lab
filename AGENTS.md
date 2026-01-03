@@ -56,6 +56,7 @@
 - Zinc palette (primary zinc-900/100, secondary zinc-700/300), responsive utilities, no hardcoded widths/heights.
 - Forms: Zod schemas in `schemas/` + `zodResolver`; validate after typing and keep errors inline.
 - Do not edit base shadcn components directly; customize via composition or props.
+- Add new shadcn components via the shadcn CLI; do not hand-create component files.
 
 ## Testing Guidelines
 - Co-locate tests: `*.test.ts(x)`, `*_test.go`, `src/test/kotlin/*Test.kt`, `test/**`, `alchimie_tests/`.
@@ -74,6 +75,9 @@
 ## Merge Guidelines
 - Use squash merges for pull requests.
 - Use `gh pr merge 2202 --squash -R proompteng/lab` (no `--delete-branch`; avoids worktree checkout conflicts).
+
+## CI/CD
+- Wait until all checks are green before reporting that a PR is ready (example: `gh pr checks 2298 --watch -R proompteng/lab`).
 
 ## Generated Artifacts & Safety
 - Do not edit generated directories (`dist/`, `build/`, `_generated`) or lockfiles (`bun.lock`, `bun.lockb`); regenerate via the owning tool.

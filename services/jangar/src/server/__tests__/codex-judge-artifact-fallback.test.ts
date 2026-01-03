@@ -90,6 +90,9 @@ if (!globalState.__codexJudgeStoreMock) {
     listRunsByCommitSha: vi.fn(),
     listRunsByPrNumber: vi.fn(),
     getRunHistory: vi.fn(),
+    listRecentRuns: vi.fn(),
+    listRunsPage: vi.fn(),
+    listIssueSummaries: vi.fn(),
     getLatestPromptTuningByIssue: vi.fn(),
     createPromptTuning: vi.fn(),
     close: vi.fn(),
@@ -182,7 +185,7 @@ describe('codex-judge artifact fallback', () => {
     expect(byName.get('implementation-patch')?.key).toBe('workflow-1/workflow-1/.codex-implementation.patch')
     expect(byName.get('implementation-status')?.key).toBe('workflow-1/workflow-1/.codex-implementation-status.txt')
     expect(byName.get('implementation-log')?.key).toBe('workflow-1/workflow-1/.codex-implementation.log')
-    expect(byName.get('implementation-events')?.key).toBe('workflow-1/workflow-1/.codex-implementation-events.jsonl')
+    expect(byName.get('implementation-events')?.key).toBe('workflow-1/workflow-1/.codex/implementation-events.jsonl')
     expect(byName.get('implementation-agent-log')?.key).toBe('workflow-1/workflow-1/.codex-implementation-agent.log')
     expect(byName.get('implementation-runtime-log')?.key).toBe(
       'workflow-1/workflow-1/.codex-implementation-runtime.log',

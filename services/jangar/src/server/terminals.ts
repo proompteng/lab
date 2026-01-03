@@ -29,6 +29,7 @@ const MAIN_FETCH_ENABLED = (process.env.JANGAR_TERMINAL_FETCH_MAIN ?? 'true') !=
 const TMUX_TIMEOUT_MS = 10_000
 const FETCH_TIMEOUT_MS = 30_000
 const WORKTREE_TIMEOUT_MS = 60_000
+const TMUX_UNAVAILABLE_LOG_THROTTLE_MS = 60_000
 const INPUT_FLUSH_MS = 12
 const INPUT_BUFFER_MAX = 2048
 const TMUX_TMPDIR =
@@ -415,6 +416,8 @@ const parseSessionLine = (line: string): TmuxSessionInfo | null => {
   }
 }
 
+let lastTmuxUnavailableLogAt = 0
+
 const listTmuxSessions = async (): Promise<TmuxSessionInfo[]> => {
   const result = await runTmux([
     'list-sessions',
@@ -430,7 +433,11 @@ const listTmuxSessions = async (): Promise<TmuxSessionInfo[]> => {
       stderr.includes('failed to connect') ||
       stderr.includes('no such file or directory')
     ) {
-      console.info('[terminals] tmux server unavailable', { stderr: result.stderr.trim(), socket: TMUX_SOCKET_NAME })
+      const now = Date.now()
+      if (now - lastTmuxUnavailableLogAt > TMUX_UNAVAILABLE_LOG_THROTTLE_MS) {
+        lastTmuxUnavailableLogAt = now
+        console.info('[terminals] tmux server unavailable', { stderr: result.stderr.trim(), socket: TMUX_SOCKET_NAME })
+      }
       return []
     }
     throw new Error(result.stderr.trim() || 'Unable to list tmux sessions')

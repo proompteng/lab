@@ -228,6 +228,25 @@ test.describe('deployed jangar e2e', () => {
     await expect(page.getByRole('heading', { name: 'Terminal sessions', level: 1 })).toBeVisible()
   })
 
+  test('codex search and runs pages render', async ({ page }) => {
+    await page.goto('/codex/search')
+    await expect(page.getByRole('heading', { name: 'Run history', level: 1 })).toBeVisible()
+    await expect(page.getByText('You can type any issue number.')).toBeVisible()
+
+    const issueInput = page.getByRole('combobox', { name: 'Issue number' })
+    await issueInput.click()
+    await issueInput.fill('999999')
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Load runs' }).click()
+    await expect(page).toHaveURL(/\/codex\/search\?/)
+    await expect(issueInput).toHaveValue('999999')
+
+    await page.goto('/codex/runs')
+    await expect(page.getByRole('heading', { name: 'All runs', level: 1 })).toBeVisible()
+    await expect(page.getByRole('columnheader', { name: 'Issue' })).toBeVisible()
+    await expect(page.getByLabel('Rows per page')).toBeVisible()
+  })
+
   test('torghut visuals render overlays and signals', async ({ page, request }) => {
     test.setTimeout(120_000)
 
@@ -474,7 +493,9 @@ test.describe('deployed jangar e2e', () => {
     const closedRow = page.locator(`[data-session-id="${sessionId}"]`)
     await expect(closedRow).toBeVisible()
     await closedRow.getByRole('button', { name: 'Delete' }).click()
-    const dialog = page.getByRole('dialog', { name: 'Delete terminal session?' })
+    const dialog = page
+      .getByRole('alertdialog', { name: 'Delete terminal session?' })
+      .or(page.getByRole('dialog', { name: 'Delete terminal session?' }))
     await expect(dialog).toBeVisible()
     await dialog.getByRole('button', { name: 'Delete' }).click()
     await expect(closedRow).toHaveCount(0)

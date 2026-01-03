@@ -19,6 +19,7 @@ import { Route as AgentsIndexRouteImport } from './routes/agents/index'
 import { Route as TorghutVisualsRouteImport } from './routes/torghut/visuals'
 import { Route as TorghutSymbolsRouteImport } from './routes/torghut/symbols'
 import { Route as TerminalsSessionIdRouteImport } from './routes/terminals/$sessionId'
+import { Route as CodexSearchRouteImport } from './routes/codex/search'
 import { Route as CodexRunsRouteImport } from './routes/codex/runs'
 import { Route as AtlasSearchRouteImport } from './routes/atlas/search'
 import { Route as AtlasIndexedRouteImport } from './routes/atlas/indexed'
@@ -37,6 +38,7 @@ import { Route as ApiTerminalsSessionIdRouteImport } from './routes/api/terminal
 import { Route as ApiCodexRunsRouteImport } from './routes/api/codex/runs'
 import { Route as ApiCodexRunCompleteRouteImport } from './routes/api/codex/run-complete'
 import { Route as ApiCodexNotifyRouteImport } from './routes/api/codex/notify'
+import { Route as ApiCodexIssuesRouteImport } from './routes/api/codex/issues'
 import { Route as ApiCodexGithubEventsRouteImport } from './routes/api/codex/github-events'
 import { Route as ApiAtlasPathsRouteImport } from './routes/api/atlas/paths'
 import { Route as ApiAtlasIndexedRouteImport } from './routes/api/atlas/indexed'
@@ -48,12 +50,14 @@ import { Route as ApiTorghutTaSignalsRouteImport } from './routes/api/torghut/ta
 import { Route as ApiTorghutTaLatestRouteImport } from './routes/api/torghut/ta/latest'
 import { Route as ApiTorghutTaBarsRouteImport } from './routes/api/torghut/ta/bars'
 import { Route as ApiTorghutSymbolsSymbolRouteImport } from './routes/api/torghut/symbols/$symbol'
-import { Route as ApiTerminalsSessionIdStreamRouteImport } from './routes/api/terminals/$sessionId/stream'
 import { Route as ApiTerminalsSessionIdWsRouteImport } from './routes/api/terminals/$sessionId/ws'
+import { Route as ApiTerminalsSessionIdTerminateRouteImport } from './routes/api/terminals/$sessionId/terminate'
+import { Route as ApiTerminalsSessionIdStreamRouteImport } from './routes/api/terminals/$sessionId/stream'
 import { Route as ApiTerminalsSessionIdResizeRouteImport } from './routes/api/terminals/$sessionId/resize'
 import { Route as ApiTerminalsSessionIdInputRouteImport } from './routes/api/terminals/$sessionId/input'
-import { Route as ApiTerminalsSessionIdTerminateRouteImport } from './routes/api/terminals/$sessionId/terminate'
 import { Route as ApiTerminalsSessionIdDeleteRouteImport } from './routes/api/terminals/$sessionId/delete'
+import { Route as ApiCodexRunsRecentRouteImport } from './routes/api/codex/runs/recent'
+import { Route as ApiCodexRunsListRouteImport } from './routes/api/codex/runs/list'
 
 const MemoriesRoute = MemoriesRouteImport.update({
   id: '/memories',
@@ -103,6 +107,11 @@ const TorghutSymbolsRoute = TorghutSymbolsRouteImport.update({
 const TerminalsSessionIdRoute = TerminalsSessionIdRouteImport.update({
   id: '/terminals/$sessionId',
   path: '/terminals/$sessionId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CodexSearchRoute = CodexSearchRouteImport.update({
+  id: '/codex/search',
+  path: '/codex/search',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CodexRunsRoute = CodexRunsRouteImport.update({
@@ -195,6 +204,11 @@ const ApiCodexNotifyRoute = ApiCodexNotifyRouteImport.update({
   path: '/api/codex/notify',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCodexIssuesRoute = ApiCodexIssuesRouteImport.update({
+  id: '/api/codex/issues',
+  path: '/api/codex/issues',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiCodexGithubEventsRoute = ApiCodexGithubEventsRouteImport.update({
   id: '/api/codex/github-events',
   path: '/api/codex/github-events',
@@ -250,16 +264,21 @@ const ApiTorghutSymbolsSymbolRoute = ApiTorghutSymbolsSymbolRouteImport.update({
   path: '/$symbol',
   getParentRoute: () => ApiTorghutSymbolsRoute,
 } as any)
+const ApiTerminalsSessionIdWsRoute = ApiTerminalsSessionIdWsRouteImport.update({
+  id: '/ws',
+  path: '/ws',
+  getParentRoute: () => ApiTerminalsSessionIdRoute,
+} as any)
+const ApiTerminalsSessionIdTerminateRoute =
+  ApiTerminalsSessionIdTerminateRouteImport.update({
+    id: '/terminate',
+    path: '/terminate',
+    getParentRoute: () => ApiTerminalsSessionIdRoute,
+  } as any)
 const ApiTerminalsSessionIdStreamRoute =
   ApiTerminalsSessionIdStreamRouteImport.update({
     id: '/stream',
     path: '/stream',
-    getParentRoute: () => ApiTerminalsSessionIdRoute,
-  } as any)
-const ApiTerminalsSessionIdWsRoute =
-  ApiTerminalsSessionIdWsRouteImport.update({
-    id: '/ws',
-    path: '/ws',
     getParentRoute: () => ApiTerminalsSessionIdRoute,
   } as any)
 const ApiTerminalsSessionIdResizeRoute =
@@ -274,18 +293,22 @@ const ApiTerminalsSessionIdInputRoute =
     path: '/input',
     getParentRoute: () => ApiTerminalsSessionIdRoute,
   } as any)
-const ApiTerminalsSessionIdTerminateRoute =
-  ApiTerminalsSessionIdTerminateRouteImport.update({
-    id: '/terminate',
-    path: '/terminate',
-    getParentRoute: () => ApiTerminalsSessionIdRoute,
-  } as any)
 const ApiTerminalsSessionIdDeleteRoute =
   ApiTerminalsSessionIdDeleteRouteImport.update({
     id: '/delete',
     path: '/delete',
     getParentRoute: () => ApiTerminalsSessionIdRoute,
   } as any)
+const ApiCodexRunsRecentRoute = ApiCodexRunsRecentRouteImport.update({
+  id: '/recent',
+  path: '/recent',
+  getParentRoute: () => ApiCodexRunsRoute,
+} as any)
+const ApiCodexRunsListRoute = ApiCodexRunsListRouteImport.update({
+  id: '/list',
+  path: '/list',
+  getParentRoute: () => ApiCodexRunsRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -304,6 +327,7 @@ export interface FileRoutesByFullPath {
   '/atlas/indexed': typeof AtlasIndexedRoute
   '/atlas/search': typeof AtlasSearchRoute
   '/codex/runs': typeof CodexRunsRoute
+  '/codex/search': typeof CodexSearchRoute
   '/terminals/$sessionId': typeof TerminalsSessionIdRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
@@ -316,17 +340,20 @@ export interface FileRoutesByFullPath {
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/codex/github-events': typeof ApiCodexGithubEventsRoute
+  '/api/codex/issues': typeof ApiCodexIssuesRoute
   '/api/codex/notify': typeof ApiCodexNotifyRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
-  '/api/codex/runs': typeof ApiCodexRunsRoute
+  '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
-  '/api/terminals/$sessionId/input': typeof ApiTerminalsSessionIdInputRoute
+  '/api/codex/runs/list': typeof ApiCodexRunsListRoute
+  '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
-  '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
+  '/api/terminals/$sessionId/input': typeof ApiTerminalsSessionIdInputRoute
   '/api/terminals/$sessionId/resize': typeof ApiTerminalsSessionIdResizeRoute
   '/api/terminals/$sessionId/stream': typeof ApiTerminalsSessionIdStreamRoute
+  '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
   '/api/terminals/$sessionId/ws': typeof ApiTerminalsSessionIdWsRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
@@ -351,6 +378,7 @@ export interface FileRoutesByTo {
   '/atlas/indexed': typeof AtlasIndexedRoute
   '/atlas/search': typeof AtlasSearchRoute
   '/codex/runs': typeof CodexRunsRoute
+  '/codex/search': typeof CodexSearchRoute
   '/terminals/$sessionId': typeof TerminalsSessionIdRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
@@ -363,17 +391,20 @@ export interface FileRoutesByTo {
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/codex/github-events': typeof ApiCodexGithubEventsRoute
+  '/api/codex/issues': typeof ApiCodexIssuesRoute
   '/api/codex/notify': typeof ApiCodexNotifyRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
-  '/api/codex/runs': typeof ApiCodexRunsRoute
+  '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
-  '/api/terminals/$sessionId/input': typeof ApiTerminalsSessionIdInputRoute
+  '/api/codex/runs/list': typeof ApiCodexRunsListRoute
+  '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
-  '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
+  '/api/terminals/$sessionId/input': typeof ApiTerminalsSessionIdInputRoute
   '/api/terminals/$sessionId/resize': typeof ApiTerminalsSessionIdResizeRoute
   '/api/terminals/$sessionId/stream': typeof ApiTerminalsSessionIdStreamRoute
+  '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
   '/api/terminals/$sessionId/ws': typeof ApiTerminalsSessionIdWsRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
@@ -399,6 +430,7 @@ export interface FileRoutesById {
   '/atlas/indexed': typeof AtlasIndexedRoute
   '/atlas/search': typeof AtlasSearchRoute
   '/codex/runs': typeof CodexRunsRoute
+  '/codex/search': typeof CodexSearchRoute
   '/terminals/$sessionId': typeof TerminalsSessionIdRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
@@ -411,17 +443,20 @@ export interface FileRoutesById {
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/codex/github-events': typeof ApiCodexGithubEventsRoute
+  '/api/codex/issues': typeof ApiCodexIssuesRoute
   '/api/codex/notify': typeof ApiCodexNotifyRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
-  '/api/codex/runs': typeof ApiCodexRunsRoute
+  '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
-  '/api/terminals/$sessionId/input': typeof ApiTerminalsSessionIdInputRoute
+  '/api/codex/runs/list': typeof ApiCodexRunsListRoute
+  '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
-  '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
+  '/api/terminals/$sessionId/input': typeof ApiTerminalsSessionIdInputRoute
   '/api/terminals/$sessionId/resize': typeof ApiTerminalsSessionIdResizeRoute
   '/api/terminals/$sessionId/stream': typeof ApiTerminalsSessionIdStreamRoute
+  '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
   '/api/terminals/$sessionId/ws': typeof ApiTerminalsSessionIdWsRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
@@ -448,6 +483,7 @@ export interface FileRouteTypes {
     | '/atlas/indexed'
     | '/atlas/search'
     | '/codex/runs'
+    | '/codex/search'
     | '/terminals/$sessionId'
     | '/torghut/symbols'
     | '/torghut/visuals'
@@ -460,17 +496,20 @@ export interface FileRouteTypes {
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/codex/github-events'
+    | '/api/codex/issues'
     | '/api/codex/notify'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
-    | '/api/terminals/$sessionId/input'
+    | '/api/codex/runs/list'
+    | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
-    | '/api/terminals/$sessionId/terminate'
+    | '/api/terminals/$sessionId/input'
     | '/api/terminals/$sessionId/resize'
     | '/api/terminals/$sessionId/stream'
+    | '/api/terminals/$sessionId/terminate'
     | '/api/terminals/$sessionId/ws'
     | '/api/torghut/symbols/$symbol'
     | '/api/torghut/ta/bars'
@@ -495,6 +534,7 @@ export interface FileRouteTypes {
     | '/atlas/indexed'
     | '/atlas/search'
     | '/codex/runs'
+    | '/codex/search'
     | '/terminals/$sessionId'
     | '/torghut/symbols'
     | '/torghut/visuals'
@@ -507,17 +547,20 @@ export interface FileRouteTypes {
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/codex/github-events'
+    | '/api/codex/issues'
     | '/api/codex/notify'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
-    | '/api/terminals/$sessionId/input'
+    | '/api/codex/runs/list'
+    | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
-    | '/api/terminals/$sessionId/terminate'
+    | '/api/terminals/$sessionId/input'
     | '/api/terminals/$sessionId/resize'
     | '/api/terminals/$sessionId/stream'
+    | '/api/terminals/$sessionId/terminate'
     | '/api/terminals/$sessionId/ws'
     | '/api/torghut/symbols/$symbol'
     | '/api/torghut/ta/bars'
@@ -542,6 +585,7 @@ export interface FileRouteTypes {
     | '/atlas/indexed'
     | '/atlas/search'
     | '/codex/runs'
+    | '/codex/search'
     | '/terminals/$sessionId'
     | '/torghut/symbols'
     | '/torghut/visuals'
@@ -554,17 +598,20 @@ export interface FileRouteTypes {
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/codex/github-events'
+    | '/api/codex/issues'
     | '/api/codex/notify'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
-    | '/api/terminals/$sessionId/input'
+    | '/api/codex/runs/list'
+    | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
-    | '/api/terminals/$sessionId/terminate'
+    | '/api/terminals/$sessionId/input'
     | '/api/terminals/$sessionId/resize'
     | '/api/terminals/$sessionId/stream'
+    | '/api/terminals/$sessionId/terminate'
     | '/api/terminals/$sessionId/ws'
     | '/api/torghut/symbols/$symbol'
     | '/api/torghut/ta/bars'
@@ -590,6 +637,7 @@ export interface RootRouteChildren {
   AtlasIndexedRoute: typeof AtlasIndexedRoute
   AtlasSearchRoute: typeof AtlasSearchRoute
   CodexRunsRoute: typeof CodexRunsRoute
+  CodexSearchRoute: typeof CodexSearchRoute
   TerminalsSessionIdRoute: typeof TerminalsSessionIdRoute
   TorghutSymbolsRoute: typeof TorghutSymbolsRoute
   TorghutVisualsRoute: typeof TorghutVisualsRoute
@@ -602,9 +650,10 @@ export interface RootRouteChildren {
   ApiAtlasIndexedRoute: typeof ApiAtlasIndexedRoute
   ApiAtlasPathsRoute: typeof ApiAtlasPathsRoute
   ApiCodexGithubEventsRoute: typeof ApiCodexGithubEventsRoute
+  ApiCodexIssuesRoute: typeof ApiCodexIssuesRoute
   ApiCodexNotifyRoute: typeof ApiCodexNotifyRoute
   ApiCodexRunCompleteRoute: typeof ApiCodexRunCompleteRoute
-  ApiCodexRunsRoute: typeof ApiCodexRunsRoute
+  ApiCodexRunsRoute: typeof ApiCodexRunsRouteWithChildren
   ApiTorghutSymbolsRoute: typeof ApiTorghutSymbolsRouteWithChildren
   OpenaiV1ModelsRoute: typeof OpenaiV1ModelsRoute
   ApiTorghutTaBarsRoute: typeof ApiTorghutTaBarsRoute
@@ -683,6 +732,13 @@ declare module '@tanstack/react-router' {
       path: '/terminals/$sessionId'
       fullPath: '/terminals/$sessionId'
       preLoaderRoute: typeof TerminalsSessionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/codex/search': {
+      id: '/codex/search'
+      path: '/codex/search'
+      fullPath: '/codex/search'
+      preLoaderRoute: typeof CodexSearchRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/codex/runs': {
@@ -811,6 +867,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCodexNotifyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/codex/issues': {
+      id: '/api/codex/issues'
+      path: '/api/codex/issues'
+      fullPath: '/api/codex/issues'
+      preLoaderRoute: typeof ApiCodexIssuesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/codex/github-events': {
       id: '/api/codex/github-events'
       path: '/api/codex/github-events'
@@ -888,18 +951,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTorghutSymbolsSymbolRouteImport
       parentRoute: typeof ApiTorghutSymbolsRoute
     }
-    '/api/terminals/$sessionId/stream': {
-      id: '/api/terminals/$sessionId/stream'
-      path: '/stream'
-      fullPath: '/api/terminals/$sessionId/stream'
-      preLoaderRoute: typeof ApiTerminalsSessionIdStreamRouteImport
-      parentRoute: typeof ApiTerminalsSessionIdRoute
-    }
     '/api/terminals/$sessionId/ws': {
       id: '/api/terminals/$sessionId/ws'
       path: '/ws'
       fullPath: '/api/terminals/$sessionId/ws'
       preLoaderRoute: typeof ApiTerminalsSessionIdWsRouteImport
+      parentRoute: typeof ApiTerminalsSessionIdRoute
+    }
+    '/api/terminals/$sessionId/terminate': {
+      id: '/api/terminals/$sessionId/terminate'
+      path: '/terminate'
+      fullPath: '/api/terminals/$sessionId/terminate'
+      preLoaderRoute: typeof ApiTerminalsSessionIdTerminateRouteImport
+      parentRoute: typeof ApiTerminalsSessionIdRoute
+    }
+    '/api/terminals/$sessionId/stream': {
+      id: '/api/terminals/$sessionId/stream'
+      path: '/stream'
+      fullPath: '/api/terminals/$sessionId/stream'
+      preLoaderRoute: typeof ApiTerminalsSessionIdStreamRouteImport
       parentRoute: typeof ApiTerminalsSessionIdRoute
     }
     '/api/terminals/$sessionId/resize': {
@@ -923,31 +993,38 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTerminalsSessionIdDeleteRouteImport
       parentRoute: typeof ApiTerminalsSessionIdRoute
     }
-    '/api/terminals/$sessionId/terminate': {
-      id: '/api/terminals/$sessionId/terminate'
-      path: '/terminate'
-      fullPath: '/api/terminals/$sessionId/terminate'
-      preLoaderRoute: typeof ApiTerminalsSessionIdTerminateRouteImport
-      parentRoute: typeof ApiTerminalsSessionIdRoute
+    '/api/codex/runs/recent': {
+      id: '/api/codex/runs/recent'
+      path: '/recent'
+      fullPath: '/api/codex/runs/recent'
+      preLoaderRoute: typeof ApiCodexRunsRecentRouteImport
+      parentRoute: typeof ApiCodexRunsRoute
+    }
+    '/api/codex/runs/list': {
+      id: '/api/codex/runs/list'
+      path: '/list'
+      fullPath: '/api/codex/runs/list'
+      preLoaderRoute: typeof ApiCodexRunsListRouteImport
+      parentRoute: typeof ApiCodexRunsRoute
     }
   }
 }
 
 interface ApiTerminalsSessionIdRouteChildren {
-  ApiTerminalsSessionIdInputRoute: typeof ApiTerminalsSessionIdInputRoute
   ApiTerminalsSessionIdDeleteRoute: typeof ApiTerminalsSessionIdDeleteRoute
-  ApiTerminalsSessionIdTerminateRoute: typeof ApiTerminalsSessionIdTerminateRoute
+  ApiTerminalsSessionIdInputRoute: typeof ApiTerminalsSessionIdInputRoute
   ApiTerminalsSessionIdResizeRoute: typeof ApiTerminalsSessionIdResizeRoute
   ApiTerminalsSessionIdStreamRoute: typeof ApiTerminalsSessionIdStreamRoute
+  ApiTerminalsSessionIdTerminateRoute: typeof ApiTerminalsSessionIdTerminateRoute
   ApiTerminalsSessionIdWsRoute: typeof ApiTerminalsSessionIdWsRoute
 }
 
 const ApiTerminalsSessionIdRouteChildren: ApiTerminalsSessionIdRouteChildren = {
-  ApiTerminalsSessionIdInputRoute: ApiTerminalsSessionIdInputRoute,
   ApiTerminalsSessionIdDeleteRoute: ApiTerminalsSessionIdDeleteRoute,
-  ApiTerminalsSessionIdTerminateRoute: ApiTerminalsSessionIdTerminateRoute,
+  ApiTerminalsSessionIdInputRoute: ApiTerminalsSessionIdInputRoute,
   ApiTerminalsSessionIdResizeRoute: ApiTerminalsSessionIdResizeRoute,
   ApiTerminalsSessionIdStreamRoute: ApiTerminalsSessionIdStreamRoute,
+  ApiTerminalsSessionIdTerminateRoute: ApiTerminalsSessionIdTerminateRoute,
   ApiTerminalsSessionIdWsRoute: ApiTerminalsSessionIdWsRoute,
 }
 
@@ -966,6 +1043,20 @@ const ApiTerminalsRouteChildren: ApiTerminalsRouteChildren = {
 
 const ApiTerminalsRouteWithChildren = ApiTerminalsRoute._addFileChildren(
   ApiTerminalsRouteChildren,
+)
+
+interface ApiCodexRunsRouteChildren {
+  ApiCodexRunsListRoute: typeof ApiCodexRunsListRoute
+  ApiCodexRunsRecentRoute: typeof ApiCodexRunsRecentRoute
+}
+
+const ApiCodexRunsRouteChildren: ApiCodexRunsRouteChildren = {
+  ApiCodexRunsListRoute: ApiCodexRunsListRoute,
+  ApiCodexRunsRecentRoute: ApiCodexRunsRecentRoute,
+}
+
+const ApiCodexRunsRouteWithChildren = ApiCodexRunsRoute._addFileChildren(
+  ApiCodexRunsRouteChildren,
 )
 
 interface ApiTorghutSymbolsRouteChildren {
@@ -996,6 +1087,7 @@ const rootRouteChildren: RootRouteChildren = {
   AtlasIndexedRoute: AtlasIndexedRoute,
   AtlasSearchRoute: AtlasSearchRoute,
   CodexRunsRoute: CodexRunsRoute,
+  CodexSearchRoute: CodexSearchRoute,
   TerminalsSessionIdRoute: TerminalsSessionIdRoute,
   TorghutSymbolsRoute: TorghutSymbolsRoute,
   TorghutVisualsRoute: TorghutVisualsRoute,
@@ -1008,9 +1100,10 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAtlasIndexedRoute: ApiAtlasIndexedRoute,
   ApiAtlasPathsRoute: ApiAtlasPathsRoute,
   ApiCodexGithubEventsRoute: ApiCodexGithubEventsRoute,
+  ApiCodexIssuesRoute: ApiCodexIssuesRoute,
   ApiCodexNotifyRoute: ApiCodexNotifyRoute,
   ApiCodexRunCompleteRoute: ApiCodexRunCompleteRoute,
-  ApiCodexRunsRoute: ApiCodexRunsRoute,
+  ApiCodexRunsRoute: ApiCodexRunsRouteWithChildren,
   ApiTorghutSymbolsRoute: ApiTorghutSymbolsRouteWithChildren,
   OpenaiV1ModelsRoute: OpenaiV1ModelsRoute,
   ApiTorghutTaBarsRoute: ApiTorghutTaBarsRoute,
