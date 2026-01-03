@@ -69,8 +69,9 @@ Notes:
 ```
 
 ## ClickHouse storage contract
-The authoritative ClickHouse table for TA signals uses the envelope fields:
-- `event_ts`, `ingest_ts`, `symbol`, `window`, `payload`, `seq`, `source`
+The authoritative ClickHouse table for TA signals is currently **flattened** and stores envelope fields
+as columns (no nested `payload` column):
+- `event_ts`, `ingest_ts`, `symbol`, `window_size`, `window_step`, `seq`, `source`, plus flattened indicator columns.
 
 Trading ingestion schema selection:
 - `TRADING_SIGNAL_SCHEMA=auto` (default): inspect ClickHouse columns and choose
@@ -83,9 +84,9 @@ Trading ingestion schema selection:
   `rsi14`, plus optional `ema`, `vwap`, `signal_json`, `timeframe`, `price`,
   `close`, `spread`.
 
-Prefer creating a view that aliases the envelope table to flat columns if you
-have older consumers or dashboards. This keeps storage in the envelope schema
-while supporting flat readers.
+Prefer creating a view that aliases the flattened table to an envelope shape if you
+need legacy envelope consumers. This keeps storage in the current flat schema
+while supporting envelope readers.
 
 ## Avro subject naming
 - Use TopicNameStrategy (default) or per-topic subject: `<topic>-value`.
@@ -132,6 +133,6 @@ spec:
 ```
 
 ## Sizing & retention notes
-- Signals 14d covers operational replay while keeping storage modest.
+- Signals 30d covers operational replay while keeping storage modest.
 - Bars 30d allows backtests and recalibration of indicators.
 - Status topics may use compaction + short retention for concise health history.

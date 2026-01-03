@@ -57,6 +57,7 @@ class SignalBatch:
     signals: list[SignalEnvelope]
     cursor_at: Optional[datetime]
     cursor_seq: Optional[int]
+    cursor_symbol: Optional[str]
 
 
 class ClickHouseSignalIngestor:
@@ -85,18 +86,19 @@ class ClickHouseSignalIngestor:
     def fetch_signals(self, session: Session) -> "SignalBatch":
         if not self.url:
             logger.warning("ClickHouse URL missing; skipping signal ingestion")
-            return SignalBatch(signals=[], cursor_at=None, cursor_seq=None)
+            return SignalBatch(signals=[], cursor_at=None, cursor_seq=None, cursor_symbol=None)
 
-        cursor_at, cursor_seq = self._get_cursor(session)
+        cursor_at, cursor_seq, cursor_symbol = self._get_cursor(session)
         time_column = self._resolve_time_column()
         supports_seq = self._supports_seq_for_time_column(time_column)
         overlap_cutoff = cursor_at if time_column == "ts" and not supports_seq else None
-        query = self._build_query(cursor_at, cursor_seq)
+        query = self._build_query(cursor_at, cursor_seq, cursor_symbol)
         rows = self._query_clickhouse(query)
         signals: list[SignalEnvelope] = []
 
         max_event_ts: Optional[datetime] = None
         max_seq: Optional[int] = None
+        max_symbol: Optional[str] = None
         for row in rows:
             signal = self.parse_row(row)
             if signal is None:
@@ -108,17 +110,29 @@ class ClickHouseSignalIngestor:
             if max_event_ts is None or signal.event_ts > max_event_ts:
                 max_event_ts = signal.event_ts
                 max_seq = _coerce_seq(signal.seq)
+                max_symbol = signal.symbol
             elif signal.event_ts == max_event_ts:
                 candidate_seq = _coerce_seq(signal.seq)
-                if candidate_seq is not None and (max_seq is None or candidate_seq > max_seq):
+                if candidate_seq is None:
+                    candidate_seq = max_seq
+                if max_seq is None or (candidate_seq is not None and candidate_seq > max_seq):
                     max_seq = candidate_seq
+                    max_symbol = signal.symbol
+                elif candidate_seq == max_seq:
+                    if max_symbol is None or signal.symbol > max_symbol:
+                        max_symbol = signal.symbol
 
-        return SignalBatch(signals=signals, cursor_at=max_event_ts, cursor_seq=max_seq)
+        return SignalBatch(
+            signals=signals,
+            cursor_at=max_event_ts,
+            cursor_seq=max_seq,
+            cursor_symbol=max_symbol,
+        )
 
     def commit_cursor(self, session: Session, batch: "SignalBatch") -> None:
         if batch.cursor_at is None:
             return
-        self._set_cursor(session, batch.cursor_at, batch.cursor_seq)
+        self._set_cursor(session, batch.cursor_at, batch.cursor_seq, batch.cursor_symbol)
 
     def parse_row(self, row: dict[str, Any]) -> Optional[SignalEnvelope]:
         event_ts = _parse_ts(row.get("event_ts")) or _parse_ts(row.get("ts")) or _parse_ts(row.get("timestamp"))
@@ -142,7 +156,9 @@ class ClickHouseSignalIngestor:
             logger.warning("Skipping invalid signal row: %s", exc)
             return None
 
-    def _build_query(self, cursor_at: datetime, cursor_seq: Optional[int]) -> str:
+    def _build_query(
+        self, cursor_at: datetime, cursor_seq: Optional[int], cursor_symbol: Optional[str]
+    ) -> str:
         cursor_expr = to_datetime64(cursor_at)
         limit = self.batch_size
         time_column = self._resolve_time_column()
@@ -151,15 +167,28 @@ class ClickHouseSignalIngestor:
         where_clause = f"{time_column} > {cursor_expr}"
         order_clause = f"{time_column} ASC"
         if supports_seq:
-            order_clause = f"{time_column} ASC, seq ASC"
-            if cursor_seq is not None:
+            order_clause = f"{time_column} ASC, symbol ASC, seq ASC"
+            if cursor_seq is not None or cursor_symbol is not None:
+                symbol_clause = ""
+                if cursor_symbol is not None:
+                    symbol_literal = _quote_literal(cursor_symbol)
+                    if cursor_seq is not None:
+                        symbol_clause = (
+                            f"(symbol > {symbol_literal} OR "
+                            f"(symbol = {symbol_literal} AND seq > {cursor_seq}))"
+                        )
+                    else:
+                        symbol_clause = f"symbol > {symbol_literal}"
+                else:
+                    symbol_clause = f"seq > {cursor_seq}"
                 where_clause = (
                     f"({time_column} > {cursor_expr} OR "
-                    f"({time_column} = {cursor_expr} AND seq > {cursor_seq}))"
+                    f"({time_column} = {cursor_expr} AND {symbol_clause}))"
                 )
         elif time_column == "ts":
             overlap_cursor = cursor_at - FLAT_CURSOR_OVERLAP
             where_clause = f"{time_column} >= {to_datetime64(overlap_cursor)}"
+            order_clause = f"{time_column} ASC, symbol ASC"
         return (
             f"SELECT {select_expr} "
             f"FROM {self.table} "
@@ -302,24 +331,36 @@ class ClickHouseSignalIngestor:
             self._time_column = "event_ts"
         return self._time_column
 
-    def _get_cursor(self, session: Session) -> tuple[datetime, Optional[int]]:
+    def _get_cursor(self, session: Session) -> tuple[datetime, Optional[int], Optional[str]]:
         stmt = select(TradeCursor).where(TradeCursor.source == "clickhouse")
         cursor_row = session.execute(stmt).scalar_one_or_none()
         if cursor_row:
-            return cursor_row.cursor_at, cursor_row.cursor_seq
+            return cursor_row.cursor_at, cursor_row.cursor_seq, cursor_row.cursor_symbol
 
         lookback = timedelta(minutes=self.initial_lookback_minutes)
-        return datetime.now(timezone.utc) - lookback, None
+        return datetime.now(timezone.utc) - lookback, None, None
 
-    def _set_cursor(self, session: Session, cursor_at: datetime, cursor_seq: Optional[int]) -> None:
+    def _set_cursor(
+        self,
+        session: Session,
+        cursor_at: datetime,
+        cursor_seq: Optional[int],
+        cursor_symbol: Optional[str],
+    ) -> None:
         stmt = select(TradeCursor).where(TradeCursor.source == "clickhouse")
         cursor_row = session.execute(stmt).scalar_one_or_none()
         if cursor_row:
             cursor_row.cursor_at = cursor_at
             cursor_row.cursor_seq = cursor_seq
+            cursor_row.cursor_symbol = cursor_symbol
             session.add(cursor_row)
         else:
-            cursor_row = TradeCursor(source="clickhouse", cursor_at=cursor_at, cursor_seq=cursor_seq)
+            cursor_row = TradeCursor(
+                source="clickhouse",
+                cursor_at=cursor_at,
+                cursor_seq=cursor_seq,
+                cursor_symbol=cursor_symbol,
+            )
             session.add(cursor_row)
         session.commit()
 
@@ -480,6 +521,11 @@ def _coerce_seq(value: Any) -> Optional[int]:
         except ValueError:
             return None
     return None
+
+
+def _quote_literal(value: str) -> str:
+    escaped = value.replace("'", "''")
+    return f"'{escaped}'"
 
 
 def _select_columns(columns: set[str], time_column: str) -> list[str]:

@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2026-01-03T07:54:48.777Z"
+    deploy.knative.dev/rollout: "2026-01-03T07:47:21.997Z"
 spec:
   replicas: 1
   strategy:
@@ -92,16 +92,6 @@ spec:
               value: "true"
             - name: JANGAR_GITHUB_MIN_REQUEST_SPACING_MS
               value: "1000"
-            - name: JANGAR_GITHUB_REPOS_ALLOWED
-              value: proompteng/lab
-            - name: JANGAR_GITHUB_REVIEWS_WRITE
-              value: "false"
-            - name: JANGAR_GITHUB_MERGE_WRITE
-              value: "false"
-            - name: JANGAR_GITHUB_MERGE_FORCE
-              value: "false"
-            - name: JANGAR_GITHUB_FILES_BACKFILL_ENABLED
-              value: "false"
             - name: JANGAR_CI_MAX_WAIT_MS
               value: "3600000"
             - name: JANGAR_REVIEW_MAX_WAIT_MS

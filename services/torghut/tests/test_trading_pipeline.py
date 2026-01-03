@@ -34,7 +34,7 @@ class FakeIngestor:
         self.signals = signals
 
     def fetch_signals(self, session: Session) -> SignalBatch:
-        return SignalBatch(signals=self.signals, cursor_at=None, cursor_seq=None)
+        return SignalBatch(signals=self.signals, cursor_at=None, cursor_seq=None, cursor_symbol=None)
 
     def commit_cursor(self, session: Session, batch: SignalBatch) -> None:
         return None

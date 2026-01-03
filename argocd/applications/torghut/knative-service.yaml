@@ -18,13 +18,13 @@ spec:
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
-        client.knative.dev/updateTimestamp: 2026-01-03T02:01:06.169Z
+        client.knative.dev/updateTimestamp: 2026-01-03T07:40:41.333Z
     spec:
       containerConcurrency: 0
       timeoutSeconds: 60
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:7c8d1938600f7f6f9cabcb85342fde59b11ed5404fadb9d5bbe3fa63d6475d76
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:cd01629cbf91029e892dcfa0eac67ee2c0a5bf27b4fd39cf5dfca6b6a93df15e
           imagePullPolicy: Always
           ports:
             - name: http1
@@ -75,9 +75,9 @@ spec:
             - name: TRADING_ENABLED
               value: "true"
             - name: TRADING_MODE
-              value: paper
+              value: live
             - name: TRADING_LIVE_ENABLED
-              value: "false"
+              value: "true"
             - name: TRADING_SIGNAL_SOURCE
               value: clickhouse
             - name: TRADING_SIGNAL_TABLE
@@ -95,7 +95,9 @@ spec:
             - name: TRADING_STRATEGY_RELOAD_SECONDS
               value: "10"
             - name: TRADING_UNIVERSE_SOURCE
-              value: jangar
+              value: static
+            - name: TRADING_STATIC_SYMBOLS
+              value: CRWD,MU,NVDA
             - name: JANGAR_SYMBOLS_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/symbols
             - name: TA_CLICKHOUSE_URL
@@ -107,10 +109,12 @@ spec:
                 secretKeyRef:
                   name: torghut-clickhouse-auth
                   key: torghut_password
+            - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
+              value: "10"
             - name: TORGHUT_VERSION
-              value: v0.390.5-1-g4f8acc4b3
+              value: v0.392.1
             - name: TORGHUT_COMMIT
-              value: 4f8acc4b3faa9b5cfa003c2e270a67f2f18b334e
+              value: 6da6056440372fd386b991d861d0f7146facd6be
           livenessProbe:
             httpGet:
               path: /healthz

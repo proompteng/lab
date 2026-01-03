@@ -191,6 +191,152 @@ type TorghutSymbols = {
   updated_at: Generated<Timestamp>
 }
 
+type JangarGithubEvents = {
+  id: Generated<string>
+  delivery_id: string
+  event_type: string
+  action: string | null
+  repository: string
+  pr_number: number
+  commit_sha: string | null
+  sender_login: string | null
+  payload: JsonValue
+  received_at: Generated<Timestamp>
+  processed_at: Timestamp | null
+}
+
+type JangarGithubPrState = {
+  id: Generated<string>
+  repository: string
+  pr_number: number
+  commit_sha: string | null
+  received_at: Timestamp
+  title: string | null
+  body: string | null
+  state: string | null
+  merged: boolean | null
+  merged_at: Timestamp | null
+  draft: boolean | null
+  author_login: string | null
+  author_avatar_url: string | null
+  html_url: string | null
+  head_ref: string | null
+  head_sha: string | null
+  base_ref: string | null
+  base_sha: string | null
+  mergeable: boolean | null
+  mergeable_state: string | null
+  labels: string[] | null
+  additions: number | null
+  deletions: number | null
+  changed_files: number | null
+  created_at: Timestamp | null
+  updated_at: Timestamp | null
+}
+
+type JangarGithubReviewState = {
+  id: Generated<string>
+  repository: string
+  pr_number: number
+  commit_sha: string | null
+  received_at: Timestamp
+  review_decision: string | null
+  requested_changes: boolean | null
+  unresolved_threads_count: number | null
+  summary: JsonValue
+  latest_reviewed_at: Timestamp | null
+  updated_at: Timestamp | null
+}
+
+type JangarGithubCheckState = {
+  id: Generated<string>
+  repository: string
+  pr_number: number
+  commit_sha: string
+  received_at: Timestamp
+  status: string | null
+  details_url: string | null
+  total_count: number | null
+  success_count: number | null
+  failure_count: number | null
+  pending_count: number | null
+  checks: JsonValue
+  updated_at: Timestamp | null
+}
+
+type JangarGithubReviewThreads = {
+  id: Generated<string>
+  repository: string
+  pr_number: number
+  commit_sha: string | null
+  received_at: Timestamp
+  thread_key: string
+  thread_id: string | null
+  is_resolved: Generated<boolean>
+  path: string | null
+  line: number | null
+  side: string | null
+  start_line: number | null
+  author_login: string | null
+  resolved_at: Timestamp | null
+  updated_at: Timestamp | null
+  created_at: Timestamp | null
+}
+
+type JangarGithubComments = {
+  id: Generated<string>
+  repository: string
+  pr_number: number
+  commit_sha: string | null
+  received_at: Timestamp
+  comment_id: string
+  comment_type: string
+  thread_key: string | null
+  author_login: string | null
+  body: string | null
+  path: string | null
+  line: number | null
+  side: string | null
+  start_line: number | null
+  diff_hunk: string | null
+  url: string | null
+  created_at: Timestamp | null
+  updated_at: Timestamp | null
+}
+
+type JangarGithubPrFiles = {
+  id: Generated<string>
+  repository: string
+  pr_number: number
+  commit_sha: string
+  received_at: Timestamp
+  path: string
+  status: string | null
+  additions: number | null
+  deletions: number | null
+  changes: number | null
+  patch: string | null
+  blob_url: string | null
+  raw_url: string | null
+  sha: string | null
+  previous_filename: string | null
+}
+
+type JangarGithubWriteActions = {
+  id: Generated<string>
+  repository: string
+  pr_number: number
+  commit_sha: string | null
+  received_at: Timestamp
+  action: string
+  actor: string | null
+  request_id: string | null
+  payload: JsonValue
+  response: JsonValue | null
+  success: Generated<boolean>
+  error: string | null
+}
+
 type TerminalSessions = {
   id: string
   status: string
@@ -468,6 +614,14 @@ export type Database = {
   'atlas.event_files': AtlasEventFiles
   'atlas.ingestion_targets': AtlasIngestionTargets
   'memories.entries': MemoriesEntries
+  'jangar_github.events': JangarGithubEvents
+  'jangar_github.pr_state': JangarGithubPrState
+  'jangar_github.review_state': JangarGithubReviewState
+  'jangar_github.check_state': JangarGithubCheckState
+  'jangar_github.review_threads': JangarGithubReviewThreads
+  'jangar_github.comments': JangarGithubComments
+  'jangar_github.pr_files': JangarGithubPrFiles
+  'jangar_github.write_actions': JangarGithubWriteActions
   torghut_symbols: TorghutSymbols
   'terminals.sessions': TerminalSessions
   'jangar_github.events': JangarGithubEvents

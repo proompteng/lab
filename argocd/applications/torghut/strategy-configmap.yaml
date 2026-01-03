@@ -13,10 +13,11 @@ data:
       - name: macd-rsi-default
         description: MACD/RSI demo strategy
         enabled: true
-        base_timeframe: "1Min"
+        base_timeframe: "1Sec"
         universe_type: static
         symbols:
-          - AAPL
-          - MSFT
+          - CRWD
+          - MU
+          - NVDA
         max_notional_per_trade: 500
         max_position_pct_equity: 0.05

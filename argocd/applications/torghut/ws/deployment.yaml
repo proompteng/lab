@@ -15,7 +15,7 @@ spec:
       labels:
         app: torghut-ws
       annotations:
-        kubectl.kubernetes.io/restartedAt: 2026-01-03T02:01:06.175Z
+        kubectl.kubernetes.io/restartedAt: 2026-01-03T07:40:41.339Z
     spec:
       serviceAccountName: torghut-runtime
       securityContext:
@@ -49,9 +49,9 @@ spec:
                   name: torghut-ws
                   key: password
             - name: TORGHUT_WS_VERSION
-              value: v0.390.5-1-g4f8acc4b3
+              value: v0.392.1
             - name: TORGHUT_WS_COMMIT
-              value: 4f8acc4b3faa9b5cfa003c2e270a67f2f18b334e
+              value: 6da6056440372fd386b991d861d0f7146facd6be
           ports:
             - containerPort: 8080
               name: http

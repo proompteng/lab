@@ -23,7 +23,7 @@ Pipeline:
 - `TRADING_MODE` (`paper|live`, default `paper`); live requires `TRADING_LIVE_ENABLED=true`.
 - `TRADING_SIGNAL_SOURCE` (`clickhouse`), `TRADING_SIGNAL_TABLE` (default `torghut.ta_signals`).
 - `TRADING_SIGNAL_SCHEMA` (`auto|envelope|flat`) to align ClickHouse shape with ingestion.
-  - `auto`: inspect columns (prefers `event_ts` envelope when present).
+  - `auto`: inspect columns (prefers `event_ts` + flattened columns when `payload` is absent).
   - `envelope`: select `event_ts, ingest_ts, symbol, payload, window, seq, source`.
   - `flat`: select `ts, symbol, macd, macd_signal, signal, rsi, rsi14, ema, vwap, signal_json, timeframe, price, close, spread`.
 - `TRADING_PRICE_TABLE` (default `torghut.ta_microbars`) for price snapshots.
@@ -39,6 +39,9 @@ Pipeline:
 SignalIngestor -> DecisionEngine -> RiskEngine -> OrderExecutor -> Reconciler
                                    ↘ Persistence (trade_decisions, executions)
 ```
+
+**Timeframe note:** when signals are emitted at 1s windows (`window_size=PT1S`), the ingestor
+maps that to `1Sec`. Strategies must use a matching `base_timeframe` (`1Sec`) or they will never fire.
 
 ```mermaid
 flowchart LR
@@ -151,8 +154,8 @@ For ad-hoc dev/stage seeding you can still run:
 ```
 uv run python services/torghut/scripts/seed_strategy.py \
   --name macd-rsi-default \
-  --base-timeframe 1Min \
-  --symbols AAPL,MSFT \
+  --base-timeframe 1Sec \
+  --symbols CRWD,MU,NVDA \
   --enabled
 ```
 

@@ -153,9 +153,9 @@ spec:
                   name: observability-minio-creds
                   key: secretkey
             - name: TORGHUT_TA_VERSION
-              value: v0.390.5-1-g4f8acc4b3
+              value: v0.392.1
             - name: TORGHUT_TA_COMMIT
-              value: 4f8acc4b3faa9b5cfa003c2e270a67f2f18b334e
+              value: 6da6056440372fd386b991d861d0f7146facd6be
           ports:
             - containerPort: 9249
               name: metrics
