@@ -291,19 +291,6 @@ function TorghutVisuals() {
               ) : null}
             </section>
           )}
-
-          <section className="text-xs text-muted-foreground">
-            Charts powered by{' '}
-            <a
-              className="text-primary underline-offset-4 hover:underline"
-              href="https://echarts.apache.org/en/index.html"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Apache ECharts
-            </a>
-            .
-          </section>
         </>
       )}
     </main>
