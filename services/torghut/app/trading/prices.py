@@ -62,6 +62,7 @@ class ClickHousePriceFetcher(PriceFetcher):
         self.password = password or settings.trading_clickhouse_password
         self.table = table or settings.trading_price_table
         self.lookback_minutes = lookback_minutes or settings.trading_price_lookback_minutes
+        self._columns: Optional[set[str]] = None
 
     def fetch_price(self, signal: SignalEnvelope) -> Optional[Decimal]:
         if not self.url:
@@ -72,13 +73,16 @@ class ClickHousePriceFetcher(PriceFetcher):
             return None
         target_ts = signal.event_ts
         lookback = target_ts - timedelta(minutes=self.lookback_minutes)
+        order_clause = "event_ts DESC"
+        if self._supports_seq():
+            order_clause = "event_ts DESC, seq DESC"
         query = (
             "SELECT event_ts, c, vwap "
             f"FROM {self.table} "
             f"WHERE symbol = '{symbol}' "
             f"AND event_ts >= {to_datetime64(lookback)} "
             f"AND event_ts <= {to_datetime64(target_ts)} "
-            "ORDER BY event_ts DESC "
+            f"ORDER BY {order_clause} "
             "LIMIT 1 "
             "FORMAT JSONEachRow"
         )
@@ -97,13 +101,16 @@ class ClickHousePriceFetcher(PriceFetcher):
             return None
         target_ts = signal.event_ts
         lookback = target_ts - timedelta(minutes=self.lookback_minutes)
+        order_clause = "event_ts DESC"
+        if self._supports_seq():
+            order_clause = "event_ts DESC, seq DESC"
         query = (
             "SELECT event_ts, c, vwap "
             f"FROM {self.table} "
             f"WHERE symbol = '{symbol}' "
             f"AND event_ts >= {to_datetime64(lookback)} "
             f"AND event_ts <= {to_datetime64(target_ts)} "
-            "ORDER BY event_ts DESC "
+            f"ORDER BY {order_clause} "
             "LIMIT 1 "
             "FORMAT JSONEachRow"
         )
@@ -145,6 +152,36 @@ class ClickHousePriceFetcher(PriceFetcher):
                 logger.warning("Failed to decode ClickHouse price row")
         return rows
 
+    def _supports_seq(self) -> bool:
+        columns = self._resolve_columns()
+        if columns is None:
+            return False
+        return "seq" in columns
+
+    def _resolve_columns(self) -> Optional[set[str]]:
+        if self._columns is not None:
+            return self._columns
+        database, table = _split_table(self.table)
+        query = (
+            "SELECT name FROM system.columns "
+            f"WHERE database = '{database}' AND table = '{table}' "
+            "FORMAT JSONEachRow"
+        )
+        try:
+            rows = self._query_clickhouse(query)
+        except Exception as exc:
+            logger.warning("Failed to detect ClickHouse price schema: %s", exc)
+            self._columns = None
+            return None
+        if not rows:
+            self._columns = None
+            return None
+        self._columns = {str(row.get("name")) for row in rows if row.get("name")}
+        if not self._columns:
+            self._columns = None
+            return None
+        return self._columns
+
 
 def _optional_decimal(value: Any) -> Optional[Decimal]:
     if value is None:
@@ -181,6 +218,13 @@ def _select_price(row: dict[str, Any]) -> Optional[Decimal]:
         or _optional_decimal(row.get("close"))
         or _optional_decimal(row.get("price"))
     )
+
+
+def _split_table(table: str) -> tuple[str, str]:
+    if "." in table:
+        database, raw_table = table.split(".", 1)
+        return database, raw_table
+    return "default", table
 
 
 __all__ = ["ClickHousePriceFetcher", "MarketSnapshot", "PriceFetcher"]

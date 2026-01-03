@@ -21,6 +21,8 @@ from .models import SignalEnvelope
 
 logger = logging.getLogger(__name__)
 
+FLAT_CURSOR_OVERLAP = timedelta(seconds=2)
+
 FLAT_SIGNAL_COLUMNS = [
     "ts",
     "symbol",
@@ -86,6 +88,9 @@ class ClickHouseSignalIngestor:
             return SignalBatch(signals=[], cursor_at=None, cursor_seq=None)
 
         cursor_at, cursor_seq = self._get_cursor(session)
+        time_column = self._resolve_time_column()
+        supports_seq = self._supports_seq_for_time_column(time_column)
+        overlap_cutoff = cursor_at if time_column == "ts" and not supports_seq else None
         query = self._build_query(cursor_at, cursor_seq)
         rows = self._query_clickhouse(query)
         signals: list[SignalEnvelope] = []
@@ -96,6 +101,8 @@ class ClickHouseSignalIngestor:
             signal = self.parse_row(row)
             if signal is None:
                 logger.warning("Skipping signal with missing event_ts or symbol")
+                continue
+            if overlap_cutoff is not None and signal.event_ts < overlap_cutoff:
                 continue
             signals.append(signal)
             if max_event_ts is None or signal.event_ts > max_event_ts:
@@ -139,16 +146,20 @@ class ClickHouseSignalIngestor:
         cursor_expr = to_datetime64(cursor_at)
         limit = self.batch_size
         time_column = self._resolve_time_column()
+        supports_seq = self._supports_seq_for_time_column(time_column)
         select_expr = self._select_expression(time_column)
         where_clause = f"{time_column} > {cursor_expr}"
         order_clause = f"{time_column} ASC"
-        if time_column == "event_ts" and self._supports_seq():
+        if supports_seq:
             order_clause = f"{time_column} ASC, seq ASC"
             if cursor_seq is not None:
                 where_clause = (
                     f"({time_column} > {cursor_expr} OR "
                     f"({time_column} = {cursor_expr} AND seq > {cursor_seq}))"
                 )
+        elif time_column == "ts":
+            overlap_cursor = cursor_at - FLAT_CURSOR_OVERLAP
+            where_clause = f"{time_column} >= {to_datetime64(overlap_cursor)}"
         return (
             f"SELECT {select_expr} "
             f"FROM {self.table} "
@@ -184,7 +195,7 @@ class ClickHouseSignalIngestor:
             where_parts.append(f"symbol = '{normalized_symbol}'")
         limit_clause = f"LIMIT {limit}" if limit else ""
         order_clause = f"{time_column} ASC"
-        if time_column == "event_ts" and self._supports_seq():
+        if self._supports_seq_for_time_column(time_column):
             order_clause = f"{time_column} ASC, seq ASC"
         query = (
             f"SELECT {select_expr} FROM {self.table} WHERE {' AND '.join(where_parts)} "
@@ -319,6 +330,16 @@ class ClickHouseSignalIngestor:
         if columns is None:
             return True
         return "seq" in columns
+
+    def _supports_seq_for_time_column(self, time_column: str) -> bool:
+        if time_column == "event_ts":
+            return self._supports_seq()
+        if time_column == "ts":
+            columns = self._resolve_columns(force=True)
+            if columns is None:
+                return False
+            return "seq" in columns
+        return False
 
 
 def _parse_ts(value: Any) -> Optional[datetime]:

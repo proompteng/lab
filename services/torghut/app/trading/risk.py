@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Iterable, Optional
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -83,9 +83,11 @@ class RiskEngine:
                 select(TradeDecision)
                 .where(TradeDecision.symbol == decision.symbol)
                 .where(TradeDecision.created_at >= recent_cutoff)
+                .order_by(desc(TradeDecision.created_at))
+                .limit(1)
             )
             recent = session.execute(stmt).scalar_one_or_none()
-            if recent:
+            if recent and recent.status != "rejected":
                 reasons.append("cooldown_active")
 
         return RiskCheckResult(approved=len(reasons) == 0, reasons=reasons)

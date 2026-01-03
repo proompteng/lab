@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest import TestCase
 
 from sqlalchemy import create_engine, select
@@ -63,7 +63,7 @@ class TestSignalIngest(TestCase):
         self.assertIn("SELECT ts, symbol, macd, macd_signal, signal, rsi, rsi14, ema, vwap", query)
         self.assertIn("signal_json, timeframe, price, close, spread", query)
         self.assertIn("FROM torghut.ta_signals", query)
-        self.assertIn("WHERE ts > toDateTime64", query)
+        self.assertIn("WHERE ts >= toDateTime64", query)
         self.assertNotIn("payload", query)
         self.assertIn("ORDER BY ts ASC", query)
 
@@ -82,6 +82,12 @@ class TestSignalIngest(TestCase):
         self.assertIn("event_ts = toDateTime64", query)
         self.assertIn("seq > 42", query)
         self.assertIn("ORDER BY event_ts ASC, seq ASC", query)
+
+    def test_build_query_flat_schema_overlaps_window(self) -> None:
+        ingestor = ClickHouseSignalIngestor(schema="flat", table="torghut.ta_signals")
+        query = ingestor._build_query(datetime(2026, 1, 1, 0, 0, 5, tzinfo=timezone.utc), None)
+        self.assertIn("WHERE ts >= toDateTime64", query)
+        self.assertIn("2026-01-01 00:00:03.000", query)
 
     def test_fetch_signals_between_respects_schema(self) -> None:
         ingestor = CapturingIngestor(schema="flat", table="torghut.ta_signals", url="http://example")
@@ -154,6 +160,35 @@ class TestSignalIngest(TestCase):
             cursor = session.execute(select(TradeCursor)).scalar_one()
             self.assertEqual(cursor.cursor_at, datetime(2026, 1, 1, 0, 0, 10))
             self.assertEqual(cursor.cursor_seq, 2)
+
+    def test_flat_cursor_overlap_dedupes_older_rows(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        base_ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        rows = [
+            {"ts": (base_ts - timedelta(seconds=1)).isoformat(), "symbol": "AAPL"},
+            {"ts": base_ts.isoformat(), "symbol": "AAPL"},
+            {"ts": (base_ts + timedelta(seconds=1)).isoformat(), "symbol": "AAPL"},
+        ]
+
+        class CursorIngestor(ClickHouseSignalIngestor):
+            def __init__(self, *args, **kwargs) -> None:
+                super().__init__(*args, **kwargs)
+                self._rows = rows
+
+            def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+                return self._rows
+
+        ingestor = CursorIngestor(schema="flat", table="torghut.ta_signals", url="http://example")
+        with session_local() as session:
+            cursor = TradeCursor(source="clickhouse", cursor_at=base_ts, cursor_seq=None)
+            session.add(cursor)
+            session.commit()
+            batch = ingestor.fetch_signals(session)
+            self.assertEqual(len(batch.signals), 2)
+            self.assertEqual(batch.cursor_at, base_ts + timedelta(seconds=1))
 
     def test_fetch_signals_between_rejects_invalid_symbol(self) -> None:
         ingestor = CapturingIngestor(schema="flat", table="torghut.ta_signals", url="http://example")
