@@ -49,6 +49,7 @@ spec:
               export GOMODCACHE=/work/modcache
               export GOPATH=/work/gopath
               mkdir -p /work/bin "$GOCACHE" "$GOMODCACHE" "$GOPATH"
+              rm -rf /work/src
               git clone --depth 1 --branch v2.0.4 https://github.com/minio/object-browser.git /work/src
               cd /work/src
               GO111MODULE=on CGO_ENABLED=0 go build -trimpath --tags=kqueue --ldflags "-s -w" -o /work/console ./cmd/console
