@@ -22,9 +22,17 @@ class CapturingPriceFetcher(ClickHousePriceFetcher):
         super().__init__(url="http://example", table="torghut.ta_microbars")
         self.last_query: str | None = None
 
+    def _resolve_columns(self) -> set[str] | None:
+        return None
+
     def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
         self.last_query = query
         return []
+
+
+class SeqAwarePriceFetcher(CapturingPriceFetcher):
+    def _resolve_columns(self) -> set[str] | None:
+        return {"event_ts", "seq", "symbol"}
 
 
 class TestClickHousePriceFetcher(TestCase):
@@ -79,3 +87,14 @@ class TestClickHousePriceFetcher(TestCase):
         price = fetcher.fetch_price(signal)
         self.assertIsNone(price)
         self.assertIsNone(fetcher.last_query)
+
+    def test_fetch_price_orders_by_seq_when_available(self) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={},
+        )
+        fetcher = SeqAwarePriceFetcher()
+        fetcher.fetch_price(signal)
+        assert fetcher.last_query is not None
+        self.assertIn("ORDER BY event_ts DESC, seq DESC", fetcher.last_query)
