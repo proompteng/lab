@@ -86,6 +86,11 @@ const githubMock = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  githubMock.submitReview.mockResolvedValue({ id: 1 })
+  githubMock.resolveReviewThread.mockResolvedValue({ id: 'thread-1', isResolved: true })
+  githubMock.getReviewThreadForComment.mockResolvedValue({ threadId: 'thread-1', isResolved: false })
+  githubMock.mergePullRequest.mockResolvedValue({ merged: true })
+  githubMock.deleteBranch.mockResolvedValue({ ok: true })
   globalState.__githubReviewConfigMock = {
     githubToken: 'token',
     githubApiBaseUrl: 'https://api.github.com',

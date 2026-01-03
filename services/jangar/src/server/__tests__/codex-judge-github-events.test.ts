@@ -232,7 +232,7 @@ describe('codex-judge GitHub webhook stream handling', () => {
     Object.assign(requireMock(globalState.__codexJudgeConfigMock, 'config'), configMock)
     Object.values(githubReviewStoreMock).forEach((value) => {
       if (typeof value === 'function') {
-        ;(value as ReturnType<typeof vi.fn>).mockReset?.()
+        ;(value as ReturnType<typeof vi.fn>).mockClear?.()
       }
     })
     Object.assign(githubReviewGithubMock, { getPullRequestFiles: vi.fn(async () => []) })
