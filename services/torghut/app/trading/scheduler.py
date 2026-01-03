@@ -152,7 +152,10 @@ class TradingPipeline:
 
         strategy_symbols = _coerce_strategy_symbols(strategy.universe_symbols)
         if strategy_symbols:
-            symbol_allowlist = strategy_symbols & allowed_symbols
+            if allowed_symbols:
+                symbol_allowlist = strategy_symbols & allowed_symbols
+            else:
+                symbol_allowlist = strategy_symbols
         else:
             symbol_allowlist = allowed_symbols
 
