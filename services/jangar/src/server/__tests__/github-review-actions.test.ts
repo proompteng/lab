@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.unmock('~/server/github-review-actions')
+
 import type { GithubReviewStore } from '../github-review-store'
 
 const globalState = globalThis as typeof globalThis & {
@@ -106,7 +108,7 @@ beforeEach(() => {
 
 describe('github review write actions', () => {
   it('submits a review via GitHub API', async () => {
-    const { submitPullRequestReview } = await import('../github-review-actions')
+    const { submitPullRequestReview } = await import('~/server/github-review-actions')
     const request = new Request('http://localhost/api/github/pulls/proompteng/lab/1/review', { method: 'POST' })
 
     const response = await submitPullRequestReview(request, {
@@ -122,7 +124,7 @@ describe('github review write actions', () => {
   })
 
   it('resolves review threads', async () => {
-    const { resolvePullRequestThread } = await import('../github-review-actions')
+    const { resolvePullRequestThread } = await import('~/server/github-review-actions')
     const request = new Request('http://localhost/api/github/pulls/proompteng/lab/1/threads/1/resolve', {
       method: 'POST',
     })
@@ -140,7 +142,7 @@ describe('github review write actions', () => {
   })
 
   it('merges pull requests and deletes branches', async () => {
-    const { mergePullRequest } = await import('../github-review-actions')
+    const { mergePullRequest } = await import('~/server/github-review-actions')
     const request = new Request('http://localhost/api/github/pulls/proompteng/lab/1/merge', { method: 'POST' })
 
     const response = await mergePullRequest(request, {
