@@ -28,9 +28,9 @@ helmCharts:
         workflowDefaults:
           spec:
             ttlStrategy:
-              secondsAfterSuccess: 86400 # 24h retention for successful runs
-              secondsAfterFailure: 259200 # 3d retention to keep failure diagnostics
-              secondsAfterCompletion: 259200
+              secondsAfterSuccess: 259200 # 3d retention for successful runs
+              secondsAfterFailure: 604800 # 7d retention to keep failure diagnostics
+              secondsAfterCompletion: 604800
       server:
         secure: false
         authModes:
