@@ -2,6 +2,14 @@ import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import {
   type CodexArtifactRecord,
@@ -80,6 +88,11 @@ function CodexRunsPage() {
   const limitId = React.useId()
 
   const repositoryRef = React.useRef<HTMLInputElement | null>(null)
+  const filteredIssueOptions = React.useMemo(() => {
+    const query = issueNumber.trim()
+    if (!query) return issueOptions
+    return issueOptions.filter((issue) => issue.issueNumber.toString().includes(query))
+  }, [issueNumber, issueOptions])
 
   React.useEffect(() => {
     setRepository(searchState.repository)
@@ -236,23 +249,34 @@ function CodexRunsPage() {
               <label className="text-xs font-medium" htmlFor={issueId}>
                 Issue number
               </label>
-              <Input
-                id={issueId}
-                name="issueNumber"
-                value={issueNumber}
-                onChange={(event) => setIssueNumber(event.target.value)}
-                placeholder="2151"
-                inputMode="numeric"
-                aria-invalid={Boolean(formError)}
-                list={`${issueId}-options`}
-              />
-              <datalist id={`${issueId}-options`}>
-                {issueOptions.map((issue) => (
-                  <option key={issue.issueNumber} value={issue.issueNumber.toString()}>
-                    #{issue.issueNumber} · {issue.runCount} runs
-                  </option>
-                ))}
-              </datalist>
+              <Combobox
+                inputValue={issueNumber}
+                onInputValueChange={(value) => setIssueNumber(value)}
+                value={issueNumber.length > 0 ? issueNumber : null}
+                onValueChange={(value) => setIssueNumber(value ?? '')}
+                autoHighlight
+                openOnInputClick
+              >
+                <ComboboxInput
+                  id={issueId}
+                  name="issueNumber"
+                  placeholder="2151"
+                  inputMode="numeric"
+                  aria-invalid={Boolean(formError)}
+                  showTrigger
+                />
+                <ComboboxContent>
+                  <ComboboxList>
+                    {filteredIssueOptions.map((issue) => (
+                      <ComboboxItem key={issue.issueNumber} value={issue.issueNumber.toString()}>
+                        <span className="text-foreground">#{issue.issueNumber}</span>
+                        <span className="text-muted-foreground">{issue.runCount} runs</span>
+                      </ComboboxItem>
+                    ))}
+                    <ComboboxEmpty>No recent issues found.</ComboboxEmpty>
+                  </ComboboxList>
+                </ComboboxContent>
+              </Combobox>
               <p className="text-xs text-muted-foreground">
                 {issueStatus === 'loading'
                   ? 'Loading recent issues…'
