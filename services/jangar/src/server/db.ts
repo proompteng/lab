@@ -478,14 +478,6 @@ export type Database = {
   'jangar_github.write_actions': JangarGithubWriteActions
   torghut_symbols: TorghutSymbols
   'terminals.sessions': TerminalSessions
-  'jangar_github.events': JangarGithubEvents
-  'jangar_github.pr_state': JangarGithubPrState
-  'jangar_github.review_state': JangarGithubReviewState
-  'jangar_github.check_state': JangarGithubCheckState
-  'jangar_github.review_threads': JangarGithubReviewThreads
-  'jangar_github.comments': JangarGithubComments
-  'jangar_github.pr_files': JangarGithubPrFiles
-  'jangar_github.write_actions': JangarGithubWriteActions
   'codex_judge.runs': CodexJudgeRuns
   'codex_judge.artifacts': CodexJudgeArtifacts
   'codex_judge.evaluations': CodexJudgeEvaluations
