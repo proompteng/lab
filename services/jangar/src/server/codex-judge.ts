@@ -666,7 +666,7 @@ const FALLBACK_ARTIFACTS = [
   { name: 'implementation-patch', path: '.codex-implementation.patch' },
   { name: 'implementation-status', path: '.codex-implementation-status.txt' },
   { name: 'implementation-log', path: '.codex-implementation.log' },
-  { name: 'implementation-events', path: '.codex-implementation-events.jsonl' },
+  { name: 'implementation-events', path: '.codex/implementation-events.jsonl' },
   { name: 'implementation-agent-log', path: '.codex-implementation-agent.log' },
   { name: 'implementation-runtime-log', path: '.codex-implementation-runtime.log' },
   { name: 'implementation-resume', path: '.codex/implementation-resume.json' },
@@ -675,7 +675,11 @@ const FALLBACK_ARTIFACTS = [
 
 const ARTIFACT_TEXT_HINTS: Record<string, string[]> = {
   'implementation-log': ['.codex-implementation.log', 'codex-implementation.log'],
-  'implementation-events': ['.codex-implementation-events.jsonl', 'codex-implementation-events.jsonl'],
+  'implementation-events': [
+    '.codex/implementation-events.jsonl',
+    '.codex-implementation-events.jsonl',
+    'codex-implementation-events.jsonl',
+  ],
   'implementation-agent-log': ['.codex-implementation-agent.log', 'codex-implementation-agent.log'],
   'implementation-runtime-log': ['.codex-implementation-runtime.log', 'codex-implementation-runtime.log'],
   'implementation-status': ['.codex-implementation-status.txt', 'codex-implementation-status.txt'],
