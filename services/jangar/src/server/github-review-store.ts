@@ -750,7 +750,7 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
     }
 
     if (input.label) {
-      query.where(sql`${sql.value(input.label)} = ANY(${sql.ref('jangar_github.pr_state.labels')})`)
+      query.where(sql<boolean>`${sql.value(input.label)} = ANY(${sql.ref('jangar_github.pr_state.labels')})`)
     }
 
     if (input.reviewDecision) {
@@ -763,7 +763,7 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
 
     if (cursor) {
       query.where(
-        sql`(COALESCE(${sql.ref('jangar_github.pr_state.updated_at')}, ${sql.ref('jangar_github.pr_state.received_at')}) < ${cursor.updatedAt}
+        sql<boolean>`(COALESCE(${sql.ref('jangar_github.pr_state.updated_at')}, ${sql.ref('jangar_github.pr_state.received_at')}) < ${cursor.updatedAt}
           OR (COALESCE(${sql.ref('jangar_github.pr_state.updated_at')}, ${sql.ref('jangar_github.pr_state.received_at')}) = ${cursor.updatedAt}
             AND ${sql.ref('jangar_github.pr_state.pr_number')} < ${cursor.prNumber}))`,
       )

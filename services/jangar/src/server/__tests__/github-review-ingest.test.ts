@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { GithubWebhookEvent } from '../github-review-ingest'
 import type { GithubReviewStore } from '../github-review-store'
 
 type GithubReviewConfig = {
@@ -84,11 +85,12 @@ describe('github review ingest', () => {
     const store = globalState.__githubReviewStoreMock
     expect(store).toBeDefined()
 
-    const payload = {
+    const payload: GithubWebhookEvent = {
       event: 'pull_request',
       action: 'opened',
       deliveryId: 'delivery-1',
       repository: 'proompteng/lab',
+      sender: 'octocat',
       payload: {
         pull_request: {
           number: 42,
@@ -103,7 +105,7 @@ describe('github review ingest', () => {
       },
     }
 
-    const result = await handler(payload as unknown as Record<string, unknown>)
+    const result = await handler(payload)
     expect(result.ok).toBe(true)
     expect(store?.recordEvent).toHaveBeenCalled()
     expect(store?.upsertPrState).toHaveBeenCalled()
@@ -113,11 +115,12 @@ describe('github review ingest', () => {
     const handler = await requireHandler()
     const store = globalState.__githubReviewStoreMock
 
-    const payload = {
+    const payload: GithubWebhookEvent = {
       event: 'pull_request_review_comment',
       action: 'created',
       deliveryId: 'delivery-2',
       repository: 'proompteng/lab',
+      sender: 'reviewer',
       payload: {
         pull_request: {
           number: 123,
@@ -135,7 +138,7 @@ describe('github review ingest', () => {
       },
     }
 
-    await handler(payload as unknown as Record<string, unknown>)
+    await handler(payload)
 
     expect(store?.upsertReviewThread).toHaveBeenCalled()
     expect(store?.upsertReviewComment).toHaveBeenCalled()
@@ -147,11 +150,12 @@ describe('github review ingest', () => {
     const store = globalState.__githubReviewStoreMock
     ;(store?.recordEvent as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ inserted: false })
 
-    const payload = {
+    const payload: GithubWebhookEvent = {
       event: 'pull_request',
       action: 'opened',
       deliveryId: 'delivery-dup',
       repository: 'proompteng/lab',
+      sender: 'octocat',
       payload: {
         pull_request: {
           number: 42,
@@ -166,7 +170,7 @@ describe('github review ingest', () => {
       },
     }
 
-    const result = await handler(payload as unknown as Record<string, unknown>)
+    const result = await handler(payload)
     expect(result.skipped).toBe(true)
     expect(store?.upsertPrState).not.toHaveBeenCalled()
   })

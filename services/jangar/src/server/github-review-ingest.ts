@@ -248,9 +248,10 @@ const buildCheckRun = (payload: Record<string, unknown>) => {
     }
   }
   if (checkSuite) {
+    const app = isRecord(checkSuite.app) ? checkSuite.app : null
     return {
       id: String(checkSuite.id ?? checkSuite.node_id ?? randomUUID()),
-      name: normalizeString(checkSuite.app?.name) || null,
+      name: normalizeString(app?.name) || null,
       status: normalizeString(checkSuite.status) || null,
       conclusion: normalizeString(checkSuite.conclusion) || null,
       url: normalizeString(checkSuite.html_url) || null,

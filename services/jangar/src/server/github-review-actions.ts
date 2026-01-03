@@ -196,6 +196,7 @@ export const resolvePullRequestThread = async (
   const actor = resolveActor(request)
   const requestId = resolveRequestId(request)
   const receivedAt = new Date().toISOString()
+  let resolvedThreadId: string | null = null
 
   try {
     let threadId = input.threadKey
@@ -219,6 +220,7 @@ export const resolvePullRequestThread = async (
       resolved: input.resolve,
       receivedAt,
     })
+    resolvedThreadId = response.id ?? threadId
 
     const unresolvedCount = await store.getUnresolvedThreadCount({ repository, prNumber: input.number })
     await store.updateUnresolvedThreadCount({ repository, prNumber: input.number, count: unresolvedCount, receivedAt })
@@ -230,7 +232,7 @@ export const resolvePullRequestThread = async (
       action: input.resolve ? 'thread_resolve' : 'thread_unresolve',
       actor,
       requestId,
-      payload: { threadKey: input.threadKey, threadId, resolve: input.resolve },
+      payload: { threadKey: input.threadKey, threadId: resolvedThreadId, resolve: input.resolve },
       response: response as Record<string, unknown>,
       success: true,
       receivedAt,
@@ -254,7 +256,7 @@ export const resolvePullRequestThread = async (
       action: input.resolve ? 'thread_resolve' : 'thread_unresolve',
       actor,
       requestId,
-      payload: { threadKey: input.threadKey, threadId, resolve: input.resolve },
+      payload: { threadKey: input.threadKey, threadId: resolvedThreadId, resolve: input.resolve },
       response: null,
       success: false,
       error: message,
