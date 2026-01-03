@@ -2,6 +2,7 @@ import {
   IconBrain,
   IconChartCandle,
   IconDatabase,
+  IconGitPullRequest,
   IconHeart,
   IconHome,
   IconList,
@@ -45,6 +46,7 @@ type TerminalSession = {
 const appNav: AppNavItem[] = [
   { to: '/', label: 'Home', icon: IconHome },
   { to: '/memories', label: 'Memories', icon: IconBrain },
+  { to: '/github/pulls', label: 'PR reviews', icon: IconGitPullRequest },
   {
     to: '/codex/runs',
     label: 'Codex runs',
