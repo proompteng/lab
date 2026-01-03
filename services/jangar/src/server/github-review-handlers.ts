@@ -183,6 +183,7 @@ type ReviewBody = {
 export const submitReviewHandler = async (
   request: Request,
   params: { owner: string; repo: string; number: string },
+  actions: { submitPullRequestReview: typeof submitPullRequestReview } = { submitPullRequestReview },
 ) => {
   const prNumber = parseNumberParam(params.number)
   if (!prNumber) {
@@ -219,7 +220,7 @@ export const submitReviewHandler = async (
     }))
 
   try {
-    const result = await submitPullRequestReview(request, {
+    const result = await actions.submitPullRequestReview(request, {
       owner: params.owner,
       repo: params.repo,
       number: prNumber,
@@ -242,6 +243,7 @@ type ResolveBody = {
 export const resolveThreadHandler = async (
   request: Request,
   params: { owner: string; repo: string; number: string; threadId: string },
+  actions: { resolvePullRequestThread: typeof resolvePullRequestThread } = { resolvePullRequestThread },
 ) => {
   const prNumber = parseNumberParam(params.number)
   if (!prNumber) {
@@ -256,7 +258,7 @@ export const resolveThreadHandler = async (
   }
 
   try {
-    const result = await resolvePullRequestThread(request, {
+    const result = await actions.resolvePullRequestThread(request, {
       owner: params.owner,
       repo: params.repo,
       number: prNumber,
@@ -279,7 +281,11 @@ type MergeBody = {
   force?: boolean
 }
 
-export const mergePullHandler = async (request: Request, params: { owner: string; repo: string; number: string }) => {
+export const mergePullHandler = async (
+  request: Request,
+  params: { owner: string; repo: string; number: string },
+  actions: { mergePullRequest: typeof mergePullRequest } = { mergePullRequest },
+) => {
   const prNumber = parseNumberParam(params.number)
   if (!prNumber) {
     return jsonResponse({ ok: false, error: 'Invalid pull request number' }, 400)
@@ -300,7 +306,7 @@ export const mergePullHandler = async (request: Request, params: { owner: string
   const config = loadGithubReviewConfig()
 
   try {
-    const result = await mergePullRequest(request, {
+    const result = await actions.mergePullRequest(request, {
       owner: params.owner,
       repo: params.repo,
       number: prNumber,
