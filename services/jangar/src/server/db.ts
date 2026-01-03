@@ -191,6 +191,20 @@ type TorghutSymbols = {
   updated_at: Generated<Timestamp>
 }
 
+type TerminalSessions = {
+  id: string
+  status: string
+  worktree_name: string | null
+  worktree_path: string | null
+  tmux_socket: string | null
+  error_message: string | null
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+  ready_at: Timestamp | null
+  closed_at: Timestamp | null
+  metadata: JsonValue
+}
+
 type JangarGithubEvents = {
   id: Generated<string>
   delivery_id: string
@@ -226,7 +240,7 @@ type JangarGithubPrState = {
   base_sha: string | null
   mergeable: boolean | null
   mergeable_state: string | null
-  labels: string[] | null
+  labels: string[]
   additions: number | null
   deletions: number | null
   changed_files: number | null
@@ -272,7 +286,7 @@ type JangarGithubReviewThreads = {
   received_at: Timestamp
   thread_key: string
   thread_id: string | null
-  is_resolved: Generated<boolean>
+  is_resolved: boolean
   path: string | null
   line: number | null
   side: string | null
@@ -333,22 +347,8 @@ type JangarGithubWriteActions = {
   request_id: string | null
   payload: JsonValue
   response: JsonValue | null
-  success: Generated<boolean>
+  success: boolean
   error: string | null
-}
-
-type TerminalSessions = {
-  id: string
-  status: string
-  worktree_name: string | null
-  worktree_path: string | null
-  tmux_socket: string | null
-  error_message: string | null
-  created_at: Generated<Timestamp>
-  updated_at: Generated<Timestamp>
-  ready_at: Timestamp | null
-  closed_at: Timestamp | null
-  metadata: JsonValue
 }
 
 type CodexJudgeRuns = {
@@ -468,6 +468,8 @@ export type Database = {
   'atlas.event_files': AtlasEventFiles
   'atlas.ingestion_targets': AtlasIngestionTargets
   'memories.entries': MemoriesEntries
+  torghut_symbols: TorghutSymbols
+  'terminals.sessions': TerminalSessions
   'jangar_github.events': JangarGithubEvents
   'jangar_github.pr_state': JangarGithubPrState
   'jangar_github.review_state': JangarGithubReviewState
@@ -476,8 +478,6 @@ export type Database = {
   'jangar_github.comments': JangarGithubComments
   'jangar_github.pr_files': JangarGithubPrFiles
   'jangar_github.write_actions': JangarGithubWriteActions
-  torghut_symbols: TorghutSymbols
-  'terminals.sessions': TerminalSessions
   'codex_judge.runs': CodexJudgeRuns
   'codex_judge.artifacts': CodexJudgeArtifacts
   'codex_judge.evaluations': CodexJudgeEvaluations
