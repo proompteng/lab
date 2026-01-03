@@ -49,7 +49,7 @@ export const up = async (db: Kysely<Database>) => {
       changed_files integer,
       created_at timestamptz,
       updated_at timestamptz,
-      PRIMARY KEY (repository, pr_number)
+      UNIQUE (repository, pr_number)
     )
   `.execute(db)
 
@@ -66,7 +66,7 @@ export const up = async (db: Kysely<Database>) => {
       summary jsonb NOT NULL DEFAULT '{}'::jsonb,
       latest_reviewed_at timestamptz,
       updated_at timestamptz,
-      PRIMARY KEY (repository, pr_number)
+      UNIQUE (repository, pr_number)
     )
   `.execute(db)
 
@@ -85,7 +85,7 @@ export const up = async (db: Kysely<Database>) => {
       pending_count integer,
       checks jsonb NOT NULL DEFAULT '{}'::jsonb,
       updated_at timestamptz,
-      PRIMARY KEY (repository, pr_number, commit_sha)
+      UNIQUE (repository, pr_number, commit_sha)
     )
   `.execute(db)
 
