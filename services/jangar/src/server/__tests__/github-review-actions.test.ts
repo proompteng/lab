@@ -85,7 +85,7 @@ const githubMock = {
 }
 
 beforeEach(() => {
-  vi.resetModules()
+  vi.clearAllMocks()
   globalState.__githubReviewConfigMock = {
     githubToken: 'token',
     githubApiBaseUrl: 'https://api.github.com',

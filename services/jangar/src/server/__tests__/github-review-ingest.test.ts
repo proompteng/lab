@@ -72,7 +72,7 @@ const requireHandler = async () => {
 }
 
 beforeEach(() => {
-  vi.resetModules()
+  vi.clearAllMocks()
   globalState.__githubReviewStoreMock = buildStore()
   globalState.__githubReviewConfigMock = { ...configMock }
   globalState.__githubReviewGithubMock = githubMock
