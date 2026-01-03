@@ -75,9 +75,9 @@ spec:
             - name: TRADING_ENABLED
               value: "true"
             - name: TRADING_MODE
-              value: live
+              value: paper
             - name: TRADING_LIVE_ENABLED
-              value: "true"
+              value: "false"
             - name: TRADING_SIGNAL_SOURCE
               value: clickhouse
             - name: TRADING_SIGNAL_TABLE
