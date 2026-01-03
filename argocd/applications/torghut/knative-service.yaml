@@ -88,6 +88,12 @@ spec:
               value: "5000"
             - name: TRADING_RECONCILE_MS
               value: "15000"
+            - name: TRADING_STRATEGY_CONFIG_PATH
+              value: /etc/torghut/strategies.yaml
+            - name: TRADING_STRATEGY_CONFIG_MODE
+              value: sync
+            - name: TRADING_STRATEGY_RELOAD_SECONDS
+              value: "10"
             - name: TRADING_UNIVERSE_SOURCE
               value: jangar
             - name: JANGAR_SYMBOLS_URL
@@ -120,3 +126,11 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+          volumeMounts:
+            - name: strategy-config
+              mountPath: /etc/torghut
+              readOnly: true
+      volumes:
+        - name: strategy-config
+          configMap:
+            name: torghut-strategy-config

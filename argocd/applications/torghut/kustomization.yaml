@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: torghut
 resources:
   - postgres-cluster.yaml
+  - strategy-configmap.yaml
   - knative-service.yaml
   - tailscale-service.yaml
   - sealed-secrets.yaml

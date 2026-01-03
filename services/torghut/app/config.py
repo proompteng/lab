@@ -38,6 +38,21 @@ class Settings(BaseSettings):
     trading_price_lookback_minutes: int = Field(default=5, alias="TRADING_PRICE_LOOKBACK_MINUTES")
     trading_poll_ms: int = Field(default=5000, alias="TRADING_POLL_MS")
     trading_reconcile_ms: int = Field(default=15000, alias="TRADING_RECONCILE_MS")
+    trading_strategy_config_path: Optional[str] = Field(
+        default=None,
+        alias="TRADING_STRATEGY_CONFIG_PATH",
+        description="Optional path to a strategy catalog file (YAML/JSON).",
+    )
+    trading_strategy_config_mode: Literal["merge", "sync"] = Field(
+        default="merge",
+        alias="TRADING_STRATEGY_CONFIG_MODE",
+        description="Merge keeps existing strategies; sync disables missing strategies.",
+    )
+    trading_strategy_reload_seconds: int = Field(
+        default=10,
+        alias="TRADING_STRATEGY_RELOAD_SECONDS",
+        description="Seconds between strategy catalog reload checks.",
+    )
     trading_universe_source: Literal["jangar", "static"] = Field(
         default="static", alias="TRADING_UNIVERSE_SOURCE"
     )

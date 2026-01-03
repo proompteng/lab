@@ -146,7 +146,8 @@ Integration test:
 - ingest one fake signal -> decision -> execution row
 
 ## Strategy provisioning
-Seed or update a default strategy (dev/stage):
+Define a strategy catalog in `argocd/applications/torghut/strategy-configmap.yaml` (hot reload applies changes).
+For ad-hoc dev/stage seeding you can still run:
 ```
 uv run python services/torghut/scripts/seed_strategy.py \
   --name macd-rsi-default \

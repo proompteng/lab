@@ -18,6 +18,7 @@ from ..config import settings
 from ..db import SessionLocal
 from ..models import LLMDecisionReview, Strategy, TradeDecision
 from ..snapshots import snapshot_account_and_positions
+from ..strategies import StrategyCatalog
 from .decisions import DecisionEngine
 from .execution import OrderExecutor
 from .ingest import ClickHouseSignalIngestor
@@ -74,6 +75,7 @@ class TradingPipeline:
         session_factory: Callable[[], Session] = SessionLocal,
         llm_review_engine: Optional[LLMReviewEngine] = None,
         price_fetcher: Optional[PriceFetcher] = None,
+        strategy_catalog: StrategyCatalog | None = None,
     ) -> None:
         self.alpaca_client = alpaca_client
         self.ingestor = ingestor
@@ -88,6 +90,7 @@ class TradingPipeline:
         self.price_fetcher = price_fetcher or ClickHousePriceFetcher()
         self._snapshot_cache = None
         self._snapshot_cached_at: Optional[datetime] = None
+        self.strategy_catalog = strategy_catalog
         if llm_review_engine is not None:
             self.llm_review_engine = llm_review_engine
         elif settings.llm_enabled:
@@ -97,6 +100,8 @@ class TradingPipeline:
 
     def run_once(self) -> None:
         with self.session_factory() as session:
+            if self.strategy_catalog is not None:
+                self.strategy_catalog.refresh(session)
             strategies = self._load_strategies(session)
             if not strategies:
                 logger.info("No enabled strategies found; skipping trading cycle")
@@ -656,6 +661,7 @@ class TradingScheduler:
 
     def _build_pipeline(self) -> TradingPipeline:
         price_fetcher = ClickHousePriceFetcher()
+        strategy_catalog = StrategyCatalog.from_settings()
         return TradingPipeline(
             alpaca_client=TorghutAlpacaClient(),
             ingestor=ClickHouseSignalIngestor(),
@@ -667,6 +673,7 @@ class TradingScheduler:
             state=self.state,
             account_label=settings.trading_account_label,
             price_fetcher=price_fetcher,
+            strategy_catalog=strategy_catalog,
         )
 
     async def start(self) -> None:

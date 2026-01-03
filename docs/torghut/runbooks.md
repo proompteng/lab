@@ -45,7 +45,8 @@ Enable trading loop:
 1) Confirm `argocd/applications/torghut/knative-service.yaml` has `TRADING_ENABLED=true`,
    `TRADING_MODE=paper`, and `TRADING_LIVE_ENABLED=false`.
 2) Ensure `JANGAR_SYMBOLS_URL` is reachable (or switch to `TRADING_UNIVERSE_SOURCE=static` + `TRADING_STATIC_SYMBOLS`).
-3) Seed at least one enabled strategy (dev/stage):
+3) Define strategies in `argocd/applications/torghut/strategy-configmap.yaml` and ensure
+   `TRADING_STRATEGY_CONFIG_PATH` is set (hot-reload applies changes). For ad-hoc dev/stage seeding:
    `uv run python services/torghut/scripts/seed_strategy.py --name macd-rsi-default --base-timeframe 1Min --symbols AAPL,MSFT --enabled`
 4) Sync the Argo CD application for torghut.
 5) Verify `kubectl -n torghut get ksvc torghut` is Ready and `GET /trading/status` returns enabled `true`.
