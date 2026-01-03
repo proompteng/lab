@@ -104,6 +104,7 @@ if (!globalState.__codexJudgeStoreMock) {
     listRunsByPrNumber: vi.fn(),
     getRunHistory: vi.fn(),
     listRecentRuns: vi.fn(),
+    listRunsPage: vi.fn(),
     listIssueSummaries: vi.fn(),
     getLatestPromptTuningByIssue: vi.fn(),
     createPromptTuning: vi.fn(),

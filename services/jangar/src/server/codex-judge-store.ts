@@ -142,6 +142,17 @@ export type ListRecentRunsInput = {
   limit?: number
 }
 
+export type ListRunsPageInput = {
+  repository?: string | null
+  page?: number
+  pageSize?: number
+}
+
+export type ListRunsPageResult = {
+  runs: CodexRunSummaryRecord[]
+  total: number
+}
+
 export type GetRunHistoryInput = {
   repository: string
   issueNumber: number
@@ -256,6 +267,7 @@ export type CodexJudgeStore = {
   listRunsByPrNumber: (repository: string, prNumber: number) => Promise<CodexRunRecord[]>
   getRunHistory: (input: GetRunHistoryInput) => Promise<CodexRunHistory>
   listRecentRuns: (input: ListRecentRunsInput) => Promise<CodexRunSummaryRecord[]>
+  listRunsPage: (input: ListRunsPageInput) => Promise<ListRunsPageResult>
   listIssueSummaries: (repository: string, limit?: number) => Promise<CodexIssueSummaryRecord[]>
   getLatestPromptTuningByIssue: (repository: string, issueNumber: number) => Promise<CodexPromptTuningRecord | null>
   createPromptTuning: (
@@ -682,6 +694,50 @@ export const createCodexJudgeStore = (
 
     const rows = await query.limit(limit).execute()
     return rows.map((row) => rowToRunSummary(row as Record<string, unknown>))
+  }
+
+  const listRunsPage = async (input: ListRunsPageInput): Promise<ListRunsPageResult> => {
+    const repository = input.repository?.trim()
+    const pageSize = input.pageSize && input.pageSize > 0 ? Math.min(input.pageSize, 200) : 50
+    const page = input.page && input.page > 0 ? Math.floor(input.page) : 1
+    const offset = (page - 1) * pageSize
+
+    let baseQuery = db.selectFrom('codex_judge.runs')
+    if (repository) {
+      baseQuery = baseQuery.where('repository', '=', repository)
+    }
+
+    const countRow = await baseQuery.select(sql<number>`count(*)`.as('count')).executeTakeFirst()
+    const total = Number(countRow?.count ?? 0)
+
+    const rows = await baseQuery
+      .select([
+        'id',
+        'repository',
+        'issue_number',
+        'branch',
+        'attempt',
+        'workflow_name',
+        'workflow_namespace',
+        'stage',
+        'status',
+        'phase',
+        'commit_sha',
+        'pr_number',
+        'pr_url',
+        'ci_status',
+        'review_status',
+        'created_at',
+        'updated_at',
+        'started_at',
+        'finished_at',
+      ])
+      .orderBy('created_at desc')
+      .limit(pageSize)
+      .offset(offset)
+      .execute()
+
+    return { runs: rows.map((row) => rowToRunSummary(row as Record<string, unknown>)), total }
   }
 
   const listIssueSummaries = async (repository: string, limit?: number): Promise<CodexIssueSummaryRecord[]> => {
@@ -1196,6 +1252,7 @@ export const createCodexJudgeStore = (
     listRunsByPrNumber,
     getRunHistory,
     listRecentRuns,
+    listRunsPage,
     listIssueSummaries,
     getLatestPromptTuningByIssue,
     createPromptTuning,

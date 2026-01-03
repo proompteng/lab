@@ -111,6 +111,10 @@ export type CodexRecentRunsResult =
   | { ok: true; runs: CodexRunSummaryRecord[]; raw?: unknown }
   | { ok: false; message: string; status?: number; raw?: unknown }
 
+export type CodexRunsPageResult =
+  | { ok: true; runs: CodexRunSummaryRecord[]; total: number; raw?: unknown }
+  | { ok: false; message: string; status?: number; raw?: unknown }
+
 export type CodexRunHistoryParams = {
   repository: string
   issueNumber: number
@@ -310,6 +314,58 @@ export const fetchCodexRecentRuns = async (params: {
   return {
     ok: true,
     runs: Array.isArray(record.runs) ? (record.runs as CodexRunSummaryRecord[]) : [],
+    raw: payload ?? undefined,
+  }
+}
+
+export const fetchCodexRunsPage = async (params: {
+  repository?: string
+  page: number
+  pageSize: number
+  signal?: AbortSignal
+}): Promise<CodexRunsPageResult> => {
+  const searchParams = new URLSearchParams({
+    page: params.page.toString(),
+    pageSize: params.pageSize.toString(),
+  })
+  if (params.repository) {
+    searchParams.set('repository', params.repository)
+  }
+
+  const response = await fetch(`/api/codex/runs/list?${searchParams.toString()}`, { signal: params.signal })
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      message: extractErrorMessage(payload) ?? `Request failed (${response.status})`,
+      raw: payload ?? undefined,
+    }
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    return { ok: false, message: 'Unexpected response format.', raw: payload ?? undefined }
+  }
+
+  const record = payload as Record<string, unknown>
+  if (record.ok === false) {
+    return {
+      ok: false,
+      message: extractErrorMessage(payload) ?? 'Request failed.',
+      raw: payload ?? undefined,
+    }
+  }
+
+  return {
+    ok: true,
+    runs: Array.isArray(record.runs) ? (record.runs as CodexRunSummaryRecord[]) : [],
+    total: typeof record.total === 'number' && Number.isFinite(record.total) ? record.total : 0,
     raw: payload ?? undefined,
   }
 }

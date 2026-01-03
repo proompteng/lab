@@ -50,8 +50,8 @@ const appNav: AppNavItem[] = [
     label: 'Codex runs',
     icon: IconList,
     children: [
-      { to: '/codex/runs', label: 'Search' },
-      { to: '/codex/runs/all', label: 'All runs' },
+      { to: '/codex/search', label: 'Search' },
+      { to: '/codex/runs', label: 'All runs' },
     ],
   },
   { to: '/terminals', label: 'Terminals', icon: IconTerminal2 },
@@ -135,7 +135,10 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {appNav.map((item) => {
-                const isActive = pathname === item.to || pathname.startsWith(`${item.to}/`)
+                const isActive =
+                  item.to === '/codex/runs'
+                    ? pathname.startsWith('/codex')
+                    : pathname === item.to || pathname.startsWith(`${item.to}/`)
                 const children =
                   item.to === '/terminals' && terminalSessions.length > 0
                     ? terminalSessions.map((session) => ({
