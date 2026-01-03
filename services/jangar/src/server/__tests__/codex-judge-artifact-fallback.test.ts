@@ -90,6 +90,8 @@ if (!globalState.__codexJudgeStoreMock) {
     listRunsByCommitSha: vi.fn(),
     listRunsByPrNumber: vi.fn(),
     getRunHistory: vi.fn(),
+    listRecentRuns: vi.fn(),
+    listIssueSummaries: vi.fn(),
     getLatestPromptTuningByIssue: vi.fn(),
     createPromptTuning: vi.fn(),
     close: vi.fn(),

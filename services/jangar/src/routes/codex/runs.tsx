@@ -3,12 +3,15 @@ import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   type CodexArtifactRecord,
   type CodexEvaluationRecord,
+  type CodexIssueSummaryRecord,
   type CodexRunHistory,
   type CodexRunHistoryEntry,
   type CodexRunStats,
+  fetchCodexIssueSummaries,
   fetchCodexRunHistory,
 } from '@/data/codex'
 import { cn } from '@/lib/utils'
@@ -22,6 +25,7 @@ type CodexRunsSearchState = {
 
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 100
+const DEFAULT_REPOSITORY = 'proompteng/lab'
 
 const parseSearchNumber = (value: unknown) => {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -37,8 +41,12 @@ const parseSearchNumber = (value: unknown) => {
 export const Route = createFileRoute('/codex/runs')({
   validateSearch: (search: Record<string, unknown>): CodexRunsSearchState => {
     const limitRaw = parseSearchNumber(search.limit) ?? DEFAULT_LIMIT
+    const repository =
+      typeof search.repository === 'string' && search.repository.trim().length > 0
+        ? search.repository
+        : DEFAULT_REPOSITORY
     return {
-      repository: typeof search.repository === 'string' ? search.repository : '',
+      repository,
       issueNumber: parseSearchNumber(search.issueNumber),
       branch: typeof search.branch === 'string' ? search.branch : '',
       limit: Math.min(limitRaw, MAX_LIMIT),
@@ -63,6 +71,9 @@ function CodexRunsPage() {
   const [error, setError] = React.useState<string | null>(null)
   const [formError, setFormError] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
+  const [issueOptions, setIssueOptions] = React.useState<CodexIssueSummaryRecord[]>([])
+  const [issueStatus, setIssueStatus] = React.useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
+  const [issueError, setIssueError] = React.useState<string | null>(null)
 
   const repositoryId = React.useId()
   const issueId = React.useId()
@@ -70,7 +81,6 @@ function CodexRunsPage() {
   const limitId = React.useId()
 
   const repositoryRef = React.useRef<HTMLInputElement | null>(null)
-  const issueRef = React.useRef<HTMLInputElement | null>(null)
 
   React.useEffect(() => {
     setRepository(searchState.repository)
@@ -78,6 +88,46 @@ function CodexRunsPage() {
     setBranch(searchState.branch)
     setLimit(searchState.limit.toString())
   }, [searchState])
+
+  React.useEffect(() => {
+    const trimmedRepository = repository.trim()
+    if (!trimmedRepository) {
+      setIssueOptions([])
+      setIssueStatus('idle')
+      setIssueError(null)
+      return
+    }
+
+    const controller = new AbortController()
+    let active = true
+    setIssueStatus('loading')
+    setIssueError(null)
+    fetchCodexIssueSummaries({ repository: trimmedRepository, limit: 200, signal: controller.signal })
+      .then((result) => {
+        if (!active) return
+        if (!result.ok) {
+          setIssueOptions([])
+          setIssueStatus('error')
+          setIssueError(result.message)
+          return
+        }
+        setIssueOptions(result.issues)
+        setIssueStatus('loaded')
+        setIssueError(null)
+      })
+      .catch((err: unknown) => {
+        if (!active) return
+        const message = err instanceof Error ? err.message : String(err)
+        setIssueOptions([])
+        setIssueStatus('error')
+        setIssueError(message)
+      })
+
+    return () => {
+      active = false
+      controller.abort()
+    }
+  }, [repository])
 
   const loadRuns = React.useCallback(
     async (params: { repository: string; issueNumber: number; branch?: string; limit: number }) => {
@@ -138,7 +188,7 @@ function CodexRunsPage() {
     }
     if (!parsedIssue) {
       setFormError('Issue number is required.')
-      issueRef.current?.focus()
+      document.getElementById(issueId)?.focus()
       return
     }
 
@@ -178,7 +228,7 @@ function CodexRunsPage() {
                 name="repository"
                 value={repository}
                 onChange={(event) => setRepository(event.target.value)}
-                placeholder="proompteng/lab"
+                placeholder={DEFAULT_REPOSITORY}
                 autoComplete="off"
                 aria-invalid={Boolean(formError)}
               />
@@ -187,16 +237,41 @@ function CodexRunsPage() {
               <label className="text-xs font-medium" htmlFor={issueId}>
                 Issue number
               </label>
-              <Input
-                ref={issueRef}
-                id={issueId}
-                name="issueNumber"
-                value={issueNumber}
-                onChange={(event) => setIssueNumber(event.target.value)}
-                placeholder="2151"
-                inputMode="numeric"
-                aria-invalid={Boolean(formError)}
-              />
+              <Select value={issueNumber || undefined} onValueChange={(value) => setIssueNumber(value ?? '')}>
+                <SelectTrigger id={issueId} aria-invalid={Boolean(formError)}>
+                  {issueNumber ? <SelectValue /> : <span className="text-muted-foreground">Select issue</span>}
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  {issueOptions.length === 0 ? (
+                    <SelectItem value="__empty" disabled>
+                      {issueStatus === 'loading' ? 'Loading issues…' : 'No issues found'}
+                    </SelectItem>
+                  ) : null}
+                  {issueOptions.map((issue) => (
+                    <SelectItem key={issue.issueNumber} value={issue.issueNumber.toString()}>
+                      <span className="flex w-full items-center justify-between gap-2">
+                        <span>#{issue.issueNumber}</span>
+                        <span className="text-xs text-muted-foreground tabular-nums">{issue.runCount} runs</span>
+                      </span>
+                    </SelectItem>
+                  ))}
+                  {issueNumber &&
+                  issueNumber !== '__empty' &&
+                  issueOptions.every((issue) => issue.issueNumber.toString() !== issueNumber) ? (
+                    <SelectItem value={issueNumber}>
+                      <span className="flex w-full items-center justify-between gap-2">
+                        <span>#{issueNumber}</span>
+                        <span className="text-xs text-muted-foreground">Not in list</span>
+                      </span>
+                    </SelectItem>
+                  ) : null}
+                </SelectContent>
+              </Select>
+              {issueStatus === 'error' ? (
+                <p className="text-xs text-destructive" role="alert">
+                  {issueError ?? 'Unable to load issues.'}
+                </p>
+              ) : null}
             </div>
             <div className="space-y-1">
               <label className="text-xs font-medium" htmlFor={branchId}>

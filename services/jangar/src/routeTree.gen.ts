@@ -20,6 +20,7 @@ import { Route as TorghutVisualsRouteImport } from './routes/torghut/visuals'
 import { Route as TorghutSymbolsRouteImport } from './routes/torghut/symbols'
 import { Route as TerminalsSessionIdRouteImport } from './routes/terminals/$sessionId'
 import { Route as CodexRunsRouteImport } from './routes/codex/runs'
+import { Route as CodexRunsAllRouteImport } from './routes/codex/runs/all'
 import { Route as AtlasSearchRouteImport } from './routes/atlas/search'
 import { Route as AtlasIndexedRouteImport } from './routes/atlas/indexed'
 import { Route as AtlasEnrichRouteImport } from './routes/atlas/enrich'
@@ -35,9 +36,11 @@ import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
 import { Route as ApiTorghutSymbolsRouteImport } from './routes/api/torghut/symbols'
 import { Route as ApiTerminalsSessionIdRouteImport } from './routes/api/terminals/$sessionId'
 import { Route as ApiCodexRunsRouteImport } from './routes/api/codex/runs'
+import { Route as ApiCodexIssuesRouteImport } from './routes/api/codex/issues'
 import { Route as ApiCodexRunCompleteRouteImport } from './routes/api/codex/run-complete'
 import { Route as ApiCodexNotifyRouteImport } from './routes/api/codex/notify'
 import { Route as ApiCodexGithubEventsRouteImport } from './routes/api/codex/github-events'
+import { Route as ApiCodexRunsRecentRouteImport } from './routes/api/codex/runs/recent'
 import { Route as ApiAtlasPathsRouteImport } from './routes/api/atlas/paths'
 import { Route as ApiAtlasIndexedRouteImport } from './routes/api/atlas/indexed'
 import { Route as ApiAtlasFileRouteImport } from './routes/api/atlas/file'
@@ -109,6 +112,11 @@ const CodexRunsRoute = CodexRunsRouteImport.update({
   id: '/codex/runs',
   path: '/codex/runs',
   getParentRoute: () => rootRouteImport,
+} as any)
+const CodexRunsAllRoute = CodexRunsAllRouteImport.update({
+  id: '/all',
+  path: '/all',
+  getParentRoute: () => CodexRunsRoute,
 } as any)
 const AtlasSearchRoute = AtlasSearchRouteImport.update({
   id: '/atlas/search',
@@ -184,6 +192,16 @@ const ApiCodexRunsRoute = ApiCodexRunsRouteImport.update({
   id: '/api/codex/runs',
   path: '/api/codex/runs',
   getParentRoute: () => rootRouteImport,
+} as any)
+const ApiCodexIssuesRoute = ApiCodexIssuesRouteImport.update({
+  id: '/api/codex/issues',
+  path: '/api/codex/issues',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiCodexRunsRecentRoute = ApiCodexRunsRecentRouteImport.update({
+  id: '/recent',
+  path: '/recent',
+  getParentRoute: () => ApiCodexRunsRoute,
 } as any)
 const ApiCodexRunCompleteRoute = ApiCodexRunCompleteRouteImport.update({
   id: '/api/codex/run-complete',
@@ -303,7 +321,8 @@ export interface FileRoutesByFullPath {
   '/atlas/enrich': typeof AtlasEnrichRoute
   '/atlas/indexed': typeof AtlasIndexedRoute
   '/atlas/search': typeof AtlasSearchRoute
-  '/codex/runs': typeof CodexRunsRoute
+  '/codex/runs': typeof CodexRunsRouteWithChildren
+  '/codex/runs/all': typeof CodexRunsAllRoute
   '/terminals/$sessionId': typeof TerminalsSessionIdRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
@@ -316,9 +335,11 @@ export interface FileRoutesByFullPath {
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/codex/github-events': typeof ApiCodexGithubEventsRoute
+  '/api/codex/issues': typeof ApiCodexIssuesRoute
   '/api/codex/notify': typeof ApiCodexNotifyRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
-  '/api/codex/runs': typeof ApiCodexRunsRoute
+  '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
+  '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
@@ -350,7 +371,8 @@ export interface FileRoutesByTo {
   '/atlas/enrich': typeof AtlasEnrichRoute
   '/atlas/indexed': typeof AtlasIndexedRoute
   '/atlas/search': typeof AtlasSearchRoute
-  '/codex/runs': typeof CodexRunsRoute
+  '/codex/runs': typeof CodexRunsRouteWithChildren
+  '/codex/runs/all': typeof CodexRunsAllRoute
   '/terminals/$sessionId': typeof TerminalsSessionIdRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
@@ -363,9 +385,11 @@ export interface FileRoutesByTo {
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/codex/github-events': typeof ApiCodexGithubEventsRoute
+  '/api/codex/issues': typeof ApiCodexIssuesRoute
   '/api/codex/notify': typeof ApiCodexNotifyRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
-  '/api/codex/runs': typeof ApiCodexRunsRoute
+  '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
+  '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
@@ -398,7 +422,8 @@ export interface FileRoutesById {
   '/atlas/enrich': typeof AtlasEnrichRoute
   '/atlas/indexed': typeof AtlasIndexedRoute
   '/atlas/search': typeof AtlasSearchRoute
-  '/codex/runs': typeof CodexRunsRoute
+  '/codex/runs': typeof CodexRunsRouteWithChildren
+  '/codex/runs/all': typeof CodexRunsAllRoute
   '/terminals/$sessionId': typeof TerminalsSessionIdRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
@@ -411,9 +436,11 @@ export interface FileRoutesById {
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/codex/github-events': typeof ApiCodexGithubEventsRoute
+  '/api/codex/issues': typeof ApiCodexIssuesRoute
   '/api/codex/notify': typeof ApiCodexNotifyRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
-  '/api/codex/runs': typeof ApiCodexRunsRoute
+  '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
+  '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
@@ -448,6 +475,7 @@ export interface FileRouteTypes {
     | '/atlas/indexed'
     | '/atlas/search'
     | '/codex/runs'
+    | '/codex/runs/all'
     | '/terminals/$sessionId'
     | '/torghut/symbols'
     | '/torghut/visuals'
@@ -460,9 +488,11 @@ export interface FileRouteTypes {
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/codex/github-events'
+    | '/api/codex/issues'
     | '/api/codex/notify'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
+    | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
@@ -495,6 +525,7 @@ export interface FileRouteTypes {
     | '/atlas/indexed'
     | '/atlas/search'
     | '/codex/runs'
+    | '/codex/runs/all'
     | '/terminals/$sessionId'
     | '/torghut/symbols'
     | '/torghut/visuals'
@@ -507,9 +538,11 @@ export interface FileRouteTypes {
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/codex/github-events'
+    | '/api/codex/issues'
     | '/api/codex/notify'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
+    | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
@@ -542,6 +575,7 @@ export interface FileRouteTypes {
     | '/atlas/indexed'
     | '/atlas/search'
     | '/codex/runs'
+    | '/codex/runs/all'
     | '/terminals/$sessionId'
     | '/torghut/symbols'
     | '/torghut/visuals'
@@ -554,9 +588,11 @@ export interface FileRouteTypes {
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/codex/github-events'
+    | '/api/codex/issues'
     | '/api/codex/notify'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
+    | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
@@ -589,7 +625,7 @@ export interface RootRouteChildren {
   AtlasEnrichRoute: typeof AtlasEnrichRoute
   AtlasIndexedRoute: typeof AtlasIndexedRoute
   AtlasSearchRoute: typeof AtlasSearchRoute
-  CodexRunsRoute: typeof CodexRunsRoute
+  CodexRunsRoute: typeof CodexRunsRouteWithChildren
   TerminalsSessionIdRoute: typeof TerminalsSessionIdRoute
   TorghutSymbolsRoute: typeof TorghutSymbolsRoute
   TorghutVisualsRoute: typeof TorghutVisualsRoute
@@ -602,9 +638,10 @@ export interface RootRouteChildren {
   ApiAtlasIndexedRoute: typeof ApiAtlasIndexedRoute
   ApiAtlasPathsRoute: typeof ApiAtlasPathsRoute
   ApiCodexGithubEventsRoute: typeof ApiCodexGithubEventsRoute
+  ApiCodexIssuesRoute: typeof ApiCodexIssuesRoute
   ApiCodexNotifyRoute: typeof ApiCodexNotifyRoute
   ApiCodexRunCompleteRoute: typeof ApiCodexRunCompleteRoute
-  ApiCodexRunsRoute: typeof ApiCodexRunsRoute
+  ApiCodexRunsRoute: typeof ApiCodexRunsRouteWithChildren
   ApiTorghutSymbolsRoute: typeof ApiTorghutSymbolsRouteWithChildren
   OpenaiV1ModelsRoute: typeof OpenaiV1ModelsRoute
   ApiTorghutTaBarsRoute: typeof ApiTorghutTaBarsRoute
@@ -691,6 +728,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/codex/runs'
       preLoaderRoute: typeof CodexRunsRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/codex/runs/all': {
+      id: '/codex/runs/all'
+      path: '/all'
+      fullPath: '/codex/runs/all'
+      preLoaderRoute: typeof CodexRunsAllRouteImport
+      parentRoute: typeof CodexRunsRoute
     }
     '/atlas/search': {
       id: '/atlas/search'
@@ -796,6 +840,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/codex/runs'
       preLoaderRoute: typeof ApiCodexRunsRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/api/codex/issues': {
+      id: '/api/codex/issues'
+      path: '/api/codex/issues'
+      fullPath: '/api/codex/issues'
+      preLoaderRoute: typeof ApiCodexIssuesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/codex/runs/recent': {
+      id: '/api/codex/runs/recent'
+      path: '/recent'
+      fullPath: '/api/codex/runs/recent'
+      preLoaderRoute: typeof ApiCodexRunsRecentRouteImport
+      parentRoute: typeof ApiCodexRunsRoute
     }
     '/api/codex/run-complete': {
       id: '/api/codex/run-complete'
@@ -933,6 +991,30 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface CodexRunsRouteChildren {
+  CodexRunsAllRoute: typeof CodexRunsAllRoute
+}
+
+const CodexRunsRouteChildren: CodexRunsRouteChildren = {
+  CodexRunsAllRoute: CodexRunsAllRoute,
+}
+
+const CodexRunsRouteWithChildren = CodexRunsRoute._addFileChildren(
+  CodexRunsRouteChildren,
+)
+
+interface ApiCodexRunsRouteChildren {
+  ApiCodexRunsRecentRoute: typeof ApiCodexRunsRecentRoute
+}
+
+const ApiCodexRunsRouteChildren: ApiCodexRunsRouteChildren = {
+  ApiCodexRunsRecentRoute: ApiCodexRunsRecentRoute,
+}
+
+const ApiCodexRunsRouteWithChildren = ApiCodexRunsRoute._addFileChildren(
+  ApiCodexRunsRouteChildren,
+)
+
 interface ApiTerminalsSessionIdRouteChildren {
   ApiTerminalsSessionIdInputRoute: typeof ApiTerminalsSessionIdInputRoute
   ApiTerminalsSessionIdDeleteRoute: typeof ApiTerminalsSessionIdDeleteRoute
@@ -995,7 +1077,7 @@ const rootRouteChildren: RootRouteChildren = {
   AtlasEnrichRoute: AtlasEnrichRoute,
   AtlasIndexedRoute: AtlasIndexedRoute,
   AtlasSearchRoute: AtlasSearchRoute,
-  CodexRunsRoute: CodexRunsRoute,
+  CodexRunsRoute: CodexRunsRouteWithChildren,
   TerminalsSessionIdRoute: TerminalsSessionIdRoute,
   TorghutSymbolsRoute: TorghutSymbolsRoute,
   TorghutVisualsRoute: TorghutVisualsRoute,
@@ -1008,9 +1090,10 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAtlasIndexedRoute: ApiAtlasIndexedRoute,
   ApiAtlasPathsRoute: ApiAtlasPathsRoute,
   ApiCodexGithubEventsRoute: ApiCodexGithubEventsRoute,
+  ApiCodexIssuesRoute: ApiCodexIssuesRoute,
   ApiCodexNotifyRoute: ApiCodexNotifyRoute,
   ApiCodexRunCompleteRoute: ApiCodexRunCompleteRoute,
-  ApiCodexRunsRoute: ApiCodexRunsRoute,
+  ApiCodexRunsRoute: ApiCodexRunsRouteWithChildren,
   ApiTorghutSymbolsRoute: ApiTorghutSymbolsRouteWithChildren,
   OpenaiV1ModelsRoute: OpenaiV1ModelsRoute,
   ApiTorghutTaBarsRoute: ApiTorghutTaBarsRoute,

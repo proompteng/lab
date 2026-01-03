@@ -45,7 +45,15 @@ type TerminalSession = {
 const appNav: AppNavItem[] = [
   { to: '/', label: 'Home', icon: IconHome },
   { to: '/memories', label: 'Memories', icon: IconBrain },
-  { to: '/codex/runs', label: 'Codex runs', icon: IconList },
+  {
+    to: '/codex/runs',
+    label: 'Codex runs',
+    icon: IconList,
+    children: [
+      { to: '/codex/runs', label: 'Search' },
+      { to: '/codex/runs/all', label: 'All runs' },
+    ],
+  },
   { to: '/terminals', label: 'Terminals', icon: IconTerminal2 },
   {
     to: '/agents',
