@@ -155,6 +155,7 @@ spec:
             fi
 
             export OUTPUT_PATH="${IMPLEMENTATION_OUTPUT_PATH:-/workspace/lab/.codex-implementation.log}"
+            export JSON_OUTPUT_PATH="${JSON_OUTPUT_PATH:-/workspace/.codex/implementation-events.jsonl}"
             export POST_TO_GITHUB=true
 
             AGENT_LOG_PATH="${AGENT_OUTPUT_PATH:-/workspace/lab/.codex-implementation-agent.log}"
@@ -244,7 +245,7 @@ spec:
           - name: implementation-log
             path: /workspace/lab/.codex-implementation.log
           - name: implementation-events
-            path: /workspace/lab/.codex-implementation-events.jsonl
+            path: /workspace/.codex/implementation-events.jsonl
           - name: implementation-agent-log
             path: /workspace/lab/.codex-implementation-agent.log
           - name: implementation-runtime-log
