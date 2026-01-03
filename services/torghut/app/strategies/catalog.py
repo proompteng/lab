@@ -91,7 +91,7 @@ class StrategyCatalog:
             if digest == self._last_digest:
                 return False
             catalog = _parse_catalog_payload(payload)
-        except (OSError, json.JSONDecodeError, ValidationError, ValueError) as exc:
+        except (OSError, json.JSONDecodeError, ValidationError, ValueError, yaml.YAMLError) as exc:
             logger.warning("Strategy catalog load failed path=%s error=%s", self.path, exc)
             return False
 
