@@ -68,7 +68,7 @@ The system is considered **guaranteed-successful** when these hold in production
 GitHub Issue -> Froussard -> Facteur -> Argo Workflow (DAG)
 
 DAG:
-  A) implementation
+  A) implementation loop (N iterations)
   B) run-complete emit (durable)
   C) judge (run in Argo)
   D) merge + deploy
@@ -109,6 +109,77 @@ Before implementation or judge begins, the workflow must:
 - Every run emits at least one summary + one gap/finding message to NATS.
 - The general channel becomes the **single source of truth** for cross-run context.
 
+## 4.2 Ralph Wiggum Implementation Loop (Configurable)
+We adopt the "Ralph Wiggum" approach for implementation: run the agent in a loop until done, but always cap it
+with explicit iteration limits. The loop is deterministic and bounded (no runaway retries), with each iteration
+preserving worktree state and artifacts.
+
+Key behaviors:
+- The implementation phase can run N sequential iterations when configured in the GitHub issue body.
+- Default `iterations` is 1 (single attempt) when no metadata is present.
+- Each iteration is a full Codex run that emits artifacts and run-complete payloads for auditability.
+- The judge + gate steps only use the final iteration artifacts by default, unless overridden by a future policy.
+
+References:
+- https://mikeyobrien.github.io/ralph-orchestrator/ (overview of the loop-based "Ralph Wiggum" technique)
+- https://mikeyobrien.github.io/ralph-orchestrator/advanced/architecture/ (example loop structure)
+- https://paddo.dev/blog/ralph-wiggum-autonomous-loops/ (background and rationale)
+
+## 4.3 Issue Metadata Schema (Future-Proof)
+Implementation iterations are controlled via a structured metadata block in the GitHub issue body. The parser must
+support a versioned schema and multiple shapes for backwards compatibility.
+
+### 4.3.1 Canonical schema (YAML, fenced)
+````yaml
+```codex
+version: 1
+iterations:
+  mode: fixed
+  count: 3
+```
+````
+
+### 4.3.2 Shorthand schema (number)
+````yaml
+```codex
+version: 1
+iterations: 3
+```
+````
+
+### 4.3.3 Extended schema (future-proof)
+````yaml
+```codex
+version: 1
+iterations:
+  mode: until
+  min: 1
+  max: 5
+  stop_on:
+    - judge_pass
+    - gate_pass
+  reason: "Loop until the judge and gate agree."
+```
+````
+
+### 4.3.4 Schema rules
+- `version` is required. Reject unknown versions unless `version_policy=allow_unknown` is set.
+- `iterations` accepts:
+  - Number: shorthand for `{ mode: fixed, count: <number> }`.
+  - Object: extended policy with `mode` and bounds.
+- `mode` options (extensible):
+  - `fixed`: run exactly `count` iterations.
+  - `until`: run until a stop condition is met, capped by `max`.
+  - `budget`: (reserved) run until time/cost budget is exhausted.
+  - `adaptive`: (reserved) dynamic policy based on failures.
+- Default: `{ mode: fixed, count: 1 }`.
+- Enforce `1 <= count <= 25` (or a configured max) to prevent runaway loops.
+
+### 4.3.5 Parsing precedence
+1) `codex` fenced block in the issue body.
+2) Future: issue labels (e.g., `codex-iterations-3`).
+3) Default to `{ mode: fixed, count: 1 }`.
+
 ## 5) Workflow Template Strategy
 
 ### 5.1 Unified template
@@ -117,6 +188,7 @@ Before implementation or judge begins, the workflow must:
   - `prompt` (only difference between implementation vs judge)
   - `repository`, `issue_number`, `base`, `head`
   - `run_id` (optional, but preferred)
+  - `iteration` (optional, 1-based index for implementation loops)
 
 ### 5.2 Two modes
 - **Implementation mode**: runs Codex, writes implementation artifacts and notify payload.
@@ -127,8 +199,8 @@ The only difference between the two modes must be the prompt and the step label.
 ## 6) Argo DAG Design
 
 ### 6.1 DAG nodes
-1) `implementation` (codex-run, stage=implementation)
-2) `run-complete` (emit run record + artifacts, retryable)
+1) `implementation-loop` (codex-run, stage=implementation, sequential N iterations)
+2) `run-complete` (emit run record + artifacts; per-iteration preferred, final-iteration required)
 3) `judge` (codex-run, stage=judge)
 4) `gate` (CI/review/mergeability gate; blocks until external acceptance is satisfied)
 5) `merge` (if pass)
@@ -140,7 +212,7 @@ The only difference between the two modes must be the prompt and the step label.
 All nodes below are **Argo workflow nodes**; edges are Argo DAG dependencies or conditional branches.
 ```mermaid
 flowchart TD
-  implementation[implementation] --> run_complete[run-complete]
+  implementation[implementation x N] --> run_complete[run-complete x N]
   run_complete --> judge[judge]
   judge --> gate[gate]
   gate -->|pass| merge[merge]
@@ -160,6 +232,10 @@ kind: WorkflowTemplate
 metadata:
   name: codex-autonomous
 spec:
+  arguments:
+    parameters:
+      - name: implementation_iterations
+        value: "1"
   entrypoint: codex-dag
   templates:
     - name: codex-dag
@@ -169,10 +245,15 @@ spec:
             templateRef:
               name: codex-run
               template: codex-run
+            withSequence:
+              start: "1"
+              end: "{{workflow.parameters.implementation_iterations}}"
             arguments:
               parameters:
                 - name: stage
                   value: implementation
+                - name: iteration
+                  value: "{{item}}"
           - name: run-complete
             dependencies: [implementation]
             template: run-complete
@@ -203,6 +284,12 @@ spec:
             when: "{{tasks.judge.outputs.parameters.decision}} != pass || {{tasks.gate.outputs.parameters.decision}} != pass || {{tasks.merge.outputs.parameters.decision}} == fail || {{tasks.verify.outputs.parameters.decision}} == fail"
             template: rerun
 ```
+
+Notes:
+- The implementation loop must be sequential to preserve worktree state. Enforce this with workflow-level
+  `parallelism: 1`, explicit chaining, or a steps template that serializes iterations.
+- If run-complete is emitted per iteration, each iteration must include its own `attempt`/`iteration` metadata.
+  At minimum, the final iteration must emit a run-complete payload with complete artifacts.
 
 ### 6.1.3 Gate Step Definition (Explicit)
 The `gate` step is the **hard acceptance barrier** between judge analysis and merge/deploy. It must:
