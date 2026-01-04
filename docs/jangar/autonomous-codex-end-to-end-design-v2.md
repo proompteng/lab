@@ -241,6 +241,54 @@ Every failure must be classified into one of:
 
 Each category produces a deterministic next_prompt and a system-improvement PR where applicable.
 
+## 6.5 Step Interfaces (Inputs/Outputs)
+
+### 6.5.1 `implementation` step
+**Inputs:** repository, issue_number, base, head, prompt  
+**Outputs (required parameters):**
+- `commit_sha`
+- `pr_number`
+- `pr_url`
+- `head_sha`
+- `artifacts_manifest_key` (optional; location of manifest in MinIO)
+
+**Failure:** must emit `implementation_failure` and write `run-gaps` NATS message.
+
+### 6.5.2 `run-complete` step
+**Inputs:** workflow metadata, artifacts list, eventBody/rawEvent, stage  
+**Outputs:** `run_id` (UUID), `run_complete_payload_key` (MinIO)  
+**Failure:** must emit `infra_failure` and retry with backoff.
+
+### 6.5.3 `judge` step
+**Inputs:** run_id, repository, issue_number, pr_number, worktree snapshot reference  
+**Outputs:** `decision`, `next_prompt`, `requirements_coverage`, `missing_items`, `suggested_fixes`  
+**Failure:** must emit `infra_failure` and retry boundedly.
+
+### 6.5.4 `gate` step
+**Inputs:** run_id, repository, pr_number, commit_sha  
+**Outputs:** `decision`, `reason`, `next_prompt`  
+**Failure:** must emit `infra_failure` if required signals missing.
+
+### 6.5.5 `merge` step
+**Inputs:** pr_number, repository  
+**Outputs:** `decision`, `merge_commit_sha`  
+**Failure:** `merge_failure` with explicit reason.
+
+### 6.5.6 `deploy` step
+**Inputs:** repository, merge_commit_sha  
+**Outputs:** `deploy_ref` (GitOps revision or workflow id)  
+**Failure:** `verification_failure` and rerun with prompt.
+
+### 6.5.7 `verify` step
+**Inputs:** deploy_ref, repository  
+**Outputs:** `decision`, `verification_report_key`  
+**Failure:** `verification_failure` and rerun with prompt.
+
+### 6.5.8 `rerun` step
+**Inputs:** run_id, next_prompt, attempt, base, head  
+**Outputs:** `rerun_submission_id`  
+**Failure:** `infra_failure` and escalation.
+
 ## 7) Data Contracts (Required)
 
 ### 7.1 Run record (authoritative)
@@ -324,6 +372,33 @@ Notify remains optional and must **not** be the source of truth. If present:
 }
 ```
 
+## 7.6 NATS Message Schema (Required)
+Messages are written to `workflow_comms.agent_messages` with `channel="general"`. Each message must include:
+```json
+{
+  "workflowUid": "uuid",
+  "workflowName": "github-codex-implementation-<id>",
+  "workflowNamespace": "argo-workflows",
+  "runId": "uuid",
+  "repository": "proompteng/lab",
+  "issueNumber": 1234,
+  "branch": "codex/issue-1234",
+  "stage": "implementation|judge|verify",
+  "kind": "run-started|run-summary|run-gaps|run-next-prompt|run-outcome",
+  "content": "string",
+  "attrs": {
+    "decision": "pass|fail",
+    "prUrl": "https://...",
+    "ciUrl": "https://...",
+    "missingItems": ["..."],
+    "suggestedFixes": ["..."]
+  },
+  "timestamp": "RFC3339"
+}
+```
+
+**Ordering guarantee:** publish `run-started` before any other message type.
+
 ## 8) Judge Requirements (v2)
 
 1) Judge must evaluate against worktree-only diff (not GitHub API diff).
@@ -351,6 +426,11 @@ Judge inputs must be assembled from **authoritative sources** in this order:
 4) Log excerpts from artifacts (implementation-log, status, events, agent/runtime logs).
 
 If any required input is missing, the judge **must not** proceed and must trigger infra rerun.
+
+## 8.4 Judge Execution Environment
+- Must run in the same cluster with access to `CODEX_CWD` worktree volume.
+- Must have access to GitHub API for PR metadata only.
+- Must emit outputs as JSON artifact and as DB/Kafka record.
 
 ## 9) System Improvement PRs (Must be Real)
 
@@ -382,6 +462,12 @@ Each system-improvement PR must include:
 - Worktree snapshots: `services/jangar/src/server/github-worktree-snapshot.ts`
 - Rerun orchestration: `services/jangar/src/server/codex-judge.ts` + new worker
 
+## 9.6 System Improvement PR Routing
+- If failure is due to workflow config: PR targets `argocd/applications/froussard/`.
+- If failure is due to judge logic: PR targets `services/jangar/src/server/`.
+- If failure is due to missing artifacts: PR targets workflow template outputs.
+- If failure is due to PR creation: PR targets `apps/froussard/src/codex/cli/`.
+
 ## 10) PR Creation Guarantees
 
 - The implementation workflow must create or update a PR on every attempt.
@@ -393,6 +479,13 @@ Implementation step must call GitHub API (or `gh`) to ensure a PR exists:
 - If PR exists: update title/body if needed.
 - If PR does not exist: create one.
 - Always persist `pr_number`, `pr_url`, and `head_sha` into `codex_judge.runs`.
+
+## 10.3 PR Body Requirements (Required)
+PR body must include:
+- Issue reference (`#<issue_number>`)
+- Summary of changes
+- Test results (command + pass/fail)
+- Known gaps if any
 
 
 ## 11) Retry and Idempotency Guarantees
@@ -432,6 +525,11 @@ Rerun submissions must:
 }
 ```
 
+## 12.2 Rerun Backoff Policy (Required)
+- Attempts: `JANGAR_CODEX_MAX_ATTEMPTS`
+- Backoff schedule: `JANGAR_CODEX_BACKOFF_SCHEDULE_MS`
+- Escalate to `needs_human` after max attempts with a system-improvement PR.
+
 ## 13) Worktree Snapshot Requirements
 
 - Worktree snapshot must exist for every PR used by judge.
@@ -442,6 +540,10 @@ Rerun submissions must:
 - Use `git diff --name-status` + `git diff -U3` against `base..head`.
 - Store `source='worktree'` in `jangar_github.pr_files`.
 - Update `jangar_github.pr_worktrees` with `base_sha`, `head_sha`, `last_refreshed_at`.
+
+## 13.2 Worktree Snapshot Validation (Required)
+- If diff is empty and no noop marker present: fail with `implementation_failure`.
+- If conflict markers present: fail with `merge_failure`.
 
 ## 14) Reliability Engineering (SLOs + Monitoring)
 
@@ -516,6 +618,19 @@ For every run, the following must be true:
 8) Implement durable rerun queue + worker.
 9) Implement system-improvement PR generator with real patches.
 10) Add metrics and alerts for missing artifacts, missing PRs, and rerun failures.
+
+## 20) End-to-End Data Validation Rules
+- `run_complete_payload` must be present for every run.
+- `workflow_name`, `workflow_namespace`, and `stage` must be non-empty.
+- `commit_sha` must be set before `gate`.
+- `pr_number` and `pr_url` must be set before `judge`.
+- `artifacts` list must include all required names.
+- `worktree snapshot` must exist for every PR used by judge.
+
+## 21) Execution Order Guarantees
+- Do not run `judge` until `run-complete` and worktree snapshot are confirmed.
+- Do not run `merge` until `gate` passes.
+- Do not run `verify` until `merge` succeeds.
 
 ## 19) Open Questions
 
