@@ -11,5 +11,6 @@ resources:
   - github-webhook-codex-judge-topic.yaml
   - github-issues-codex-tasks-topic.yaml
   - github-codex-implementation-workflow-template.yaml
+  - github-codex-post-deploy-workflow-template.yaml
   - coder-workspace-access.yaml
   - knative-service.yaml

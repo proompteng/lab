@@ -18,7 +18,9 @@ import { loadCodexJudgeConfig } from '~/server/codex-judge-config'
 import { evaluateDeterministicGates } from '~/server/codex-judge-gates'
 import { type CodexEvaluationRecord, type CodexRunRecord, createCodexJudgeStore } from '~/server/codex-judge-store'
 import { createGitHubClient, GitHubRateLimitError, type PullRequest, type ReviewSummary } from '~/server/github-client'
+import { mergePullRequest } from '~/server/github-review-actions'
 import { ingestGithubReviewEvent } from '~/server/github-review-ingest'
+import { refreshWorktreeSnapshot } from '~/server/github-worktree-snapshot'
 import { createPostgresMemoriesStore } from '~/server/memories-store'
 
 type MemoryStoreFactory = () => ReturnType<typeof createPostgresMemoriesStore>
@@ -65,6 +67,8 @@ const JSON_ONLY_REMINDER = [
   'IMPORTANT: Return a single JSON object only.',
   'Do not include markdown, code fences, or extra text.',
 ].join('\n')
+const POST_DEPLOY_TEMPLATE = 'github-codex-post-deploy'
+const POST_DEPLOY_POLL_MS = 10_000
 
 const getErrorStatus = (error: unknown) => {
   if (!error || typeof error !== 'object') return null
@@ -158,6 +162,16 @@ const RunCompletePayloadSchema = S.Struct({
   ),
   artifacts: S.optional(S.Array(S.Unknown)),
   stage: S.optional(S.String),
+  workflowName: S.optional(S.String),
+  workflowNamespace: S.optional(S.String),
+  workflowUid: S.optional(S.String),
+  repository: S.optional(S.String),
+  issueNumber: S.optional(S.Union(S.String, S.Number)),
+  branch: S.optional(S.String),
+  base: S.optional(S.String),
+  prompt: S.optional(S.String),
+  startedAt: S.optional(S.String),
+  finishedAt: S.optional(S.String),
 })
 
 const decodeSchema = <SchemaT extends S.Schema.AnyNoContext>(
@@ -405,24 +419,33 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
   )
 
   const repository =
+    normalizeRepo(decodedPayload.repository) ||
     normalizeRepo(eventBody.repository ?? eventBody.repo) ||
     metadataRepository ||
     normalizeRepo(extractRepositoryFromRawEvent(rawEvent))
   const issueNumber =
+    normalizeNumber(decodedPayload.issueNumber ?? 0) ||
     normalizeNumber(eventBody.issueNumber ?? eventBody.issue_number ?? 0) ||
     metadataIssueNumber ||
     extractIssueNumberFromRawEvent(rawEvent)
   const head =
+    normalizeRepo(decodedPayload.branch) ||
     normalizeRepo(eventBody.head) ||
     normalizeRepo(getParamValue(params, 'head')) ||
     metadataHead ||
     normalizeRepo(extractBranchFromRawEvent(rawEvent, 'head'))
   const base =
+    normalizeRepo(decodedPayload.base) ||
     normalizeRepo(eventBody.base) ||
     normalizeRepo(getParamValue(params, 'base')) ||
     metadataBase ||
     normalizeRepo(extractBranchFromRawEvent(rawEvent, 'base'))
-  const prompt = typeof eventBody.prompt === 'string' ? eventBody.prompt.trim() : null
+  const prompt =
+    typeof decodedPayload.prompt === 'string'
+      ? decodedPayload.prompt.trim()
+      : typeof eventBody.prompt === 'string'
+        ? eventBody.prompt.trim()
+        : null
   const issueTitle = typeof eventBody.issueTitle === 'string' ? eventBody.issueTitle : null
   const issueBody = typeof eventBody.issueBody === 'string' ? eventBody.issueBody : null
   const issueUrl = typeof eventBody.issueUrl === 'string' ? eventBody.issueUrl : null
@@ -462,13 +485,24 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
     issueUrl,
     turnId,
     threadId,
-    workflowName: String(metadataRecord.name ?? ''),
-    workflowUid: typeof metadataRecord.uid === 'string' ? metadataRecord.uid : null,
-    workflowNamespace: typeof metadataRecord.namespace === 'string' ? metadataRecord.namespace : null,
+    workflowName:
+      typeof decodedPayload.workflowName === 'string' && decodedPayload.workflowName.trim()
+        ? decodedPayload.workflowName.trim()
+        : String(metadataRecord.name ?? ''),
+    workflowUid:
+      (typeof decodedPayload.workflowUid === 'string' ? decodedPayload.workflowUid.trim() : '') ||
+      (typeof metadataRecord.uid === 'string' ? metadataRecord.uid : null),
+    workflowNamespace:
+      (typeof decodedPayload.workflowNamespace === 'string' ? decodedPayload.workflowNamespace.trim() : '') ||
+      (typeof metadataRecord.namespace === 'string' ? metadataRecord.namespace : null),
     stage: typeof decodedPayload.stage === 'string' ? decodedPayload.stage : null,
     phase: typeof rawStatus.phase === 'string' ? rawStatus.phase : null,
-    startedAt: typeof rawStatus.startedAt === 'string' ? rawStatus.startedAt : null,
-    finishedAt: typeof rawStatus.finishedAt === 'string' ? rawStatus.finishedAt : null,
+    startedAt:
+      normalizeOptionalString(decodedPayload.startedAt) ??
+      (typeof rawStatus.startedAt === 'string' ? rawStatus.startedAt : null),
+    finishedAt:
+      normalizeOptionalString(decodedPayload.finishedAt) ??
+      (typeof rawStatus.finishedAt === 'string' ? rawStatus.finishedAt : null),
     artifacts,
     runCompletePayload: data,
   }
@@ -490,8 +524,13 @@ const parseNotifyPayload = (payload: Record<string, unknown>) => {
         ? data.workflowNamespace
         : null
   const repository = normalizeRepo(data.repository)
-  const issueNumber = Number(data.issue_number ?? 0)
-  const branch = typeof data.head_branch === 'string' ? data.head_branch.trim() : ''
+  const issueNumber = Number(data.issue_number ?? data.issueNumber ?? 0)
+  const branch =
+    typeof data.head_branch === 'string'
+      ? data.head_branch.trim()
+      : typeof data.branch === 'string'
+        ? data.branch.trim()
+        : ''
   const prompt = typeof data.prompt === 'string' ? data.prompt : null
   return { workflowName, workflowNamespace, repository, issueNumber, branch, prompt, notifyPayload: data }
 }
@@ -967,6 +1006,69 @@ const resolveReviewContext = async (run: CodexRunRecord, prNumber: number) => {
   return { review, reviewRun }
 }
 
+const buildAutomationRequest = (run: CodexRunRecord) =>
+  new Request('http://jangar.internal/codex-judge', {
+    headers: {
+      'x-jangar-actor': 'codex-judge',
+      'x-request-id': `codex-judge-${run.id}`,
+    },
+  })
+
+const submitPostDeployWorkflow = async (input: {
+  repository: string
+  issueNumber: number
+  branch: string
+  base: string | null
+  commitSha: string | null
+  prompt: string | null
+  workflowNamespace: string | null
+}) => {
+  if (!argo) {
+    throw new Error('Argo client unavailable')
+  }
+  const parameters: string[] = [
+    `repository=${input.repository}`,
+    `issueNumber=${input.issueNumber}`,
+    `branch=${input.branch}`,
+  ]
+  if (input.base) parameters.push(`base=${input.base}`)
+  if (input.commitSha) parameters.push(`commitSha=${input.commitSha}`)
+  if (input.prompt) parameters.push(`prompt=${input.prompt}`)
+
+  return argo.submitWorkflowTemplate({
+    namespace: input.workflowNamespace ?? 'argo-workflows',
+    templateName: POST_DEPLOY_TEMPLATE,
+    parameters,
+    labels: {
+      'codex.stage': 'post-deploy',
+      'codex.issue_number': String(input.issueNumber),
+    },
+    annotations: {
+      'codex.repository': input.repository,
+      'codex.head': input.branch,
+      ...(input.base ? { 'codex.base': input.base } : {}),
+    },
+    generateName: `${POST_DEPLOY_TEMPLATE}-`,
+  })
+}
+
+const waitForWorkflowCompletion = async (namespace: string, name: string, timeoutMs: number) => {
+  if (!argo) {
+    throw new Error('Argo client unavailable')
+  }
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const workflow = await argo.getWorkflow(namespace, name)
+    const status = isRecord(workflow?.status) ? workflow.status : {}
+    const phase = typeof status.phase === 'string' ? status.phase : null
+    if (phase && ['Succeeded', 'Failed', 'Error'].includes(phase)) {
+      return { phase, workflow }
+    }
+    await wait(POST_DEPLOY_POLL_MS)
+  }
+  return { phase: 'Timeout', workflow: null }
+}
+
 const extractLogExcerpt = (payload?: Record<string, unknown> | null) => {
   if (!payload) {
     return {
@@ -977,7 +1079,7 @@ const extractLogExcerpt = (payload?: Record<string, unknown> | null) => {
       status: null,
     }
   }
-  const raw = payload.log_excerpt
+  const raw = (payload.logs as Record<string, unknown> | undefined) ?? payload.log_excerpt
   if (!raw || typeof raw !== 'object') {
     return {
       output: null,
@@ -2030,6 +2132,30 @@ const evaluateRun = async (runId: string) => {
       return
     }
 
+    const missingDeps: string[] = []
+    if (!config.githubToken) missingDeps.push('GITHUB_TOKEN')
+    if (!process.env.MINIO_ENDPOINT) missingDeps.push('MINIO_ENDPOINT')
+    if (!process.env.MINIO_ACCESS_KEY) missingDeps.push('MINIO_ACCESS_KEY')
+    if (!process.env.MINIO_SECRET_KEY) missingDeps.push('MINIO_SECRET_KEY')
+    if (!process.env.ARGO_SERVER_URL) missingDeps.push('ARGO_SERVER_URL')
+    if (!process.env.FACTEUR_INTERNAL_URL) missingDeps.push('FACTEUR_INTERNAL_URL')
+
+    if (missingDeps.length > 0 && !_RECONCILE_DISABLED) {
+      const evaluation = await store.updateDecision({
+        runId: run.id,
+        decision: 'needs_human',
+        reasons: { error: 'missing_env', missing: missingDeps },
+        suggestedFixes: { fix: `Configure required environment variables: ${missingDeps.join(', ')}` },
+        nextPrompt: null,
+        promptTuning: {},
+        systemSuggestions: {},
+      })
+      const refreshedRun = (await store.getRunById(run.id)) ?? run
+      await writeMemories(refreshedRun, evaluation)
+      await sendDiscordEscalation(run, 'missing_env')
+      return
+    }
+
     if (run.status !== 'waiting_for_ci' && run.status !== 'judging') {
       const updated = await store.updateRunStatus(run.id, 'waiting_for_ci')
       if (!updated) return
@@ -2260,6 +2386,49 @@ const evaluateRun = async (runId: string) => {
       return
     }
 
+    if (!pr.headRef || !pr.baseRef) {
+      const evaluation = await store.updateDecision({
+        runId: run.id,
+        decision: 'needs_human',
+        reasons: { error: 'missing_pr_refs' },
+        suggestedFixes: { fix: 'Ensure the PR includes both base and head refs before judging.' },
+        nextPrompt: null,
+        promptTuning: {},
+        systemSuggestions: {},
+      })
+      const refreshedRun = (await store.getRunById(run.id)) ?? run
+      await writeMemories(refreshedRun, evaluation)
+      await sendDiscordEscalation(run, 'missing_pr_refs')
+      return
+    }
+
+    if (!_RECONCILE_DISABLED) {
+      try {
+        await refreshWorktreeSnapshot({
+          repository: run.repository,
+          prNumber: pr.number,
+          headRef: pr.headRef,
+          baseRef: pr.baseRef,
+        })
+      } catch (error) {
+        const evaluation = await store.updateDecision({
+          runId: run.id,
+          decision: 'needs_human',
+          reasons: { error: 'worktree_snapshot_failed', detail: String(error) },
+          suggestedFixes: {
+            fix: 'Verify CODEX_CWD is populated, git is available, and the worktree can be created for this PR.',
+          },
+          nextPrompt: null,
+          promptTuning: {},
+          systemSuggestions: {},
+        })
+        const refreshedRun = (await store.getRunById(run.id)) ?? run
+        await writeMemories(refreshedRun, evaluation)
+        await sendDiscordEscalation(run, 'worktree_snapshot_failed')
+        return
+      }
+    }
+
     const { review, reviewRun } = await resolveReviewContext(run, pr.number)
 
     if (review.requestedChanges || review.unresolvedThreads.length > 0) {
@@ -2404,10 +2573,113 @@ const evaluateRun = async (runId: string) => {
     })
 
     if (decision === 'pass') {
-      const updatedRun = (await store.updateRunStatus(run.id, 'completed')) ?? run
-      await sendDiscordSuccess(run, pr.htmlUrl, ci.url)
-      await writeMemories(updatedRun, evaluation)
-      return
+      if (_RECONCILE_DISABLED) {
+        const updatedRun = (await store.updateRunStatus(run.id, 'completed')) ?? run
+        await sendDiscordSuccess(run, pr.htmlUrl, ci.url)
+        await writeMemories(updatedRun, evaluation)
+        return
+      }
+      if (!repoParts) {
+        const mergedEval = await store.updateDecision({
+          runId: run.id,
+          decision: 'needs_human',
+          reasons: { error: 'merge_failed', detail: 'Repository parse failed' },
+          suggestedFixes: { fix: 'Merge the PR manually and verify deployment.' },
+          nextPrompt: null,
+          promptTuning: {},
+          systemSuggestions: {},
+        })
+        const refreshedRun = (await store.getRunById(run.id)) ?? run
+        await writeMemories(refreshedRun, mergedEval)
+        await sendDiscordEscalation(run, 'merge_failed')
+        return
+      }
+
+      try {
+        await mergePullRequest(buildAutomationRequest(run), {
+          owner: repoParts.owner,
+          repo: repoParts.repo,
+          number: pr.number,
+          method: 'squash',
+          deleteBranch: true,
+        })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        const mergedEval = await store.updateDecision({
+          runId: run.id,
+          decision: 'needs_human',
+          reasons: { error: 'merge_failed', detail: message },
+          suggestedFixes: { fix: 'Enable merge writes or merge the PR manually.' },
+          nextPrompt: null,
+          promptTuning: {},
+          systemSuggestions: {},
+        })
+        const refreshedRun = (await store.getRunById(run.id)) ?? run
+        await writeMemories(refreshedRun, mergedEval)
+        await sendDiscordEscalation(run, 'merge_failed')
+        return
+      }
+
+      await store.updateRunStatus(run.id, 'verifying')
+      try {
+        const postDeploy = await submitPostDeployWorkflow({
+          repository: run.repository,
+          issueNumber: run.issueNumber,
+          branch: run.branch,
+          base: pr.baseRef ?? null,
+          commitSha,
+          prompt: run.prompt,
+          workflowNamespace: run.workflowNamespace,
+        })
+
+        const timeoutMs = Math.max(60_000, config.ciMaxWaitMs)
+        const verification = await waitForWorkflowCompletion(postDeploy.namespace, postDeploy.name, timeoutMs)
+        if (verification.phase === 'Succeeded') {
+          const updatedRun = (await store.updateRunStatus(run.id, 'completed')) ?? run
+          await sendDiscordSuccess(run, pr.htmlUrl, ci.url)
+          await writeMemories(updatedRun, evaluation)
+          return
+        }
+
+        const evaluationFailure = await store.updateDecision({
+          runId: run.id,
+          decision: 'needs_iteration',
+          reasons: {
+            error: 'post_deploy_failed',
+            phase: verification.phase,
+            workflow: postDeploy.name,
+          },
+          suggestedFixes: {
+            fix: 'Fix post-deploy integration/E2E failures and re-run verification.',
+            rollback: 'Rollback by reverting the merge or restoring the prior GitOps revision if needed.',
+          },
+          nextPrompt:
+            verification.phase === 'Timeout'
+              ? 'Post-deploy verification timed out. Investigate the deployment and re-run post-deploy tests.'
+              : 'Post-deploy verification failed. Fix the issues found in integration/E2E tests and rerun.',
+          promptTuning: {},
+          systemSuggestions: {},
+        })
+        const refreshedRun = (await store.getRunById(run.id)) ?? run
+        await writeMemories(refreshedRun, evaluationFailure)
+        await triggerRerun(run, 'post_deploy_failed', evaluationFailure)
+        return
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        const evaluationFailure = await store.updateDecision({
+          runId: run.id,
+          decision: 'needs_human',
+          reasons: { error: 'post_deploy_failed', detail: message },
+          suggestedFixes: { fix: 'Verify Argo post-deploy workflow access and rerun verification.' },
+          nextPrompt: null,
+          promptTuning: {},
+          systemSuggestions: {},
+        })
+        const refreshedRun = (await store.getRunById(run.id)) ?? run
+        await writeMemories(refreshedRun, evaluationFailure)
+        await sendDiscordEscalation(run, 'post_deploy_failed')
+        return
+      }
     }
 
     const refreshedRun = (await store.getRunById(run.id)) ?? run

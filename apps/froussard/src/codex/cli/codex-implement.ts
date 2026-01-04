@@ -58,14 +58,21 @@ type CodexNotifyPayload = {
   type: 'agent-turn-complete'
   repository: string
   issue_number: string
+  issueNumber?: string
   base_branch: string
   head_branch: string
   workflow_name: string | null
   workflow_namespace: string | null
+  workflowName?: string | null
+  workflowNamespace?: string | null
+  commit_sha?: string | null
+  commitSha?: string | null
   session_id: string | null
+  branch?: string | null
   prompt: string
   input_messages: string[]
   last_assistant_message: string | null
+  logs?: CodexNotifyLogExcerpt
   output_paths: Record<string, string>
   log_excerpt?: CodexNotifyLogExcerpt
   issued_at: string
@@ -129,6 +136,19 @@ const collectLogExcerpts = async (
   }
 }
 
+const resolveHeadSha = async (worktree: string, logger: CodexLogger) => {
+  try {
+    const result = await runCommand('git', ['rev-parse', 'HEAD'], { cwd: worktree })
+    if (result.exitCode === 0) {
+      return result.stdout.trim() || null
+    }
+    logger.warn(`git rev-parse HEAD failed: ${result.stderr.trim() || result.stdout.trim()}`)
+  } catch (error) {
+    logger.warn('git rev-parse HEAD threw', error)
+  }
+  return null
+}
+
 const initializeOutputFiles = async (paths: string[], logger: CodexLogger) => {
   await Promise.all(
     paths.map(async (path) => {
@@ -159,6 +179,7 @@ const buildNotifyPayload = ({
   sessionId,
   lastAssistantMessage,
   logExcerpt,
+  commitSha,
 }: {
   repository: string
   issueNumber: string
@@ -176,19 +197,27 @@ const buildNotifyPayload = ({
   sessionId?: string
   lastAssistantMessage?: string | null
   logExcerpt?: CodexNotifyLogExcerpt
+  commitSha?: string | null
 }): CodexNotifyPayload => {
   return {
     type: 'agent-turn-complete',
     repository,
     issue_number: issueNumber,
+    issueNumber,
     base_branch: baseBranch,
     head_branch: headBranch,
     workflow_name: process.env.ARGO_WORKFLOW_NAME ?? null,
     workflow_namespace: process.env.ARGO_WORKFLOW_NAMESPACE ?? null,
+    workflowName: process.env.ARGO_WORKFLOW_NAME ?? null,
+    workflowNamespace: process.env.ARGO_WORKFLOW_NAMESPACE ?? null,
+    commit_sha: commitSha ?? null,
+    commitSha: commitSha ?? null,
     session_id: sessionId ?? null,
+    branch: headBranch || null,
     prompt,
     input_messages: [prompt],
     last_assistant_message: lastAssistantMessage ?? null,
+    logs: logExcerpt,
     output_paths: {
       output: outputPath,
       events: jsonOutputPath,
@@ -394,6 +423,7 @@ interface ImplementationManifest {
   repository: string
   issueNumber: string
   prompt: string
+  commitSha: string | null
   sessionId?: string
   trackedFiles: string[]
   deletedFiles: string[]
@@ -800,6 +830,18 @@ const captureImplementationArtifacts = async ({
       logger.warn('git ls-files threw while capturing implementation artifacts', error)
     }
 
+    let commitSha: string | null = null
+    try {
+      const commitResult = await runCommand('git', ['rev-parse', 'HEAD'], { cwd: worktree })
+      if (commitResult.exitCode === 0) {
+        commitSha = commitResult.stdout.trim() || null
+      } else {
+        logger.warn('git rev-parse HEAD failed while capturing implementation artifacts', commitResult.stderr.trim())
+      }
+    } catch (error) {
+      logger.warn('git rev-parse HEAD threw while capturing implementation artifacts', error)
+    }
+
     const manifest = {
       version: 1,
       generatedAt: new Date().toISOString(),
@@ -807,6 +849,7 @@ const captureImplementationArtifacts = async ({
       repository,
       issueNumber,
       prompt,
+      commitSha,
       sessionId: sessionId ?? (await extractSessionIdFromEvents(jsonEventsPath, logger)),
       trackedFiles: Array.from(trackedFiles).sort(),
       deletedFiles: deletedFiles.sort(),
@@ -1169,6 +1212,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       sessionResult.agentMessages.length > 0
         ? sessionResult.agentMessages[sessionResult.agentMessages.length - 1]
         : null
+    const commitSha = await resolveHeadSha(worktree, logger)
     const notifyPayload = buildNotifyPayload({
       repository,
       issueNumber,
@@ -1186,6 +1230,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       sessionId: capturedSessionId,
       lastAssistantMessage,
       logExcerpt,
+      commitSha,
     })
     try {
       await ensureFileDirectory(notifyPath)

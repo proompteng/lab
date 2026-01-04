@@ -1,6 +1,7 @@
 import { mergePullRequest, resolvePullRequestThread, submitPullRequestReview } from '~/server/github-review-actions'
 import { isGithubRepoAllowed, loadGithubReviewConfig } from '~/server/github-review-config'
 import { createGithubReviewStore } from '~/server/github-review-store'
+import { refreshWorktreeSnapshot } from '~/server/github-worktree-snapshot'
 
 const jsonResponse = (payload: unknown, status = 200) => {
   const body = JSON.stringify(payload)
@@ -24,6 +25,37 @@ const parseLimit = (value: string | null, fallback: number) => {
   const parsed = Number.parseInt(value, 10)
   if (!Number.isFinite(parsed)) return fallback
   return Math.max(1, Math.min(parsed, 100))
+}
+
+const maybeAutoRefreshFiles = async (
+  store: ReturnType<typeof createGithubReviewStore>,
+  input: {
+    repository: string
+    prNumber: number
+    headRef: string | null
+    baseRef: string | null
+    headSha: string | null
+  },
+) => {
+  if (!input.headRef || !input.baseRef) return false
+  const existing = await store.getPrWorktree({ repository: input.repository, prNumber: input.prNumber })
+  if (existing?.headSha && input.headSha && existing.headSha === input.headSha) return false
+  try {
+    await refreshWorktreeSnapshot({
+      repository: input.repository,
+      prNumber: input.prNumber,
+      headRef: input.headRef,
+      baseRef: input.baseRef,
+    })
+    return true
+  } catch (error) {
+    console.warn('[github-review] worktree snapshot refresh failed', {
+      repository: input.repository,
+      prNumber: input.prNumber,
+      error: String(error),
+    })
+  }
+  return false
 }
 
 export const getPullsHandler = async (request: Request, createStore = createGithubReviewStore) => {
@@ -136,10 +168,112 @@ export const getPullFilesHandler = async (
       return jsonResponse({ ok: false, error: 'Pull request not found' }, 404)
     }
 
-    const files = await store.listFiles({ repository, prNumber, commitSha: pull.pull.headSha })
+    const worktree = await store.getPrWorktree({ repository, prNumber })
+    const commitSha = worktree?.headSha ?? pull.pull.headSha
+    let files = await store.listFiles({
+      repository,
+      prNumber,
+      commitSha,
+      source: 'worktree',
+    })
+    if (files.length === 0) {
+      const refreshed = await maybeAutoRefreshFiles(store, {
+        repository,
+        prNumber,
+        headRef: pull.pull.headRef ?? null,
+        baseRef: pull.pull.baseRef ?? null,
+        headSha: pull.pull.headSha ?? null,
+      })
+      if (refreshed) {
+        const refreshedWorktree = await store.getPrWorktree({ repository, prNumber })
+        const refreshedCommit = refreshedWorktree?.headSha ?? pull.pull.headSha
+        files = await store.listFiles({
+          repository,
+          prNumber,
+          commitSha: refreshedCommit,
+          source: 'worktree',
+        })
+      }
+    }
     return jsonResponse({ ok: true, files })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to load pull request files'
+    return jsonResponse({ ok: false, error: message }, 500)
+  } finally {
+    await store.close()
+  }
+}
+
+export const refreshPullFilesHandler = async (
+  _request: Request,
+  params: { owner: string; repo: string; number: string },
+  createStore = createGithubReviewStore,
+) => {
+  const prNumber = parseNumberParam(params.number)
+  if (!prNumber) {
+    return jsonResponse({ ok: false, error: 'Invalid pull request number' }, 400)
+  }
+
+  const repository = `${params.owner}/${params.repo}`
+  const config = loadGithubReviewConfig()
+  if (!isGithubRepoAllowed(config, repository)) {
+    return jsonResponse({ ok: false, error: 'Repository not allowed' }, 403)
+  }
+
+  const store = createStore()
+  try {
+    const pull = await store.getPull({ repository, prNumber })
+    if (!pull.pull) {
+      return jsonResponse({ ok: false, error: 'Pull request not found' }, 404)
+    }
+    if (!pull.pull.headRef || !pull.pull.baseRef) {
+      return jsonResponse({ ok: false, error: 'Missing base/head ref for pull request' }, 400)
+    }
+
+    const snapshot = await refreshWorktreeSnapshot({
+      repository,
+      prNumber,
+      headRef: pull.pull.headRef,
+      baseRef: pull.pull.baseRef,
+    })
+
+    return jsonResponse({
+      ok: true,
+      commitSha: snapshot.commitSha,
+      baseSha: snapshot.baseSha,
+      fileCount: snapshot.fileCount,
+      worktreePath: snapshot.worktreePath,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to refresh pull request files'
+    return jsonResponse({ ok: false, error: message }, 500)
+  } finally {
+    await store.close()
+  }
+}
+
+export const getPullChecksHandler = async (
+  _request: Request,
+  params: { owner: string; repo: string; number: string },
+  createStore = createGithubReviewStore,
+) => {
+  const prNumber = parseNumberParam(params.number)
+  if (!prNumber) {
+    return jsonResponse({ ok: false, error: 'Invalid pull request number' }, 400)
+  }
+
+  const repository = `${params.owner}/${params.repo}`
+  const config = loadGithubReviewConfig()
+  if (!isGithubRepoAllowed(config, repository)) {
+    return jsonResponse({ ok: false, error: 'Repository not allowed' }, 403)
+  }
+
+  const store = createStore()
+  try {
+    const checks = await store.listCheckStates({ repository, prNumber })
+    return jsonResponse({ ok: true, commits: checks })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to load pull request checks'
     return jsonResponse({ ok: false, error: message }, 500)
   } finally {
     await store.close()

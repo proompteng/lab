@@ -1,3 +1,5 @@
+import type { CodexRunRecord } from '@/data/codex'
+
 export type GithubCheckRun = {
   id: string
   name: string | null
@@ -15,6 +17,18 @@ export type GithubCheckSummary = {
   failureCount: number
   pendingCount: number
   runs: GithubCheckRun[]
+}
+
+export type GithubCheckState = {
+  commitSha: string
+  status: string | null
+  detailsUrl: string | null
+  totalCount: number
+  successCount: number
+  failureCount: number
+  pendingCount: number
+  runs: GithubCheckRun[]
+  updatedAt: string | null
 }
 
 export type GithubReviewSummary = {
@@ -193,6 +207,54 @@ export const fetchGithubPullThreads = async (owner: string, repo: string, number
     return { ok: false, error: payload?.error ?? 'Failed to load pull request threads' } as const
   }
   return { ok: true, threads: payload.threads ?? [] } as const
+}
+
+export const fetchGithubPullChecks = async (owner: string, repo: string, number: number) => {
+  const response = await fetch(`/api/github/pulls/${owner}/${repo}/${number}/checks`)
+  const payload = (await response.json().catch(() => null)) as {
+    ok: boolean
+    commits?: GithubCheckState[]
+    error?: string
+  } | null
+  if (!response.ok || !payload || !payload.ok) {
+    return { ok: false, error: payload?.error ?? 'Failed to load pull request checks' } as const
+  }
+  return { ok: true, commits: payload.commits ?? [] } as const
+}
+
+export const refreshGithubPullFiles = async (owner: string, repo: string, number: number) => {
+  const response = await fetch(`/api/github/pulls/${owner}/${repo}/${number}/refresh-files`, {
+    method: 'POST',
+  })
+  const payload = (await response.json().catch(() => null)) as {
+    ok: boolean
+    commitSha?: string
+    baseSha?: string
+    fileCount?: number
+    error?: string
+  } | null
+  if (!response.ok || !payload || !payload.ok) {
+    return { ok: false, error: payload?.error ?? 'Failed to refresh pull request files' } as const
+  }
+  return {
+    ok: true,
+    commitSha: payload.commitSha ?? null,
+    baseSha: payload.baseSha ?? null,
+    fileCount: payload.fileCount ?? 0,
+  } as const
+}
+
+export const fetchGithubPullJudgeRuns = async (owner: string, repo: string, number: number) => {
+  const response = await fetch(`/api/github/pulls/${owner}/${repo}/${number}/judge-runs`)
+  const payload = (await response.json().catch(() => null)) as {
+    ok: boolean
+    runs?: CodexRunRecord[]
+    error?: string
+  } | null
+  if (!response.ok || !payload || !payload.ok) {
+    return { ok: false, error: payload?.error ?? 'Failed to load judge runs' } as const
+  }
+  return { ok: true, runs: payload.runs ?? [] } as const
 }
 
 export const submitGithubReview = async (

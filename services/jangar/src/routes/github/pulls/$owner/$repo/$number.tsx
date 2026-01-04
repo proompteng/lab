@@ -3,10 +3,14 @@ import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import type { CodexRunRecord } from '@/data/codex'
 import {
   fetchGithubPull,
+  fetchGithubPullChecks,
   fetchGithubPullFiles,
+  fetchGithubPullJudgeRuns,
   fetchGithubPullThreads,
+  type GithubCheckState,
   type GithubCheckSummary,
   type GithubIssueComment,
   type GithubPrFile,
@@ -14,6 +18,7 @@ import {
   type GithubReviewSummary,
   type GithubReviewThread,
   mergeGithubPull,
+  refreshGithubPullFiles,
   resolveGithubThread,
   submitGithubReview,
 } from '@/data/github'
@@ -44,7 +49,7 @@ const formatDateTime = (value: string | null) => {
   }).format(new Date(parsed))
 }
 
-type TabKey = 'overview' | 'files' | 'conversation' | 'checks'
+type TabKey = 'overview' | 'files' | 'conversation' | 'checks' | 'judge'
 
 type InlineComment = {
   id: string
@@ -54,6 +59,47 @@ type InlineComment = {
   body: string
   startLine: string
 }
+
+type FileTreeNode = {
+  name: string
+  path: string
+  children: FileTreeNode[]
+  file?: GithubPrFile
+}
+
+const buildFileTree = (files: GithubPrFile[]) => {
+  const root: FileTreeNode = { name: '', path: '', children: [] }
+  for (const file of files) {
+    const segments = file.path.split('/').filter(Boolean)
+    let current = root
+    let currentPath = ''
+    for (let index = 0; index < segments.length; index += 1) {
+      const segment = segments[index] ?? ''
+      currentPath = currentPath ? `${currentPath}/${segment}` : segment
+      let node = current.children.find((child) => child.name === segment)
+      if (!node) {
+        node = { name: segment, path: currentPath, children: [] }
+        current.children.push(node)
+      }
+      if (index === segments.length - 1) {
+        node.file = file
+      }
+      current = node
+    }
+  }
+  const sortTree = (node: FileTreeNode) => {
+    node.children.sort((a, b) => {
+      if (a.file && !b.file) return 1
+      if (!a.file && b.file) return -1
+      return a.name.localeCompare(b.name)
+    })
+    node.children.forEach(sortTree)
+  }
+  sortTree(root)
+  return root
+}
+
+const formatShortSha = (value: string | null | undefined) => (value ? value.slice(0, 7) : '—')
 
 export const Route = createFileRoute('/github/pulls/$owner/$repo/$number')({
   component: GithubPullDetailPage,
@@ -66,14 +112,17 @@ function GithubPullDetailPage() {
   const [pull, setPull] = React.useState<GithubPullState | null>(null)
   const [review, setReview] = React.useState<GithubReviewSummary | null>(null)
   const [checks, setChecks] = React.useState<GithubCheckSummary | null>(null)
+  const [checksByCommit, setChecksByCommit] = React.useState<GithubCheckState[]>([])
   const [issueComments, setIssueComments] = React.useState<GithubIssueComment[]>([])
   const [threads, setThreads] = React.useState<GithubReviewThread[]>([])
   const [files, setFiles] = React.useState<GithubPrFile[]>([])
+  const [judgeRuns, setJudgeRuns] = React.useState<CodexRunRecord[]>([])
   const [capabilities, setCapabilities] = React.useState({ reviewsWriteEnabled: false, mergeWriteEnabled: false })
 
   const [status, setStatus] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(false)
+  const [refreshingFiles, setRefreshingFiles] = React.useState(false)
 
   const [activeTab, setActiveTab] = React.useState<TabKey>('overview')
   const [reviewBody, setReviewBody] = React.useState('')
@@ -83,6 +132,8 @@ function GithubPullDetailPage() {
   const [mergeTitle, setMergeTitle] = React.useState('')
   const [mergeMessage, setMergeMessage] = React.useState('')
   const [deleteBranch, setDeleteBranch] = React.useState(true)
+  const [selectedFilePath, setSelectedFilePath] = React.useState<string | null>(null)
+  const fileTree = React.useMemo(() => buildFileTree(files), [files])
 
   const loadAll = React.useCallback(async () => {
     if (!Number.isFinite(prNumber)) {
@@ -104,12 +155,16 @@ function GithubPullDetailPage() {
       setIssueComments(pullRes.issueComments)
       setCapabilities(pullRes.capabilities)
 
-      const [filesRes, threadsRes] = await Promise.all([
+      const [filesRes, threadsRes, checksRes, judgeRes] = await Promise.all([
         fetchGithubPullFiles(owner, repo, prNumber),
         fetchGithubPullThreads(owner, repo, prNumber),
+        fetchGithubPullChecks(owner, repo, prNumber),
+        fetchGithubPullJudgeRuns(owner, repo, prNumber),
       ])
       if (filesRes.ok) setFiles(filesRes.files)
       if (threadsRes.ok) setThreads(threadsRes.threads)
+      if (checksRes.ok) setChecksByCommit(checksRes.commits)
+      if (judgeRes.ok) setJudgeRuns(judgeRes.runs)
 
       setStatus('Loaded pull request details.')
     } catch (err) {
@@ -123,6 +178,17 @@ function GithubPullDetailPage() {
   React.useEffect(() => {
     void loadAll()
   }, [loadAll])
+
+  React.useEffect(() => {
+    if (files.length === 0) {
+      setSelectedFilePath(null)
+      return
+    }
+    const stillExists = files.some((file) => file.path === selectedFilePath)
+    if (!stillExists) {
+      setSelectedFilePath(files[0]?.path ?? null)
+    }
+  }, [files, selectedFilePath])
 
   const createInlineComment = () => ({
     id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -211,6 +277,22 @@ function GithubPullDetailPage() {
     await loadAll()
   }
 
+  const refreshFiles = async () => {
+    if (!Number.isFinite(prNumber)) return
+    setRefreshingFiles(true)
+    setStatus(null)
+    setError(null)
+    const response = await refreshGithubPullFiles(owner, repo, prNumber)
+    if (!response.ok) {
+      setError(response.error)
+      setRefreshingFiles(false)
+      return
+    }
+    await loadAll()
+    setStatus(`Refreshed worktree snapshot (${response.fileCount} files).`)
+    setRefreshingFiles(false)
+  }
+
   const reviewBadge = review?.decision
     ? badgeClass(
         review.decision === 'approved' ? 'success' : review.decision === 'changes_requested' ? 'danger' : 'warning',
@@ -267,15 +349,23 @@ function GithubPullDetailPage() {
       <section className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
-            {(['overview', 'files', 'conversation', 'checks'] as TabKey[]).map((tab) => (
+            {(
+              [
+                { key: 'overview', label: 'Overview' },
+                { key: 'files', label: 'Files' },
+                { key: 'conversation', label: 'Conversation' },
+                { key: 'checks', label: 'Checks' },
+                { key: 'judge', label: 'Judge' },
+              ] as Array<{ key: TabKey; label: string }>
+            ).map((tab) => (
               <Button
-                key={tab}
+                key={tab.key}
                 type="button"
                 size="sm"
-                variant={activeTab === tab ? 'default' : 'outline'}
-                onClick={() => setActiveTab(tab)}
+                variant={activeTab === tab.key ? 'default' : 'outline'}
+                onClick={() => setActiveTab(tab.key)}
               >
-                {tab}
+                {tab.label}
               </Button>
             ))}
           </div>
@@ -307,24 +397,56 @@ function GithubPullDetailPage() {
 
           {activeTab === 'files' ? (
             <div className="space-y-3 rounded-none border bg-card p-4 text-xs">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium">Worktree snapshot</div>
+                <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <span>{files.length} files</span>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={() => void refreshFiles()}
+                    disabled={refreshingFiles}
+                  >
+                    {refreshingFiles ? 'Refreshing…' : 'Refresh'}
+                  </Button>
+                </div>
+              </div>
               {files.length === 0 ? (
                 <div className="text-muted-foreground">No file snapshots stored yet.</div>
               ) : (
-                files.map((file) => (
-                  <div key={file.path} className="space-y-2 border-b pb-3 last:border-b-0">
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm font-medium">{file.path}</div>
-                      <div className="text-muted-foreground">
-                        +{file.additions ?? 0} / -{file.deletions ?? 0}
-                      </div>
-                    </div>
-                    {file.patch ? (
-                      <pre className="overflow-x-auto bg-muted p-2 text-[11px] leading-relaxed">{file.patch}</pre>
-                    ) : (
-                      <div className="text-muted-foreground">No patch stored.</div>
-                    )}
+                <div className="grid gap-3 lg:grid-cols-[240px_1fr]">
+                  <div className="space-y-1 border-r pr-2">
+                    {fileTree.children.map((node) => (
+                      <FileTree
+                        key={node.path}
+                        node={node}
+                        depth={0}
+                        selectedPath={selectedFilePath}
+                        onSelect={(path) => setSelectedFilePath(path)}
+                      />
+                    ))}
                   </div>
-                ))
+                  <div className="space-y-3">
+                    {files
+                      .filter((file) => file.path === selectedFilePath)
+                      .map((file) => (
+                        <div key={file.path} className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="text-sm font-medium">{file.path}</div>
+                            <div className="text-muted-foreground">
+                              +{file.additions ?? 0} / -{file.deletions ?? 0}
+                            </div>
+                          </div>
+                          {file.patch ? (
+                            <pre className="overflow-x-auto bg-muted p-2 text-[11px] leading-relaxed">{file.patch}</pre>
+                          ) : (
+                            <div className="text-muted-foreground">No patch stored.</div>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                </div>
               )}
             </div>
           ) : null}
@@ -385,31 +507,98 @@ function GithubPullDetailPage() {
                 <div className="text-sm font-medium">Checks summary</div>
                 <span className={checkBadge}>{checks?.status ?? 'unknown'}</span>
               </div>
-              {checks?.runs.length ? (
+              {checksByCommit.length ? (
                 <div className="space-y-2">
-                  {checks.runs.map((run) => (
-                    <div key={run.id} className="flex items-center justify-between border-b pb-2 last:border-b-0">
-                      <div>
-                        <div className="text-sm font-medium">{run.name ?? 'Check'}</div>
-                        <div className="text-[11px] text-muted-foreground">
-                          {run.status ?? 'unknown'} · {run.conclusion ?? 'pending'}
+                  {checksByCommit.map((commit) => (
+                    <div key={commit.commitSha} className="space-y-2 border-b pb-3 last:border-b-0">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-sm font-medium">Commit {formatShortSha(commit.commitSha)}</div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {commit.status ?? 'unknown'} · {commit.totalCount} checks
+                          </div>
                         </div>
+                        {commit.detailsUrl ? (
+                          <a
+                            className="text-[11px] text-foreground underline"
+                            href={commit.detailsUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Details
+                          </a>
+                        ) : null}
                       </div>
-                      {run.url ? (
+                      {commit.runs.length ? (
+                        <div className="space-y-2">
+                          {commit.runs.map((run) => (
+                            <div
+                              key={run.id}
+                              className="flex items-center justify-between border-b pb-2 last:border-b-0"
+                            >
+                              <div>
+                                <div className="text-sm font-medium">{run.name ?? 'Check'}</div>
+                                <div className="text-[11px] text-muted-foreground">
+                                  {run.status ?? 'unknown'} · {run.conclusion ?? 'pending'}
+                                </div>
+                              </div>
+                              {run.url ? (
+                                <a
+                                  className="text-[11px] text-foreground underline"
+                                  href={run.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  Details
+                                </a>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-muted-foreground">No check runs stored for this commit.</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-muted-foreground">No checks stored yet.</div>
+              )}
+            </div>
+          ) : null}
+
+          {activeTab === 'judge' ? (
+            <div className="space-y-3 rounded-none border bg-card p-4 text-xs">
+              <div className="text-sm font-medium">Judge runs</div>
+              {judgeRuns.length === 0 ? (
+                <div className="text-muted-foreground">No judge runs recorded yet.</div>
+              ) : (
+                <div className="space-y-2">
+                  {judgeRuns.map((run) => (
+                    <div key={run.id} className="space-y-1 border-b pb-2 last:border-b-0">
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm font-medium">
+                          Attempt {run.attempt} · {run.status}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">{formatDateTime(run.createdAt)}</div>
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        Commit {formatShortSha(run.commitSha)} · CI {run.ciStatus ?? 'unknown'} · Review{' '}
+                        {run.reviewStatus ?? 'unknown'}
+                      </div>
+                      {run.prUrl ? (
                         <a
                           className="text-[11px] text-foreground underline"
-                          href={run.url}
+                          href={run.prUrl}
                           target="_blank"
                           rel="noreferrer"
                         >
-                          Details
+                          Open PR
                         </a>
                       ) : null}
                     </div>
                   ))}
                 </div>
-              ) : (
-                <div className="text-muted-foreground">No check runs stored.</div>
               )}
             </div>
           ) : null}
@@ -546,5 +735,42 @@ function GithubPullDetailPage() {
         </aside>
       </section>
     </main>
+  )
+}
+
+function FileTree({
+  node,
+  depth,
+  selectedPath,
+  onSelect,
+}: {
+  node: FileTreeNode
+  depth: number
+  selectedPath: string | null
+  onSelect: (path: string) => void
+}) {
+  const hasChildren = node.children.length > 0
+  const isSelected = node.file && node.path === selectedPath
+  const paddingStyle = { paddingLeft: `${depth * 12}px` }
+
+  return (
+    <div className="space-y-1" style={paddingStyle}>
+      {node.file ? (
+        <button
+          type="button"
+          onClick={() => onSelect(node.path)}
+          className={`block w-full text-left text-[11px] ${isSelected ? 'text-foreground' : 'text-muted-foreground'}`}
+        >
+          {node.name}
+        </button>
+      ) : (
+        <div className="text-[11px] font-medium text-muted-foreground">{node.name}</div>
+      )}
+      {hasChildren
+        ? node.children.map((child) => (
+            <FileTree key={child.path} node={child} depth={depth + 1} selectedPath={selectedPath} onSelect={onSelect} />
+          ))
+        : null}
+    </div>
   )
 }

@@ -57,10 +57,6 @@ const globalState = globalThis as typeof globalThis & {
     reviewsWriteEnabled: boolean
     mergeWriteEnabled: boolean
     mergeForceEnabled: boolean
-    filesBackfillEnabled: boolean
-  }
-  __githubReviewGithubMock?: {
-    getPullRequestFiles: ReturnType<typeof vi.fn>
   }
 }
 
@@ -115,6 +111,7 @@ const githubReviewStoreMock = {
   upsertReviewComment: vi.fn(async () => {}),
   upsertIssueComment: vi.fn(async () => {}),
   upsertPrFiles: vi.fn(async () => {}),
+  getPrWorktree: vi.fn(async () => null),
   listFiles: vi.fn(async () => []),
   getUnresolvedThreadCount: vi.fn(async () => 0),
   updateUnresolvedThreadCount: vi.fn(async () => {}),
@@ -127,11 +124,6 @@ const githubReviewConfigMock = {
   reviewsWriteEnabled: false,
   mergeWriteEnabled: false,
   mergeForceEnabled: false,
-  filesBackfillEnabled: false,
-}
-
-const githubReviewGithubMock = {
-  getPullRequestFiles: vi.fn(async () => []),
 }
 
 if (!globalState.__codexJudgeStoreMock) {
@@ -235,10 +227,8 @@ describe('codex-judge GitHub webhook stream handling', () => {
         ;(value as ReturnType<typeof vi.fn>).mockClear?.()
       }
     })
-    Object.assign(githubReviewGithubMock, { getPullRequestFiles: vi.fn(async () => []) })
     globalState.__githubReviewStoreMock = githubReviewStoreMock
     globalState.__githubReviewConfigMock = githubReviewConfigMock
-    globalState.__githubReviewGithubMock = githubReviewGithubMock
   })
 
   afterEach(() => {

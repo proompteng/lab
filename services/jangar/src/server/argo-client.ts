@@ -93,6 +93,11 @@ export type ArgoWorkflowArtifacts = {
   artifacts: ArgoArtifact[]
 }
 
+export type ArgoSubmitResult = {
+  name: string
+  namespace: string
+}
+
 export const extractWorkflowArtifacts = (workflow: Record<string, unknown>): ArgoWorkflowArtifacts => {
   const metadata = isRecord(workflow.metadata) ? workflow.metadata : {}
   const status = isRecord(workflow.status) ? workflow.status : {}
@@ -188,8 +193,41 @@ export const createArgoClient = ({ baseUrl }: { baseUrl: string }) => {
     }
   }
 
+  const submitWorkflowTemplate = async (input: {
+    namespace: string
+    templateName: string
+    parameters: string[]
+    labels?: Record<string, string>
+    annotations?: Record<string, string>
+    generateName?: string
+  }): Promise<ArgoSubmitResult> => {
+    const response = await requestJson(`${normalized}/api/v1/workflows/${encodeURIComponent(input.namespace)}/submit`, {
+      method: 'POST',
+      headers: {
+        ...buildHeaders(),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        namespace: input.namespace,
+        resourceKind: 'WorkflowTemplate',
+        resourceName: input.templateName,
+        submitOptions: {
+          parameters: input.parameters,
+          labels: input.labels ?? {},
+          annotations: input.annotations ?? {},
+          generateName: input.generateName ?? '',
+        },
+      }),
+    })
+    const metadata = isRecord(response?.metadata) ? response.metadata : {}
+    const name = asNonEmptyString(metadata.name) ?? ''
+    const namespace = asNonEmptyString(metadata.namespace) ?? input.namespace
+    return { name, namespace }
+  }
+
   return {
     getWorkflow,
     getWorkflowArtifacts,
+    submitWorkflowTemplate,
   }
 }
