@@ -80,6 +80,29 @@ const readTerminalSize = async (page: import('@playwright/test').Page) =>
     return { cols, rows }
   })
 
+const parseSttySizeFromOutput = (output: string, marker: string) => {
+  const normalized = output.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\r/g, '')
+  for (const line of normalized.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed.includes(marker)) continue
+    const match = trimmed.match(new RegExp(`${marker}:\\s*(\\d+)\\s+(\\d+)`))
+    if (!match) continue
+    return { rows: Number(match[1]), cols: Number(match[2]) }
+  }
+  return null
+}
+
+const waitForTerminalSnapshotContaining = async (sessionId: string, marker: string, timeoutMs = 20_000) => {
+  const start = Date.now()
+  let snapshot = ''
+  while (Date.now() - start < timeoutMs) {
+    snapshot = await fetchTerminalSnapshot(sessionId)
+    if (snapshot.includes(marker)) return snapshot
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  throw new Error(`Timed out waiting for terminal snapshot containing ${marker}`)
+}
+
 const isTerminalFocusWithin = async (page: import('@playwright/test').Page) =>
   page.evaluate(() => {
     const container = document.querySelector('[data-testid="terminal-canvas"]')
@@ -528,7 +551,7 @@ test.describe('deployed jangar e2e', () => {
     const terminal = page.getByTestId('terminal-canvas')
     await terminal.click()
     const drawCmd =
-      "printf '\\033[2J\\033[H'; printf 'LINE-1: 012345678901234567890123456789012345678901234567890123456789\\n'; printf 'LINE-2: 012345678901234567890123456789012345678901234567890123456789\\n'; read -n 1 -s"
+      "printf '\\033[2J\\033[H'; printf 'LINE-1: 012345678901234567890123456789012345678901234567890123456789\\n'; printf 'LINE-2: 012345678901234567890123456789012345678901234567890123456789\\n'"
     await page.keyboard.type(drawCmd)
     await page.keyboard.press('Enter')
     await expect(page.locator('.xterm-rows')).toContainText('LINE-1:', { timeout: 10_000 })
@@ -539,16 +562,42 @@ test.describe('deployed jangar e2e', () => {
     expect(sizeBefore.cols).toBeGreaterThan(0)
     expect(sizeBefore.rows).toBeGreaterThan(0)
 
+    const beforeMarker = `STTY-BEFORE-${Date.now()}`
+    const beforeInput = await request.post(`/api/terminals/${encodeURIComponent(sessionId)}/input`, {
+      data: { data: Buffer.from(`printf '${beforeMarker}:'; stty size; printf '\\n'\n`).toString('base64') },
+    })
+    expect(beforeInput.ok()).toBe(true)
+    const beforeSnapshot = await waitForTerminalSnapshotContaining(sessionId, beforeMarker, 20_000)
+    const beforeSize = parseSttySizeFromOutput(beforeSnapshot, beforeMarker)
+    expect(beforeSize).toEqual({ rows: sizeBefore.rows, cols: sizeBefore.cols })
+
+    const initialViewport = page.viewportSize()
     const other = await context.newPage()
     await other.goto('about:blank')
     await other.bringToFront()
+    if (initialViewport) {
+      await page.setViewportSize({
+        width: initialViewport.width + 140,
+        height: initialViewport.height + 120,
+      })
+    }
     await page.waitForTimeout(800)
     await page.bringToFront()
     await page.waitForTimeout(800)
 
     const sizeAfter = await readTerminalSize(page)
-    expect(sizeAfter).toEqual(sizeBefore)
+    expect(sizeAfter.cols).toBeGreaterThan(0)
+    expect(sizeAfter.rows).toBeGreaterThan(0)
     await expect(page.locator('.xterm-rows')).toContainText('LINE-1:', { timeout: 5_000 })
+
+    const afterMarker = `STTY-AFTER-${Date.now()}`
+    const afterInput = await request.post(`/api/terminals/${encodeURIComponent(sessionId)}/input`, {
+      data: { data: Buffer.from(`printf '${afterMarker}:'; stty size; printf '\\n'\n`).toString('base64') },
+    })
+    expect(afterInput.ok()).toBe(true)
+    const afterSnapshot = await waitForTerminalSnapshotContaining(sessionId, afterMarker, 20_000)
+    const afterSize = parseSttySizeFromOutput(afterSnapshot, afterMarker)
+    expect(afterSize).toEqual({ rows: sizeAfter.rows, cols: sizeAfter.cols })
 
     await page.keyboard.press('Enter')
 

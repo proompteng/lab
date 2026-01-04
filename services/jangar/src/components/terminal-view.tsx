@@ -44,6 +44,8 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
   const latestSnapshotSeqRef = React.useRef(0)
   const outputQueueRef = React.useRef<string[]>([])
   const snapshotApplyingRef = React.useRef(false)
+  const pendingSnapshotRef = React.useRef<{ delayMs: number; active: boolean }>({ delayMs: 180, active: false })
+  const resyncTimersRef = React.useRef<ReturnType<typeof setTimeout>[]>([])
 
   const [status, setStatus] = React.useState<'connecting' | 'connected' | 'error'>('connecting')
   const [error, setError] = React.useState<string | null>(null)
@@ -76,10 +78,13 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       sendMessage({ type: 'input', data: encodeInput(data) })
     }
 
-    const sendResize = () => {
+    const sendResize = (size?: { cols: number; rows: number }) => {
       const terminal = terminalRef.current
       if (!terminal) return
-      sendMessage({ type: 'resize', cols: terminal.cols, rows: terminal.rows })
+      const cols = size?.cols ?? terminal.cols
+      const rows = size?.rows ?? terminal.rows
+      if (!Number.isFinite(cols) || !Number.isFinite(rows)) return
+      sendMessage({ type: 'resize', cols, rows })
     }
 
     const scheduleSnapshot = (delayMs = 180) => {
@@ -97,6 +102,16 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       }, delayMs)
     }
 
+    const requestSnapshotAfterLayout = (delayMs = 180) => {
+      pendingSnapshotRef.current = { delayMs, active: true }
+    }
+
+    const clearResyncTimers = () => {
+      if (resyncTimersRef.current.length === 0) return
+      for (const timer of resyncTimersRef.current) clearTimeout(timer)
+      resyncTimersRef.current = []
+    }
+
     const refreshLayout = (force = false) => {
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current)
       resizeTimerRef.current = setTimeout(() => {
@@ -109,24 +124,46 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         const terminal = terminalRef.current
         const fitAddon = fitRef.current
         if (!terminal || !fitAddon) return
-
-        fitAddon.fit()
-        const nextSize = { cols: terminal.cols, rows: terminal.rows }
+        const proposed = fitAddon.proposeDimensions()
+        if (!proposed || proposed.cols < 2 || proposed.rows < 2) return
+        const nextSize = { cols: proposed.cols, rows: proposed.rows }
+        if (terminal.cols !== nextSize.cols || terminal.rows !== nextSize.rows) {
+          terminal.resize(nextSize.cols, nextSize.rows)
+        }
         container.dataset.termCols = `${nextSize.cols}`
         container.dataset.termRows = `${nextSize.rows}`
         const lastSize = lastSizeRef.current
         if (force || !lastSize || nextSize.cols !== lastSize.cols || nextSize.rows !== lastSize.rows) {
           lastSizeRef.current = nextSize
-          sendResize()
-          scheduleSnapshot()
+          sendResize(nextSize)
+          const delayMs = pendingSnapshotRef.current.active ? pendingSnapshotRef.current.delayMs : 180
+          pendingSnapshotRef.current = { delayMs, active: false }
+          scheduleSnapshot(delayMs)
+        } else if (pendingSnapshotRef.current.active) {
+          const delayMs = pendingSnapshotRef.current.delayMs
+          pendingSnapshotRef.current = { delayMs, active: false }
+          scheduleSnapshot(delayMs)
         }
       }, 50)
     }
 
     const forceResync = (delayMs = 240) => {
       lastSizeRef.current = null
+      requestSnapshotAfterLayout(delayMs)
       refreshLayout(true)
-      scheduleSnapshot(delayMs)
+      clearResyncTimers()
+      resyncTimersRef.current = [
+        setTimeout(() => {
+          if (!isPageVisible()) return
+          requestSnapshotAfterLayout(delayMs)
+          refreshLayout(true)
+        }, 320),
+        setTimeout(() => {
+          if (!isPageVisible()) return
+          requestSnapshotAfterLayout(delayMs)
+          refreshLayout(true)
+        }, 900),
+      ]
     }
 
     const attachSocket = () => {
@@ -280,7 +317,6 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       const fitAddon = new FitAddon()
       terminal.loadAddon(fitAddon)
       terminal.open(containerRef.current)
-      fitAddon.fit()
 
       terminalRef.current = terminal
       fitRef.current = fitAddon
@@ -318,7 +354,6 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         refreshLayout()
       })
       resizeObserverRef.current.observe(containerRef.current)
-      sendResize()
       refreshLayout(true)
 
       const fonts = document.fonts?.ready
@@ -342,9 +377,14 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         refreshLayout()
       }
 
+      const handlePageShow = () => {
+        forceResync(260)
+      }
+
       document.addEventListener('visibilitychange', handleVisibility)
       window.addEventListener('focus', handleWindowFocus)
       window.addEventListener('resize', handleWindowResize)
+      window.addEventListener('pageshow', handlePageShow)
       window.visualViewport?.addEventListener('resize', handleWindowResize)
 
       attachSocket()
@@ -355,6 +395,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         document.removeEventListener('visibilitychange', handleVisibility)
         window.removeEventListener('focus', handleWindowFocus)
         window.removeEventListener('resize', handleWindowResize)
+        window.removeEventListener('pageshow', handlePageShow)
         window.visualViewport?.removeEventListener('resize', handleWindowResize)
       }
     }
@@ -383,6 +424,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         clearTimeout(resizeTimerRef.current)
         resizeTimerRef.current = null
       }
+      clearResyncTimers()
       if (socketRef.current) {
         socketRef.current.close()
         socketRef.current = null
