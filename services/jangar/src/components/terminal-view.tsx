@@ -260,7 +260,8 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
           const text = snapshotDecoder.decode(base64ToBytes(payload.data))
           if (text) {
             snapshotApplyingRef.current = true
-            terminal.write(`\u001b[2J\u001b[3J\u001b[H${text}`, () => {
+            terminal.reset()
+            terminal.write(text, () => {
               snapshotApplyingRef.current = false
               if (resyncingRef.current) {
                 if (resyncPhaseRef.current === 1) {
