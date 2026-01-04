@@ -427,6 +427,7 @@ spec:
             # Ensure judge output files exist for all stages to satisfy Argo output collection.
             : > "/workspace/lab/.codex-judge-decision.txt"
             : > "/workspace/lab/.codex-judge-next-prompt.txt"
+            : > "/workspace/lab/.codex-nats-context.json"
 
             if ! git -C "$WORKTREE_DIR" rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1 \
               && ! git -C "$WORKTREE_DIR" rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
@@ -457,7 +458,7 @@ spec:
 
             if [[ -x "$NATS_PUBLISHER" ]]; then
               touch "$AGENT_LOG_PATH"
-              "$NATS_PUBLISHER" --kind status --status started --content "${WORKFLOW_STAGE} started" --publish-general || true
+              "$NATS_PUBLISHER" --kind status --status started --content "${WORKFLOW_STAGE} started" --publish-general
               "$NATS_PUBLISHER" --kind log --log-file "$AGENT_LOG_PATH" &
               NATS_TAIL_PID=$!
             fi
@@ -479,7 +480,7 @@ spec:
             cleanup_nats
 
             if [[ -x "$NATS_PUBLISHER" ]]; then
-              "$NATS_PUBLISHER" --kind status --status completed --exit-code "$EXIT_CODE" --content "${WORKFLOW_STAGE} completed" --publish-general || true
+              "$NATS_PUBLISHER" --kind status --status completed --exit-code "$EXIT_CODE" --content "${WORKFLOW_STAGE} completed" --publish-general
             fi
 
             exit "$EXIT_CODE"

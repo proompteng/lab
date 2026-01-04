@@ -111,7 +111,7 @@ spec:
 
             if [[ -x "$NATS_PUBLISHER" ]]; then
               touch "$AGENT_LOG_PATH"
-              "$NATS_PUBLISHER" --kind status --status started --content "research started" --publish-general || true
+              "$NATS_PUBLISHER" --kind status --status started --content "research started" --publish-general
               "$NATS_PUBLISHER" --kind log --log-file "$AGENT_LOG_PATH" &
               NATS_TAIL_PID=$!
             fi
@@ -133,7 +133,7 @@ spec:
             cleanup_nats
 
             if [[ -x "$NATS_PUBLISHER" ]]; then
-              "$NATS_PUBLISHER" --kind status --status completed --exit-code "$EXIT_CODE" --content "research completed" --publish-general || true
+              "$NATS_PUBLISHER" --kind status --status completed --exit-code "$EXIT_CODE" --content "research completed" --publish-general
             fi
 
             exit "$EXIT_CODE"
