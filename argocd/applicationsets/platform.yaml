@@ -32,7 +32,7 @@ spec:
             enabled: "true"
           - name: crossplane
             path: argocd/applications/crossplane
-            namespace: crossplane-system
+            namespace: crossplane
             annotations:
               argocd.argoproj.io/sync-wave: "-1"
             automation: manual
