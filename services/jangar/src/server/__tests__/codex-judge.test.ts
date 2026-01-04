@@ -966,8 +966,8 @@ describe('prompt tuning PR gating', () => {
     await privateApi.evaluateRun('run-1')
 
     expect(harness.store.createPromptTuning).not.toHaveBeenCalled()
-    expect(harness.github.createBranch).toHaveBeenCalledTimes(1)
-    expect(harness.github.createPullRequest).toHaveBeenCalledTimes(1)
+    expect(harness.github.createBranch).not.toHaveBeenCalled()
+    expect(harness.github.createPullRequest).not.toHaveBeenCalled()
   })
 
   it('creates prompt tuning PRs when actionable suggestions are present', async () => {
@@ -1015,8 +1015,8 @@ describe('prompt tuning PR gating', () => {
     await privateApi.evaluateRun('run-1')
 
     expect(harness.store.createPromptTuning).toHaveBeenCalledTimes(1)
-    expect(harness.github.createBranch).toHaveBeenCalledTimes(2)
+    expect(harness.github.createBranch).toHaveBeenCalledTimes(1)
     expect(harness.github.updateFile).toHaveBeenCalled()
-    expect(harness.github.createPullRequest).toHaveBeenCalledTimes(2)
+    expect(harness.github.createPullRequest).toHaveBeenCalledTimes(1)
   })
 })
