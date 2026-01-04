@@ -324,6 +324,7 @@ type JangarGithubPrFiles = {
   pr_number: number
   commit_sha: string
   received_at: Timestamp
+  source: string
   path: string
   status: string | null
   additions: number | null
@@ -334,6 +335,17 @@ type JangarGithubPrFiles = {
   raw_url: string | null
   sha: string | null
   previous_filename: string | null
+}
+
+type JangarGithubPrWorktrees = {
+  id: Generated<string>
+  repository: string
+  pr_number: number
+  worktree_name: string
+  worktree_path: string
+  base_sha: string | null
+  head_sha: string | null
+  last_refreshed_at: Timestamp
 }
 
 type JangarGithubWriteActions = {
@@ -477,6 +489,7 @@ export type Database = {
   'jangar_github.review_threads': JangarGithubReviewThreads
   'jangar_github.comments': JangarGithubComments
   'jangar_github.pr_files': JangarGithubPrFiles
+  'jangar_github.pr_worktrees': JangarGithubPrWorktrees
   'jangar_github.write_actions': JangarGithubWriteActions
   'codex_judge.runs': CodexJudgeRuns
   'codex_judge.artifacts': CodexJudgeArtifacts

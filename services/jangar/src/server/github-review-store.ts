@@ -100,6 +100,7 @@ export type GithubIssueComment = {
 
 export type GithubPrFile = {
   path: string
+  source?: string | null
   status: string | null
   additions: number | null
   deletions: number | null
@@ -109,6 +110,28 @@ export type GithubPrFile = {
   rawUrl: string | null
   sha: string | null
   previousFilename: string | null
+}
+
+export type GithubCheckState = {
+  commitSha: string
+  status: string | null
+  detailsUrl: string | null
+  totalCount: number
+  successCount: number
+  failureCount: number
+  pendingCount: number
+  runs: GithubCheckRun[]
+  updatedAt: string | null
+}
+
+export type GithubPrWorktree = {
+  repository: string
+  prNumber: number
+  worktreeName: string
+  worktreePath: string
+  baseSha: string | null
+  headSha: string | null
+  lastRefreshedAt: string
 }
 
 export type GithubWriteAudit = {
@@ -173,7 +196,17 @@ export type GithubReviewStore = {
     commitSha: string
     receivedAt: string
     files: GithubPrFile[]
+    source?: string
   }) => Promise<void>
+  replacePrFiles: (input: {
+    repository: string
+    prNumber: number
+    commitSha: string
+    receivedAt: string
+    files: GithubPrFile[]
+    source: string
+  }) => Promise<void>
+  upsertPrWorktree: (input: GithubPrWorktree) => Promise<void>
   getUnresolvedThreadCount: (input: { repository: string; prNumber: number }) => Promise<number>
   updateUnresolvedThreadCount: (input: {
     repository: string
@@ -198,7 +231,13 @@ export type GithubReviewStore = {
     checks: GithubCheckSummary | null
     issueComments: GithubIssueComment[]
   }>
-  listFiles: (input: { repository: string; prNumber: number; commitSha: string | null }) => Promise<GithubPrFile[]>
+  listFiles: (input: {
+    repository: string
+    prNumber: number
+    commitSha: string | null
+    source?: string | null
+  }) => Promise<GithubPrFile[]>
+  listCheckStates: (input: { repository: string; prNumber: number }) => Promise<GithubCheckState[]>
   listThreads: (input: { repository: string; prNumber: number }) => Promise<GithubReviewThread[]>
   updateThreadResolution: (input: {
     repository: string
@@ -598,6 +637,7 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
   const upsertPrFiles: GithubReviewStore['upsertPrFiles'] = async (input) => {
     await ready
     if (input.files.length === 0) return
+    const source = input.source ?? 'worktree'
 
     await db.transaction().execute(async (trx) => {
       for (const file of input.files) {
@@ -608,6 +648,7 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
             pr_number: input.prNumber,
             commit_sha: input.commitSha,
             received_at: input.receivedAt,
+            source,
             path: file.path,
             status: file.status,
             additions: file.additions,
@@ -622,6 +663,7 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
           .onConflict((oc) =>
             oc.columns(['repository', 'pr_number', 'commit_sha', 'path']).doUpdateSet({
               received_at: input.receivedAt,
+              source,
               status: file.status,
               additions: file.additions,
               deletions: file.deletions,
@@ -636,6 +678,68 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
           .execute()
       }
     })
+  }
+
+  const replacePrFiles: GithubReviewStore['replacePrFiles'] = async (input) => {
+    await ready
+    await db.transaction().execute(async (trx) => {
+      await trx
+        .deleteFrom('jangar_github.pr_files')
+        .where('repository', '=', input.repository)
+        .where('pr_number', '=', input.prNumber)
+        .where('commit_sha', '=', input.commitSha)
+        .execute()
+
+      if (input.files.length === 0) return
+
+      for (const file of input.files) {
+        await trx
+          .insertInto('jangar_github.pr_files')
+          .values({
+            repository: input.repository,
+            pr_number: input.prNumber,
+            commit_sha: input.commitSha,
+            received_at: input.receivedAt,
+            source: input.source,
+            path: file.path,
+            status: file.status,
+            additions: file.additions,
+            deletions: file.deletions,
+            changes: file.changes,
+            patch: file.patch,
+            blob_url: file.blobUrl,
+            raw_url: file.rawUrl,
+            sha: file.sha,
+            previous_filename: file.previousFilename,
+          })
+          .execute()
+      }
+    })
+  }
+
+  const upsertPrWorktree: GithubReviewStore['upsertPrWorktree'] = async (input) => {
+    await ready
+    await db
+      .insertInto('jangar_github.pr_worktrees')
+      .values({
+        repository: input.repository,
+        pr_number: input.prNumber,
+        worktree_name: input.worktreeName,
+        worktree_path: input.worktreePath,
+        base_sha: input.baseSha,
+        head_sha: input.headSha,
+        last_refreshed_at: input.lastRefreshedAt,
+      })
+      .onConflict((oc) =>
+        oc.columns(['repository', 'pr_number']).doUpdateSet({
+          worktree_name: input.worktreeName,
+          worktree_path: input.worktreePath,
+          base_sha: input.baseSha,
+          head_sha: input.headSha,
+          last_refreshed_at: input.lastRefreshedAt,
+        }),
+      )
+      .execute()
   }
 
   const getUnresolvedThreadCount: GithubReviewStore['getUnresolvedThreadCount'] = async (input) => {
@@ -957,10 +1061,11 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
   const listFiles: GithubReviewStore['listFiles'] = async (input) => {
     await ready
     if (!input.commitSha) return []
-    const rows = await db
+    let query = db
       .selectFrom('jangar_github.pr_files')
       .select([
         'path',
+        'source',
         'status',
         'additions',
         'deletions',
@@ -974,11 +1079,16 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
       .where('repository', '=', input.repository)
       .where('pr_number', '=', input.prNumber)
       .where('commit_sha', '=', input.commitSha)
-      .orderBy('path', 'asc')
-      .execute()
+
+    if (input.source) {
+      query = query.where('source', '=', input.source)
+    }
+
+    const rows = await query.orderBy('path', 'asc').execute()
 
     return rows.map((row) => ({
       path: row.path,
+      source: row.source ?? null,
       status: row.status ?? null,
       additions: row.additions ?? null,
       deletions: row.deletions ?? null,
@@ -989,6 +1099,62 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
       sha: row.sha ?? null,
       previousFilename: row.previous_filename ?? null,
     }))
+  }
+
+  const listCheckStates: GithubReviewStore['listCheckStates'] = async (input) => {
+    await ready
+    const rows = await db
+      .selectFrom('jangar_github.check_state')
+      .select([
+        'commit_sha',
+        'status',
+        'details_url',
+        'total_count',
+        'success_count',
+        'failure_count',
+        'pending_count',
+        'checks',
+        'updated_at',
+      ])
+      .where('repository', '=', input.repository)
+      .where('pr_number', '=', input.prNumber)
+      .orderBy('updated_at', 'desc')
+      .execute()
+
+    return rows.map((row) => {
+      const decoded =
+        decodeCheckSummary(row.checks) ??
+        (row.status || row.total_count !== null
+          ? {
+              status: row.status ?? null,
+              detailsUrl: row.details_url ?? null,
+              totalCount: Number(row.total_count ?? 0),
+              successCount: Number(row.success_count ?? 0),
+              failureCount: Number(row.failure_count ?? 0),
+              pendingCount: Number(row.pending_count ?? 0),
+              runs: [],
+            }
+          : {
+              status: null,
+              detailsUrl: null,
+              totalCount: 0,
+              successCount: 0,
+              failureCount: 0,
+              pendingCount: 0,
+              runs: [],
+            })
+      return {
+        commitSha: row.commit_sha,
+        status: decoded.status,
+        detailsUrl: decoded.detailsUrl,
+        totalCount: decoded.totalCount,
+        successCount: decoded.successCount,
+        failureCount: decoded.failureCount,
+        pendingCount: decoded.pendingCount,
+        runs: decoded.runs,
+        updatedAt: row.updated_at ? String(row.updated_at) : null,
+      }
+    })
   }
 
   const listThreads: GithubReviewStore['listThreads'] = async (input) => {
@@ -1138,11 +1304,14 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
     upsertReviewComment,
     upsertIssueComment,
     upsertPrFiles,
+    replacePrFiles,
+    upsertPrWorktree,
     getUnresolvedThreadCount,
     updateUnresolvedThreadCount,
     listPulls,
     getPull,
     listFiles,
+    listCheckStates,
     listThreads,
     updateThreadResolution,
     updateMergeState,

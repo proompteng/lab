@@ -340,7 +340,7 @@ const backfillFiles = async (
   const [owner, repo] = repository.split('/')
   if (!owner || !repo) return
   const files = await github.getPullRequestFiles(owner, repo, prNumber)
-  await store.upsertPrFiles({ repository, prNumber, commitSha, receivedAt, files })
+  await store.upsertPrFiles({ repository, prNumber, commitSha, receivedAt, files, source: 'github' })
 }
 
 export const ingestGithubReviewEvent = async (input: GithubWebhookEvent): Promise<GithubReviewIngestResult> => {
@@ -439,6 +439,7 @@ export const ingestGithubReviewEvent = async (input: GithubWebhookEvent): Promis
         prNumber,
         commitSha,
         receivedAt,
+        source: 'github',
         files: [
           {
             path: comment.path,
