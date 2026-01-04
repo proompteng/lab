@@ -100,7 +100,7 @@ flowchart LR
   ARGO --> COMPLETIONS[Argo Events -> Kafka completions]
   COMPLETIONS --> JANGAR[Jangar /codex/run-complete]
   CODEX -->|notify| JANGAR
-  JANGAR --> GHAPI[GitHub API (PR metadata only)]
+  JANGAR --> GHAPI[GitHub API - PR metadata only]
   JANGAR --> DB[(jangar-db)]
   JANGAR --> MEM[(memories.entries)]
   JANGAR --> MERGE[Merge PR]
