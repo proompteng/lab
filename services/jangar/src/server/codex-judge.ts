@@ -20,6 +20,7 @@ import { type CodexEvaluationRecord, type CodexRunRecord, createCodexJudgeStore 
 import { createGitHubClient, GitHubRateLimitError, type PullRequest, type ReviewSummary } from '~/server/github-client'
 import { mergePullRequest } from '~/server/github-review-actions'
 import { ingestGithubReviewEvent } from '~/server/github-review-ingest'
+import { createGithubReviewStore } from '~/server/github-review-store'
 import { refreshWorktreeSnapshot } from '~/server/github-worktree-snapshot'
 import { createPostgresMemoriesStore } from '~/server/memories-store'
 
@@ -63,6 +64,8 @@ const _RECONCILE_JITTER_MS = 15_000
 const _PENDING_EVALUATION_STATUSES = ['run_complete', 'waiting_for_ci', 'judging'] as const
 const _RECONCILE_DISABLED = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
 const RERUN_SUBMISSION_BACKOFF_MS = [2_000, 7_000, 15_000]
+const RERUN_WORKER_POLL_MS = 10_000
+const RERUN_WORKER_BATCH_SIZE = 10
 const JSON_ONLY_REMINDER = [
   'IMPORTANT: Return a single JSON object only.',
   'Do not include markdown, code fences, or extra text.',
@@ -532,7 +535,25 @@ const parseNotifyPayload = (payload: Record<string, unknown>) => {
         ? data.branch.trim()
         : ''
   const prompt = typeof data.prompt === 'string' ? data.prompt : null
-  return { workflowName, workflowNamespace, repository, issueNumber, branch, prompt, notifyPayload: data }
+  const prNumberRaw = data.pr_number ?? data.prNumber
+  const prNumber = typeof prNumberRaw === 'number' ? prNumberRaw : Number(prNumberRaw ?? 0)
+  const prUrl = typeof data.pr_url === 'string' ? data.pr_url : typeof data.prUrl === 'string' ? data.prUrl : null
+  const headSha =
+    typeof data.head_sha === 'string' ? data.head_sha : typeof data.headSha === 'string' ? data.headSha : null
+  const stage = typeof data.stage === 'string' ? data.stage : null
+  return {
+    workflowName,
+    workflowNamespace,
+    repository,
+    issueNumber,
+    branch,
+    prompt,
+    prNumber: Number.isFinite(prNumber) && prNumber > 0 ? prNumber : null,
+    prUrl,
+    headSha,
+    stage,
+    notifyPayload: data,
+  }
 }
 
 const parseRepositoryParts = (repository: string) => {
@@ -2200,8 +2221,31 @@ const evaluateRun = async (runId: string) => {
     let diff = ''
 
     if (pr) {
-      const { owner, repo } = parseRepositoryParts(run.repository)
-      diff = await github.getPullRequestDiff(owner, repo, pr.number)
+      const worktree = await buildWorktreeDiff(run, pr)
+      diff = worktree.diff
+
+      if (!diff) {
+        const evaluation = await store.updateDecision({
+          runId: run.id,
+          decision: 'needs_iteration',
+          reasons: { error: 'infra_failure', detail: worktree.error ?? 'missing_worktree_diff' },
+          suggestedFixes: {
+            fix: 'Ensure worktree snapshots are generated and persisted before judging.',
+          },
+          nextPrompt: 'Worktree snapshot missing. Re-run after persisting the worktree diff.',
+          promptTuning: {},
+          systemSuggestions: {
+            suggestions: [
+              'Ensure the worktree snapshot step runs before judging.',
+              'Verify worktree diff rows exist in jangar_github.pr_files with source=worktree.',
+            ],
+          },
+        })
+        const refreshedRun = (await store.getRunById(run.id)) ?? run
+        await writeMemories(refreshedRun, evaluation)
+        await triggerRerun(run, 'infra_failure', evaluation)
+        return
+      }
 
       const gateFailure = evaluateDeterministicGates({
         diff,
@@ -2213,10 +2257,16 @@ const evaluateRun = async (runId: string) => {
       })
 
       if (gateFailure) {
+        const failureCategory =
+          gateFailure.reason === 'empty_diff'
+            ? 'implementation_failure'
+            : gateFailure.reason === 'merge_conflict'
+              ? 'merge_failure'
+              : gateFailure.reason
         const evaluation = await store.updateDecision({
           runId: run.id,
           decision: gateFailure.decision,
-          reasons: { error: gateFailure.reason, detail: gateFailure.detail },
+          reasons: { error: failureCategory, detail: gateFailure.detail },
           suggestedFixes: { fix: gateFailure.suggestedFix },
           nextPrompt: gateFailure.nextPrompt,
           promptTuning: {},
@@ -2226,12 +2276,12 @@ const evaluateRun = async (runId: string) => {
         await writeMemories(refreshedRun, evaluation)
 
         if (gateFailure.decision === 'needs_human') {
-          await maybeCreatePromptTuningPr(refreshedRun, gateFailure.reason, evaluation.nextPrompt ?? '', evaluation)
-          await sendDiscordEscalation(run, gateFailure.reason)
+          await maybeCreatePromptTuningPr(refreshedRun, failureCategory, evaluation.nextPrompt ?? '', evaluation)
+          await sendDiscordEscalation(run, failureCategory)
           return
         }
 
-        await triggerRerun(run, gateFailure.reason, evaluation)
+        await triggerRerun(run, failureCategory, evaluation)
         return
       }
     }
@@ -2516,44 +2566,68 @@ const evaluateRun = async (runId: string) => {
       return
     }
 
-    const judgePrompt = buildJudgePrompt({
-      issueTitle,
-      issueBody,
-      prTitle: pr.title,
-      prBody: pr.body,
-      diff,
-      summary: (run.notifyPayload?.last_assistant_message as string | null) ?? null,
-      ciStatus: ci.status,
-      reviewStatus: review.status,
-      logExcerpt,
-    })
-
-    const client = await Effect.runPromise(getCodexClient({ defaultModel: config.judgeModel }))
-
+    const isJudgeStage = run.stage === 'judge' || run.runCompletePayload?.stage === 'judge'
     let judgeOutput: Record<string, unknown>
     let judgeAttempts = 0
-    try {
-      const result = await runJudgeWithRetries(client, judgePrompt, MAX_JUDGE_JSON_RETRIES)
-      judgeOutput = result.output
-      judgeAttempts = result.attempts
-    } catch (error) {
-      const evaluation = await store.updateDecision({
-        runId: run.id,
-        decision: 'needs_iteration',
-        reasons: {
-          error: 'judge_invalid_json',
-          detail: String(error),
-          attempts: judgeAttempts || MAX_JUDGE_JSON_RETRIES + 1,
-        },
-        suggestedFixes: { fix: 'Retry judge output formatting.' },
-        nextPrompt: 'Re-run judge with valid JSON output.',
-        promptTuning: {},
-        systemSuggestions: {},
+
+    if (isJudgeStage) {
+      const notifyJudgeOutput = (run.notifyPayload?.judge_output as Record<string, unknown> | undefined) ?? null
+      const notifyMessage = run.notifyPayload?.last_assistant_message as string | null
+      const parsedFromMessage = notifyMessage ? safeParseJson(notifyMessage) : null
+      judgeOutput = notifyJudgeOutput ?? parsedFromMessage ?? {}
+      if (Object.keys(judgeOutput).length === 0) {
+        const evaluation = await store.updateDecision({
+          runId: run.id,
+          decision: 'needs_iteration',
+          reasons: { error: 'infra_failure', detail: 'missing_judge_output' },
+          suggestedFixes: { fix: 'Ensure judge step writes JSON output to notify payload.' },
+          nextPrompt: 'Judge output missing. Re-run judge and emit JSON output.',
+          promptTuning: {},
+          systemSuggestions: {},
+        })
+        const refreshedRun = (await store.getRunById(run.id)) ?? run
+        await writeMemories(refreshedRun, evaluation)
+        await triggerRerun(run, 'infra_failure', evaluation)
+        return
+      }
+    } else {
+      const judgePrompt = buildJudgePrompt({
+        issueTitle,
+        issueBody,
+        prTitle: pr.title,
+        prBody: pr.body,
+        diff,
+        summary: (run.notifyPayload?.last_assistant_message as string | null) ?? null,
+        ciStatus: ci.status,
+        reviewStatus: review.status,
+        logExcerpt,
       })
-      const refreshedRun = (await store.getRunById(run.id)) ?? run
-      await writeMemories(refreshedRun, evaluation)
-      await triggerRerun(run, 'judge_invalid_json', evaluation)
-      return
+
+      const client = await Effect.runPromise(getCodexClient({ defaultModel: config.judgeModel }))
+
+      try {
+        const result = await runJudgeWithRetries(client, judgePrompt, MAX_JUDGE_JSON_RETRIES)
+        judgeOutput = result.output
+        judgeAttempts = result.attempts
+      } catch (error) {
+        const evaluation = await store.updateDecision({
+          runId: run.id,
+          decision: 'needs_iteration',
+          reasons: {
+            error: 'judge_invalid_json',
+            detail: String(error),
+            attempts: judgeAttempts || MAX_JUDGE_JSON_RETRIES + 1,
+          },
+          suggestedFixes: { fix: 'Retry judge output formatting.' },
+          nextPrompt: 'Re-run judge with valid JSON output.',
+          promptTuning: {},
+          systemSuggestions: {},
+        })
+        const refreshedRun = (await store.getRunById(run.id)) ?? run
+        await writeMemories(refreshedRun, evaluation)
+        await triggerRerun(run, 'judge_invalid_json', evaluation)
+        return
+      }
     }
 
     const decisionRaw = typeof judgeOutput.decision === 'string' ? judgeOutput.decision : 'fail'
@@ -2888,6 +2962,163 @@ const maybeCreatePromptTuningPr = async (
   await createPromptTuningPr(run, nextPrompt, aggregate)
 }
 
+const resolveSystemImprovementPath = (reason: string | null) => {
+  const normalized = (reason ?? '').toLowerCase()
+  if (
+    normalized.includes('workflow') ||
+    normalized.includes('artifact') ||
+    normalized.includes('run_complete') ||
+    normalized.includes('worktree') ||
+    normalized.includes('infra')
+  ) {
+    return 'argocd/applications/froussard/system-improvements'
+  }
+  if (normalized.includes('pull_request') || normalized.includes('pr') || normalized.includes('notify')) {
+    return 'apps/froussard/src/codex/cli/system-improvements'
+  }
+  return 'services/jangar/src/server/system-improvements'
+}
+
+const buildSystemImprovementDoc = (run: CodexRunRecord, reason: string | null, evaluation?: CodexEvaluationRecord) => {
+  const failureReason = reason ?? 'unknown'
+  const nextPrompt = evaluation?.nextPrompt ?? run.nextPrompt ?? 'n/a'
+  return [
+    `# System improvement for run ${run.id}`,
+    '',
+    `- Repository: ${run.repository}`,
+    `- Issue: #${run.issueNumber}`,
+    `- Branch: ${run.branch}`,
+    `- Stage: ${run.stage ?? 'unknown'}`,
+    `- Failure reason: ${failureReason}`,
+    '',
+    '## Root cause',
+    `- ${failureReason}`,
+    '',
+    '## Suggested fixes',
+    `- ${JSON.stringify(evaluation?.suggestedFixes ?? {}, null, 2)}`,
+    '',
+    '## Next prompt',
+    `- ${nextPrompt}`,
+    '',
+    '## Validation plan',
+    '- Re-run the workflow end-to-end and ensure all required artifacts are present.',
+    '- Verify the worktree diff is stored with source=worktree and judge output is recorded.',
+    '',
+    '## Rollback plan',
+    '- Revert this change or disable the new workflow template if regressions occur.',
+    '',
+  ].join('\n')
+}
+
+const maybeCreateSystemImprovementPr = async (
+  run: CodexRunRecord,
+  reason: string | null,
+  evaluation?: CodexEvaluationRecord,
+) => {
+  const targetRepo = config.promptTuningRepo ?? run.repository
+  if (!targetRepo) return
+  const targetPath = resolveSystemImprovementPath(reason)
+  const branch = `codex/system-improvement-${run.issueNumber}-${run.id.slice(0, 8)}`
+  const baseRef = 'main'
+
+  try {
+    const { owner, repo } = parseRepositoryParts(targetRepo)
+    const baseSha = await github.getRefSha(owner, repo, `heads/${baseRef}`)
+    await github.createBranch({ owner, repo, branch, baseSha })
+
+    const filePath = `${targetPath}/run-${run.id}.md`
+    const content = buildSystemImprovementDoc(run, reason, evaluation)
+    await github.updateFile({
+      owner,
+      repo,
+      path: filePath,
+      branch,
+      message: `docs(system): record run ${run.id} improvement`,
+      content,
+    })
+
+    const prBody = [
+      '## Summary',
+      `- System improvement for run ${run.id}`,
+      '',
+      '## Related Issues',
+      `- #${run.issueNumber}`,
+      '',
+      '## Testing',
+      '- N/A (system improvement tracking)',
+      '',
+      '## Rollback',
+      '- Revert this PR if it introduces regressions.',
+      '',
+    ].join('\n')
+
+    await github.createPullRequest({
+      owner,
+      repo,
+      head: branch,
+      base: baseRef,
+      title: `docs(system): system improvement for run ${run.id.slice(0, 8)}`,
+      body: prBody,
+    })
+  } catch (error) {
+    console.warn('Failed to create system improvement PR', error)
+  }
+}
+
+let rerunWorkerStarted = false
+
+const startRerunSubmissionWorker = () => {
+  if (rerunWorkerStarted || _RECONCILE_DISABLED) return
+  rerunWorkerStarted = true
+  setInterval(() => {
+    void processRerunQueue()
+  }, RERUN_WORKER_POLL_MS)
+}
+
+const shouldDelayRerun = (submissionAttempt: number, updatedAt: string | null) => {
+  const delayIndex = Math.min(Math.max(submissionAttempt, 0), RERUN_SUBMISSION_BACKOFF_MS.length - 1)
+  const delayMs = RERUN_SUBMISSION_BACKOFF_MS[delayIndex] ?? 0
+  if (delayMs <= 0) return false
+  const updatedMs = updatedAt ? Date.parse(updatedAt) : null
+  if (!updatedMs || Number.isNaN(updatedMs)) return false
+  return Date.now() - updatedMs < delayMs
+}
+
+const processRerunQueue = async () => {
+  await ensureStoreReady()
+  const submissions = await store.listRerunSubmissions({
+    statuses: ['queued', 'failed'],
+    limit: RERUN_WORKER_BATCH_SIZE,
+  })
+  for (const submission of submissions) {
+    if (shouldDelayRerun(submission.submissionAttempt, submission.updatedAt)) continue
+    const run = await store.getRunById(submission.parentRunId)
+    if (!run) continue
+    const prompt = run.nextPrompt ?? run.prompt
+    if (!prompt) continue
+    const result = await submitRerun(run, prompt, submission.attempt)
+    if (result.status === 'failed') {
+      await store.updateDecision({
+        runId: run.id,
+        decision: 'needs_human',
+        reasons: { error: 'rerun_submission_failed', detail: result.error ?? null },
+        suggestedFixes: { fix: 'Check Facteur availability and requeue the rerun.' },
+        nextPrompt: null,
+        promptTuning: {},
+        systemSuggestions: {},
+      })
+      const updated = await store.updateRunStatus(run.id, 'needs_human')
+      if (updated) {
+        await sendDiscordEscalation(run, 'rerun_submission_failed')
+      }
+    }
+  }
+}
+
+if (!_RECONCILE_DISABLED) {
+  startRerunSubmissionWorker()
+}
+
 const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: CodexEvaluationRecord) => {
   const latestRun = await store.getRunById(run.id)
   if (!latestRun || latestRun.status === 'superseded') return
@@ -2898,6 +3129,7 @@ const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: Co
   if (attempts >= config.maxAttempts) {
     const updated = await store.updateRunStatus(run.id, 'needs_human')
     if (!updated) return
+    await maybeCreateSystemImprovementPr(updated, resolvedReason, evaluation)
     await maybeCreatePromptTuningPr(updated, resolvedReason, evaluation?.nextPrompt ?? run.nextPrompt ?? '', evaluation)
     await sendDiscordEscalation(run, reason)
     return
@@ -2907,44 +3139,22 @@ const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: Co
   if (!nextPrompt) {
     const updated = await store.updateRunStatus(run.id, 'needs_iteration')
     if (!updated) return
+    await maybeCreateSystemImprovementPr(updated, resolvedReason, evaluation)
     await maybeCreatePromptTuningPr(updated, resolvedReason, '', evaluation)
     return
   }
 
   const updated = await store.updateRunStatus(run.id, 'needs_iteration')
   if (!updated) return
+  await maybeCreateSystemImprovementPr(updated, resolvedReason, evaluation)
   await maybeCreatePromptTuningPr(updated, resolvedReason, nextPrompt, evaluation)
-  const delayIndex = Math.min(Math.max(attempts - 1, 0), config.backoffScheduleMs.length - 1)
-  const delayMs = config.backoffScheduleMs[delayIndex] ?? 0
-  if (delayMs > 0) {
-    setTimeout(() => {
-      void handleRerunSubmission(run, nextPrompt, attempts + 1)
-    }, delayMs)
-    return
-  }
-  await handleRerunSubmission(run, nextPrompt, attempts + 1)
+
+  const deliveryId = `jangar-${run.id}-attempt-${attempts + 1}`
+  await store.enqueueRerunSubmission({ parentRunId: run.id, attempt: attempts + 1, deliveryId })
+  startRerunSubmissionWorker()
 }
 
 type RerunSubmissionResult = { status: 'submitted' | 'skipped' | 'failed'; error?: string }
-
-const handleRerunSubmission = async (run: CodexRunRecord, prompt: string, attempt: number) => {
-  const result = await submitRerun(run, prompt, attempt)
-  if (result.status !== 'failed') return
-
-  await store.updateDecision({
-    runId: run.id,
-    decision: 'needs_human',
-    reasons: { error: 'rerun_submission_failed', detail: result.error ?? null },
-    suggestedFixes: { fix: 'Check Facteur availability and requeue the rerun.' },
-    nextPrompt: null,
-    promptTuning: {},
-    systemSuggestions: {},
-  })
-
-  const updated = await store.updateRunStatus(run.id, 'needs_human')
-  if (!updated) return
-  await sendDiscordEscalation(run, 'rerun_submission_failed')
-}
 
 const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number): Promise<RerunSubmissionResult> => {
   const latestRun = await store.getRunById(run.id)
@@ -3335,6 +3545,43 @@ const resolveCiUrl = (run: CodexRunRecord, ciUrl?: string) => {
   return null
 }
 
+const buildWorktreeDiff = async (run: CodexRunRecord, pr: PullRequest | null) => {
+  if (!pr?.headSha) {
+    return { diff: '', files: [], error: 'missing_commit_sha' }
+  }
+
+  const store = createGithubReviewStore()
+  try {
+    await store.ready
+    const files = await store.listFiles({
+      repository: run.repository,
+      prNumber: pr.number,
+      commitSha: pr.headSha,
+      source: 'worktree',
+    })
+    if (files.length === 0) {
+      return { diff: '', files: [], error: 'worktree_diff_missing' }
+    }
+
+    const header = [
+      'Worktree diff (authoritative):',
+      ...files.map((file) => `- ${file.status ?? 'modified'} ${file.path}`),
+      '',
+    ].join('\n')
+
+    const patches = files.map((file) => {
+      if (file.patch && file.patch.trim().length > 0) {
+        return file.patch.trimEnd()
+      }
+      return `diff --git a/${file.path} b/${file.path}\n# patch unavailable for ${file.path}`
+    })
+
+    return { diff: `${header}\n${patches.join('\n\n')}`.trim(), files, error: null }
+  } finally {
+    await store.close()
+  }
+}
+
 const extractArtifactUrl = (run: CodexRunRecord) => {
   const payload = run.runCompletePayload
   if (!payload || typeof payload !== 'object') return null
@@ -3473,6 +3720,7 @@ const sendDiscordSuccess = async (run: CodexRunRecord, prUrl?: string, ciUrl?: s
 }
 
 const sendDiscordEscalation = async (run: CodexRunRecord, reason: string) => {
+  await maybeCreateSystemImprovementPr(run, reason)
   if (!config.discordBotToken || !config.discordChannelId) return
   let runForMessage = run
   try {
@@ -3653,6 +3901,10 @@ export const handleNotify = async (payload: Record<string, unknown>) => {
     branch: parsed.branch,
     prompt: parsed.prompt,
   })
+
+  if (run && parsed.prNumber && parsed.prUrl) {
+    await store.updateRunPrInfo(run.id, parsed.prNumber, parsed.prUrl, parsed.headSha ?? null)
+  }
 
   if (run && run.status === 'run_complete') {
     scheduleEvaluation(run.id, 1000)

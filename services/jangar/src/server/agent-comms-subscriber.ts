@@ -183,6 +183,9 @@ const normalizePayload = (raw: string, subject: string): AgentMessageInput | nul
     ...(payload.status ? { status: payload.status } : {}),
     ...(payload.exit_code ? { exit_code: payload.exit_code } : {}),
     ...(subject ? { nats_subject: subject } : {}),
+    ...(payload.repository ? { repository: payload.repository } : {}),
+    ...(payload.issueNumber ? { issueNumber: payload.issueNumber } : {}),
+    ...(payload.branch ? { branch: payload.branch } : {}),
   }
 
   return {
