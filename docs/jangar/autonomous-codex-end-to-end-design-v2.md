@@ -112,7 +112,9 @@ Before implementation or judge begins, the workflow must:
 ## 4.2 Ralph Wiggum Implementation Loop (Configurable)
 We adopt the "Ralph Wiggum" approach for implementation: run the agent in a loop until done, but always cap it
 with explicit iteration limits. The loop is deterministic and bounded (no runaway retries), with each iteration
-preserving worktree state and artifacts.
+preserving worktree state and artifacts. The Ralph Wiggum technique is a continuous agent loop (often expressed
+as a simple bash `while` loop) popularized by Geoffrey Huntley, and productionized in tooling like Ralph
+Orchestrator with explicit completion checks and safety limits.
 
 Key behaviors:
 - The implementation phase can run N sequential iterations when configured in the GitHub issue body.
@@ -123,7 +125,7 @@ Key behaviors:
 References:
 - https://mikeyobrien.github.io/ralph-orchestrator/ (overview of the loop-based "Ralph Wiggum" technique)
 - https://mikeyobrien.github.io/ralph-orchestrator/advanced/architecture/ (example loop structure)
-- https://paddo.dev/blog/ralph-wiggum-autonomous-loops/ (background and rationale)
+- https://zencoder.ai/blog/wigging-out-controlled-autonomous-loops-in-zenflow (background + safety considerations)
 
 ## 4.3 Issue Metadata Schema (Future-Proof)
 Implementation iterations are controlled via a structured metadata block in the GitHub issue body. The parser must
