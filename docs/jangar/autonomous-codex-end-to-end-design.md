@@ -187,9 +187,9 @@ flowchart LR
 
 ### 7.11 Post-Deploy Verification
 - After deploy is ready, run integration and end-to-end tests.
-- Failures gate completion and force rerun or escalation.
+- Failures gate completion and force another iteration or escalation.
 - Record failures as artifacts and judge evaluations.
- - If post-deploy tests are flaky or fail due to missing changes, the system must **request another iteration** by submitting a rerun task with the next prompt describing the new work required.
+- If post-deploy tests fail or requirements are verified as incomplete, the system must **request another iteration** by submitting a rerun task with a next prompt that enumerates the missing work.
 
 ### 7.12 Persist Evidence
 - Store artifacts in `codex_judge.artifacts`.
@@ -263,6 +263,7 @@ Minimum fields required to create the run:
 - Max reruns: `JANGAR_CODEX_MAX_ATTEMPTS`
 - Backoff schedule: `JANGAR_CODEX_BACKOFF_SCHEDULE_MS`
 - Mergeable state rules: use existing `codex-judge.ts` logic.
+- Post-deploy verification failures or human validation failures must trigger a rerun with a concrete next prompt.
 
 ## 11) Idempotency and Retry Rules
 
@@ -345,6 +346,11 @@ sequenceDiagram
     J->>A: deploy
     A->>J: deploy ready
     J->>A: post-deploy tests
+    alt post-deploy fail or human validation fail
+      J->>F: request rerun with next prompt
+    else post-deploy pass
+      J->>J: mark completed
+    end
   else fail
     J->>F: request rerun
   end
@@ -363,6 +369,8 @@ stateDiagram-v2
   MergeReady --> Deploying
   Deploying --> Verifying
   Verifying --> Completed
+  Verifying --> NeedsIteration
+  Verifying --> NeedsHuman
   Judging --> NeedsIteration
   NeedsIteration --> Implementing
   Judging --> NeedsHuman
