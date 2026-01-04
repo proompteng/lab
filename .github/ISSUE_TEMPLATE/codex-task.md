@@ -33,6 +33,14 @@ assignees: ''
 
 ## Codex Prompt
 <!-- Provide the exact prompt Codex should use. Be explicit about scope and output format. -->
+<!--
+Instructions: replace each condition below with a concrete, testable requirement.
+- do not stop until condition 1
+- do not stop until condition 2
+- do not stop until condition 3
+- do not stop until condition 4
+- do not stop until condition 5
+-->
 
 ## Additional Context
 <!-- Logs, screenshots, Argo workflow runs, or Discord threads that provide extra colour. -->
