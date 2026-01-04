@@ -120,7 +120,7 @@ Before implementation or judge begins, the workflow must:
 
 ### 5.2 Two modes
 - **Implementation mode**: runs Codex, writes implementation artifacts and notify payload.
-- **Judge mode**: runs judge prompt (Codex or specialized judge binary), produces evaluation payload and required system-improvement output.
+- **Judge mode**: runs the **same Codex runtime** with a different prompt; no separate judge binary or model is allowed unless explicitly configured later.
 
 The only difference between the two modes must be the prompt and the step label. All infrastructure and capture logic is shared.
 
