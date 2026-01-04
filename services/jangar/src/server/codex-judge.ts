@@ -2990,7 +2990,11 @@ const extractSystemSuggestions = (evaluation?: CodexEvaluationRecord) => {
   return suggestions.filter((value) => value.trim().length > 0)
 }
 
-const buildSystemImprovementPrompt = (run: CodexRunRecord, reason: string | null, evaluation?: CodexEvaluationRecord) => {
+const buildSystemImprovementPrompt = (
+  run: CodexRunRecord,
+  reason: string | null,
+  evaluation?: CodexEvaluationRecord,
+) => {
   const failureReason = reason ?? 'unknown'
   const suggestions = extractSystemSuggestions(evaluation)
   const nextPrompt = evaluation?.nextPrompt ?? run.nextPrompt ?? ''

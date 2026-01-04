@@ -84,7 +84,9 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
   const rerunWorkflowNamespace = (process.env.JANGAR_CODEX_RERUN_NAMESPACE ?? 'argo-workflows').trim()
   const systemImprovementWorkflowTemplate =
     (process.env.JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE ?? 'codex-autonomous').trim() || null
-  const systemImprovementWorkflowNamespace = (process.env.JANGAR_SYSTEM_IMPROVEMENT_NAMESPACE ?? 'argo-workflows').trim()
+  const systemImprovementWorkflowNamespace = (
+    process.env.JANGAR_SYSTEM_IMPROVEMENT_NAMESPACE ?? 'argo-workflows'
+  ).trim()
   const systemImprovementJudgePrompt = (
     process.env.JANGAR_SYSTEM_IMPROVEMENT_JUDGE_PROMPT ?? DEFAULT_SYSTEM_IMPROVEMENT_JUDGE_PROMPT
   ).trim()

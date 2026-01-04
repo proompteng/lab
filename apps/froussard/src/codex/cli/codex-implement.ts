@@ -1493,16 +1493,7 @@ export const runCodexImplementation = async (eventPath: string) => {
     const discordScriptExists = await pathExists(channelScript)
 
     if (discordToken && discordGuild && discordScriptExists) {
-      const args = [
-        '--stage',
-        stage,
-        '--repo',
-        repository,
-        '--issue',
-        issueNumber,
-        '--timestamp',
-        channelTimestamp,
-      ]
+      const args = ['--stage', stage, '--repo', repository, '--issue', issueNumber, '--timestamp', channelTimestamp]
       if (channelRunId) {
         args.push('--run-id', channelRunId)
       }

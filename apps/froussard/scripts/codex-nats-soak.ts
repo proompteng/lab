@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
+import { spawnSync } from 'node:child_process'
 import { unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { spawnSync } from 'node:child_process'
 
 type Options = {
   stream: string
@@ -115,7 +115,10 @@ const normalizeIssueNumber = (value: string | number | null) => {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-const filterMessages = (messages: NatsMessage[], filters: { repository?: string; issueNumber?: number | null; branch?: string }) => {
+const filterMessages = (
+  messages: NatsMessage[],
+  filters: { repository?: string; issueNumber?: number | null; branch?: string },
+) => {
   return messages.filter((message) => {
     if (filters.repository && message.repository && message.repository !== filters.repository) return false
     if (filters.issueNumber != null) {
@@ -142,7 +145,16 @@ const run = () => {
 
   const creds = resolveCredsFile()
   try {
-    const args = ['stream', 'view', options.stream, '--subject', options.subject, '--count', String(options.count), '--raw']
+    const args = [
+      'stream',
+      'view',
+      options.stream,
+      '--subject',
+      options.subject,
+      '--count',
+      String(options.count),
+      '--raw',
+    ]
     const command = spawnSync('nats', [...buildNatsArgs(creds.path), ...args], {
       encoding: 'utf8',
     })
