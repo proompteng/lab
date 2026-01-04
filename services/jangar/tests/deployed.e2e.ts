@@ -81,7 +81,9 @@ const readTerminalSize = async (page: import('@playwright/test').Page) =>
   })
 
 const parseSttySizeFromOutput = (output: string, marker: string) => {
-  const normalized = output.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\r/g, '')
+  const ansiPattern = new RegExp('\\u001b\\[[0-9;?]*[A-Za-z]', 'g')
+  const carriageReturnPattern = new RegExp('\\r', 'g')
+  const normalized = output.replace(ansiPattern, '').replace(carriageReturnPattern, '')
   for (const line of normalized.split('\n')) {
     const trimmed = line.trim()
     if (!trimmed.includes(marker)) continue
