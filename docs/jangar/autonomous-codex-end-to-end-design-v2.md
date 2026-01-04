@@ -101,6 +101,7 @@ A completed or failed run must have:
 - Implementation and judge are two DAG steps in the same workflow or a child workflow.
 - Jangar becomes a durable state store + UI, not the sole orchestrator.
 - Run creation happens inside Argo (via DB or Kafka with retries), not via a single Jangar API request.
+- NATS provides a **global agent context channel** so every Argo run can learn prior decisions, gaps, and fixes.
 
 ### Proposed flow (DAG)
 ```
@@ -114,6 +115,39 @@ DAG:
   E) post-deploy verify
   F) rerun submit (if needed)
 ```
+
+## 4.1 NATS Agent Context Channel (Required)
+
+### 4.1.1 Purpose
+All Argo workflow agents must know what has already been attempted, what failed, and what remains. This is enforced through a **global NATS channel** that:
+- Receives summaries from every run (implementation + judge + verification).
+- Allows new runs to pull a **context soak** before acting.
+- Stores a structured history that is queryable by issue number, branch, and run id.
+
+### 4.1.2 Channel and Subjects
+- General channel: `workflow_comms.agent_messages` with `channel="general"`.
+- Subject schema (hierarchical):
+  - `codex.run.<repository>.<issueNumber>.<runId>`
+  - `codex.run.<repository>.<issueNumber>.general`
+
+### 4.1.3 Required Messages (per run)
+Every run must publish the following messages to the general channel:
+- `run-started`: repository, issue, branch, workflow id, stage
+- `run-summary`: concise summary of actions taken + artifacts produced
+- `run-gaps`: explicit missing items and next steps
+- `run-next-prompt`: the exact next_prompt used for rerun (if any)
+- `run-outcome`: decision + status + PR link + CI link
+
+### 4.1.4 Context Soak (pre-run)
+Before implementation or judge begins, the workflow must:
+- Fetch the **latest N** messages from `channel="general"` for the issue/branch.
+- Inject a structured summary into the run prompt.
+- Fail fast if NATS is unreachable (classify as infra_failure).
+
+### 4.1.5 Guarantees
+- No Argo run proceeds without a context soak.
+- Every run emits at least one summary + one gap/finding message to NATS.
+- The general channel becomes the **single source of truth** for cross-run context.
 
 ## 5) Workflow Template Strategy
 
