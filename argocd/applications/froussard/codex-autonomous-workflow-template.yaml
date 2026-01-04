@@ -687,7 +687,6 @@ spec:
         parameters:
           - name: repository
           - name: head
-          - name: pr_number
       container:
         image: registry.ide-newton.ts.net/lab/codex-universal:latest
         imagePullPolicy: Always
@@ -856,7 +855,6 @@ spec:
         parameters:
           - name: repository
           - name: head
-          - name: pr_number
       container:
         image: registry.ide-newton.ts.net/lab/codex-universal:latest
         imagePullPolicy: Always
