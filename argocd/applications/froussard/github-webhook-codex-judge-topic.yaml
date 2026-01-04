@@ -3,6 +3,8 @@ kind: KafkaTopic
 metadata:
   name: github-webhook-codex-judge
   namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
 spec:
   topicName: github.webhook.codex.judge
   partitions: 3
