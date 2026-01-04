@@ -5,7 +5,6 @@ export type GithubReviewConfig = {
   reviewsWriteEnabled: boolean
   mergeWriteEnabled: boolean
   mergeForceEnabled: boolean
-  filesBackfillEnabled: boolean
 }
 
 const DEFAULT_GITHUB_API_BASE = 'https://api.github.com'
@@ -31,7 +30,6 @@ export const loadGithubReviewConfig = (): GithubReviewConfig => {
   const reviewsWriteEnabled = parseBool(process.env.JANGAR_GITHUB_REVIEWS_WRITE, false)
   const mergeWriteEnabled = parseBool(process.env.JANGAR_GITHUB_MERGE_WRITE, false)
   const mergeForceEnabled = parseBool(process.env.JANGAR_GITHUB_MERGE_FORCE, false)
-  const filesBackfillEnabled = parseBool(process.env.JANGAR_GITHUB_FILES_BACKFILL_ENABLED, false)
 
   return {
     githubToken,
@@ -40,7 +38,6 @@ export const loadGithubReviewConfig = (): GithubReviewConfig => {
     reviewsWriteEnabled,
     mergeWriteEnabled,
     mergeForceEnabled,
-    filesBackfillEnabled,
   }
 }
 

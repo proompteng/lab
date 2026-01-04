@@ -10,7 +10,6 @@ const globalState = globalThis as typeof globalThis & {
     reviewsWriteEnabled: boolean
     mergeWriteEnabled: boolean
     mergeForceEnabled: boolean
-    filesBackfillEnabled: boolean
   }
   __githubReviewGithubMock?: {
     submitReview: ReturnType<typeof vi.fn>
@@ -43,6 +42,7 @@ const buildStore = (): GithubReviewStore => ({
   upsertPrFiles: vi.fn(async () => {}),
   replacePrFiles: vi.fn(async () => {}),
   upsertPrWorktree: vi.fn(async () => {}),
+  getPrWorktree: vi.fn(async () => null),
   listPulls: vi.fn(async () => ({ items: [], nextCursor: null })),
   getPull: vi.fn(async () => ({
     pull: {
@@ -117,7 +117,6 @@ beforeEach(() => {
     reviewsWriteEnabled: true,
     mergeWriteEnabled: true,
     mergeForceEnabled: false,
-    filesBackfillEnabled: false,
   }
   globalState.__githubReviewGithubMock = githubMock
   globalState.__githubReviewStoreMock = buildStore()

@@ -207,6 +207,7 @@ export type GithubReviewStore = {
     source: string
   }) => Promise<void>
   upsertPrWorktree: (input: GithubPrWorktree) => Promise<void>
+  getPrWorktree: (input: { repository: string; prNumber: number }) => Promise<GithubPrWorktree | null>
   getUnresolvedThreadCount: (input: { repository: string; prNumber: number }) => Promise<number>
   updateUnresolvedThreadCount: (input: {
     repository: string
@@ -740,6 +741,34 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
         }),
       )
       .execute()
+  }
+
+  const getPrWorktree: GithubReviewStore['getPrWorktree'] = async (input) => {
+    await ready
+    const row = await db
+      .selectFrom('jangar_github.pr_worktrees')
+      .select([
+        'repository',
+        'pr_number',
+        'worktree_name',
+        'worktree_path',
+        'base_sha',
+        'head_sha',
+        'last_refreshed_at',
+      ])
+      .where('repository', '=', input.repository)
+      .where('pr_number', '=', input.prNumber)
+      .executeTakeFirst()
+    if (!row) return null
+    return {
+      repository: row.repository,
+      prNumber: row.pr_number,
+      worktreeName: row.worktree_name,
+      worktreePath: row.worktree_path,
+      baseSha: row.base_sha ?? null,
+      headSha: row.head_sha ?? null,
+      lastRefreshedAt: row.last_refreshed_at ? String(row.last_refreshed_at) : new Date().toISOString(),
+    }
   }
 
   const getUnresolvedThreadCount: GithubReviewStore['getUnresolvedThreadCount'] = async (input) => {
@@ -1306,6 +1335,7 @@ export const createGithubReviewStore = (options: StoreOptions = {}): GithubRevie
     upsertPrFiles,
     replacePrFiles,
     upsertPrWorktree,
+    getPrWorktree,
     getUnresolvedThreadCount,
     updateUnresolvedThreadCount,
     listPulls,

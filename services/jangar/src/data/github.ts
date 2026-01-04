@@ -1,3 +1,5 @@
+import type { CodexRunRecord } from '@/data/codex'
+
 export type GithubCheckRun = {
   id: string
   name: string | null

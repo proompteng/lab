@@ -3,22 +3,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GithubWebhookEvent } from '../github-review-ingest'
 import type { GithubReviewStore } from '../github-review-store'
 
-type GithubReviewConfig = {
-  githubToken: string | null
-  githubApiBaseUrl: string
-  reposAllowed: string[]
-  reviewsWriteEnabled: boolean
-  mergeWriteEnabled: boolean
-  mergeForceEnabled: boolean
-  filesBackfillEnabled: boolean
-}
+vi.mock('../github-worktree-snapshot', () => ({
+  refreshWorktreeSnapshot: vi.fn(async () => ({
+    repository: 'proompteng/lab',
+    prNumber: 0,
+    commitSha: 'mock',
+    baseSha: 'base',
+    worktreeName: 'mock',
+    worktreePath: '/tmp/mock',
+    fileCount: 0,
+  })),
+}))
 
 const globalState = globalThis as typeof globalThis & {
   __githubReviewStoreMock?: GithubReviewStore
-  __githubReviewConfigMock?: GithubReviewConfig
-  __githubReviewGithubMock?: {
-    getPullRequestFiles: ReturnType<typeof vi.fn>
-  }
 }
 
 const buildStore = (): GithubReviewStore => ({
@@ -42,6 +40,7 @@ const buildStore = (): GithubReviewStore => ({
   upsertPrFiles: vi.fn(async () => {}),
   replacePrFiles: vi.fn(async () => {}),
   upsertPrWorktree: vi.fn(async () => {}),
+  getPrWorktree: vi.fn(async () => null),
   listPulls: vi.fn(async () => ({ items: [], nextCursor: null })),
   getPull: vi.fn(async () => ({ pull: null, review: null, checks: null, issueComments: [] })),
   listFiles: vi.fn(async () => []),
@@ -56,20 +55,6 @@ const buildStore = (): GithubReviewStore => ({
   updateUnresolvedThreadCount: vi.fn(async () => {}),
 })
 
-const configMock: GithubReviewConfig = {
-  githubToken: null,
-  githubApiBaseUrl: 'https://api.github.com',
-  reposAllowed: ['proompteng/lab'],
-  reviewsWriteEnabled: false,
-  mergeWriteEnabled: false,
-  mergeForceEnabled: false,
-  filesBackfillEnabled: false,
-}
-
-const githubMock = {
-  getPullRequestFiles: vi.fn(async () => []),
-}
-
 const requireHandler = async () => {
   const module = await import('../github-review-ingest')
   return module.ingestGithubReviewEvent
@@ -78,8 +63,6 @@ const requireHandler = async () => {
 beforeEach(() => {
   vi.clearAllMocks()
   globalState.__githubReviewStoreMock = buildStore()
-  globalState.__githubReviewConfigMock = { ...configMock }
-  globalState.__githubReviewGithubMock = githubMock
 })
 
 describe('github review ingest', () => {

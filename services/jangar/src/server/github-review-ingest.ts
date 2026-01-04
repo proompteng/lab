@@ -1,6 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { createGitHubClient } from '~/server/github-client'
-import { loadGithubReviewConfig } from '~/server/github-review-config'
 import type {
   GithubIssueComment,
   GithubPullState,
@@ -9,6 +7,7 @@ import type {
   GithubReviewThread,
 } from '~/server/github-review-store'
 import { createGithubReviewStore } from '~/server/github-review-store'
+import { refreshWorktreeSnapshot } from '~/server/github-worktree-snapshot'
 
 export type GithubWebhookEvent = {
   event: string
@@ -31,30 +30,9 @@ type GithubReviewIngestResult = {
 
 const globalOverrides = globalThis as typeof globalThis & {
   __githubReviewStoreMock?: GithubReviewStore
-  __githubReviewConfigMock?: ReturnType<typeof loadGithubReviewConfig>
-  __githubReviewGithubMock?: ReturnType<typeof createGitHubClient>
 }
 
-let cachedConfig: ReturnType<typeof loadGithubReviewConfig> | null = null
-let cachedGithub: ReturnType<typeof createGitHubClient> | null = null
 let cachedStore: GithubReviewStore | null = null
-
-const getConfig = () => {
-  if (globalOverrides.__githubReviewConfigMock) return globalOverrides.__githubReviewConfigMock
-  if (!cachedConfig) {
-    cachedConfig = loadGithubReviewConfig()
-  }
-  return cachedConfig
-}
-
-const getGithub = () => {
-  if (globalOverrides.__githubReviewGithubMock) return globalOverrides.__githubReviewGithubMock
-  if (!cachedGithub) {
-    const config = getConfig()
-    cachedGithub = createGitHubClient({ token: config.githubToken, apiBaseUrl: config.githubApiBaseUrl })
-  }
-  return cachedGithub
-}
 
 const getStore = () => {
   if (globalOverrides.__githubReviewStoreMock) return globalOverrides.__githubReviewStoreMock
@@ -317,30 +295,33 @@ const buildIssueComment = (payload: Record<string, unknown>, receivedAt: string)
   }
 }
 
-const shouldBackfillFiles = async (
+const maybeRefreshWorktreeSnapshot = async (
   store: GithubReviewStore,
-  repository: string,
-  prNumber: number,
-  commitSha: string | null,
+  input: {
+    repository: string
+    prNumber: number
+    headRef: string | null
+    baseRef: string | null
+    headSha: string | null
+  },
 ) => {
-  const config = getConfig()
-  if (!config.filesBackfillEnabled || !commitSha) return false
-  const existing = await store.listFiles({ repository, prNumber, commitSha })
-  return existing.length === 0
-}
-
-const backfillFiles = async (
-  store: GithubReviewStore,
-  repository: string,
-  prNumber: number,
-  commitSha: string,
-  receivedAt: string,
-) => {
-  const github = getGithub()
-  const [owner, repo] = repository.split('/')
-  if (!owner || !repo) return
-  const files = await github.getPullRequestFiles(owner, repo, prNumber)
-  await store.upsertPrFiles({ repository, prNumber, commitSha, receivedAt, files, source: 'github' })
+  if (!input.headRef || !input.baseRef) return
+  const existing = await store.getPrWorktree({ repository: input.repository, prNumber: input.prNumber })
+  if (existing?.headSha && input.headSha && existing.headSha === input.headSha) return
+  try {
+    await refreshWorktreeSnapshot({
+      repository: input.repository,
+      prNumber: input.prNumber,
+      headRef: input.headRef,
+      baseRef: input.baseRef,
+    })
+  } catch (error) {
+    console.warn('[github-review-ingest] worktree snapshot refresh failed', {
+      repository: input.repository,
+      prNumber: input.prNumber,
+      error: String(error),
+    })
+  }
 }
 
 export const ingestGithubReviewEvent = async (input: GithubWebhookEvent): Promise<GithubReviewIngestResult> => {
@@ -379,9 +360,13 @@ export const ingestGithubReviewEvent = async (input: GithubWebhookEvent): Promis
     const prState = buildPrState(repository, input.payload, receivedAt)
     if (prState) {
       await store.upsertPrState(prState)
-      if (await shouldBackfillFiles(store, repository, prNumber, prState.headSha)) {
-        await backfillFiles(store, repository, prNumber, prState.headSha ?? '', receivedAt)
-      }
+      await maybeRefreshWorktreeSnapshot(store, {
+        repository,
+        prNumber,
+        headRef: prState.headRef ?? null,
+        baseRef: prState.baseRef ?? null,
+        headSha: prState.headSha ?? null,
+      })
     }
   }
 

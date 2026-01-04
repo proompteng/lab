@@ -27,6 +27,37 @@ const parseLimit = (value: string | null, fallback: number) => {
   return Math.max(1, Math.min(parsed, 100))
 }
 
+const maybeAutoRefreshFiles = async (
+  store: ReturnType<typeof createGithubReviewStore>,
+  input: {
+    repository: string
+    prNumber: number
+    headRef: string | null
+    baseRef: string | null
+    headSha: string | null
+  },
+) => {
+  if (!input.headRef || !input.baseRef) return false
+  const existing = await store.getPrWorktree({ repository: input.repository, prNumber: input.prNumber })
+  if (existing?.headSha && input.headSha && existing.headSha === input.headSha) return false
+  try {
+    await refreshWorktreeSnapshot({
+      repository: input.repository,
+      prNumber: input.prNumber,
+      headRef: input.headRef,
+      baseRef: input.baseRef,
+    })
+    return true
+  } catch (error) {
+    console.warn('[github-review] worktree snapshot refresh failed', {
+      repository: input.repository,
+      prNumber: input.prNumber,
+      error: String(error),
+    })
+  }
+  return false
+}
+
 export const getPullsHandler = async (request: Request, createStore = createGithubReviewStore) => {
   const config = loadGithubReviewConfig()
   if (config.reposAllowed.length === 0) {
@@ -137,12 +168,33 @@ export const getPullFilesHandler = async (
       return jsonResponse({ ok: false, error: 'Pull request not found' }, 404)
     }
 
-    const files = await store.listFiles({
+    const worktree = await store.getPrWorktree({ repository, prNumber })
+    const commitSha = worktree?.headSha ?? pull.pull.headSha
+    let files = await store.listFiles({
       repository,
       prNumber,
-      commitSha: pull.pull.headSha,
+      commitSha,
       source: 'worktree',
     })
+    if (files.length === 0) {
+      const refreshed = await maybeAutoRefreshFiles(store, {
+        repository,
+        prNumber,
+        headRef: pull.pull.headRef ?? null,
+        baseRef: pull.pull.baseRef ?? null,
+        headSha: pull.pull.headSha ?? null,
+      })
+      if (refreshed) {
+        const refreshedWorktree = await store.getPrWorktree({ repository, prNumber })
+        const refreshedCommit = refreshedWorktree?.headSha ?? pull.pull.headSha
+        files = await store.listFiles({
+          repository,
+          prNumber,
+          commitSha: refreshedCommit,
+          source: 'worktree',
+        })
+      }
+    }
     return jsonResponse({ ok: true, files })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to load pull request files'
