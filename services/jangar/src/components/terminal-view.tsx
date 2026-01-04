@@ -130,6 +130,16 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       resyncTimeoutRef.current = null
     }
 
+    const bumpResyncTimeout = () => {
+      if (!resyncingRef.current) return
+      clearResyncTimeout()
+      resyncTimeoutRef.current = setTimeout(() => {
+        resyncingRef.current = false
+        resyncPhaseRef.current = 0
+        flushQueuedOutput()
+      }, 2500)
+    }
+
     const startResyncGuard = () => {
       resyncingRef.current = true
       resyncPhaseRef.current = 1
@@ -243,6 +253,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
           const terminal = terminalRef.current
           if (!terminal) return
           if (expectedCols && expectedRows && (terminal.cols !== expectedCols || terminal.rows !== expectedRows)) {
+            bumpResyncTimeout()
             scheduleSnapshot(120)
             return
           }

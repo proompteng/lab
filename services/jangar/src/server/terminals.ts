@@ -818,6 +818,44 @@ const fetchTerminalCursor = async (sessionId: string) => {
   return { x, y }
 }
 
+const parseTerminalDimensions = (value: string) => {
+  const [colsRaw, rowsRaw] = value.trim().split(/\s+/)
+  const cols = Number.parseInt(colsRaw ?? '', 10)
+  const rows = Number.parseInt(rowsRaw ?? '', 10)
+  if (!Number.isFinite(cols) || !Number.isFinite(rows)) return null
+  return { cols, rows }
+}
+
+export const fetchTerminalDimensions = async (sessionId: string) => {
+  if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
+  const result = await runTmux(['display-message', '-p', '-t', sessionId, '#{pane_width} #{pane_height}'], {
+    label: 'tmux display-message',
+  })
+  if (result.exitCode !== 0) return null
+  return parseTerminalDimensions(result.stdout)
+}
+
+export const waitForTerminalDimensions = async (
+  sessionId: string,
+  cols: number,
+  rows: number,
+  timeoutMs = 700,
+  intervalMs = 60,
+) => {
+  if (!Number.isFinite(cols) || !Number.isFinite(rows)) return null
+  const start = Date.now()
+  let last: { cols: number; rows: number } | null = null
+  while (Date.now() - start < timeoutMs) {
+    const current = await fetchTerminalDimensions(sessionId).catch(() => null)
+    if (current) {
+      last = current
+      if (current.cols === cols && current.rows === rows) return current
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
+  return last
+}
+
 export const captureTerminalSnapshot = async (sessionId: string, lines = 2000): Promise<string> => {
   if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
   const [captureResult, cursor] = await Promise.all([
