@@ -130,7 +130,7 @@ The only difference between the two modes must be the prompt and the step label.
 1) `implementation` (codex-run, stage=implementation)
 2) `run-complete` (emit run record + artifacts, retryable)
 3) `judge` (codex-run, stage=judge)
-4) `gate` (CI/review gate; waits on GitHub check data)
+4) `gate` (CI/review/mergeability gate; blocks until external acceptance is satisfied)
 5) `merge` (if pass)
 6) `deploy` (if merge)
 7) `verify` (post-deploy)
@@ -203,6 +203,20 @@ spec:
             when: "{{tasks.judge.outputs.parameters.decision}} != pass || {{tasks.gate.outputs.parameters.decision}} != pass || {{tasks.merge.outputs.parameters.decision}} == fail || {{tasks.verify.outputs.parameters.decision}} == fail"
             template: rerun
 ```
+
+### 6.1.3 Gate Step Definition (Explicit)
+The `gate` step is the **hard acceptance barrier** between judge analysis and merge/deploy. It must:
+1) Resolve the **exact commit SHA** for the attempt (PR head SHA preferred; fallback to artifacts/notify).
+2) Query GitHub Actions check runs for that SHA (no branch-level fallback).
+3) Ensure Codex review is complete and all review threads are resolved.
+4) Validate `mergeable_state` (no conflicts, not blocked, not unknown after retry).
+
+**Outputs (required):**
+- `decision`: `pass` | `fail`
+- `reason`: `ci_failed` | `review_unresolved` | `merge_conflict` | `timeout` | `missing_commit_sha`
+- `next_prompt`: a concrete prompt when `fail`
+
+If any required signal is missing, `gate` must fail with a precise `reason` and emit a `next_prompt` that directs the rerun to fix the missing requirement.
 
 ### 6.2 Run creation without Jangar API
 - `run-complete` step writes directly to the DB or publishes to Kafka with retry/backoff.
