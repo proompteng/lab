@@ -6,12 +6,14 @@ import {
   captureTerminalSnapshot,
   ensureTerminalLogPipe,
   ensureTerminalSessionExists,
+  fetchTerminalDimensions,
   formatSessionId,
   getTerminalSession,
   isTerminalSessionId,
   markTerminalSessionError,
   queueTerminalInput,
   resizeTerminalSession,
+  waitForTerminalDimensions,
 } from '~/server/terminals'
 
 type PeerState = {
@@ -148,8 +150,10 @@ const runSnapshot = async (sessionId: string, state: SnapshotState) => {
   try {
     const cols = latest ? latest.cols : Number.NaN
     const rows = latest ? latest.rows : Number.NaN
+    let actualSize: { cols: number; rows: number } | null = null
     if (Number.isFinite(cols) && Number.isFinite(rows)) {
       await resizeTerminalSession(sessionId, cols, rows)
+      actualSize = await waitForTerminalDimensions(sessionId, cols, rows)
     }
     const snapshot = await captureTerminalSnapshot(sessionId, 2000)
     if (snapshot.trim().length > 0) {
@@ -158,9 +162,12 @@ const runSnapshot = async (sessionId: string, state: SnapshotState) => {
         if (peerState.get(request.peer)?.closed) continue
         const payload: Record<string, unknown> = { type: 'snapshot', data }
         if (request.seq !== null) payload.seq = request.seq
-        if (Number.isFinite(cols) && Number.isFinite(rows)) {
-          payload.cols = cols
-          payload.rows = rows
+        if (!actualSize) {
+          actualSize = await fetchTerminalDimensions(sessionId).catch(() => null)
+        }
+        if (actualSize) {
+          payload.cols = actualSize.cols
+          payload.rows = actualSize.rows
         }
         sendJson(request.peer, payload)
       }

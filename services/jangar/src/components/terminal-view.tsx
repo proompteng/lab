@@ -46,6 +46,9 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
   const snapshotApplyingRef = React.useRef(false)
   const pendingSnapshotRef = React.useRef<{ delayMs: number; active: boolean }>({ delayMs: 180, active: false })
   const resyncTimersRef = React.useRef<ReturnType<typeof setTimeout>[]>([])
+  const resyncingRef = React.useRef(false)
+  const resyncTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const resyncPhaseRef = React.useRef<0 | 1 | 2>(0)
 
   const [status, setStatus] = React.useState<'connecting' | 'connected' | 'error'>('connecting')
   const [error, setError] = React.useState<string | null>(null)
@@ -106,10 +109,46 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       pendingSnapshotRef.current = { delayMs, active: true }
     }
 
+    const flushQueuedOutput = () => {
+      if (snapshotApplyingRef.current || resyncingRef.current) return
+      const terminal = terminalRef.current
+      if (!terminal || outputQueueRef.current.length === 0) return
+      const payload = outputQueueRef.current.join('')
+      outputQueueRef.current = []
+      terminal.write(payload)
+    }
+
     const clearResyncTimers = () => {
       if (resyncTimersRef.current.length === 0) return
       for (const timer of resyncTimersRef.current) clearTimeout(timer)
       resyncTimersRef.current = []
+    }
+
+    const clearResyncTimeout = () => {
+      if (!resyncTimeoutRef.current) return
+      clearTimeout(resyncTimeoutRef.current)
+      resyncTimeoutRef.current = null
+    }
+
+    const bumpResyncTimeout = () => {
+      if (!resyncingRef.current) return
+      clearResyncTimeout()
+      resyncTimeoutRef.current = setTimeout(() => {
+        resyncingRef.current = false
+        resyncPhaseRef.current = 0
+        flushQueuedOutput()
+      }, 2500)
+    }
+
+    const startResyncGuard = () => {
+      resyncingRef.current = true
+      resyncPhaseRef.current = 1
+      clearResyncTimeout()
+      resyncTimeoutRef.current = setTimeout(() => {
+        resyncingRef.current = false
+        resyncPhaseRef.current = 0
+        flushQueuedOutput()
+      }, 2500)
     }
 
     const refreshLayout = (force = false) => {
@@ -135,6 +174,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         const lastSize = lastSizeRef.current
         if (force || !lastSize || nextSize.cols !== lastSize.cols || nextSize.rows !== lastSize.rows) {
           lastSizeRef.current = nextSize
+          startResyncGuard()
           sendResize(nextSize)
           const delayMs = pendingSnapshotRef.current.active ? pendingSnapshotRef.current.delayMs : 180
           pendingSnapshotRef.current = { delayMs, active: false }
@@ -149,17 +189,20 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
 
     const forceResync = (delayMs = 240) => {
       lastSizeRef.current = null
+      startResyncGuard()
       requestSnapshotAfterLayout(delayMs)
       refreshLayout(true)
       clearResyncTimers()
       resyncTimersRef.current = [
         setTimeout(() => {
           if (!isPageVisible()) return
+          resyncingRef.current = true
           requestSnapshotAfterLayout(delayMs)
           refreshLayout(true)
         }, 320),
         setTimeout(() => {
           if (!isPageVisible()) return
+          resyncingRef.current = true
           requestSnapshotAfterLayout(delayMs)
           refreshLayout(true)
         }, 900),
@@ -183,15 +226,6 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         if (inputBufferRef.current) {
           flushInput()
         }
-      }
-
-      const flushQueuedOutput = () => {
-        if (snapshotApplyingRef.current) return
-        const terminal = terminalRef.current
-        if (!terminal || outputQueueRef.current.length === 0) return
-        const payload = outputQueueRef.current.join('')
-        outputQueueRef.current = []
-        terminal.write(payload)
       }
 
       const handleMessage = (raw: string) => {
@@ -219,16 +253,33 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
           const terminal = terminalRef.current
           if (!terminal) return
           if (expectedCols && expectedRows && (terminal.cols !== expectedCols || terminal.rows !== expectedRows)) {
+            bumpResyncTimeout()
             scheduleSnapshot(120)
             return
           }
           const text = snapshotDecoder.decode(base64ToBytes(payload.data))
           if (text) {
             snapshotApplyingRef.current = true
-            terminal.write(`\u001b[2J\u001b[3J\u001b[H${text}`, () => {
+            terminal.reset()
+            terminal.write(text, () => {
               snapshotApplyingRef.current = false
-              terminal.scrollToBottom()
-              flushQueuedOutput()
+              if (resyncingRef.current) {
+                if (resyncPhaseRef.current === 1) {
+                  outputQueueRef.current = []
+                  resyncPhaseRef.current = 2
+                  scheduleSnapshot(120)
+                } else {
+                  resyncingRef.current = false
+                  resyncPhaseRef.current = 0
+                  clearResyncTimeout()
+                  terminal.scrollToBottom()
+                  flushQueuedOutput()
+                }
+              } else {
+                clearResyncTimeout()
+                terminal.scrollToBottom()
+                flushQueuedOutput()
+              }
             })
           }
           return
@@ -236,7 +287,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         if (payload.type === 'output' && payload.data) {
           const text = outputDecoder.decode(base64ToBytes(payload.data))
           if (!text) return
-          if (snapshotApplyingRef.current) {
+          if (snapshotApplyingRef.current || resyncingRef.current) {
             outputQueueRef.current.push(text)
             return
           }
@@ -425,6 +476,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         resizeTimerRef.current = null
       }
       clearResyncTimers()
+      clearResyncTimeout()
       if (socketRef.current) {
         socketRef.current.close()
         socketRef.current = null
