@@ -622,19 +622,19 @@ spec:
             fi
 
             exit "$EXIT_CODE"
-      volumeMounts:
-        - name: workdir
-          mountPath: /workspace
-        - name: docker-lib
-          mountPath: /var/lib/docker
-          readOnly: true
-      resources:
-        requests:
-          cpu: "2"
-          memory: 4Gi
-        limits:
-          cpu: "4"
-          memory: 6Gi
+        volumeMounts:
+          - name: workdir
+            mountPath: /workspace
+          - name: docker-lib
+            mountPath: /var/lib/docker
+            readOnly: true
+        resources:
+          requests:
+            cpu: "2"
+            memory: 4Gi
+          limits:
+            cpu: "4"
+            memory: 6Gi
       retryStrategy:
         limit: 3
         retryPolicy: OnFailure
