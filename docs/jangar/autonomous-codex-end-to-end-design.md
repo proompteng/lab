@@ -376,16 +376,26 @@ stateDiagram-v2
   Judging --> NeedsHuman
 ```
 
-## 16) Implementation Inputs (Mandatory for a Single Workflow)
+## 16) Implementation Inputs (Mandatory for Highest Success)
 
-These items must be defined and included in the workflow parameters or config maps so a single Argo workflow can complete end-to-end without follow-up runs:
-- Argo workflow template name for implementation and deployment.
-- Parameter schema (repository, issue number, base, head, prompt, commit SHA).
-- Exact pre-merge test commands.
-- Exact post-deploy integration and end-to-end test commands.
-- Notify and run-complete payload schemas as a single reference JSON definition.
-- Rollback policy (what gets rolled back, how, and what signals trigger rollback).
-- Rerun policy (max attempts before `needs_human`).
+These items are **required** and must be pinned in workflow parameters or config maps before execution. The workflow must fail fast if any are missing.
+- **Argo template names**: implementation workflow template name and deployment workflow template name.
+- **Parameter schema**: repository, issue number, base, head, prompt, commit SHA, workflow namespace, workflow UID.
+- **Pre-merge test commands**: exact commands and working directories.
+- **Post-deploy test commands**: exact integration + end-to-end commands and working directories.
+- **Notify payload schema**: exact JSON contract for `/api/codex/notify`.
+- **Run-complete payload schema**: exact JSON contract for `/api/codex/run-complete`.
+- **Rollback policy**: what is rolled back, how, and the decision signals.
+- **Rerun policy**: maximum attempts and when to escalate to `needs_human`.
+
+### 16.1 Preflight Validation (Fail-Fast)
+Before starting implementation, the workflow must validate:
+- Git is available in the runtime image.
+- `${CODEX_CWD}` exists and contains the repository checkout.
+- `base` and `head` refs resolve locally or can be fetched.
+- Required environment variables are present (GitHub token, DB URL, MinIO, Argo).
+- Artifacts can be uploaded to the configured bucket.
+- Jangar endpoints `/api/codex/notify` and `/api/codex/run-complete` are reachable.
 
 ## 17) Success Criteria
 - Worktree snapshot exists for PR with `source='worktree'`.
