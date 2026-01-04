@@ -68,13 +68,31 @@ The system is considered **guaranteed-successful** when these hold in production
 GitHub Issue -> Froussard -> Facteur -> Argo Workflow (DAG)
 
 DAG:
-  A) implementation
+  A) implementation loop (N iterations)
   B) run-complete emit (durable)
-  C) judge (run in Argo)
-  D) merge + deploy
-  E) post-deploy verify
-  F) rerun submit (if needed)
+  C) judge (run in Argo, same Codex binary)
+  D) Jangar PR review (human or policy-driven)
+  E) merge + deploy
+  F) post-deploy verify
+  G) rerun submit (if needed)
 ```
+
+## 4.4 Production Flow (Auto Codex)
+This is the production control flow for the autonomous pipeline:
+1) GitHub issue is created with Codex metadata (iterations, prompt, requirements).
+2) Froussard parses the issue body and publishes a Codex task payload.
+3) Facteur receives the task and submits the first Argo workflow (`codex-autonomous`).
+4) Argo runs the implementation loop N times, sequentially, reusing the same branch and worktree state.
+   - Iteration 1 uses the base prompt + initial context soak.
+   - Iteration 2+ must reuse:
+     - `memories` snapshots from Jangar,
+     - NATS agent-messages channel context,
+     - the branch head from the previous iteration.
+5) Argo runs a judge workflow (same Codex binary, stage=judge) against the issue requirements.
+6) If judge decides **incomplete**, Argo triggers another implementation loop cycle with the same branch and refreshed context.
+7) If judge decides **complete**, the PR is handed to Jangar for PR review and any required human approvals.
+8) On Jangar review pass, merge and deploy proceed; post-deploy verification runs in Argo.
+9) Jangar remains the control plane for visibility, approvals, and audit.
 
 ## 4.1 NATS Agent Context Channel (Required)
 
@@ -109,6 +127,82 @@ Before implementation or judge begins, the workflow must:
 - Every run emits at least one summary + one gap/finding message to NATS.
 - The general channel becomes the **single source of truth** for cross-run context.
 
+## 4.2 Ralph Wiggum Implementation Loop (Configurable)
+We adopt the "Ralph Wiggum" approach for implementation: run the agent in a loop until done, but always cap it
+with explicit iteration limits. The loop is deterministic and bounded (no runaway retries), with each iteration
+preserving worktree state and artifacts. The Ralph Wiggum technique is a continuous agent loop (often expressed
+as a simple bash `while` loop) popularized by Geoffrey Huntley, and productionized in tooling like Ralph
+Orchestrator with explicit completion checks and safety limits.
+
+Key behaviors:
+- The implementation phase can run N sequential iterations when configured in the GitHub issue body.
+- Default `iterations` is 1 (single attempt) when no metadata is present.
+- Each iteration is a full Codex run that emits artifacts and run-complete payloads for auditability.
+- The judge + gate steps only use the final iteration artifacts by default, unless overridden by a future policy.
+- Iteration 2+ must reuse the branch head from the prior iteration and inject context from Jangar memories plus the NATS agent channel.
+
+References:
+- https://ghuntley.com/ralph/ (origin and canonical loop description)
+- https://mikeyobrien.github.io/ralph-orchestrator/guide/overview/ (Ralph Orchestrator overview)
+- https://mikeyobrien.github.io/ralph-orchestrator/advanced/architecture/ (example loop structure)
+- https://zencoder.ai/blog/wigging-out-controlled-autonomous-loops-in-zenflow (background + safety considerations)
+
+## 4.3 Issue Metadata Schema (Future-Proof)
+Implementation iterations are controlled via a structured metadata block in the GitHub issue body. The parser must
+support a versioned schema and multiple shapes for backwards compatibility.
+
+### 4.3.1 Canonical schema (YAML, fenced)
+````yaml
+```codex
+version: 1
+iterations:
+  mode: fixed
+  count: 3
+```
+````
+
+### 4.3.2 Shorthand schema (number)
+````yaml
+```codex
+version: 1
+iterations: 3
+```
+````
+
+### 4.3.3 Extended schema (future-proof)
+````yaml
+```codex
+version: 1
+iterations:
+  mode: until
+  min: 1
+  max: 5
+  stop_on:
+    - judge_pass
+    - gate_pass
+  reason: "Loop until the judge and gate agree."
+```
+````
+
+### 4.3.4 Schema rules
+- `version` is required. Reject unknown versions unless `version_policy=allow_unknown` is set.
+- `iterations` accepts:
+  - Number: shorthand for `{ mode: fixed, count: <number> }`.
+  - Object: extended policy with `mode` and bounds.
+- `mode` options (extensible):
+  - `fixed`: run exactly `count` iterations.
+  - `until`: run until a stop condition is met, capped by `max`.
+  - `budget`: (reserved) run until time/cost budget is exhausted.
+  - `adaptive`: (reserved) dynamic policy based on failures.
+- Default: `{ mode: fixed, count: 1 }`.
+- Enforce `1 <= count <= 25` (or a configured max) to prevent runaway loops.
+- When judge requests more work, a new iteration cycle starts using the same `iterations` policy unless overridden by the judge output.
+
+### 4.3.5 Parsing precedence
+1) `codex` fenced block in the issue body.
+2) Future: issue labels (e.g., `codex-iterations-3`).
+3) Default to `{ mode: fixed, count: 1 }`.
+
 ## 5) Workflow Template Strategy
 
 ### 5.1 Unified template
@@ -117,6 +211,8 @@ Before implementation or judge begins, the workflow must:
   - `prompt` (only difference between implementation vs judge)
   - `repository`, `issue_number`, `base`, `head`
   - `run_id` (optional, but preferred)
+  - `iteration` (optional, 1-based index for implementation loops)
+  - `iteration_cycle` (optional, incremented when judge requests more work)
 
 ### 5.2 Two modes
 - **Implementation mode**: runs Codex, writes implementation artifacts and notify payload.
@@ -127,22 +223,24 @@ The only difference between the two modes must be the prompt and the step label.
 ## 6) Argo DAG Design
 
 ### 6.1 DAG nodes
-1) `implementation` (codex-run, stage=implementation)
-2) `run-complete` (emit run record + artifacts, retryable)
-3) `judge` (codex-run, stage=judge)
-4) `gate` (CI/review/mergeability gate; blocks until external acceptance is satisfied)
-5) `merge` (if pass)
-6) `deploy` (if merge)
-7) `verify` (post-deploy)
-8) `rerun` (if fail, durable submit with next_prompt)
+1) `implementation-loop` (codex-run, stage=implementation, sequential N iterations)
+2) `run-complete` (emit run record + artifacts; per-iteration preferred, final-iteration required)
+3) `judge` (codex-run, stage=judge; same binary as implementation, run as Argo workflow)
+4) `jangar-review` (control-plane review + approvals, surfaced in Jangar UI)
+5) `gate` (CI/review/mergeability gate; blocks until external acceptance is satisfied)
+6) `merge` (if pass)
+7) `deploy` (if merge)
+8) `verify` (post-deploy)
+9) `rerun` (if fail, durable submit with next_prompt)
 
 ### 6.1.1 Argo Workflow DAG (Mermaid)
 All nodes below are **Argo workflow nodes**; edges are Argo DAG dependencies or conditional branches.
 ```mermaid
 flowchart TD
-  implementation[implementation] --> run_complete[run-complete]
+  implementation[implementation x N] --> run_complete[run-complete x N]
   run_complete --> judge[judge]
-  judge --> gate[gate]
+  judge --> jangar_review[jangar review]
+  jangar_review --> gate[gate]
   gate -->|pass| merge[merge]
   merge --> deploy[deploy]
   deploy --> verify[verify]
@@ -160,6 +258,10 @@ kind: WorkflowTemplate
 metadata:
   name: codex-autonomous
 spec:
+  arguments:
+    parameters:
+      - name: implementation_iterations
+        value: "1"
   entrypoint: codex-dag
   templates:
     - name: codex-dag
@@ -169,10 +271,15 @@ spec:
             templateRef:
               name: codex-run
               template: codex-run
+            withSequence:
+              start: "1"
+              end: "{{workflow.parameters.implementation_iterations}}"
             arguments:
               parameters:
                 - name: stage
                   value: implementation
+                - name: iteration
+                  value: "{{item}}"
           - name: run-complete
             dependencies: [implementation]
             template: run-complete
@@ -185,8 +292,11 @@ spec:
               parameters:
                 - name: stage
                   value: judge
-          - name: gate
+          - name: jangar-review
             dependencies: [judge]
+            template: jangar-review
+          - name: gate
+            dependencies: [jangar-review]
             template: gate
           - name: merge
             dependencies: [gate]
@@ -204,11 +314,17 @@ spec:
             template: rerun
 ```
 
+Notes:
+- The implementation loop must be sequential to preserve worktree state. Enforce this with workflow-level
+  `parallelism: 1`, explicit chaining, or a steps template that serializes iterations.
+- If run-complete is emitted per iteration, each iteration must include its own `attempt`/`iteration` metadata.
+  At minimum, the final iteration must emit a run-complete payload with complete artifacts.
+
 ### 6.1.3 Gate Step Definition (Explicit)
 The `gate` step is the **hard acceptance barrier** between judge analysis and merge/deploy. It must:
 1) Resolve the **exact commit SHA** for the attempt (PR head SHA preferred; fallback to artifacts/notify).
 2) Query GitHub Actions check runs for that SHA (no branch-level fallback).
-3) Ensure Codex review is complete and all review threads are resolved.
+3) Ensure Jangar review status is complete and all review threads are resolved.
 4) Validate `mergeable_state` (no conflicts, not blocked, not unknown after retry).
 
 **Outputs (required):**
@@ -222,6 +338,14 @@ If any required signal is missing, `gate` must fail with a precise `reason` and 
 - `run-complete` step writes directly to the DB or publishes to Kafka with retry/backoff.
 - If DB is unavailable, persist a run payload artifact and requeue later.
 - Jangar should be able to reconcile runs from these artifacts.
+
+### 6.2.1 Judge-driven loop (required)
+If the judge decision is not `pass`, Argo must submit a new implementation-loop workflow with:
+- the same repository + issue number,
+- the same head branch (reuse prior work),
+- `iteration_cycle` incremented,
+- refreshed context soak from Jangar memories + NATS agent messages.
+The loop must preserve all artifacts for each cycle so Jangar can audit every attempt.
 
 ### 6.3 DAG Success Invariants
 These invariants must be enforced by the workflow before proceeding to the next step:
@@ -244,7 +368,11 @@ Each category produces a deterministic next_prompt and a system-improvement PR w
 ## 6.5 Step Interfaces (Inputs/Outputs)
 
 ### 6.5.1 `implementation` step
-**Inputs:** repository, issue_number, base, head, prompt  
+**Inputs:** repository, issue_number, base, head, prompt, iteration, iteration_cycle  
+**Required context (iteration 2+):**
+- `memories` snapshots from Jangar for this issue/branch
+- NATS agent-messages context soak
+- branch head from the previous iteration (reuse worktree)
 **Outputs (required parameters):**
 - `commit_sha`
 - `pr_number`
@@ -264,27 +392,32 @@ Each category produces a deterministic next_prompt and a system-improvement PR w
 **Outputs:** `decision`, `next_prompt`, `requirements_coverage`, `missing_items`, `suggested_fixes`  
 **Failure:** must emit `infra_failure` and retry boundedly.
 
-### 6.5.4 `gate` step
+### 6.5.4 `jangar-review` step
+**Inputs:** run_id, repository, pr_number, judge decision  
+**Outputs:** `review_status`, `review_summary`, `needs_human`  
+**Failure:** must emit `infra_failure` if Jangar is unreachable.
+
+### 6.5.5 `gate` step
 **Inputs:** run_id, repository, pr_number, commit_sha  
 **Outputs:** `decision`, `reason`, `next_prompt`  
 **Failure:** must emit `infra_failure` if required signals missing.
 
-### 6.5.5 `merge` step
+### 6.5.6 `merge` step
 **Inputs:** pr_number, repository  
 **Outputs:** `decision`, `merge_commit_sha`  
 **Failure:** `merge_failure` with explicit reason.
 
-### 6.5.6 `deploy` step
+### 6.5.7 `deploy` step
 **Inputs:** repository, merge_commit_sha  
 **Outputs:** `deploy_ref` (GitOps revision or workflow id)  
 **Failure:** `verification_failure` and rerun with prompt.
 
-### 6.5.7 `verify` step
+### 6.5.8 `verify` step
 **Inputs:** deploy_ref, repository  
 **Outputs:** `decision`, `verification_report_key`  
 **Failure:** `verification_failure` and rerun with prompt.
 
-### 6.5.8 `rerun` step
+### 6.5.9 `rerun` step
 **Inputs:** run_id, next_prompt, attempt, base, head  
 **Outputs:** `rerun_submission_id`  
 **Failure:** `infra_failure` and escalation.
@@ -296,9 +429,31 @@ Required fields:
 - `workflow_name`, `workflow_namespace`, `workflow_uid`
 - `repository`, `issue_number`, `branch`, `base`
 - `stage` (implementation | judge | post-deploy)
+- `iteration`, `iteration_cycle`
 - `prompt`
 - `started_at`, `finished_at`
 - `artifacts[]` with bucket + key
+
+## 8) Jangar Control Plane Requirements
+
+### 8.1 Visibility + Status
+Jangar must surface:
+- Which Argo workflows are running, their stage, iteration, and current phase.
+- Which workflows completed, with outcome and verdict (judge decision + gate result).
+- Which judge workflows ran (name/uid) and their verdicts.
+- Which PRs require human review, with a single review queue in Jangar.
+
+### 8.2 Required ingest signals
+- Argo workflow status events (start, phase transitions, completion).
+- Run-complete payloads (artifacts + metadata per iteration).
+- Judge outputs (decision, reasons, next_prompt).
+- Gate outcomes (CI/review/mergeability).
+
+### 8.3 Review facilitation
+Jangar owns the PR review UX:
+- Show diff + artifacts (from worktree snapshots + Argo artifacts).
+- Track reviewer status and unresolved threads.
+- Provide explicit approve/reject actions that feed back to Argo gate.
 
 ### 7.2 Artifacts (all required every run)
 - `implementation-changes`
