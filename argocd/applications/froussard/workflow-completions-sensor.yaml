@@ -41,6 +41,152 @@ spec:
               name: kafka-codex-credentials
               key: password
           payload:
+            - dest: workflowName
+              src:
+                dependencyName: workflow-completion
+                useRawData: true
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $meta := coalesce (index $wf "metadata") (dict) -}}
+                  {{- default "" (index $meta "name") -}}
+            - dest: workflowNamespace
+              src:
+                dependencyName: workflow-completion
+                useRawData: true
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $meta := coalesce (index $wf "metadata") (dict) -}}
+                  {{- default "" (index $meta "namespace") -}}
+            - dest: workflowUid
+              src:
+                dependencyName: workflow-completion
+                useRawData: true
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $meta := coalesce (index $wf "metadata") (dict) -}}
+                  {{- default "" (index $meta "uid") -}}
+            - dest: repository
+              src:
+                dependencyName: workflow-completion
+                useRawData: true
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $spec := coalesce (index $wf "spec") (dict) -}}
+                  {{- $args := coalesce (index $spec "arguments") (dict) -}}
+                  {{- $params := coalesce (index $args "parameters") (list) -}}
+                  {{- $eventBody := "" -}}
+                  {{- range $param := $params -}}
+                    {{- if eq (index $param "name") "eventBody" -}}
+                      {{- $eventBody = (index $param "value") -}}
+                    {{- end -}}
+                  {{- end -}}
+                  {{- $event := dict -}}
+                  {{- if $eventBody -}}
+                    {{- $event = fromJson (b64dec $eventBody) -}}
+                  {{- end -}}
+                  {{- $repo := default "" (index $event "repository") -}}
+                  {{- if not $repo -}}
+                    {{- $repo = default "" (index $event "repo") -}}
+                  {{- end -}}
+                  {{- $repo -}}
+            - dest: issueNumber
+              src:
+                dependencyName: workflow-completion
+                useRawData: true
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $spec := coalesce (index $wf "spec") (dict) -}}
+                  {{- $args := coalesce (index $spec "arguments") (dict) -}}
+                  {{- $params := coalesce (index $args "parameters") (list) -}}
+                  {{- $eventBody := "" -}}
+                  {{- range $param := $params -}}
+                    {{- if eq (index $param "name") "eventBody" -}}
+                      {{- $eventBody = (index $param "value") -}}
+                    {{- end -}}
+                  {{- end -}}
+                  {{- $event := dict -}}
+                  {{- if $eventBody -}}
+                    {{- $event = fromJson (b64dec $eventBody) -}}
+                  {{- end -}}
+                  {{- $issue := default "" (index $event "issueNumber") -}}
+                  {{- if not $issue -}}
+                    {{- $issue = default "" (index $event "issue_number") -}}
+                  {{- end -}}
+                  {{- $issue -}}
+            - dest: branch
+              src:
+                dependencyName: workflow-completion
+                useRawData: true
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $spec := coalesce (index $wf "spec") (dict) -}}
+                  {{- $args := coalesce (index $spec "arguments") (dict) -}}
+                  {{- $params := coalesce (index $args "parameters") (list) -}}
+                  {{- $eventBody := "" -}}
+                  {{- range $param := $params -}}
+                    {{- if eq (index $param "name") "eventBody" -}}
+                      {{- $eventBody = (index $param "value") -}}
+                    {{- end -}}
+                  {{- end -}}
+                  {{- $event := dict -}}
+                  {{- if $eventBody -}}
+                    {{- $event = fromJson (b64dec $eventBody) -}}
+                  {{- end -}}
+                  {{- default "" (index $event "head") -}}
+            - dest: base
+              src:
+                dependencyName: workflow-completion
+                useRawData: true
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $spec := coalesce (index $wf "spec") (dict) -}}
+                  {{- $args := coalesce (index $spec "arguments") (dict) -}}
+                  {{- $params := coalesce (index $args "parameters") (list) -}}
+                  {{- $eventBody := "" -}}
+                  {{- range $param := $params -}}
+                    {{- if eq (index $param "name") "eventBody" -}}
+                      {{- $eventBody = (index $param "value") -}}
+                    {{- end -}}
+                  {{- end -}}
+                  {{- $event := dict -}}
+                  {{- if $eventBody -}}
+                    {{- $event = fromJson (b64dec $eventBody) -}}
+                  {{- end -}}
+                  {{- default "" (index $event "base") -}}
+            - dest: prompt
+              src:
+                dependencyName: workflow-completion
+                useRawData: true
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $spec := coalesce (index $wf "spec") (dict) -}}
+                  {{- $args := coalesce (index $spec "arguments") (dict) -}}
+                  {{- $params := coalesce (index $args "parameters") (list) -}}
+                  {{- $eventBody := "" -}}
+                  {{- range $param := $params -}}
+                    {{- if eq (index $param "name") "eventBody" -}}
+                      {{- $eventBody = (index $param "value") -}}
+                    {{- end -}}
+                  {{- end -}}
+                  {{- $event := dict -}}
+                  {{- if $eventBody -}}
+                    {{- $event = fromJson (b64dec $eventBody) -}}
+                  {{- end -}}
+                  {{- default "" (index $event "prompt") -}}
+            - dest: startedAt
+              src:
+                dependencyName: workflow-completion
+                useRawData: true
+                dataTemplate: |
+                  {{- $status := coalesce (index .Input.body "status") (dict) -}}
+                  {{- default "" (index $status "startedAt") -}}
+            - dest: finishedAt
+              src:
+                dependencyName: workflow-completion
+                useRawData: true
+                dataTemplate: |
+                  {{- $status := coalesce (index .Input.body "status") (dict) -}}
+                  {{- default "" (index $status "finishedAt") -}}
             - dest: metadata
               src:
                 dependencyName: workflow-completion

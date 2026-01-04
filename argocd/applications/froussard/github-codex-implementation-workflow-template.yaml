@@ -154,6 +154,65 @@ spec:
               exit 0
             fi
 
+            if ! command -v git >/dev/null 2>&1; then
+              echo "Missing git binary in runtime image" >&2
+              exit 1
+            fi
+
+            if [[ ! -d "$WORKTREE_DIR" ]]; then
+              echo "CODEX_CWD directory missing: $WORKTREE_DIR" >&2
+              exit 1
+            fi
+
+            if [[ ! -e "$WORKTREE_DIR/.git" ]]; then
+              echo "Repository checkout missing at $WORKTREE_DIR" >&2
+              exit 1
+            fi
+
+            if [[ -z "${HEAD_BRANCH:-}" ]]; then
+              echo "Missing head branch parameter" >&2
+              exit 1
+            fi
+
+            if [[ -z "${BASE_BRANCH:-}" ]]; then
+              echo "Missing base branch parameter" >&2
+              exit 1
+            fi
+
+            if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+              echo "Missing GITHUB_TOKEN" >&2
+              exit 1
+            fi
+
+            if [[ -z "${JANGAR_BASE_URL:-}" ]]; then
+              echo "Missing JANGAR_BASE_URL" >&2
+              exit 1
+            fi
+
+            git -C "$WORKTREE_DIR" fetch --all --prune
+
+            if ! git -C "$WORKTREE_DIR" rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1 \
+              && ! git -C "$WORKTREE_DIR" rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
+              echo "Base ref '$BASE_BRANCH' not found in repository" >&2
+              exit 1
+            fi
+
+            if ! git -C "$WORKTREE_DIR" rev-parse --verify "$HEAD_BRANCH" >/dev/null 2>&1 \
+              && ! git -C "$WORKTREE_DIR" rev-parse --verify "origin/$HEAD_BRANCH" >/dev/null 2>&1; then
+              echo "Head ref '$HEAD_BRANCH' not found in repository" >&2
+              exit 1
+            fi
+
+            JANGAR_NOTIFY_URL="${JANGAR_BASE_URL%/}/api/codex/notify"
+            JANGAR_COMPLETE_URL="${JANGAR_BASE_URL%/}/api/codex/run-complete"
+            for endpoint in "$JANGAR_NOTIFY_URL" "$JANGAR_COMPLETE_URL"; do
+              status=$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS "$endpoint" || true)
+              if [[ "$status" == "000" ]]; then
+                echo "Jangar endpoint unreachable: $endpoint" >&2
+                exit 1
+              fi
+            done
+
             export OUTPUT_PATH="${IMPLEMENTATION_OUTPUT_PATH:-/workspace/lab/.codex-implementation.log}"
             export JSON_OUTPUT_PATH="${JSON_OUTPUT_PATH:-/workspace/.codex/implementation-events.jsonl}"
             export POST_TO_GITHUB=true

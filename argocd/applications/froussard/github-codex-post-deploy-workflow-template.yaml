@@ -1,0 +1,81 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: github-codex-post-deploy
+  namespace: argo-workflows
+  labels:
+    codex.stage: post-deploy
+spec:
+  serviceAccountName: codex-workflow
+  entrypoint: verify
+  arguments:
+    parameters:
+      - name: repository
+        value: ''
+      - name: issueNumber
+        value: ''
+      - name: branch
+        value: ''
+      - name: base
+        value: ''
+      - name: commitSha
+        value: ''
+      - name: prompt
+        value: ''
+      - name: integrationCommand
+        value: 'curl -sf http://jangar.jangar.svc.cluster.local/health'
+      - name: integrationCwd
+        value: '/workspace/lab'
+      - name: e2eCommand
+        value: 'curl -sf http://jangar.jangar.svc.cluster.local/api/health'
+      - name: e2eCwd
+        value: '/workspace/lab'
+  volumes:
+    - name: workdir
+      emptyDir:
+        sizeLimit: 1Gi
+  templates:
+    - name: verify
+      inputs:
+        parameters:
+          - name: integrationCommand
+          - name: integrationCwd
+          - name: e2eCommand
+          - name: e2eCwd
+      container:
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
+        command: ["/bin/bash", "-lc"]
+        args:
+          - |
+            set -euo pipefail
+
+            STATUS_PATH="/workspace/lab/.codex-post-deploy-status.txt"
+            LOG_PATH="/workspace/lab/.codex-post-deploy.log"
+            touch "$STATUS_PATH" "$LOG_PATH"
+
+            run_check() {
+              local name="$1"
+              local cwd="$2"
+              local cmd="$3"
+              echo "==> ${name} (${cwd})" | tee -a "$LOG_PATH"
+              if [[ -z "$cmd" ]]; then
+                echo "missing command for ${name}" | tee -a "$LOG_PATH"
+                return 1
+              fi
+              (cd "$cwd" && bash -lc "$cmd") >>"$LOG_PATH" 2>&1
+            }
+
+            run_check "integration" "{{inputs.parameters.integrationCwd}}" "{{inputs.parameters.integrationCommand}}"
+            run_check "e2e" "{{inputs.parameters.e2eCwd}}" "{{inputs.parameters.e2eCommand}}"
+
+            echo "post-deploy verification succeeded" | tee -a "$STATUS_PATH" "$LOG_PATH"
+        volumeMounts:
+          - name: workdir
+            mountPath: /workspace
+      outputs:
+        artifacts:
+          - name: post-deploy-log
+            path: /workspace/lab/.codex-post-deploy.log
+          - name: post-deploy-status
+            path: /workspace/lab/.codex-post-deploy-status.txt
