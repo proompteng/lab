@@ -45,7 +45,7 @@ This design is grounded in the current live cluster and the `jangar` database.
 ```
 
 ### 1.4 Observed Gaps
-- `jangar_github.pr_files` only has 2 rows (PR #2304). This confirms file snapshots are incomplete via GitHub API backfill.
+- `jangar_github.pr_files` only has 2 rows (PR #2304). This confirms file snapshots are incomplete and **must be sourced from the local worktree only**.
 - `jangar_github.check_state` stores 15 distinct commit SHAs across 2 PRs, so UI must group checks by commit.
 - `jangar_github.write_actions` is empty, so no automated merges have occurred yet.
 
@@ -100,7 +100,7 @@ flowchart LR
   ARGO --> COMPLETIONS[Argo Events -> Kafka completions]
   COMPLETIONS --> JANGAR[Jangar /codex/run-complete]
   CODEX -->|notify| JANGAR
-  JANGAR --> GHAPI[GitHub API]
+  JANGAR --> GHAPI[GitHub API (PR metadata only)]
   JANGAR --> DB[(jangar-db)]
   JANGAR --> MEM[(memories.entries)]
   JANGAR --> MERGE[Merge PR]
@@ -142,6 +142,7 @@ flowchart LR
 - Generate diff: `git diff --name-status <base>..<head>`.
 - Optional patch: `git diff -U3 <base>..<head>`.
 - Store results in `jangar_github.pr_files` with `source='worktree'`.
+- **No GitHub API usage is permitted for file lists or patches.** The local worktree is the single source of truth.
 
 ### 5.7 Step 6: CI + Review Gate
 - CI status: `jangar_github.check_state` grouped by commit SHA.
@@ -172,8 +173,8 @@ flowchart LR
 ## 6) Data Model Changes
 
 ### 6.1 `jangar_github.pr_files`
-Add `source text not null default 'github_api'`.
-- New worktree snapshots inserted with `source='worktree'`.
+Add `source text not null default 'worktree'`.
+- Only worktree snapshots are valid; no API backfill is allowed for PR files or patches.
 
 ### 6.2 `jangar_github.pr_worktrees` (new)
 Tracks worktree allocations to make runs deterministic.
@@ -275,4 +276,3 @@ stateDiagram-v2
 - Jangar already has env vars for GitHub, NATS, MinIO, Facteur, Argo.
 - `jangar_github.pr_files` is currently incomplete; worktree is mandatory.
 - `jangar_github.write_actions` currently empty; this run should populate it.
-
