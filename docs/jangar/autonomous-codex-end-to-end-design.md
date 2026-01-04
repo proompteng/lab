@@ -189,6 +189,7 @@ flowchart LR
 - After deploy is ready, run integration and end-to-end tests.
 - Failures gate completion and force rerun or escalation.
 - Record failures as artifacts and judge evaluations.
+ - If post-deploy tests are flaky or fail due to missing changes, the system must **request another iteration** by submitting a rerun task with the next prompt describing the new work required.
 
 ### 7.12 Persist Evidence
 - Store artifacts in `codex_judge.artifacts`.
