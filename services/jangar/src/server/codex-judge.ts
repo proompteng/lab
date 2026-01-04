@@ -3824,6 +3824,7 @@ export const __private = {
   findCommitShaInValue,
   normalizeBranchRef,
   resolveCiContext,
+  processRerunQueue,
   writeMemories,
 }
 export const handleRunComplete = async (payload: Record<string, unknown>) => {
