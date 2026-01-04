@@ -95,7 +95,18 @@ If any gate fails, the system must record why and either rerun or escalate to `n
 - `services/jangar/src/server/agent-comms-subscriber.ts`
 - `services/jangar/src/routes/api/agents/events.ts`
 
-## 5) Architecture Overview
+## 5) Configuration and Secrets
+
+The autonomous run depends on these environment variables already present in the Jangar deployment:
+- GitHub: `GITHUB_TOKEN`, `JANGAR_GITHUB_REPOS_ALLOWED`, `JANGAR_GITHUB_REVIEWS_WRITE`, `JANGAR_GITHUB_MERGE_WRITE`, `JANGAR_GITHUB_MERGE_FORCE`
+- Codex judge: `JANGAR_CI_EVENT_STREAM_ENABLED`, `JANGAR_CI_MAX_WAIT_MS`, `JANGAR_REVIEW_MAX_WAIT_MS`, `JANGAR_CODEX_MAX_ATTEMPTS`, `JANGAR_CODEX_BACKOFF_SCHEDULE_MS`, `JANGAR_CODEX_JUDGE_MODEL`
+- Argo and artifacts: `ARGO_SERVER_URL`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_SECURE`
+- Facteur reruns: `FACTEUR_INTERNAL_URL`
+- Infra: `DATABASE_URL`, `JANGAR_REDIS_URL`, `NATS_URL`, `NATS_USER`, `NATS_PASSWORD`
+
+Required guarantee: the workflow image has `git` and the repo checkout at `${CODEX_CWD}`.
+
+## 6) Architecture Overview
 
 ```mermaid
 flowchart LR
@@ -116,16 +127,16 @@ flowchart LR
   DEPLOY --> VERIFY[Post-deploy tests]
 ```
 
-## 6) End-to-End Run: Detailed Steps
+## 7) End-to-End Run: Detailed Steps
 
-### 6.1 Inputs
+### 7.1 Inputs
 - `repository` (e.g. `proompteng/lab`)
 - `issueNumber`
 - `base` (e.g. `main`)
 - `head` (e.g. `codex/issue-<n>`)
 - `prompt`
 
-### 6.2 Worktree Provisioning
+### 7.2 Worktree Provisioning
 **Goal:** authoritative file source.
 - Worktree root: `${CODEX_CWD}/.worktrees`.
 - Worktree name: `pr-${owner}-${repo}-${issueNumber}`.
@@ -133,32 +144,32 @@ flowchart LR
 - If not: `git worktree add --detach <path> <head>`.
 - Record into DB table `jangar_github.pr_worktrees`.
 
-### 6.3 Implementation
+### 7.3 Implementation
 - Run Codex agent inside worktree.
 - Produce artifacts: changes tarball, patch, logs, events, status.
 - Include `metadata/manifest.json` inside the changes archive.
 
-### 6.4 Tests
+### 7.4 Tests
 - Execute repo-appropriate test suites and record results.
 - Failures do not skip PR creation; they gate later completion.
 - Store output in `codex_judge.artifacts` and logs.
 
-### 6.5 PR Creation or Update
+### 7.5 PR Creation or Update
 - Use `github.createPullRequest` or update existing PR.
 - Persist PR number, URL, and head SHA into `codex_judge.runs`.
 
-### 6.6 Worktree-Only File Snapshot
+### 7.6 Worktree-Only File Snapshot
 - Generate diff: `git diff --name-status <base>..<head>`.
 - Optional patch: `git diff -U3 <base>..<head>`.
 - Store in `jangar_github.pr_files` with `source='worktree'`.
 - **Do not use GitHub API for file lists or patches.**
 
-### 6.7 CI and Review Gate
+### 7.7 CI and Review Gate
 - CI status: `jangar_github.check_state` grouped by commit SHA.
 - Review status: `jangar_github.review_state` plus unresolved threads.
 - Mergeability: GitHub API `mergeable_state` only.
 
-### 6.8 Codex Judge
+### 7.8 Codex Judge
 - Evaluate via `services/jangar/src/server/codex-judge.ts`.
 - Requirements to pass:
   - CI success
@@ -166,31 +177,107 @@ flowchart LR
   - Mergeable state acceptable
   - Judge decision pass
 
-### 6.9 Merge
+### 7.9 Merge
 - Use `mergePullRequest` in `github-review-actions.ts`.
 - Record audit to `jangar_github.write_actions`.
 
-### 6.10 Deploy
+### 7.10 Deploy
 - GitOps preferred: merge triggers Argo CD sync.
 - Optional: trigger deploy workflow via Argo API.
 
-### 6.11 Post-Deploy Verification
+### 7.11 Post-Deploy Verification
 - After deploy is ready, run integration and end-to-end tests.
 - Failures gate completion and force rerun or escalation.
 - Record failures as artifacts and judge evaluations.
 
-### 6.12 Persist Evidence
+### 7.12 Persist Evidence
 - Store artifacts in `codex_judge.artifacts`.
 - Store evaluations in `codex_judge.evaluations`.
 - Store memories in `memories.entries`.
 
-## 7) Data Model Changes
+## 8) Artifact Contract (Required)
 
-### 7.1 `jangar_github.pr_files`
+The workflow must emit the following artifacts on every run, regardless of success/failure:
+- `implementation-changes` (`.codex-implementation-changes.tar.gz`)
+  - Must contain `metadata/manifest.json` with repository, issue number, prompt, session id, commit SHA.
+- `implementation-patch` (`.codex-implementation.patch`)
+- `implementation-status` (`.codex-implementation-status.txt`)
+- `implementation-log` (`.codex-implementation.log`)
+- `implementation-events` (`.codex/implementation-events.jsonl`)
+- `implementation-agent-log` (`.codex-implementation-agent.log`)
+- `implementation-runtime-log` (`.codex-implementation-runtime.log`)
+- `implementation-notify` (`.codex-implementation-notify.json`)
+- `implementation-resume` (`.codex/implementation-resume.json`)
+
+If any artifact is missing, Jangar must fall back to available artifacts and still persist the run.
+
+## 9) Payload Contracts (Notify + Run-Complete)
+
+### 9.1 Notify Payload (POST /api/codex/notify)
+Minimum fields required to attach enrichment:
+```json
+{
+  "workflowName": "github-codex-implementation-<id>",
+  "workflowNamespace": "argo-workflows",
+  "repository": "proompteng/lab",
+  "issueNumber": 1234,
+  "branch": "codex/issue-1234",
+  "prompt": "string",
+  "commitSha": "abcdef123",
+  "last_assistant_message": "string",
+  "logs": {
+    "output": "string",
+    "events": "string",
+    "agent": "string",
+    "runtime": "string",
+    "status": "string"
+  }
+}
+```
+
+### 9.2 Run-Complete Payload (POST /api/codex/run-complete)
+Minimum fields required to create the run:
+```json
+{
+  "workflowName": "github-codex-implementation-<id>",
+  "workflowNamespace": "argo-workflows",
+  "workflowUid": "uuid",
+  "repository": "proompteng/lab",
+  "issueNumber": 1234,
+  "branch": "codex/issue-1234",
+  "base": "main",
+  "prompt": "string",
+  "startedAt": "2026-01-04T00:00:00Z",
+  "finishedAt": "2026-01-04T00:10:00Z",
+  "artifacts": [
+    { "name": "implementation-changes", "key": "path/in/bucket", "bucket": "argo-workflows" }
+  ]
+}
+```
+
+## 10) Gate and Timeout Policy
+
+- CI timeout: `JANGAR_CI_MAX_WAIT_MS`
+- Review timeout: `JANGAR_REVIEW_MAX_WAIT_MS`
+- Max reruns: `JANGAR_CODEX_MAX_ATTEMPTS`
+- Backoff schedule: `JANGAR_CODEX_BACKOFF_SCHEDULE_MS`
+- Mergeable state rules: use existing `codex-judge.ts` logic.
+
+## 11) Idempotency and Retry Rules
+
+- Run identity: `(workflow_name, workflow_namespace, workflow_uid)` is the primary key for run-complete ingestion.
+- Notify payloads attach by workflow name and namespace; notify is enrichment only.
+- Worktree allocation is idempotent per `(repository, pr_number)` in `jangar_github.pr_worktrees`.
+- PR creation must be idempotent: if branch already has a PR, update it rather than creating a new one.
+- Worktree snapshots overwrite prior `source='worktree'` records for the same PR and commit SHA.
+
+## 12) Data Model Changes
+
+### 12.1 `jangar_github.pr_files`
 Add `source text not null default 'worktree'`.
 - Only worktree snapshots are valid; API backfill is not allowed.
 
-### 7.2 `jangar_github.pr_worktrees` (new)
+### 12.2 `jangar_github.pr_worktrees` (new)
 ```
 CREATE TABLE jangar_github.pr_worktrees (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -205,29 +292,29 @@ CREATE TABLE jangar_github.pr_worktrees (
 );
 ```
 
-## 8) API Changes
+## 13) API Changes
 
-### 8.1 Judge Runs by PR
+### 13.1 Judge Runs by PR
 `GET /api/github/pulls/:owner/:repo/:number/judge-runs`
 - Returns all `codex_judge.runs` for the PR.
 
-### 8.2 Checks Grouped by Commit
+### 13.2 Checks Grouped by Commit
 `GET /api/github/pulls/:owner/:repo/:number/checks`
 - Returns grouped check runs by commit SHA.
 
-### 8.3 Worktree Snapshot Refresh
+### 13.3 Worktree Snapshot Refresh
 `POST /api/github/pulls/:owner/:repo/:number/refresh-files`
 - Triggers worktree diff and updates `pr_files` with `source='worktree'`.
 
-## 9) UI Requirements
+## 14) UI Requirements
 - Replace PR detail navigation with tabs: Overview, Files, Conversation, Checks, Judge.
 - Checks tab grouped by commit SHA.
 - Files tab shows full tree from worktree snapshot.
 - Judge tab links to run history.
 
-## 10) Mermaid Diagrams
+## 15) Mermaid Diagrams
 
-### 10.1 Sequence: End-to-End Run
+### 15.1 Sequence: End-to-End Run
 ```mermaid
 sequenceDiagram
   participant GH as GitHub
@@ -262,7 +349,7 @@ sequenceDiagram
   end
 ```
 
-### 10.2 State: Run Lifecycle
+### 15.2 State: Run Lifecycle
 ```mermaid
 stateDiagram-v2
   [*] --> WorktreeReady
@@ -280,18 +367,18 @@ stateDiagram-v2
   Judging --> NeedsHuman
 ```
 
-## 11) Implementation Readiness Checklist
+## 16) Implementation Inputs (Mandatory for a Single Workflow)
 
-A new engineer should be able to implement this in a single run only if all of the following are present:
-- An Argo workflow template that includes worktree provisioning, implementation, tests, notify, and artifact upload.
-- A Jangar endpoint for worktree snapshot refresh and PR-scoped judge runs.
-- DB migrations for `jangar_github.pr_files.source` and `jangar_github.pr_worktrees`.
-- Clear, repo-specific test commands defined in the workflow.
-- Post-deploy test suite location and commands.
+These items must be defined and included in the workflow parameters or config maps so a single Argo workflow can complete end-to-end without follow-up runs:
+- Argo workflow template name for implementation and deployment.
+- Parameter schema (repository, issue number, base, head, prompt, commit SHA).
+- Exact pre-merge test commands.
+- Exact post-deploy integration and end-to-end test commands.
+- Notify and run-complete payload schemas as a single reference JSON definition.
+- Rollback policy (what gets rolled back, how, and what signals trigger rollback).
+- Rerun policy (max attempts before `needs_human`).
 
-If any of the above are missing, the run will require additional implementation passes.
-
-## 12) Success Criteria
+## 17) Success Criteria
 - Worktree snapshot exists for PR with `source='worktree'`.
 - CI success and review clear.
 - Judge decision pass.
