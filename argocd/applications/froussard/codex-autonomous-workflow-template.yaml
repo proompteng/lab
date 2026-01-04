@@ -988,12 +988,12 @@ spec:
           - name: max_wait_seconds
           - name: poll_seconds
       container:
-        image: bitnami/kubectl:1.29
+        image: alpine/helm:3.14.2
         imagePullPolicy: IfNotPresent
-        command: ["/bin/bash", "-lc"]
+        command: ["/bin/sh", "-lc"]
         args:
           - |
-            set -euo pipefail
+            set -eu
 
             DECISION_PATH="/workspace/lab/.codex-deploy-decision.txt"
             mkdir -p /workspace/lab
@@ -1002,26 +1002,56 @@ spec:
             MAX_WAIT_SECONDS="{{inputs.parameters.max_wait_seconds}}"
             POLL_SECONDS="{{inputs.parameters.poll_seconds}}"
 
-            if [[ -z "$APPS_RAW" ]]; then
+            if [ -z "$APPS_RAW" ]; then
               echo "pass" > "$DECISION_PATH"
               exit 0
             fi
 
-            IFS=',' read -ra APPS <<< "$APPS_RAW"
-            deadline=$((SECONDS + MAX_WAIT_SECONDS))
+            start_time=$(date +%s)
+            deadline=$((start_time + MAX_WAIT_SECONDS))
 
-            for app in "${APPS[@]}"; do
+            if ! command -v kubectl >/dev/null 2>&1; then
+              apk add --no-cache kubectl >/dev/null
+            fi
+
+            if ! command -v helm >/dev/null 2>&1; then
+              echo "Missing helm binary" >&2
+              echo "fail" > "$DECISION_PATH"
+              exit 1
+            fi
+
+            helm repo add crossplane https://charts.crossplane.io/stable >/dev/null
+            helm repo update >/dev/null
+
+            IFS=',' 
+            for app in $APPS_RAW; do
               app=$(echo "$app" | xargs)
-              if [[ -z "$app" ]]; then
+              if [ -z "$app" ]; then
                 continue
               fi
+
+              if [ "$app" = "crossplane" ]; then
+                echo "Applying Crossplane manifests via helm template" >&2
+                kubectl create namespace crossplane-system --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+                helm template crossplane crossplane/crossplane \
+                  --version 2.1.3 \
+                  --namespace crossplane-system \
+                  --include-crds > /tmp/crossplane.yaml
+                kubectl apply -n crossplane-system -f /tmp/crossplane.yaml
+                kubectl -n crossplane-system rollout status deployment/crossplane --timeout=600s
+                kubectl -n crossplane-system wait --for=condition=Ready pod -l app.kubernetes.io/name=crossplane --timeout=600s
+                echo "Crossplane pods are Ready" >&2
+              fi
+
               while true; do
                 sync_status=$(kubectl -n "$ARGOCD_NAMESPACE" get applications.argoproj.io "$app" -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
                 health_status=$(kubectl -n "$ARGOCD_NAMESPACE" get applications.argoproj.io "$app" -o jsonpath='{.status.health.status}' 2>/dev/null || true)
-                if [[ "$sync_status" == "Synced" && "$health_status" == "Healthy" ]]; then
+                echo "Argo CD status for ${app}: sync=${sync_status:-Unknown} health=${health_status:-Unknown}" >&2
+                if [ "$sync_status" = "Synced" ] && [ "$health_status" = "Healthy" ]; then
                   break
                 fi
-                if [[ "$SECONDS" -ge "$deadline" ]]; then
+                now=$(date +%s)
+                if [ "$now" -ge "$deadline" ]; then
                   echo "fail" > "$DECISION_PATH"
                   exit 1
                 fi
