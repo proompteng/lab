@@ -187,6 +187,10 @@ export const getAgentEvents = async (request: Request) => {
         controller.enqueue(encoder.encode(`: ${value.replaceAll('\n', ' ')}\n\n`))
       }
 
+      // Flush headers and establish the SSE connection immediately.
+      controller.enqueue(encoder.encode('retry: 1000\n\n'))
+      controller.enqueue(encoder.encode(': connected\n\n'))
+
       const pushRecord = (record: AgentMessageRecord) => {
         if (seenIds.has(record.id)) return
         seenIds.add(record.id)
@@ -195,6 +199,11 @@ export const getAgentEvents = async (request: Request) => {
         }
         push(buildPayload(record))
       }
+
+      let resolveKeepAlive: (() => void) | null = null
+      const keepAlive = new Promise<void>((resolve) => {
+        resolveKeepAlive = resolve
+      })
 
       const cleanup = async () => {
         if (isClosed) return
@@ -212,6 +221,7 @@ export const getAgentEvents = async (request: Request) => {
           connectionClosed = true
         }
         controller.close()
+        if (resolveKeepAlive) resolveKeepAlive()
       }
 
       const handleAbort = () => {
@@ -244,6 +254,8 @@ export const getAgentEvents = async (request: Request) => {
           })()
         }, POLL_INTERVAL_MS)
       })()
+
+      return keepAlive
     },
     cancel() {
       if (isClosed) return

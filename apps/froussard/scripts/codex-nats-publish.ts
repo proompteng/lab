@@ -293,12 +293,13 @@ const main = async () => {
   const publishLine = async (line: string) => {
     const content = line.trim()
     if (!content) return
-    const messageId = crypto.randomUUID()
+    const runMessageId = crypto.randomUUID()
     const sentAt = new Date().toISOString()
-    const payload = buildPayload(options, content, context, options.channel, messageId, sentAt)
+    const payload = buildPayload(options, content, context, options.channel, runMessageId, sentAt)
     await publishPayload(runSubject, payload, natsArgs)
     if (options.publishGeneral) {
-      const generalPayload = buildPayload(options, content, context, 'general', messageId, sentAt)
+      const generalMessageId = crypto.randomUUID()
+      const generalPayload = buildPayload(options, content, context, 'general', generalMessageId, sentAt)
       await publishPayload(generalSubject, generalPayload, natsArgs)
     }
   }
