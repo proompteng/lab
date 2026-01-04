@@ -48,6 +48,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
   const resyncTimersRef = React.useRef<ReturnType<typeof setTimeout>[]>([])
   const resyncingRef = React.useRef(false)
   const resyncTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const resyncPhaseRef = React.useRef<0 | 1 | 2>(0)
 
   const [status, setStatus] = React.useState<'connecting' | 'connected' | 'error'>('connecting')
   const [error, setError] = React.useState<string | null>(null)
@@ -131,9 +132,11 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
 
     const startResyncGuard = () => {
       resyncingRef.current = true
+      resyncPhaseRef.current = 1
       clearResyncTimeout()
       resyncTimeoutRef.current = setTimeout(() => {
         resyncingRef.current = false
+        resyncPhaseRef.current = 0
         flushQueuedOutput()
       }, 2500)
     }
@@ -248,10 +251,23 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
             snapshotApplyingRef.current = true
             terminal.write(`\u001b[2J\u001b[3J\u001b[H${text}`, () => {
               snapshotApplyingRef.current = false
-              resyncingRef.current = false
-              clearResyncTimeout()
-              terminal.scrollToBottom()
-              flushQueuedOutput()
+              if (resyncingRef.current) {
+                if (resyncPhaseRef.current === 1) {
+                  outputQueueRef.current = []
+                  resyncPhaseRef.current = 2
+                  scheduleSnapshot(120)
+                } else {
+                  resyncingRef.current = false
+                  resyncPhaseRef.current = 0
+                  clearResyncTimeout()
+                  terminal.scrollToBottom()
+                  flushQueuedOutput()
+                }
+              } else {
+                clearResyncTimeout()
+                terminal.scrollToBottom()
+                flushQueuedOutput()
+              }
             })
           }
           return
