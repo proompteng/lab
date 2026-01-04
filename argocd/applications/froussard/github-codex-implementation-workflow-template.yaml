@@ -294,6 +294,386 @@ spec:
               cpu: "2"
               memory: 4Gi
       outputs:
+        parameters:
+          - name: decision
+            valueFrom:
+              path: /workspace/lab/.codex-judge-decision.txt
+          - name: next_prompt
+            valueFrom:
+              path: /workspace/lab/.codex-judge-next-prompt.txt
+        artifacts:
+          - name: implementation-changes
+            path: /workspace/lab/.codex-implementation-changes.tar.gz
+          - name: implementation-patch
+            path: /workspace/lab/.codex-implementation.patch
+          - name: implementation-status
+            path: /workspace/lab/.codex-implementation-status.txt
+          - name: implementation-log
+            path: /workspace/lab/.codex-implementation.log
+          - name: implementation-events
+            path: /workspace/.codex/implementation-events.jsonl
+          - name: implementation-agent-log
+            path: /workspace/lab/.codex-implementation-agent.log
+          - name: implementation-runtime-log
+            path: /workspace/lab/.codex-implementation-runtime.log
+          - name: implementation-resume
+            path: /workspace/lab/.codex/implementation-resume.json
+          - name: implementation-notify
+            path: /workspace/lab/.codex-implementation-notify.json
+---
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: codex-run
+  namespace: argo-workflows
+  labels:
+    codex.stage: implementation
+spec:
+  serviceAccountName: codex-workflow
+  entrypoint: codex-run
+  arguments:
+    parameters:
+      - name: repository
+        value: ''
+      - name: issue_number
+        value: ''
+      - name: base
+        value: 'main'
+      - name: head
+        value: ''
+      - name: prompt
+        value: ''
+      - name: stage
+        value: implementation
+      - name: rawEvent
+        value: '{}'
+      - name: eventBody
+        value: '{}'
+  volumeClaimTemplates:
+    - metadata:
+        name: workdir
+      spec:
+        accessModes: ["ReadWriteMany"]
+        resources:
+          requests:
+            storage: 10Gi
+  volumes:
+    - name: docker-lib
+      emptyDir: {}
+  templates:
+    - name: codex-run
+      inputs:
+        parameters:
+          - name: repository
+          - name: issue_number
+          - name: base
+          - name: head
+          - name: prompt
+          - name: stage
+          - name: rawEvent
+          - name: eventBody
+      container:
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
+        env:
+          - name: CODEX_CWD
+            value: /workspace/lab
+          - name: CODEX_REPO_URL
+            value: 'https://github.com/{{inputs.parameters.repository}}'
+          - name: CODEX_REPO_SLUG
+            value: '{{inputs.parameters.repository}}'
+          - name: HEAD_BRANCH
+            value: '{{inputs.parameters.head}}'
+          - name: BASE_BRANCH
+            value: '{{inputs.parameters.base}}'
+          - name: DISCORD_BOT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: bot-token
+                optional: true
+          - name: DISCORD_GUILD_ID
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: guild-id
+                optional: true
+          - name: DISCORD_CATEGORY_ID
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: category-id
+                optional: true
+          - name: GH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+          - name: JANGAR_BASE_URL
+            value: http://jangar.jangar.svc.cluster.local
+          - name: NATS_URL
+            value: nats://nats.nats.svc.cluster.local:4222
+          - name: NATS_USER
+            valueFrom:
+              secretKeyRef:
+                name: nats-agents-credentials
+                key: username
+          - name: NATS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: nats-agents-credentials
+                key: password
+          - name: NATS_CREDS
+            valueFrom:
+              secretKeyRef:
+                name: nats-agent-creds
+                key: creds
+                optional: true
+          - name: MINIO_ENDPOINT
+            value: observability-minio.minio.svc.cluster.local:9000
+          - name: MINIO_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: observability-minio-creds
+                key: accesskey
+          - name: MINIO_SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: observability-minio-creds
+                key: secretkey
+          - name: MINIO_SECURE
+            value: 'false'
+          - name: WORKFLOW_NAME
+            value: '{{workflow.name}}'
+          - name: ARGO_WORKFLOW_NAME
+            value: '{{workflow.name}}'
+          - name: WORKFLOW_UID
+            value: '{{workflow.uid}}'
+          - name: ARGO_WORKFLOW_UID
+            value: '{{workflow.uid}}'
+          - name: WORKFLOW_NAMESPACE
+            value: '{{workflow.namespace}}'
+          - name: ARGO_WORKFLOW_NAMESPACE
+            value: '{{workflow.namespace}}'
+          - name: WORKFLOW_STAGE
+            value: '{{inputs.parameters.stage}}'
+          - name: WORKFLOW_STEP
+            value: '{{pod.name}}'
+          - name: AGENT_ID
+            value: '{{inputs.parameters.stage}}'
+          - name: AGENT_ROLE
+            value: assistant
+          - name: AGENT_OUTPUT_PATH
+            value: /workspace/lab/.codex-implementation-agent.log
+          - name: RUN_ID
+            value: '{{workflow.uid}}'
+          - name: CODEX_GRAF_BEARER_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: graf-api
+                key: bearer-tokens
+                optional: true
+          - name: LGTM_LOKI_ENDPOINT
+            value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
+          - name: DOCKER_HOST
+            value: tcp://localhost:2375
+          - name: DOCKER_TLS_VERIFY
+            value: ""
+          - name: DOCKER_ENABLED
+            value: "1"
+          - name: DOCKER_WAIT_ATTEMPTS
+            value: "12"
+        command: ["/usr/local/bin/codex-bootstrap"]
+        args:
+          - "/bin/bash"
+          - "-lc"
+          - |
+            set -euo pipefail
+
+            EVENT_FILE=$(mktemp)
+            EVENT_BODY_B64='{{inputs.parameters.eventBody}}'
+            if [[ -n "$EVENT_BODY_B64" && "$EVENT_BODY_B64" != "{}" ]]; then
+              printf '%s' "$EVENT_BODY_B64" | base64 --decode > "$EVENT_FILE"
+            else
+              cat > "$EVENT_FILE" <<'JSON'
+            {
+              "repository": "{{inputs.parameters.repository}}",
+              "issueNumber": "{{inputs.parameters.issue_number}}",
+              "base": "{{inputs.parameters.base}}",
+              "head": "{{inputs.parameters.head}}",
+              "prompt": "{{inputs.parameters.prompt}}",
+              "stage": "{{inputs.parameters.stage}}"
+            }
+            JSON
+            fi
+
+            if command -v jq >/dev/null 2>&1; then
+              TMP_EVENT=$(mktemp)
+              jq \
+                --arg prompt "{{inputs.parameters.prompt}}" \
+                --arg stage "{{inputs.parameters.stage}}" \
+                --arg repo "{{inputs.parameters.repository}}" \
+                --arg issue "{{inputs.parameters.issue_number}}" \
+                --arg base "{{inputs.parameters.base}}" \
+                --arg head "{{inputs.parameters.head}}" \
+                '.prompt = ($prompt // .prompt) | .stage = ($stage // .stage) | .repository = ($repo // .repository) | .issueNumber = ($issue // .issueNumber) | .base = ($base // .base) | .head = ($head // .head)' \
+                "$EVENT_FILE" > "$TMP_EVENT" && mv "$TMP_EVENT" "$EVENT_FILE"
+            fi
+
+            WORKTREE_DIR="${WORKTREE:-/workspace/lab}"
+
+            if ! command -v git >/dev/null 2>&1; then
+              echo "Missing git binary in runtime image" >&2
+              exit 1
+            fi
+
+            if [[ ! -d "$WORKTREE_DIR" ]]; then
+              echo "CODEX_CWD directory missing: $WORKTREE_DIR" >&2
+              exit 1
+            fi
+
+            if [[ ! -e "$WORKTREE_DIR/.git" ]]; then
+              echo "Repository checkout missing at $WORKTREE_DIR" >&2
+              exit 1
+            fi
+
+            if [[ -z "${HEAD_BRANCH:-}" ]]; then
+              echo "Missing head branch parameter" >&2
+              exit 1
+            fi
+
+            if [[ -z "${BASE_BRANCH:-}" ]]; then
+              echo "Missing base branch parameter" >&2
+              exit 1
+            fi
+
+            if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+              echo "Missing GITHUB_TOKEN" >&2
+              exit 1
+            fi
+
+            if [[ -z "${JANGAR_BASE_URL:-}" ]]; then
+              echo "Missing JANGAR_BASE_URL" >&2
+              exit 1
+            fi
+
+            git -C "$WORKTREE_DIR" fetch --all --prune
+
+            if ! git -C "$WORKTREE_DIR" rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1 \
+              && ! git -C "$WORKTREE_DIR" rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
+              echo "Base ref '$BASE_BRANCH' not found in repository" >&2
+              exit 1
+            fi
+
+            if ! git -C "$WORKTREE_DIR" rev-parse --verify "$HEAD_BRANCH" >/dev/null 2>&1 \
+              && ! git -C "$WORKTREE_DIR" rev-parse --verify "origin/$HEAD_BRANCH" >/dev/null 2>&1; then
+              echo "Head ref '$HEAD_BRANCH' not found in repository" >&2
+              exit 1
+            fi
+
+            JANGAR_NOTIFY_URL="${JANGAR_BASE_URL%/}/api/codex/notify"
+            JANGAR_COMPLETE_URL="${JANGAR_BASE_URL%/}/api/codex/run-complete"
+            for endpoint in "$JANGAR_NOTIFY_URL" "$JANGAR_COMPLETE_URL"; do
+              status=$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS "$endpoint" || true)
+              if [[ "$status" == "000" ]]; then
+                echo "Jangar endpoint unreachable: $endpoint" >&2
+                exit 1
+              fi
+            done
+
+            export OUTPUT_PATH="${IMPLEMENTATION_OUTPUT_PATH:-/workspace/lab/.codex-implementation.log}"
+            export JSON_OUTPUT_PATH="${JSON_OUTPUT_PATH:-/workspace/.codex/implementation-events.jsonl}"
+            export POST_TO_GITHUB=true
+
+            AGENT_LOG_PATH="${AGENT_OUTPUT_PATH:-/workspace/lab/.codex-implementation-agent.log}"
+            NATS_PUBLISHER="/usr/local/bin/codex-nats-publish"
+            NATS_TAIL_PID=""
+
+            if [[ -x "$NATS_PUBLISHER" ]]; then
+              touch "$AGENT_LOG_PATH"
+              "$NATS_PUBLISHER" --kind status --status started --content "${WORKFLOW_STAGE} started" --publish-general || true
+              "$NATS_PUBLISHER" --kind log --log-file "$AGENT_LOG_PATH" &
+              NATS_TAIL_PID=$!
+            fi
+
+            cleanup_nats() {
+              if [[ -n "${NATS_TAIL_PID:-}" ]]; then
+                kill "$NATS_TAIL_PID" 2>/dev/null || true
+                wait "$NATS_TAIL_PID" 2>/dev/null || true
+              fi
+            }
+            trap cleanup_nats EXIT
+
+            echo "Executing ${WORKFLOW_STAGE} workflow" >&2
+            set +e
+            /usr/local/bin/codex-implement "$EVENT_FILE"
+            EXIT_CODE=$?
+            set -e
+
+            cleanup_nats
+
+            if [[ -x "$NATS_PUBLISHER" ]]; then
+              "$NATS_PUBLISHER" --kind status --status completed --exit-code "$EXIT_CODE" --content "${WORKFLOW_STAGE} completed" --publish-general || true
+            fi
+
+            exit "$EXIT_CODE"
+      volumeMounts:
+        - name: workdir
+          mountPath: /workspace
+        - name: docker-lib
+          mountPath: /var/lib/docker
+          readOnly: true
+      resources:
+        requests:
+          cpu: "2"
+          memory: 4Gi
+        limits:
+          cpu: "4"
+          memory: 6Gi
+      retryStrategy:
+        limit: 3
+        retryPolicy: OnFailure
+      sidecars:
+        - name: docker
+          image: docker:25.0-dind
+          command: ["dockerd-entrypoint.sh"]
+          args:
+            - "--host=tcp://0.0.0.0:2375"
+          env:
+            - name: DOCKER_TLS_CERTDIR
+              value: ""
+            - name: XDG_RUNTIME_DIR
+              value: /tmp/docker-runtime
+            - name: DOCKER_HOST
+              value: tcp://0.0.0.0:2375
+          ports:
+            - containerPort: 2375
+              name: docker
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: docker-lib
+              mountPath: /var/lib/docker
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+      outputs:
+        parameters:
+          - name: decision
+            valueFrom:
+              path: /workspace/lab/.codex-judge-decision.txt
+          - name: next_prompt
+            valueFrom:
+              path: /workspace/lab/.codex-judge-next-prompt.txt
         artifacts:
           - name: implementation-changes
             path: /workspace/lab/.codex-implementation-changes.tar.gz

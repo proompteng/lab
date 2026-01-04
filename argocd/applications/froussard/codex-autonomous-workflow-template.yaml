@@ -1,0 +1,414 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: codex-autonomous
+  namespace: argo-workflows
+spec:
+  serviceAccountName: codex-workflow
+  entrypoint: codex-dag
+  arguments:
+    parameters:
+      - name: repository
+        value: ''
+      - name: issue_number
+        value: ''
+      - name: base
+        value: 'main'
+      - name: head
+        value: ''
+      - name: prompt
+        value: ''
+      - name: judge_prompt
+        value: ''
+      - name: rawEvent
+        value: '{}'
+      - name: eventBody
+        value: '{}'
+  templates:
+    - name: codex-dag
+      dag:
+        tasks:
+          - name: implementation
+            templateRef:
+              name: codex-run
+              template: codex-run
+            arguments:
+              parameters:
+                - name: repository
+                  value: '{{workflow.parameters.repository}}'
+                - name: issue_number
+                  value: '{{workflow.parameters.issue_number}}'
+                - name: base
+                  value: '{{workflow.parameters.base}}'
+                - name: head
+                  value: '{{workflow.parameters.head}}'
+                - name: prompt
+                  value: '{{workflow.parameters.prompt}}'
+                - name: stage
+                  value: implementation
+                - name: rawEvent
+                  value: '{{workflow.parameters.rawEvent}}'
+                - name: eventBody
+                  value: '{{workflow.parameters.eventBody}}'
+          - name: run-complete
+            dependencies: [implementation]
+            template: run-complete
+            arguments:
+              parameters:
+                - name: repository
+                  value: '{{workflow.parameters.repository}}'
+                - name: issue_number
+                  value: '{{workflow.parameters.issue_number}}'
+                - name: base
+                  value: '{{workflow.parameters.base}}'
+                - name: head
+                  value: '{{workflow.parameters.head}}'
+                - name: rawEvent
+                  value: '{{workflow.parameters.rawEvent}}'
+                - name: eventBody
+                  value: '{{workflow.parameters.eventBody}}'
+                - name: stage
+                  value: implementation
+                - name: implementation_log_key
+                  value: '{{tasks.implementation.outputs.artifacts.implementation-log.key}}'
+                - name: implementation_log_bucket
+                  value: '{{tasks.implementation.outputs.artifacts.implementation-log.bucket}}'
+                - name: implementation_changes_key
+                  value: '{{tasks.implementation.outputs.artifacts.implementation-changes.key}}'
+                - name: implementation_changes_bucket
+                  value: '{{tasks.implementation.outputs.artifacts.implementation-changes.bucket}}'
+          - name: judge
+            dependencies: [run-complete]
+            templateRef:
+              name: codex-run
+              template: codex-run
+            arguments:
+              parameters:
+                - name: repository
+                  value: '{{workflow.parameters.repository}}'
+                - name: issue_number
+                  value: '{{workflow.parameters.issue_number}}'
+                - name: base
+                  value: '{{workflow.parameters.base}}'
+                - name: head
+                  value: '{{workflow.parameters.head}}'
+                - name: prompt
+                  value: '{{workflow.parameters.judge_prompt}}'
+                - name: stage
+                  value: judge
+                - name: rawEvent
+                  value: '{{workflow.parameters.rawEvent}}'
+                - name: eventBody
+                  value: '{{workflow.parameters.eventBody}}'
+          - name: gate
+            dependencies: [judge]
+            template: gate
+            arguments:
+              parameters:
+                - name: repository
+                  value: '{{workflow.parameters.repository}}'
+                - name: head
+                  value: '{{workflow.parameters.head}}'
+          - name: merge
+            dependencies: [gate]
+            when: "{{tasks.gate.outputs.parameters.decision}} == pass"
+            template: merge
+            arguments:
+              parameters:
+                - name: repository
+                  value: '{{workflow.parameters.repository}}'
+                - name: head
+                  value: '{{workflow.parameters.head}}'
+          - name: deploy
+            dependencies: [merge]
+            template: deploy
+          - name: verify
+            dependencies: [deploy]
+            template: verify
+          - name: rerun
+            dependencies: [judge, gate, merge, verify]
+            when: "{{tasks.judge.outputs.parameters.decision}} != pass || {{tasks.gate.outputs.parameters.decision}} != pass || {{tasks.merge.outputs.parameters.decision}} == fail || {{tasks.verify.outputs.parameters.decision}} == fail"
+            template: rerun
+            arguments:
+              parameters:
+                - name: repository
+                  value: '{{workflow.parameters.repository}}'
+                - name: issue_number
+                  value: '{{workflow.parameters.issue_number}}'
+                - name: base
+                  value: '{{workflow.parameters.base}}'
+                - name: head
+                  value: '{{workflow.parameters.head}}'
+                - name: prompt
+                  value: '{{tasks.judge.outputs.parameters.next_prompt}}'
+    - name: run-complete
+      inputs:
+        parameters:
+          - name: repository
+          - name: issue_number
+          - name: base
+          - name: head
+          - name: rawEvent
+          - name: eventBody
+          - name: stage
+          - name: implementation_log_key
+          - name: implementation_log_bucket
+          - name: implementation_changes_key
+          - name: implementation_changes_bucket
+      container:
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
+        env:
+          - name: JANGAR_BASE_URL
+            value: http://jangar.jangar.svc.cluster.local
+        command: ["/bin/bash", "-lc"]
+        args:
+          - |
+            set -euo pipefail
+
+            PAYLOAD_PATH="/workspace/lab/.codex-run-complete-payload.json"
+            RESPONSE_PATH="/workspace/lab/.codex-run-complete-response.json"
+            RUN_ID_PATH="/workspace/lab/.codex-run-id.txt"
+
+            cat > "$PAYLOAD_PATH" <<JSON
+            {
+              "metadata": {
+                "name": "{{workflow.name}}",
+                "namespace": "{{workflow.namespace}}",
+                "uid": "{{workflow.uid}}"
+              },
+              "status": {
+                "phase": "{{workflow.status}}",
+                "startedAt": "{{workflow.startedAt}}",
+                "finishedAt": "{{workflow.finishedAt}}"
+              },
+              "arguments": {
+                "parameters": [
+                  { "name": "eventBody", "value": "{{inputs.parameters.eventBody}}" },
+                  { "name": "rawEvent", "value": "{{inputs.parameters.rawEvent}}" },
+                  { "name": "head", "value": "{{inputs.parameters.head}}" },
+                  { "name": "base", "value": "{{inputs.parameters.base}}" }
+                ]
+              },
+              "artifacts": [
+                { "name": "implementation-log", "key": "{{inputs.parameters.implementation_log_key}}", "bucket": "{{inputs.parameters.implementation_log_bucket}}" },
+                { "name": "implementation-changes", "key": "{{inputs.parameters.implementation_changes_key}}", "bucket": "{{inputs.parameters.implementation_changes_bucket}}" }
+              ],
+              "stage": "{{inputs.parameters.stage}}"
+            }
+            JSON
+
+            JANGAR_COMPLETE_URL="${JANGAR_BASE_URL%/}/api/codex/run-complete"
+            if ! curl -sSf -X POST -H 'content-type: application/json' --data @"$PAYLOAD_PATH" "$JANGAR_COMPLETE_URL" > "$RESPONSE_PATH"; then
+              echo "Failed to post run-complete payload" >&2
+              exit 1
+            fi
+
+            if command -v jq >/dev/null 2>&1; then
+              jq -r '.run.id // empty' "$RESPONSE_PATH" > "$RUN_ID_PATH" || true
+            fi
+      retryStrategy:
+        limit: 3
+        retryPolicy: OnFailure
+        backoff:
+          duration: "5s"
+          factor: 2
+          maxDuration: "30s"
+      outputs:
+        parameters:
+          - name: run_id
+            valueFrom:
+              path: /workspace/lab/.codex-run-id.txt
+        artifacts:
+          - name: run-complete-payload
+            path: /workspace/lab/.codex-run-complete-payload.json
+    - name: gate
+      inputs:
+        parameters:
+          - name: repository
+          - name: head
+      container:
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
+        env:
+          - name: GH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+        command: ["/bin/bash", "-lc"]
+        args:
+          - |
+            set -euo pipefail
+
+            REPO="{{inputs.parameters.repository}}"
+            HEAD="{{inputs.parameters.head}}"
+            DECISION_PATH="/workspace/lab/.codex-gate-decision.txt"
+            REASON_PATH="/workspace/lab/.codex-gate-reason.txt"
+            NEXT_PROMPT_PATH="/workspace/lab/.codex-gate-next-prompt.txt"
+
+            pr_json=$(gh pr list --repo "$REPO" --head "$HEAD" --json number,url,headRefOid,mergeableState,reviewDecision,isDraft --limit 1)
+            pr_number=$(echo "$pr_json" | jq -r '.[0].number // empty')
+            pr_sha=$(echo "$pr_json" | jq -r '.[0].headRefOid // empty')
+            mergeable=$(echo "$pr_json" | jq -r '.[0].mergeableState // empty')
+            review_decision=$(echo "$pr_json" | jq -r '.[0].reviewDecision // empty')
+
+            if [[ -z "$pr_number" || -z "$pr_sha" ]]; then
+              echo "fail" > "$DECISION_PATH"
+              echo "missing_commit_sha" > "$REASON_PATH"
+              echo "Ensure the PR exists and its head SHA is available." > "$NEXT_PROMPT_PATH"
+              exit 0
+            fi
+
+            ci_json=$(gh api "repos/${REPO}/commits/${pr_sha}/check-runs" | jq '.')
+            total_checks=$(echo "$ci_json" | jq -r '.total_count // 0')
+            failing_checks=$(echo "$ci_json" | jq -r '[.check_runs[] | select(.status != "completed" or .conclusion != "success")] | length')
+            if [[ "$total_checks" -eq 0 || "$failing_checks" -gt 0 ]]; then
+              echo "fail" > "$DECISION_PATH"
+              echo "ci_failed" > "$REASON_PATH"
+              echo "Fix failing checks for the current commit and re-run CI." > "$NEXT_PROMPT_PATH"
+              exit 0
+            fi
+
+            if [[ "$review_decision" == "CHANGES_REQUESTED" || "$review_decision" == "REVIEW_REQUIRED" ]]; then
+              echo "fail" > "$DECISION_PATH"
+              echo "review_unresolved" > "$REASON_PATH"
+              echo "Resolve Codex review threads and ensure reviews are approved." > "$NEXT_PROMPT_PATH"
+              exit 0
+            fi
+
+            if [[ "$mergeable" == "dirty" || "$mergeable" == "blocked" ]]; then
+              echo "fail" > "$DECISION_PATH"
+              echo "merge_conflict" > "$REASON_PATH"
+              echo "Resolve merge conflicts and ensure the PR is mergeable." > "$NEXT_PROMPT_PATH"
+              exit 0
+            fi
+
+            echo "pass" > "$DECISION_PATH"
+            echo "" > "$REASON_PATH"
+            echo "" > "$NEXT_PROMPT_PATH"
+      outputs:
+        parameters:
+          - name: decision
+            valueFrom:
+              path: /workspace/lab/.codex-gate-decision.txt
+          - name: reason
+            valueFrom:
+              path: /workspace/lab/.codex-gate-reason.txt
+          - name: next_prompt
+            valueFrom:
+              path: /workspace/lab/.codex-gate-next-prompt.txt
+    - name: merge
+      inputs:
+        parameters:
+          - name: repository
+          - name: head
+      container:
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
+        env:
+          - name: GH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+        command: ["/bin/bash", "-lc"]
+        args:
+          - |
+            set -euo pipefail
+
+            REPO="{{inputs.parameters.repository}}"
+            HEAD="{{inputs.parameters.head}}"
+            DECISION_PATH="/workspace/lab/.codex-merge-decision.txt"
+
+            pr_number=$(gh pr list --repo "$REPO" --head "$HEAD" --json number --limit 1 | jq -r '.[0].number // empty')
+            if [[ -z "$pr_number" ]]; then
+              echo "fail" > "$DECISION_PATH"
+              exit 0
+            fi
+
+            if gh pr merge --repo "$REPO" "$pr_number" --squash; then
+              echo "pass" > "$DECISION_PATH"
+            else
+              echo "fail" > "$DECISION_PATH"
+            fi
+      outputs:
+        parameters:
+          - name: decision
+            valueFrom:
+              path: /workspace/lab/.codex-merge-decision.txt
+    - name: deploy
+      container:
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
+        command: ["/bin/bash", "-lc"]
+        args:
+          - |
+            set -euo pipefail
+            echo "pass" > /workspace/lab/.codex-deploy-decision.txt
+      outputs:
+        parameters:
+          - name: decision
+            valueFrom:
+              path: /workspace/lab/.codex-deploy-decision.txt
+    - name: verify
+      container:
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
+        command: ["/bin/bash", "-lc"]
+        args:
+          - |
+            set -euo pipefail
+            echo "pass" > /workspace/lab/.codex-verify-decision.txt
+      outputs:
+        parameters:
+          - name: decision
+            valueFrom:
+              path: /workspace/lab/.codex-verify-decision.txt
+    - name: rerun
+      inputs:
+        parameters:
+          - name: repository
+          - name: issue_number
+          - name: base
+          - name: head
+          - name: prompt
+      container:
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
+        env:
+          - name: FACTEUR_INTERNAL_URL
+            value: http://facteur.facteur.svc.cluster.local
+        command: ["/bin/bash", "-lc"]
+        args:
+          - |
+            set -euo pipefail
+
+            if [[ -z "{{inputs.parameters.prompt}}" ]]; then
+              echo "No next prompt provided; skipping rerun" >&2
+              exit 0
+            fi
+
+            cat > /workspace/lab/.codex-rerun-payload.json <<JSON
+            {
+              "repository": "{{inputs.parameters.repository}}",
+              "issueNumber": {{inputs.parameters.issue_number}},
+              "base": "{{inputs.parameters.base}}",
+              "head": "{{inputs.parameters.head}}",
+              "prompt": "{{inputs.parameters.prompt}}",
+              "attempt": 2,
+              "parentRunId": "{{workflow.uid}}"
+            }
+            JSON
+
+            curl -sSf -X POST -H 'content-type: application/json' --data @/workspace/lab/.codex-rerun-payload.json "${FACTEUR_INTERNAL_URL%/}/codex/rerun" || true
