@@ -16,7 +16,12 @@ import {
 import { extractImplementationManifestFromArchive, extractTextFromArchive } from '~/server/codex-judge-artifacts'
 import { loadCodexJudgeConfig } from '~/server/codex-judge-config'
 import { evaluateDeterministicGates } from '~/server/codex-judge-gates'
-import { type CodexEvaluationRecord, type CodexRunRecord, createCodexJudgeStore } from '~/server/codex-judge-store'
+import {
+  type CodexEvaluationRecord,
+  type CodexRunRecord,
+  createCodexJudgeStore,
+  type UpdateDecisionInput,
+} from '~/server/codex-judge-store'
 import { createGitHubClient, GitHubRateLimitError, type PullRequest, type ReviewSummary } from '~/server/github-client'
 import { mergePullRequest } from '~/server/github-review-actions'
 import { ingestGithubReviewEvent } from '~/server/github-review-ingest'
@@ -2118,6 +2123,35 @@ const getMergeableOutcome = (state: string | null | undefined): MergeableOutcome
   return { action: 'none' }
 }
 
+const UNKNOWN_FAILURE_REASON = 'unknown_failure'
+
+const resolveFailureReason = (reason: string | null | undefined, evaluation?: CodexEvaluationRecord) => {
+  const reasons = evaluation?.reasons as Record<string, unknown> | undefined
+  const error = typeof reasons?.error === 'string' ? reasons.error : null
+  if (error) return error
+  if (reason) return reason
+  if (evaluation && evaluation.decision !== 'pass') return 'judge_failed'
+  return null
+}
+
+const recordDecision = async (
+  input: UpdateDecisionInput,
+  run?: CodexRunRecord | null,
+): Promise<CodexEvaluationRecord> => {
+  const evaluation = await store.updateDecision(input)
+  if (input.decision !== 'needs_iteration' && input.decision !== 'needs_human') {
+    return evaluation
+  }
+
+  const resolvedRun = run ?? (await store.getRunById(input.runId))
+  if (!resolvedRun) return evaluation
+
+  const failureReason = resolveFailureReason(null, evaluation) ?? UNKNOWN_FAILURE_REASON
+  await maybeSubmitSystemImprovementWorkflow(resolvedRun, failureReason, evaluation)
+
+  return evaluation
+}
+
 const evaluateRun = async (runId: string) => {
   await ensureStoreReady()
   if (activeEvaluations.has(runId)) return
@@ -2130,7 +2164,7 @@ const evaluateRun = async (runId: string) => {
     if (isTerminalStatus(run.status) || run.status === 'superseded') return
 
     if (!hasRequiredRunMetadata(run)) {
-      const evaluation = await store.updateDecision({
+      const evaluation = await recordDecision({
         runId: run.id,
         decision: 'needs_human',
         reasons: {
@@ -2162,7 +2196,7 @@ const evaluateRun = async (runId: string) => {
     if (!process.env.FACTEUR_INTERNAL_URL) missingDeps.push('FACTEUR_INTERNAL_URL')
 
     if (missingDeps.length > 0 && !_RECONCILE_DISABLED) {
-      const evaluation = await store.updateDecision({
+      const evaluation = await recordDecision({
         runId: run.id,
         decision: 'needs_human',
         reasons: { error: 'missing_env', missing: missingDeps },
@@ -2225,7 +2259,7 @@ const evaluateRun = async (runId: string) => {
       diff = worktree.diff
 
       if (!diff) {
-        const evaluation = await store.updateDecision({
+        const evaluation = await recordDecision({
           runId: run.id,
           decision: 'needs_iteration',
           reasons: { error: 'infra_failure', detail: worktree.error ?? 'missing_worktree_diff' },
@@ -2263,7 +2297,7 @@ const evaluateRun = async (runId: string) => {
             : gateFailure.reason === 'merge_conflict'
               ? 'merge_failure'
               : gateFailure.reason
-        const evaluation = await store.updateDecision({
+        const evaluation = await recordDecision({
           runId: run.id,
           decision: gateFailure.decision,
           reasons: { error: failureCategory, detail: gateFailure.detail },
@@ -2288,7 +2322,7 @@ const evaluateRun = async (runId: string) => {
 
     const { commitSha, ci, updatedRun: ciUpdatedRun } = await resolveCiContext(run, pr)
     if (!commitSha) {
-      const evaluation = await store.updateDecision({
+      const evaluation = await recordDecision({
         runId: run.id,
         decision: 'needs_iteration',
         reasons: { error: 'missing_commit_sha' },
@@ -2310,7 +2344,7 @@ const evaluateRun = async (runId: string) => {
       return
     }
     if (!pr) {
-      const evaluation = await store.updateDecision({
+      const evaluation = await recordDecision({
         runId: run.id,
         decision: 'needs_iteration',
         reasons: { error: 'missing_pull_request' },
@@ -2343,7 +2377,7 @@ const evaluateRun = async (runId: string) => {
       }
       if (hasWaitTimedOut(ciRun.ciStatusUpdatedAt, config.ciMaxWaitMs)) {
         const elapsedMs = getElapsedMs(ciRun.ciStatusUpdatedAt)
-        const evaluation = await store.updateDecision({
+        const evaluation = await recordDecision({
           runId: run.id,
           decision: 'needs_iteration',
           reasons: {
@@ -2383,7 +2417,7 @@ const evaluateRun = async (runId: string) => {
     }
 
     if (ci.status === 'failure') {
-      const evaluation = await store.updateDecision({
+      const evaluation = await recordDecision({
         runId: run.id,
         decision: 'needs_iteration',
         reasons: { error: 'ci_failed', url: ci.url },
@@ -2416,7 +2450,7 @@ const evaluateRun = async (runId: string) => {
     }
 
     if (!pr) {
-      const evaluation = await store.updateDecision({
+      const evaluation = await recordDecision({
         runId: run.id,
         decision: 'needs_iteration',
         reasons: { error: 'missing_pull_request' },
@@ -2437,7 +2471,7 @@ const evaluateRun = async (runId: string) => {
     }
 
     if (!pr.headRef || !pr.baseRef) {
-      const evaluation = await store.updateDecision({
+      const evaluation = await recordDecision({
         runId: run.id,
         decision: 'needs_human',
         reasons: { error: 'missing_pr_refs' },
@@ -2461,7 +2495,7 @@ const evaluateRun = async (runId: string) => {
           baseRef: pr.baseRef,
         })
       } catch (error) {
-        const evaluation = await store.updateDecision({
+        const evaluation = await recordDecision({
           runId: run.id,
           decision: 'needs_human',
           reasons: { error: 'worktree_snapshot_failed', detail: String(error) },
@@ -2482,7 +2516,7 @@ const evaluateRun = async (runId: string) => {
     const { review, reviewRun } = await resolveReviewContext(run, pr.number)
 
     if (review.requestedChanges || review.unresolvedThreads.length > 0) {
-      const evaluation = await store.updateDecision({
+      const evaluation = await recordDecision({
         runId: run.id,
         decision: 'needs_iteration',
         reasons: {
@@ -2503,7 +2537,7 @@ const evaluateRun = async (runId: string) => {
     if (review.status === 'pending') {
       if (hasWaitTimedOut(reviewRun.reviewStatusUpdatedAt, config.reviewMaxWaitMs)) {
         const elapsedMs = getElapsedMs(reviewRun.reviewStatusUpdatedAt)
-        const evaluation = await store.updateDecision({
+        const evaluation = await recordDecision({
           runId: run.id,
           decision: 'needs_iteration',
           reasons: {
@@ -2544,7 +2578,7 @@ const evaluateRun = async (runId: string) => {
 
     if (mergeableOutcome.action === 'gate') {
       const gate = mergeableOutcome.gate
-      const evaluation = await store.updateDecision({
+      const evaluation = await recordDecision({
         runId: run.id,
         decision: gate.decision,
         reasons: { error: gate.reason, mergeable_state: pr.mergeableState ?? null },
@@ -2576,7 +2610,7 @@ const evaluateRun = async (runId: string) => {
       const parsedFromMessage = notifyMessage ? safeParseJson(notifyMessage) : null
       judgeOutput = notifyJudgeOutput ?? parsedFromMessage ?? {}
       if (Object.keys(judgeOutput).length === 0) {
-        const evaluation = await store.updateDecision({
+        const evaluation = await recordDecision({
           runId: run.id,
           decision: 'needs_iteration',
           reasons: { error: 'infra_failure', detail: 'missing_judge_output' },
@@ -2610,7 +2644,7 @@ const evaluateRun = async (runId: string) => {
         judgeOutput = result.output
         judgeAttempts = result.attempts
       } catch (error) {
-        const evaluation = await store.updateDecision({
+        const evaluation = await recordDecision({
           runId: run.id,
           decision: 'needs_iteration',
           reasons: {
@@ -2634,7 +2668,7 @@ const evaluateRun = async (runId: string) => {
     const decision = normalizeJudgeDecision(decisionRaw)
     const nextPrompt = typeof judgeOutput.next_prompt === 'string' ? judgeOutput.next_prompt : null
 
-    const evaluation = await store.updateDecision({
+    const evaluation = await recordDecision({
       runId: run.id,
       decision: decision === 'pass' ? 'pass' : 'needs_iteration',
       confidence: typeof judgeOutput.confidence === 'number' ? judgeOutput.confidence : null,
@@ -2654,7 +2688,7 @@ const evaluateRun = async (runId: string) => {
         return
       }
       if (!repoParts) {
-        const mergedEval = await store.updateDecision({
+        const mergedEval = await recordDecision({
           runId: run.id,
           decision: 'needs_human',
           reasons: { error: 'merge_failed', detail: 'Repository parse failed' },
@@ -2679,7 +2713,7 @@ const evaluateRun = async (runId: string) => {
         })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        const mergedEval = await store.updateDecision({
+        const mergedEval = await recordDecision({
           runId: run.id,
           decision: 'needs_human',
           reasons: { error: 'merge_failed', detail: message },
@@ -2715,7 +2749,7 @@ const evaluateRun = async (runId: string) => {
           return
         }
 
-        const evaluationFailure = await store.updateDecision({
+        const evaluationFailure = await recordDecision({
           runId: run.id,
           decision: 'needs_iteration',
           reasons: {
@@ -2740,7 +2774,7 @@ const evaluateRun = async (runId: string) => {
         return
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        const evaluationFailure = await store.updateDecision({
+        const evaluationFailure = await recordDecision({
           runId: run.id,
           decision: 'needs_human',
           reasons: { error: 'post_deploy_failed', detail: message },
@@ -2822,17 +2856,6 @@ type PromptTuningAggregate = {
   runReferences: PromptTuningRunReference[]
   promptSuggestions: string[]
   systemSuggestions: string[]
-}
-
-const UNKNOWN_FAILURE_REASON = 'unknown_failure'
-
-const resolveFailureReason = (reason: string | null | undefined, evaluation?: CodexEvaluationRecord) => {
-  const reasons = evaluation?.reasons as Record<string, unknown> | undefined
-  const error = typeof reasons?.error === 'string' ? reasons.error : null
-  if (error) return error
-  if (reason) return reason
-  if (evaluation && evaluation.decision !== 'pass') return 'judge_failed'
-  return null
 }
 
 const buildPromptTuningAggregate = async (
@@ -2990,6 +3013,31 @@ const extractSystemSuggestions = (evaluation?: CodexEvaluationRecord) => {
   return suggestions.filter((value) => value.trim().length > 0)
 }
 
+const resolveWorkflowUrl = (run: CodexRunRecord) => {
+  if (!config.argoServerUrl) return null
+  if (!run.workflowName || !run.workflowNamespace) return null
+  const base = config.argoServerUrl.replace(/\/+$/, '')
+  return `${base}/workflows/${run.workflowNamespace}/${run.workflowName}`
+}
+
+const buildSystemImprovementLinks = (run: CodexRunRecord) => {
+  const links: string[] = []
+  if (run.repository && run.issueNumber) {
+    links.push(`Issue: https://github.com/${run.repository}/issues/${run.issueNumber}`)
+  }
+  if (run.prUrl) {
+    links.push(`PR: ${run.prUrl}`)
+  }
+  if (run.ciUrl) {
+    links.push(`CI: ${run.ciUrl}`)
+  }
+  const workflowUrl = resolveWorkflowUrl(run)
+  if (workflowUrl) {
+    links.push(`Argo workflow: ${workflowUrl}`)
+  }
+  return links
+}
+
 const buildSystemImprovementPrompt = (
   run: CodexRunRecord,
   reason: string | null,
@@ -2997,15 +3045,36 @@ const buildSystemImprovementPrompt = (
 ) => {
   const failureReason = reason ?? 'unknown'
   const suggestions = extractSystemSuggestions(evaluation)
+  const links = buildSystemImprovementLinks(run)
   const nextPrompt = evaluation?.nextPrompt ?? run.nextPrompt ?? ''
-  const suggestedFixes = evaluation?.suggestedFixes ? JSON.stringify(evaluation.suggestedFixes, null, 2) : 'n/a'
+  const suggestedFixes = evaluation?.suggestedFixes ?? {}
+  const reasons = evaluation?.reasons ?? {}
+  const missingItems = evaluation?.missingItems ?? {}
+  const systemSuggestions =
+    suggestions.length > 0
+      ? suggestions
+      : [
+          `Investigate and resolve the failure reason (${failureReason}).`,
+          'Review run artifacts/logs to identify missing or flaky steps and harden the pipeline.',
+          'Add validation or automated checks to prevent recurrence.',
+        ]
 
   return [
     'You are Codex operating on system improvements for the autonomous pipeline.',
-    `Repository: ${run.repository}`,
-    `Issue: #${run.issueNumber}`,
-    `Branch: ${run.branch}`,
-    `Failure reason: ${failureReason}`,
+    '',
+    'Run context:',
+    `- Run id: ${run.id}`,
+    `- Repository: ${run.repository}`,
+    `- Issue: #${run.issueNumber}`,
+    `- Branch: ${run.branch}`,
+    `- Stage: ${run.stage ?? 'unknown'}`,
+    `- Attempt: ${run.attempt}`,
+    `- Failure reason: ${failureReason}`,
+    run.workflowName ? `- Workflow: ${run.workflowName}` : null,
+    run.workflowNamespace ? `- Workflow namespace: ${run.workflowNamespace}` : null,
+    '',
+    'Run links:',
+    links.length > 0 ? links.map((entry) => `- ${entry}`).join('\n') : '- n/a',
     '',
     'Requirements:',
     '- Implement real code/config improvements (no doc-only placeholders).',
@@ -3013,14 +3082,27 @@ const buildSystemImprovementPrompt = (
     '- Update manifests, scripts, and services as needed to make the pipeline reliable.',
     '- Add tests or validation steps where applicable.',
     '',
-    'System suggestions:',
-    suggestions.length > 0 ? suggestions.map((entry) => `- ${entry}`).join('\n') : '- None provided',
+    'Failure context:',
+    `Reasons: ${JSON.stringify(reasons, null, 2)}`,
+    `Missing items: ${JSON.stringify(missingItems, null, 2)}`,
+    `Suggested fixes: ${JSON.stringify(suggestedFixes, null, 2)}`,
     '',
-    'Suggested fixes (structured):',
-    suggestedFixes,
+    'System suggestions:',
+    systemSuggestions.map((entry) => `- ${entry}`).join('\n'),
     '',
     nextPrompt ? `Prior next_prompt: ${nextPrompt}` : 'Prior next_prompt: n/a',
-  ].join('\n')
+    '',
+    'Validation plan:',
+    '- Re-run the failing step(s) with the same inputs and confirm the failure is resolved.',
+    '- Run the smallest relevant linters/tests for the changed components.',
+    '- Confirm the full autonomous pipeline (gate → merge → verify) passes end-to-end.',
+    '',
+    'Rollback steps:',
+    '- Revert the system-improvement PR or roll back the GitOps revision.',
+    '- Confirm the rollback restores the prior healthy workflow behavior.',
+  ]
+    .filter((line): line is string => line !== null)
+    .join('\n')
 }
 
 const maybeSubmitSystemImprovementWorkflow = async (
@@ -3028,9 +3110,8 @@ const maybeSubmitSystemImprovementWorkflow = async (
   reason: string | null,
   evaluation?: CodexEvaluationRecord,
 ) => {
-  if (!argo || !config.systemImprovementWorkflowTemplate) return
-  const suggestions = extractSystemSuggestions(evaluation)
-  if (suggestions.length === 0) return
+  const argoClient = globalOverrides.__codexJudgeArgoMock ?? argo
+  if (!argoClient || !config.systemImprovementWorkflowTemplate) return
 
   const baseRef =
     typeof run.runCompletePayload?.base === 'string' && run.runCompletePayload.base.trim().length > 0
@@ -3040,7 +3121,7 @@ const maybeSubmitSystemImprovementWorkflow = async (
   const prompt = buildSystemImprovementPrompt(run, reason, evaluation)
 
   try {
-    await argo.submitWorkflowTemplate({
+    await argoClient.submitWorkflowTemplate({
       namespace: config.systemImprovementWorkflowNamespace,
       templateName: config.systemImprovementWorkflowTemplate,
       parameters: [
@@ -3097,7 +3178,7 @@ const processRerunQueue = async () => {
     if (!prompt) continue
     const result = await submitRerun(run, prompt, submission.attempt)
     if (result.status === 'failed') {
-      await store.updateDecision({
+      await recordDecision({
         runId: run.id,
         decision: 'needs_human',
         reasons: { error: 'rerun_submission_failed', detail: result.error ?? null },
@@ -3128,7 +3209,6 @@ const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: Co
   if (attempts >= config.maxAttempts) {
     const updated = await store.updateRunStatus(run.id, 'needs_human')
     if (!updated) return
-    await maybeSubmitSystemImprovementWorkflow(updated, resolvedReason, evaluation)
     await maybeCreatePromptTuningPr(updated, resolvedReason, evaluation?.nextPrompt ?? run.nextPrompt ?? '', evaluation)
     await sendDiscordEscalation(run, reason)
     return
@@ -3138,14 +3218,12 @@ const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: Co
   if (!nextPrompt) {
     const updated = await store.updateRunStatus(run.id, 'needs_iteration')
     if (!updated) return
-    await maybeSubmitSystemImprovementWorkflow(updated, resolvedReason, evaluation)
     await maybeCreatePromptTuningPr(updated, resolvedReason, '', evaluation)
     return
   }
 
   const updated = await store.updateRunStatus(run.id, 'needs_iteration')
   if (!updated) return
-  await maybeSubmitSystemImprovementWorkflow(updated, resolvedReason, evaluation)
   await maybeCreatePromptTuningPr(updated, resolvedReason, nextPrompt, evaluation)
 
   const deliveryId = `jangar-${run.id}-attempt-${attempts + 1}`
@@ -3767,7 +3845,6 @@ const sendDiscordSuccess = async (run: CodexRunRecord, prUrl?: string, ciUrl?: s
 }
 
 const sendDiscordEscalation = async (run: CodexRunRecord, reason: string) => {
-  await maybeSubmitSystemImprovementWorkflow(run, reason)
   if (!config.discordBotToken || !config.discordChannelId) return
   let runForMessage = run
   try {
