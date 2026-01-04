@@ -321,5 +321,3 @@ export const mergeGithubPull = async (
   }
   return { ok: true } as const
 }
-
-import type { CodexRunRecord } from '@/data/codex'
