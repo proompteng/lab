@@ -671,6 +671,8 @@ describe('codex judge guardrails', () => {
         shouldSubmit: true,
       })
 
+      globalState.__codexJudgeArgoMock?.submitWorkflowTemplate.mockRejectedValueOnce(new Error('argo down'))
+
       const privateApi = await requirePrivate()
       await privateApi.processRerunQueue()
 

@@ -146,6 +146,10 @@ const EventBodySchema = S.Struct({
   turn_id: S.optional(S.String),
   threadId: S.optional(S.String),
   thread_id: S.optional(S.String),
+  iteration: S.optional(S.Union(S.String, S.Number)),
+  iteration_cycle: S.optional(S.Union(S.String, S.Number)),
+  iterationCycle: S.optional(S.Union(S.String, S.Number)),
+  iterations: S.optional(S.Union(S.String, S.Number)),
 })
 
 const RunCompletePayloadSchema = S.Struct({
@@ -178,6 +182,10 @@ const RunCompletePayloadSchema = S.Struct({
   branch: S.optional(S.String),
   base: S.optional(S.String),
   prompt: S.optional(S.String),
+  iteration: S.optional(S.Union(S.String, S.Number)),
+  iterationCycle: S.optional(S.Union(S.String, S.Number)),
+  iteration_cycle: S.optional(S.Union(S.String, S.Number)),
+  iterations: S.optional(S.Union(S.String, S.Number)),
   startedAt: S.optional(S.String),
   finishedAt: S.optional(S.String),
 })
@@ -454,6 +462,21 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
       : typeof eventBody.prompt === 'string'
         ? eventBody.prompt.trim()
         : null
+  const iterationRaw =
+    normalizeNumber(decodedPayload.iteration ?? 0) ||
+    normalizeNumber(eventBody.iteration ?? 0) ||
+    normalizeNumber(getParamValue(params, 'iteration'))
+  const iterationCycleRaw =
+    normalizeNumber(decodedPayload.iterationCycle ?? decodedPayload.iteration_cycle ?? 0) ||
+    normalizeNumber(eventBody.iterationCycle ?? eventBody.iteration_cycle ?? 0) ||
+    normalizeNumber(getParamValue(params, 'iteration_cycle'))
+  const iterationsRaw =
+    normalizeNumber(decodedPayload.iterations ?? 0) ||
+    normalizeNumber(eventBody.iterations ?? 0) ||
+    normalizeNumber(getParamValue(params, 'iterations'))
+  const iteration = iterationRaw > 0 ? iterationRaw : null
+  const iterationCycle = iterationCycleRaw > 0 ? iterationCycleRaw : null
+  const iterations = iterationsRaw > 0 ? iterationsRaw : null
   const issueTitle = typeof eventBody.issueTitle === 'string' ? eventBody.issueTitle : null
   const issueBody = typeof eventBody.issueBody === 'string' ? eventBody.issueBody : null
   const issueUrl = typeof eventBody.issueUrl === 'string' ? eventBody.issueUrl : null
@@ -488,6 +511,9 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
     head,
     base,
     prompt,
+    iteration,
+    iterationCycle,
+    iterations,
     issueTitle,
     issueBody,
     issueUrl,
@@ -546,6 +572,21 @@ const parseNotifyPayload = (payload: Record<string, unknown>) => {
   const headSha =
     typeof data.head_sha === 'string' ? data.head_sha : typeof data.headSha === 'string' ? data.headSha : null
   const stage = typeof data.stage === 'string' ? data.stage : null
+  const reviewStatus =
+    typeof data.review_status === 'string'
+      ? data.review_status
+      : typeof data.reviewStatus === 'string'
+        ? data.reviewStatus
+        : null
+  const reviewSummary = isRecord(data.review_summary)
+    ? data.review_summary
+    : isRecord(data.reviewSummary)
+      ? data.reviewSummary
+      : null
+  const iterationRaw = normalizeNumber(data.iteration ?? 0)
+  const iterationCycleRaw = normalizeNumber(data.iteration_cycle ?? data.iterationCycle ?? 0)
+  const iteration = iterationRaw > 0 ? iterationRaw : null
+  const iterationCycle = iterationCycleRaw > 0 ? iterationCycleRaw : null
   return {
     workflowName,
     workflowNamespace,
@@ -557,6 +598,10 @@ const parseNotifyPayload = (payload: Record<string, unknown>) => {
     prUrl,
     headSha,
     stage,
+    iteration,
+    iterationCycle,
+    reviewStatus,
+    reviewSummary,
     notifyPayload: data,
   }
 }
@@ -3254,20 +3299,36 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
       typeof run.runCompletePayload?.base === 'string' && run.runCompletePayload.base.trim().length > 0
         ? run.runCompletePayload.base.trim()
         : 'main'
+    const iterationCycle =
+      typeof run.iterationCycle === 'number' && Number.isFinite(run.iterationCycle)
+        ? run.iterationCycle + 1
+        : typeof run.runCompletePayload?.iteration_cycle === 'number' &&
+            Number.isFinite(run.runCompletePayload?.iteration_cycle)
+          ? Number(run.runCompletePayload?.iteration_cycle) + 1
+          : 1
+    const iterationsCount =
+      typeof run.runCompletePayload?.iterations === 'number' && Number.isFinite(run.runCompletePayload?.iterations)
+        ? Number(run.runCompletePayload?.iterations)
+        : null
     try {
+      const parameters = [
+        `repository=${run.repository}`,
+        `issue_number=${run.issueNumber}`,
+        `base=${baseRef}`,
+        `head=${run.branch}`,
+        `prompt=${prompt}`,
+        `judge_prompt=${config.defaultJudgePrompt}`,
+        `attempt=${attempt}`,
+        `parent_run_uid=${run.workflowUid ?? run.id}`,
+        `iteration_cycle=${iterationCycle}`,
+      ]
+      if (iterationsCount && iterationsCount > 0) {
+        parameters.push(`implementation_iterations=${iterationsCount}`)
+      }
       await argo.submitWorkflowTemplate({
         namespace: config.rerunWorkflowNamespace,
         templateName: config.rerunWorkflowTemplate,
-        parameters: [
-          `repository=${run.repository}`,
-          `issue_number=${run.issueNumber}`,
-          `base=${baseRef}`,
-          `head=${run.branch}`,
-          `prompt=${prompt}`,
-          `judge_prompt=${config.defaultJudgePrompt}`,
-          `attempt=${attempt}`,
-          `parent_run_uid=${run.workflowUid ?? run.id}`,
-        ],
+        parameters,
         labels: {
           'codex.repository': run.repository,
           'codex.issue': String(run.issueNumber),
@@ -3297,9 +3358,25 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
   let lastError: string | undefined =
     argoResult?.status === 'failed' ? `Argo rerun submission failed: ${argoResult.error}` : undefined
 
-  const { CodexTaskSchema, CodexTaskStage } = await import('./proto/codex_task_pb')
+  const { CodexTaskSchema, CodexTaskStage, CodexIterationsPolicySchema } = await import('./proto/codex_task_pb')
   const { create, toBinary } = await import('@bufbuild/protobuf')
   const { timestampFromDate } = await import('@bufbuild/protobuf/wkt')
+
+  const iterationsCount =
+    typeof run.runCompletePayload?.iterations === 'number' && Number.isFinite(run.runCompletePayload?.iterations)
+      ? Number(run.runCompletePayload?.iterations)
+      : null
+  const iterationCycle =
+    typeof run.iterationCycle === 'number' && Number.isFinite(run.iterationCycle)
+      ? run.iterationCycle + 1
+      : typeof run.runCompletePayload?.iteration_cycle === 'number' &&
+          Number.isFinite(run.runCompletePayload?.iteration_cycle)
+        ? Number(run.runCompletePayload?.iteration_cycle) + 1
+        : 1
+
+  const iterationsPolicy = iterationsCount
+    ? create(CodexIterationsPolicySchema, { mode: 'fixed', count: iterationsCount })
+    : undefined
 
   const message = create(CodexTaskSchema, {
     stage: CodexTaskStage.IMPLEMENTATION,
@@ -3321,6 +3398,9 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
     sender: 'jangar',
     issuedAt: timestampFromDate(new Date()),
     deliveryId,
+    metadataVersion: 1,
+    iterations: iterationsPolicy,
+    iterationCycle,
   })
 
   const payload = toBinary(CodexTaskSchema, message)
@@ -3983,6 +4063,8 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
     threadId: resolvedThreadId,
     status: 'run_complete',
     phase: parsed.phase,
+    iteration: parsed.iteration,
+    iterationCycle: parsed.iterationCycle,
     prompt: resolvedPrompt,
     runCompletePayload: {
       ...parsed.runCompletePayload,
@@ -3995,6 +4077,9 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
       issueNumber: resolvedIssueNumber,
       turnId: resolvedTurnId,
       threadId: resolvedThreadId,
+      iteration: parsed.iteration,
+      iteration_cycle: parsed.iterationCycle,
+      iterations: parsed.iterations,
     },
     startedAt: parsed.startedAt,
     finishedAt: parsed.finishedAt,
@@ -4025,10 +4110,20 @@ export const handleNotify = async (payload: Record<string, unknown>) => {
     issueNumber: parsed.issueNumber,
     branch: parsed.branch,
     prompt: parsed.prompt,
+    iteration: parsed.iteration,
+    iterationCycle: parsed.iterationCycle,
   })
 
   if (run && parsed.prNumber && parsed.prUrl) {
     await store.updateRunPrInfo(run.id, parsed.prNumber, parsed.prUrl, parsed.headSha ?? null)
+  }
+
+  if (run && parsed.reviewStatus) {
+    await store.updateReviewStatus({
+      runId: run.id,
+      status: parsed.reviewStatus,
+      summary: parsed.reviewSummary ?? {},
+    })
   }
 
   if (run && run.status === 'run_complete') {

@@ -8,6 +8,7 @@ import * as workflowCommsAgentMessagesMigration from '~/server/migrations/202512
 import * as codexJudgeWebhookIndexesMigration from '~/server/migrations/20251230_codex_judge_webhook_indexes'
 import * as terminalSessionsMigration from '~/server/migrations/20260102_terminal_sessions'
 import * as jangarGithubPrReviewMigration from '~/server/migrations/20260103_jangar_github_pr_review'
+import * as codexJudgeIterationsMigration from '~/server/migrations/20260104_codex_judge_iterations'
 import * as jangarGithubWorktreesMigration from '~/server/migrations/20260104_jangar_github_worktrees'
 
 type MigrationMap = Record<string, Migration>
@@ -30,6 +31,7 @@ const migrations: MigrationMap = {
   '20251230_codex_judge_webhook_indexes': codexJudgeWebhookIndexesMigration,
   '20260102_terminal_sessions': terminalSessionsMigration,
   '20260103_jangar_github_pr_review': jangarGithubPrReviewMigration,
+  '20260104_codex_judge_iterations': codexJudgeIterationsMigration,
   '20260104_jangar_github_worktrees': jangarGithubWorktreesMigration,
 }
 

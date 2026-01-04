@@ -17,6 +17,8 @@ export type CodexRunRecord = {
   stage: string | null
   status: string
   phase: string | null
+  iteration: number | null
+  iterationCycle: number | null
   prompt: string | null
   nextPrompt: string | null
   commitSha: string | null
@@ -47,6 +49,9 @@ export type CodexRunSummaryRecord = {
   stage: string | null
   status: string
   phase: string | null
+  iteration: number | null
+  iterationCycle: number | null
+  decision: string | null
   commitSha: string | null
   prNumber: number | null
   prUrl: string | null
@@ -172,6 +177,8 @@ export type UpsertRunCompleteInput = {
   stage: string | null
   status: string
   phase: string | null
+  iteration: number | null
+  iterationCycle: number | null
   prompt: string | null
   runCompletePayload: Record<string, unknown>
   startedAt: string | null
@@ -186,6 +193,8 @@ export type AttachNotifyInput = {
   issueNumber?: number
   branch?: string
   prompt?: string | null
+  iteration?: number | null
+  iterationCycle?: number | null
 }
 
 export type UpdateCiInput = {
@@ -436,6 +445,8 @@ const rowToRun = (row: Record<string, unknown>): CodexRunRecord => {
     stage: row.stage ? String(row.stage) : null,
     status: String(row.status),
     phase: row.phase ? String(row.phase) : null,
+    iteration: row.iteration != null ? Number(row.iteration) : null,
+    iterationCycle: row.iteration_cycle != null ? Number(row.iteration_cycle) : null,
     prompt: row.prompt ? String(row.prompt) : null,
     nextPrompt: row.next_prompt ? String(row.next_prompt) : null,
     commitSha: row.commit_sha ? String(row.commit_sha) : null,
@@ -467,6 +478,9 @@ const rowToRunSummary = (row: Record<string, unknown>): CodexRunSummaryRecord =>
   stage: row.stage ? String(row.stage) : null,
   status: String(row.status),
   phase: row.phase ? String(row.phase) : null,
+  iteration: row.iteration != null ? Number(row.iteration) : null,
+  iterationCycle: row.iteration_cycle != null ? Number(row.iteration_cycle) : null,
+  decision: row.decision ? String(row.decision) : null,
   commitSha: row.commit_sha ? String(row.commit_sha) : null,
   prNumber: row.pr_number != null ? Number(row.pr_number) : null,
   prUrl: row.pr_url ? String(row.pr_url) : null,
@@ -689,6 +703,8 @@ export const createCodexJudgeStore = (
         'stage',
         'status',
         'phase',
+        'iteration',
+        'iteration_cycle',
         'commit_sha',
         'pr_number',
         'pr_url',
@@ -698,6 +714,9 @@ export const createCodexJudgeStore = (
         'updated_at',
         'started_at',
         'finished_at',
+        sql<string>`(select decision from codex_judge.evaluations e where e.run_id = codex_judge.runs.id order by e.created_at desc limit 1)`.as(
+          'decision',
+        ),
       ])
       .orderBy('created_at desc')
 
@@ -735,6 +754,8 @@ export const createCodexJudgeStore = (
         'stage',
         'status',
         'phase',
+        'iteration',
+        'iteration_cycle',
         'commit_sha',
         'pr_number',
         'pr_url',
@@ -744,6 +765,9 @@ export const createCodexJudgeStore = (
         'updated_at',
         'started_at',
         'finished_at',
+        sql<string>`(select decision from codex_judge.evaluations e where e.run_id = codex_judge.runs.id order by e.created_at desc limit 1)`.as(
+          'decision',
+        ),
       ])
       .orderBy('created_at desc')
       .limit(pageSize)
@@ -852,6 +876,9 @@ export const createCodexJudgeStore = (
           stage: input.stage,
           status: nextStatus,
           phase: input.phase,
+          iteration: input.iteration ?? (existing.iteration != null ? Number(existing.iteration) : null),
+          iteration_cycle:
+            input.iterationCycle ?? (existing.iteration_cycle != null ? Number(existing.iteration_cycle) : null),
           prompt: input.prompt,
           run_complete_payload: input.runCompletePayload,
           started_at: input.startedAt ? new Date(input.startedAt) : null,
@@ -887,6 +914,8 @@ export const createCodexJudgeStore = (
         stage: input.stage,
         status: 'run_complete',
         phase: input.phase,
+        iteration: input.iteration ?? null,
+        iteration_cycle: input.iterationCycle ?? null,
         prompt: input.prompt,
         review_summary: {},
         run_complete_payload: input.runCompletePayload,
@@ -929,6 +958,8 @@ export const createCodexJudgeStore = (
           workflow_name: input.workflowName,
           workflow_namespace: input.workflowNamespace ?? null,
           status: 'notified',
+          iteration: input.iteration ?? null,
+          iteration_cycle: input.iterationCycle ?? null,
           prompt: input.prompt ?? null,
           review_summary: {},
           notify_payload: input.notifyPayload,
@@ -946,6 +977,8 @@ export const createCodexJudgeStore = (
         issue_number: input.issueNumber ?? row.issue_number,
         branch: input.branch && input.branch.length > 0 ? input.branch : row.branch,
         prompt: input.prompt ?? row.prompt,
+        iteration: input.iteration ?? row.iteration,
+        iteration_cycle: input.iterationCycle ?? row.iteration_cycle,
         notify_payload: input.notifyPayload,
         updated_at: sql`now()`,
       })

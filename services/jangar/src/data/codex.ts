@@ -12,6 +12,8 @@ export type CodexRunRecord = {
   stage: string | null
   status: string
   phase: string | null
+  iteration: number | null
+  iterationCycle: number | null
   prompt: string | null
   nextPrompt: string | null
   commitSha: string | null
@@ -42,6 +44,9 @@ export type CodexRunSummaryRecord = {
   stage: string | null
   status: string
   phase: string | null
+  iteration: number | null
+  iterationCycle: number | null
+  decision: string | null
   commitSha: string | null
   prNumber: number | null
   prUrl: string | null
