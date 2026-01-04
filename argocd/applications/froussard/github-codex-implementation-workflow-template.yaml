@@ -93,6 +93,10 @@ spec:
                 name: nats-agent-creds
                 key: creds
                 optional: true
+          - name: CODEX_NATS_SOAK_REQUIRED
+            value: "true"
+          - name: NATS_CONTEXT_PATH
+            value: /workspace/lab/.codex-nats-context.json
           - name: WORKFLOW_NAME
             value: '{{workflow.name}}'
           - name: ARGO_WORKFLOW_NAME
@@ -184,11 +188,6 @@ spec:
               exit 1
             fi
 
-            if [[ -z "${JANGAR_BASE_URL:-}" ]]; then
-              echo "Missing JANGAR_BASE_URL" >&2
-              exit 1
-            fi
-
             git -C "$WORKTREE_DIR" fetch --all --prune
 
             if ! git -C "$WORKTREE_DIR" rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1 \
@@ -203,21 +202,13 @@ spec:
               exit 1
             fi
 
-            JANGAR_NOTIFY_URL="${JANGAR_BASE_URL%/}/api/codex/notify"
-            JANGAR_COMPLETE_URL="${JANGAR_BASE_URL%/}/api/codex/run-complete"
-            for endpoint in "$JANGAR_NOTIFY_URL" "$JANGAR_COMPLETE_URL"; do
-              status=$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS "$endpoint" || true)
-              if [[ "$status" == "000" ]]; then
-                echo "Jangar endpoint unreachable: $endpoint" >&2
-                exit 1
-              fi
-            done
-
             export OUTPUT_PATH="${IMPLEMENTATION_OUTPUT_PATH:-/workspace/lab/.codex-implementation.log}"
             export JSON_OUTPUT_PATH="${JSON_OUTPUT_PATH:-/workspace/.codex/implementation-events.jsonl}"
+            export AGENT_OUTPUT_PATH="${AGENT_OUTPUT_PATH:-/workspace/lab/.codex-implementation-agent.log}"
+            export CODEX_RUNTIME_LOG_PATH="${CODEX_RUNTIME_LOG_PATH:-/workspace/lab/.codex-implementation-runtime.log}"
             export POST_TO_GITHUB=true
 
-            AGENT_LOG_PATH="${AGENT_OUTPUT_PATH:-/workspace/lab/.codex-implementation-agent.log}"
+            AGENT_LOG_PATH="${AGENT_OUTPUT_PATH}"
             NATS_PUBLISHER="/usr/local/bin/codex-nats-publish"
             NATS_TAIL_PID=""
 
@@ -320,6 +311,10 @@ spec:
             path: /workspace/lab/.codex/implementation-resume.json
           - name: implementation-notify
             path: /workspace/lab/.codex-implementation-notify.json
+          - name: nats-context
+            path: /workspace/lab/.codex-nats-context.json
+          - name: nats-context
+            path: /workspace/lab/.codex-nats-context.json
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate

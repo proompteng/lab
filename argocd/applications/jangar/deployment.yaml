@@ -132,6 +132,14 @@ spec:
               value: "true"
             - name: JANGAR_PROMPT_TUNING_REPO
               value: proompteng/lab
+            - name: JANGAR_CODEX_RERUN_TEMPLATE
+              value: codex-autonomous
+            - name: JANGAR_CODEX_RERUN_NAMESPACE
+              value: argo-workflows
+            - name: JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE
+              value: codex-autonomous
+            - name: JANGAR_SYSTEM_IMPROVEMENT_NAMESPACE
+              value: argo-workflows
             - name: DISCORD_BOT_TOKEN
               valueFrom:
                 secretKeyRef:

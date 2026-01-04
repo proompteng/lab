@@ -2962,106 +2962,101 @@ const maybeCreatePromptTuningPr = async (
   await createPromptTuningPr(run, nextPrompt, aggregate)
 }
 
-const resolveSystemImprovementPath = (reason: string | null) => {
-  const normalized = (reason ?? '').toLowerCase()
-  if (
-    normalized.includes('workflow') ||
-    normalized.includes('artifact') ||
-    normalized.includes('run_complete') ||
-    normalized.includes('worktree') ||
-    normalized.includes('infra')
-  ) {
-    return 'argocd/applications/froussard/system-improvements'
+const extractSystemSuggestions = (evaluation?: CodexEvaluationRecord) => {
+  if (!evaluation?.systemSuggestions) return []
+  const raw = evaluation.systemSuggestions as Record<string, unknown>
+  const suggestions: string[] = []
+
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      if (typeof entry === 'string') suggestions.push(entry)
+    }
   }
-  if (normalized.includes('pull_request') || normalized.includes('pr') || normalized.includes('notify')) {
-    return 'apps/froussard/src/codex/cli/system-improvements'
+
+  const nested = raw?.suggestions
+  if (Array.isArray(nested)) {
+    for (const entry of nested) {
+      if (typeof entry === 'string') suggestions.push(entry)
+    }
   }
-  return 'services/jangar/src/server/system-improvements'
+
+  if (typeof raw?.summary === 'string') suggestions.push(raw.summary)
+  if (typeof raw?.notes === 'string') suggestions.push(raw.notes)
+
+  if (suggestions.length === 0) {
+    suggestions.push(JSON.stringify(raw, null, 2))
+  }
+
+  return suggestions.filter((value) => value.trim().length > 0)
 }
 
-const buildSystemImprovementDoc = (run: CodexRunRecord, reason: string | null, evaluation?: CodexEvaluationRecord) => {
+const buildSystemImprovementPrompt = (run: CodexRunRecord, reason: string | null, evaluation?: CodexEvaluationRecord) => {
   const failureReason = reason ?? 'unknown'
-  const nextPrompt = evaluation?.nextPrompt ?? run.nextPrompt ?? 'n/a'
+  const suggestions = extractSystemSuggestions(evaluation)
+  const nextPrompt = evaluation?.nextPrompt ?? run.nextPrompt ?? ''
+  const suggestedFixes = evaluation?.suggestedFixes ? JSON.stringify(evaluation.suggestedFixes, null, 2) : 'n/a'
+
   return [
-    `# System improvement for run ${run.id}`,
+    'You are Codex operating on system improvements for the autonomous pipeline.',
+    `Repository: ${run.repository}`,
+    `Issue: #${run.issueNumber}`,
+    `Branch: ${run.branch}`,
+    `Failure reason: ${failureReason}`,
     '',
-    `- Repository: ${run.repository}`,
-    `- Issue: #${run.issueNumber}`,
-    `- Branch: ${run.branch}`,
-    `- Stage: ${run.stage ?? 'unknown'}`,
-    `- Failure reason: ${failureReason}`,
+    'Requirements:',
+    '- Implement real code/config improvements (no doc-only placeholders).',
+    '- Keep changes additive and composable with existing design.',
+    '- Update manifests, scripts, and services as needed to make the pipeline reliable.',
+    '- Add tests or validation steps where applicable.',
     '',
-    '## Root cause',
-    `- ${failureReason}`,
+    'System suggestions:',
+    suggestions.length > 0 ? suggestions.map((entry) => `- ${entry}`).join('\n') : '- None provided',
     '',
-    '## Suggested fixes',
-    `- ${JSON.stringify(evaluation?.suggestedFixes ?? {}, null, 2)}`,
+    'Suggested fixes (structured):',
+    suggestedFixes,
     '',
-    '## Next prompt',
-    `- ${nextPrompt}`,
-    '',
-    '## Validation plan',
-    '- Re-run the workflow end-to-end and ensure all required artifacts are present.',
-    '- Verify the worktree diff is stored with source=worktree and judge output is recorded.',
-    '',
-    '## Rollback plan',
-    '- Revert this change or disable the new workflow template if regressions occur.',
-    '',
+    nextPrompt ? `Prior next_prompt: ${nextPrompt}` : 'Prior next_prompt: n/a',
   ].join('\n')
 }
 
-const maybeCreateSystemImprovementPr = async (
+const maybeSubmitSystemImprovementWorkflow = async (
   run: CodexRunRecord,
   reason: string | null,
   evaluation?: CodexEvaluationRecord,
 ) => {
-  const targetRepo = config.promptTuningRepo ?? run.repository
-  if (!targetRepo) return
-  const targetPath = resolveSystemImprovementPath(reason)
+  if (!argo || !config.systemImprovementWorkflowTemplate) return
+  const suggestions = extractSystemSuggestions(evaluation)
+  if (suggestions.length === 0) return
+
+  const baseRef =
+    typeof run.runCompletePayload?.base === 'string' && run.runCompletePayload.base.trim().length > 0
+      ? run.runCompletePayload.base.trim()
+      : 'main'
   const branch = `codex/system-improvement-${run.issueNumber}-${run.id.slice(0, 8)}`
-  const baseRef = 'main'
+  const prompt = buildSystemImprovementPrompt(run, reason, evaluation)
 
   try {
-    const { owner, repo } = parseRepositoryParts(targetRepo)
-    const baseSha = await github.getRefSha(owner, repo, `heads/${baseRef}`)
-    await github.createBranch({ owner, repo, branch, baseSha })
-
-    const filePath = `${targetPath}/run-${run.id}.md`
-    const content = buildSystemImprovementDoc(run, reason, evaluation)
-    await github.updateFile({
-      owner,
-      repo,
-      path: filePath,
-      branch,
-      message: `docs(system): record run ${run.id} improvement`,
-      content,
-    })
-
-    const prBody = [
-      '## Summary',
-      `- System improvement for run ${run.id}`,
-      '',
-      '## Related Issues',
-      `- #${run.issueNumber}`,
-      '',
-      '## Testing',
-      '- N/A (system improvement tracking)',
-      '',
-      '## Rollback',
-      '- Revert this PR if it introduces regressions.',
-      '',
-    ].join('\n')
-
-    await github.createPullRequest({
-      owner,
-      repo,
-      head: branch,
-      base: baseRef,
-      title: `docs(system): system improvement for run ${run.id.slice(0, 8)}`,
-      body: prBody,
+    await argo.submitWorkflowTemplate({
+      namespace: config.systemImprovementWorkflowNamespace,
+      templateName: config.systemImprovementWorkflowTemplate,
+      parameters: [
+        `repository=${run.repository}`,
+        `issue_number=${run.issueNumber}`,
+        `base=${baseRef}`,
+        `head=${branch}`,
+        `prompt=${prompt}`,
+        `judge_prompt=${config.systemImprovementJudgePrompt}`,
+      ],
+      labels: {
+        'codex.repository': run.repository,
+        'codex.issue': String(run.issueNumber),
+        'codex.parent_run': run.id,
+        'codex.type': 'system-improvement',
+      },
+      generateName: 'codex-system-improvement-',
     })
   } catch (error) {
-    console.warn('Failed to create system improvement PR', error)
+    console.warn('Failed to submit system improvement workflow', error)
   }
 }
 
@@ -3129,7 +3124,7 @@ const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: Co
   if (attempts >= config.maxAttempts) {
     const updated = await store.updateRunStatus(run.id, 'needs_human')
     if (!updated) return
-    await maybeCreateSystemImprovementPr(updated, resolvedReason, evaluation)
+    await maybeSubmitSystemImprovementWorkflow(updated, resolvedReason, evaluation)
     await maybeCreatePromptTuningPr(updated, resolvedReason, evaluation?.nextPrompt ?? run.nextPrompt ?? '', evaluation)
     await sendDiscordEscalation(run, reason)
     return
@@ -3139,14 +3134,14 @@ const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: Co
   if (!nextPrompt) {
     const updated = await store.updateRunStatus(run.id, 'needs_iteration')
     if (!updated) return
-    await maybeCreateSystemImprovementPr(updated, resolvedReason, evaluation)
+    await maybeSubmitSystemImprovementWorkflow(updated, resolvedReason, evaluation)
     await maybeCreatePromptTuningPr(updated, resolvedReason, '', evaluation)
     return
   }
 
   const updated = await store.updateRunStatus(run.id, 'needs_iteration')
   if (!updated) return
-  await maybeCreateSystemImprovementPr(updated, resolvedReason, evaluation)
+  await maybeSubmitSystemImprovementWorkflow(updated, resolvedReason, evaluation)
   await maybeCreatePromptTuningPr(updated, resolvedReason, nextPrompt, evaluation)
 
   const deliveryId = `jangar-${run.id}-attempt-${attempts + 1}`
@@ -3170,6 +3165,55 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
   if (!claimed.shouldSubmit) {
     return { status: 'skipped' }
   }
+
+  const submitViaArgo = async () => {
+    if (!argo || !config.rerunWorkflowTemplate) return null
+    const baseRef =
+      typeof run.runCompletePayload?.base === 'string' && run.runCompletePayload.base.trim().length > 0
+        ? run.runCompletePayload.base.trim()
+        : 'main'
+    try {
+      await argo.submitWorkflowTemplate({
+        namespace: config.rerunWorkflowNamespace,
+        templateName: config.rerunWorkflowTemplate,
+        parameters: [
+          `repository=${run.repository}`,
+          `issue_number=${run.issueNumber}`,
+          `base=${baseRef}`,
+          `head=${run.branch}`,
+          `prompt=${prompt}`,
+          `judge_prompt=${config.defaultJudgePrompt}`,
+          `attempt=${attempt}`,
+          `parent_run_uid=${run.workflowUid ?? run.id}`,
+        ],
+        labels: {
+          'codex.repository': run.repository,
+          'codex.issue': String(run.issueNumber),
+          'codex.parent_run': run.id,
+          'codex.attempt': String(attempt),
+        },
+        generateName: 'codex-rerun-',
+      })
+      await store.updateRerunSubmission({
+        id: claimed.submission.id,
+        status: 'submitted',
+        responseStatus: 201,
+        error: null,
+        submittedAt: new Date().toISOString(),
+      })
+      return { status: 'submitted' as const }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { status: 'failed' as const, error: message }
+    }
+  }
+
+  const argoResult = await submitViaArgo()
+  if (argoResult?.status === 'submitted') {
+    return argoResult
+  }
+  let lastError: string | undefined =
+    argoResult?.status === 'failed' ? `Argo rerun submission failed: ${argoResult.error}` : undefined
 
   const { CodexTaskSchema, CodexTaskStage } = await import('./proto/codex_task_pb')
   const { create, toBinary } = await import('@bufbuild/protobuf')
@@ -3200,7 +3244,6 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
   const payload = toBinary(CodexTaskSchema, message)
 
   const maxAttempts = RERUN_SUBMISSION_BACKOFF_MS.length + 1
-  let lastError: string | undefined
   for (let index = 0; index < maxAttempts; index += 1) {
     let responseStatus: number | null = null
     try {
@@ -3720,7 +3763,7 @@ const sendDiscordSuccess = async (run: CodexRunRecord, prUrl?: string, ciUrl?: s
 }
 
 const sendDiscordEscalation = async (run: CodexRunRecord, reason: string) => {
-  await maybeCreateSystemImprovementPr(run, reason)
+  await maybeSubmitSystemImprovementWorkflow(run, reason)
   if (!config.discordBotToken || !config.discordChannelId) return
   let runForMessage = run
   try {

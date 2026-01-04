@@ -18,10 +18,26 @@ export type CodexJudgeConfig = {
   promptTuningFailureThreshold: number
   promptTuningWindowHours: number
   promptTuningCooldownHours: number
+  rerunWorkflowTemplate: string | null
+  rerunWorkflowNamespace: string
+  systemImprovementWorkflowTemplate: string | null
+  systemImprovementWorkflowNamespace: string
+  systemImprovementJudgePrompt: string
+  defaultJudgePrompt: string
 }
 
 const DEFAULT_GITHUB_API_BASE = 'https://api.github.com'
 const DEFAULT_DISCORD_API_BASE = 'https://discord.com/api/v10'
+const DEFAULT_JUDGE_PROMPT = [
+  'You are the Codex judge.',
+  'Evaluate whether the PR satisfies the issue requirements with no gaps.',
+  'Return a single JSON object with decision, confidence, reasons, missing_items, suggested_fixes, next_prompt, and system_suggestions.',
+].join('\n')
+const DEFAULT_SYSTEM_IMPROVEMENT_JUDGE_PROMPT = [
+  'You are the Codex judge for system-improvement PRs.',
+  'Review the implementation changes and verify they address the system-improvement prompt.',
+  'Return a single JSON object with decision, confidence, reasons, missing_items, suggested_fixes, next_prompt, and system_suggestions.',
+].join('\n')
 
 const parseList = (raw: string | undefined) =>
   (raw ?? '')
@@ -64,6 +80,15 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
   const promptTuningFailureThreshold = parseNumber(process.env.JANGAR_PROMPT_TUNING_FAILURE_THRESHOLD, 3)
   const promptTuningWindowHours = parseNumber(process.env.JANGAR_PROMPT_TUNING_WINDOW_HOURS, 24)
   const promptTuningCooldownHours = parseNumber(process.env.JANGAR_PROMPT_TUNING_COOLDOWN_HOURS, 6)
+  const rerunWorkflowTemplate = (process.env.JANGAR_CODEX_RERUN_TEMPLATE ?? 'codex-autonomous').trim() || null
+  const rerunWorkflowNamespace = (process.env.JANGAR_CODEX_RERUN_NAMESPACE ?? 'argo-workflows').trim()
+  const systemImprovementWorkflowTemplate =
+    (process.env.JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE ?? 'codex-autonomous').trim() || null
+  const systemImprovementWorkflowNamespace = (process.env.JANGAR_SYSTEM_IMPROVEMENT_NAMESPACE ?? 'argo-workflows').trim()
+  const systemImprovementJudgePrompt = (
+    process.env.JANGAR_SYSTEM_IMPROVEMENT_JUDGE_PROMPT ?? DEFAULT_SYSTEM_IMPROVEMENT_JUDGE_PROMPT
+  ).trim()
+  const defaultJudgePrompt = (process.env.JANGAR_CODEX_JUDGE_PROMPT ?? DEFAULT_JUDGE_PROMPT).trim()
 
   return {
     githubToken,
@@ -85,5 +110,11 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     promptTuningFailureThreshold,
     promptTuningWindowHours,
     promptTuningCooldownHours,
+    rerunWorkflowTemplate,
+    rerunWorkflowNamespace,
+    systemImprovementWorkflowTemplate,
+    systemImprovementWorkflowNamespace,
+    systemImprovementJudgePrompt,
+    defaultJudgePrompt,
   }
 }

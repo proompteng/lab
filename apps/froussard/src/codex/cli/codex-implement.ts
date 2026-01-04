@@ -98,6 +98,11 @@ type CodexNotifyPayload = {
   prompt: string
   stage?: string | null
   judge_output?: Record<string, unknown> | null
+  context_soak?: {
+    fetched: number
+    filtered: number
+    messages: Array<Record<string, unknown>>
+  } | null
   input_messages: string[]
   last_assistant_message: string | null
   logs?: CodexNotifyLogExcerpt
@@ -107,6 +112,12 @@ type CodexNotifyPayload = {
 }
 
 const MAX_NOTIFY_LOG_CHARS = 12_000
+
+type NatsContextPayload = {
+  fetched: number
+  filtered: number
+  messages: Array<Record<string, unknown>>
+}
 
 const truncateLogContent = (content: string) => {
   if (content.length <= MAX_NOTIFY_LOG_CHARS) {
@@ -213,6 +224,7 @@ const buildNotifyPayload = ({
   prNumber,
   prUrl,
   judgeOutput,
+  contextSoak,
 }: {
   repository: string
   issueNumber: string
@@ -236,6 +248,7 @@ const buildNotifyPayload = ({
   prNumber?: number | null
   prUrl?: string | null
   judgeOutput?: Record<string, unknown> | null
+  contextSoak?: NatsContextPayload | null
 }): CodexNotifyPayload => {
   return {
     type: 'agent-turn-complete',
@@ -261,6 +274,7 @@ const buildNotifyPayload = ({
     prompt,
     stage,
     judge_output: judgeOutput ?? null,
+    context_soak: contextSoak ?? null,
     input_messages: [prompt],
     last_assistant_message: lastAssistantMessage ?? null,
     logs: logExcerpt,
@@ -618,6 +632,73 @@ const runCommand = async (command: string, args: string[], options: { cwd?: stri
       })
     })
   })
+}
+
+const truncateContextLine = (value: string, max = 400) => {
+  if (value.length <= max) return value
+  return `${value.slice(0, max)}…`
+}
+
+const formatNatsContextBlock = (payload: NatsContextPayload | null, maxMessages = 25) => {
+  if (!payload || payload.messages.length === 0) return ''
+  const messages = payload.messages.slice(-maxMessages)
+  const lines = messages.map((message) => {
+    const timestamp =
+      typeof message.timestamp === 'string'
+        ? message.timestamp
+        : typeof message.sent_at === 'string'
+          ? message.sent_at
+          : 'unknown-time'
+    const kind = typeof message.kind === 'string' ? message.kind : 'message'
+    const content =
+      typeof message.content === 'string' && message.content.trim().length > 0
+        ? message.content.trim()
+        : message.attrs
+          ? JSON.stringify(message.attrs)
+          : JSON.stringify(message)
+    return `- [${timestamp}] (${kind}) ${truncateContextLine(content, 500)}`
+  })
+  return `Context soak from NATS general channel (latest ${messages.length} of ${payload.filtered}):\n${lines.join('\n')}`
+}
+
+const fetchNatsContext = async ({
+  logger,
+  required,
+  outputPath,
+}: {
+  logger: CodexLogger
+  required: boolean
+  outputPath: string
+}): Promise<NatsContextPayload | null> => {
+  if (!process.env.NATS_URL) {
+    if (required) {
+      throw new Error('NATS_URL is required for context soak')
+    }
+    return null
+  }
+
+  try {
+    const result = await runCommand('codex-nats-soak', [], { cwd: process.env.WORKTREE })
+    if (result.exitCode !== 0) {
+      const message = result.stderr.trim() || result.stdout.trim() || 'codex-nats-soak failed'
+      if (required) {
+        throw new Error(message)
+      }
+      logger.warn(`NATS context soak failed: ${message}`)
+      return null
+    }
+
+    const raw = await readFile(outputPath, 'utf8')
+    if (!raw.trim()) return null
+    const parsed = JSON.parse(raw) as NatsContextPayload
+    return parsed
+  } catch (error) {
+    if (required) {
+      throw error
+    }
+    logger.warn('NATS context soak failed', error)
+    return null
+  }
 }
 
 const publishNatsEvent = async (
@@ -1184,7 +1265,7 @@ export const runCodexImplementation = async (eventPath: string) => {
 
   const event = await readEventPayload(eventPath)
 
-  const prompt = event.prompt?.trim()
+  let prompt = event.prompt?.trim()
   if (!prompt) {
     throw new Error('Missing Codex prompt in event payload')
   }
@@ -1216,6 +1297,7 @@ export const runCodexImplementation = async (eventPath: string) => {
   const judgeOutputPath = process.env.JUDGE_OUTPUT_PATH ?? `${worktree}/.codex-judge-output.json`
   const judgeDecisionPath = process.env.JUDGE_DECISION_PATH ?? `${worktree}/.codex-judge-decision.txt`
   const judgeNextPromptPath = process.env.JUDGE_NEXT_PROMPT_PATH ?? `${worktree}/.codex-judge-next-prompt.txt`
+  const natsContextPath = process.env.NATS_CONTEXT_PATH ?? `${worktree}/.codex-nats-context.json`
   const resumeMetadataPath = getResumeMetadataPath(worktree)
   const lokiEndpoint =
     process.env.LGTM_LOKI_ENDPOINT ??
@@ -1300,6 +1382,7 @@ export const runCodexImplementation = async (eventPath: string) => {
   process.env.IMPLEMENTATION_STATUS_PATH = statusPath
   process.env.IMPLEMENTATION_CHANGES_ARCHIVE_PATH = archivePath
   process.env.IMPLEMENTATION_NOTIFY_PATH = notifyPath
+  process.env.NATS_CONTEXT_PATH = natsContextPath
 
   process.env.CODEX_STAGE = stage
   process.env.RUST_LOG = process.env.RUST_LOG ?? 'codex_core=info,codex_exec=info'
@@ -1325,6 +1408,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       judgeOutputPath,
       judgeDecisionPath,
       judgeNextPromptPath,
+      natsContextPath,
     ],
     consoleLogger,
   )
@@ -1341,6 +1425,20 @@ export const runCodexImplementation = async (eventPath: string) => {
     },
   })
 
+  const natsSoakRequired =
+    (process.env.CODEX_NATS_SOAK_REQUIRED ?? 'true').trim().toLowerCase() !== 'false' &&
+    (process.env.CODEX_NATS_SOAK_REQUIRED ?? 'true').trim() !== '0'
+
+  const natsContext = await fetchNatsContext({
+    logger,
+    required: natsSoakRequired,
+    outputPath: natsContextPath,
+  })
+  const natsContextBlock = formatNatsContextBlock(natsContext)
+  if (natsContextBlock) {
+    prompt = `${natsContextBlock}\n\n${prompt}`
+  }
+
   await ensureEmptyFile(outputPath)
   await ensureEmptyFile(jsonOutputPath)
   await ensureEmptyFile(agentOutputPath)
@@ -1353,34 +1451,37 @@ export const runCodexImplementation = async (eventPath: string) => {
   })
 
   const normalizedIssueNumber = issueNumber
+  const supportsResume = stage === 'implementation'
   let resumeContext: ResumeContext | undefined
   let resumeSessionId: string | undefined
   let capturedSessionId: string | undefined
   let runSucceeded = false
 
   try {
-    resumeContext = await loadResumeMetadata({
-      worktree,
-      repository,
-      issueNumber: normalizedIssueNumber,
-      logger,
-    })
+    if (supportsResume) {
+      resumeContext = await loadResumeMetadata({
+        worktree,
+        repository,
+        issueNumber: normalizedIssueNumber,
+        logger,
+      })
 
-    if (resumeContext) {
-      logger.info(
-        `Found pending resume state from ${resumeContext.metadata.generatedAt}; attempting to restore implementation changes`,
-      )
-      const applied = await applyResumeContext({ worktree, context: resumeContext, logger })
-      if (applied) {
-        if (resumeContext.metadata.sessionId && resumeContext.metadata.sessionId.trim().length > 0) {
-          resumeSessionId = resumeContext.metadata.sessionId.trim()
-          logger.info(`Resuming Codex session ${resumeSessionId}`)
+      if (resumeContext) {
+        logger.info(
+          `Found pending resume state from ${resumeContext.metadata.generatedAt}; attempting to restore implementation changes`,
+        )
+        const applied = await applyResumeContext({ worktree, context: resumeContext, logger })
+        if (applied) {
+          if (resumeContext.metadata.sessionId && resumeContext.metadata.sessionId.trim().length > 0) {
+            resumeSessionId = resumeContext.metadata.sessionId.trim()
+            logger.info(`Resuming Codex session ${resumeSessionId}`)
+          } else {
+            resumeSessionId = '--last'
+            logger.warn('Resume metadata missing session id; falling back to --last to resume the latest Codex session')
+          }
         } else {
-          resumeSessionId = '--last'
-          logger.warn('Resume metadata missing session id; falling back to --last to resume the latest Codex session')
+          logger.warn('Failed to restore resume archive; proceeding with a fresh Codex session')
         }
-      } else {
-        logger.warn('Failed to restore resume archive; proceeding with a fresh Codex session')
       }
     }
 
@@ -1394,7 +1495,7 @@ export const runCodexImplementation = async (eventPath: string) => {
     if (discordToken && discordGuild && discordScriptExists) {
       const args = [
         '--stage',
-        'implementation',
+        stage,
         '--repo',
         repository,
         '--issue',
@@ -1450,7 +1551,7 @@ export const runCodexImplementation = async (eventPath: string) => {
 
     await copyAgentLogIfNeeded(outputPath, agentOutputPath)
     await pushCodexEventsToLoki({
-      stage: 'implementation',
+      stage,
       endpoint: lokiEndpoint,
       jsonPath: jsonOutputPath,
       agentLogPath: agentOutputPath,
@@ -1532,6 +1633,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       prNumber,
       prUrl,
       judgeOutput,
+      contextSoak: natsContext,
     })
     try {
       await ensureFileDirectory(notifyPath)
@@ -1561,6 +1663,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       kind: 'run-summary',
       content: summary ?? `${stage} run completed`,
       attrs: {
+        stage,
         decision,
         prUrl,
         ciUrl: null,
@@ -1570,6 +1673,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       kind: 'run-gaps',
       content: gaps.length > 0 ? gaps.join('; ') : 'None',
       attrs: {
+        stage,
         missingItems: gaps,
         suggestedFixes: gaps.length > 0 ? gaps : [],
       },
@@ -1577,12 +1681,13 @@ export const runCodexImplementation = async (eventPath: string) => {
     await publishNatsEvent(logger, {
       kind: 'run-next-prompt',
       content: nextPrompt ?? 'None',
-      attrs: { decision },
+      attrs: { stage, decision },
     })
     await publishNatsEvent(logger, {
       kind: 'run-outcome',
       content: `${stage} completed`,
       attrs: {
+        stage,
         decision,
         prUrl,
         ciUrl: null,
@@ -1607,26 +1712,28 @@ export const runCodexImplementation = async (eventPath: string) => {
       await publishNatsEvent(logger, {
         kind: 'run-outcome',
         content: `${stage} failed`,
-        attrs: { decision: 'fail' },
+        attrs: { stage, decision: 'fail' },
       })
     }
     await ensureNotifyPlaceholder(notifyPath, logger)
     try {
-      await captureImplementationArtifacts({
-        worktree,
-        archivePath,
-        patchPath,
-        statusPath,
-        jsonEventsPath: jsonOutputPath,
-        resumeMetadataPath,
-        repository,
-        issueNumber: normalizedIssueNumber,
-        prompt,
-        sessionId: capturedSessionId,
-        resumedSessionId: resumeContext?.metadata.sessionId,
-        markForResume: !runSucceeded,
-        logger,
-      })
+      if (stage === 'implementation') {
+        await captureImplementationArtifacts({
+          worktree,
+          archivePath,
+          patchPath,
+          statusPath,
+          jsonEventsPath: jsonOutputPath,
+          resumeMetadataPath,
+          repository,
+          issueNumber: normalizedIssueNumber,
+          prompt,
+          sessionId: capturedSessionId,
+          resumedSessionId: resumeContext?.metadata.sessionId,
+          markForResume: !runSucceeded,
+          logger,
+        })
+      }
     } catch (error) {
       logger.error('Failed while finalizing implementation artifacts', error)
     }
