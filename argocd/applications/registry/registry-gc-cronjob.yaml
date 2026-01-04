@@ -4,7 +4,8 @@ metadata:
   name: registry-gc
   namespace: registry
 spec:
-  schedule: "30 3 * * 0"
+  schedule: "0 3 * * 0"
+  timeZone: America/Los_Angeles
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 1800
   successfulJobsHistoryLimit: 1
@@ -38,10 +39,36 @@ spec:
                     "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${kubectl_arch}/kubectl"
                   chmod +x /usr/local/bin/kubectl
 
+                  desired_replicas="$(kubectl -n registry get deployment/registry -o jsonpath='{.spec.replicas}' || echo '1')"
+                  if [ -z "${desired_replicas}" ]; then
+                    desired_replicas="1"
+                  fi
+
+                  registry_pod="$(kubectl -n registry get pod -l app=registry -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+                  registry_node=""
+                  if [ -n "${registry_pod}" ]; then
+                    registry_node="$(kubectl -n registry get pod "${registry_pod}" -o jsonpath='{.spec.nodeName}' 2>/dev/null || true)"
+                  fi
+
+                  scale_up() {
+                    echo "Scaling registry back up to ${desired_replicas}..."
+                    kubectl -n registry scale deployment/registry --replicas="${desired_replicas}" || true
+                    kubectl -n registry rollout status deployment/registry --timeout=5m || true
+                  }
+                  trap scale_up EXIT
+
                   gc_job="registry-gc-${HOSTNAME}-$(date +%s)"
 
                   kubectl -n registry scale deployment/registry --replicas=0
                   kubectl -n registry rollout status deployment/registry --timeout=5m
+                  if kubectl -n registry get pod -l app=registry -o name | grep -q .; then
+                    kubectl -n registry wait --for=delete pod -l app=registry --timeout=5m
+                  fi
+
+                  node_name_line=""
+                  if [ -n "${registry_node}" ]; then
+                    node_name_line="nodeName: ${registry_node}"
+                  fi
 
                   cat <<JOB | kubectl -n registry apply -f -
                   apiVersion: batch/v1
@@ -52,6 +79,7 @@ spec:
                     backoffLimit: 0
                     template:
                       spec:
+                        ${node_name_line}
                         restartPolicy: Never
                         containers:
                           - name: gc
@@ -77,6 +105,6 @@ spec:
                   kubectl -n registry wait --for=condition=complete job/${gc_job} --timeout=2h
                   kubectl -n registry logs job/${gc_job}
                   kubectl -n registry delete job/${gc_job}
-
-                  kubectl -n registry scale deployment/registry --replicas=1
-                  kubectl -n registry rollout status deployment/registry --timeout=5m
+                  if kubectl -n registry get pod -l job-name="${gc_job}" -o name | grep -q .; then
+                    kubectl -n registry wait --for=delete pod -l job-name="${gc_job}" --timeout=10m || true
+                  fi
