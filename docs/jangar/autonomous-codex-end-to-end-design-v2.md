@@ -9,6 +9,7 @@ Scope: Fully autonomous Codex pipeline with Argo as the primary orchestrator, in
 
 The current pipeline is not production-ready. The system relies on Jangar API uptime for run creation and uses GitHub diffs instead of worktree snapshots. PR creation, durable reruns, and system-improvement PRs are not guaranteed. v2 closes these gaps by shifting run creation and judge execution into Argo DAG steps and defining strict data/behavior contracts.
 
+
 ## 1.1 Guarantee Model (What “Success” Means Here)
 This design cannot guarantee business success (e.g., every issue is implementable without human review), but it **does** guarantee the following when deployed correctly:
 - If the pipeline is blocked, it **fails fast** with an explicit reason and a recovery path.
@@ -151,6 +152,58 @@ flowchart TD
   verify -->|fail| rerun
 ```
 
+### 6.1.2 Argo DAG Skeleton (YAML)
+This is a **minimal** DAG wiring example. It is intended to be used as a template for the final workflow.
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: codex-autonomous
+spec:
+  entrypoint: codex-dag
+  templates:
+    - name: codex-dag
+      dag:
+        tasks:
+          - name: implementation
+            templateRef:
+              name: codex-run
+              template: codex-run
+            arguments:
+              parameters:
+                - name: stage
+                  value: implementation
+          - name: run-complete
+            dependencies: [implementation]
+            template: run-complete
+          - name: judge
+            dependencies: [run-complete]
+            templateRef:
+              name: codex-run
+              template: codex-run
+            arguments:
+              parameters:
+                - name: stage
+                  value: judge
+          - name: gate
+            dependencies: [judge]
+            template: gate
+          - name: merge
+            dependencies: [gate]
+            when: "{{tasks.gate.outputs.parameters.decision}} == pass"
+            template: merge
+          - name: deploy
+            dependencies: [merge]
+            template: deploy
+          - name: verify
+            dependencies: [deploy]
+            template: verify
+          - name: rerun
+            dependencies: [judge, gate, merge, verify]
+            when: "{{tasks.judge.outputs.parameters.decision}} != pass || {{tasks.gate.outputs.parameters.decision}} != pass || {{tasks.merge.outputs.parameters.decision}} == fail || {{tasks.verify.outputs.parameters.decision}} == fail"
+            template: rerun
+```
+
 ### 6.2 Run creation without Jangar API
 - `run-complete` step writes directly to the DB or publishes to Kafka with retry/backoff.
 - If DB is unavailable, persist a run payload artifact and requeue later.
@@ -206,6 +259,57 @@ Required fields:
 - `prompt_tuning_suggestions`
 - `system_improvement_suggestions`
 
+## 7.4 Run-Complete Payload (DB/Kafka)
+The run-complete payload must include:
+```json
+{
+  "metadata": {
+    "name": "github-codex-implementation-<id>",
+    "namespace": "argo-workflows",
+    "uid": "uuid"
+  },
+  "status": {
+    "phase": "Succeeded|Failed|Error",
+    "startedAt": "RFC3339",
+    "finishedAt": "RFC3339"
+  },
+  "arguments": {
+    "parameters": [
+      { "name": "eventBody", "value": "<base64 json>" },
+      { "name": "rawEvent", "value": "<base64 json>" },
+      { "name": "head", "value": "codex/issue-<n>" },
+      { "name": "base", "value": "main" }
+    ]
+  },
+  "artifacts": [
+    { "name": "implementation-log", "key": "path", "bucket": "argo-workflows" }
+  ],
+  "stage": "implementation"
+}
+```
+
+## 7.5 Notify Payload (optional enrichment)
+Notify remains optional and must **not** be the source of truth. If present:
+```json
+{
+  "workflowName": "github-codex-implementation-<id>",
+  "workflowNamespace": "argo-workflows",
+  "repository": "proompteng/lab",
+  "issueNumber": 1234,
+  "branch": "codex/issue-1234",
+  "prompt": "string",
+  "commitSha": "abcdef123",
+  "last_assistant_message": "string",
+  "logs": {
+    "output": "string",
+    "events": "string",
+    "agent": "string",
+    "runtime": "string",
+    "status": "string"
+  }
+}
+```
+
 ## 8) Judge Requirements (v2)
 
 1) Judge must evaluate against worktree-only diff (not GitHub API diff).
@@ -225,6 +329,15 @@ If judge output is not valid JSON in the required schema:
 - if still invalid, classify as `infra_failure` and rerun
 - record failure reason and attach retry prompts
 
+## 8.3 Judge Input Assembly (Required)
+Judge inputs must be assembled from **authoritative sources** in this order:
+1) Worktree snapshot diff from `jangar_github.pr_files` (source=worktree).
+2) Issue title/body from the issue payload in run-complete (or GitHub API fallback).
+3) PR title/body from GitHub API (metadata only).
+4) Log excerpts from artifacts (implementation-log, status, events, agent/runtime logs).
+
+If any required input is missing, the judge **must not** proceed and must trigger infra rerun.
+
 ## 9) System Improvement PRs (Must be Real)
 
 ### 9.1 Hard requirement
@@ -242,11 +355,30 @@ If judge output is not valid JSON in the required schema:
 - Pipeline should fail if it cannot generate a real system-improvement PR for repeated failures.
 - This prevents silent degradation where suggestions become “garbage.”
 
+### 9.4 System Improvement PR Content (Required)
+Each system-improvement PR must include:
+- **Root cause** from a specific run id.
+- **Concrete patch** (workflow template change, config change, or code fix).
+- **Validation plan** with expected metrics change.
+- **Rollback strategy** for the change.
+
+### 9.5 Suggested Implementation Locations
+- Workflow templates: `argocd/applications/froussard/`
+- Judge logic: `services/jangar/src/server/codex-judge.ts`
+- Worktree snapshots: `services/jangar/src/server/github-worktree-snapshot.ts`
+- Rerun orchestration: `services/jangar/src/server/codex-judge.ts` + new worker
+
 ## 10) PR Creation Guarantees
 
 - The implementation workflow must create or update a PR on every attempt.
 - PR creation is not optional; workflow must fail fast if no PR is created.
 - Head branch must be stable per issue; reruns continue on the same branch.
+
+## 10.2 PR Creation Implementation (Required)
+Implementation step must call GitHub API (or `gh`) to ensure a PR exists:
+- If PR exists: update title/body if needed.
+- If PR does not exist: create one.
+- Always persist `pr_number`, `pr_url`, and `head_sha` into `codex_judge.runs`.
 
 
 ## 11) Retry and Idempotency Guarantees
@@ -261,17 +393,41 @@ If judge output is not valid JSON in the required schema:
 - PR identity: `head branch` is unique per issue.
 - System-improvement PR identity: `(issue_number, failure_reason, window)` is unique.
 
+## 11.3 Durable Rerun Queue (Required)
+Rerun submissions must:
+- Be inserted into `codex_judge.rerun_submissions` **before** calling Facteur.
+- Be claimed with idempotency (`parent_run_id`, `attempt`, `delivery_id`).
+- Retry via worker if submission fails (no in-memory timers).
+
 ## 12) Durable Rerun Orchestration
 
 - Rerun submissions must be persisted in DB first, then executed.
 - A background worker (or Argo step) must claim and submit pending reruns.
 - In-memory timers are not allowed for production.
 
+## 12.1 Rerun Payload (Facteur)
+```json
+{
+  "repository": "proompteng/lab",
+  "issueNumber": 1234,
+  "base": "main",
+  "head": "codex/issue-1234",
+  "prompt": "<next_prompt>",
+  "attempt": 2,
+  "parentRunId": "uuid"
+}
+```
+
 ## 13) Worktree Snapshot Requirements
 
 - Worktree snapshot must exist for every PR used by judge.
 - `jangar_github.pr_files` must be populated from git diff in the worktree.
 - Judge must fail if worktree snapshot is missing.
+
+## 13.1 Worktree Snapshot Implementation (Required)
+- Use `git diff --name-status` + `git diff -U3` against `base..head`.
+- Store `source='worktree'` in `jangar_github.pr_files`.
+- Update `jangar_github.pr_worktrees` with `base_sha`, `head_sha`, `last_refreshed_at`.
 
 ## 14) Reliability Engineering (SLOs + Monitoring)
 
@@ -334,6 +490,18 @@ For every run, the following must be true:
 - Review status and threads are resolved or escalated.
 - Judge output is valid JSON with required fields.
 - If decision != pass, next_prompt is non-empty.
+
+## 19) Implementation Checklist (Engineering)
+1) Add or update Argo WorkflowTemplate `codex-run` and `codex-autonomous` DAG.
+2) Ensure workflow outputs include all required artifacts.
+3) Implement `run-complete` step to persist payload (DB or Kafka).
+4) Implement NATS context soak (pre-run) and publish summary/gaps (post-run).
+5) Enforce PR creation in implementation step.
+6) Implement worktree snapshot refresh and enforce judge dependency on it.
+7) Implement judge execution inside Argo with strict JSON output.
+8) Implement durable rerun queue + worker.
+9) Implement system-improvement PR generator with real patches.
+10) Add metrics and alerts for missing artifacts, missing PRs, and rerun failures.
 
 ## 19) Open Questions
 
