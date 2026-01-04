@@ -85,6 +85,30 @@ Need only the core bootstrap stack? Stop after the first command—leave the oth
 
 All generated Applications default to manual sync. Promote a workload by running `argocd app sync <name>`. Once stable, flip its `automation` value to `auto` inside the relevant stage file to enable automatic reconcilation.
 
+## Crossplane (platform stage)
+
+Crossplane is installed via the `platform.yaml` ApplicationSet. Keep automation set to `manual` until the install is validated.
+
+Apply Crossplane via kubectl (Codex deployment step uses the same sequence):
+
+```bash
+kubectl create namespace crossplane-system --dry-run=client -o yaml | kubectl apply -f -
+helm repo add crossplane https://charts.crossplane.io/stable
+helm repo update
+helm template crossplane crossplane/crossplane \
+  --version 2.1.3 \
+  --namespace crossplane-system \
+  --include-crds | kubectl apply -n crossplane-system -f -
+kubectl -n crossplane-system rollout status deployment/crossplane --timeout=600s
+kubectl -n crossplane-system wait --for=condition=Ready pod -l app.kubernetes.io/name=crossplane --timeout=600s
+```
+
+Validation:
+
+- `argocd app get crossplane` reports Synced/Healthy.
+- `kubectl get pods -n crossplane-system` shows all Crossplane pods Ready.
+- Crossplane chart version is pinned to `2.1.3`.
+
 ### Bringing the control plane up before Dex is ready
 
 Dex relies on Sealed Secrets to decrypt the Argo Workflows SSO credentials. When rebuilding a cluster you can bring Argo CD online first and delay Dex until Sealed Secrets and Argo Workflows are configured.
