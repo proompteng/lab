@@ -866,6 +866,7 @@ export const captureTerminalSnapshot = async (sessionId: string, lines = 2000): 
     throw new Error(captureResult.stderr.trim() || 'Unable to capture tmux pane')
   }
   let snapshot = captureResult.stdout.replace(/\n+$/g, '')
+  snapshot = snapshot.replace(/\r?\n/g, '\r\n')
   if (cursor) {
     const row = Math.max(1, cursor.y + 1)
     const col = Math.max(1, cursor.x + 1)
