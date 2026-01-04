@@ -23,6 +23,10 @@ spec:
         value: ''
       - name: base
         value: 'main'
+      - name: implementation_iterations
+        value: '1'
+      - name: iteration_cycle
+        value: '1'
   volumes:
     - name: workdir
       emptyDir:
@@ -37,6 +41,8 @@ spec:
           - name: eventBody
           - name: head
           - name: base
+          - name: implementation_iterations
+          - name: iteration_cycle
       container:
         image: registry.ide-newton.ts.net/lab/codex-universal:latest
         imagePullPolicy: Always
@@ -344,6 +350,10 @@ spec:
         value: ''
       - name: stage
         value: implementation
+      - name: iteration
+        value: ''
+      - name: iteration_cycle
+        value: ''
       - name: rawEvent
         value: '{}'
       - name: eventBody
@@ -369,6 +379,8 @@ spec:
           - name: head
           - name: prompt
           - name: stage
+          - name: iteration
+          - name: iteration_cycle
           - name: rawEvent
           - name: eventBody
       container:
@@ -471,6 +483,10 @@ spec:
             value: /workspace/lab/.codex-implementation-agent.log
           - name: RUN_ID
             value: '{{workflow.uid}}'
+          - name: CODEX_ITERATION
+            value: '{{inputs.parameters.iteration}}'
+          - name: CODEX_ITERATION_CYCLE
+            value: '{{inputs.parameters.iteration_cycle}}'
           - name: CODEX_GRAF_BEARER_TOKEN
             valueFrom:
               secretKeyRef:
@@ -506,7 +522,9 @@ spec:
               "base": "{{inputs.parameters.base}}",
               "head": "{{inputs.parameters.head}}",
               "prompt": "{{inputs.parameters.prompt}}",
-              "stage": "{{inputs.parameters.stage}}"
+              "stage": "{{inputs.parameters.stage}}",
+              "iteration": "{{inputs.parameters.iteration}}",
+              "iteration_cycle": "{{inputs.parameters.iteration_cycle}}"
             }
             JSON
             fi
@@ -520,7 +538,9 @@ spec:
                 --arg issue "{{inputs.parameters.issue_number}}" \
                 --arg base "{{inputs.parameters.base}}" \
                 --arg head "{{inputs.parameters.head}}" \
-                '.prompt = ($prompt // .prompt) | .stage = ($stage // .stage) | .repository = ($repo // .repository) | .issueNumber = ($issue // .issueNumber) | .base = ($base // .base) | .head = ($head // .head)' \
+                --arg iteration "{{inputs.parameters.iteration}}" \
+                --arg iterationCycle "{{inputs.parameters.iteration_cycle}}" \
+                '.prompt = (if ($prompt | length) > 0 then $prompt else .prompt end) | .stage = ($stage // .stage) | .repository = ($repo // .repository) | .issueNumber = ($issue // .issueNumber) | .base = ($base // .base) | .head = ($head // .head) | .iteration = (if ($iteration | length) > 0 then ($iteration | tonumber?) else .iteration end) | .iteration_cycle = (if ($iterationCycle | length) > 0 then ($iterationCycle | tonumber?) else .iteration_cycle end)' \
                 "$EVENT_FILE" > "$TMP_EVENT" && mv "$TMP_EVENT" "$EVENT_FILE"
             fi
 

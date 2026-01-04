@@ -5,6 +5,7 @@ metadata:
   namespace: argo-workflows
 spec:
   serviceAccountName: codex-workflow
+  parallelism: 1
   entrypoint: codex-dag
   arguments:
     parameters:
@@ -20,10 +21,14 @@ spec:
         value: ''
       - name: judge_prompt
         value: ''
+      - name: implementation_iterations
+        value: '1'
       - name: attempt
         value: '1'
       - name: parent_run_uid
         value: ''
+      - name: iteration_cycle
+        value: '1'
       - name: deploy_apps
         value: ''
       - name: argocd_namespace
@@ -48,8 +53,11 @@ spec:
     - name: codex-dag
       dag:
         tasks:
-          - name: implementation
-            template: codex-run
+          - name: implementation-loop
+            template: implementation-cycle
+            withSequence:
+              start: "1"
+              end: "{{workflow.parameters.implementation_iterations}}"
             arguments:
               parameters:
                 - name: repository
@@ -72,51 +80,14 @@ spec:
                   value: '{{workflow.parameters.rawEvent}}'
                 - name: eventBody
                   value: '{{workflow.parameters.eventBody}}'
-          - name: run-complete
-            dependencies: [implementation]
-            template: run-complete
-            arguments:
-              parameters:
-                - name: repository
-                  value: '{{workflow.parameters.repository}}'
-                - name: issue_number
-                  value: '{{workflow.parameters.issue_number}}'
-                - name: base
-                  value: '{{workflow.parameters.base}}'
-                - name: head
-                  value: '{{workflow.parameters.head}}'
-                - name: attempt
-                  value: '{{workflow.parameters.attempt}}'
-                - name: parent_run_uid
-                  value: '{{workflow.parameters.parent_run_uid}}'
-                - name: rawEvent
-                  value: '{{workflow.parameters.rawEvent}}'
-                - name: eventBody
-                  value: '{{workflow.parameters.eventBody}}'
-                - name: stage
-                  value: implementation
-                - name: implementation_changes_key
-                  value: '{{tasks.implementation.outputs.artifacts.implementation-changes}}'
-                - name: implementation_patch_key
-                  value: '{{tasks.implementation.outputs.artifacts.implementation-patch}}'
-                - name: implementation_status_key
-                  value: '{{tasks.implementation.outputs.artifacts.implementation-status}}'
-                - name: implementation_log_key
-                  value: '{{tasks.implementation.outputs.artifacts.implementation-log}}'
-                - name: implementation_events_key
-                  value: '{{tasks.implementation.outputs.artifacts.implementation-events}}'
-                - name: implementation_agent_log_key
-                  value: '{{tasks.implementation.outputs.artifacts.implementation-agent-log}}'
-                - name: implementation_runtime_log_key
-                  value: '{{tasks.implementation.outputs.artifacts.implementation-runtime-log}}'
-                - name: implementation_resume_key
-                  value: '{{tasks.implementation.outputs.artifacts.implementation-resume}}'
-                - name: implementation_notify_key
-                  value: '{{tasks.implementation.outputs.artifacts.implementation-notify}}'
-                - name: nats_context_key
-                  value: '{{tasks.implementation.outputs.artifacts.nats-context}}'
+                - name: iteration
+                  value: '{{item}}'
+                - name: iteration_cycle
+                  value: '{{workflow.parameters.iteration_cycle}}'
+                - name: iterations
+                  value: '{{workflow.parameters.implementation_iterations}}'
           - name: judge
-            dependencies: [run-complete]
+            dependencies: [implementation-loop]
             template: codex-run
             arguments:
               parameters:
@@ -140,8 +111,25 @@ spec:
                   value: '{{workflow.parameters.rawEvent}}'
                 - name: eventBody
                   value: '{{workflow.parameters.eventBody}}'
-          - name: gate
+                - name: iteration
+                  value: '{{workflow.parameters.implementation_iterations}}'
+                - name: iteration_cycle
+                  value: '{{workflow.parameters.iteration_cycle}}'
+                - name: iterations
+                  value: '{{workflow.parameters.implementation_iterations}}'
+          - name: jangar-review
             dependencies: [judge]
+            template: jangar-review
+            arguments:
+              parameters:
+                - name: repository
+                  value: '{{workflow.parameters.repository}}'
+                - name: issue_number
+                  value: '{{workflow.parameters.issue_number}}'
+                - name: head
+                  value: '{{workflow.parameters.head}}'
+          - name: gate
+            dependencies: [jangar-review]
             template: gate
             arguments:
               parameters:
@@ -149,9 +137,6 @@ spec:
                   value: '{{workflow.parameters.repository}}'
                 - name: head
                   value: '{{workflow.parameters.head}}'
-              artifacts:
-                - name: implementation-notify
-                  from: '{{tasks.implementation.outputs.artifacts.implementation-notify}}'
           - name: merge
             dependencies: [gate]
             when: "{{tasks.gate.outputs.parameters.decision}} == pass"
@@ -212,6 +197,103 @@ spec:
                   value: '{{=sprig.add(int(workflow.parameters.attempt), 1)}}'
                 - name: parent_run_uid
                   value: '{{workflow.uid}}'
+                - name: iteration_cycle
+                  value: '{{=sprig.add(int(workflow.parameters.iteration_cycle), 1)}}'
+    - name: implementation-cycle
+      inputs:
+        parameters:
+          - name: repository
+          - name: issue_number
+          - name: base
+          - name: head
+          - name: prompt
+          - name: stage
+          - name: attempt
+          - name: parent_run_uid
+          - name: rawEvent
+          - name: eventBody
+          - name: iteration
+          - name: iteration_cycle
+          - name: iterations
+      steps:
+        - - name: implementation
+            template: codex-run
+            arguments:
+              parameters:
+                - name: repository
+                  value: '{{inputs.parameters.repository}}'
+                - name: issue_number
+                  value: '{{inputs.parameters.issue_number}}'
+                - name: base
+                  value: '{{inputs.parameters.base}}'
+                - name: head
+                  value: '{{inputs.parameters.head}}'
+                - name: prompt
+                  value: '{{inputs.parameters.prompt}}'
+                - name: stage
+                  value: '{{inputs.parameters.stage}}'
+                - name: attempt
+                  value: '{{inputs.parameters.attempt}}'
+                - name: parent_run_uid
+                  value: '{{inputs.parameters.parent_run_uid}}'
+                - name: rawEvent
+                  value: '{{inputs.parameters.rawEvent}}'
+                - name: eventBody
+                  value: '{{inputs.parameters.eventBody}}'
+                - name: iteration
+                  value: '{{inputs.parameters.iteration}}'
+                - name: iteration_cycle
+                  value: '{{inputs.parameters.iteration_cycle}}'
+                - name: iterations
+                  value: '{{inputs.parameters.iterations}}'
+        - - name: run-complete
+            template: run-complete
+            arguments:
+              parameters:
+                - name: repository
+                  value: '{{inputs.parameters.repository}}'
+                - name: issue_number
+                  value: '{{inputs.parameters.issue_number}}'
+                - name: base
+                  value: '{{inputs.parameters.base}}'
+                - name: head
+                  value: '{{inputs.parameters.head}}'
+                - name: attempt
+                  value: '{{inputs.parameters.attempt}}'
+                - name: parent_run_uid
+                  value: '{{inputs.parameters.parent_run_uid}}'
+                - name: rawEvent
+                  value: '{{inputs.parameters.rawEvent}}'
+                - name: eventBody
+                  value: '{{inputs.parameters.eventBody}}'
+                - name: stage
+                  value: '{{inputs.parameters.stage}}'
+                - name: iteration
+                  value: '{{inputs.parameters.iteration}}'
+                - name: iteration_cycle
+                  value: '{{inputs.parameters.iteration_cycle}}'
+                - name: iterations
+                  value: '{{inputs.parameters.iterations}}'
+                - name: implementation_changes_key
+                  value: '{{steps.implementation.outputs.artifacts.implementation-changes}}'
+                - name: implementation_patch_key
+                  value: '{{steps.implementation.outputs.artifacts.implementation-patch}}'
+                - name: implementation_status_key
+                  value: '{{steps.implementation.outputs.artifacts.implementation-status}}'
+                - name: implementation_log_key
+                  value: '{{steps.implementation.outputs.artifacts.implementation-log}}'
+                - name: implementation_events_key
+                  value: '{{steps.implementation.outputs.artifacts.implementation-events}}'
+                - name: implementation_agent_log_key
+                  value: '{{steps.implementation.outputs.artifacts.implementation-agent-log}}'
+                - name: implementation_runtime_log_key
+                  value: '{{steps.implementation.outputs.artifacts.implementation-runtime-log}}'
+                - name: implementation_resume_key
+                  value: '{{steps.implementation.outputs.artifacts.implementation-resume}}'
+                - name: implementation_notify_key
+                  value: '{{steps.implementation.outputs.artifacts.implementation-notify}}'
+                - name: nats_context_key
+                  value: '{{steps.implementation.outputs.artifacts.nats-context}}'
     - name: codex-run
       inputs:
         parameters:
@@ -225,6 +307,9 @@ spec:
           - name: parent_run_uid
           - name: rawEvent
           - name: eventBody
+          - name: iteration
+          - name: iteration_cycle
+          - name: iterations
       container:
         image: registry.ide-newton.ts.net/lab/codex-universal:latest
         imagePullPolicy: Always
@@ -331,6 +416,12 @@ spec:
             value: '{{inputs.parameters.attempt}}'
           - name: CODEX_PARENT_RUN_UID
             value: '{{inputs.parameters.parent_run_uid}}'
+          - name: CODEX_ITERATION
+            value: '{{inputs.parameters.iteration}}'
+          - name: CODEX_ITERATION_CYCLE
+            value: '{{inputs.parameters.iteration_cycle}}'
+          - name: CODEX_ITERATIONS_COUNT
+            value: '{{inputs.parameters.iterations}}'
           - name: RUN_ID
             value: '{{workflow.uid}}'
           - name: CODEX_GRAF_BEARER_TOKEN
@@ -370,7 +461,10 @@ spec:
               "prompt": "{{inputs.parameters.prompt}}",
               "stage": "{{inputs.parameters.stage}}",
               "attempt": "{{inputs.parameters.attempt}}",
-              "parentRunUid": "{{inputs.parameters.parent_run_uid}}"
+              "parentRunUid": "{{inputs.parameters.parent_run_uid}}",
+              "iteration": "{{inputs.parameters.iteration}}",
+              "iteration_cycle": "{{inputs.parameters.iteration_cycle}}",
+              "iterations": "{{inputs.parameters.iterations}}"
             }
             JSON
             fi
@@ -386,7 +480,10 @@ spec:
                 --arg head "{{inputs.parameters.head}}" \
                 --arg attempt "{{inputs.parameters.attempt}}" \
                 --arg parentRunUid "{{inputs.parameters.parent_run_uid}}" \
-                '.prompt = ($prompt // .prompt) | .stage = ($stage // .stage) | .repository = ($repo // .repository) | .issueNumber = ($issue // .issueNumber) | .base = ($base // .base) | .head = ($head // .head) | .attempt = ($attempt // .attempt) | .parentRunUid = ($parentRunUid // .parentRunUid)' \
+                --arg iteration "{{inputs.parameters.iteration}}" \
+                --arg iterationCycle "{{inputs.parameters.iteration_cycle}}" \
+                --arg iterations "{{inputs.parameters.iterations}}" \
+                '.prompt = (if ($prompt | length) > 0 then $prompt else .prompt end) | .stage = ($stage // .stage) | .repository = ($repo // .repository) | .issueNumber = ($issue // .issueNumber) | .base = ($base // .base) | .head = ($head // .head) | .attempt = ($attempt // .attempt) | .parentRunUid = ($parentRunUid // .parentRunUid) | .iteration = (if ($iteration | length) > 0 then ($iteration | tonumber?) else .iteration end) | .iteration_cycle = (if ($iterationCycle | length) > 0 then ($iterationCycle | tonumber?) else .iteration_cycle end) | .iterations = (if ($iterations | length) > 0 then ($iterations | tonumber?) else .iterations end)' \
                 "$EVENT_FILE" > "$TMP_EVENT" && mv "$TMP_EVENT" "$EVENT_FILE"
             fi
 
@@ -569,6 +666,9 @@ spec:
           - name: rawEvent
           - name: eventBody
           - name: stage
+          - name: iteration
+          - name: iteration_cycle
+          - name: iterations
           - name: implementation_changes_key
           - name: implementation_patch_key
           - name: implementation_status_key
@@ -613,6 +713,9 @@ spec:
             FINISHED_AT="$(date -Iseconds -u)"
             ATTEMPT="{{inputs.parameters.attempt}}"
             PARENT_RUN_UID="{{inputs.parameters.parent_run_uid}}"
+            ITERATION="{{inputs.parameters.iteration}}"
+            ITERATION_CYCLE="{{inputs.parameters.iteration_cycle}}"
+            ITERATIONS="{{inputs.parameters.iterations}}"
             mkdir -p /workspace/lab
 
             cat > "$PAYLOAD_PATH" <<JSON
@@ -637,7 +740,10 @@ spec:
                   { "name": "base", "value": "{{inputs.parameters.base}}" },
                   { "name": "stage", "value": "{{inputs.parameters.stage}}" },
                   { "name": "attempt", "value": "${ATTEMPT}" },
-                  { "name": "parent_run_uid", "value": "${PARENT_RUN_UID}" }
+                  { "name": "parent_run_uid", "value": "${PARENT_RUN_UID}" },
+                  { "name": "iteration", "value": "${ITERATION}" },
+                  { "name": "iteration_cycle", "value": "${ITERATION_CYCLE}" },
+                  { "name": "iterations", "value": "${ITERATIONS}" }
                 ]
               },
               "artifacts": [
@@ -660,6 +766,9 @@ spec:
               "issueNumber": "{{inputs.parameters.issue_number}}",
               "branch": "{{inputs.parameters.head}}",
               "base": "{{inputs.parameters.base}}",
+              "iteration": "${ITERATION}",
+              "iteration_cycle": "${ITERATION_CYCLE}",
+              "iterations": "${ITERATIONS}",
               "prompt": "",
               "startedAt": "${STARTED_AT}",
               "finishedAt": "${FINISHED_AT}"
@@ -720,15 +829,12 @@ spec:
         artifacts:
           - name: run-complete-payload
             path: /workspace/lab/.codex-run-complete-payload.json
-    - name: gate
+    - name: jangar-review
       inputs:
         parameters:
           - name: repository
+          - name: issue_number
           - name: head
-        artifacts:
-          - name: implementation-notify
-            path: /workspace/lab/.codex-implementation-notify.json
-            optional: true
       container:
         image: registry.ide-newton.ts.net/lab/codex-universal:latest
         imagePullPolicy: Always
@@ -743,6 +849,95 @@ spec:
               secretKeyRef:
                 name: github-token
                 key: token
+          - name: JANGAR_BASE_URL
+            value: http://jangar.jangar.svc.cluster.local
+        command: ["/bin/bash", "-lc"]
+        args:
+          - |
+            set -euo pipefail
+
+            REPO="{{inputs.parameters.repository}}"
+            HEAD="{{inputs.parameters.head}}"
+            ISSUE_NUMBER="{{inputs.parameters.issue_number}}"
+            STATUS_PATH="/workspace/lab/.codex-review-status.txt"
+            SUMMARY_PATH="/workspace/lab/.codex-review-summary.json"
+            PR_NUMBER_PATH="/workspace/lab/.codex-review-pr-number.txt"
+            PR_URL_PATH="/workspace/lab/.codex-review-pr-url.txt"
+            mkdir -p /workspace/lab
+
+            if [[ -z "${JANGAR_BASE_URL:-}" ]]; then
+              echo "Missing JANGAR_BASE_URL for review queue" >&2
+              exit 1
+            fi
+
+            pr_json=$(gh pr list --repo "$REPO" --head "$HEAD" --json number,url --limit 1)
+            pr_number=$(echo "$pr_json" | jq -r '.[0].number // empty')
+            pr_url=$(echo "$pr_json" | jq -r '.[0].url // empty')
+
+            if [[ -z "$pr_number" ]]; then
+              echo "missing_pull_request" > "$STATUS_PATH"
+              : > "$SUMMARY_PATH"
+              : > "$PR_NUMBER_PATH"
+              : > "$PR_URL_PATH"
+              exit 0
+            fi
+
+            echo "$pr_number" > "$PR_NUMBER_PATH"
+            echo "$pr_url" > "$PR_URL_PATH"
+
+            review_status="pending"
+            review_summary=$(jq -n --arg prUrl "$pr_url" --arg issue "$ISSUE_NUMBER" '{ queuedAt: (now | todate), prUrl: $prUrl, issue: $issue }')
+            echo "$review_status" > "$STATUS_PATH"
+            echo "$review_summary" > "$SUMMARY_PATH"
+
+            payload=$(jq -n \
+              --arg workflowName "{{workflow.name}}" \
+              --arg workflowNamespace "{{workflow.namespace}}" \
+              --arg repository "$REPO" \
+              --arg issueNumber "$ISSUE_NUMBER" \
+              --arg headBranch "$HEAD" \
+              --arg prNumber "$pr_number" \
+              --arg prUrl "$pr_url" \
+              --arg reviewStatus "$review_status" \
+              --argjson reviewSummary "$review_summary" \
+              '{workflow_name: $workflowName, workflow_namespace: $workflowNamespace, repository: $repository, issue_number: $issueNumber, head_branch: $headBranch, pr_number: ($prNumber | tonumber), pr_url: $prUrl, stage: "review", review_status: $reviewStatus, review_summary: $reviewSummary}')
+
+            curl -sSf -X POST -H 'content-type: application/json' --data "$payload" "${JANGAR_BASE_URL%/}/api/codex/notify" >/dev/null
+        volumeMounts:
+          - name: workdir
+            mountPath: /workspace
+      outputs:
+        parameters:
+          - name: review_status
+            valueFrom:
+              path: /workspace/lab/.codex-review-status.txt
+          - name: pr_number
+            valueFrom:
+              path: /workspace/lab/.codex-review-pr-number.txt
+          - name: pr_url
+            valueFrom:
+              path: /workspace/lab/.codex-review-pr-url.txt
+    - name: gate
+      inputs:
+        parameters:
+          - name: repository
+          - name: head
+      container:
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
+        env:
+          - name: GH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+          - name: JANGAR_BASE_URL
+            value: http://jangar.jangar.svc.cluster.local
         command: ["/bin/bash", "-lc"]
         args:
           - |
@@ -794,6 +989,28 @@ spec:
                 return 0
               fi
               return 1
+            }
+
+            post_review_status() {
+              local status="$1"
+              local unresolved="$2"
+              if [[ -z "${JANGAR_BASE_URL:-}" || -z "$pr_number" ]]; then
+                return 0
+              fi
+              local summary
+              summary=$(jq -n --arg decision "$status" --argjson unresolvedThreadsCount "$unresolved" '{decision: $decision, unresolvedThreadsCount: $unresolvedThreadsCount}')
+              local payload
+              payload=$(jq -n \
+                --arg workflowName "{{workflow.name}}" \
+                --arg workflowNamespace "{{workflow.namespace}}" \
+                --arg repository "$REPO" \
+                --arg headBranch "$HEAD" \
+                --arg prNumber "$pr_number" \
+                --arg prUrl "$pr_url" \
+                --arg reviewStatus "$status" \
+                --argjson reviewSummary "$summary" \
+                '{workflow_name: $workflowName, workflow_namespace: $workflowNamespace, repository: $repository, head_branch: $headBranch, pr_number: ($prNumber | tonumber), pr_url: $prUrl, stage: "review", review_status: $reviewStatus, review_summary: $reviewSummary}')
+              curl -sSf -X POST -H 'content-type: application/json' --data "$payload" "${JANGAR_BASE_URL%/}/api/codex/notify" >/dev/null || true
             }
 
             fallback_sha=""
@@ -848,21 +1065,34 @@ spec:
                 continue
               fi
 
-              review_json=$(gh pr view --repo "$REPO" "$pr_number" --json reviewDecision,reviewThreads)
-              review_decision=$(echo "$review_json" | jq -r '.reviewDecision // empty')
-              unresolved_threads=$(echo "$review_json" | jq -r '[.reviewThreads[] | select(.isResolved == false)] | length')
+              review_decision=""
+              unresolved_threads=0
+              if [[ -n "${JANGAR_BASE_URL:-}" ]]; then
+                owner=$(echo "$REPO" | cut -d/ -f1)
+                repo=$(echo "$REPO" | cut -d/ -f2-)
+                review_payload=$(curl -sSf "${JANGAR_BASE_URL%/}/api/github/pulls/${owner}/${repo}/${pr_number}")
+                review_decision=$(echo "$review_payload" | jq -r '.review.decision // empty')
+                unresolved_threads=$(echo "$review_payload" | jq -r '.review.unresolvedThreadsCount // 0')
+              else
+                review_json=$(gh pr view --repo "$REPO" "$pr_number" --json reviewDecision,reviewThreads)
+                review_decision=$(echo "$review_json" | jq -r '.reviewDecision // empty')
+                unresolved_threads=$(echo "$review_json" | jq -r '[.reviewThreads[] | select(.isResolved == false)] | length')
+              fi
 
               if [[ "$unresolved_threads" -gt 0 ]]; then
+                post_review_status "pending" "$unresolved_threads"
                 write_output "fail" "review_unresolved" "Resolve all review threads and request approvals." "$pr_number" "$pr_url" "$pr_sha"
                 exit 0
               fi
 
-              if [[ "$review_decision" == "CHANGES_REQUESTED" ]]; then
+              if [[ "$review_decision" == "CHANGES_REQUESTED" || "$review_decision" == "changes_requested" ]]; then
+                post_review_status "changes_requested" "$unresolved_threads"
                 write_output "fail" "review_unresolved" "Address requested changes and obtain approval." "$pr_number" "$pr_url" "$pr_sha"
                 exit 0
               fi
 
-              if [[ "$review_decision" == "REVIEW_REQUIRED" ]]; then
+              if [[ -z "$review_decision" || "$review_decision" == "REVIEW_REQUIRED" || "$review_decision" == "pending" ]]; then
+                post_review_status "pending" "$unresolved_threads"
                 if [[ "$SECONDS" -ge "$deadline" ]]; then
                   write_output "fail" "review_unresolved" "Obtain required approvals and re-run the gate." "$pr_number" "$pr_url" "$pr_sha"
                   exit 0
@@ -870,6 +1100,8 @@ spec:
                 sleep "$POLL_SECONDS"
                 continue
               fi
+
+              post_review_status "approved" "$unresolved_threads"
 
               ci_json=$(gh api "repos/${REPO}/commits/${pr_sha}/check-runs")
               total_checks=$(echo "$ci_json" | jq -r '.total_count // 0')
@@ -1085,6 +1317,7 @@ spec:
           - name: prompt
           - name: attempt
           - name: parent_run_uid
+          - name: iteration_cycle
       resource:
         action: create
         manifest: |
@@ -1115,6 +1348,8 @@ spec:
                   value: "{{inputs.parameters.prompt}}"
                 - name: judge_prompt
                   value: "{{workflow.parameters.judge_prompt}}"
+                - name: implementation_iterations
+                  value: "{{workflow.parameters.implementation_iterations}}"
                 - name: attempt
                   value: "{{inputs.parameters.attempt}}"
                 - name: parent_run_uid
@@ -1123,3 +1358,5 @@ spec:
                   value: "{{workflow.parameters.rawEvent}}"
                 - name: eventBody
                   value: "{{workflow.parameters.eventBody}}"
+                - name: iteration_cycle
+                  value: "{{inputs.parameters.iteration_cycle}}"
