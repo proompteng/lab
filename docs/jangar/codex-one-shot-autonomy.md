@@ -165,7 +165,14 @@ flowchart LR
 - GitOps preferred: merge triggers Argo CD sync.
 - Optionally trigger Argo deploy workflow via `argo-client.ts`.
 
-### 5.11 Step 10: Persist Evidence
+### 5.11 Step 10: Post-Deploy Verification (Required)
+After the deployment is reported ready, the system must **automatically run end-to-end and integration tests**.
+- Run service-level integration suites (API + workflow hooks).
+- Run UI E2E suites (Playwright) covering the PR review surface and judge linkage.
+- Failures must gate completion and trigger either rollback or `needs_iteration`.
+  - Record failures in artifacts and `codex_judge.evaluations` with a clear reason.
+
+### 5.12 Step 11: Persist Evidence
 - Store artifacts in `codex_judge.artifacts`.
 - Store evaluation in `codex_judge.evaluations`.
 - Store memories in `memories.entries`.
@@ -270,6 +277,7 @@ stateDiagram-v2
 - CI + review + mergeable = pass.
 - Judge decision = pass.
 - PR merged and deployment triggered.
+- Post-deploy E2E + integration tests completed successfully.
 - Artifacts and memories persisted.
 
 ## 11) Operational Notes
