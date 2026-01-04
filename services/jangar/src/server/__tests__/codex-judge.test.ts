@@ -46,9 +46,16 @@ const globalState = globalThis as typeof globalThis & {
     promptTuningFailureThreshold: number
     promptTuningWindowHours: number
     promptTuningCooldownHours: number
+    rerunWorkflowTemplate: string | null
+    rerunWorkflowNamespace: string
+    systemImprovementWorkflowTemplate: string | null
+    systemImprovementWorkflowNamespace: string
+    systemImprovementJudgePrompt: string
+    defaultJudgePrompt: string
   }
   __codexJudgeMemoryStoreMock?: { persist: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
   __codexJudgeClientMock?: CodexAppServerClient
+  __codexJudgeArgoMock?: { submitWorkflowTemplate: ReturnType<typeof vi.fn> } | null
   __codexJudgeReviewStoreMock?: {
     ready: Promise<void>
     listFiles: ReturnType<typeof vi.fn>
@@ -162,6 +169,12 @@ if (!globalState.__codexJudgeConfigMock) {
     promptTuningFailureThreshold: 3,
     promptTuningWindowHours: 24,
     promptTuningCooldownHours: 6,
+    rerunWorkflowTemplate: 'codex-autonomous',
+    rerunWorkflowNamespace: 'argo-workflows',
+    systemImprovementWorkflowTemplate: 'codex-autonomous',
+    systemImprovementWorkflowNamespace: 'argo-workflows',
+    systemImprovementJudgePrompt: 'system improvement judge prompt',
+    defaultJudgePrompt: 'judge prompt',
   }
 }
 
@@ -169,6 +182,12 @@ if (!globalState.__codexJudgeMemoryStoreMock) {
   globalState.__codexJudgeMemoryStoreMock = {
     persist: vi.fn(),
     close: vi.fn(),
+  }
+}
+
+if (!globalState.__codexJudgeArgoMock) {
+  globalState.__codexJudgeArgoMock = {
+    submitWorkflowTemplate: vi.fn(),
   }
 }
 
@@ -447,6 +466,10 @@ const harness = (() => {
     close: vi.fn(async () => {}),
   }
 
+  const argo = {
+    submitWorkflowTemplate: vi.fn(async () => ({})),
+  }
+
   const config = requireMock(globalState.__codexJudgeConfigMock, 'config')
   Object.assign(config, {
     githubToken: null,
@@ -468,6 +491,12 @@ const harness = (() => {
     promptTuningFailureThreshold: 3,
     promptTuningWindowHours: 24,
     promptTuningCooldownHours: 6,
+    rerunWorkflowTemplate: 'codex-autonomous',
+    rerunWorkflowNamespace: 'argo-workflows',
+    systemImprovementWorkflowTemplate: 'codex-autonomous',
+    systemImprovementWorkflowNamespace: 'argo-workflows',
+    systemImprovementJudgePrompt: 'system improvement judge prompt',
+    defaultJudgePrompt: 'judge prompt',
   })
 
   const memoriesStore = {
@@ -478,11 +507,13 @@ const harness = (() => {
   const storeMock = requireMock(globalState.__codexJudgeStoreMock, 'store')
   const githubMock = requireMock(globalState.__codexJudgeGithubMock, 'github')
   const memoryStoreMock = requireMock(globalState.__codexJudgeMemoryStoreMock, 'memory store')
+  const argoMock = requireMock(globalState.__codexJudgeArgoMock, 'argo')
   const reviewStoreMock = requireMock(globalState.__codexJudgeReviewStoreMock, 'review store')
 
   Object.assign(storeMock, store)
   Object.assign(githubMock, github)
   Object.assign(memoryStoreMock, memoriesStore)
+  Object.assign(argoMock, argo)
   Object.assign(reviewStoreMock, reviewStore)
   globalState.__codexJudgeClientMock = codexClient as unknown as CodexAppServerClient
 
@@ -505,6 +536,7 @@ const harness = (() => {
     github,
     config,
     memoriesStore,
+    argo,
     reviewStore,
     reset,
     setRun,
@@ -1018,5 +1050,49 @@ describe('prompt tuning PR gating', () => {
     expect(harness.github.createBranch).toHaveBeenCalledTimes(1)
     expect(harness.github.updateFile).toHaveBeenCalled()
     expect(harness.github.createPullRequest).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('system improvement workflow submission', () => {
+  it('submits a system-improvement workflow even when suggestions are empty', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => '',
+      json: async () => ({}),
+    }))
+    global.fetch = fetchMock as unknown as typeof global.fetch
+
+    harness.config.argoServerUrl = 'https://argo.example.com'
+    harness.setRun({ workflowNamespace: 'argo-workflows' })
+
+    harness.setJudgeResponses([
+      JSON.stringify({
+        decision: 'fail',
+        confidence: 0.4,
+        requirements_coverage: [],
+        missing_items: [],
+        suggested_fixes: [],
+        next_prompt: 'Fix the pipeline and rerun.',
+        prompt_tuning_suggestions: [],
+        system_improvement_suggestions: [],
+      }),
+    ])
+
+    const privateApi = await requirePrivate()
+    await privateApi.evaluateRun('run-1')
+
+    expect(harness.argo.submitWorkflowTemplate).toHaveBeenCalledTimes(1)
+    const submitMock = harness.argo.submitWorkflowTemplate as unknown as {
+      mock: { calls: Array<[{ parameters?: string[] }]> }
+    }
+    const params = submitMock.mock.calls[0]?.[0]?.parameters ?? []
+    const promptParam = params.find((value: string) => value.startsWith('prompt='))
+    expect(promptParam).toBeTruthy()
+    expect(promptParam).toContain('Run id: run-1')
+    expect(promptParam).toContain('Failure reason:')
+    expect(promptParam).toContain('Validation plan:')
+    expect(promptParam).toContain('Rollback steps:')
+    expect(promptParam).toContain('Argo workflow:')
   })
 })
