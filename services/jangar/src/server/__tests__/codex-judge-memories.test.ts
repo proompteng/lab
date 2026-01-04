@@ -277,6 +277,8 @@ describe('codex-judge memory snapshots', () => {
       stage: 'implementation',
       status: 'completed',
       phase: null,
+      iteration: null,
+      iterationCycle: null,
       prompt: 'prompt',
       nextPrompt: 'next prompt',
       commitSha: 'a'.repeat(40),

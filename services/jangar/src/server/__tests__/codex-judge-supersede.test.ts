@@ -236,6 +236,8 @@ const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
   stage: 'implementation',
   status: 'superseded',
   phase: null,
+  iteration: null,
+  iterationCycle: null,
   prompt: null,
   nextPrompt: null,
   commitSha: null,

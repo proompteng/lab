@@ -188,6 +188,8 @@ const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
   stage: 'implementation',
   status: 'run_complete',
   phase: null,
+  iteration: null,
+  iterationCycle: null,
   prompt: null,
   nextPrompt: null,
   commitSha: null,

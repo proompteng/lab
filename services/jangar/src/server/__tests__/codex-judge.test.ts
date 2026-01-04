@@ -216,6 +216,8 @@ const harness = (() => {
     stage: 'implementation',
     status: 'run_complete',
     phase: 'Succeeded',
+    iteration: null,
+    iterationCycle: null,
     prompt: 'Implement the change.',
     nextPrompt: null,
     commitSha: null,
