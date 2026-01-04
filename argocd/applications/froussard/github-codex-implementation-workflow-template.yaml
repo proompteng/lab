@@ -317,6 +317,8 @@ spec:
             path: /workspace/lab/.codex-implementation-notify.json
           - name: nats-context
             path: /workspace/lab/.codex-nats-context.json
+          - name: nats-context
+            path: /workspace/lab/.codex-nats-context.json
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
