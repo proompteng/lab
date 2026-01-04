@@ -168,6 +168,7 @@ class TradeCursor(Base, TimestampMixin):
     source: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
     cursor_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     cursor_seq: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    cursor_symbol: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
 
 
 class LLMDecisionReview(Base, CreatedAtMixin):

@@ -73,7 +73,11 @@ class Settings(BaseSettings):
     trading_clickhouse_url: Optional[str] = Field(default=None, alias="TA_CLICKHOUSE_URL")
     trading_clickhouse_username: Optional[str] = Field(default=None, alias="TA_CLICKHOUSE_USERNAME")
     trading_clickhouse_password: Optional[str] = Field(default=None, alias="TA_CLICKHOUSE_PASSWORD")
-    trading_clickhouse_timeout_seconds: int = Field(default=5, alias="TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS")
+    trading_clickhouse_timeout_seconds: int = Field(
+        default=5,
+        alias="TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS",
+        validation_alias=AliasChoices("TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS", "CLICKHOUSE_TIMEOUT_SECONDS"),
+    )
 
     llm_enabled: bool = Field(default=False, alias="LLM_ENABLED")
     llm_model: str = Field(default="gpt-4.1-mini", alias="LLM_MODEL")

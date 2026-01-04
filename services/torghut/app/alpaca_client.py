@@ -35,8 +35,8 @@ class TorghutAlpacaClient:
     ) -> None:
         key = api_key or settings.apca_api_key_id
         secret = secret_key or settings.apca_api_secret_key
-        base = base_url or settings.apca_api_base_url
-        data_base = settings.apca_data_api_base_url
+        base = _normalize_alpaca_base_url(base_url or settings.apca_api_base_url)
+        data_base = _normalize_alpaca_base_url(settings.apca_data_api_base_url)
 
         is_live = settings.trading_mode == "live"
 
@@ -192,6 +192,15 @@ class TorghutAlpacaClient:
         if unit == TimeFrameUnit.Month:
             return timedelta(days=30 * amount)
         raise ValueError(f"Unsupported timeframe unit: {unit}")
+
+
+def _normalize_alpaca_base_url(base_url: Optional[str]) -> Optional[str]:
+    if not base_url:
+        return None
+    trimmed = base_url.rstrip("/")
+    if trimmed.endswith("/v2"):
+        return trimmed[:-3]
+    return trimmed
 
 
 __all__ = ["TorghutAlpacaClient"]

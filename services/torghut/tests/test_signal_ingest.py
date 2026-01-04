@@ -59,33 +59,33 @@ class TestSignalIngest(TestCase):
 
     def test_build_query_flat_schema(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="flat", table="torghut.ta_signals")
-        query = ingestor._build_query(datetime(2026, 1, 1, tzinfo=timezone.utc), None)
+        query = ingestor._build_query(datetime(2026, 1, 1, tzinfo=timezone.utc), None, None)
         self.assertIn("SELECT ts, symbol, macd, macd_signal, signal, rsi, rsi14, ema, vwap", query)
         self.assertIn("signal_json, timeframe, price, close, spread", query)
         self.assertIn("FROM torghut.ta_signals", query)
         self.assertIn("WHERE ts >= toDateTime64", query)
         self.assertNotIn("payload", query)
-        self.assertIn("ORDER BY ts ASC", query)
+        self.assertIn("ORDER BY ts ASC, symbol ASC", query)
 
     def test_build_query_envelope_schema(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="envelope", table="torghut.ta_signals")
-        query = ingestor._build_query(datetime(2026, 1, 1, tzinfo=timezone.utc), None)
+        query = ingestor._build_query(datetime(2026, 1, 1, tzinfo=timezone.utc), None, None)
         self.assertIn("SELECT event_ts, ingest_ts, symbol, payload, window_size, window_step, seq, source", query)
         self.assertIn("FROM torghut.ta_signals", query)
         self.assertIn("WHERE event_ts > toDateTime64", query)
-        self.assertIn("ORDER BY event_ts ASC, seq ASC", query)
+        self.assertIn("ORDER BY event_ts ASC, symbol ASC, seq ASC", query)
         self.assertNotIn("signal_json", query)
 
     def test_build_query_envelope_schema_with_cursor_seq(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="envelope", table="torghut.ta_signals")
-        query = ingestor._build_query(datetime(2026, 1, 1, tzinfo=timezone.utc), 42)
+        query = ingestor._build_query(datetime(2026, 1, 1, tzinfo=timezone.utc), 42, None)
         self.assertIn("event_ts = toDateTime64", query)
         self.assertIn("seq > 42", query)
-        self.assertIn("ORDER BY event_ts ASC, seq ASC", query)
+        self.assertIn("ORDER BY event_ts ASC, symbol ASC, seq ASC", query)
 
     def test_build_query_flat_schema_overlaps_window(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="flat", table="torghut.ta_signals")
-        query = ingestor._build_query(datetime(2026, 1, 1, 0, 0, 5, tzinfo=timezone.utc), None)
+        query = ingestor._build_query(datetime(2026, 1, 1, 0, 0, 5, tzinfo=timezone.utc), None, None)
         self.assertIn("WHERE ts >= toDateTime64", query)
         self.assertIn("2026-01-01 00:00:03.000", query)
 
@@ -160,6 +160,35 @@ class TestSignalIngest(TestCase):
             cursor = session.execute(select(TradeCursor)).scalar_one()
             self.assertEqual(cursor.cursor_at, datetime(2026, 1, 1, 0, 0, 10))
             self.assertEqual(cursor.cursor_seq, 2)
+            self.assertEqual(cursor.cursor_symbol, "AAPL")
+
+    def test_cursor_tracks_symbol_tiebreak(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        rows = [
+            {"event_ts": "2026-01-01T00:00:00Z", "symbol": "AAPL", "payload": {}, "seq": 1},
+            {"event_ts": "2026-01-01T00:00:00Z", "symbol": "MSFT", "payload": {}, "seq": 1},
+            {"event_ts": "2026-01-01T00:00:00Z", "symbol": "GOOG", "payload": {}, "seq": 1},
+        ]
+
+        class CursorIngestor(ClickHouseSignalIngestor):
+            def __init__(self, *args, **kwargs) -> None:
+                super().__init__(*args, **kwargs)
+                self._rows = rows
+
+            def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+                return self._rows
+
+        ingestor = CursorIngestor(schema="envelope", table="torghut.ta_signals", url="http://example")
+        with session_local() as session:
+            batch = ingestor.fetch_signals(session)
+            ingestor.commit_cursor(session, batch)
+            cursor = session.execute(select(TradeCursor)).scalar_one()
+            self.assertEqual(cursor.cursor_at, datetime(2026, 1, 1, 0, 0, 0))
+            self.assertEqual(cursor.cursor_seq, 1)
+            self.assertEqual(cursor.cursor_symbol, "MSFT")
 
     def test_flat_cursor_overlap_dedupes_older_rows(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)

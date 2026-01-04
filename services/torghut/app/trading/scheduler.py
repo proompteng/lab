@@ -449,7 +449,7 @@ class TradingPipeline:
     def _ensure_decision_price(
         self, decision: StrategyDecision, signal_price: Any
     ) -> tuple[StrategyDecision, Optional[MarketSnapshot]]:
-        if signal_price is not None:
+        if signal_price is not None and "price_snapshot" in decision.params:
             return decision, None
         snapshot = self.price_fetcher.fetch_market_snapshot(
             SignalEnvelope(
@@ -462,7 +462,8 @@ class TradingPipeline:
         if snapshot is None or snapshot.price is None:
             return decision, None
         updated_params = dict(decision.params)
-        updated_params["price"] = snapshot.price
+        if signal_price is None:
+            updated_params["price"] = snapshot.price
         updated_params["price_snapshot"] = _price_snapshot_payload(snapshot)
         if snapshot.spread is not None and "spread" not in updated_params:
             updated_params["spread"] = snapshot.spread

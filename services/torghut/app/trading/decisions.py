@@ -9,7 +9,7 @@ from typing import Any, Iterable, Optional, cast
 from ..config import settings
 from ..models import Strategy
 from .models import SignalEnvelope, StrategyDecision
-from .prices import PriceFetcher
+from .prices import MarketSnapshot, PriceFetcher
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +67,11 @@ class DecisionEngine:
 
         qty = Decimal(str(settings.trading_default_qty))
         price = _extract_price(payload)
+        snapshot: Optional[MarketSnapshot] = None
         if price is None and self.price_fetcher is not None:
-            price = self.price_fetcher.fetch_price(signal)
+            snapshot = self.price_fetcher.fetch_market_snapshot(signal)
+            if snapshot is not None:
+                price = snapshot.price
 
         return StrategyDecision(
             strategy_id=str(strategy.id),
@@ -80,13 +83,43 @@ class DecisionEngine:
             order_type="market",
             time_in_force="day",
             rationale=",".join(rationale_parts) if rationale_parts else None,
-            params={
-                "macd": macd,
-                "macd_signal": macd_signal,
-                "rsi": rsi,
-                "price": price,
-            },
+            params=_build_params(
+                macd=macd,
+                macd_signal=macd_signal,
+                rsi=rsi,
+                price=price,
+                snapshot=snapshot,
+            ),
         )
+
+
+def _build_params(
+    macd: Decimal,
+    macd_signal: Decimal,
+    rsi: Decimal,
+    price: Optional[Decimal],
+    snapshot: Optional[MarketSnapshot],
+) -> dict[str, Any]:
+    params: dict[str, Any] = {
+        "macd": macd,
+        "macd_signal": macd_signal,
+        "rsi": rsi,
+        "price": price,
+    }
+    if snapshot is not None:
+        params["price_snapshot"] = _snapshot_payload(snapshot)
+        if snapshot.spread is not None:
+            params.setdefault("spread", snapshot.spread)
+    return params
+
+
+def _snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:
+    return {
+        "as_of": snapshot.as_of.isoformat(),
+        "price": str(snapshot.price) if snapshot.price is not None else None,
+        "spread": str(snapshot.spread) if snapshot.spread is not None else None,
+        "source": snapshot.source,
+    }
 
 
 def _extract_macd(payload: dict[str, Any]) -> tuple[Optional[Decimal], Optional[Decimal]]:

@@ -127,3 +127,14 @@ class TestAlpacaClient(TestCase):
                 self.assertFalse(data_kwargs.get("sandbox"))
         finally:
             config.settings.trading_mode = original
+
+    def test_alpaca_base_url_strips_v2_suffix(self) -> None:
+        with patch("app.alpaca_client.TradingClient") as mock_trading_client:
+            TorghutAlpacaClient(
+                api_key="k",
+                secret_key="s",
+                base_url="https://paper-api.alpaca.markets/v2",
+            )
+
+            trading_kwargs = mock_trading_client.call_args.kwargs
+            self.assertEqual(trading_kwargs.get("url_override"), "https://paper-api.alpaca.markets")
