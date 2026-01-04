@@ -80,6 +80,7 @@ describe('runCodexImplementation', () => {
     process.env.LGTM_LOKI_ENDPOINT = 'http://localhost/loki'
     process.env.CHANNEL_SCRIPT = ''
     process.env.CODEX_SKIP_PR_CHECK = '1'
+    process.env.CODEX_NATS_SOAK_REQUIRED = 'false'
 
     const payload = {
       prompt: 'Implementation prompt',

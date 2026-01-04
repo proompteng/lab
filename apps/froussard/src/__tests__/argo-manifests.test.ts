@@ -8,10 +8,11 @@ import YAML from 'yaml'
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const repoRoot = resolve(__dirname, '../../../..')
 
-const loadYaml = async <T = unknown>(relativePath: string): Promise<T> => {
+const loadYamlDocs = async <T = unknown>(relativePath: string): Promise<T[]> => {
   const absolutePath = resolve(repoRoot, relativePath)
   const content = await readFile(absolutePath, 'utf8')
-  return YAML.parse(content) as T
+  const docs = YAML.parseAllDocuments(content)
+  return docs.map((doc) => doc.toJSON() as T).filter(Boolean)
 }
 
 interface WorkflowTemplate {
@@ -29,11 +30,15 @@ describe('Codex Argo manifests', () => {
     const templatePaths = ['argocd/applications/froussard/github-codex-implementation-workflow-template.yaml']
 
     for (const relativePath of templatePaths) {
-      const template = await loadYaml<WorkflowTemplate>(relativePath)
-      const implementTemplate = template.spec?.templates?.[0]
-      const script: string | undefined = implementTemplate?.container?.args?.[2]
-      expect(script, `missing bootstrap script for ${relativePath}`).toBeTruthy()
-      expect(script, `workflow ${relativePath} does not decode payloads`).toContain('base64 --decode')
+      const templates = await loadYamlDocs<WorkflowTemplate>(relativePath)
+      const scripts = templates
+        .map((template) => template.spec?.templates?.[0]?.container?.args?.[2])
+        .filter((script): script is string => Boolean(script))
+      expect(scripts.length, `missing bootstrap script for ${relativePath}`).toBeGreaterThan(0)
+      expect(
+        scripts.some((script) => script.includes('base64 --decode')),
+        `workflow ${relativePath} does not decode payloads`,
+      ).toBe(true)
     }
   })
 })

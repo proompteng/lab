@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2026-01-04T06:18:36.000Z"
+    deploy.knative.dev/rollout: "2026-01-04T09:41:13.639Z"
 spec:
   replicas: 1
   strategy:
@@ -132,6 +132,14 @@ spec:
               value: "true"
             - name: JANGAR_PROMPT_TUNING_REPO
               value: proompteng/lab
+            - name: JANGAR_CODEX_RERUN_TEMPLATE
+              value: codex-autonomous
+            - name: JANGAR_CODEX_RERUN_NAMESPACE
+              value: argo-workflows
+            - name: JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE
+              value: codex-autonomous
+            - name: JANGAR_SYSTEM_IMPROVEMENT_NAMESPACE
+              value: argo-workflows
             - name: DISCORD_BOT_TOKEN
               valueFrom:
                 secretKeyRef:

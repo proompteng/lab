@@ -3,26 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { resetCodexClient, setCodexClientFactory } from '~/server/codex-client'
 import { GitHubRateLimitError, type ReviewSummary } from '~/server/github-client'
-import type { CodexEvaluationRecord, CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
+import type {
+  CodexEvaluationRecord,
+  CodexJudgeStore,
+  CodexRerunSubmissionRecord,
+  CodexRunRecord,
+} from '../codex-judge-store'
 
 let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
-
-const requireMock = <T>(value: T | undefined, name: string): T => {
-  if (!value) {
-    throw new Error(`Missing ${name} mock`)
-  }
-  return value
-}
-
-const requirePrivate = async () => {
-  if (!__private) {
-    __private = (await import('../codex-judge')).__private
-  }
-  if (!__private) {
-    throw new Error('Missing codex judge private API')
-  }
-  return __private
-}
 
 const globalState = globalThis as typeof globalThis & {
   __codexJudgeStoreMock?: CodexJudgeStore
@@ -61,6 +49,48 @@ const globalState = globalThis as typeof globalThis & {
   }
   __codexJudgeMemoryStoreMock?: { persist: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
   __codexJudgeClientMock?: CodexAppServerClient
+  __codexJudgeReviewStoreMock?: {
+    ready: Promise<void>
+    listFiles: ReturnType<typeof vi.fn>
+    close: ReturnType<typeof vi.fn>
+  }
+}
+
+vi.mock('~/server/github-review-store', () => ({
+  createGithubReviewStore: () => {
+    const state = globalThis as typeof globalThis & {
+      __codexJudgeReviewStoreMock?: {
+        ready: Promise<void>
+        listFiles: ReturnType<typeof vi.fn>
+        close: ReturnType<typeof vi.fn>
+      }
+    }
+    if (!state.__codexJudgeReviewStoreMock) {
+      state.__codexJudgeReviewStoreMock = {
+        ready: Promise.resolve(),
+        listFiles: vi.fn(async () => []),
+        close: vi.fn(async () => {}),
+      }
+    }
+    return state.__codexJudgeReviewStoreMock
+  },
+}))
+
+const requireMock = <T>(value: T | undefined, name: string): T => {
+  if (!value) {
+    throw new Error(`Missing ${name} mock`)
+  }
+  return value
+}
+
+const requirePrivate = async () => {
+  if (!__private) {
+    __private = (await import('../codex-judge')).__private
+  }
+  if (!__private) {
+    throw new Error('Missing codex judge private API')
+  }
+  return __private
 }
 
 if (!globalState.__codexJudgeStoreMock) {
@@ -88,6 +118,8 @@ if (!globalState.__codexJudgeStoreMock) {
     listRecentRuns: vi.fn(),
     listRunsPage: vi.fn(),
     listIssueSummaries: vi.fn(),
+    enqueueRerunSubmission: vi.fn(),
+    listRerunSubmissions: vi.fn(),
     getLatestPromptTuningByIssue: vi.fn(),
     createPromptTuning: vi.fn(),
     close: vi.fn(),
@@ -136,6 +168,14 @@ if (!globalState.__codexJudgeConfigMock) {
 if (!globalState.__codexJudgeMemoryStoreMock) {
   globalState.__codexJudgeMemoryStoreMock = {
     persist: vi.fn(),
+    close: vi.fn(),
+  }
+}
+
+if (!globalState.__codexJudgeReviewStoreMock) {
+  globalState.__codexJudgeReviewStoreMock = {
+    ready: Promise.resolve(),
+    listFiles: vi.fn(),
     close: vi.fn(),
   }
 }
@@ -196,6 +236,14 @@ const harness = (() => {
     evaluations.length = 0
     judgePrompts.length = 0
     judgeResponses.length = 0
+    reviewStore.listFiles.mockReset()
+    reviewStore.listFiles.mockResolvedValue([
+      {
+        path: 'services/jangar/src/server/codex-judge.ts',
+        status: 'modified',
+        patch: 'diff --git a/file b/file\n+change',
+      },
+    ])
   }
 
   const codexClient = {
@@ -280,6 +328,7 @@ const harness = (() => {
     listRunsByCommitSha: vi.fn(async () => []),
     listRunsByPrNumber: vi.fn(async () => []),
     listRunsByStatus: vi.fn(async () => [run]),
+    listRerunSubmissions: vi.fn(async () => [] as CodexRerunSubmissionRecord[]),
     claimRerunSubmission: vi.fn(async ({ attempt, deliveryId }: { attempt: number; deliveryId: string }) => ({
       submission: {
         id: `rerun-${attempt}`,
@@ -295,6 +344,19 @@ const harness = (() => {
         submittedAt: null,
       },
       shouldSubmit: true,
+    })),
+    enqueueRerunSubmission: vi.fn(async ({ parentRunId, attempt, deliveryId }) => ({
+      id: `rerun-${attempt}`,
+      parentRunId,
+      attempt,
+      deliveryId,
+      status: 'queued',
+      submissionAttempt: 0,
+      responseStatus: null,
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+      submittedAt: null,
     })),
     updateRerunSubmission: vi.fn(async ({ id, status, responseStatus, error, submittedAt }) => ({
       id,
@@ -373,6 +435,18 @@ const harness = (() => {
     createPullRequest: vi.fn(async () => ({ html_url: 'https://github.com/proompteng/lab/pull/101' })),
   }
 
+  const reviewStore = {
+    ready: Promise.resolve(),
+    listFiles: vi.fn(async () => [
+      {
+        path: 'services/jangar/src/server/codex-judge.ts',
+        status: 'modified',
+        patch: 'diff --git a/file b/file\n+change',
+      },
+    ]),
+    close: vi.fn(async () => {}),
+  }
+
   const config = requireMock(globalState.__codexJudgeConfigMock, 'config')
   Object.assign(config, {
     githubToken: null,
@@ -404,14 +478,25 @@ const harness = (() => {
   const storeMock = requireMock(globalState.__codexJudgeStoreMock, 'store')
   const githubMock = requireMock(globalState.__codexJudgeGithubMock, 'github')
   const memoryStoreMock = requireMock(globalState.__codexJudgeMemoryStoreMock, 'memory store')
+  const reviewStoreMock = requireMock(globalState.__codexJudgeReviewStoreMock, 'review store')
 
   Object.assign(storeMock, store)
   Object.assign(githubMock, github)
   Object.assign(memoryStoreMock, memoriesStore)
+  Object.assign(reviewStoreMock, reviewStore)
   globalState.__codexJudgeClientMock = codexClient as unknown as CodexAppServerClient
 
   const setJudgeResponses = (responses: string[]) => {
     judgeResponses.splice(0, judgeResponses.length, ...responses)
+  }
+
+  const setWorktreeFiles = (files: Array<{ path: string; status?: string | null; patch?: string | null }>) => {
+    const normalized = files.map((file) => ({
+      path: file.path,
+      status: file.status ?? 'modified',
+      patch: file.patch ?? '',
+    }))
+    reviewStore.listFiles.mockResolvedValue(normalized)
   }
 
   return {
@@ -420,9 +505,11 @@ const harness = (() => {
     github,
     config,
     memoriesStore,
+    reviewStore,
     reset,
     setRun,
     setJudgeResponses,
+    setWorktreeFiles,
     judgePrompts,
   }
 })()
@@ -497,7 +584,10 @@ describe('codex judge guardrails', () => {
       }),
     )
     expect(harness.store.listRunsByIssue).toHaveBeenCalledTimes(1)
-    expect(fetchMock).toHaveBeenCalledWith('http://facteur.test/codex/tasks', expect.any(Object))
+    expect(harness.store.enqueueRerunSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({ parentRunId: 'run-1', attempt: 2 }),
+    )
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('marks runs needs_human when rerun submission fails', async () => {
@@ -506,6 +596,7 @@ describe('codex judge guardrails', () => {
       return 0 as unknown as ReturnType<typeof setTimeout>
     })
     try {
+      const staleTimestamp = new Date(Date.now() - 60_000).toISOString()
       const fetchMock = vi.fn(async () => ({
         ok: false,
         status: 500,
@@ -516,10 +607,42 @@ describe('codex judge guardrails', () => {
 
       harness.setJudgeResponses(['nope', 'still nope', 'no json here'])
 
-      const privateApi = await requirePrivate()
-      await privateApi.evaluateRun('run-1')
+      harness.store.listRerunSubmissions.mockResolvedValue([
+        {
+          id: 'rerun-1',
+          parentRunId: 'run-1',
+          attempt: 2,
+          deliveryId: 'jangar-run-1-attempt-2',
+          status: 'queued',
+          submissionAttempt: 0,
+          responseStatus: null,
+          error: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: staleTimestamp,
+          submittedAt: null,
+        },
+      ])
+      harness.store.claimRerunSubmission.mockResolvedValue({
+        submission: {
+          id: 'rerun-1',
+          parentRunId: 'run-1',
+          attempt: 2,
+          deliveryId: 'jangar-run-1-attempt-2',
+          status: 'queued',
+          submissionAttempt: 0,
+          responseStatus: null,
+          error: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: staleTimestamp,
+          submittedAt: null,
+        },
+        shouldSubmit: true,
+      })
 
-      expect(fetchMock).toHaveBeenCalledTimes(4)
+      const privateApi = await requirePrivate()
+      await privateApi.processRerunQueue()
+
+      expect(fetchMock).toHaveBeenCalled()
       expect(harness.store.updateRunStatus).toHaveBeenCalledWith('run-1', 'needs_human')
       expect(harness.store.updateRerunSubmission).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed' }))
     } finally {
@@ -570,11 +693,18 @@ describe('codex judge guardrails', () => {
 
 describe('codex judge ordering', () => {
   it('runs deterministic gates before CI/review checks', async () => {
-    harness.github.getPullRequestDiff.mockResolvedValue(`<<<<<<< HEAD
+    harness.setWorktreeFiles([
+      {
+        path: 'services/jangar/src/server/codex-judge.ts',
+        status: 'modified',
+        patch: `diff --git a/file b/file
+<<<<<<< HEAD
 conflict
 =======
 resolved
->>>>>>> branch`)
+>>>>>>> branch`,
+      },
+    ])
 
     const privateApi = await requirePrivate()
     await privateApi.evaluateRun('run-1')
@@ -604,7 +734,6 @@ describe('codex judge CI gating', () => {
 
     harness.github.getPullRequestByHead.mockResolvedValueOnce(prPayload)
     harness.github.getPullRequest.mockResolvedValueOnce(prPayload)
-    harness.github.getPullRequestDiff.mockResolvedValueOnce('diff --git a/file b/file')
     const fetchMock = vi.fn(async () => ({
       ok: true,
       status: 200,
@@ -621,10 +750,11 @@ describe('codex judge CI gating', () => {
     expect(harness.store.updateDecision).toHaveBeenCalledWith(
       expect.objectContaining({
         decision: 'needs_iteration',
-        reasons: expect.objectContaining({ error: 'missing_commit_sha' }),
+        reasons: expect.objectContaining({ error: 'infra_failure', detail: 'missing_commit_sha' }),
       }),
     )
     expect(harness.store.updateRunStatus).toHaveBeenCalledWith('run-1', 'needs_iteration')
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })
 
@@ -835,8 +965,8 @@ describe('prompt tuning PR gating', () => {
     const privateApi = await requirePrivate()
     await privateApi.evaluateRun('run-1')
 
+    expect(harness.store.createPromptTuning).not.toHaveBeenCalled()
     expect(harness.github.createBranch).not.toHaveBeenCalled()
-    expect(harness.github.updateFile).not.toHaveBeenCalled()
     expect(harness.github.createPullRequest).not.toHaveBeenCalled()
   })
 
@@ -884,6 +1014,7 @@ describe('prompt tuning PR gating', () => {
     const privateApi = await requirePrivate()
     await privateApi.evaluateRun('run-1')
 
+    expect(harness.store.createPromptTuning).toHaveBeenCalledTimes(1)
     expect(harness.github.createBranch).toHaveBeenCalledTimes(1)
     expect(harness.github.updateFile).toHaveBeenCalled()
     expect(harness.github.createPullRequest).toHaveBeenCalledTimes(1)

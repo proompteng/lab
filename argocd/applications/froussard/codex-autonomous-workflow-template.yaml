@@ -1,0 +1,1048 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: codex-autonomous
+  namespace: argo-workflows
+spec:
+  serviceAccountName: codex-workflow
+  entrypoint: codex-dag
+  arguments:
+    parameters:
+      - name: repository
+        value: ''
+      - name: issue_number
+        value: ''
+      - name: base
+        value: 'main'
+      - name: head
+        value: ''
+      - name: prompt
+        value: ''
+      - name: judge_prompt
+        value: ''
+      - name: attempt
+        value: '1'
+      - name: parent_run_uid
+        value: ''
+      - name: deploy_apps
+        value: ''
+      - name: argocd_namespace
+        value: 'argocd'
+      - name: deploy_max_wait_seconds
+        value: '1800'
+      - name: deploy_poll_seconds
+        value: '20'
+      - name: rawEvent
+        value: '{}'
+      - name: eventBody
+        value: '{}'
+  volumeClaimTemplates:
+    - metadata:
+        name: workdir
+      spec:
+        accessModes: ["ReadWriteMany"]
+        resources:
+          requests:
+            storage: 10Gi
+  templates:
+    - name: codex-dag
+      dag:
+        tasks:
+          - name: implementation
+            template: codex-run
+            arguments:
+              parameters:
+                - name: repository
+                  value: '{{workflow.parameters.repository}}'
+                - name: issue_number
+                  value: '{{workflow.parameters.issue_number}}'
+                - name: base
+                  value: '{{workflow.parameters.base}}'
+                - name: head
+                  value: '{{workflow.parameters.head}}'
+                - name: prompt
+                  value: '{{workflow.parameters.prompt}}'
+                - name: stage
+                  value: implementation
+                - name: attempt
+                  value: '{{workflow.parameters.attempt}}'
+                - name: parent_run_uid
+                  value: '{{workflow.parameters.parent_run_uid}}'
+                - name: rawEvent
+                  value: '{{workflow.parameters.rawEvent}}'
+                - name: eventBody
+                  value: '{{workflow.parameters.eventBody}}'
+          - name: run-complete
+            dependencies: [implementation]
+            template: run-complete
+            arguments:
+              parameters:
+                - name: repository
+                  value: '{{workflow.parameters.repository}}'
+                - name: issue_number
+                  value: '{{workflow.parameters.issue_number}}'
+                - name: base
+                  value: '{{workflow.parameters.base}}'
+                - name: head
+                  value: '{{workflow.parameters.head}}'
+                - name: attempt
+                  value: '{{workflow.parameters.attempt}}'
+                - name: parent_run_uid
+                  value: '{{workflow.parameters.parent_run_uid}}'
+                - name: rawEvent
+                  value: '{{workflow.parameters.rawEvent}}'
+                - name: eventBody
+                  value: '{{workflow.parameters.eventBody}}'
+                - name: stage
+                  value: implementation
+                - name: implementation_changes_key
+                  value: '{{tasks.implementation.outputs.artifacts.implementation-changes}}'
+                - name: implementation_patch_key
+                  value: '{{tasks.implementation.outputs.artifacts.implementation-patch}}'
+                - name: implementation_status_key
+                  value: '{{tasks.implementation.outputs.artifacts.implementation-status}}'
+                - name: implementation_log_key
+                  value: '{{tasks.implementation.outputs.artifacts.implementation-log}}'
+                - name: implementation_events_key
+                  value: '{{tasks.implementation.outputs.artifacts.implementation-events}}'
+                - name: implementation_agent_log_key
+                  value: '{{tasks.implementation.outputs.artifacts.implementation-agent-log}}'
+                - name: implementation_runtime_log_key
+                  value: '{{tasks.implementation.outputs.artifacts.implementation-runtime-log}}'
+                - name: implementation_resume_key
+                  value: '{{tasks.implementation.outputs.artifacts.implementation-resume}}'
+                - name: implementation_notify_key
+                  value: '{{tasks.implementation.outputs.artifacts.implementation-notify}}'
+                - name: nats_context_key
+                  value: '{{tasks.implementation.outputs.artifacts.nats-context}}'
+          - name: judge
+            dependencies: [run-complete]
+            template: codex-run
+            arguments:
+              parameters:
+                - name: repository
+                  value: '{{workflow.parameters.repository}}'
+                - name: issue_number
+                  value: '{{workflow.parameters.issue_number}}'
+                - name: base
+                  value: '{{workflow.parameters.base}}'
+                - name: head
+                  value: '{{workflow.parameters.head}}'
+                - name: prompt
+                  value: '{{workflow.parameters.judge_prompt}}'
+                - name: stage
+                  value: judge
+                - name: attempt
+                  value: '{{workflow.parameters.attempt}}'
+                - name: parent_run_uid
+                  value: '{{workflow.parameters.parent_run_uid}}'
+                - name: rawEvent
+                  value: '{{workflow.parameters.rawEvent}}'
+                - name: eventBody
+                  value: '{{workflow.parameters.eventBody}}'
+          - name: gate
+            dependencies: [judge]
+            template: gate
+            arguments:
+              parameters:
+                - name: repository
+                  value: '{{workflow.parameters.repository}}'
+                - name: head
+                  value: '{{workflow.parameters.head}}'
+          - name: merge
+            dependencies: [gate]
+            when: "{{tasks.gate.outputs.parameters.decision}} == pass"
+            template: merge
+            arguments:
+              parameters:
+                - name: repository
+                  value: '{{workflow.parameters.repository}}'
+                - name: head
+                  value: '{{workflow.parameters.head}}'
+                - name: pr_number
+                  value: '{{tasks.gate.outputs.parameters.pr_number}}'
+          - name: deploy
+            dependencies: [merge]
+            template: deploy
+            arguments:
+              parameters:
+                - name: deploy_apps
+                  value: '{{workflow.parameters.deploy_apps}}'
+                - name: argocd_namespace
+                  value: '{{workflow.parameters.argocd_namespace}}'
+                - name: max_wait_seconds
+                  value: '{{workflow.parameters.deploy_max_wait_seconds}}'
+                - name: poll_seconds
+                  value: '{{workflow.parameters.deploy_poll_seconds}}'
+          - name: verify
+            dependencies: [deploy]
+            template: verify
+            arguments:
+              parameters:
+                - name: repository
+                  value: '{{workflow.parameters.repository}}'
+                - name: issue_number
+                  value: '{{workflow.parameters.issue_number}}'
+                - name: head
+                  value: '{{workflow.parameters.head}}'
+                - name: base
+                  value: '{{workflow.parameters.base}}'
+                - name: commit_sha
+                  value: '{{tasks.gate.outputs.parameters.head_sha}}'
+          - name: rerun
+            dependencies: [judge, gate, merge, verify]
+            when: "({{tasks.judge.outputs.parameters.decision}} != pass || {{tasks.gate.outputs.parameters.decision}} != pass || {{tasks.merge.status}} != Succeeded || {{tasks.deploy.status}} != Succeeded || {{tasks.verify.status}} != Succeeded) && {{tasks.judge.outputs.parameters.next_prompt}} != ''"
+            template: rerun
+            arguments:
+              parameters:
+                - name: repository
+                  value: '{{workflow.parameters.repository}}'
+                - name: issue_number
+                  value: '{{workflow.parameters.issue_number}}'
+                - name: base
+                  value: '{{workflow.parameters.base}}'
+                - name: head
+                  value: '{{workflow.parameters.head}}'
+                - name: prompt
+                  value: '{{tasks.judge.outputs.parameters.next_prompt}}'
+                - name: attempt
+                  value: '{{=sprig.add(int(workflow.parameters.attempt), 1)}}'
+                - name: parent_run_uid
+                  value: '{{workflow.uid}}'
+    - name: codex-run
+      inputs:
+        parameters:
+          - name: repository
+          - name: issue_number
+          - name: base
+          - name: head
+          - name: prompt
+          - name: stage
+          - name: attempt
+          - name: parent_run_uid
+          - name: rawEvent
+          - name: eventBody
+      container:
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
+        env:
+          - name: CODEX_CWD
+            value: /workspace/lab
+          - name: CODEX_REPO_URL
+            value: 'https://github.com/{{inputs.parameters.repository}}'
+          - name: CODEX_REPO_SLUG
+            value: '{{inputs.parameters.repository}}'
+          - name: HEAD_BRANCH
+            value: '{{inputs.parameters.head}}'
+          - name: BASE_BRANCH
+            value: '{{inputs.parameters.base}}'
+          - name: DISCORD_BOT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: bot-token
+                optional: true
+          - name: DISCORD_GUILD_ID
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: guild-id
+                optional: true
+          - name: DISCORD_CATEGORY_ID
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: category-id
+                optional: true
+          - name: GH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+          - name: JANGAR_BASE_URL
+            value: http://jangar.jangar.svc.cluster.local
+          - name: NATS_URL
+            value: nats://nats.nats.svc.cluster.local:4222
+          - name: NATS_USER
+            valueFrom:
+              secretKeyRef:
+                name: nats-agents-credentials
+                key: username
+          - name: NATS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: nats-agents-credentials
+                key: password
+          - name: NATS_CREDS
+            valueFrom:
+              secretKeyRef:
+                name: nats-agent-creds
+                key: creds
+                optional: true
+          - name: MINIO_ENDPOINT
+            value: observability-minio.minio.svc.cluster.local:9000
+          - name: MINIO_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: observability-minio-creds
+                key: accesskey
+          - name: MINIO_SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: observability-minio-creds
+                key: secretkey
+          - name: MINIO_SECURE
+            value: 'false'
+          - name: CODEX_NATS_SOAK_REQUIRED
+            value: 'true'
+          - name: NATS_CONTEXT_PATH
+            value: /workspace/lab/.codex-nats-context.json
+          - name: WORKFLOW_NAME
+            value: '{{workflow.name}}'
+          - name: ARGO_WORKFLOW_NAME
+            value: '{{workflow.name}}'
+          - name: WORKFLOW_UID
+            value: '{{workflow.uid}}'
+          - name: ARGO_WORKFLOW_UID
+            value: '{{workflow.uid}}'
+          - name: WORKFLOW_NAMESPACE
+            value: '{{workflow.namespace}}'
+          - name: ARGO_WORKFLOW_NAMESPACE
+            value: '{{workflow.namespace}}'
+          - name: WORKFLOW_STAGE
+            value: '{{inputs.parameters.stage}}'
+          - name: WORKFLOW_STEP
+            value: '{{pod.name}}'
+          - name: AGENT_ID
+            value: '{{inputs.parameters.stage}}'
+          - name: AGENT_ROLE
+            value: assistant
+          - name: AGENT_OUTPUT_PATH
+            value: /workspace/lab/.codex-implementation-agent.log
+          - name: CODEX_ATTEMPT
+            value: '{{inputs.parameters.attempt}}'
+          - name: CODEX_PARENT_RUN_UID
+            value: '{{inputs.parameters.parent_run_uid}}'
+          - name: RUN_ID
+            value: '{{workflow.uid}}'
+          - name: CODEX_GRAF_BEARER_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: graf-api
+                key: bearer-tokens
+                optional: true
+          - name: LGTM_LOKI_ENDPOINT
+            value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
+          - name: DOCKER_HOST
+            value: tcp://localhost:2375
+          - name: DOCKER_TLS_VERIFY
+            value: ""
+          - name: DOCKER_ENABLED
+            value: "1"
+          - name: DOCKER_WAIT_ATTEMPTS
+            value: "12"
+        command: ["/usr/local/bin/codex-bootstrap"]
+        args:
+          - "/bin/bash"
+          - "-lc"
+          - |
+            set -euo pipefail
+
+            EVENT_FILE=$(mktemp)
+            EVENT_BODY_B64='{{inputs.parameters.eventBody}}'
+            if [[ -n "$EVENT_BODY_B64" && "$EVENT_BODY_B64" != "{}" ]]; then
+              printf '%s' "$EVENT_BODY_B64" | base64 --decode > "$EVENT_FILE"
+            else
+              cat > "$EVENT_FILE" <<'JSON'
+            {
+              "repository": "{{inputs.parameters.repository}}",
+              "issueNumber": "{{inputs.parameters.issue_number}}",
+              "base": "{{inputs.parameters.base}}",
+              "head": "{{inputs.parameters.head}}",
+              "prompt": "{{inputs.parameters.prompt}}",
+              "stage": "{{inputs.parameters.stage}}",
+              "attempt": "{{inputs.parameters.attempt}}",
+              "parentRunUid": "{{inputs.parameters.parent_run_uid}}"
+            }
+            JSON
+            fi
+
+            if command -v jq >/dev/null 2>&1; then
+              TMP_EVENT=$(mktemp)
+              jq \
+                --arg prompt "{{inputs.parameters.prompt}}" \
+                --arg stage "{{inputs.parameters.stage}}" \
+                --arg repo "{{inputs.parameters.repository}}" \
+                --arg issue "{{inputs.parameters.issue_number}}" \
+                --arg base "{{inputs.parameters.base}}" \
+                --arg head "{{inputs.parameters.head}}" \
+                --arg attempt "{{inputs.parameters.attempt}}" \
+                --arg parentRunUid "{{inputs.parameters.parent_run_uid}}" \
+                '.prompt = ($prompt // .prompt) | .stage = ($stage // .stage) | .repository = ($repo // .repository) | .issueNumber = ($issue // .issueNumber) | .base = ($base // .base) | .head = ($head // .head) | .attempt = ($attempt // .attempt) | .parentRunUid = ($parentRunUid // .parentRunUid)' \
+                "$EVENT_FILE" > "$TMP_EVENT" && mv "$TMP_EVENT" "$EVENT_FILE"
+            fi
+
+            WORKTREE_DIR="${WORKTREE:-/workspace/lab}"
+
+            if ! command -v git >/dev/null 2>&1; then
+              echo "Missing git binary in runtime image" >&2
+              exit 1
+            fi
+
+            if [[ ! -d "$WORKTREE_DIR" ]]; then
+              echo "CODEX_CWD directory missing: $WORKTREE_DIR" >&2
+              exit 1
+            fi
+
+            if [[ ! -e "$WORKTREE_DIR/.git" ]]; then
+              echo "Repository checkout missing at $WORKTREE_DIR" >&2
+              exit 1
+            fi
+
+            if [[ -z "${HEAD_BRANCH:-}" ]]; then
+              echo "Missing head branch parameter" >&2
+              exit 1
+            fi
+
+            if [[ -z "${BASE_BRANCH:-}" ]]; then
+              echo "Missing base branch parameter" >&2
+              exit 1
+            fi
+
+            if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+              echo "Missing GITHUB_TOKEN" >&2
+              exit 1
+            fi
+
+            git -C "$WORKTREE_DIR" fetch --all --prune
+
+            # Ensure judge output files exist for all stages to satisfy Argo output collection.
+            : > "/workspace/lab/.codex-judge-decision.txt"
+            : > "/workspace/lab/.codex-judge-next-prompt.txt"
+
+            if ! git -C "$WORKTREE_DIR" rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1 \
+              && ! git -C "$WORKTREE_DIR" rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
+              echo "Base ref '$BASE_BRANCH' not found in repository" >&2
+              exit 1
+            fi
+
+            if ! git -C "$WORKTREE_DIR" rev-parse --verify "$HEAD_BRANCH" >/dev/null 2>&1 \
+              && ! git -C "$WORKTREE_DIR" rev-parse --verify "origin/$HEAD_BRANCH" >/dev/null 2>&1; then
+              echo "Head ref '$HEAD_BRANCH' not found in repository" >&2
+              exit 1
+            fi
+
+            export OUTPUT_PATH="${IMPLEMENTATION_OUTPUT_PATH:-/workspace/lab/.codex-${WORKFLOW_STAGE}.log}"
+            export JSON_OUTPUT_PATH="${JSON_OUTPUT_PATH:-/workspace/.codex/${WORKFLOW_STAGE}-events.jsonl}"
+            export AGENT_OUTPUT_PATH="${AGENT_OUTPUT_PATH:-/workspace/lab/.codex-${WORKFLOW_STAGE}-agent.log}"
+            export CODEX_RUNTIME_LOG_PATH="${CODEX_RUNTIME_LOG_PATH:-/workspace/lab/.codex-${WORKFLOW_STAGE}-runtime.log}"
+
+            if [[ "${WORKFLOW_STAGE}" == "implementation" ]]; then
+              export POST_TO_GITHUB=true
+            else
+              export POST_TO_GITHUB=false
+            fi
+
+            AGENT_LOG_PATH="${AGENT_OUTPUT_PATH}"
+            NATS_PUBLISHER="/usr/local/bin/codex-nats-publish"
+            NATS_TAIL_PID=""
+
+            if [[ -x "$NATS_PUBLISHER" ]]; then
+              touch "$AGENT_LOG_PATH"
+              "$NATS_PUBLISHER" --kind status --status started --content "${WORKFLOW_STAGE} started" --publish-general || true
+              "$NATS_PUBLISHER" --kind log --log-file "$AGENT_LOG_PATH" &
+              NATS_TAIL_PID=$!
+            fi
+
+            cleanup_nats() {
+              if [[ -n "${NATS_TAIL_PID:-}" ]]; then
+                kill "$NATS_TAIL_PID" 2>/dev/null || true
+                wait "$NATS_TAIL_PID" 2>/dev/null || true
+              fi
+            }
+            trap cleanup_nats EXIT
+
+            echo "Executing ${WORKFLOW_STAGE} workflow" >&2
+            set +e
+            /usr/local/bin/codex-implement "$EVENT_FILE"
+            EXIT_CODE=$?
+            set -e
+
+            cleanup_nats
+
+            if [[ -x "$NATS_PUBLISHER" ]]; then
+              "$NATS_PUBLISHER" --kind status --status completed --exit-code "$EXIT_CODE" --content "${WORKFLOW_STAGE} completed" --publish-general || true
+            fi
+
+            exit "$EXIT_CODE"
+        volumeMounts:
+          - name: workdir
+            mountPath: /workspace
+          - name: docker-lib
+            mountPath: /var/lib/docker
+            readOnly: true
+        resources:
+          requests:
+            cpu: "2"
+            memory: 4Gi
+          limits:
+            cpu: "4"
+            memory: 6Gi
+      retryStrategy:
+        limit: 3
+        retryPolicy: OnFailure
+      sidecars:
+        - name: docker
+          image: docker:25.0-dind
+          command: ["dockerd-entrypoint.sh"]
+          args:
+            - "--host=tcp://0.0.0.0:2375"
+          env:
+            - name: DOCKER_TLS_CERTDIR
+              value: ""
+            - name: XDG_RUNTIME_DIR
+              value: /tmp/docker-runtime
+            - name: DOCKER_HOST
+              value: tcp://0.0.0.0:2375
+          ports:
+            - containerPort: 2375
+              name: docker
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: docker-lib
+              mountPath: /var/lib/docker
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+      outputs:
+        parameters:
+          - name: decision
+            valueFrom:
+              path: /workspace/lab/.codex-judge-decision.txt
+          - name: next_prompt
+            valueFrom:
+              path: /workspace/lab/.codex-judge-next-prompt.txt
+        artifacts:
+          - name: implementation-changes
+            path: /workspace/lab/.codex-implementation-changes.tar.gz
+          - name: implementation-patch
+            path: /workspace/lab/.codex-implementation.patch
+          - name: implementation-status
+            path: /workspace/lab/.codex-implementation-status.txt
+          - name: implementation-log
+            path: /workspace/lab/.codex-implementation.log
+          - name: implementation-events
+            path: /workspace/.codex/implementation-events.jsonl
+          - name: implementation-agent-log
+            path: /workspace/lab/.codex-implementation-agent.log
+          - name: implementation-runtime-log
+            path: /workspace/lab/.codex-implementation-runtime.log
+          - name: implementation-resume
+            path: /workspace/lab/.codex/implementation-resume.json
+          - name: implementation-notify
+            path: /workspace/lab/.codex-implementation-notify.json
+          - name: nats-context
+            path: /workspace/lab/.codex-nats-context.json
+    - name: run-complete
+      inputs:
+        parameters:
+          - name: repository
+          - name: issue_number
+          - name: base
+          - name: head
+          - name: attempt
+          - name: parent_run_uid
+          - name: rawEvent
+          - name: eventBody
+          - name: stage
+          - name: implementation_changes_key
+          - name: implementation_patch_key
+          - name: implementation_status_key
+          - name: implementation_log_key
+          - name: implementation_events_key
+          - name: implementation_agent_log_key
+          - name: implementation_runtime_log_key
+          - name: implementation_resume_key
+          - name: implementation_notify_key
+          - name: nats_context_key
+      container:
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
+        env:
+          - name: JANGAR_BASE_URL
+            value: http://jangar.jangar.svc.cluster.local
+        command: ["/bin/bash", "-lc"]
+        args:
+          - |
+            set -euo pipefail
+
+            PAYLOAD_PATH="/workspace/lab/.codex-run-complete-payload.json"
+            RESPONSE_PATH="/workspace/lab/.codex-run-complete-response.json"
+            RUN_ID_PATH="/workspace/lab/.codex-run-id.txt"
+            STARTED_AT="{{workflow.creationTimestamp}}"
+            FINISHED_AT="$(date -Iseconds -u)"
+            ATTEMPT="{{inputs.parameters.attempt}}"
+            PARENT_RUN_UID="{{inputs.parameters.parent_run_uid}}"
+            mkdir -p /workspace/lab
+
+            cat > "$PAYLOAD_PATH" <<JSON
+            {
+              "metadata": {
+                "name": "{{workflow.name}}",
+                "namespace": "{{workflow.namespace}}",
+                "uid": "{{workflow.uid}}"
+              },
+              "status": {
+                "phase": "{{workflow.status}}",
+                "startedAt": "${STARTED_AT}",
+                "finishedAt": "${FINISHED_AT}"
+              },
+              "arguments": {
+                "parameters": [
+                  { "name": "eventBody", "value": "{{inputs.parameters.eventBody}}" },
+                  { "name": "rawEvent", "value": "{{inputs.parameters.rawEvent}}" },
+                  { "name": "repository", "value": "{{inputs.parameters.repository}}" },
+                  { "name": "issue_number", "value": "{{inputs.parameters.issue_number}}" },
+                  { "name": "head", "value": "{{inputs.parameters.head}}" },
+                  { "name": "base", "value": "{{inputs.parameters.base}}" },
+                  { "name": "stage", "value": "{{inputs.parameters.stage}}" },
+                  { "name": "attempt", "value": "${ATTEMPT}" },
+                  { "name": "parent_run_uid", "value": "${PARENT_RUN_UID}" }
+                ]
+              },
+              "artifacts": [
+                { "name": "implementation-changes", "key": "{{inputs.parameters.implementation_changes_key}}" },
+                { "name": "implementation-patch", "key": "{{inputs.parameters.implementation_patch_key}}" },
+                { "name": "implementation-status", "key": "{{inputs.parameters.implementation_status_key}}" },
+                { "name": "implementation-log", "key": "{{inputs.parameters.implementation_log_key}}" },
+                { "name": "implementation-events", "key": "{{inputs.parameters.implementation_events_key}}" },
+                { "name": "implementation-agent-log", "key": "{{inputs.parameters.implementation_agent_log_key}}" },
+                { "name": "implementation-runtime-log", "key": "{{inputs.parameters.implementation_runtime_log_key}}" },
+                { "name": "implementation-resume", "key": "{{inputs.parameters.implementation_resume_key}}" },
+                { "name": "implementation-notify", "key": "{{inputs.parameters.implementation_notify_key}}" },
+                { "name": "nats-context", "key": "{{inputs.parameters.nats_context_key}}" }
+              ],
+              "stage": "{{inputs.parameters.stage}}",
+              "workflowName": "{{workflow.name}}",
+              "workflowNamespace": "{{workflow.namespace}}",
+              "workflowUid": "{{workflow.uid}}",
+              "repository": "{{inputs.parameters.repository}}",
+              "issueNumber": "{{inputs.parameters.issue_number}}",
+              "branch": "{{inputs.parameters.head}}",
+              "base": "{{inputs.parameters.base}}",
+              "prompt": "",
+              "startedAt": "${STARTED_AT}",
+              "finishedAt": "${FINISHED_AT}"
+            }
+            JSON
+
+            if [[ -z "${JANGAR_BASE_URL:-}" ]]; then
+              echo "JANGAR_BASE_URL not set; skipping run-complete POST" >&2
+              exit 0
+            fi
+
+            JANGAR_COMPLETE_URL="${JANGAR_BASE_URL%/}/api/codex/run-complete"
+            set +e
+            curl -sSf -X POST -H 'content-type: application/json' --data @"$PAYLOAD_PATH" "$JANGAR_COMPLETE_URL" > "$RESPONSE_PATH"
+            CURL_EXIT=$?
+            set -e
+            if [[ "$CURL_EXIT" -ne 0 ]]; then
+              echo "Failed to post run-complete payload (exit $CURL_EXIT); continuing" >&2
+              exit 0
+            fi
+
+            if command -v jq >/dev/null 2>&1; then
+              jq -r '.run.id // empty' "$RESPONSE_PATH" > "$RUN_ID_PATH" || true
+            fi
+        volumeMounts:
+          - name: workdir
+            mountPath: /workspace
+      retryStrategy:
+        limit: 3
+        retryPolicy: OnFailure
+        backoff:
+          duration: "5s"
+          factor: 2
+          maxDuration: "30s"
+      outputs:
+        parameters:
+          - name: run_id
+            valueFrom:
+              path: /workspace/lab/.codex-run-id.txt
+        artifacts:
+          - name: run-complete-payload
+            path: /workspace/lab/.codex-run-complete-payload.json
+    - name: gate
+      inputs:
+        parameters:
+          - name: repository
+          - name: head
+      container:
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
+        env:
+          - name: GH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+        command: ["/bin/bash", "-lc"]
+        args:
+          - |
+            set -euo pipefail
+
+            REPO="{{inputs.parameters.repository}}"
+            HEAD="{{inputs.parameters.head}}"
+            DECISION_PATH="/workspace/lab/.codex-gate-decision.txt"
+            REASON_PATH="/workspace/lab/.codex-gate-reason.txt"
+            NEXT_PROMPT_PATH="/workspace/lab/.codex-gate-next-prompt.txt"
+            PR_NUMBER_PATH="/workspace/lab/.codex-gate-pr-number.txt"
+            PR_URL_PATH="/workspace/lab/.codex-gate-pr-url.txt"
+            HEAD_SHA_PATH="/workspace/lab/.codex-gate-head-sha.txt"
+            mkdir -p /workspace/lab
+
+            MAX_WAIT_SECONDS="${GATE_MAX_WAIT_SECONDS:-3600}"
+            POLL_SECONDS="${GATE_POLL_SECONDS:-20}"
+            deadline=$((SECONDS + MAX_WAIT_SECONDS))
+
+            write_output() {
+              local decision="$1"
+              local reason="$2"
+              local prompt="$3"
+              local number="${4:-}"
+              local url="${5:-}"
+              local sha="${6:-}"
+              echo "$decision" > "$DECISION_PATH"
+              echo "$reason" > "$REASON_PATH"
+              echo "$prompt" > "$NEXT_PROMPT_PATH"
+              : > "$PR_NUMBER_PATH"
+              : > "$PR_URL_PATH"
+              : > "$HEAD_SHA_PATH"
+              if [[ -n "$number" ]]; then
+                echo "$number" > "$PR_NUMBER_PATH"
+              fi
+              if [[ -n "$url" ]]; then
+                echo "$url" > "$PR_URL_PATH"
+              fi
+              if [[ -n "$sha" ]]; then
+                echo "$sha" > "$HEAD_SHA_PATH"
+              fi
+            }
+
+            while true; do
+              pr_json=$(gh pr list --repo "$REPO" --head "$HEAD" --json number,url,headRefOid,mergeableState,reviewDecision,isDraft --limit 1)
+              pr_number=$(echo "$pr_json" | jq -r '.[0].number // empty')
+              pr_url=$(echo "$pr_json" | jq -r '.[0].url // empty')
+              pr_sha=$(echo "$pr_json" | jq -r '.[0].headRefOid // empty')
+              mergeable=$(echo "$pr_json" | jq -r '.[0].mergeableState // empty')
+              review_decision=$(echo "$pr_json" | jq -r '.[0].reviewDecision // empty')
+              is_draft=$(echo "$pr_json" | jq -r '.[0].isDraft // false')
+
+              if [[ -z "$pr_number" ]]; then
+                write_output "fail" "missing_pull_request" "Open a PR for the branch and ensure the head SHA is available."
+                exit 0
+              fi
+
+              if [[ "$is_draft" == "true" ]]; then
+                write_output "fail" "draft_pr" "Mark the PR ready for review, then re-run the gate."
+                exit 0
+              fi
+
+              if [[ -z "$pr_sha" ]]; then
+                write_output "fail" "missing_commit_sha" "Ensure the PR exists and its head SHA is available." "$pr_number" "$pr_url"
+                exit 0
+              fi
+
+              if [[ "$mergeable" == "dirty" || "$mergeable" == "blocked" ]]; then
+                write_output "fail" "merge_conflict" "Resolve merge conflicts and ensure the PR is mergeable." "$pr_number" "$pr_url" "$pr_sha"
+                exit 0
+              fi
+
+              if [[ "$mergeable" == "unknown" || "$mergeable" == "behind" || "$mergeable" == "unstable" ]]; then
+                if [[ "$SECONDS" -ge "$deadline" ]]; then
+                  write_output "fail" "merge_conflict" "Ensure the PR is mergeable (no conflicts/behind) and retry." "$pr_number" "$pr_url" "$pr_sha"
+                  exit 0
+                fi
+                sleep "$POLL_SECONDS"
+                continue
+              fi
+
+              review_json=$(gh pr view --repo "$REPO" "$pr_number" --json reviewDecision,reviewThreads)
+              review_decision=$(echo "$review_json" | jq -r '.reviewDecision // empty')
+              unresolved_threads=$(echo "$review_json" | jq -r '[.reviewThreads[] | select(.isResolved == false)] | length')
+
+              if [[ "$unresolved_threads" -gt 0 ]]; then
+                write_output "fail" "review_unresolved" "Resolve all review threads and request approvals." "$pr_number" "$pr_url" "$pr_sha"
+                exit 0
+              fi
+
+              if [[ "$review_decision" == "CHANGES_REQUESTED" ]]; then
+                write_output "fail" "review_unresolved" "Address requested changes and obtain approval." "$pr_number" "$pr_url" "$pr_sha"
+                exit 0
+              fi
+
+              if [[ "$review_decision" == "REVIEW_REQUIRED" ]]; then
+                if [[ "$SECONDS" -ge "$deadline" ]]; then
+                  write_output "fail" "review_unresolved" "Obtain required approvals and re-run the gate." "$pr_number" "$pr_url" "$pr_sha"
+                  exit 0
+                fi
+                sleep "$POLL_SECONDS"
+                continue
+              fi
+
+              ci_json=$(gh api "repos/${REPO}/commits/${pr_sha}/check-runs")
+              total_checks=$(echo "$ci_json" | jq -r '.total_count // 0')
+              incomplete_checks=$(echo "$ci_json" | jq -r '[.check_runs[] | select(.status != "completed")] | length')
+              failing_checks=$(echo "$ci_json" | jq -r '[.check_runs[] | select(.status == "completed" and .conclusion != "success")] | length')
+
+              if [[ "$total_checks" -eq 0 || "$incomplete_checks" -gt 0 ]]; then
+                if [[ "$SECONDS" -ge "$deadline" ]]; then
+                  write_output "fail" "ci_failed" "Ensure required checks run to completion and pass." "$pr_number" "$pr_url" "$pr_sha"
+                  exit 0
+                fi
+                sleep "$POLL_SECONDS"
+                continue
+              fi
+
+              if [[ "$failing_checks" -gt 0 ]]; then
+                write_output "fail" "ci_failed" "Fix failing checks for the current commit and re-run CI." "$pr_number" "$pr_url" "$pr_sha"
+                exit 0
+              fi
+
+              write_output "pass" "" "" "$pr_number" "$pr_url" "$pr_sha"
+              exit 0
+            done
+        volumeMounts:
+          - name: workdir
+            mountPath: /workspace
+      outputs:
+        parameters:
+          - name: decision
+            valueFrom:
+              path: /workspace/lab/.codex-gate-decision.txt
+          - name: reason
+            valueFrom:
+              path: /workspace/lab/.codex-gate-reason.txt
+          - name: next_prompt
+            valueFrom:
+              path: /workspace/lab/.codex-gate-next-prompt.txt
+          - name: pr_number
+            valueFrom:
+              path: /workspace/lab/.codex-gate-pr-number.txt
+          - name: pr_url
+            valueFrom:
+              path: /workspace/lab/.codex-gate-pr-url.txt
+          - name: head_sha
+            valueFrom:
+              path: /workspace/lab/.codex-gate-head-sha.txt
+    - name: merge
+      inputs:
+        parameters:
+          - name: repository
+          - name: head
+          - name: pr_number
+      container:
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
+        env:
+          - name: GH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+        command: ["/bin/bash", "-lc"]
+        args:
+          - |
+            set -euo pipefail
+
+            REPO="{{inputs.parameters.repository}}"
+            HEAD="{{inputs.parameters.head}}"
+            PR_NUMBER="{{inputs.parameters.pr_number}}"
+            DECISION_PATH="/workspace/lab/.codex-merge-decision.txt"
+            mkdir -p /workspace/lab
+
+            if [[ -z "$PR_NUMBER" ]]; then
+              PR_NUMBER=$(gh pr list --repo "$REPO" --head "$HEAD" --json number --limit 1 | jq -r '.[0].number // empty')
+            fi
+
+            if [[ -z "$PR_NUMBER" ]]; then
+              echo "fail" > "$DECISION_PATH"
+              exit 0
+            fi
+
+            if gh pr merge --repo "$REPO" "$PR_NUMBER" --squash; then
+              echo "pass" > "$DECISION_PATH"
+            else
+              echo "fail" > "$DECISION_PATH"
+            fi
+        volumeMounts:
+          - name: workdir
+            mountPath: /workspace
+      outputs:
+        parameters:
+          - name: decision
+            valueFrom:
+              path: /workspace/lab/.codex-merge-decision.txt
+    - name: deploy
+      inputs:
+        parameters:
+          - name: deploy_apps
+          - name: argocd_namespace
+          - name: max_wait_seconds
+          - name: poll_seconds
+      container:
+        image: bitnami/kubectl:1.29
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-lc"]
+        args:
+          - |
+            set -euo pipefail
+
+            DECISION_PATH="/workspace/lab/.codex-deploy-decision.txt"
+            mkdir -p /workspace/lab
+            APPS_RAW="{{inputs.parameters.deploy_apps}}"
+            ARGOCD_NAMESPACE="{{inputs.parameters.argocd_namespace}}"
+            MAX_WAIT_SECONDS="{{inputs.parameters.max_wait_seconds}}"
+            POLL_SECONDS="{{inputs.parameters.poll_seconds}}"
+
+            if [[ -z "$APPS_RAW" ]]; then
+              echo "pass" > "$DECISION_PATH"
+              exit 0
+            fi
+
+            IFS=',' read -ra APPS <<< "$APPS_RAW"
+            deadline=$((SECONDS + MAX_WAIT_SECONDS))
+
+            for app in "${APPS[@]}"; do
+              app=$(echo "$app" | xargs)
+              if [[ -z "$app" ]]; then
+                continue
+              fi
+              while true; do
+                sync_status=$(kubectl -n "$ARGOCD_NAMESPACE" get applications.argoproj.io "$app" -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
+                health_status=$(kubectl -n "$ARGOCD_NAMESPACE" get applications.argoproj.io "$app" -o jsonpath='{.status.health.status}' 2>/dev/null || true)
+                if [[ "$sync_status" == "Synced" && "$health_status" == "Healthy" ]]; then
+                  break
+                fi
+                if [[ "$SECONDS" -ge "$deadline" ]]; then
+                  echo "fail" > "$DECISION_PATH"
+                  exit 1
+                fi
+                sleep "$POLL_SECONDS"
+              done
+            done
+
+            echo "pass" > "$DECISION_PATH"
+        volumeMounts:
+          - name: workdir
+            mountPath: /workspace
+      outputs:
+        parameters:
+          - name: decision
+            valueFrom:
+              path: /workspace/lab/.codex-deploy-decision.txt
+    - name: verify
+      inputs:
+        parameters:
+          - name: repository
+          - name: issue_number
+          - name: head
+          - name: base
+          - name: commit_sha
+      resource:
+        action: create
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Workflow
+          metadata:
+            generateName: codex-post-deploy-
+            namespace: argo-workflows
+            labels:
+              codex.parent: "{{workflow.name}}"
+              codex.repository: "{{inputs.parameters.repository}}"
+              codex.issue: "{{inputs.parameters.issue_number}}"
+          spec:
+            workflowTemplateRef:
+              name: github-codex-post-deploy
+            arguments:
+              parameters:
+                - name: repository
+                  value: "{{inputs.parameters.repository}}"
+                - name: issueNumber
+                  value: "{{inputs.parameters.issue_number}}"
+                - name: branch
+                  value: "{{inputs.parameters.head}}"
+                - name: base
+                  value: "{{inputs.parameters.base}}"
+                - name: commitSha
+                  value: "{{inputs.parameters.commit_sha}}"
+        successCondition: status.phase == Succeeded
+        failureCondition: status.phase == Failed || status.phase == Error
+    - name: rerun
+      inputs:
+        parameters:
+          - name: repository
+          - name: issue_number
+          - name: base
+          - name: head
+          - name: prompt
+          - name: attempt
+          - name: parent_run_uid
+      resource:
+        action: create
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Workflow
+          metadata:
+            generateName: codex-autonomous-rerun-
+            namespace: argo-workflows
+            labels:
+              codex.parent: "{{workflow.name}}"
+              codex.repository: "{{inputs.parameters.repository}}"
+              codex.issue: "{{inputs.parameters.issue_number}}"
+              codex.attempt: "{{inputs.parameters.attempt}}"
+          spec:
+            workflowTemplateRef:
+              name: codex-autonomous
+            arguments:
+              parameters:
+                - name: repository
+                  value: "{{inputs.parameters.repository}}"
+                - name: issue_number
+                  value: "{{inputs.parameters.issue_number}}"
+                - name: base
+                  value: "{{inputs.parameters.base}}"
+                - name: head
+                  value: "{{inputs.parameters.head}}"
+                - name: prompt
+                  value: "{{inputs.parameters.prompt}}"
+                - name: judge_prompt
+                  value: "{{workflow.parameters.judge_prompt}}"
+                - name: attempt
+                  value: "{{inputs.parameters.attempt}}"
+                - name: parent_run_uid
+                  value: "{{inputs.parameters.parent_run_uid}}"
+                - name: rawEvent
+                  value: "{{workflow.parameters.rawEvent}}"
+                - name: eventBody
+                  value: "{{workflow.parameters.eventBody}}"
