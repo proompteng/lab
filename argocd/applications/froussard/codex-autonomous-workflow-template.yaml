@@ -149,6 +149,9 @@ spec:
                   value: '{{workflow.parameters.repository}}'
                 - name: head
                   value: '{{workflow.parameters.head}}'
+              artifacts:
+                - name: implementation-notify
+                  from: '{{tasks.implementation.outputs.artifacts.implementation-notify}}'
           - name: merge
             dependencies: [gate]
             when: "{{tasks.gate.outputs.parameters.decision}} == pass"
@@ -191,7 +194,7 @@ spec:
                   value: '{{tasks.gate.outputs.parameters.head_sha}}'
           - name: rerun
             dependencies: [judge, gate, merge, verify]
-            when: "({{tasks.judge.outputs.parameters.decision}} != pass || {{tasks.gate.outputs.parameters.decision}} != pass || {{tasks.merge.status}} != Succeeded || {{tasks.deploy.status}} != Succeeded || {{tasks.verify.status}} != Succeeded) && {{tasks.judge.outputs.parameters.next_prompt}} != ''"
+            when: "{{=(tasks.judge.outputs.parameters.decision != 'pass' || tasks.gate.outputs.parameters.decision != 'pass' || tasks.merge.status != 'Succeeded' || tasks.deploy.status != 'Succeeded' || tasks.verify.status != 'Succeeded') && (sprig.trim(sprig.coalesce(sprig.ternary(tasks.gate.outputs.parameters.next_prompt, '', tasks.gate.outputs.parameters.decision != 'pass'), sprig.ternary(tasks.merge.outputs.parameters.next_prompt, '', tasks.merge.status != 'Succeeded'), sprig.ternary('Post-deploy verification failed. Review the post-deploy workflow logs, fix the failures, and rerun.', '', (tasks.deploy.status != 'Succeeded' || tasks.verify.status != 'Succeeded')), tasks.judge.outputs.parameters.next_prompt)) != '')}}"
             template: rerun
             arguments:
               parameters:
@@ -204,7 +207,7 @@ spec:
                 - name: head
                   value: '{{workflow.parameters.head}}'
                 - name: prompt
-                  value: '{{tasks.judge.outputs.parameters.next_prompt}}'
+                  value: '{{=sprig.coalesce(sprig.ternary(tasks.gate.outputs.parameters.next_prompt, "", tasks.gate.outputs.parameters.decision != "pass"), sprig.ternary(tasks.merge.outputs.parameters.next_prompt, "", tasks.merge.status != "Succeeded"), sprig.ternary("Post-deploy verification failed. Review the post-deploy workflow logs, fix the failures, and rerun.", "", (tasks.deploy.status != "Succeeded" || tasks.verify.status != "Succeeded")), tasks.judge.outputs.parameters.next_prompt)}}'
                 - name: attempt
                   value: '{{=sprig.add(int(workflow.parameters.attempt), 1)}}'
                 - name: parent_run_uid
@@ -581,6 +584,22 @@ spec:
         env:
           - name: JANGAR_BASE_URL
             value: http://jangar.jangar.svc.cluster.local
+          - name: KAFKA_BROKERS
+            value: kafka-kafka-bootstrap.kafka:9092
+          - name: KAFKA_USERNAME
+            valueFrom:
+              secretKeyRef:
+                name: kafka-codex-username
+                key: username
+                optional: true
+          - name: KAFKA_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: kafka-codex-credentials
+                key: password
+                optional: true
+          - name: KAFKA_RUN_COMPLETE_TOPIC
+            value: argo.workflows.completions
         command: ["/bin/bash", "-lc"]
         args:
           - |
@@ -646,24 +665,42 @@ spec:
             }
             JSON
 
-            if [[ -z "${JANGAR_BASE_URL:-}" ]]; then
-              echo "JANGAR_BASE_URL not set; skipping run-complete POST" >&2
+            post_run_complete() {
+              if [[ -z "${JANGAR_BASE_URL:-}" ]]; then
+                echo "JANGAR_BASE_URL not set; skipping run-complete POST" >&2
+                return 1
+              fi
+
+              JANGAR_COMPLETE_URL="${JANGAR_BASE_URL%/}/api/codex/run-complete"
+              curl -sSf -X POST -H 'content-type: application/json' --data @"$PAYLOAD_PATH" "$JANGAR_COMPLETE_URL" > "$RESPONSE_PATH"
+            }
+
+            enqueue_run_complete() {
+              if [[ -z "${KAFKA_BROKERS:-}" || -z "${KAFKA_USERNAME:-}" || -z "${KAFKA_PASSWORD:-}" ]]; then
+                echo "Kafka credentials not set; skipping run-complete enqueue" >&2
+                return 1
+              fi
+              local topic="${KAFKA_RUN_COMPLETE_TOPIC:-argo.workflows.completions}"
+              bun /workspace/lab/apps/froussard/scripts/codex-run-complete-kafka.ts \
+                --payload "$PAYLOAD_PATH" \
+                --topic "$topic" \
+                --key "{{workflow.uid}}"
+            }
+
+            if post_run_complete; then
+              if command -v jq >/dev/null 2>&1; then
+                jq -r '.run.id // empty' "$RESPONSE_PATH" > "$RUN_ID_PATH" || true
+              fi
               exit 0
             fi
 
-            JANGAR_COMPLETE_URL="${JANGAR_BASE_URL%/}/api/codex/run-complete"
-            set +e
-            curl -sSf -X POST -H 'content-type: application/json' --data @"$PAYLOAD_PATH" "$JANGAR_COMPLETE_URL" > "$RESPONSE_PATH"
-            CURL_EXIT=$?
-            set -e
-            if [[ "$CURL_EXIT" -ne 0 ]]; then
-              echo "Failed to post run-complete payload (exit $CURL_EXIT); continuing" >&2
+            echo "Failed to post run-complete payload; attempting Kafka enqueue" >&2
+            if enqueue_run_complete; then
               exit 0
             fi
 
-            if command -v jq >/dev/null 2>&1; then
-              jq -r '.run.id // empty' "$RESPONSE_PATH" > "$RUN_ID_PATH" || true
-            fi
+            echo "Failed to persist run-complete payload; will retry via Argo backoff" >&2
+            exit 1
         volumeMounts:
           - name: workdir
             mountPath: /workspace
@@ -687,6 +724,10 @@ spec:
         parameters:
           - name: repository
           - name: head
+        artifacts:
+          - name: implementation-notify
+            path: /workspace/lab/.codex-implementation-notify.json
+            optional: true
       container:
         image: registry.ide-newton.ts.net/lab/codex-universal:latest
         imagePullPolicy: Always
@@ -714,6 +755,7 @@ spec:
             PR_NUMBER_PATH="/workspace/lab/.codex-gate-pr-number.txt"
             PR_URL_PATH="/workspace/lab/.codex-gate-pr-url.txt"
             HEAD_SHA_PATH="/workspace/lab/.codex-gate-head-sha.txt"
+            NOTIFY_PATH="/workspace/lab/.codex-implementation-notify.json"
             mkdir -p /workspace/lab
 
             MAX_WAIT_SECONDS="${GATE_MAX_WAIT_SECONDS:-3600}"
@@ -744,6 +786,21 @@ spec:
               fi
             }
 
+            normalize_sha() {
+              local value="${1:-}"
+              if [[ "$value" =~ ^[a-fA-F0-9]{7,40}$ ]]; then
+                echo "$value"
+                return 0
+              fi
+              return 1
+            }
+
+            fallback_sha=""
+            if [[ -f "$NOTIFY_PATH" ]] && command -v jq >/dev/null 2>&1; then
+              candidate=$(jq -r '.head_sha // .headSha // .commit_sha // .commitSha // empty' "$NOTIFY_PATH" 2>/dev/null || true)
+              fallback_sha="$(normalize_sha "$candidate" || true)"
+            fi
+
             while true; do
               pr_json=$(gh pr list --repo "$REPO" --head "$HEAD" --json number,url,headRefOid,mergeableState,reviewDecision,isDraft --limit 1)
               pr_number=$(echo "$pr_json" | jq -r '.[0].number // empty')
@@ -754,7 +811,11 @@ spec:
               is_draft=$(echo "$pr_json" | jq -r '.[0].isDraft // false')
 
               if [[ -z "$pr_number" ]]; then
-                write_output "fail" "missing_pull_request" "Open a PR for the branch and ensure the head SHA is available."
+                if [[ -n "$fallback_sha" ]]; then
+                  write_output "fail" "missing_pull_request" "Open a PR for the branch and ensure the head SHA is available." "" "" "$fallback_sha"
+                else
+                  write_output "fail" "missing_pull_request" "Open a PR for the branch and ensure the head SHA is available."
+                fi
                 exit 0
               fi
 
@@ -764,8 +825,12 @@ spec:
               fi
 
               if [[ -z "$pr_sha" ]]; then
-                write_output "fail" "missing_commit_sha" "Ensure the PR exists and its head SHA is available." "$pr_number" "$pr_url"
-                exit 0
+                if [[ -n "$fallback_sha" ]]; then
+                  pr_sha="$fallback_sha"
+                else
+                  write_output "fail" "missing_commit_sha" "Ensure the PR exists and its head SHA is available." "$pr_number" "$pr_url"
+                  exit 0
+                fi
               fi
 
               if [[ "$mergeable" == "dirty" || "$mergeable" == "blocked" ]]; then
@@ -879,21 +944,29 @@ spec:
             HEAD="{{inputs.parameters.head}}"
             PR_NUMBER="{{inputs.parameters.pr_number}}"
             DECISION_PATH="/workspace/lab/.codex-merge-decision.txt"
+            NEXT_PROMPT_PATH="/workspace/lab/.codex-merge-next-prompt.txt"
             mkdir -p /workspace/lab
+
+            write_output() {
+              local decision="$1"
+              local prompt="$2"
+              echo "$decision" > "$DECISION_PATH"
+              echo "$prompt" > "$NEXT_PROMPT_PATH"
+            }
 
             if [[ -z "$PR_NUMBER" ]]; then
               PR_NUMBER=$(gh pr list --repo "$REPO" --head "$HEAD" --json number --limit 1 | jq -r '.[0].number // empty')
             fi
 
             if [[ -z "$PR_NUMBER" ]]; then
-              echo "fail" > "$DECISION_PATH"
+              write_output "fail" "Ensure the PR exists for the head branch and rerun merge."
               exit 0
             fi
 
             if gh pr merge --repo "$REPO" "$PR_NUMBER" --squash; then
-              echo "pass" > "$DECISION_PATH"
+              write_output "pass" ""
             else
-              echo "fail" > "$DECISION_PATH"
+              write_output "fail" "Resolve merge blockers or conflicts, then retry the merge."
             fi
         volumeMounts:
           - name: workdir
@@ -903,6 +976,9 @@ spec:
           - name: decision
             valueFrom:
               path: /workspace/lab/.codex-merge-decision.txt
+          - name: next_prompt
+            valueFrom:
+              path: /workspace/lab/.codex-merge-next-prompt.txt
     - name: deploy
       inputs:
         parameters:
