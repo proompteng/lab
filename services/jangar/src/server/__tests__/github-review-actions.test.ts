@@ -41,6 +41,8 @@ const buildStore = (): GithubReviewStore => ({
   upsertReviewComment: vi.fn(async () => {}),
   upsertIssueComment: vi.fn(async () => {}),
   upsertPrFiles: vi.fn(async () => {}),
+  replacePrFiles: vi.fn(async () => {}),
+  upsertPrWorktree: vi.fn(async () => {}),
   listPulls: vi.fn(async () => ({ items: [], nextCursor: null })),
   getPull: vi.fn(async () => ({
     pull: {
@@ -82,6 +84,7 @@ const buildStore = (): GithubReviewStore => ({
     issueComments: [],
   })),
   listFiles: vi.fn(async () => []),
+  listCheckStates: vi.fn(async () => []),
   listThreads: vi.fn(async () => []),
   updateThreadResolution: vi.fn(async () => {}),
   updateMergeState: vi.fn(async () => {}),
