@@ -3,8 +3,8 @@ import { timestampFromDate } from '@bufbuild/protobuf/wkt'
 import type { CodexTaskMessage } from '@/codex'
 import {
   CodexTaskStage,
-  type CodexTask as GithubCodexTaskMessage,
   CodexIterationsPolicySchema as GithubCodexIterationsPolicySchema,
+  type CodexTask as GithubCodexTaskMessage,
   CodexTaskSchema as GithubCodexTaskSchema,
 } from '@/proto/proompteng/froussard/v1/codex_task_pb'
 
