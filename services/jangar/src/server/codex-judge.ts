@@ -3110,7 +3110,8 @@ const maybeSubmitSystemImprovementWorkflow = async (
   reason: string | null,
   evaluation?: CodexEvaluationRecord,
 ) => {
-  if (!argo || !config.systemImprovementWorkflowTemplate) return
+  const argoClient = globalOverrides.__codexJudgeArgoMock ?? argo
+  if (!argoClient || !config.systemImprovementWorkflowTemplate) return
 
   const baseRef =
     typeof run.runCompletePayload?.base === 'string' && run.runCompletePayload.base.trim().length > 0
@@ -3120,7 +3121,7 @@ const maybeSubmitSystemImprovementWorkflow = async (
   const prompt = buildSystemImprovementPrompt(run, reason, evaluation)
 
   try {
-    await argo.submitWorkflowTemplate({
+    await argoClient.submitWorkflowTemplate({
       namespace: config.systemImprovementWorkflowNamespace,
       templateName: config.systemImprovementWorkflowTemplate,
       parameters: [
