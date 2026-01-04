@@ -43,11 +43,14 @@ type ArgoConfig struct {
 
 // ImplementerConfig controls Facteur-led Codex implementation orchestration behaviour.
 type ImplementerConfig struct {
-	Enabled          bool              `mapstructure:"enabled"`
-	Namespace        string            `mapstructure:"namespace"`
-	WorkflowTemplate string            `mapstructure:"workflow_template"`
-	ServiceAccount   string            `mapstructure:"service_account"`
-	Parameters       map[string]string `mapstructure:"parameters"`
+	Enabled                      bool              `mapstructure:"enabled"`
+	Namespace                    string            `mapstructure:"namespace"`
+	WorkflowTemplate             string            `mapstructure:"workflow_template"`
+	AutonomousWorkflowTemplate   string            `mapstructure:"autonomous_workflow_template"`
+	ServiceAccount               string            `mapstructure:"service_account"`
+	Parameters                   map[string]string `mapstructure:"parameters"`
+	AutonomousGenerateNamePrefix string            `mapstructure:"autonomous_generate_name_prefix"`
+	JudgePrompt                  string            `mapstructure:"judge_prompt"`
 }
 
 // ServerConfig contains HTTP server runtime options.
@@ -137,8 +140,11 @@ func LoadWithOptions(opts Options) (*Config, error) {
 		},
 		{key: "codex_implementation_orchestrator.namespace"},
 		{key: "codex_implementation_orchestrator.workflow_template"},
+		{key: "codex_implementation_orchestrator.autonomous_workflow_template"},
 		{key: "codex_implementation_orchestrator.service_account"},
 		{key: "codex_implementation_orchestrator.parameters"},
+		{key: "codex_implementation_orchestrator.autonomous_generate_name_prefix"},
+		{key: "codex_implementation_orchestrator.judge_prompt"},
 	} {
 		if len(binding.envs) == 0 {
 			if err := v.BindEnv(binding.key); err != nil {

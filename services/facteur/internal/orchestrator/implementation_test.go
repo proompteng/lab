@@ -154,6 +154,9 @@ func TestImplementer_Success(t *testing.T) {
 	require.Equal(t, "staging", input.Parameters["environment"])
 	require.Equal(t, "codex/issue-1966-demo", input.Parameters["head"])
 	require.Equal(t, "main", input.Parameters["base"])
+	require.Equal(t, "Implement work", input.Parameters["prompt"])
+	require.Equal(t, "1", input.Parameters["implementation_iterations"])
+	require.Equal(t, "1", input.Parameters["iteration_cycle"])
 	require.Equal(t, map[string]string{"codex.issue_number": "1966"}, input.Labels)
 	require.Equal(t, map[string]string{
 		"codex.repository":   "proompteng/lab",
