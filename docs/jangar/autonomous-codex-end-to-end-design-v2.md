@@ -23,46 +23,6 @@ The system is considered **guaranteed-successful** when these hold in production
 3) Every judge decision is based on an authoritative worktree snapshot.
 4) Every run contains a complete artifact set, or is explicitly marked as infra-failure with automatic rerun.
 
-## 1.3 One-Turn Completion Contract (Required)
-This design is **completable in one turn** when the following conditions are true. If any condition is false, the run must fail fast with a precise error and the smallest unblocker.
-
-### 1.3.1 One-turn definition
-A single **Argo workflow execution** performs:
-1) Implementation
-2) Run record creation
-3) Judge evaluation
-4) Gate resolution (CI + review)
-5) Merge
-6) Deploy
-7) Post-deploy verification
-
-No manual intervention, no out-of-band Jangar API calls, and no cross-run dependency are allowed in a one-turn execution.
-
-### 1.3.2 One-turn preconditions (hard requirements)
-All of the following must be true before the workflow starts:
-- Repo checkout present at `CODEX_CWD` with valid `.git`.
-- `git`, `gh`, and `argo` CLIs available in the workflow container.
-- GitHub token has PR create + read + review scopes.
-- MinIO/Argo artifact repository is reachable.
-- DB or Kafka sink is reachable for run-complete persistence.
-- Workflow template `codex-run` exists and is referenced by the DAG.
-
-### 1.3.3 One-turn execution guarantees (must be enforced)
-- Implementation step creates or updates a PR **before** the DAG proceeds.
-- Run record is written **inside** the DAG (`run-complete` step).
-- Judge runs **inside** the DAG (not as a Jangar background task).
-- Worktree snapshot exists before judge evaluation.
-- CI and review gates are resolved for **exact** commit SHA.
-- Any failure produces `next_prompt` + rerun submission **in the same workflow**.
-
-### 1.3.4 One-turn output guarantees
-A completed or failed run must have:
-- Run record in DB
-- Full artifact set in MinIO
-- Judge decision JSON
-- PR URL (or explicit failure reason)
-- Rerun submission or human escalation record
-
 ## 2) Observed Deficiencies (from code + DB)
 
 ### Data and ingestion
@@ -93,7 +53,6 @@ A completed or failed run must have:
 6) The pipeline is resumable and durable across service restarts.
 7) The system is **deterministically recoverable** from any transient failure.
 8) The system produces **verifiable and auditable evidence** for every decision.
-9) The system can be **executed end-to-end in one Argo workflow run** with no external dependencies beyond GitHub, MinIO, and DB/Kafka.
 
 ## 4) High-Level Architecture
 
@@ -176,12 +135,7 @@ The only difference between the two modes must be the prompt and the step label.
 7) `verify` (post-deploy)
 8) `rerun` (if fail, durable submit with next_prompt)
 
-### 6.1.1 One-turn DAG wiring (mandatory)
-- `implementation -> run-complete -> judge -> gate -> merge -> deploy -> verify`
-- `judge -> rerun` on failure (no external timer)
-- `rerun` must submit the next workflow execution immediately or with a bounded delay (persisted).
-
-### 6.1.2 Argo Workflow DAG (Mermaid)
+### 6.1.1 Argo Workflow DAG (Mermaid)
 All nodes below are **Argo workflow nodes**; edges are Argo DAG dependencies or conditional branches.
 ```mermaid
 flowchart TD
@@ -294,9 +248,6 @@ If judge output is not valid JSON in the required schema:
 - PR creation is not optional; workflow must fail fast if no PR is created.
 - Head branch must be stable per issue; reruns continue on the same branch.
 
-### 10.1 One-turn PR constraint
-- PR must be opened **within the same workflow run** (implementation step).
-- If PR is not opened, the workflow must fail and emit a system-improvement PR with the root cause.
 
 ## 11) Retry and Idempotency Guarantees
 
