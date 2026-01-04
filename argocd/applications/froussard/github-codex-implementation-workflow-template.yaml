@@ -190,6 +190,7 @@ spec:
 
             git -C "$WORKTREE_DIR" fetch --all --prune
 
+            mkdir -p /workspace/lab /workspace/.codex
             # Ensure judge output files exist for all stages to satisfy Argo output collection.
             : > "/workspace/lab/.codex-judge-decision.txt"
             : > "/workspace/lab/.codex-judge-next-prompt.txt"
