@@ -421,6 +421,10 @@ spec:
 
             git -C "$WORKTREE_DIR" fetch --all --prune
 
+            # Ensure judge output files exist for all stages to satisfy Argo output collection.
+            : > "/workspace/lab/.codex-judge-decision.txt"
+            : > "/workspace/lab/.codex-judge-next-prompt.txt"
+
             if ! git -C "$WORKTREE_DIR" rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1 \
               && ! git -C "$WORKTREE_DIR" rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
               echo "Base ref '$BASE_BRANCH' not found in repository" >&2
