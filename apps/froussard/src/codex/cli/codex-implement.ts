@@ -29,6 +29,10 @@ interface ImplementationEventPayload {
   planCommentId?: number | string | null
   planCommentUrl?: string | null
   planCommentBody?: string | null
+  iteration?: number | string | null
+  iterationCycle?: number | string | null
+  iteration_cycle?: number | string | null
+  iterations?: number | string | null
 }
 
 const readEventPayload = async (path: string): Promise<ImplementationEventPayload> => {
@@ -103,6 +107,15 @@ type CodexNotifyPayload = {
     filtered: number
     messages: Array<Record<string, unknown>>
   } | null
+  memory_soak?: {
+    fetched: number
+    query: string
+    namespace: string
+    memories: Array<Record<string, unknown>>
+  } | null
+  iteration?: number | null
+  iteration_cycle?: number | null
+  iterations?: number | null
   input_messages: string[]
   last_assistant_message: string | null
   logs?: CodexNotifyLogExcerpt
@@ -117,6 +130,22 @@ type NatsContextPayload = {
   fetched: number
   filtered: number
   messages: Array<Record<string, unknown>>
+}
+
+type MemoryRecord = {
+  id?: string
+  content?: string | null
+  summary?: string | null
+  tags?: string[]
+  metadata?: Record<string, unknown>
+  createdAt?: string | null
+}
+
+type MemoryContextPayload = {
+  fetched: number
+  query: string
+  namespace: string
+  memories: MemoryRecord[]
 }
 
 const truncateLogContent = (content: string) => {
@@ -225,6 +254,10 @@ const buildNotifyPayload = ({
   prUrl,
   judgeOutput,
   contextSoak,
+  memorySoak,
+  iteration,
+  iterationCycle,
+  iterations,
 }: {
   repository: string
   issueNumber: string
@@ -249,6 +282,10 @@ const buildNotifyPayload = ({
   prUrl?: string | null
   judgeOutput?: Record<string, unknown> | null
   contextSoak?: NatsContextPayload | null
+  memorySoak?: MemoryContextPayload | null
+  iteration?: number | null
+  iterationCycle?: number | null
+  iterations?: number | null
 }): CodexNotifyPayload => {
   return {
     type: 'agent-turn-complete',
@@ -275,6 +312,10 @@ const buildNotifyPayload = ({
     stage,
     judge_output: judgeOutput ?? null,
     context_soak: contextSoak ?? null,
+    memory_soak: memorySoak ?? null,
+    iteration: iteration ?? null,
+    iteration_cycle: iterationCycle ?? null,
+    iterations: iterations ?? null,
     input_messages: [prompt],
     last_assistant_message: lastAssistantMessage ?? null,
     logs: logExcerpt,
@@ -502,6 +543,37 @@ const buildPrBody = (input: { issueNumber: string; summary: string | null; tests
   ].join('\n')
 }
 
+const buildDefaultJudgePrompt = (input: {
+  repository: string
+  issueNumber: string
+  issueTitle: string
+  issueBody: string
+  issueUrl: string
+  baseBranch: string
+  headBranch: string
+}) => {
+  const trimmedBody = input.issueBody.trim() || 'No issue body provided.'
+  return [
+    'You are the Codex judge. Evaluate the implementation against the issue requirements.',
+    `Repository: ${input.repository}`,
+    `Issue: #${input.issueNumber} - ${input.issueTitle}`,
+    `Issue URL: ${input.issueUrl}`,
+    `Base branch: ${input.baseBranch}`,
+    `Head branch: ${input.headBranch}`,
+    '',
+    'Requirements:',
+    '- Use the worktree diff (git diff base..head) as the source of truth.',
+    '- Verify every requirement in the issue body is satisfied.',
+    '- If anything is missing, decide fail and provide a concrete next_prompt.',
+    '- Output strict JSON with fields: decision, requirements_coverage, missing_items, suggested_fixes, next_prompt, prompt_tuning_suggestions, system_improvement_suggestions.',
+    '',
+    'Issue body:',
+    '"""',
+    trimmedBody,
+    '"""',
+  ].join('\n')
+}
+
 const listPullRequestByHead = async (repository: string, headBranch: string) => {
   const owner = repository.includes('/') ? (repository.split('/')[0] ?? '') : ''
   const headSelector = headBranch.includes(':') || !owner ? headBranch : `${owner}:${headBranch}`
@@ -639,6 +711,23 @@ const truncateContextLine = (value: string, max = 400) => {
   return `${value.slice(0, max)}…`
 }
 
+const formatMemoryContextBlock = (payload: MemoryContextPayload | null, maxMemories = 6) => {
+  if (!payload || payload.memories.length === 0) return ''
+  const memories = payload.memories.slice(0, maxMemories)
+  const lines = memories.map((memory) => {
+    const summary =
+      typeof memory.summary === 'string' && memory.summary.trim().length > 0 ? memory.summary.trim() : 'memory'
+    const created =
+      typeof memory.createdAt === 'string' && memory.createdAt.trim().length > 0 ? memory.createdAt : 'unknown-time'
+    const content =
+      typeof memory.content === 'string' && memory.content.trim().length > 0
+        ? truncateContextLine(memory.content.trim(), 600)
+        : ''
+    return `- [${created}] ${summary}${content ? ` :: ${content}` : ''}`
+  })
+  return `Jangar memory snapshots (namespace=${payload.namespace}, query="${payload.query}"):\n${lines.join('\n')}`
+}
+
 const formatNatsContextBlock = (payload: NatsContextPayload | null, maxMessages = 25) => {
   if (!payload || payload.messages.length === 0) return ''
   const messages = payload.messages.slice(-maxMessages)
@@ -699,6 +788,65 @@ const fetchNatsContext = async ({
     logger.warn('NATS context soak failed', error)
     return null
   }
+}
+
+const fetchJangarMemories = async ({
+  logger,
+  required,
+  namespace,
+  query,
+  limit,
+}: {
+  logger: CodexLogger
+  required: boolean
+  namespace: string
+  query: string
+  limit: number
+}): Promise<MemoryContextPayload | null> => {
+  const baseUrl = sanitizeNullableString(process.env.JANGAR_BASE_URL ?? '')
+  if (!baseUrl) {
+    if (required) {
+      throw new Error('JANGAR_BASE_URL is required for memory soak')
+    }
+    return null
+  }
+
+  const url = new URL(`${baseUrl.replace(/\/+$/, '')}/api/memories`)
+  url.searchParams.set('namespace', namespace)
+  url.searchParams.set('query', query)
+  url.searchParams.set('limit', String(limit))
+
+  const maxAttempts = 3
+  let lastError: Error | undefined
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await fetch(url.toString())
+      if (!response.ok) {
+        const message = await response.text()
+        throw new Error(`Memory fetch failed (${response.status}): ${message}`)
+      }
+      const payload = (await response.json()) as { memories?: MemoryRecord[] }
+      const memories = Array.isArray(payload.memories) ? payload.memories : []
+      return {
+        fetched: memories.length,
+        query,
+        namespace,
+        memories,
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Memory fetch failed')
+      logger.warn(`Jangar memory fetch failed (attempt ${attempt}/${maxAttempts})`, lastError)
+      if (attempt < maxAttempts) {
+        await sleep(750 * attempt)
+      }
+    }
+  }
+
+  if (required && lastError) {
+    throw lastError
+  }
+  return null
 }
 
 const publishNatsEvent = async (
@@ -831,6 +979,17 @@ const extractSessionIdFromEvents = async (eventsPath: string | undefined, logger
 }
 
 const normalizeIssueNumber = (value: string | number) => String(value)
+
+const parseOptionalInt = (value: string | number | null | undefined) => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.floor(value)
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number.parseInt(value, 10)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
+}
 
 const readResumeContext = async (path: string, logger: CodexLogger): Promise<ResumeContext | undefined> => {
   if (!(await pathExists(path))) {
@@ -1265,10 +1424,7 @@ export const runCodexImplementation = async (eventPath: string) => {
 
   const event = await readEventPayload(eventPath)
 
-  let prompt = event.prompt?.trim()
-  if (!prompt) {
-    throw new Error('Missing Codex prompt in event payload')
-  }
+  let prompt = event.prompt?.trim() ?? ''
 
   const repository = event.repository?.trim()
   if (!repository) {
@@ -1282,6 +1438,9 @@ export const runCodexImplementation = async (eventPath: string) => {
   }
 
   const stage = normalizeStage(event.stage ?? process.env.CODEX_STAGE ?? 'implementation')
+  const iteration = parseOptionalInt(event.iteration)
+  const iterationCycle = parseOptionalInt(event.iterationCycle ?? event.iteration_cycle)
+  const iterations = parseOptionalInt(event.iterations)
 
   const worktree = process.env.WORKTREE ?? '/workspace/lab'
   const defaultOutputPath = `${worktree}/.codex-implementation.log`
@@ -1363,6 +1522,24 @@ export const runCodexImplementation = async (eventPath: string) => {
   const planCommentUrl = sanitizeNullableString(event.planCommentUrl)
   const planCommentBody = sanitizeNullableString(event.planCommentBody)
   const issueTitle = sanitizeNullableString(event.issueTitle ?? process.env.ISSUE_TITLE ?? '')
+  const issueBody = sanitizeNullableString(event.issueBody ?? '')
+  const issueUrl = sanitizeNullableString(event.issueUrl ?? '')
+
+  if (!prompt) {
+    if (stage === 'judge') {
+      prompt = buildDefaultJudgePrompt({
+        repository,
+        issueNumber,
+        issueTitle: issueTitle || `Issue #${issueNumber}`,
+        issueBody,
+        issueUrl: issueUrl || `https://github.com/${repository}/issues/${issueNumber}`,
+        baseBranch,
+        headBranch,
+      })
+    } else {
+      throw new Error('Missing Codex prompt in event payload')
+    }
+  }
 
   process.env.CODEX_PROMPT = prompt
   process.env.ISSUE_REPO = repository
@@ -1378,6 +1555,10 @@ export const runCodexImplementation = async (eventPath: string) => {
   process.env.WORKTREE = worktree
   process.env.OUTPUT_PATH = outputPath
   process.env.ISSUE_TITLE = issueTitle
+  process.env.CODEX_ITERATION = iteration !== null && iteration !== undefined ? String(iteration) : ''
+  process.env.CODEX_ITERATION_CYCLE =
+    iterationCycle !== null && iterationCycle !== undefined ? String(iterationCycle) : ''
+  process.env.CODEX_ITERATIONS_COUNT = iterations !== null && iterations !== undefined ? String(iterations) : ''
   process.env.IMPLEMENTATION_PATCH_PATH = patchPath
   process.env.IMPLEMENTATION_STATUS_PATH = statusPath
   process.env.IMPLEMENTATION_CHANGES_ARCHIVE_PATH = archivePath
@@ -1429,6 +1610,21 @@ export const runCodexImplementation = async (eventPath: string) => {
     (process.env.CODEX_NATS_SOAK_REQUIRED ?? 'true').trim().toLowerCase() !== 'false' &&
     (process.env.CODEX_NATS_SOAK_REQUIRED ?? 'true').trim() !== '0'
 
+  const shouldRequireMemories = stage === 'implementation' && ((iteration ?? 1) >= 2 || (iterationCycle ?? 1) >= 2)
+  const memoryNamespace = `codex:${repository}:${issueNumber}`
+  const memoryQuery = `issue ${issueNumber} ${issueTitle || repository} codex run summary`
+  const memorySoak = await fetchJangarMemories({
+    logger,
+    required: shouldRequireMemories,
+    namespace: memoryNamespace,
+    query: memoryQuery,
+    limit: 12,
+  })
+  const memoryContextBlock = formatMemoryContextBlock(memorySoak)
+  if (memoryContextBlock) {
+    prompt = `${memoryContextBlock}\n\n${prompt}`
+  }
+
   const natsContext = await fetchNatsContext({
     logger,
     required: natsSoakRequired,
@@ -1447,7 +1643,7 @@ export const runCodexImplementation = async (eventPath: string) => {
   await publishNatsEvent(logger, {
     kind: 'run-started',
     content: `${stage} started`,
-    attrs: { stage },
+    attrs: { stage, iteration, iterationCycle },
   })
 
   const normalizedIssueNumber = issueNumber
@@ -1625,6 +1821,10 @@ export const runCodexImplementation = async (eventPath: string) => {
       prUrl,
       judgeOutput,
       contextSoak: natsContext,
+      memorySoak,
+      iteration,
+      iterationCycle,
+      iterations,
     })
     try {
       await ensureFileDirectory(notifyPath)
@@ -1658,6 +1858,8 @@ export const runCodexImplementation = async (eventPath: string) => {
         decision,
         prUrl,
         ciUrl: null,
+        iteration,
+        iterationCycle,
       },
     })
     await publishNatsEvent(logger, {
@@ -1667,12 +1869,14 @@ export const runCodexImplementation = async (eventPath: string) => {
         stage,
         missingItems: gaps,
         suggestedFixes: gaps.length > 0 ? gaps : [],
+        iteration,
+        iterationCycle,
       },
     })
     await publishNatsEvent(logger, {
       kind: 'run-next-prompt',
       content: nextPrompt ?? 'None',
-      attrs: { stage, decision },
+      attrs: { stage, decision, iteration, iterationCycle },
     })
     await publishNatsEvent(logger, {
       kind: 'run-outcome',
@@ -1683,6 +1887,8 @@ export const runCodexImplementation = async (eventPath: string) => {
         prUrl,
         ciUrl: null,
         tests,
+        iteration,
+        iterationCycle,
       },
     })
 
@@ -1703,7 +1909,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       await publishNatsEvent(logger, {
         kind: 'run-outcome',
         content: `${stage} failed`,
-        attrs: { stage, decision: 'fail' },
+        attrs: { stage, decision: 'fail', iteration, iterationCycle },
       })
     }
     await ensureNotifyPlaceholder(notifyPath, logger)
