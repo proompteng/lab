@@ -67,7 +67,7 @@ spec:
 
                   node_name_line=""
                   if [ -n "${registry_node}" ]; then
-                    node_name_line="      nodeName: ${registry_node}"
+                    node_name_line="nodeName: ${registry_node}"
                   fi
 
                   cat <<JOB | kubectl -n registry apply -f -
@@ -79,7 +79,7 @@ spec:
                     backoffLimit: 0
                     template:
                       spec:
-${node_name_line}
+                        ${node_name_line}
                         restartPolicy: Never
                         containers:
                           - name: gc
