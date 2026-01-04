@@ -21,6 +21,9 @@ interface ImplementationEventPayload {
   repository?: string
   issueNumber?: number | string
   issueTitle?: string | null
+  issueBody?: string | null
+  issueUrl?: string | null
+  stage?: string | null
   base?: string | null
   head?: string | null
   planCommentId?: number | string | null
@@ -46,6 +49,23 @@ const sanitizeNullableString = (value: string | null | undefined) => {
   return value
 }
 
+const safeParseJson = (value: string | null | undefined) => {
+  if (!value) return null
+  try {
+    return JSON.parse(value) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+const VALID_STAGES = new Set(['implementation', 'judge', 'verify', 'review', 'planning', 'research'])
+
+const normalizeStage = (value: string | null | undefined) => {
+  if (!value) return 'implementation'
+  const trimmed = value.trim().toLowerCase()
+  return VALID_STAGES.has(trimmed) ? trimmed : 'implementation'
+}
+
 type CodexNotifyLogExcerpt = {
   output?: string | null
   events?: string | null
@@ -67,9 +87,17 @@ type CodexNotifyPayload = {
   workflowNamespace?: string | null
   commit_sha?: string | null
   commitSha?: string | null
+  head_sha?: string | null
+  headSha?: string | null
+  pr_number?: number | null
+  pr_url?: string | null
+  prNumber?: number | null
+  prUrl?: string | null
   session_id: string | null
   branch?: string | null
   prompt: string
+  stage?: string | null
+  judge_output?: Record<string, unknown> | null
   input_messages: string[]
   last_assistant_message: string | null
   logs?: CodexNotifyLogExcerpt
@@ -168,6 +196,7 @@ const buildNotifyPayload = ({
   baseBranch,
   headBranch,
   prompt,
+  stage,
   outputPath,
   jsonOutputPath,
   agentOutputPath,
@@ -180,12 +209,17 @@ const buildNotifyPayload = ({
   lastAssistantMessage,
   logExcerpt,
   commitSha,
+  headSha,
+  prNumber,
+  prUrl,
+  judgeOutput,
 }: {
   repository: string
   issueNumber: string
   baseBranch: string
   headBranch: string
   prompt: string
+  stage: string
   outputPath: string
   jsonOutputPath: string
   agentOutputPath: string
@@ -198,6 +232,10 @@ const buildNotifyPayload = ({
   lastAssistantMessage?: string | null
   logExcerpt?: CodexNotifyLogExcerpt
   commitSha?: string | null
+  headSha?: string | null
+  prNumber?: number | null
+  prUrl?: string | null
+  judgeOutput?: Record<string, unknown> | null
 }): CodexNotifyPayload => {
   return {
     type: 'agent-turn-complete',
@@ -212,9 +250,17 @@ const buildNotifyPayload = ({
     workflowNamespace: process.env.ARGO_WORKFLOW_NAMESPACE ?? null,
     commit_sha: commitSha ?? null,
     commitSha: commitSha ?? null,
+    head_sha: headSha ?? commitSha ?? null,
+    headSha: headSha ?? commitSha ?? null,
+    pr_number: prNumber ?? null,
+    pr_url: prUrl ?? null,
+    prNumber: prNumber ?? null,
+    prUrl: prUrl ?? null,
     session_id: sessionId ?? null,
     branch: headBranch || null,
     prompt,
+    stage,
+    judge_output: judgeOutput ?? null,
     input_messages: [prompt],
     last_assistant_message: lastAssistantMessage ?? null,
     logs: logExcerpt,
@@ -368,6 +414,180 @@ export const ensurePullRequestExists = async (repository: string, headBranch: st
   throw new Error(`No pull request found for branch '${headBranch}' in ${repository}`)
 }
 
+type PullRequestInfo = {
+  number: number
+  url: string
+  title?: string | null
+  body?: string | null
+  headSha?: string | null
+}
+
+const extractSectionLines = (text: string, header: string) => {
+  const lines = text.replace(/\r/g, '').split('\n')
+  const headerIndex = lines.findIndex((line) => line.trim().toLowerCase().startsWith(header.toLowerCase()))
+  if (headerIndex < 0) return []
+  const collected: string[] = []
+  for (let i = headerIndex + 1; i < lines.length; i += 1) {
+    const line = lines[i]?.trim()
+    if (!line) {
+      if (collected.length > 0) break
+      continue
+    }
+    if (/^[A-Za-z].*:/.test(line)) break
+    collected.push(line)
+  }
+  return collected
+}
+
+const extractSummary = (message?: string | null) => {
+  if (!message) return null
+  const summaryLines = extractSectionLines(message, 'Summary')
+  if (summaryLines.length > 0) {
+    return summaryLines.map((line) => line.replace(/^[-*]\s*/, '')).join(' ')
+  }
+  const firstLine = message
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.length > 0)
+  return firstLine ?? null
+}
+
+const extractTests = (message?: string | null) => {
+  if (!message) return []
+  const testLines = extractSectionLines(message, 'Tests')
+  return testLines.map((line) => line.replace(/^[-*]\s*/, '')).filter(Boolean)
+}
+
+const extractKnownGaps = (message?: string | null) => {
+  if (!message) return []
+  const gapLines = extractSectionLines(message, 'Known gaps')
+  if (gapLines.length > 0) return gapLines.map((line) => line.replace(/^[-*]\s*/, '')).filter(Boolean)
+  const altLines = extractSectionLines(message, 'Gaps')
+  return altLines.map((line) => line.replace(/^[-*]\s*/, '')).filter(Boolean)
+}
+
+const buildPrBody = (input: { issueNumber: string; summary: string | null; tests: string[]; knownGaps: string[] }) => {
+  const summary = input.summary ?? `Implementation for #${input.issueNumber}.`
+  const tests = input.tests.length > 0 ? input.tests : ['Not run (not provided).']
+  const gaps = input.knownGaps.length > 0 ? input.knownGaps : ['None.']
+
+  return [
+    '## Summary',
+    `- ${summary}`,
+    '',
+    '## Related Issues',
+    `- #${input.issueNumber}`,
+    '',
+    '## Testing',
+    ...tests.map((test) => `- ${test}`),
+    '',
+    '## Known Gaps',
+    ...gaps.map((gap) => `- ${gap}`),
+    '',
+  ].join('\n')
+}
+
+const listPullRequestByHead = async (repository: string, headBranch: string) => {
+  const owner = repository.includes('/') ? (repository.split('/')[0] ?? '') : ''
+  const headSelector = headBranch.includes(':') || !owner ? headBranch : `${owner}:${headBranch}`
+  const result = await runCommand('gh', [
+    'pr',
+    'list',
+    '--repo',
+    repository,
+    '--state',
+    'all',
+    '--head',
+    headSelector,
+    '--json',
+    'number,url,title,body,headRefOid',
+    '--limit',
+    '1',
+  ])
+  if (result.exitCode !== 0) {
+    const message = result.stderr.trim() || result.stdout.trim()
+    throw new Error(`Failed to list PR for ${repository}#${headSelector}: ${message}`)
+  }
+  const parsed = JSON.parse(result.stdout || '[]') as PullRequestInfo[]
+  return parsed.length > 0 ? parsed[0] : null
+}
+
+const updatePullRequest = async (repository: string, pr: PullRequestInfo, title: string, body: string) => {
+  const args = ['pr', 'edit', String(pr.number), '--repo', repository, '--title', title, '--body', body]
+  const result = await runCommand('gh', args)
+  if (result.exitCode !== 0) {
+    const message = result.stderr.trim() || result.stdout.trim()
+    throw new Error(`Failed to update PR ${pr.number}: ${message}`)
+  }
+}
+
+const createPullRequest = async (
+  repository: string,
+  headBranch: string,
+  baseBranch: string,
+  title: string,
+  body: string,
+) => {
+  const args = [
+    'pr',
+    'create',
+    '--repo',
+    repository,
+    '--head',
+    headBranch,
+    '--base',
+    baseBranch,
+    '--title',
+    title,
+    '--body',
+    body,
+  ]
+  const result = await runCommand('gh', args)
+  if (result.exitCode !== 0) {
+    const message = result.stderr.trim() || result.stdout.trim()
+    throw new Error(`Failed to create PR for ${headBranch}: ${message}`)
+  }
+  return listPullRequestByHead(repository, headBranch)
+}
+
+const ensurePullRequest = async (input: {
+  repository: string
+  headBranch: string
+  baseBranch: string
+  issueNumber: string
+  issueTitle?: string | null
+  lastAssistantMessage?: string | null
+  logger: CodexLogger
+}) => {
+  if (process.env.CODEX_SKIP_PR_CHECK === '1') {
+    input.logger.debug('Skipping pull request create/update (CODEX_SKIP_PR_CHECK=1)')
+    return null
+  }
+  const summary = extractSummary(input.lastAssistantMessage)
+  const tests = extractTests(input.lastAssistantMessage)
+  const gaps = extractKnownGaps(input.lastAssistantMessage)
+  const title = input.issueTitle?.trim() || `Codex: Issue #${input.issueNumber}`
+  const body = buildPrBody({
+    issueNumber: input.issueNumber,
+    summary,
+    tests,
+    knownGaps: gaps,
+  })
+
+  const existing = await listPullRequestByHead(input.repository, input.headBranch)
+  if (existing) {
+    await updatePullRequest(input.repository, existing, title, body)
+    return existing
+  }
+
+  const created = await createPullRequest(input.repository, input.headBranch, input.baseBranch, title, body)
+  if (!created) {
+    throw new Error(`PR creation did not return a PR for ${input.headBranch}`)
+  }
+  return created
+}
+
 const runCommand = async (command: string, args: string[], options: { cwd?: string } = {}): Promise<CommandResult> => {
   return await new Promise<CommandResult>((resolve, reject) => {
     const child = spawnChild(command, args, {
@@ -400,6 +620,22 @@ const runCommand = async (command: string, args: string[], options: { cwd?: stri
   })
 }
 
+const publishNatsEvent = async (
+  logger: CodexLogger,
+  input: { kind: string; content: string; attrs?: Record<string, unknown> },
+) => {
+  if (!process.env.NATS_URL) return
+  const args = ['--kind', input.kind, '--content', input.content, '--channel', 'general', '--publish-general']
+  if (input.attrs && Object.keys(input.attrs).length > 0) {
+    args.push('--attrs-json', JSON.stringify(input.attrs))
+  }
+  try {
+    await runCommand('codex-nats-publish', args)
+  } catch (error) {
+    logger.warn('Failed to publish NATS event', error)
+  }
+}
+
 interface CaptureImplementationArtifactsOptions {
   worktree: string
   archivePath: string
@@ -422,9 +658,12 @@ interface ImplementationManifest {
   worktree: string
   repository: string
   issueNumber: string
+  issue_number?: string
   prompt: string
   commitSha: string | null
+  commit_sha?: string | null
   sessionId?: string
+  session_id?: string
   trackedFiles: string[]
   deletedFiles: string[]
 }
@@ -842,15 +1081,20 @@ const captureImplementationArtifacts = async ({
       logger.warn('git rev-parse HEAD threw while capturing implementation artifacts', error)
     }
 
+    const resolvedSessionId = sessionId ?? (await extractSessionIdFromEvents(jsonEventsPath, logger))
+
     const manifest = {
       version: 1,
       generatedAt: new Date().toISOString(),
       worktree,
       repository,
       issueNumber,
+      issue_number: issueNumber,
       prompt,
       commitSha,
-      sessionId: sessionId ?? (await extractSessionIdFromEvents(jsonEventsPath, logger)),
+      commit_sha: commitSha,
+      sessionId: resolvedSessionId,
+      session_id: resolvedSessionId,
       trackedFiles: Array.from(trackedFiles).sort(),
       deletedFiles: deletedFiles.sort(),
     } satisfies ImplementationManifest
@@ -956,6 +1200,8 @@ export const runCodexImplementation = async (eventPath: string) => {
     throw new Error('Missing issue number metadata in event payload')
   }
 
+  const stage = normalizeStage(event.stage ?? process.env.CODEX_STAGE ?? 'implementation')
+
   const worktree = process.env.WORKTREE ?? '/workspace/lab'
   const defaultOutputPath = `${worktree}/.codex-implementation.log`
   const outputPath = process.env.OUTPUT_PATH ?? defaultOutputPath
@@ -967,6 +1213,9 @@ export const runCodexImplementation = async (eventPath: string) => {
   const archivePath =
     process.env.IMPLEMENTATION_CHANGES_ARCHIVE_PATH ?? `${worktree}/.codex-implementation-changes.tar.gz`
   const notifyPath = process.env.IMPLEMENTATION_NOTIFY_PATH ?? `${worktree}/.codex-implementation-notify.json`
+  const judgeOutputPath = process.env.JUDGE_OUTPUT_PATH ?? `${worktree}/.codex-judge-output.json`
+  const judgeDecisionPath = process.env.JUDGE_DECISION_PATH ?? `${worktree}/.codex-judge-decision.txt`
+  const judgeNextPromptPath = process.env.JUDGE_NEXT_PROMPT_PATH ?? `${worktree}/.codex-judge-next-prompt.txt`
   const resumeMetadataPath = getResumeMetadataPath(worktree)
   const lokiEndpoint =
     process.env.LGTM_LOKI_ENDPOINT ??
@@ -1036,8 +1285,11 @@ export const runCodexImplementation = async (eventPath: string) => {
   process.env.CODEX_PROMPT = prompt
   process.env.ISSUE_REPO = repository
   process.env.ISSUE_NUMBER = issueNumber
+  process.env.CODEX_REPOSITORY = repository
+  process.env.CODEX_ISSUE_NUMBER = issueNumber
   process.env.BASE_BRANCH = baseBranch
   process.env.HEAD_BRANCH = headBranch
+  process.env.CODEX_BRANCH = headBranch
   process.env.PLAN_COMMENT_ID = planCommentId
   process.env.PLAN_COMMENT_URL = planCommentUrl
   process.env.PLAN_COMMENT_BODY = planCommentBody
@@ -1049,7 +1301,7 @@ export const runCodexImplementation = async (eventPath: string) => {
   process.env.IMPLEMENTATION_CHANGES_ARCHIVE_PATH = archivePath
   process.env.IMPLEMENTATION_NOTIFY_PATH = notifyPath
 
-  process.env.CODEX_STAGE = process.env.CODEX_STAGE ?? 'implementation'
+  process.env.CODEX_STAGE = stage
   process.env.RUST_LOG = process.env.RUST_LOG ?? 'codex_core=info,codex_exec=info'
   process.env.RUST_BACKTRACE = process.env.RUST_BACKTRACE ?? '1'
 
@@ -1063,12 +1315,24 @@ export const runCodexImplementation = async (eventPath: string) => {
     process.env.CODEX_CHANNEL_RUN_ID ?? process.env.ARGO_WORKFLOW_NAME ?? process.env.ARGO_WORKFLOW_UID ?? randomRunId()
   const channelRunId = channelRunIdSource.slice(0, 24).toLowerCase()
 
-  await initializeOutputFiles([outputPath, jsonOutputPath, agentOutputPath, runtimeLogPath, notifyPath], consoleLogger)
+  await initializeOutputFiles(
+    [
+      outputPath,
+      jsonOutputPath,
+      agentOutputPath,
+      runtimeLogPath,
+      notifyPath,
+      judgeOutputPath,
+      judgeDecisionPath,
+      judgeNextPromptPath,
+    ],
+    consoleLogger,
+  )
 
   const logger = await createCodexLogger({
     logPath: runtimeLogPath,
     context: {
-      stage: 'implementation',
+      stage,
       repository,
       issue: issueNumber,
       workflow: process.env.ARGO_WORKFLOW_NAME ?? undefined,
@@ -1081,6 +1345,12 @@ export const runCodexImplementation = async (eventPath: string) => {
   await ensureEmptyFile(jsonOutputPath)
   await ensureEmptyFile(agentOutputPath)
   await ensureEmptyFile(runtimeLogPath)
+
+  await publishNatsEvent(logger, {
+    kind: 'run-started',
+    content: `${stage} started`,
+    attrs: { stage },
+  })
 
   const normalizedIssueNumber = issueNumber
   let resumeContext: ResumeContext | undefined
@@ -1152,13 +1422,13 @@ export const runCodexImplementation = async (eventPath: string) => {
     }
 
     if (resumeSessionId) {
-      logger.info(`Running Codex implementation for ${repository}#${issueNumber} (resume mode)`)
+      logger.info(`Running Codex ${stage} for ${repository}#${issueNumber} (resume mode)`)
     } else {
-      logger.info(`Running Codex implementation for ${repository}#${issueNumber}`)
+      logger.info(`Running Codex ${stage} for ${repository}#${issueNumber}`)
     }
 
     const sessionResult = await runCodexSession({
-      stage: 'implementation',
+      stage: stage as Parameters<typeof runCodexSession>[0]['stage'],
       prompt,
       outputPath,
       jsonOutputPath,
@@ -1213,12 +1483,39 @@ export const runCodexImplementation = async (eventPath: string) => {
         ? sessionResult.agentMessages[sessionResult.agentMessages.length - 1]
         : null
     const commitSha = await resolveHeadSha(worktree, logger)
+    const judgeOutput = stage === 'judge' ? safeParseJson(lastAssistantMessage ?? '') : null
+
+    let prInfo: PullRequestInfo | null = null
+    if (stage === 'implementation') {
+      prInfo = await ensurePullRequest({
+        repository,
+        headBranch,
+        baseBranch,
+        issueNumber,
+        issueTitle,
+        lastAssistantMessage,
+        logger,
+      })
+    }
+    const prNumber = prInfo?.number ?? null
+    const prUrl = prInfo?.url ?? null
+    const headSha = prInfo?.headSha ?? commitSha ?? null
+
+    if (stage === 'judge') {
+      const decisionValue = typeof judgeOutput?.decision === 'string' ? judgeOutput.decision : 'fail'
+      const nextPromptValue = typeof judgeOutput?.next_prompt === 'string' ? judgeOutput.next_prompt : ''
+      await writeFile(judgeOutputPath, JSON.stringify(judgeOutput ?? {}, null, 2), 'utf8')
+      await writeFile(judgeDecisionPath, decisionValue, 'utf8')
+      await writeFile(judgeNextPromptPath, nextPromptValue, 'utf8')
+    }
+
     const notifyPayload = buildNotifyPayload({
       repository,
       issueNumber,
       baseBranch,
       headBranch,
       prompt,
+      stage,
       outputPath,
       jsonOutputPath,
       agentOutputPath,
@@ -1231,6 +1528,10 @@ export const runCodexImplementation = async (eventPath: string) => {
       lastAssistantMessage,
       logExcerpt,
       commitSha,
+      headSha,
+      prNumber,
+      prUrl,
+      judgeOutput,
     })
     try {
       await ensureFileDirectory(notifyPath)
@@ -1250,7 +1551,45 @@ export const runCodexImplementation = async (eventPath: string) => {
       // ignore missing json log
     }
 
-    await ensurePullRequestExists(repository, headBranch, logger)
+    const summary = extractSummary(lastAssistantMessage)
+    const tests = extractTests(lastAssistantMessage)
+    const gaps = extractKnownGaps(lastAssistantMessage)
+    const decision = stage === 'judge' && typeof judgeOutput?.decision === 'string' ? judgeOutput.decision : 'pass'
+    const nextPrompt =
+      stage === 'judge' && typeof judgeOutput?.next_prompt === 'string' ? judgeOutput.next_prompt : 'None'
+    await publishNatsEvent(logger, {
+      kind: 'run-summary',
+      content: summary ?? `${stage} run completed`,
+      attrs: {
+        decision,
+        prUrl,
+        ciUrl: null,
+      },
+    })
+    await publishNatsEvent(logger, {
+      kind: 'run-gaps',
+      content: gaps.length > 0 ? gaps.join('; ') : 'None',
+      attrs: {
+        missingItems: gaps,
+        suggestedFixes: gaps.length > 0 ? gaps : [],
+      },
+    })
+    await publishNatsEvent(logger, {
+      kind: 'run-next-prompt',
+      content: nextPrompt ?? 'None',
+      attrs: { decision },
+    })
+    await publishNatsEvent(logger, {
+      kind: 'run-outcome',
+      content: `${stage} completed`,
+      attrs: {
+        decision,
+        prUrl,
+        ciUrl: null,
+        tests,
+      },
+    })
+
     runSucceeded = true
     return {
       repository,
@@ -1264,6 +1603,13 @@ export const runCodexImplementation = async (eventPath: string) => {
       sessionId: capturedSessionId,
     }
   } finally {
+    if (!runSucceeded) {
+      await publishNatsEvent(logger, {
+        kind: 'run-outcome',
+        content: `${stage} failed`,
+        attrs: { decision: 'fail' },
+      })
+    }
     await ensureNotifyPlaceholder(notifyPath, logger)
     try {
       await captureImplementationArtifacts({

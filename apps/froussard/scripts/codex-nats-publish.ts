@@ -13,6 +13,7 @@ type Options = {
   publishGeneral: boolean
   status?: string
   exitCode?: string
+  attrsJson?: string
 }
 
 const usage = () => {
@@ -26,6 +27,7 @@ Options:
   --publish-general     Also publish each event to argo.workflow.general.<kind>.
   --status <value>      Optional status value for status events.
   --exit-code <value>   Optional exit code for status events.
+  --attrs-json <value>  Optional JSON payload merged into attrs.
   -h, --help            Show this help text.
 
 Environment:
@@ -41,6 +43,9 @@ Environment:
   AGENT_ID              Agent identifier.
   AGENT_ROLE            Optional agent role (defaults to assistant).
   RUN_ID                Optional Codex run id for Jangar correlation.
+  CODEX_REPOSITORY      Optional repository slug for context.
+  CODEX_ISSUE_NUMBER    Optional issue number for context.
+  CODEX_BRANCH          Optional branch name for context.
 `)
 }
 
@@ -48,6 +53,15 @@ const coerceNonEmpty = (value?: string | null) => {
   if (!value) return null
   const trimmed = value.trim()
   return trimmed.length > 0 ? trimmed : null
+}
+
+const safeParseJson = (value: string | undefined) => {
+  if (!value) return null
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return null
+  }
 }
 
 const parseArgs = (argv: string[]): Options | null => {
@@ -87,6 +101,10 @@ const parseArgs = (argv: string[]): Options | null => {
         options.exitCode = argv[i + 1]
         i += 1
         break
+      case '--attrs-json':
+        options.attrsJson = argv[i + 1]
+        i += 1
+        break
       case '-h':
       case '--help':
         usage()
@@ -119,6 +137,9 @@ const buildPayload = (
     agentId: string
     agentRole: string
     runId: string | null
+    repository: string | null
+    issueNumber: number | null
+    branch: string | null
   },
   channel: string,
   messageId: string,
@@ -139,6 +160,9 @@ const buildPayload = (
   }
 
   if (context.runId) payload.run_id = context.runId
+  if (context.repository) payload.repository = context.repository
+  if (context.issueNumber) payload.issueNumber = context.issueNumber
+  if (context.branch) payload.branch = context.branch
   if (context.workflowStep) payload.step_id = context.workflowStep
   if (context.workflowStage) payload.stage = context.workflowStage
   if (context.workflowStage) payload.workflow_stage = context.workflowStage
@@ -148,6 +172,13 @@ const buildPayload = (
     const parsed = Number(options.exitCode)
     if (Number.isFinite(parsed)) {
       payload.exit_code = parsed
+    }
+  }
+
+  if (options.attrsJson) {
+    const parsedAttrs = safeParseJson(options.attrsJson)
+    if (parsedAttrs && typeof parsedAttrs === 'object' && !Array.isArray(parsedAttrs)) {
+      payload.attrs = parsedAttrs
     }
   }
 
@@ -233,6 +264,10 @@ const main = async () => {
     coerceNonEmpty(process.env.RUN_ID) ??
     coerceNonEmpty(process.env.CODEX_RUN_ID) ??
     coerceNonEmpty(process.env.JANGAR_RUN_ID)
+  const repository = coerceNonEmpty(process.env.CODEX_REPOSITORY) ?? coerceNonEmpty(process.env.CODEX_REPO_SLUG)
+  const issueNumberRaw = coerceNonEmpty(process.env.CODEX_ISSUE_NUMBER) ?? coerceNonEmpty(process.env.ISSUE_NUMBER)
+  const issueNumber = issueNumberRaw ? Number.parseInt(issueNumberRaw, 10) : null
+  const branch = coerceNonEmpty(process.env.CODEX_BRANCH) ?? coerceNonEmpty(process.env.HEAD_BRANCH)
   const subjectPrefix = process.env.NATS_SUBJECT_PREFIX?.trim() || 'argo.workflow'
 
   const creds = resolveCredsFile()
@@ -250,6 +285,9 @@ const main = async () => {
     agentId,
     agentRole,
     runId,
+    repository,
+    issueNumber: Number.isFinite(issueNumber ?? Number.NaN) ? issueNumber : null,
+    branch,
   }
 
   const publishLine = async (line: string) => {
