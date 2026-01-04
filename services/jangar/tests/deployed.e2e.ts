@@ -607,6 +607,76 @@ test.describe('deployed jangar e2e', () => {
     await expect.poll(() => fetchSessionStatus(sessionId), { timeout: 30_000 }).toBe('closed')
   })
 
+  test('terminal stays visually stable across window resize', async ({ page, request }) => {
+    test.setTimeout(120_000)
+
+    const createResponse = await request.get('/api/terminals?create=1')
+    expect(createResponse.ok()).toBe(true)
+    const createPayload = (await createResponse.json()) as {
+      ok: boolean
+      session?: { id: string; status?: string }
+      message?: string
+    }
+    expect(createPayload.ok).toBe(true)
+    if (!createPayload.session?.id) {
+      throw new Error(`Terminal session creation returned no id: ${createPayload.message ?? 'unknown error'}`)
+    }
+    const sessionId = createPayload.session.id
+    await expect.poll(() => fetchSessionStatus(sessionId), { timeout: 90_000 }).toBe('ready')
+
+    await page.goto(`/terminals/${sessionId}`)
+    await waitForHydration(page)
+    await expect(page.getByText('Status: connected', { exact: false })).toBeVisible({ timeout: 20_000 })
+
+    const terminal = page.getByTestId('terminal-canvas')
+    await terminal.click()
+    const drawCmd =
+      "printf '\\033[2J\\033[H'; printf 'LINE-1: 012345678901234567890123456789012345678901234567890123456789\\n'; printf 'LINE-2: 012345678901234567890123456789012345678901234567890123456789\\n'"
+    await page.keyboard.type(drawCmd)
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.xterm-rows')).toContainText('LINE-1:', { timeout: 10_000 })
+
+    await expect.poll(async () => (await readTerminalSize(page)).cols, { timeout: 10_000 }).toBeGreaterThan(0)
+    await expect.poll(async () => (await readTerminalSize(page)).rows, { timeout: 10_000 }).toBeGreaterThan(0)
+    const sizeBefore = await readTerminalSize(page)
+
+    const beforeMarker = `STTY-RESIZE-BEFORE-${Date.now()}`
+    const beforeInput = await request.post(`/api/terminals/${encodeURIComponent(sessionId)}/input`, {
+      data: { data: Buffer.from(`printf '${beforeMarker}:'; stty size; printf '\\n'\n`).toString('base64') },
+    })
+    expect(beforeInput.ok()).toBe(true)
+    const beforeSnapshot = await waitForTerminalSnapshotContaining(sessionId, beforeMarker, 20_000)
+    const beforeSize = parseSttySizeFromOutput(beforeSnapshot, beforeMarker)
+    expect(beforeSize).toEqual({ rows: sizeBefore.rows, cols: sizeBefore.cols })
+
+    const initialViewport = page.viewportSize()
+    if (!initialViewport) {
+      throw new Error('Missing viewport size for resize test')
+    }
+    await page.setViewportSize({
+      width: initialViewport.width + 240,
+      height: initialViewport.height + 180,
+    })
+    await page.waitForTimeout(800)
+
+    const sizeAfter = await readTerminalSize(page)
+    expect(sizeAfter.cols).toBeGreaterThan(0)
+    expect(sizeAfter.rows).toBeGreaterThan(0)
+    await expect(page.locator('.xterm-rows')).toContainText('LINE-1:', { timeout: 5_000 })
+
+    const afterMarker = `STTY-RESIZE-AFTER-${Date.now()}`
+    const afterInput = await request.post(`/api/terminals/${encodeURIComponent(sessionId)}/input`, {
+      data: { data: Buffer.from(`printf '${afterMarker}:'; stty size; printf '\\n'\n`).toString('base64') },
+    })
+    expect(afterInput.ok()).toBe(true)
+    const afterSnapshot = await waitForTerminalSnapshotContaining(sessionId, afterMarker, 20_000)
+    const afterSize = parseSttySizeFromOutput(afterSnapshot, afterMarker)
+    expect(afterSize).toEqual({ rows: sizeAfter.rows, cols: sizeAfter.cols })
+
+    await request.post(`/api/terminals/${encodeURIComponent(sessionId)}/terminate`)
+    await expect.poll(() => fetchSessionStatus(sessionId), { timeout: 30_000 }).toBe('closed')
+  })
+
   test('terminal focus UX is keyboard focusable without auto-focus', async ({ page, request }) => {
     test.setTimeout(120_000)
 

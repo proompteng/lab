@@ -46,6 +46,8 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
   const snapshotApplyingRef = React.useRef(false)
   const pendingSnapshotRef = React.useRef<{ delayMs: number; active: boolean }>({ delayMs: 180, active: false })
   const resyncTimersRef = React.useRef<ReturnType<typeof setTimeout>[]>([])
+  const resyncingRef = React.useRef(false)
+  const resyncTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [status, setStatus] = React.useState<'connecting' | 'connected' | 'error'>('connecting')
   const [error, setError] = React.useState<string | null>(null)
@@ -106,10 +108,34 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
       pendingSnapshotRef.current = { delayMs, active: true }
     }
 
+    const flushQueuedOutput = () => {
+      if (snapshotApplyingRef.current || resyncingRef.current) return
+      const terminal = terminalRef.current
+      if (!terminal || outputQueueRef.current.length === 0) return
+      const payload = outputQueueRef.current.join('')
+      outputQueueRef.current = []
+      terminal.write(payload)
+    }
+
     const clearResyncTimers = () => {
       if (resyncTimersRef.current.length === 0) return
       for (const timer of resyncTimersRef.current) clearTimeout(timer)
       resyncTimersRef.current = []
+    }
+
+    const clearResyncTimeout = () => {
+      if (!resyncTimeoutRef.current) return
+      clearTimeout(resyncTimeoutRef.current)
+      resyncTimeoutRef.current = null
+    }
+
+    const startResyncGuard = () => {
+      resyncingRef.current = true
+      clearResyncTimeout()
+      resyncTimeoutRef.current = setTimeout(() => {
+        resyncingRef.current = false
+        flushQueuedOutput()
+      }, 2500)
     }
 
     const refreshLayout = (force = false) => {
@@ -135,6 +161,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         const lastSize = lastSizeRef.current
         if (force || !lastSize || nextSize.cols !== lastSize.cols || nextSize.rows !== lastSize.rows) {
           lastSizeRef.current = nextSize
+          startResyncGuard()
           sendResize(nextSize)
           const delayMs = pendingSnapshotRef.current.active ? pendingSnapshotRef.current.delayMs : 180
           pendingSnapshotRef.current = { delayMs, active: false }
@@ -149,17 +176,20 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
 
     const forceResync = (delayMs = 240) => {
       lastSizeRef.current = null
+      startResyncGuard()
       requestSnapshotAfterLayout(delayMs)
       refreshLayout(true)
       clearResyncTimers()
       resyncTimersRef.current = [
         setTimeout(() => {
           if (!isPageVisible()) return
+          resyncingRef.current = true
           requestSnapshotAfterLayout(delayMs)
           refreshLayout(true)
         }, 320),
         setTimeout(() => {
           if (!isPageVisible()) return
+          resyncingRef.current = true
           requestSnapshotAfterLayout(delayMs)
           refreshLayout(true)
         }, 900),
@@ -183,15 +213,6 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         if (inputBufferRef.current) {
           flushInput()
         }
-      }
-
-      const flushQueuedOutput = () => {
-        if (snapshotApplyingRef.current) return
-        const terminal = terminalRef.current
-        if (!terminal || outputQueueRef.current.length === 0) return
-        const payload = outputQueueRef.current.join('')
-        outputQueueRef.current = []
-        terminal.write(payload)
       }
 
       const handleMessage = (raw: string) => {
@@ -227,6 +248,8 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
             snapshotApplyingRef.current = true
             terminal.write(`\u001b[2J\u001b[3J\u001b[H${text}`, () => {
               snapshotApplyingRef.current = false
+              resyncingRef.current = false
+              clearResyncTimeout()
               terminal.scrollToBottom()
               flushQueuedOutput()
             })
@@ -236,7 +259,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         if (payload.type === 'output' && payload.data) {
           const text = outputDecoder.decode(base64ToBytes(payload.data))
           if (!text) return
-          if (snapshotApplyingRef.current) {
+          if (snapshotApplyingRef.current || resyncingRef.current) {
             outputQueueRef.current.push(text)
             return
           }
@@ -425,6 +448,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         resizeTimerRef.current = null
       }
       clearResyncTimers()
+      clearResyncTimeout()
       if (socketRef.current) {
         socketRef.current.close()
         socketRef.current = null
