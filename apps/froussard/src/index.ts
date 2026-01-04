@@ -64,6 +64,8 @@ export const createApp = () => {
     codexTriggerLogins: config.codex.triggerLogins,
     codexWorkflowLogin: config.codex.workflowLogin,
     codexImplementationTriggerPhrase: config.codex.implementationTriggerPhrase,
+    codexAutonomousRepos: config.codex.autonomousRepos,
+    codexAutonomousLabels: config.codex.autonomousLabels,
     topics: config.kafka.topics,
     discord: {
       publicKey: config.discord.publicKey,

@@ -142,6 +142,8 @@ describe('createWebhookHandler', () => {
     codexTriggerLogins: ['user'],
     codexWorkflowLogin: 'github-actions[bot]',
     codexImplementationTriggerPhrase: 'implement issue',
+    codexAutonomousRepos: [],
+    codexAutonomousLabels: ['codex-autonomous'],
     topics: {
       raw: 'raw-topic',
       codexStructured: 'github.issues.codex.tasks',
@@ -184,6 +186,8 @@ describe('createWebhookHandler', () => {
         triggerLogins: [...baseConfig.codexTriggerLogins],
         workflowLogin: baseConfig.codexWorkflowLogin,
         implementationTriggerPhrase: baseConfig.codexImplementationTriggerPhrase,
+        autonomousRepos: [...baseConfig.codexAutonomousRepos],
+        autonomousLabels: [...baseConfig.codexAutonomousLabels],
       },
       discord: {
         publicKey: baseConfig.discord.publicKey,

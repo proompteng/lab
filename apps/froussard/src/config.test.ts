@@ -27,6 +27,8 @@ describe('loadConfig', () => {
     expect(config.codex.triggerLogins).toEqual(['gregkonush', 'tuslagch'])
     expect(config.codex.workflowLogin).toBe('github-actions[bot]')
     expect(config.codex.implementationTriggerPhrase).toBe('implement issue')
+    expect(config.codex.autonomousRepos).toEqual([])
+    expect(config.codex.autonomousLabels).toEqual(['codex-autonomous', 'codex-auto'])
     expect(config.discord.publicKey).toBe('public-key')
     expect(config.discord.defaultResponse.ephemeral).toBe(true)
   })
@@ -39,6 +41,8 @@ describe('loadConfig', () => {
       CODEX_TRIGGER_LOGINS: 'user-one, user-two',
       CODEX_WORKFLOW_LOGIN: 'Automation-Bot',
       CODEX_IMPLEMENTATION_TRIGGER: 'run it',
+      CODEX_AUTONOMOUS_REPOS: 'proompteng/lab,proompteng/docs',
+      CODEX_AUTONOMOUS_LABELS: 'codex-auto, auto-codex',
       GITHUB_ACK_REACTION: 'eyes',
       DISCORD_DEFAULT_EPHEMERAL: 'false',
     }
@@ -49,6 +53,8 @@ describe('loadConfig', () => {
     expect(config.codex.triggerLogins).toEqual(['user-one', 'user-two'])
     expect(config.codex.workflowLogin).toBe('automation-bot')
     expect(config.codex.implementationTriggerPhrase).toBe('run it')
+    expect(config.codex.autonomousRepos).toEqual(['proompteng/lab', 'proompteng/docs'])
+    expect(config.codex.autonomousLabels).toEqual(['codex-auto', 'auto-codex'])
     expect(config.github.ackReaction).toBe('eyes')
     expect(config.discord.defaultResponse.ephemeral).toBe(false)
   })
