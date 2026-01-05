@@ -53,9 +53,12 @@ const parseNumber = (raw: string | undefined, fallback: number) => {
   return parsed
 }
 
+const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
+
 const parseJudgeMode = (raw: string | undefined) => {
   const normalized = (raw ?? 'argo').trim().toLowerCase()
-  return normalized === 'local' ? 'local' : 'argo'
+  if (normalized === 'local' && isTestEnv) return 'local'
+  return 'argo'
 }
 
 export const loadCodexJudgeConfig = (): CodexJudgeConfig => {

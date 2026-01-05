@@ -24,7 +24,7 @@ Options:
   --content <text>      Publish a single event with the provided content.
   --log-file <path>     Tail a log file and publish each line as an event.
   --channel <value>     Channel name for run-specific events (default: run).
-  --publish-general     Also publish each event to argo.workflow.general.<kind>.
+  --publish-general     Also publish each event to <subject-prefix>.general.<kind> (default: argo.workflow.general.<kind>).
   --status <value>      Optional status value for status events.
   --exit-code <value>   Optional exit code for status events.
   --attrs-json <value>  Optional JSON payload merged into attrs.
@@ -274,7 +274,7 @@ const main = async () => {
   const issueNumberRaw = coerceNonEmpty(process.env.CODEX_ISSUE_NUMBER) ?? coerceNonEmpty(process.env.ISSUE_NUMBER)
   const issueNumber = issueNumberRaw ? Number.parseInt(issueNumberRaw, 10) : null
   const branch = coerceNonEmpty(process.env.CODEX_BRANCH) ?? coerceNonEmpty(process.env.HEAD_BRANCH)
-  const subjectPrefix = process.env.NATS_SUBJECT_PREFIX?.trim() || 'workflow_comms.agent_messages'
+  const subjectPrefix = process.env.NATS_SUBJECT_PREFIX?.trim() || 'argo.workflow'
 
   const creds = resolveCredsFile()
   const natsArgs = buildNatsArgs(creds.path)

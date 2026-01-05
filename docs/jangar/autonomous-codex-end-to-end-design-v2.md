@@ -60,6 +60,7 @@ The system is considered **guaranteed-successful** when these hold in production
 ### Core shift: Argo-first orchestration
 - Implementation and judge are two DAG steps in the same workflow or a child workflow.
 - Jangar becomes a durable state store + UI, not the sole orchestrator.
+- Jangar does not execute judge logic locally in production; it only ingests judge artifacts from Argo.
 - Run creation happens inside Argo (via DB or Kafka with retries), not via a single Jangar API request.
 - NATS provides a **global agent context channel** so every Argo run can learn prior decisions, gaps, and fixes.
 
@@ -103,10 +104,10 @@ All Argo workflow agents must know what has already been attempted, what failed,
 - Stores a structured history that is queryable by issue number, branch, and run id.
 
 ### 4.1.2 Channel and Subjects
-- General channel: `workflow_comms.agent_messages` with `channel="general"`.
-- Subject schema (hierarchical):
-  - `codex.run.<repository>.<issueNumber>.<runId>`
-  - `codex.run.<repository>.<issueNumber>.general`
+- General channel: `argo.workflow.general.<kind>` with `channel="general"` (persisted into `workflow_comms.agent_messages`).
+- Subject schema (hierarchical; see `docs/nats-argo-agent-communications.md` for details):
+  - `argo.workflow.<workflow_namespace>.<workflow_name>.<workflow_uid>.agent.<agent_id>.<kind>`
+  - `argo.workflow.general.<kind>`
 
 ### 4.1.3 Required Messages (per run)
 Every run must publish the following messages to the general channel:
@@ -528,7 +529,8 @@ Notify remains optional and must **not** be the source of truth. If present:
 ```
 
 ## 7.6 NATS Message Schema (Required)
-Messages are written to `workflow_comms.agent_messages` with `channel="general"`. Each message must include:
+Messages are published to `argo.workflow.*` subjects and ingested into `workflow_comms.agent_messages` with
+`channel="general"`. Each message must include:
 ```json
 {
   "workflowUid": "uuid",
