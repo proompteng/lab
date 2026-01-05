@@ -90,6 +90,7 @@ async function main() {
 
   console.log(`> ${preview}`)
   const processResult = Bun.spawn(command, {
+    stdin: 'inherit',
     stdout: 'inherit',
     stderr: 'inherit',
   })
