@@ -19,14 +19,8 @@ surface for creating and managing Agent, Memory, Orchestration, and supporting p
 - `POST /v1/agent-runs`
 - `POST /v1/memories`
 - `POST /v1/orchestrations`
-- `POST /v1/orchestration-executions`
+- `POST /v1/orchestration-runs`
 - `GET /v1/runs/{id}`
-
-## Standalone runs endpoint
-
-`GET /v1/runs/{id}` provides a unified read-only view across run types. It resolves an ID to the
-underlying execution (AgentRun or OrchestrationExecution), returning a normalized status payload.
-This is used by UI and event consumers that only know a run ID and do not want to branch on type.
 
 ## Status aggregation
 
