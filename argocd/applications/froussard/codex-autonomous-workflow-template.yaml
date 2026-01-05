@@ -386,6 +386,7 @@ spec:
           - name: iteration
           - name: iteration_cycle
           - name: iterations
+          - name: judge_commit_sha
       container:
         image: registry.ide-newton.ts.net/lab/codex-universal:latest
         imagePullPolicy: Always
