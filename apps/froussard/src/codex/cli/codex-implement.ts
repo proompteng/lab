@@ -4,8 +4,9 @@ import { copyFile, lstat, mkdtemp, readFile, readlink, rm, stat, symlink, writeF
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
+
 import { runCli } from './lib/cli'
-import { pushCodexEventsToLoki, runCodexSession, type RunCodexSessionResult } from './lib/codex-runner'
+import { pushCodexEventsToLoki, type RunCodexSessionResult, runCodexSession } from './lib/codex-runner'
 import {
   buildDiscordChannelCommand,
   copyAgentLogIfNeeded,
