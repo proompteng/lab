@@ -281,6 +281,7 @@ spec:
           - name: iteration_cycle
           - name: iterations
           - name: judge_commit_sha
+          - name: judge_commit_sha
       steps:
         - - name: implementation
             template: codex-run
