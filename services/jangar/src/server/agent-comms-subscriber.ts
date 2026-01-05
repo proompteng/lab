@@ -457,20 +457,16 @@ export const startAgentCommsSubscriber = () => {
     startPromise = subscriberRuntime
       .runPromise(
         Effect.flatMap(AgentCommsSubscriber, (service) =>
-          Effect.gen(function* () {
-            yield* Effect.forkScoped(
-              pipe(
-                service.ready,
-                Effect.tap(() => Effect.sync(() => readyGate.resolve())),
-                Effect.catchAll((error) =>
-                  Effect.sync(() => {
-                    readyGate.reject(error instanceof Error ? error : new Error(String(error)))
-                  }),
-                ),
-              ),
-            )
-            return yield* Effect.never
-          }),
+          pipe(
+            service.ready,
+            Effect.tap(() => Effect.sync(() => readyGate.resolve())),
+            Effect.catchAll((error) =>
+              Effect.sync(() => {
+                readyGate.reject(error instanceof Error ? error : new Error(String(error)))
+              }),
+            ),
+            Effect.zipRight(Effect.never),
+          ),
         ),
       )
       .catch((error) => {
