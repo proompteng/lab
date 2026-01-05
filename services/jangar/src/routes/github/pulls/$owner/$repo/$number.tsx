@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
 
+import { type FileTreeNode, FileTreeView } from '@/components/file-tree'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { CodexRunRecord } from '@/data/codex'
@@ -58,13 +59,6 @@ type InlineComment = {
   side: 'LEFT' | 'RIGHT'
   body: string
   startLine: string
-}
-
-type FileTreeNode = {
-  name: string
-  path: string
-  children: FileTreeNode[]
-  file?: GithubPrFile
 }
 
 const buildFileTree = (files: GithubPrFile[]) => {
@@ -417,15 +411,11 @@ function GithubPullDetailPage() {
               ) : (
                 <div className="grid gap-3 lg:grid-cols-[240px_1fr]">
                   <div className="space-y-1 border-r pr-2">
-                    {fileTree.children.map((node) => (
-                      <FileTree
-                        key={node.path}
-                        node={node}
-                        depth={0}
-                        selectedPath={selectedFilePath}
-                        onSelect={(path) => setSelectedFilePath(path)}
-                      />
-                    ))}
+                    <FileTreeView
+                      nodes={fileTree.children}
+                      selectedPath={selectedFilePath}
+                      onSelect={(path) => setSelectedFilePath(path)}
+                    />
                   </div>
                   <div className="space-y-3">
                     {files
@@ -735,42 +725,5 @@ function GithubPullDetailPage() {
         </aside>
       </section>
     </main>
-  )
-}
-
-function FileTree({
-  node,
-  depth,
-  selectedPath,
-  onSelect,
-}: {
-  node: FileTreeNode
-  depth: number
-  selectedPath: string | null
-  onSelect: (path: string) => void
-}) {
-  const hasChildren = node.children.length > 0
-  const isSelected = node.file && node.path === selectedPath
-  const paddingStyle = { paddingLeft: `${depth * 12}px` }
-
-  return (
-    <div className="space-y-1" style={paddingStyle}>
-      {node.file ? (
-        <button
-          type="button"
-          onClick={() => onSelect(node.path)}
-          className={`block w-full text-left text-[11px] ${isSelected ? 'text-foreground' : 'text-muted-foreground'}`}
-        >
-          {node.name}
-        </button>
-      ) : (
-        <div className="text-[11px] font-medium text-muted-foreground">{node.name}</div>
-      )}
-      {hasChildren
-        ? node.children.map((child) => (
-            <FileTree key={child.path} node={child} depth={depth + 1} selectedPath={selectedPath} onSelect={onSelect} />
-          ))
-        : null}
-    </div>
   )
 }
