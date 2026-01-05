@@ -51,6 +51,9 @@ spec:
         resources:
           requests:
             storage: 10Gi
+  volumes:
+    - name: docker-lib
+      emptyDir: {}
   templates:
     - name: codex-dag
       dag:
