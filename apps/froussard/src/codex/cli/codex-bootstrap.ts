@@ -83,9 +83,15 @@ const configureBunCache = async (targetDir: string) => {
     process.env.BUN_INSTALL_CACHE_DIR = cacheDir
   }
   await mkdir(cacheDir, { recursive: true })
+  return cacheDir
 }
 
-const bootstrapWorkspace = async () => {
+const resetBunCache = async (cacheDir: string) => {
+  await rm(cacheDir, { recursive: true, force: true })
+  await mkdir(cacheDir, { recursive: true })
+}
+
+const bootstrapWorkspace = async (cacheDir: string) => {
   if (process.env.CODEX_SKIP_BOOTSTRAP === '1') {
     return
   }
@@ -95,11 +101,12 @@ const bootstrapWorkspace = async () => {
   const installResult = await $`${bunExecutable} install --frozen-lockfile`.nothrow()
 
   if (installResult.exitCode !== 0) {
-    console.warn('bun install --frozen-lockfile failed; retrying without frozen lockfile')
+    console.warn('bun install --frozen-lockfile failed; clearing cache and retrying without frozen lockfile')
+    await resetBunCache(cacheDir)
     const retryResult = await $`${bunExecutable} install`.nothrow()
 
     if (retryResult.exitCode !== 0) {
-      throw new Error('Bun install failed even after retry without --frozen-lockfile')
+      throw new Error('Bun install failed even after cache reset retry')
     }
   }
 }
@@ -171,7 +178,7 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
 
   process.chdir(targetDir)
 
-  await configureBunCache(targetDir)
+  const bunCacheDir = await configureBunCache(targetDir)
 
   if (headBranch && headBranch !== baseBranch) {
     const remoteHead = await $`git -C ${targetDir} rev-parse --verify --quiet origin/${headBranch}`.nothrow()
@@ -199,7 +206,7 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
     }
   }
 
-  await bootstrapWorkspace()
+  await bootstrapWorkspace(bunCacheDir)
   await waitForDocker()
 
   const [command, ...commandArgs] = argv
