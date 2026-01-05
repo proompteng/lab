@@ -123,13 +123,6 @@ spec:
                   value: '{{workflow.parameters.implementation_iterations}}'
                 - name: judge_commit_sha
                   value: '{{workflow.parameters.judge_commit_sha}}'
-            retryStrategy:
-              limit: 2
-              retryPolicy: OnFailure
-              backoff:
-                duration: "10s"
-                factor: 2
-                maxDuration: "1m"
           - name: judge-run-complete
             dependencies: [judge]
             continueOn:
