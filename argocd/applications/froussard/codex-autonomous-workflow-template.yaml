@@ -21,6 +21,8 @@ spec:
         value: ''
       - name: judge_prompt
         value: ''
+      - name: judge_commit_sha
+        value: ''
       - name: implementation_iterations
         value: '1'
       - name: attempt
@@ -86,6 +88,8 @@ spec:
                   value: '{{workflow.parameters.iteration_cycle}}'
                 - name: iterations
                   value: '{{workflow.parameters.implementation_iterations}}'
+                - name: judge_commit_sha
+                  value: '{{workflow.parameters.judge_commit_sha}}'
           - name: judge
             dependencies: [implementation-loop]
             template: codex-run
@@ -117,8 +121,68 @@ spec:
                   value: '{{workflow.parameters.iteration_cycle}}'
                 - name: iterations
                   value: '{{workflow.parameters.implementation_iterations}}'
-          - name: jangar-review
+                - name: judge_commit_sha
+                  value: '{{workflow.parameters.judge_commit_sha}}'
+          - name: judge-run-complete
             dependencies: [judge]
+            continueOn:
+              failed: true
+            template: run-complete
+            arguments:
+              parameters:
+                - name: repository
+                  value: '{{workflow.parameters.repository}}'
+                - name: issue_number
+                  value: '{{workflow.parameters.issue_number}}'
+                - name: base
+                  value: '{{workflow.parameters.base}}'
+                - name: head
+                  value: '{{workflow.parameters.head}}'
+                - name: prompt
+                  value: '{{workflow.parameters.judge_prompt}}'
+                - name: attempt
+                  value: '{{workflow.parameters.attempt}}'
+                - name: parent_run_uid
+                  value: '{{workflow.parameters.parent_run_uid}}'
+                - name: rawEvent
+                  value: '{{workflow.parameters.rawEvent}}'
+                - name: eventBody
+                  value: '{{workflow.parameters.eventBody}}'
+                - name: stage
+                  value: judge
+                - name: iteration
+                  value: '{{workflow.parameters.implementation_iterations}}'
+                - name: iteration_cycle
+                  value: '{{workflow.parameters.iteration_cycle}}'
+                - name: iterations
+                  value: '{{workflow.parameters.implementation_iterations}}'
+                - name: implementation_changes_key
+                  value: '{{tasks.judge.outputs.artifacts.implementation-changes}}'
+                - name: implementation_patch_key
+                  value: '{{tasks.judge.outputs.artifacts.implementation-patch}}'
+                - name: implementation_status_key
+                  value: '{{tasks.judge.outputs.artifacts.implementation-status}}'
+                - name: implementation_log_key
+                  value: '{{tasks.judge.outputs.artifacts.implementation-log}}'
+                - name: implementation_events_key
+                  value: '{{tasks.judge.outputs.artifacts.implementation-events}}'
+                - name: implementation_agent_log_key
+                  value: '{{tasks.judge.outputs.artifacts.implementation-agent-log}}'
+                - name: implementation_runtime_log_key
+                  value: '{{tasks.judge.outputs.artifacts.implementation-runtime-log}}'
+                - name: implementation_resume_key
+                  value: '{{tasks.judge.outputs.artifacts.implementation-resume}}'
+                - name: implementation_notify_key
+                  value: '{{tasks.judge.outputs.artifacts.implementation-notify}}'
+                - name: nats_context_key
+                  value: '{{tasks.judge.outputs.artifacts.nats-context}}'
+                - name: implementation_changes_manifest_key
+                  value: '{{tasks.judge.outputs.artifacts.implementation-changes-manifest}}'
+                - name: judge_output_key
+                  value: '{{tasks.judge.outputs.artifacts.judge-output}}'
+          - name: jangar-review
+            dependencies: [judge-run-complete]
+            when: "{{tasks.judge.outputs.parameters.decision}} == pass"
             template: jangar-review
             arguments:
               parameters:
@@ -130,6 +194,7 @@ spec:
                   value: '{{workflow.parameters.head}}'
           - name: gate
             dependencies: [jangar-review]
+            when: "{{tasks.judge.outputs.parameters.decision}} == pass"
             template: gate
             arguments:
               parameters:
@@ -179,7 +244,7 @@ spec:
                   value: '{{tasks.gate.outputs.parameters.head_sha}}'
           - name: rerun
             dependencies: [judge, gate, merge, verify]
-            when: "{{=(tasks.judge.outputs.parameters.decision != 'pass' || tasks.gate.outputs.parameters.decision != 'pass' || tasks.merge.status != 'Succeeded' || tasks.deploy.status != 'Succeeded' || tasks.verify.status != 'Succeeded') && (sprig.trim(sprig.coalesce(sprig.ternary(tasks.gate.outputs.parameters.next_prompt, '', tasks.gate.outputs.parameters.decision != 'pass'), sprig.ternary(tasks.merge.outputs.parameters.next_prompt, '', tasks.merge.status != 'Succeeded'), sprig.ternary('Post-deploy verification failed. Review the post-deploy workflow logs, fix the failures, and rerun.', '', (tasks.deploy.status != 'Succeeded' || tasks.verify.status != 'Succeeded')), tasks.judge.outputs.parameters.next_prompt)) != '')}}"
+            when: "{{=(tasks.judge.outputs.parameters.decision != 'pass' || tasks.gate.outputs.parameters.decision != 'pass' || tasks.merge.status != 'Succeeded' || tasks.deploy.status != 'Succeeded' || tasks.verify.status != 'Succeeded')}}"
             template: rerun
             arguments:
               parameters:
@@ -192,7 +257,7 @@ spec:
                 - name: head
                   value: '{{workflow.parameters.head}}'
                 - name: prompt
-                  value: '{{=sprig.coalesce(sprig.ternary(tasks.gate.outputs.parameters.next_prompt, "", tasks.gate.outputs.parameters.decision != "pass"), sprig.ternary(tasks.merge.outputs.parameters.next_prompt, "", tasks.merge.status != "Succeeded"), sprig.ternary("Post-deploy verification failed. Review the post-deploy workflow logs, fix the failures, and rerun.", "", (tasks.deploy.status != "Succeeded" || tasks.verify.status != "Succeeded")), tasks.judge.outputs.parameters.next_prompt)}}'
+                  value: '{{=sprig.coalesce(sprig.ternary(tasks.gate.outputs.parameters.next_prompt, "", tasks.gate.outputs.parameters.decision != "pass"), sprig.ternary(tasks.merge.outputs.parameters.next_prompt, "", tasks.merge.status != "Succeeded"), sprig.ternary("Post-deploy verification failed. Review the post-deploy workflow logs, fix the failures, and rerun.", "", (tasks.deploy.status != "Succeeded" || tasks.verify.status != "Succeeded")), tasks.judge.outputs.parameters.next_prompt, "Re-run the implementation cycle with the latest context and address any missing requirements.")}}'
                 - name: attempt
                   value: '{{=sprig.add(int(workflow.parameters.attempt), 1)}}'
                 - name: parent_run_uid
@@ -215,6 +280,7 @@ spec:
           - name: iteration
           - name: iteration_cycle
           - name: iterations
+          - name: judge_commit_sha
       steps:
         - - name: implementation
             template: codex-run
@@ -246,7 +312,11 @@ spec:
                   value: '{{inputs.parameters.iteration_cycle}}'
                 - name: iterations
                   value: '{{inputs.parameters.iterations}}'
+                - name: judge_commit_sha
+                  value: '{{inputs.parameters.judge_commit_sha}}'
         - - name: run-complete
+            continueOn:
+              failed: true
             template: run-complete
             arguments:
               parameters:
@@ -258,6 +328,8 @@ spec:
                   value: '{{inputs.parameters.base}}'
                 - name: head
                   value: '{{inputs.parameters.head}}'
+                - name: prompt
+                  value: '{{inputs.parameters.prompt}}'
                 - name: attempt
                   value: '{{inputs.parameters.attempt}}'
                 - name: parent_run_uid
@@ -294,6 +366,10 @@ spec:
                   value: '{{steps.implementation.outputs.artifacts.implementation-notify}}'
                 - name: nats_context_key
                   value: '{{steps.implementation.outputs.artifacts.nats-context}}'
+                - name: implementation_changes_manifest_key
+                  value: '{{steps.implementation.outputs.artifacts.implementation-changes-manifest}}'
+                - name: judge_output_key
+                  value: '{{steps.implementation.outputs.artifacts.judge-output}}'
     - name: codex-run
       inputs:
         parameters:
@@ -422,6 +498,8 @@ spec:
             value: '{{inputs.parameters.iteration_cycle}}'
           - name: CODEX_ITERATIONS_COUNT
             value: '{{inputs.parameters.iterations}}'
+          - name: CODEX_JUDGE_COMMIT_SHA
+            value: '{{inputs.parameters.judge_commit_sha}}'
           - name: RUN_ID
             value: '{{workflow.uid}}'
           - name: CODEX_GRAF_BEARER_TOKEN
@@ -633,6 +711,9 @@ spec:
           - name: next_prompt
             valueFrom:
               path: /workspace/lab/.codex-judge-next-prompt.txt
+          - name: head_sha
+            valueFrom:
+              path: /workspace/lab/.codex-head-sha.txt
         artifacts:
           - name: implementation-changes
             path: /workspace/lab/.codex-implementation-changes.tar.gz
@@ -641,19 +722,23 @@ spec:
           - name: implementation-status
             path: /workspace/lab/.codex-implementation-status.txt
           - name: implementation-log
-            path: /workspace/lab/.codex-implementation.log
+            path: /workspace/lab/.codex-{{inputs.parameters.stage}}.log
           - name: implementation-events
-            path: /workspace/.codex/implementation-events.jsonl
+            path: /workspace/.codex/{{inputs.parameters.stage}}-events.jsonl
           - name: implementation-agent-log
-            path: /workspace/lab/.codex-implementation-agent.log
+            path: /workspace/lab/.codex-{{inputs.parameters.stage}}-agent.log
           - name: implementation-runtime-log
-            path: /workspace/lab/.codex-implementation-runtime.log
+            path: /workspace/lab/.codex-{{inputs.parameters.stage}}-runtime.log
           - name: implementation-resume
             path: /workspace/lab/.codex/implementation-resume.json
           - name: implementation-notify
             path: /workspace/lab/.codex-implementation-notify.json
           - name: nats-context
             path: /workspace/lab/.codex-nats-context.json
+          - name: implementation-changes-manifest
+            path: /workspace/lab/.codex-implementation-changes-manifest.json
+          - name: judge-output
+            path: /workspace/lab/.codex-judge-output.json
     - name: run-complete
       inputs:
         parameters:
@@ -661,6 +746,7 @@ spec:
           - name: issue_number
           - name: base
           - name: head
+          - name: prompt
           - name: attempt
           - name: parent_run_uid
           - name: rawEvent
@@ -679,6 +765,8 @@ spec:
           - name: implementation_resume_key
           - name: implementation_notify_key
           - name: nats_context_key
+          - name: implementation_changes_manifest_key
+          - name: judge_output_key
       container:
         image: registry.ide-newton.ts.net/lab/codex-universal:latest
         imagePullPolicy: Always
@@ -756,7 +844,9 @@ spec:
                 { "name": "implementation-runtime-log", "key": "{{inputs.parameters.implementation_runtime_log_key}}" },
                 { "name": "implementation-resume", "key": "{{inputs.parameters.implementation_resume_key}}" },
                 { "name": "implementation-notify", "key": "{{inputs.parameters.implementation_notify_key}}" },
-                { "name": "nats-context", "key": "{{inputs.parameters.nats_context_key}}" }
+                { "name": "nats-context", "key": "{{inputs.parameters.nats_context_key}}" },
+                { "name": "implementation-changes-manifest", "key": "{{inputs.parameters.implementation_changes_manifest_key}}" },
+                { "name": "judge-output", "key": "{{inputs.parameters.judge_output_key}}" }
               ],
               "stage": "{{inputs.parameters.stage}}",
               "workflowName": "{{workflow.name}}",
@@ -769,7 +859,7 @@ spec:
               "iteration": "${ITERATION}",
               "iteration_cycle": "${ITERATION_CYCLE}",
               "iterations": "${ITERATIONS}",
-              "prompt": "",
+              "prompt": "{{inputs.parameters.prompt}}",
               "startedAt": "${STARTED_AT}",
               "finishedAt": "${FINISHED_AT}"
             }

@@ -245,6 +245,8 @@ const buildNotifyPayload = ({
   patchPath,
   archivePath,
   notifyPath,
+  manifestPath,
+  headShaPath,
   sessionId,
   lastAssistantMessage,
   logExcerpt,
@@ -273,6 +275,8 @@ const buildNotifyPayload = ({
   patchPath: string
   archivePath: string
   notifyPath: string
+  manifestPath: string
+  headShaPath: string
   sessionId?: string
   lastAssistantMessage?: string | null
   logExcerpt?: CodexNotifyLogExcerpt
@@ -328,6 +332,8 @@ const buildNotifyPayload = ({
       patch: patchPath,
       changes: archivePath,
       notify: notifyPath,
+      changes_manifest: manifestPath,
+      head_sha: headShaPath,
     },
     log_excerpt: logExcerpt,
     issued_at: new Date().toISOString(),
@@ -706,6 +712,34 @@ const runCommand = async (command: string, args: string[], options: { cwd?: stri
   })
 }
 
+const buildWorktreeDiff = async (input: {
+  worktree: string
+  baseBranch: string
+  headBranch: string
+  logger: CodexLogger
+}) => {
+  const range = `${input.baseBranch}..${input.headBranch}`
+  const nameResult = await runCommand('git', ['diff', '--name-status', '-M', range], { cwd: input.worktree })
+  if (nameResult.exitCode !== 0) {
+    input.logger.warn('git diff --name-status failed while preparing judge prompt', nameResult.stderr.trim())
+    return { diff: '', error: 'worktree_diff_failed' }
+  }
+  const patchResult = await runCommand('git', ['diff', '-U3', range], { cwd: input.worktree })
+  if (patchResult.exitCode !== 0) {
+    input.logger.warn('git diff failed while preparing judge prompt', patchResult.stderr.trim())
+    return { diff: '', error: 'worktree_diff_failed' }
+  }
+
+  const nameLines = nameResult.stdout.trim()
+  const patch = patchResult.stdout.trim()
+  if (!patch) {
+    return { diff: '', error: 'worktree_diff_empty' }
+  }
+
+  const header = nameLines ? `Worktree diff (authoritative):\n${nameLines}` : 'Worktree diff (authoritative):'
+  return { diff: `${header}\n\n${patch}`, error: null }
+}
+
 const truncateContextLine = (value: string, max = 400) => {
   if (value.length <= max) return value
   return `${value.slice(0, max)}…`
@@ -870,6 +904,7 @@ interface CaptureImplementationArtifactsOptions {
   archivePath: string
   patchPath: string
   statusPath: string
+  manifestPath: string
   jsonEventsPath?: string
   resumeMetadataPath: string
   repository: string
@@ -1187,6 +1222,7 @@ const captureImplementationArtifacts = async ({
   archivePath,
   patchPath,
   statusPath,
+  manifestPath,
   jsonEventsPath,
   resumeMetadataPath,
   repository,
@@ -1341,6 +1377,8 @@ const captureImplementationArtifacts = async ({
 
     await ensureFileDirectory(join(metadataDir, 'manifest.json'))
     await writeFile(join(metadataDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8')
+    await ensureFileDirectory(manifestPath)
+    await writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8')
 
     for (const relativePath of trackedFiles) {
       const sourcePath = join(worktree, relativePath)
@@ -1453,6 +1491,9 @@ export const runCodexImplementation = async (eventPath: string) => {
   const archivePath =
     process.env.IMPLEMENTATION_CHANGES_ARCHIVE_PATH ?? `${worktree}/.codex-implementation-changes.tar.gz`
   const notifyPath = process.env.IMPLEMENTATION_NOTIFY_PATH ?? `${worktree}/.codex-implementation-notify.json`
+  const manifestPath =
+    process.env.IMPLEMENTATION_CHANGES_MANIFEST_PATH ?? `${worktree}/.codex-implementation-changes-manifest.json`
+  const headShaPath = process.env.CODEX_HEAD_SHA_PATH ?? `${worktree}/.codex-head-sha.txt`
   const judgeOutputPath = process.env.JUDGE_OUTPUT_PATH ?? `${worktree}/.codex-judge-output.json`
   const judgeDecisionPath = process.env.JUDGE_DECISION_PATH ?? `${worktree}/.codex-judge-decision.txt`
   const judgeNextPromptPath = process.env.JUDGE_NEXT_PROMPT_PATH ?? `${worktree}/.codex-judge-next-prompt.txt`
@@ -1586,6 +1627,11 @@ export const runCodexImplementation = async (eventPath: string) => {
       agentOutputPath,
       runtimeLogPath,
       notifyPath,
+      patchPath,
+      statusPath,
+      archivePath,
+      manifestPath,
+      headShaPath,
       judgeOutputPath,
       judgeDecisionPath,
       judgeNextPromptPath,
@@ -1648,6 +1694,7 @@ export const runCodexImplementation = async (eventPath: string) => {
 
   const normalizedIssueNumber = issueNumber
   const supportsResume = stage === 'implementation'
+  let forcedJudgeOutput: Record<string, unknown> | null = null
   let resumeContext: ResumeContext | undefined
   let resumeSessionId: string | undefined
   let capturedSessionId: string | undefined
@@ -1678,6 +1725,26 @@ export const runCodexImplementation = async (eventPath: string) => {
         } else {
           logger.warn('Failed to restore resume archive; proceeding with a fresh Codex session')
         }
+      }
+    }
+
+    if (stage === 'judge') {
+      const diffResult = await buildWorktreeDiff({ worktree, baseBranch, headBranch, logger })
+      if (diffResult.error) {
+        forcedJudgeOutput = {
+          decision: 'fail',
+          requirements_coverage: [],
+          missing_items: [diffResult.error],
+          suggested_fixes: ['Ensure a worktree diff is available for this PR head SHA before judging.'],
+          next_prompt:
+            'Worktree diff missing. Re-run the implementation with a valid worktree snapshot, then rerun the judge.',
+          prompt_tuning_suggestions: [],
+          system_improvement_suggestions: [
+            'Ensure worktree snapshots are generated and persisted before the judge runs.',
+          ],
+        }
+      } else if (diffResult.diff) {
+        prompt = `${diffResult.diff}\n\n${prompt}`
       }
     }
 
@@ -1771,7 +1838,7 @@ export const runCodexImplementation = async (eventPath: string) => {
         ? sessionResult.agentMessages[sessionResult.agentMessages.length - 1]
         : null
     const commitSha = await resolveHeadSha(worktree, logger)
-    const judgeOutput = stage === 'judge' ? safeParseJson(lastAssistantMessage ?? '') : null
+    const judgeOutput = stage === 'judge' ? (forcedJudgeOutput ?? safeParseJson(lastAssistantMessage ?? '')) : null
 
     let prInfo: PullRequestInfo | null = null
     if (stage === 'implementation') {
@@ -1788,10 +1855,19 @@ export const runCodexImplementation = async (eventPath: string) => {
     const prNumber = prInfo?.number ?? null
     const prUrl = prInfo?.url ?? null
     const headSha = prInfo?.headSha ?? commitSha ?? null
+    try {
+      await ensureFileDirectory(headShaPath)
+      await writeFile(headShaPath, headSha ?? '', 'utf8')
+    } catch (error) {
+      logger.warn('Failed to persist head sha output', error)
+    }
 
     if (stage === 'judge') {
       const decisionValue = typeof judgeOutput?.decision === 'string' ? judgeOutput.decision : 'fail'
-      const nextPromptValue = typeof judgeOutput?.next_prompt === 'string' ? judgeOutput.next_prompt : ''
+      const nextPromptValue =
+        typeof judgeOutput?.next_prompt === 'string' && judgeOutput.next_prompt.trim().length > 0
+          ? judgeOutput.next_prompt
+          : 'Re-run the implementation cycle with the latest context and address any missing requirements.'
       await writeFile(judgeOutputPath, JSON.stringify(judgeOutput ?? {}, null, 2), 'utf8')
       await writeFile(judgeDecisionPath, decisionValue, 'utf8')
       await writeFile(judgeNextPromptPath, nextPromptValue, 'utf8')
@@ -1812,6 +1888,8 @@ export const runCodexImplementation = async (eventPath: string) => {
       patchPath,
       archivePath,
       notifyPath,
+      manifestPath,
+      headShaPath,
       sessionId: capturedSessionId,
       lastAssistantMessage,
       logExcerpt,
@@ -1920,6 +1998,7 @@ export const runCodexImplementation = async (eventPath: string) => {
           archivePath,
           patchPath,
           statusPath,
+          manifestPath,
           jsonEventsPath: jsonOutputPath,
           resumeMetadataPath,
           repository,

@@ -274,6 +274,7 @@ export type CodexJudgeStore = {
     commitSha?: string | null,
   ) => Promise<CodexRunRecord | null>
   upsertArtifacts: (input: UpsertArtifactsInput) => Promise<CodexArtifactRecord[]>
+  listArtifactsForRun: (runId: string) => Promise<CodexArtifactRecord[]>
   listRunsByStatus: (statuses: string[]) => Promise<CodexPendingRun[]>
   claimRerunSubmission: (
     input: ClaimRerunSubmissionInput,
@@ -1109,6 +1110,16 @@ export const createCodexJudgeStore = (
     return updated ? rowToRun(updated as Record<string, unknown>) : null
   }
 
+  const listArtifactsForRun = async (runId: string) => {
+    const rows = await db
+      .selectFrom('codex_judge.artifacts')
+      .selectAll()
+      .where('run_id', '=', runId)
+      .orderBy('created_at asc')
+      .execute()
+    return rows.map((row) => rowToArtifact(row as Record<string, unknown>))
+  }
+
   const listRunsByStatus = async (statuses: string[]): Promise<CodexPendingRun[]> => {
     if (statuses.length === 0) return []
     const rows = await db
@@ -1325,6 +1336,7 @@ export const createCodexJudgeStore = (
     updateRunPrompt,
     updateRunPrInfo,
     upsertArtifacts,
+    listArtifactsForRun,
     listRunsByStatus,
     claimRerunSubmission,
     enqueueRerunSubmission,

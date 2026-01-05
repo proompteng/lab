@@ -17,6 +17,7 @@ import { extractImplementationManifestFromArchive, extractTextFromArchive } from
 import { loadCodexJudgeConfig } from '~/server/codex-judge-config'
 import { evaluateDeterministicGates } from '~/server/codex-judge-gates'
 import {
+  type CodexArtifactRecord,
   type CodexEvaluationRecord,
   type CodexRunRecord,
   createCodexJudgeStore,
@@ -1707,6 +1708,14 @@ const fetchArtifactFullText = async (artifact: ResolvedArtifact, maxBytes = MAX_
 const buildArtifactIndex = (artifacts: ResolvedArtifact[]) =>
   new Map(artifacts.map((artifact) => [artifact.name, artifact]))
 
+const toResolvedArtifact = (artifact: CodexArtifactRecord): ResolvedArtifact => ({
+  name: artifact.name,
+  key: artifact.key,
+  bucket: artifact.bucket,
+  url: artifact.url,
+  metadata: artifact.metadata ?? {},
+})
+
 const extractNotifyPayloadFromArtifacts = async (artifactMap: Map<string, ResolvedArtifact>) => {
   const artifact = artifactMap.get('implementation-notify')
   if (!artifact) return null
@@ -1762,6 +1771,15 @@ const extractManifestFromArtifacts = async (artifactMap: Map<string, ResolvedArt
   const buffer = await fetchArtifactBuffer(artifact)
   if (!buffer) return null
   return extractImplementationManifestFromArchive(buffer)
+}
+
+const extractJudgeOutputFromArtifacts = async (artifacts: ResolvedArtifact[]) => {
+  const artifact = buildArtifactIndex(artifacts).get('judge-output')
+  if (!artifact) return null
+  const text = await fetchArtifactText(artifact)
+  if (!text) return null
+  const parsed = safeParseJson(text)
+  return isRecord(parsed) ? parsed : null
 }
 
 const resolveCommitSha = async (run: CodexRunRecord, fallbackCommitSha: string | null) => {
@@ -2187,6 +2205,9 @@ const recordDecision = async (
   if (input.decision !== 'needs_iteration' && input.decision !== 'needs_human') {
     return evaluation
   }
+  if (config.judgeMode === 'argo') {
+    return evaluation
+  }
 
   const resolvedRun = run ?? (await store.getRunById(input.runId))
   if (!resolvedRun) return evaluation
@@ -2227,6 +2248,76 @@ const evaluateRun = async (runId: string) => {
           suggestions: ['Attach codex repository/issue/head/base metadata to Argo workflow labels or annotations.'],
         },
       })
+      const refreshedRun = (await store.getRunById(run.id)) ?? run
+      await writeMemories(refreshedRun, evaluation)
+      return
+    }
+
+    const argoJudgeOnly = config.judgeMode === 'argo'
+    const isJudgeStage = run.stage === 'judge' || run.runCompletePayload?.stage === 'judge'
+
+    if (argoJudgeOnly) {
+      await store.updateRunPrompt(run.id, run.prompt, run.nextPrompt)
+
+      if (!isJudgeStage) {
+        return
+      }
+
+      let artifactJudgeOutput: Record<string, unknown> | null = null
+      try {
+        const artifactRecords = await store.listArtifactsForRun(run.id)
+        if (artifactRecords.length > 0) {
+          const artifacts = artifactRecords.map((artifact) => toResolvedArtifact(artifact))
+          artifactJudgeOutput = await extractJudgeOutputFromArtifacts(artifacts)
+        }
+      } catch (error) {
+        console.warn('Failed to load judge output from artifacts', error)
+      }
+
+      const notifyJudgeOutput = (run.notifyPayload?.judge_output as Record<string, unknown> | undefined) ?? null
+      const notifyMessage = run.notifyPayload?.last_assistant_message as string | null
+      const parsedFromMessage = notifyMessage ? safeParseJson(notifyMessage) : null
+      const resolvedArtifactJudgeOutput =
+        artifactJudgeOutput && Object.keys(artifactJudgeOutput).length > 0 ? artifactJudgeOutput : null
+      const judgeOutput = resolvedArtifactJudgeOutput ?? notifyJudgeOutput ?? parsedFromMessage ?? {}
+
+      if (Object.keys(judgeOutput).length === 0) {
+        const evaluation = await recordDecision(
+          {
+            runId: run.id,
+            decision: 'needs_iteration',
+            reasons: { error: 'infra_failure', detail: 'missing_judge_output' },
+            suggestedFixes: { fix: 'Ensure judge output JSON is persisted in run-complete artifacts.' },
+            nextPrompt: 'Judge output missing. Re-run judge and emit JSON output.',
+            promptTuning: {},
+            systemSuggestions: {},
+          },
+          run,
+        )
+        const refreshedRun = (await store.getRunById(run.id)) ?? run
+        await writeMemories(refreshedRun, evaluation)
+        return
+      }
+
+      const decisionRaw = typeof judgeOutput.decision === 'string' ? judgeOutput.decision : 'fail'
+      const decision = normalizeJudgeDecision(decisionRaw)
+      const nextPrompt = typeof judgeOutput.next_prompt === 'string' ? judgeOutput.next_prompt : null
+
+      const evaluation = await recordDecision(
+        {
+          runId: run.id,
+          decision: decision === 'pass' ? 'pass' : 'needs_iteration',
+          confidence: typeof judgeOutput.confidence === 'number' ? judgeOutput.confidence : null,
+          reasons: { requirements_coverage: judgeOutput.requirements_coverage ?? [], decision },
+          missingItems: { missing_items: judgeOutput.missing_items ?? [] },
+          suggestedFixes: { suggested_fixes: judgeOutput.suggested_fixes ?? [] },
+          nextPrompt,
+          promptTuning: { suggestions: judgeOutput.prompt_tuning_suggestions ?? [] },
+          systemSuggestions: { suggestions: judgeOutput.system_improvement_suggestions ?? [] },
+        },
+        run,
+      )
+
       const refreshedRun = (await store.getRunById(run.id)) ?? run
       await writeMemories(refreshedRun, evaluation)
       return
@@ -2645,7 +2736,6 @@ const evaluateRun = async (runId: string) => {
       return
     }
 
-    const isJudgeStage = run.stage === 'judge' || run.runCompletePayload?.stage === 'judge'
     let judgeOutput: Record<string, unknown>
     let judgeAttempts = 0
 
@@ -3193,7 +3283,7 @@ const maybeSubmitSystemImprovementWorkflow = async (
 let rerunWorkerStarted = false
 
 const startRerunSubmissionWorker = () => {
-  if (rerunWorkerStarted || _RECONCILE_DISABLED) return
+  if (rerunWorkerStarted || _RECONCILE_DISABLED || config.judgeMode === 'argo') return
   rerunWorkerStarted = true
   setInterval(() => {
     void processRerunQueue()
@@ -3245,6 +3335,9 @@ if (!_RECONCILE_DISABLED) {
 }
 
 const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: CodexEvaluationRecord) => {
+  if (config.judgeMode === 'argo') {
+    return
+  }
   const latestRun = await store.getRunById(run.id)
   if (!latestRun || latestRun.status === 'superseded') return
 
