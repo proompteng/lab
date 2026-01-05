@@ -274,6 +274,33 @@ test.describe('deployed jangar e2e', () => {
     await expect(page.getByLabel('Rows per page')).toBeVisible()
   })
 
+  test('worktree snapshot renders a hierarchical file tree', async ({ page }) => {
+    await page.goto('/github/pulls/proompteng/lab/2311')
+    await page.getByRole('button', { name: 'Files' }).click()
+    const tree = page.getByTestId('file-tree')
+    await expect(tree).toBeVisible()
+
+    const directoryButton = tree.locator('button[data-tree-type="dir"]').first()
+    await expect(directoryButton).toBeVisible()
+    const dirPath = await directoryButton.getAttribute('data-tree-path')
+    expect(dirPath).toBeTruthy()
+
+    const hasNestedFile = await tree.evaluate(
+      (root, path) =>
+        Array.from(root.querySelectorAll('button[data-tree-type="file"]')).some((button) =>
+          (button as HTMLElement).dataset.treePath?.startsWith(`${path}/`),
+        ),
+      dirPath,
+    )
+    expect(hasNestedFile).toBe(true)
+
+    await expect(directoryButton).toHaveAttribute('aria-expanded', 'true')
+    await directoryButton.click()
+    await expect(directoryButton).toHaveAttribute('aria-expanded', 'false')
+    await directoryButton.click()
+    await expect(directoryButton).toHaveAttribute('aria-expanded', 'true')
+  })
+
   test('torghut visuals render overlays and signals', async ({ page, request }) => {
     test.setTimeout(120_000)
 
