@@ -91,6 +91,16 @@ const resetBunCache = async (cacheDir: string) => {
   await mkdir(cacheDir, { recursive: true })
 }
 
+const runBunInstall = async (bunExecutable: string, args: string[]) => {
+  const child = spawn({
+    cmd: [bunExecutable, 'install', ...args],
+    stdout: 'inherit',
+    stderr: 'inherit',
+  })
+  const exitCode = await child.exited
+  return exitCode ?? 1
+}
+
 const bootstrapWorkspace = async (cacheDir: string) => {
   if (process.env.CODEX_SKIP_BOOTSTRAP === '1') {
     return
@@ -98,15 +108,19 @@ const bootstrapWorkspace = async (cacheDir: string) => {
 
   const bunExecutable = (await which('bun')) ?? 'bun'
   console.log('Installing workspace dependencies via Bun...')
-  const installResult = await $`${bunExecutable} install --frozen-lockfile`.nothrow()
+  const frozenExit = await runBunInstall(bunExecutable, ['--frozen-lockfile'])
 
-  if (installResult.exitCode !== 0) {
-    console.warn('bun install --frozen-lockfile failed; clearing cache and retrying without frozen lockfile')
+  if (frozenExit !== 0) {
+    console.warn('bun install --frozen-lockfile failed; clearing cache and retrying with copyfile backend')
     await resetBunCache(cacheDir)
-    const retryResult = await $`${bunExecutable} install`.nothrow()
+    const retryExit = await runBunInstall(bunExecutable, ['--no-cache', '--backend=copyfile'])
 
-    if (retryResult.exitCode !== 0) {
-      throw new Error('Bun install failed even after cache reset retry')
+    if (retryExit !== 0) {
+      console.warn('bun install retry failed; attempting final install with --force and copyfile backend')
+      const finalExit = await runBunInstall(bunExecutable, ['--force', '--no-cache', '--backend=copyfile'])
+      if (finalExit !== 0) {
+        throw new Error('Bun install failed even after cache reset retries')
+      }
     }
   }
 }
