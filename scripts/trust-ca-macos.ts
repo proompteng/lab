@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 
 interface Options {
@@ -66,14 +67,24 @@ function parseArgs(argv: string[]): Options {
   return options
 }
 
+function expandHome(value: string): string {
+  if (value === '~') {
+    return homedir()
+  }
+  if (value.startsWith('~/') || value.startsWith('~\\')) {
+    return `${homedir()}/${value.slice(2)}`
+  }
+  return value
+}
+
 async function main() {
   if (process.platform !== 'darwin') {
     throw new Error('This script only supports macOS (darwin).')
   }
 
   const options = parseArgs(process.argv.slice(2))
-  const certPath = resolve(options.certPath)
-  const keychain = resolve(options.keychain)
+  const certPath = resolve(expandHome(options.certPath))
+  const keychain = resolve(expandHome(options.keychain))
 
   if (!existsSync(certPath)) {
     throw new Error(`Certificate not found: ${certPath}`)
@@ -90,6 +101,7 @@ async function main() {
 
   console.log(`> ${preview}`)
   const processResult = Bun.spawn(command, {
+    stdin: 'inherit',
     stdout: 'inherit',
     stderr: 'inherit',
   })
