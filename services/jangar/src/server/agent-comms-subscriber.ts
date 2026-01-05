@@ -188,6 +188,8 @@ const normalizePayload = (raw: string, subject: string): AgentMessageInput | nul
     ...(payload.branch ? { branch: payload.branch } : {}),
   }
 
+  const dedupeKey = messageId ? `${subject}:${messageId}` : null
+
   return {
     workflowUid,
     workflowName,
@@ -202,7 +204,7 @@ const normalizePayload = (raw: string, subject: string): AgentMessageInput | nul
     stage,
     content,
     attrs,
-    dedupeKey: messageId ?? null,
+    dedupeKey,
   }
 }
 
@@ -445,16 +447,38 @@ export const AgentCommsSubscriberLive = Layer.scoped(
 )
 
 const subscriberRuntime = ManagedRuntime.make(AgentCommsSubscriberLive)
-const startAgentCommsSubscriberEffect = Effect.flatMap(AgentCommsSubscriber, (service) => service.ready)
 let startPromise: Promise<void> | null = null
+let readyPromise: Promise<void> | null = null
 
 export const startAgentCommsSubscriber = () => {
   if (!startPromise) {
-    startPromise = subscriberRuntime.runPromise(startAgentCommsSubscriberEffect).catch((error) => {
-      startPromise = null
-      throw error
-    })
+    const readyGate = createDeferredPromise()
+    readyPromise = readyGate.promise
+    startPromise = subscriberRuntime
+      .runPromise(
+        Effect.flatMap(AgentCommsSubscriber, (service) =>
+          Effect.gen(function* () {
+            yield* Effect.forkScoped(
+              pipe(
+                service.ready,
+                Effect.tap(() => Effect.sync(() => readyGate.resolve())),
+                Effect.catchAll((error) =>
+                  Effect.sync(() => {
+                    readyGate.reject(error instanceof Error ? error : new Error(String(error)))
+                  }),
+                ),
+              ),
+            )
+            return yield* Effect.never
+          }),
+        ),
+      )
+      .catch((error) => {
+        readyGate.reject(error instanceof Error ? error : new Error(String(error)))
+        startPromise = null
+        throw error
+      })
   }
 
-  return startPromise
+  return readyPromise ?? Promise.resolve()
 }

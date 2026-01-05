@@ -1,7 +1,14 @@
+import { randomUUID } from 'node:crypto'
+
 import { expect, test } from '@playwright/test'
+import { connect, StringCodec } from 'nats'
 
 const baseURL = process.env.JANGAR_DEPLOYED_BASE_URL ?? 'http://jangar'
 const shouldRun = process.env.PLAYWRIGHT_DEPLOYED === '1'
+const generalNatsUrl = process.env.JANGAR_AGENT_COMMS_NATS_URL ?? ''
+const generalNatsUser = process.env.JANGAR_AGENT_COMMS_NATS_USER
+const generalNatsPassword = process.env.JANGAR_AGENT_COMMS_NATS_PASSWORD
+const canPublishGeneral = shouldRun && Boolean(generalNatsUrl)
 
 const trackApiFailures = (page: import('@playwright/test').Page) => {
   const failures: string[] = []
@@ -238,6 +245,34 @@ const assertSseStaysOpen = async (sessionId: string, durationMs = 15000) => {
   }
 }
 
+const publishGeneralMessage = async (content: string) => {
+  const nc = await connect({
+    servers: generalNatsUrl,
+    user: generalNatsUser,
+    pass: generalNatsPassword,
+  })
+  const sc = StringCodec()
+  const messageId = randomUUID()
+  const sentAt = new Date().toISOString()
+  const payload = {
+    message_id: messageId,
+    sent_at: sentAt,
+    timestamp: sentAt,
+    kind: 'status',
+    workflow_uid: `e2e-${messageId}`,
+    workflow_name: 'e2e-general',
+    workflow_namespace: 'e2e',
+    agent_id: 'e2e-agent',
+    role: 'assistant',
+    channel: 'general',
+    content,
+  }
+  nc.publish('argo.workflow.general.status', sc.encode(JSON.stringify(payload)))
+  await nc.flush()
+  await nc.close()
+  return { messageId, sentAt }
+}
+
 test.describe('deployed jangar e2e', () => {
   test.skip(
     !shouldRun,
@@ -295,6 +330,24 @@ test.describe('deployed jangar e2e', () => {
     await expect(directoryItem).toHaveAttribute('aria-expanded', 'false')
     await directoryItem.click()
     await expect(directoryItem).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  test('general agent stream receives live messages', async ({ page }) => {
+    test.skip(
+      !canPublishGeneral,
+      'Set PLAYWRIGHT_DEPLOYED=1 and JANGAR_AGENT_COMMS_NATS_URL (plus creds) to publish a general message.',
+    )
+
+    const content = `e2e-general-${Date.now()}`
+    await page.goto('/agents/general')
+    await expect(page.getByRole('heading', { name: 'General channel', level: 1 })).toBeVisible()
+
+    await expect(page.getByText('Live', { exact: true })).toBeVisible({ timeout: 20_000 })
+
+    await publishGeneralMessage(content)
+
+    await expect(page.getByText(content)).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText('Disconnected')).toHaveCount(0)
   })
 
   test('torghut visuals render overlays and signals', async ({ page, request }) => {

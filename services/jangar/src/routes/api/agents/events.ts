@@ -228,6 +228,8 @@ export const getAgentEvents = async (request: Request) => {
         void cleanup()
       }
 
+      request.signal.addEventListener('abort', handleAbort)
+
       heartbeat = setInterval(() => {
         controller.enqueue(encoder.encode(': keep-alive\n\n'))
       }, HEARTBEAT_INTERVAL_MS)

@@ -181,8 +181,13 @@ export const useAgentEventStream = ({ runId, channel, maxMessages }: AgentStream
     }
 
     source.onerror = () => {
-      setStatus('error')
-      setError('Stream disconnected. Retrying...')
+      if (source.readyState === EventSource.CLOSED) {
+        setStatus('error')
+        setError('Stream disconnected. Retrying...')
+        return
+      }
+      setStatus('connecting')
+      setError(null)
     }
 
     source.onmessage = (event) => {
