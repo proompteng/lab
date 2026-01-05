@@ -45,12 +45,19 @@ codex_implementation_orchestrator:
   enabled: false
   namespace: argo
   workflow_template: github-codex-implementation
+  autonomous_workflow_template: codex-autonomous
   service_account: facteur
+  autonomous_generate_name_prefix: codex-autonomous-
+  judge_prompt: ""
   parameters:
     rawEvent: ""
     eventBody: ""
     head: ""
     base: ""
+    prompt: ""
+    judge_prompt: ""
+    implementation_iterations: "1"
+    iteration_cycle: "1"
 role_map:
   plan:
     - "123456789012345678"

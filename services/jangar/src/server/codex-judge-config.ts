@@ -2,6 +2,7 @@ export type CodexJudgeConfig = {
   githubToken: string | null
   githubApiBaseUrl: string
   codexReviewers: string[]
+  judgeMode: 'argo' | 'local'
   ciEventStreamEnabled: boolean
   ciMaxWaitMs: number
   reviewMaxWaitMs: number
@@ -52,10 +53,16 @@ const parseNumber = (raw: string | undefined, fallback: number) => {
   return parsed
 }
 
+const parseJudgeMode = (raw: string | undefined) => {
+  const normalized = (raw ?? 'argo').trim().toLowerCase()
+  return normalized === 'local' ? 'local' : 'argo'
+}
+
 export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
   const githubToken = (process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? '').trim() || null
   const githubApiBaseUrl = (process.env.GITHUB_API_BASE_URL ?? DEFAULT_GITHUB_API_BASE).trim()
   const codexReviewers = parseList(process.env.JANGAR_CODEX_REVIEWERS ?? process.env.CODEX_REVIEWERS)
+  const judgeMode = parseJudgeMode(process.env.JANGAR_CODEX_JUDGE_MODE)
   const ciEventStreamEnabled =
     (process.env.JANGAR_CI_EVENT_STREAM_ENABLED ?? process.env.JANGAR_GITHUB_EVENT_STREAM_ENABLED ?? 'false')
       .trim()
@@ -96,6 +103,7 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     githubToken,
     githubApiBaseUrl,
     codexReviewers,
+    judgeMode,
     ciEventStreamEnabled,
     ciMaxWaitMs,
     reviewMaxWaitMs,

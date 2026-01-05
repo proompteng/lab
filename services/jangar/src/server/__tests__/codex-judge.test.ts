@@ -30,6 +30,7 @@ const globalState = globalThis as typeof globalThis & {
     githubToken: string | null
     githubApiBaseUrl: string
     codexReviewers: string[]
+    judgeMode: 'argo' | 'local'
     ciEventStreamEnabled: boolean
     ciMaxWaitMs: number
     reviewMaxWaitMs: number
@@ -112,6 +113,7 @@ if (!globalState.__codexJudgeStoreMock) {
     updateRunPrompt: vi.fn(),
     updateRunPrInfo: vi.fn(),
     upsertArtifacts: vi.fn(),
+    listArtifactsForRun: vi.fn(),
     listRunsByStatus: vi.fn(),
     claimRerunSubmission: vi.fn(),
     updateRerunSubmission: vi.fn(),
@@ -153,6 +155,7 @@ if (!globalState.__codexJudgeConfigMock) {
     githubToken: null,
     githubApiBaseUrl: 'https://api.github.com',
     codexReviewers: [],
+    judgeMode: 'local',
     ciEventStreamEnabled: false,
     ciMaxWaitMs: 10_000,
     reviewMaxWaitMs: 10_000,
@@ -216,6 +219,8 @@ const harness = (() => {
     stage: 'implementation',
     status: 'run_complete',
     phase: 'Succeeded',
+    iteration: null,
+    iterationCycle: null,
     prompt: 'Implement the change.',
     nextPrompt: null,
     commitSha: null,
@@ -670,6 +675,8 @@ describe('codex judge guardrails', () => {
         },
         shouldSubmit: true,
       })
+
+      globalState.__codexJudgeArgoMock?.submitWorkflowTemplate.mockRejectedValueOnce(new Error('argo down'))
 
       const privateApi = await requirePrivate()
       await privateApi.processRerunQueue()

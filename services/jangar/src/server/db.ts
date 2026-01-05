@@ -377,6 +377,8 @@ type CodexJudgeRuns = {
   stage: string | null
   status: string
   phase: string | null
+  iteration: number | null
+  iteration_cycle: number | null
   prompt: string | null
   next_prompt: string | null
   commit_sha: string | null

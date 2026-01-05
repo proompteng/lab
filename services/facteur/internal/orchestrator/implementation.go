@@ -24,8 +24,9 @@ import (
 )
 
 const (
-	implementationStageLabel  = "implementation"
-	defaultImplementationName = "github-codex-implementation-"
+	implementationStageLabel    = "implementation"
+	defaultImplementationName   = "github-codex-implementation-"
+	maxImplementationIterations = 25
 )
 
 var (
@@ -74,11 +75,14 @@ func NewImplementer(store knowledgeStore, runner argo.Runner, cfg Config) (Imple
 		store:  store,
 		runner: runner,
 		cfg: Config{
-			Namespace:          cfg.Namespace,
-			WorkflowTemplate:   cfg.WorkflowTemplate,
-			ServiceAccount:     cfg.ServiceAccount,
-			Parameters:         mergedParams,
-			GenerateNamePrefix: cfg.GenerateNamePrefix,
+			Namespace:                    cfg.Namespace,
+			WorkflowTemplate:             cfg.WorkflowTemplate,
+			AutonomousWorkflowTemplate:   cfg.AutonomousWorkflowTemplate,
+			ServiceAccount:               cfg.ServiceAccount,
+			Parameters:                   mergedParams,
+			GenerateNamePrefix:           cfg.GenerateNamePrefix,
+			AutonomousGenerateNamePrefix: cfg.AutonomousGenerateNamePrefix,
+			JudgePrompt:                  cfg.JudgePrompt,
 		},
 		tracer:        telemetry.Tracer(),
 		now:           func() time.Time { return time.Now().UTC() },
@@ -87,6 +91,54 @@ func NewImplementer(store knowledgeStore, runner argo.Runner, cfg Config) (Imple
 			time.AfterFunc(ttl, deleteFn)
 		},
 	}, nil
+}
+
+func resolveIterationsCount(task *froussardpb.CodexTask) int {
+	if task == nil {
+		return 1
+	}
+	policy := task.GetIterations()
+	if policy == nil {
+		return 1
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(policy.GetMode()))
+	switch mode {
+	case "", "fixed":
+		count := int(policy.GetCount())
+		if count <= 0 {
+			count = 1
+		}
+		if count > maxImplementationIterations {
+			count = maxImplementationIterations
+		}
+		return count
+	case "until":
+		max := int(policy.GetMax())
+		if max <= 0 {
+			max = int(policy.GetCount())
+		}
+		if max <= 0 {
+			max = 1
+		}
+		if max > maxImplementationIterations {
+			max = maxImplementationIterations
+		}
+		return max
+	default:
+		return 1
+	}
+}
+
+func resolveIterationCycle(task *froussardpb.CodexTask) int {
+	if task == nil {
+		return 1
+	}
+	cycle := int(task.GetIterationCycle())
+	if cycle <= 0 {
+		return 1
+	}
+	return cycle
 }
 
 func (i *implementer) Implement(ctx context.Context, task *froussardpb.CodexTask) (Result, error) {
@@ -223,6 +275,7 @@ func (i *implementer) execute(ctx context.Context, span trace.Span, deliveryID s
 		"issueNumber": task.GetIssueNumber(),
 		"head":        task.GetHead(),
 		"base":        base,
+		"autonomous":  task.GetAutonomous(),
 	})
 	if err != nil {
 		span.RecordError(err)
@@ -282,6 +335,13 @@ func (i *implementer) execute(ctx context.Context, span trace.Span, deliveryID s
 	parameters["eventBody"] = base64.StdEncoding.EncodeToString(eventBody)
 	parameters["head"] = task.GetHead()
 	parameters["base"] = base
+	parameters["prompt"] = task.GetPrompt()
+	iterationsCount := resolveIterationsCount(task)
+	parameters["implementation_iterations"] = strconv.Itoa(iterationsCount)
+	parameters["iteration_cycle"] = strconv.Itoa(resolveIterationCycle(task))
+	if i.cfg.JudgePrompt != "" {
+		parameters["judge_prompt"] = i.cfg.JudgePrompt
+	}
 
 	span.SetAttributes(attribute.String(attributeArgoParameters, strings.Join(sortedKeys(parameters), ",")))
 
@@ -290,8 +350,25 @@ func (i *implementer) execute(ctx context.Context, span trace.Span, deliveryID s
 		namespace = "argo-workflows"
 	}
 	workflowTemplate := i.cfg.WorkflowTemplate
+	generateNamePrefix := i.cfg.GenerateNamePrefix
 	if workflowTemplate == "" {
 		workflowTemplate = "github-codex-implementation"
+	}
+	if generateNamePrefix == "" {
+		generateNamePrefix = defaultImplementationName
+	}
+
+	if task.GetAutonomous() {
+		if i.cfg.AutonomousWorkflowTemplate != "" {
+			workflowTemplate = i.cfg.AutonomousWorkflowTemplate
+		} else {
+			workflowTemplate = "codex-autonomous"
+		}
+		if i.cfg.AutonomousGenerateNamePrefix != "" {
+			generateNamePrefix = i.cfg.AutonomousGenerateNamePrefix
+		} else {
+			generateNamePrefix = "codex-autonomous-"
+		}
 	}
 
 	labels, annotations := buildCodexWorkflowMetadata(task, base)
@@ -303,7 +380,7 @@ func (i *implementer) execute(ctx context.Context, span trace.Span, deliveryID s
 		Parameters:         parameters,
 		Labels:             labels,
 		Annotations:        annotations,
-		GenerateNamePrefix: i.cfg.GenerateNamePrefix,
+		GenerateNamePrefix: generateNamePrefix,
 	})
 	if err != nil {
 		span.RecordError(err)

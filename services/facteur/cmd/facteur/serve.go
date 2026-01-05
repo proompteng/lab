@@ -115,10 +115,13 @@ func NewServeCommand() *cobra.Command {
 			implementerOpts := server.CodexImplementerOptions{}
 			if cfg.Implementer.Enabled {
 				implementerCfg := orchestrator.Config{
-					Namespace:        cfg.Implementer.Namespace,
-					WorkflowTemplate: cfg.Implementer.WorkflowTemplate,
-					ServiceAccount:   cfg.Implementer.ServiceAccount,
-					Parameters:       map[string]string{},
+					Namespace:                    cfg.Implementer.Namespace,
+					WorkflowTemplate:             cfg.Implementer.WorkflowTemplate,
+					AutonomousWorkflowTemplate:   cfg.Implementer.AutonomousWorkflowTemplate,
+					ServiceAccount:               cfg.Implementer.ServiceAccount,
+					Parameters:                   map[string]string{},
+					AutonomousGenerateNamePrefix: cfg.Implementer.AutonomousGenerateNamePrefix,
+					JudgePrompt:                  cfg.Implementer.JudgePrompt,
 				}
 
 				for k, v := range cfg.Argo.Parameters {
@@ -138,6 +141,12 @@ func NewServeCommand() *cobra.Command {
 					implementerCfg.ServiceAccount = cfg.Argo.ServiceAccount
 				}
 				implementerCfg.GenerateNamePrefix = "github-codex-implementation-"
+				if implementerCfg.AutonomousWorkflowTemplate == "" {
+					implementerCfg.AutonomousWorkflowTemplate = "codex-autonomous"
+				}
+				if implementerCfg.AutonomousGenerateNamePrefix == "" {
+					implementerCfg.AutonomousGenerateNamePrefix = "codex-autonomous-"
+				}
 
 				implementer, err := orchestrator.NewImplementer(knowledgeStore, runner, implementerCfg)
 				if err != nil {

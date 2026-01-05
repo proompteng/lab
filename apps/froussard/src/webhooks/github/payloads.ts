@@ -3,6 +3,7 @@ import { timestampFromDate } from '@bufbuild/protobuf/wkt'
 import type { CodexTaskMessage } from '@/codex'
 import {
   CodexTaskStage,
+  CodexIterationsPolicySchema as GithubCodexIterationsPolicySchema,
   type CodexTask as GithubCodexTaskMessage,
   CodexTaskSchema as GithubCodexTaskSchema,
 } from '@/proto/proompteng/froussard/v1/codex_task_pb'
@@ -19,6 +20,17 @@ const toTimestamp = (value: string | undefined) => {
 }
 
 export const toCodexTaskProto = (message: CodexTaskMessage, deliveryId: string): GithubCodexTaskMessage => {
+  const iterations = message.iterations
+    ? create(GithubCodexIterationsPolicySchema, {
+        mode: message.iterations.mode,
+        count: message.iterations.count,
+        min: message.iterations.min,
+        max: message.iterations.max,
+        stopOn: message.iterations.stopOn ?? [],
+        reason: message.iterations.reason,
+      })
+    : undefined
+
   return create(GithubCodexTaskSchema, {
     stage: CodexTaskStage.IMPLEMENTATION,
     prompt: message.prompt,
@@ -35,5 +47,10 @@ export const toCodexTaskProto = (message: CodexTaskMessage, deliveryId: string):
     planCommentUrl: message.planCommentUrl,
     planCommentBody: message.planCommentBody,
     deliveryId,
+    metadataVersion: message.metadataVersion,
+    iterations,
+    iteration: message.iteration,
+    iterationCycle: message.iterationCycle,
+    autonomous: message.autonomous,
   })
 }

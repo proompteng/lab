@@ -436,6 +436,11 @@ function RunCard({ entry }: { entry: CodexRunHistoryEntry }) {
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="text-muted-foreground">Attempt</span>
             <span className="text-sm font-semibold tabular-nums">#{run.attempt}</span>
+            <span className="text-muted-foreground">Iteration</span>
+            <span className="text-sm font-semibold tabular-nums">
+              {run.iteration ?? '—'}
+              {run.iterationCycle ? `/${run.iterationCycle}` : ''}
+            </span>
             <StatusPill value={run.status} />
             {run.phase ? <StatusPill value={run.phase} tone="muted" /> : null}
             {run.stage ? <StatusPill value={run.stage} tone="muted" /> : null}

@@ -36,6 +36,9 @@ jobs:
           version: 1.47.2
           github_token: ${{ github.token }}
 
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y make g++
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 

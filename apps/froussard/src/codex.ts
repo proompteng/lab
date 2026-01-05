@@ -4,6 +4,17 @@ export type Nullable<T> = T | null | undefined
 
 export type CodexTaskStage = 'implementation'
 
+export type CodexIterationsMode = 'fixed' | 'until' | 'budget' | 'adaptive'
+
+export interface CodexIterationsPolicy {
+  mode: CodexIterationsMode
+  count?: number
+  min?: number
+  max?: number
+  stopOn?: string[]
+  reason?: string
+}
+
 export const PROGRESS_COMMENT_MARKER = '<!-- codex:progress -->'
 
 export const normalizeLogin = (login?: Nullable<string>): string | null => {
@@ -118,4 +129,9 @@ export interface CodexTaskMessage {
   planCommentId?: number
   planCommentUrl?: string
   planCommentBody?: string
+  metadataVersion?: number
+  iterations?: CodexIterationsPolicy
+  iteration?: number
+  iterationCycle?: number
+  autonomous?: boolean
 }

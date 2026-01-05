@@ -33,6 +33,15 @@ message CodexReviewContext {
   repeated string additional_notes = 4;
 }
 
+message CodexIterationsPolicy {
+  string mode = 1;
+  optional int32 count = 2;
+  optional int32 min = 3;
+  optional int32 max = 4;
+  repeated string stop_on = 5;
+  optional string reason = 6;
+}
+
 message CodexTask {
   CodexTaskStage stage = 1;
   string prompt = 2;
@@ -50,4 +59,9 @@ message CodexTask {
   optional string plan_comment_body = 14;
   string delivery_id = 15;
   optional CodexReviewContext review_context = 16;
+  optional int32 metadata_version = 17;
+  optional CodexIterationsPolicy iterations = 18;
+  optional int32 iteration = 19;
+  optional int32 iteration_cycle = 20;
+  optional bool autonomous = 21;
 }

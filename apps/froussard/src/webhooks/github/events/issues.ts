@@ -1,6 +1,7 @@
 import { Schema } from 'effect'
 
 import { buildCodexBranchName, buildCodexPrompt, type CodexTaskMessage, normalizeLogin } from '@/codex'
+import { parseCodexIssueMetadata } from '@/codex/issue-metadata'
 import type { ImplementationCommand } from '@/codex/workflow-machine'
 import { selectReactionRepository } from '@/codex-workflow'
 import { deriveRepositoryFullName, isGithubIssueCommentEvent, isGithubIssueEvent } from '@/github-payload'
@@ -41,6 +42,14 @@ const IssueSchema = Schema.Struct({
   html_url: Schema.optionalWith(Schema.String, { nullable: true }),
   repository_url: Schema.optionalWith(Schema.String, { nullable: true }),
   repository: Schema.optionalWith(RepositoryValueSchema, { nullable: true }),
+  labels: Schema.optionalWith(
+    Schema.Array(
+      Schema.Struct({
+        name: Schema.optionalWith(Schema.String, { nullable: true }),
+      }),
+    ),
+    { nullable: true, default: () => [] },
+  ),
   pull_request: Schema.optionalWith(
     Schema.Struct({
       url: Schema.optionalWith(Schema.String, { nullable: true }),
@@ -151,6 +160,13 @@ export const handleIssueOpened = async (params: BaseIssueParams): Promise<Workfl
   const issueTitle = typeof issue?.title === 'string' && issue.title.length > 0 ? issue.title : `Issue #${issueNumber}`
   const issueBody = typeof issue?.body === 'string' ? issue.body : ''
   const issueUrl = typeof issue?.html_url === 'string' ? issue.html_url : ''
+  const metadata = parseCodexIssueMetadata(issueBody)
+  const labelNames = (issue?.labels ?? [])
+    .map((label) => (typeof label?.name === 'string' ? label.name.trim().toLowerCase() : ''))
+    .filter((label) => label.length > 0)
+  const hasAutonomousLabel = labelNames.some((label) => config.codexAutonomousLabels.includes(label))
+  const hasAutonomousRepo = config.codexAutonomousRepos.includes(repositoryFullName.toLowerCase())
+  const autonomous = metadata.autonomous || hasAutonomousLabel || hasAutonomousRepo
   const prompt = buildCodexPrompt({
     issueTitle,
     issueBody,
@@ -173,6 +189,9 @@ export const handleIssueOpened = async (params: BaseIssueParams): Promise<Workfl
     issueBody,
     sender: typeof senderLoginValue === 'string' ? senderLoginValue : '',
     issuedAt: new Date().toISOString(),
+    metadataVersion: metadata.version ?? undefined,
+    iterations: metadata.iterations,
+    autonomous,
   }
 
   const codexStructuredMessage = toCodexTaskProto(codexMessage, deliveryId)
@@ -294,6 +313,13 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
   const issueTitle = typeof issue?.title === 'string' && issue.title.length > 0 ? issue.title : `Issue #${issueNumber}`
   const issueBody = typeof issue?.body === 'string' ? issue.body : ''
   const issueUrl = typeof issue?.html_url === 'string' ? issue.html_url : ''
+  const metadata = parseCodexIssueMetadata(issueBody)
+  const labelNames = (issue?.labels ?? [])
+    .map((label) => (typeof label?.name === 'string' ? label.name.trim().toLowerCase() : ''))
+    .filter((label) => label.length > 0)
+  const hasAutonomousLabel = labelNames.some((label) => config.codexAutonomousLabels.includes(label))
+  const hasAutonomousRepo = config.codexAutonomousRepos.includes(repositoryFullName.toLowerCase())
+  const autonomous = metadata.autonomous || hasAutonomousLabel || hasAutonomousRepo
 
   const prompt = buildCodexPrompt({
     issueTitle,
@@ -317,6 +343,9 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
     issueBody,
     sender: typeof senderLoginValue === 'string' ? senderLoginValue : '',
     issuedAt: new Date().toISOString(),
+    metadataVersion: metadata.version ?? undefined,
+    iterations: metadata.iterations,
+    autonomous,
   }
 
   const codexStructuredMessage = toCodexTaskProto(codexMessage, deliveryId)

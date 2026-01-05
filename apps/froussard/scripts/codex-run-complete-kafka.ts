@@ -27,7 +27,6 @@ const parseArgs = (argv: string[]): Args => {
     }
     if (arg === '--key') {
       key = argv[++i]
-      continue
     }
   }
 

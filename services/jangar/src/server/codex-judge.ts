@@ -17,6 +17,7 @@ import { extractImplementationManifestFromArchive, extractTextFromArchive } from
 import { loadCodexJudgeConfig } from '~/server/codex-judge-config'
 import { evaluateDeterministicGates } from '~/server/codex-judge-gates'
 import {
+  type CodexArtifactRecord,
   type CodexEvaluationRecord,
   type CodexRunRecord,
   createCodexJudgeStore,
@@ -49,6 +50,13 @@ storeReady.catch((error) => {
   console.error('Codex judge store failed to initialize', error)
 })
 const config = globalOverrides.__codexJudgeConfigMock ?? loadCodexJudgeConfig()
+const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
+const effectiveJudgeMode = config.judgeMode === 'local' && isTestEnv ? 'local' : 'argo'
+if (config.judgeMode !== 'argo' && !isTestEnv) {
+  console.warn(
+    'Jangar local judge mode is deprecated and disabled in production; forcing JANGAR_CODEX_JUDGE_MODE=argo.',
+  )
+}
 const github =
   globalOverrides.__codexJudgeGithubMock ??
   createGitHubClient({ token: config.githubToken, apiBaseUrl: config.githubApiBaseUrl })
@@ -146,6 +154,10 @@ const EventBodySchema = S.Struct({
   turn_id: S.optional(S.String),
   threadId: S.optional(S.String),
   thread_id: S.optional(S.String),
+  iteration: S.optional(S.Union(S.String, S.Number)),
+  iteration_cycle: S.optional(S.Union(S.String, S.Number)),
+  iterationCycle: S.optional(S.Union(S.String, S.Number)),
+  iterations: S.optional(S.Union(S.String, S.Number)),
 })
 
 const RunCompletePayloadSchema = S.Struct({
@@ -178,6 +190,10 @@ const RunCompletePayloadSchema = S.Struct({
   branch: S.optional(S.String),
   base: S.optional(S.String),
   prompt: S.optional(S.String),
+  iteration: S.optional(S.Union(S.String, S.Number)),
+  iterationCycle: S.optional(S.Union(S.String, S.Number)),
+  iteration_cycle: S.optional(S.Union(S.String, S.Number)),
+  iterations: S.optional(S.Union(S.String, S.Number)),
   startedAt: S.optional(S.String),
   finishedAt: S.optional(S.String),
 })
@@ -454,6 +470,21 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
       : typeof eventBody.prompt === 'string'
         ? eventBody.prompt.trim()
         : null
+  const iterationRaw =
+    normalizeNumber(decodedPayload.iteration ?? 0) ||
+    normalizeNumber(eventBody.iteration ?? 0) ||
+    normalizeNumber(getParamValue(params, 'iteration'))
+  const iterationCycleRaw =
+    normalizeNumber(decodedPayload.iterationCycle ?? decodedPayload.iteration_cycle ?? 0) ||
+    normalizeNumber(eventBody.iterationCycle ?? eventBody.iteration_cycle ?? 0) ||
+    normalizeNumber(getParamValue(params, 'iteration_cycle'))
+  const iterationsRaw =
+    normalizeNumber(decodedPayload.iterations ?? 0) ||
+    normalizeNumber(eventBody.iterations ?? 0) ||
+    normalizeNumber(getParamValue(params, 'iterations'))
+  const iteration = iterationRaw > 0 ? iterationRaw : null
+  const iterationCycle = iterationCycleRaw > 0 ? iterationCycleRaw : null
+  const iterations = iterationsRaw > 0 ? iterationsRaw : null
   const issueTitle = typeof eventBody.issueTitle === 'string' ? eventBody.issueTitle : null
   const issueBody = typeof eventBody.issueBody === 'string' ? eventBody.issueBody : null
   const issueUrl = typeof eventBody.issueUrl === 'string' ? eventBody.issueUrl : null
@@ -488,6 +519,9 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
     head,
     base,
     prompt,
+    iteration,
+    iterationCycle,
+    iterations,
     issueTitle,
     issueBody,
     issueUrl,
@@ -546,6 +580,21 @@ const parseNotifyPayload = (payload: Record<string, unknown>) => {
   const headSha =
     typeof data.head_sha === 'string' ? data.head_sha : typeof data.headSha === 'string' ? data.headSha : null
   const stage = typeof data.stage === 'string' ? data.stage : null
+  const reviewStatus =
+    typeof data.review_status === 'string'
+      ? data.review_status
+      : typeof data.reviewStatus === 'string'
+        ? data.reviewStatus
+        : null
+  const reviewSummary = isRecord(data.review_summary)
+    ? data.review_summary
+    : isRecord(data.reviewSummary)
+      ? data.reviewSummary
+      : null
+  const iterationRaw = normalizeNumber(data.iteration ?? 0)
+  const iterationCycleRaw = normalizeNumber(data.iteration_cycle ?? data.iterationCycle ?? 0)
+  const iteration = iterationRaw > 0 ? iterationRaw : null
+  const iterationCycle = iterationCycleRaw > 0 ? iterationCycleRaw : null
   return {
     workflowName,
     workflowNamespace,
@@ -557,6 +606,10 @@ const parseNotifyPayload = (payload: Record<string, unknown>) => {
     prUrl,
     headSha,
     stage,
+    iteration,
+    iterationCycle,
+    reviewStatus,
+    reviewSummary,
     notifyPayload: data,
   }
 }
@@ -1662,6 +1715,14 @@ const fetchArtifactFullText = async (artifact: ResolvedArtifact, maxBytes = MAX_
 const buildArtifactIndex = (artifacts: ResolvedArtifact[]) =>
   new Map(artifacts.map((artifact) => [artifact.name, artifact]))
 
+const toResolvedArtifact = (artifact: CodexArtifactRecord): ResolvedArtifact => ({
+  name: artifact.name,
+  key: artifact.key,
+  bucket: artifact.bucket,
+  url: artifact.url,
+  metadata: artifact.metadata ?? {},
+})
+
 const extractNotifyPayloadFromArtifacts = async (artifactMap: Map<string, ResolvedArtifact>) => {
   const artifact = artifactMap.get('implementation-notify')
   if (!artifact) return null
@@ -1717,6 +1778,15 @@ const extractManifestFromArtifacts = async (artifactMap: Map<string, ResolvedArt
   const buffer = await fetchArtifactBuffer(artifact)
   if (!buffer) return null
   return extractImplementationManifestFromArchive(buffer)
+}
+
+const extractJudgeOutputFromArtifacts = async (artifacts: ResolvedArtifact[]) => {
+  const artifact = buildArtifactIndex(artifacts).get('judge-output')
+  if (!artifact) return null
+  const text = await fetchArtifactText(artifact)
+  if (!text) return null
+  const parsed = safeParseJson(text)
+  return isRecord(parsed) ? parsed : null
 }
 
 const resolveCommitSha = async (run: CodexRunRecord, fallbackCommitSha: string | null) => {
@@ -2147,7 +2217,13 @@ const recordDecision = async (
   if (!resolvedRun) return evaluation
 
   const failureReason = resolveFailureReason(null, evaluation) ?? UNKNOWN_FAILURE_REASON
-  await maybeSubmitSystemImprovementWorkflow(resolvedRun, failureReason, evaluation)
+  const submission = await maybeSubmitSystemImprovementWorkflow(resolvedRun, failureReason, evaluation)
+  if (!isTestEnv && !submission.submitted) {
+    const updated = await store.updateRunStatus(resolvedRun.id, 'needs_human')
+    if (updated) {
+      await sendDiscordEscalation(resolvedRun, 'system_improvement_failed')
+    }
+  }
 
   return evaluation
 }
@@ -2182,6 +2258,76 @@ const evaluateRun = async (runId: string) => {
           suggestions: ['Attach codex repository/issue/head/base metadata to Argo workflow labels or annotations.'],
         },
       })
+      const refreshedRun = (await store.getRunById(run.id)) ?? run
+      await writeMemories(refreshedRun, evaluation)
+      return
+    }
+
+    const argoJudgeOnly = effectiveJudgeMode === 'argo'
+    const isJudgeStage = run.stage === 'judge' || run.runCompletePayload?.stage === 'judge'
+
+    if (argoJudgeOnly) {
+      await store.updateRunPrompt(run.id, run.prompt, run.nextPrompt)
+
+      if (!isJudgeStage) {
+        return
+      }
+
+      let artifactJudgeOutput: Record<string, unknown> | null = null
+      try {
+        const artifactRecords = await store.listArtifactsForRun(run.id)
+        if (artifactRecords.length > 0) {
+          const artifacts = artifactRecords.map((artifact) => toResolvedArtifact(artifact))
+          artifactJudgeOutput = await extractJudgeOutputFromArtifacts(artifacts)
+        }
+      } catch (error) {
+        console.warn('Failed to load judge output from artifacts', error)
+      }
+
+      const notifyJudgeOutput = (run.notifyPayload?.judge_output as Record<string, unknown> | undefined) ?? null
+      const notifyMessage = run.notifyPayload?.last_assistant_message as string | null
+      const parsedFromMessage = notifyMessage ? safeParseJson(notifyMessage) : null
+      const resolvedArtifactJudgeOutput =
+        artifactJudgeOutput && Object.keys(artifactJudgeOutput).length > 0 ? artifactJudgeOutput : null
+      const judgeOutput = resolvedArtifactJudgeOutput ?? notifyJudgeOutput ?? parsedFromMessage ?? {}
+
+      if (Object.keys(judgeOutput).length === 0) {
+        const evaluation = await recordDecision(
+          {
+            runId: run.id,
+            decision: 'needs_iteration',
+            reasons: { error: 'infra_failure', detail: 'missing_judge_output' },
+            suggestedFixes: { fix: 'Ensure judge output JSON is persisted in run-complete artifacts.' },
+            nextPrompt: 'Judge output missing. Re-run judge and emit JSON output.',
+            promptTuning: {},
+            systemSuggestions: {},
+          },
+          run,
+        )
+        const refreshedRun = (await store.getRunById(run.id)) ?? run
+        await writeMemories(refreshedRun, evaluation)
+        return
+      }
+
+      const decisionRaw = typeof judgeOutput.decision === 'string' ? judgeOutput.decision : 'fail'
+      const decision = normalizeJudgeDecision(decisionRaw)
+      const nextPrompt = typeof judgeOutput.next_prompt === 'string' ? judgeOutput.next_prompt : null
+
+      const evaluation = await recordDecision(
+        {
+          runId: run.id,
+          decision: decision === 'pass' ? 'pass' : 'needs_iteration',
+          confidence: typeof judgeOutput.confidence === 'number' ? judgeOutput.confidence : null,
+          reasons: { requirements_coverage: judgeOutput.requirements_coverage ?? [], decision },
+          missingItems: { missing_items: judgeOutput.missing_items ?? [] },
+          suggestedFixes: { suggested_fixes: judgeOutput.suggested_fixes ?? [] },
+          nextPrompt,
+          promptTuning: { suggestions: judgeOutput.prompt_tuning_suggestions ?? [] },
+          systemSuggestions: { suggestions: judgeOutput.system_improvement_suggestions ?? [] },
+        },
+        run,
+      )
+
       const refreshedRun = (await store.getRunById(run.id)) ?? run
       await writeMemories(refreshedRun, evaluation)
       return
@@ -2600,7 +2746,6 @@ const evaluateRun = async (runId: string) => {
       return
     }
 
-    const isJudgeStage = run.stage === 'judge' || run.runCompletePayload?.stage === 'judge'
     let judgeOutput: Record<string, unknown>
     let judgeAttempts = 0
 
@@ -3109,9 +3254,11 @@ const maybeSubmitSystemImprovementWorkflow = async (
   run: CodexRunRecord,
   reason: string | null,
   evaluation?: CodexEvaluationRecord,
-) => {
+): Promise<{ submitted: boolean; error?: string }> => {
   const argoClient = globalOverrides.__codexJudgeArgoMock ?? argo
-  if (!argoClient || !config.systemImprovementWorkflowTemplate) return
+  if (!argoClient || !config.systemImprovementWorkflowTemplate) {
+    return { submitted: false, error: 'system_improvement_workflow_unconfigured' }
+  }
 
   const baseRef =
     typeof run.runCompletePayload?.base === 'string' && run.runCompletePayload.base.trim().length > 0
@@ -3140,8 +3287,10 @@ const maybeSubmitSystemImprovementWorkflow = async (
       },
       generateName: 'codex-system-improvement-',
     })
+    return { submitted: true }
   } catch (error) {
     console.warn('Failed to submit system improvement workflow', error)
+    return { submitted: false, error: error instanceof Error ? error.message : String(error) }
   }
 }
 
@@ -3200,6 +3349,9 @@ if (!_RECONCILE_DISABLED) {
 }
 
 const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: CodexEvaluationRecord) => {
+  if (effectiveJudgeMode === 'argo') {
+    return
+  }
   const latestRun = await store.getRunById(run.id)
   if (!latestRun || latestRun.status === 'superseded') return
 
@@ -3254,20 +3406,36 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
       typeof run.runCompletePayload?.base === 'string' && run.runCompletePayload.base.trim().length > 0
         ? run.runCompletePayload.base.trim()
         : 'main'
+    const iterationCycle =
+      typeof run.iterationCycle === 'number' && Number.isFinite(run.iterationCycle)
+        ? run.iterationCycle + 1
+        : typeof run.runCompletePayload?.iteration_cycle === 'number' &&
+            Number.isFinite(run.runCompletePayload?.iteration_cycle)
+          ? Number(run.runCompletePayload?.iteration_cycle) + 1
+          : 1
+    const iterationsCount =
+      typeof run.runCompletePayload?.iterations === 'number' && Number.isFinite(run.runCompletePayload?.iterations)
+        ? Number(run.runCompletePayload?.iterations)
+        : null
     try {
+      const parameters = [
+        `repository=${run.repository}`,
+        `issue_number=${run.issueNumber}`,
+        `base=${baseRef}`,
+        `head=${run.branch}`,
+        `prompt=${prompt}`,
+        `judge_prompt=${config.defaultJudgePrompt}`,
+        `attempt=${attempt}`,
+        `parent_run_uid=${run.workflowUid ?? run.id}`,
+        `iteration_cycle=${iterationCycle}`,
+      ]
+      if (iterationsCount && iterationsCount > 0) {
+        parameters.push(`implementation_iterations=${iterationsCount}`)
+      }
       await argo.submitWorkflowTemplate({
         namespace: config.rerunWorkflowNamespace,
         templateName: config.rerunWorkflowTemplate,
-        parameters: [
-          `repository=${run.repository}`,
-          `issue_number=${run.issueNumber}`,
-          `base=${baseRef}`,
-          `head=${run.branch}`,
-          `prompt=${prompt}`,
-          `judge_prompt=${config.defaultJudgePrompt}`,
-          `attempt=${attempt}`,
-          `parent_run_uid=${run.workflowUid ?? run.id}`,
-        ],
+        parameters,
         labels: {
           'codex.repository': run.repository,
           'codex.issue': String(run.issueNumber),
@@ -3297,9 +3465,25 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
   let lastError: string | undefined =
     argoResult?.status === 'failed' ? `Argo rerun submission failed: ${argoResult.error}` : undefined
 
-  const { CodexTaskSchema, CodexTaskStage } = await import('./proto/codex_task_pb')
+  const { CodexTaskSchema, CodexTaskStage, CodexIterationsPolicySchema } = await import('./proto/codex_task_pb')
   const { create, toBinary } = await import('@bufbuild/protobuf')
   const { timestampFromDate } = await import('@bufbuild/protobuf/wkt')
+
+  const iterationsCount =
+    typeof run.runCompletePayload?.iterations === 'number' && Number.isFinite(run.runCompletePayload?.iterations)
+      ? Number(run.runCompletePayload?.iterations)
+      : null
+  const iterationCycle =
+    typeof run.iterationCycle === 'number' && Number.isFinite(run.iterationCycle)
+      ? run.iterationCycle + 1
+      : typeof run.runCompletePayload?.iteration_cycle === 'number' &&
+          Number.isFinite(run.runCompletePayload?.iteration_cycle)
+        ? Number(run.runCompletePayload?.iteration_cycle) + 1
+        : 1
+
+  const iterationsPolicy = iterationsCount
+    ? create(CodexIterationsPolicySchema, { mode: 'fixed', count: iterationsCount })
+    : undefined
 
   const message = create(CodexTaskSchema, {
     stage: CodexTaskStage.IMPLEMENTATION,
@@ -3321,6 +3505,9 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
     sender: 'jangar',
     issuedAt: timestampFromDate(new Date()),
     deliveryId,
+    metadataVersion: 1,
+    iterations: iterationsPolicy,
+    iterationCycle,
   })
 
   const payload = toBinary(CodexTaskSchema, message)
@@ -3983,6 +4170,8 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
     threadId: resolvedThreadId,
     status: 'run_complete',
     phase: parsed.phase,
+    iteration: parsed.iteration,
+    iterationCycle: parsed.iterationCycle,
     prompt: resolvedPrompt,
     runCompletePayload: {
       ...parsed.runCompletePayload,
@@ -3995,6 +4184,9 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
       issueNumber: resolvedIssueNumber,
       turnId: resolvedTurnId,
       threadId: resolvedThreadId,
+      iteration: parsed.iteration,
+      iteration_cycle: parsed.iterationCycle,
+      iterations: parsed.iterations,
     },
     startedAt: parsed.startedAt,
     finishedAt: parsed.finishedAt,
@@ -4008,6 +4200,70 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
   }
 
   return run
+}
+
+const parseRerunPayload = (payload: Record<string, unknown>) => {
+  const repository = typeof payload.repository === 'string' ? payload.repository.trim() : ''
+  const issueNumberRaw = payload.issue_number ?? payload.issueNumber
+  const issueNumber = Number.parseInt(String(issueNumberRaw ?? ''), 10)
+  const attemptRaw = payload.attempt ?? payload.rerun_attempt
+  const attempt = Number.parseInt(String(attemptRaw ?? ''), 10)
+  const prompt = typeof payload.prompt === 'string' ? payload.prompt.trim() : ''
+  const runId = typeof payload.run_id === 'string' ? payload.run_id.trim() : ''
+  const workflowName = typeof payload.workflow_name === 'string' ? payload.workflow_name.trim() : ''
+  const workflowNamespace =
+    typeof payload.workflow_namespace === 'string' ? payload.workflow_namespace.trim() : 'argo-workflows'
+  const deliveryId =
+    typeof payload.delivery_id === 'string'
+      ? payload.delivery_id.trim()
+      : workflowName && Number.isFinite(attempt)
+        ? `${workflowName}:${attempt}`
+        : `rerun-${Date.now()}`
+
+  if (!repository || !Number.isFinite(issueNumber) || !Number.isFinite(attempt) || !prompt) {
+    throw new Error('rerun payload missing required fields (repository, issue_number, attempt, prompt)')
+  }
+
+  return {
+    repository,
+    issueNumber,
+    attempt,
+    prompt,
+    runId: runId || null,
+    workflowName: workflowName || null,
+    workflowNamespace: workflowNamespace || 'argo-workflows',
+    deliveryId,
+  }
+}
+
+export const handleRerunRequest = async (payload: Record<string, unknown>) => {
+  await ensureStoreReady()
+  const parsed = parseRerunPayload(payload)
+
+  const run = parsed.runId
+    ? await store.getRunById(parsed.runId)
+    : parsed.workflowName
+      ? await store.getRunByWorkflow(parsed.workflowName, parsed.workflowNamespace)
+      : null
+
+  if (!run) {
+    throw new Error('rerun parent run not found')
+  }
+
+  await store.updateRunPrompt(run.id, run.prompt, parsed.prompt)
+  await store.updateRunStatus(run.id, 'needs_iteration')
+
+  const submission = await store.enqueueRerunSubmission({
+    parentRunId: run.id,
+    attempt: parsed.attempt,
+    deliveryId: parsed.deliveryId,
+  })
+
+  if (submission) {
+    void processRerunQueue()
+  }
+
+  return { run, submission }
 }
 
 export const handleNotify = async (payload: Record<string, unknown>) => {
@@ -4025,10 +4281,20 @@ export const handleNotify = async (payload: Record<string, unknown>) => {
     issueNumber: parsed.issueNumber,
     branch: parsed.branch,
     prompt: parsed.prompt,
+    iteration: parsed.iteration,
+    iterationCycle: parsed.iterationCycle,
   })
 
   if (run && parsed.prNumber && parsed.prUrl) {
     await store.updateRunPrInfo(run.id, parsed.prNumber, parsed.prUrl, parsed.headSha ?? null)
+  }
+
+  if (run && parsed.reviewStatus) {
+    await store.updateReviewStatus({
+      runId: run.id,
+      status: parsed.reviewStatus,
+      summary: parsed.reviewSummary ?? {},
+    })
   }
 
   if (run && run.status === 'run_complete') {

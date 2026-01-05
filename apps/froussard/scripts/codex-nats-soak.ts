@@ -134,7 +134,7 @@ const filterMessages = (
 const run = () => {
   const options: Options = {
     stream: coerceNonEmpty(process.env.NATS_STREAM) ?? 'agent-comms',
-    subject: coerceNonEmpty(process.env.NATS_CONTEXT_SUBJECT) ?? 'argo.workflow.general.message',
+    subject: coerceNonEmpty(process.env.NATS_CONTEXT_SUBJECT) ?? 'workflow_comms.agent_messages.general.>',
     count: parseNumber(process.env.NATS_CONTEXT_COUNT, 50),
     outputPath: coerceNonEmpty(process.env.NATS_CONTEXT_PATH) ?? undefined,
   }

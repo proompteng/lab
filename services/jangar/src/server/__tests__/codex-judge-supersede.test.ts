@@ -30,6 +30,7 @@ const globalState = globalThis as typeof globalThis & {
     githubToken: string | null
     githubApiBaseUrl: string
     codexReviewers: string[]
+    judgeMode: 'argo' | 'local'
     ciEventStreamEnabled: boolean
     ciMaxWaitMs: number
     reviewMaxWaitMs: number
@@ -62,6 +63,7 @@ if (!globalState.__codexJudgeStoreMock) {
     updateRunPrompt: vi.fn(),
     updateRunPrInfo: vi.fn(),
     upsertArtifacts: vi.fn(),
+    listArtifactsForRun: vi.fn(),
     listRunsByStatus: vi.fn(),
     claimRerunSubmission: vi.fn(),
     updateRerunSubmission: vi.fn(),
@@ -103,6 +105,7 @@ if (!globalState.__codexJudgeConfigMock) {
     githubToken: null,
     githubApiBaseUrl: 'https://api.github.com',
     codexReviewers: [],
+    judgeMode: 'local',
     ciEventStreamEnabled: false,
     ciMaxWaitMs: 10_000,
     reviewMaxWaitMs: 10_000,
@@ -151,6 +154,7 @@ const store = {
   updateRunPrompt: vi.fn(),
   updateRunPrInfo: vi.fn(),
   upsertArtifacts,
+  listArtifactsForRun: vi.fn(),
   listRunsByStatus: vi.fn(),
   claimRerunSubmission: vi.fn(),
   updateRerunSubmission: vi.fn(),
@@ -186,6 +190,7 @@ const config = {
   githubToken: null,
   githubApiBaseUrl: 'https://api.github.com',
   codexReviewers: [],
+  judgeMode: 'local',
   ciEventStreamEnabled: false,
   ciMaxWaitMs: 10_000,
   reviewMaxWaitMs: 10_000,
@@ -236,6 +241,8 @@ const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
   stage: 'implementation',
   status: 'superseded',
   phase: null,
+  iteration: null,
+  iterationCycle: null,
   prompt: null,
   nextPrompt: null,
   commitSha: null,

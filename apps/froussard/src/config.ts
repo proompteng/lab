@@ -34,6 +34,8 @@ export interface AppConfig {
     triggerLogins: string[]
     workflowLogin: string
     implementationTriggerPhrase: string
+    autonomousRepos: string[]
+    autonomousLabels: string[]
   }
   discord: {
     publicKey: string
@@ -87,6 +89,8 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
           ? env.CODEX_WORKFLOW_LOGIN.trim().toLowerCase()
           : 'github-actions[bot]',
       implementationTriggerPhrase: (env.CODEX_IMPLEMENTATION_TRIGGER ?? 'implement issue').trim(),
+      autonomousRepos: parseCsvList(env.CODEX_AUTONOMOUS_REPOS),
+      autonomousLabels: parseCsvList(env.CODEX_AUTONOMOUS_LABELS, ['codex-autonomous', 'codex-auto']),
     },
     discord: {
       publicKey: requireEnv(env, 'DISCORD_PUBLIC_KEY'),
@@ -111,4 +115,13 @@ const parseTriggerLogins = (env: NodeJS.ProcessEnv): string[] => {
     .map((login) => login.trim().toLowerCase())
     .filter((login) => login.length > 0)
   return logins.length > 0 ? logins : ['gregkonush', 'tuslagch']
+}
+
+const parseCsvList = (value: string | undefined, fallback: string[] = []): string[] => {
+  if (!value) return fallback
+  const entries = value
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.length > 0)
+  return entries.length > 0 ? entries : fallback
 }

@@ -11,7 +11,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from '@/components/ui/pagination'
-import { type CodexRunSummaryRecord, fetchCodexRunsPage } from '@/data/codex'
+import { type CodexRunSummaryRecord, fetchCodexRecentRuns, fetchCodexRunsPage } from '@/data/codex'
 import { cn } from '@/lib/utils'
 
 type CodexRunsSearchState = {
@@ -56,6 +56,7 @@ function CodexRunsPage() {
   const [repository, setRepository] = React.useState(searchState.repository)
   const [pageSize, setPageSize] = React.useState(searchState.pageSize.toString())
   const [runs, setRuns] = React.useState<CodexRunSummaryRecord[]>([])
+  const [reviewQueue, setReviewQueue] = React.useState<CodexRunSummaryRecord[]>([])
   const [total, setTotal] = React.useState(0)
   const [status, setStatus] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
@@ -109,6 +110,35 @@ function CodexRunsPage() {
       pageSize: searchState.pageSize,
     })
   }, [loadRuns, searchState.page, searchState.pageSize, searchState.repository])
+
+  React.useEffect(() => {
+    const trimmedRepository = searchState.repository.trim()
+    const controller = new AbortController()
+    fetchCodexRecentRuns({
+      repository: trimmedRepository.length > 0 ? trimmedRepository : undefined,
+      limit: 50,
+      signal: controller.signal,
+    })
+      .then((result) => {
+        if (!result.ok) {
+          setReviewQueue([])
+          return
+        }
+        const queued = result.runs.filter((run) => {
+          const statusValue = run.reviewStatus?.toLowerCase() ?? ''
+          if (statusValue === 'approved') return false
+          if (statusValue === 'pending' || statusValue === 'changes_requested' || statusValue === 'commented') {
+            return true
+          }
+          return run.stage === 'review'
+        })
+        setReviewQueue(queued)
+      })
+      .catch(() => {
+        setReviewQueue([])
+      })
+    return () => controller.abort()
+  }, [searchState.repository])
 
   const totalPages = Math.max(1, Math.ceil(total / searchState.pageSize))
   const clampedPage = Math.min(searchState.page, totalPages)
@@ -217,6 +247,64 @@ function CodexRunsPage() {
         </form>
       </section>
 
+      <section className="rounded-none border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 text-xs text-muted-foreground">
+          <span>Review queue</span>
+          <span className="tabular-nums">{reviewQueue.length}</span>
+        </div>
+        {reviewQueue.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-xs">
+              <thead className="bg-muted/40 text-muted-foreground">
+                <tr className="border-b">
+                  <th className="px-3 py-2 text-left font-medium">Issue</th>
+                  <th className="px-3 py-2 text-left font-medium">Repository</th>
+                  <th className="px-3 py-2 text-left font-medium">Review status</th>
+                  <th className="px-3 py-2 text-left font-medium">PR</th>
+                  <th className="px-3 py-2 text-left font-medium">Updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reviewQueue.map((run) => (
+                  <tr key={`review-${run.id}`} className="border-b last:border-0">
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <Link
+                        to="/codex/search"
+                        search={{
+                          repository: run.repository,
+                          issueNumber: run.issueNumber,
+                          branch: '',
+                          limit: DEFAULT_SEARCH_LIMIT,
+                        }}
+                        className="text-primary hover:underline"
+                      >
+                        #{run.issueNumber}
+                      </Link>
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.repository}</td>
+                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                      {run.reviewStatus ?? 'pending'}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {run.prUrl ? (
+                        <ExternalLink href={run.prUrl}>PR #{run.prNumber ?? '—'}</ExternalLink>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                      {formatDateTime(run.updatedAt)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="p-6 text-center text-xs text-muted-foreground">No review queue items.</div>
+        )}
+      </section>
+
       {error ? (
         <section className="rounded-none p-4 text-xs border border-destructive/40 bg-destructive/10 text-destructive">
           {error}
@@ -242,8 +330,10 @@ function CodexRunsPage() {
                   <th className="px-3 py-2 text-left font-medium">Issue</th>
                   <th className="px-3 py-2 text-left font-medium">Repository</th>
                   <th className="px-3 py-2 text-left font-medium">Attempt</th>
+                  <th className="px-3 py-2 text-left font-medium">Iteration</th>
                   <th className="px-3 py-2 text-left font-medium">Status</th>
                   <th className="px-3 py-2 text-left font-medium">Stage / Phase</th>
+                  <th className="px-3 py-2 text-left font-medium">Judge</th>
                   <th className="px-3 py-2 text-left font-medium">Workflow</th>
                   <th className="px-3 py-2 text-left font-medium">Branch</th>
                   <th className="px-3 py-2 text-left font-medium">PR</th>
@@ -271,12 +361,23 @@ function CodexRunsPage() {
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.repository}</td>
                     <td className="px-3 py-2 whitespace-nowrap tabular-nums">#{run.attempt}</td>
+                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                      {run.iteration ? (
+                        <span className="tabular-nums">
+                          {run.iteration}
+                          {run.iterationCycle ? `/${run.iterationCycle}` : ''}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       <StatusPill value={run.status} />
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
                       {run.stage ?? '—'} / {run.phase ?? '—'}
                     </td>
+                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.decision ?? '—'}</td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       <div className="text-foreground">{run.workflowName}</div>
                       {run.workflowNamespace ? (
