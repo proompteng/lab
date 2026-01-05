@@ -99,12 +99,13 @@ If any gate fails, the system must record why and either rerun or escalate to `n
 
 The autonomous run depends on these environment variables already present in the Jangar deployment:
 - GitHub: `GITHUB_TOKEN`, `JANGAR_GITHUB_REPOS_ALLOWED`, `JANGAR_GITHUB_REVIEWS_WRITE`, `JANGAR_GITHUB_MERGE_WRITE`, `JANGAR_GITHUB_MERGE_FORCE`
-- Codex judge: `JANGAR_CI_EVENT_STREAM_ENABLED`, `JANGAR_CI_MAX_WAIT_MS`, `JANGAR_REVIEW_MAX_WAIT_MS`, `JANGAR_CODEX_MAX_ATTEMPTS`, `JANGAR_CODEX_BACKOFF_SCHEDULE_MS`, `JANGAR_CODEX_JUDGE_MODEL`
+- Codex judge: `JANGAR_CI_EVENT_STREAM_ENABLED`, `JANGAR_CI_MAX_WAIT_MS`, `JANGAR_REVIEW_MAX_WAIT_MS`, `JANGAR_CODEX_MAX_ATTEMPTS`, `JANGAR_CODEX_BACKOFF_SCHEDULE_MS`, `JANGAR_CODEX_JUDGE_MODEL`, `JANGAR_CODEX_JUDGE_MODE`
 - Argo and artifacts: `ARGO_SERVER_URL`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_SECURE`
 - Facteur reruns: `FACTEUR_INTERNAL_URL`
 - Infra: `DATABASE_URL`, `JANGAR_REDIS_URL`, `NATS_URL`, `NATS_USER`, `NATS_PASSWORD`
 
 Required guarantee: the workflow image has `git` and the repo checkout at `${CODEX_CWD}`.
+Production requirement: local judge mode is deprecated. Set `JANGAR_CODEX_JUDGE_MODE=argo` so Jangar only hosts the UI and stores results from the Argo judge workflow.
 
 ## 6) Architecture Overview
 
