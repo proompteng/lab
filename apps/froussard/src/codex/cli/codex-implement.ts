@@ -2546,6 +2546,16 @@ export const runCodexImplementation = async (eventPath: string) => {
     await ensureNotifyPlaceholder(notifyPath, logger)
     try {
       if (stage === 'implementation') {
+        try {
+          await commitWorkingTreeIfNeeded({
+            worktree,
+            issueNumber,
+            issueTitle,
+            logger,
+          })
+        } catch (error) {
+          logger.warn('Failed to auto-commit implementation changes during cleanup', error)
+        }
         const baseRef = await resolveBaseRef(worktree, baseBranch, logger)
         await captureImplementationArtifacts({
           worktree,
