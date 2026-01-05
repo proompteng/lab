@@ -255,6 +255,8 @@ packages/temporal-bun-sdk/releases/
 packages/temporal-bun-sdk/vendor/
 packages/temporal-bun-sdk/Users/
 **/zig-out/
+.codex/
+.codex-*
 .codex/cache
 .worktrees/
 
