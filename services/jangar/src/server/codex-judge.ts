@@ -50,6 +50,13 @@ storeReady.catch((error) => {
   console.error('Codex judge store failed to initialize', error)
 })
 const config = globalOverrides.__codexJudgeConfigMock ?? loadCodexJudgeConfig()
+const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
+const effectiveJudgeMode = config.judgeMode === 'local' && isTestEnv ? 'local' : 'argo'
+if (config.judgeMode !== 'argo' && !isTestEnv) {
+  console.warn(
+    'Jangar local judge mode is deprecated and disabled in production; forcing JANGAR_CODEX_JUDGE_MODE=argo.',
+  )
+}
 const github =
   globalOverrides.__codexJudgeGithubMock ??
   createGitHubClient({ token: config.githubToken, apiBaseUrl: config.githubApiBaseUrl })
@@ -2205,15 +2212,18 @@ const recordDecision = async (
   if (input.decision !== 'needs_iteration' && input.decision !== 'needs_human') {
     return evaluation
   }
-  if (config.judgeMode === 'argo') {
-    return evaluation
-  }
 
   const resolvedRun = run ?? (await store.getRunById(input.runId))
   if (!resolvedRun) return evaluation
 
   const failureReason = resolveFailureReason(null, evaluation) ?? UNKNOWN_FAILURE_REASON
-  await maybeSubmitSystemImprovementWorkflow(resolvedRun, failureReason, evaluation)
+  const submission = await maybeSubmitSystemImprovementWorkflow(resolvedRun, failureReason, evaluation)
+  if (!isTestEnv && !submission.submitted) {
+    const updated = await store.updateRunStatus(resolvedRun.id, 'needs_human')
+    if (updated) {
+      await sendDiscordEscalation(resolvedRun, 'system_improvement_failed')
+    }
+  }
 
   return evaluation
 }
@@ -2253,7 +2263,7 @@ const evaluateRun = async (runId: string) => {
       return
     }
 
-    const argoJudgeOnly = config.judgeMode === 'argo'
+    const argoJudgeOnly = effectiveJudgeMode === 'argo'
     const isJudgeStage = run.stage === 'judge' || run.runCompletePayload?.stage === 'judge'
 
     if (argoJudgeOnly) {
@@ -3244,9 +3254,11 @@ const maybeSubmitSystemImprovementWorkflow = async (
   run: CodexRunRecord,
   reason: string | null,
   evaluation?: CodexEvaluationRecord,
-) => {
+): Promise<{ submitted: boolean; error?: string }> => {
   const argoClient = globalOverrides.__codexJudgeArgoMock ?? argo
-  if (!argoClient || !config.systemImprovementWorkflowTemplate) return
+  if (!argoClient || !config.systemImprovementWorkflowTemplate) {
+    return { submitted: false, error: 'system_improvement_workflow_unconfigured' }
+  }
 
   const baseRef =
     typeof run.runCompletePayload?.base === 'string' && run.runCompletePayload.base.trim().length > 0
@@ -3275,15 +3287,17 @@ const maybeSubmitSystemImprovementWorkflow = async (
       },
       generateName: 'codex-system-improvement-',
     })
+    return { submitted: true }
   } catch (error) {
     console.warn('Failed to submit system improvement workflow', error)
+    return { submitted: false, error: error instanceof Error ? error.message : String(error) }
   }
 }
 
 let rerunWorkerStarted = false
 
 const startRerunSubmissionWorker = () => {
-  if (rerunWorkerStarted || _RECONCILE_DISABLED || config.judgeMode === 'argo') return
+  if (rerunWorkerStarted || _RECONCILE_DISABLED) return
   rerunWorkerStarted = true
   setInterval(() => {
     void processRerunQueue()
@@ -3335,7 +3349,7 @@ if (!_RECONCILE_DISABLED) {
 }
 
 const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: CodexEvaluationRecord) => {
-  if (config.judgeMode === 'argo') {
+  if (effectiveJudgeMode === 'argo') {
     return
   }
   const latestRun = await store.getRunById(run.id)
@@ -4186,6 +4200,70 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
   }
 
   return run
+}
+
+const parseRerunPayload = (payload: Record<string, unknown>) => {
+  const repository = typeof payload.repository === 'string' ? payload.repository.trim() : ''
+  const issueNumberRaw = payload.issue_number ?? payload.issueNumber
+  const issueNumber = Number.parseInt(String(issueNumberRaw ?? ''), 10)
+  const attemptRaw = payload.attempt ?? payload.rerun_attempt
+  const attempt = Number.parseInt(String(attemptRaw ?? ''), 10)
+  const prompt = typeof payload.prompt === 'string' ? payload.prompt.trim() : ''
+  const runId = typeof payload.run_id === 'string' ? payload.run_id.trim() : ''
+  const workflowName = typeof payload.workflow_name === 'string' ? payload.workflow_name.trim() : ''
+  const workflowNamespace =
+    typeof payload.workflow_namespace === 'string' ? payload.workflow_namespace.trim() : 'argo-workflows'
+  const deliveryId =
+    typeof payload.delivery_id === 'string'
+      ? payload.delivery_id.trim()
+      : workflowName && Number.isFinite(attempt)
+        ? `${workflowName}:${attempt}`
+        : `rerun-${Date.now()}`
+
+  if (!repository || !Number.isFinite(issueNumber) || !Number.isFinite(attempt) || !prompt) {
+    throw new Error('rerun payload missing required fields (repository, issue_number, attempt, prompt)')
+  }
+
+  return {
+    repository,
+    issueNumber,
+    attempt,
+    prompt,
+    runId: runId || null,
+    workflowName: workflowName || null,
+    workflowNamespace: workflowNamespace || 'argo-workflows',
+    deliveryId,
+  }
+}
+
+export const handleRerunRequest = async (payload: Record<string, unknown>) => {
+  await ensureStoreReady()
+  const parsed = parseRerunPayload(payload)
+
+  const run = parsed.runId
+    ? await store.getRunById(parsed.runId)
+    : parsed.workflowName
+      ? await store.getRunByWorkflow(parsed.workflowName, parsed.workflowNamespace)
+      : null
+
+  if (!run) {
+    throw new Error('rerun parent run not found')
+  }
+
+  await store.updateRunPrompt(run.id, run.prompt, parsed.prompt)
+  await store.updateRunStatus(run.id, 'needs_iteration')
+
+  const submission = await store.enqueueRerunSubmission({
+    parentRunId: run.id,
+    attempt: parsed.attempt,
+    deliveryId: parsed.deliveryId,
+  })
+
+  if (submission) {
+    void processRerunQueue()
+  }
+
+  return { run, submission }
 }
 
 export const handleNotify = async (payload: Record<string, unknown>) => {

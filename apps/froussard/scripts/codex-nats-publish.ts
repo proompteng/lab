@@ -153,6 +153,9 @@ const buildPayload = (
     workflow_uid: context.workflowUid,
     workflow_name: context.workflowName,
     workflow_namespace: context.workflowNamespace,
+    workflowUid: context.workflowUid,
+    workflowName: context.workflowName,
+    workflowNamespace: context.workflowNamespace,
     agent_id: context.agentId,
     role: context.agentRole,
     channel,
@@ -167,6 +170,9 @@ const buildPayload = (
   if (context.workflowStage) payload.stage = context.workflowStage
   if (context.workflowStage) payload.workflow_stage = context.workflowStage
   if (context.workflowStep) payload.workflow_step = context.workflowStep
+  if (context.runId) payload.runId = context.runId
+  if (context.workflowStep) payload.workflowStep = context.workflowStep
+  if (context.workflowStage) payload.workflowStage = context.workflowStage
   if (options.status) payload.status = options.status
   if (options.exitCode) {
     const parsed = Number(options.exitCode)
@@ -268,7 +274,7 @@ const main = async () => {
   const issueNumberRaw = coerceNonEmpty(process.env.CODEX_ISSUE_NUMBER) ?? coerceNonEmpty(process.env.ISSUE_NUMBER)
   const issueNumber = issueNumberRaw ? Number.parseInt(issueNumberRaw, 10) : null
   const branch = coerceNonEmpty(process.env.CODEX_BRANCH) ?? coerceNonEmpty(process.env.HEAD_BRANCH)
-  const subjectPrefix = process.env.NATS_SUBJECT_PREFIX?.trim() || 'argo.workflow'
+  const subjectPrefix = process.env.NATS_SUBJECT_PREFIX?.trim() || 'workflow_comms.agent_messages'
 
   const creds = resolveCredsFile()
   const natsArgs = buildNatsArgs(creds.path)

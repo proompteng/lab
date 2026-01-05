@@ -83,6 +83,10 @@ spec:
             value: http://jangar.jangar.svc.cluster.local
           - name: NATS_URL
             value: nats://nats.nats.svc.cluster.local:4222
+          - name: NATS_SUBJECT_PREFIX
+            value: workflow_comms.agent_messages
+          - name: NATS_CONTEXT_SUBJECT
+            value: workflow_comms.agent_messages.general.>
           - name: NATS_USER
             valueFrom:
               secretKeyRef:
@@ -148,6 +152,76 @@ spec:
           - |
             set -euo pipefail
 
+            preflight_fail() {
+              echo "Preflight failed: $1" >&2
+              exit 1
+            }
+
+            if [[ -z "${CODEX_CWD:-}" || ! -d "$CODEX_CWD" ]]; then
+              preflight_fail "CODEX_CWD is missing or not a directory"
+            fi
+            if ! git -C "$CODEX_CWD" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+              preflight_fail "CODEX_CWD is not a git worktree"
+            fi
+            if [[ -z "${GH_TOKEN:-}" && -z "${GITHUB_TOKEN:-}" ]]; then
+              preflight_fail "Missing GitHub token"
+            fi
+            if [[ -z "${MINIO_ENDPOINT:-}" ]]; then
+              preflight_fail "Missing MINIO_ENDPOINT"
+            fi
+            minio_host="${MINIO_ENDPOINT%%:*}"
+            minio_port="${MINIO_ENDPOINT##*:}"
+            if [[ "$minio_port" == "$minio_host" ]]; then
+              minio_port="9000"
+            fi
+            if ! timeout 3 bash -c "</dev/tcp/${minio_host}/${minio_port}" >/dev/null 2>&1; then
+              preflight_fail "MinIO endpoint unreachable"
+            fi
+            if [[ -z "${MINIO_ACCESS_KEY:-}" || -z "${MINIO_SECRET_KEY:-}" ]]; then
+              preflight_fail "Missing MinIO credentials"
+            fi
+            export MINIO_BUCKET="${ARTIFACT_BUCKET:-argo-workflows}"
+            if ! bun /workspace/lab/services/jangar/scripts/minio-presign-check.ts >/dev/null 2>&1; then
+              preflight_fail "MinIO signed URL check failed"
+            fi
+            if [[ "${CODEX_NATS_SOAK_REQUIRED:-true}" != "false" && "${CODEX_NATS_SOAK_REQUIRED:-true}" != "0" ]]; then
+              if [[ -z "${NATS_URL:-}" ]]; then
+                preflight_fail "NATS_URL required for context soak"
+              fi
+            fi
+            if [[ -z "${JANGAR_BASE_URL:-}" ]]; then
+              preflight_fail "Missing JANGAR_BASE_URL"
+            fi
+            check_jangar_endpoint() {
+              local url="$1"
+              local code
+              code=$(curl -s -o /dev/null -w "%{http_code}" "$url" || true)
+              if [[ "$code" == "000" ]]; then
+                preflight_fail "Jangar endpoint unreachable: $url"
+              fi
+              if [[ "$code" -ge 500 ]]; then
+                preflight_fail "Jangar endpoint unhealthy (${code}): $url"
+              fi
+            }
+            check_jangar_endpoint "${JANGAR_BASE_URL%/}/api/codex/notify"
+            check_jangar_endpoint "${JANGAR_BASE_URL%/}/api/codex/run-complete"
+            if [[ -z "${JANGAR_BASE_URL:-}" ]]; then
+              preflight_fail "Missing JANGAR_BASE_URL"
+            fi
+            check_jangar_endpoint() {
+              local url="$1"
+              local code
+              code=$(curl -s -o /dev/null -w "%{http_code}" "$url" || true)
+              if [[ "$code" == "000" ]]; then
+                preflight_fail "Jangar endpoint unreachable: $url"
+              fi
+              if [[ "$code" -ge 500 ]]; then
+                preflight_fail "Jangar endpoint unhealthy (${code}): $url"
+              fi
+            }
+            check_jangar_endpoint "${JANGAR_BASE_URL%/}/api/codex/notify"
+            check_jangar_endpoint "${JANGAR_BASE_URL%/}/api/codex/run-complete"
+
             EVENT_FILE=$(mktemp)
             EVENT_BODY_B64='{{inputs.parameters.eventBody}}'
             if [[ -z "$EVENT_BODY_B64" ]]; then
@@ -155,6 +229,25 @@ spec:
               exit 1
             fi
             printf '%s' "$EVENT_BODY_B64" | base64 --decode > "$EVENT_FILE"
+
+            REPO=""
+            if command -v jq >/dev/null 2>&1; then
+              REPO=$(jq -r '.repository // .repo // empty' "$EVENT_FILE")
+            fi
+            if [[ -n "$REPO" ]]; then
+              gh_perm_file=$(mktemp)
+              if ! gh api "repos/${REPO}" > "$gh_perm_file"; then
+                preflight_fail "GitHub token cannot access ${REPO}"
+              fi
+              if command -v jq >/dev/null 2>&1; then
+                pr_pull=$(jq -r '.permissions.pull // false' "$gh_perm_file")
+                pr_push=$(jq -r '.permissions.push // false' "$gh_perm_file")
+                if [[ "$pr_pull" != "true" || "$pr_push" != "true" ]]; then
+                  preflight_fail "GitHub token lacks pull/push permissions for ${REPO}"
+                fi
+              fi
+              rm -f "$gh_perm_file"
+            fi
 
             # Ensure output paths exist before any early exits so Argo output collection never fails.
             mkdir -p /workspace/lab /workspace/.codex
@@ -226,6 +319,8 @@ spec:
 
             if [[ -x "$NATS_PUBLISHER" ]]; then
               touch "$AGENT_LOG_PATH"
+              export CODEX_SKIP_RUN_STARTED=1
+              "$NATS_PUBLISHER" --kind run-started --content "implementation started" --channel general --publish-general
               "$NATS_PUBLISHER" --kind status --status started --content "implementation started" --publish-general
               "$NATS_PUBLISHER" --kind log --log-file "$AGENT_LOG_PATH" &
               NATS_TAIL_PID=$!
@@ -510,6 +605,59 @@ spec:
           - |
             set -euo pipefail
 
+            preflight_fail() {
+              echo "Preflight failed: $1" >&2
+              exit 1
+            }
+
+            if [[ -z "${CODEX_CWD:-}" || ! -d "$CODEX_CWD" ]]; then
+              preflight_fail "CODEX_CWD is missing or not a directory"
+            fi
+            if ! git -C "$CODEX_CWD" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+              preflight_fail "CODEX_CWD is not a git worktree"
+            fi
+            if [[ -z "${GH_TOKEN:-}" && -z "${GITHUB_TOKEN:-}" ]]; then
+              preflight_fail "Missing GitHub token"
+            fi
+            REPO="{{inputs.parameters.repository}}"
+            if [[ -n "$REPO" ]]; then
+              gh_perm_file=$(mktemp)
+              if ! gh api "repos/${REPO}" > "$gh_perm_file"; then
+                preflight_fail "GitHub token cannot access ${REPO}"
+              fi
+              if command -v jq >/dev/null 2>&1; then
+                pr_pull=$(jq -r '.permissions.pull // false' "$gh_perm_file")
+                pr_push=$(jq -r '.permissions.push // false' "$gh_perm_file")
+                if [[ "$pr_pull" != "true" || "$pr_push" != "true" ]]; then
+                  preflight_fail "GitHub token lacks pull/push permissions for ${REPO}"
+                fi
+              fi
+              rm -f "$gh_perm_file"
+            fi
+            if [[ -z "${MINIO_ENDPOINT:-}" ]]; then
+              preflight_fail "Missing MINIO_ENDPOINT"
+            fi
+            minio_host="${MINIO_ENDPOINT%%:*}"
+            minio_port="${MINIO_ENDPOINT##*:}"
+            if [[ "$minio_port" == "$minio_host" ]]; then
+              minio_port="9000"
+            fi
+            if ! timeout 3 bash -c "</dev/tcp/${minio_host}/${minio_port}" >/dev/null 2>&1; then
+              preflight_fail "MinIO endpoint unreachable"
+            fi
+            if [[ -z "${MINIO_ACCESS_KEY:-}" || -z "${MINIO_SECRET_KEY:-}" ]]; then
+              preflight_fail "Missing MinIO credentials"
+            fi
+            export MINIO_BUCKET="${ARTIFACT_BUCKET:-argo-workflows}"
+            if ! bun /workspace/lab/services/jangar/scripts/minio-presign-check.ts >/dev/null 2>&1; then
+              preflight_fail "MinIO signed URL check failed"
+            fi
+            if [[ "${CODEX_NATS_SOAK_REQUIRED:-true}" != "false" && "${CODEX_NATS_SOAK_REQUIRED:-true}" != "0" ]]; then
+              if [[ -z "${NATS_URL:-}" ]]; then
+                preflight_fail "NATS_URL required for context soak"
+              fi
+            fi
+
             EVENT_FILE=$(mktemp)
             EVENT_BODY_B64='{{inputs.parameters.eventBody}}'
             if [[ -n "$EVENT_BODY_B64" && "$EVENT_BODY_B64" != "{}" ]]; then
@@ -615,6 +763,8 @@ spec:
 
             if [[ -x "$NATS_PUBLISHER" ]]; then
               touch "$AGENT_LOG_PATH"
+              export CODEX_SKIP_RUN_STARTED=1
+              "$NATS_PUBLISHER" --kind run-started --content "${WORKFLOW_STAGE} started" --channel general --publish-general
               "$NATS_PUBLISHER" --kind status --status started --content "${WORKFLOW_STAGE} started" --publish-general
               "$NATS_PUBLISHER" --kind log --log-file "$AGENT_LOG_PATH" &
               NATS_TAIL_PID=$!

@@ -123,6 +123,13 @@ spec:
                   value: '{{workflow.parameters.implementation_iterations}}'
                 - name: judge_commit_sha
                   value: '{{workflow.parameters.judge_commit_sha}}'
+            retryStrategy:
+              limit: 2
+              retryPolicy: OnFailure
+              backoff:
+                duration: "10s"
+                factor: 2
+                maxDuration: "1m"
           - name: judge-run-complete
             dependencies: [judge]
             continueOn:
@@ -138,6 +145,14 @@ spec:
                   value: '{{workflow.parameters.base}}'
                 - name: head
                   value: '{{workflow.parameters.head}}'
+                - name: head_sha
+                  value: '{{tasks.judge.outputs.parameters.head_sha}}'
+                - name: commit_sha
+                  value: '{{tasks.judge.outputs.parameters.commit_sha}}'
+                - name: pr_number
+                  value: '{{tasks.judge.outputs.parameters.pr_number}}'
+                - name: pr_url
+                  value: '{{tasks.judge.outputs.parameters.pr_url}}'
                 - name: prompt
                   value: '{{workflow.parameters.judge_prompt}}'
                 - name: attempt
@@ -243,7 +258,7 @@ spec:
                 - name: commit_sha
                   value: '{{tasks.gate.outputs.parameters.head_sha}}'
           - name: rerun
-            dependencies: [judge, gate, merge, verify]
+            dependencies: [judge, judge-run-complete, gate, merge, verify]
             when: "{{=(tasks.judge.outputs.parameters.decision != 'pass' || tasks.gate.outputs.parameters.decision != 'pass' || tasks.merge.status != 'Succeeded' || tasks.deploy.status != 'Succeeded' || tasks.verify.status != 'Succeeded')}}"
             template: rerun
             arguments:
@@ -264,6 +279,12 @@ spec:
                   value: '{{workflow.uid}}'
                 - name: iteration_cycle
                   value: '{{=sprig.add(int(workflow.parameters.iteration_cycle), 1)}}'
+                - name: run_id
+                  value: '{{tasks.judge-run-complete.outputs.parameters.run_id}}'
+                - name: workflow_name
+                  value: '{{workflow.name}}'
+                - name: workflow_namespace
+                  value: '{{workflow.namespace}}'
     - name: implementation-cycle
       inputs:
         parameters:
@@ -328,6 +349,14 @@ spec:
                   value: '{{inputs.parameters.base}}'
                 - name: head
                   value: '{{inputs.parameters.head}}'
+                - name: head_sha
+                  value: '{{steps.implementation.outputs.parameters.head_sha}}'
+                - name: commit_sha
+                  value: '{{steps.implementation.outputs.parameters.commit_sha}}'
+                - name: pr_number
+                  value: '{{steps.implementation.outputs.parameters.pr_number}}'
+                - name: pr_url
+                  value: '{{steps.implementation.outputs.parameters.pr_url}}'
                 - name: prompt
                   value: '{{inputs.parameters.prompt}}'
                 - name: attempt
@@ -433,6 +462,10 @@ spec:
             value: http://jangar.jangar.svc.cluster.local
           - name: NATS_URL
             value: nats://nats.nats.svc.cluster.local:4222
+          - name: NATS_SUBJECT_PREFIX
+            value: workflow_comms.agent_messages
+          - name: NATS_CONTEXT_SUBJECT
+            value: workflow_comms.agent_messages.general.>
           - name: NATS_USER
             valueFrom:
               secretKeyRef:
@@ -526,6 +559,56 @@ spec:
           - |
             set -euo pipefail
 
+            preflight_fail() {
+              echo "Preflight failed: $1" >&2
+              exit 1
+            }
+
+            if [[ -z "${CODEX_CWD:-}" || ! -d "$CODEX_CWD" ]]; then
+              preflight_fail "CODEX_CWD is missing or not a directory"
+            fi
+            if ! git -C "$CODEX_CWD" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+              preflight_fail "CODEX_CWD is not a git worktree"
+            fi
+            if [[ -z "${GH_TOKEN:-}" && -z "${GITHUB_TOKEN:-}" ]]; then
+              preflight_fail "Missing GitHub token"
+            fi
+            if [[ -z "${MINIO_ENDPOINT:-}" ]]; then
+              preflight_fail "Missing MINIO_ENDPOINT"
+            fi
+            minio_host="${MINIO_ENDPOINT%%:*}"
+            minio_port="${MINIO_ENDPOINT##*:}"
+            if [[ "$minio_port" == "$minio_host" ]]; then
+              minio_port="9000"
+            fi
+            if ! timeout 3 bash -c "</dev/tcp/${minio_host}/${minio_port}" >/dev/null 2>&1; then
+              preflight_fail "MinIO endpoint unreachable"
+            fi
+            if [[ -z "${MINIO_ACCESS_KEY:-}" || -z "${MINIO_SECRET_KEY:-}" ]]; then
+              preflight_fail "Missing MinIO credentials"
+            fi
+            if [[ "${CODEX_NATS_SOAK_REQUIRED:-true}" != "false" && "${CODEX_NATS_SOAK_REQUIRED:-true}" != "0" ]]; then
+              if [[ -z "${NATS_URL:-}" ]]; then
+                preflight_fail "NATS_URL required for context soak"
+              fi
+            fi
+            if [[ -z "${JANGAR_BASE_URL:-}" ]]; then
+              preflight_fail "Missing JANGAR_BASE_URL"
+            fi
+            check_jangar_endpoint() {
+              local url="$1"
+              local code
+              code=$(curl -s -o /dev/null -w "%{http_code}" "$url" || true)
+              if [[ "$code" == "000" ]]; then
+                preflight_fail "Jangar endpoint unreachable: $url"
+              fi
+              if [[ "$code" -ge 500 ]]; then
+                preflight_fail "Jangar endpoint unhealthy (${code}): $url"
+              fi
+            }
+            check_jangar_endpoint "${JANGAR_BASE_URL%/}/api/codex/notify"
+            check_jangar_endpoint "${JANGAR_BASE_URL%/}/api/codex/run-complete"
+
             EVENT_FILE=$(mktemp)
             EVENT_BODY_B64='{{inputs.parameters.eventBody}}'
             if [[ -n "$EVENT_BODY_B64" && "$EVENT_BODY_B64" != "{}" ]]; then
@@ -598,6 +681,22 @@ spec:
               exit 1
             fi
 
+            REPO="{{inputs.parameters.repository}}"
+            if [[ -n "$REPO" ]]; then
+              gh_perm_file=$(mktemp)
+              if ! gh api "repos/${REPO}" > "$gh_perm_file"; then
+                preflight_fail "GitHub token cannot access ${REPO}"
+              fi
+              if command -v jq >/dev/null 2>&1; then
+                pr_pull=$(jq -r '.permissions.pull // false' "$gh_perm_file")
+                pr_push=$(jq -r '.permissions.push // false' "$gh_perm_file")
+                if [[ "$pr_pull" != "true" || "$pr_push" != "true" ]]; then
+                  preflight_fail "GitHub token lacks pull/push permissions for ${REPO}"
+                fi
+              fi
+              rm -f "$gh_perm_file"
+            fi
+
             git -C "$WORKTREE_DIR" fetch --all --prune
 
             # Ensure judge output files exist for all stages to satisfy Argo output collection.
@@ -617,6 +716,15 @@ spec:
               exit 1
             fi
 
+            if [[ -z "${MINIO_ACCESS_KEY:-}" || -z "${MINIO_SECRET_KEY:-}" ]]; then
+              preflight_fail "Missing MinIO credentials"
+            fi
+
+            export MINIO_BUCKET="${ARTIFACT_BUCKET:-argo-workflows}"
+            if ! bun /workspace/lab/services/jangar/scripts/minio-presign-check.ts >/dev/null 2>&1; then
+              preflight_fail "MinIO signed URL check failed"
+            fi
+
             export OUTPUT_PATH="${IMPLEMENTATION_OUTPUT_PATH:-/workspace/lab/.codex-${WORKFLOW_STAGE}.log}"
             export JSON_OUTPUT_PATH="${JSON_OUTPUT_PATH:-/workspace/.codex/${WORKFLOW_STAGE}-events.jsonl}"
             export AGENT_OUTPUT_PATH="${AGENT_OUTPUT_PATH:-/workspace/lab/.codex-${WORKFLOW_STAGE}-agent.log}"
@@ -634,6 +742,8 @@ spec:
 
             if [[ -x "$NATS_PUBLISHER" ]]; then
               touch "$AGENT_LOG_PATH"
+              export CODEX_SKIP_RUN_STARTED=1
+              "$NATS_PUBLISHER" --kind run-started --content "${WORKFLOW_STAGE} started" --channel general --publish-general
               "$NATS_PUBLISHER" --kind status --status started --content "${WORKFLOW_STAGE} started" --publish-general
               "$NATS_PUBLISHER" --kind log --log-file "$AGENT_LOG_PATH" &
               NATS_TAIL_PID=$!
@@ -706,6 +816,15 @@ spec:
               memory: 4Gi
       outputs:
         parameters:
+          - name: commit_sha
+            valueFrom:
+              path: /workspace/lab/.codex-commit-sha.txt
+          - name: pr_number
+            valueFrom:
+              path: /workspace/lab/.codex-pr-number.txt
+          - name: pr_url
+            valueFrom:
+              path: /workspace/lab/.codex-pr-url.txt
           - name: decision
             valueFrom:
               path: /workspace/lab/.codex-judge-decision.txt
@@ -747,6 +866,10 @@ spec:
           - name: issue_number
           - name: base
           - name: head
+          - name: head_sha
+          - name: commit_sha
+          - name: pr_number
+          - name: pr_url
           - name: prompt
           - name: attempt
           - name: parent_run_uid
@@ -790,6 +913,8 @@ spec:
                 optional: true
           - name: KAFKA_RUN_COMPLETE_TOPIC
             value: argo.workflows.completions
+          - name: ARTIFACT_BUCKET
+            value: argo-workflows
         command: ["/bin/bash", "-lc"]
         args:
           - |
@@ -805,6 +930,7 @@ spec:
             ITERATION="{{inputs.parameters.iteration}}"
             ITERATION_CYCLE="{{inputs.parameters.iteration_cycle}}"
             ITERATIONS="{{inputs.parameters.iterations}}"
+            ARTIFACT_BUCKET="${ARTIFACT_BUCKET:-argo-workflows}"
             mkdir -p /workspace/lab
 
             cat > "$PAYLOAD_PATH" <<JSON
@@ -827,6 +953,10 @@ spec:
                   { "name": "issue_number", "value": "{{inputs.parameters.issue_number}}" },
                   { "name": "head", "value": "{{inputs.parameters.head}}" },
                   { "name": "base", "value": "{{inputs.parameters.base}}" },
+                  { "name": "head_sha", "value": "{{inputs.parameters.head_sha}}" },
+                  { "name": "commit_sha", "value": "{{inputs.parameters.commit_sha}}" },
+                  { "name": "pr_number", "value": "{{inputs.parameters.pr_number}}" },
+                  { "name": "pr_url", "value": "{{inputs.parameters.pr_url}}" },
                   { "name": "stage", "value": "{{inputs.parameters.stage}}" },
                   { "name": "attempt", "value": "${ATTEMPT}" },
                   { "name": "parent_run_uid", "value": "${PARENT_RUN_UID}" },
@@ -836,18 +966,18 @@ spec:
                 ]
               },
               "artifacts": [
-                { "name": "implementation-changes", "key": "{{inputs.parameters.implementation_changes_key}}" },
-                { "name": "implementation-patch", "key": "{{inputs.parameters.implementation_patch_key}}" },
-                { "name": "implementation-status", "key": "{{inputs.parameters.implementation_status_key}}" },
-                { "name": "implementation-log", "key": "{{inputs.parameters.implementation_log_key}}" },
-                { "name": "implementation-events", "key": "{{inputs.parameters.implementation_events_key}}" },
-                { "name": "implementation-agent-log", "key": "{{inputs.parameters.implementation_agent_log_key}}" },
-                { "name": "implementation-runtime-log", "key": "{{inputs.parameters.implementation_runtime_log_key}}" },
-                { "name": "implementation-resume", "key": "{{inputs.parameters.implementation_resume_key}}" },
-                { "name": "implementation-notify", "key": "{{inputs.parameters.implementation_notify_key}}" },
-                { "name": "nats-context", "key": "{{inputs.parameters.nats_context_key}}" },
-                { "name": "implementation-changes-manifest", "key": "{{inputs.parameters.implementation_changes_manifest_key}}" },
-                { "name": "judge-output", "key": "{{inputs.parameters.judge_output_key}}" }
+                { "name": "implementation-changes", "key": "{{inputs.parameters.implementation_changes_key}}", "bucket": "${ARTIFACT_BUCKET}" },
+                { "name": "implementation-patch", "key": "{{inputs.parameters.implementation_patch_key}}", "bucket": "${ARTIFACT_BUCKET}" },
+                { "name": "implementation-status", "key": "{{inputs.parameters.implementation_status_key}}", "bucket": "${ARTIFACT_BUCKET}" },
+                { "name": "implementation-log", "key": "{{inputs.parameters.implementation_log_key}}", "bucket": "${ARTIFACT_BUCKET}" },
+                { "name": "implementation-events", "key": "{{inputs.parameters.implementation_events_key}}", "bucket": "${ARTIFACT_BUCKET}" },
+                { "name": "implementation-agent-log", "key": "{{inputs.parameters.implementation_agent_log_key}}", "bucket": "${ARTIFACT_BUCKET}" },
+                { "name": "implementation-runtime-log", "key": "{{inputs.parameters.implementation_runtime_log_key}}", "bucket": "${ARTIFACT_BUCKET}" },
+                { "name": "implementation-resume", "key": "{{inputs.parameters.implementation_resume_key}}", "bucket": "${ARTIFACT_BUCKET}" },
+                { "name": "implementation-notify", "key": "{{inputs.parameters.implementation_notify_key}}", "bucket": "${ARTIFACT_BUCKET}" },
+                { "name": "nats-context", "key": "{{inputs.parameters.nats_context_key}}", "bucket": "${ARTIFACT_BUCKET}" },
+                { "name": "implementation-changes-manifest", "key": "{{inputs.parameters.implementation_changes_manifest_key}}", "bucket": "${ARTIFACT_BUCKET}" },
+                { "name": "judge-output", "key": "{{inputs.parameters.judge_output_key}}", "bucket": "${ARTIFACT_BUCKET}" }
               ],
               "stage": "{{inputs.parameters.stage}}",
               "workflowName": "{{workflow.name}}",
@@ -857,6 +987,10 @@ spec:
               "issueNumber": "{{inputs.parameters.issue_number}}",
               "branch": "{{inputs.parameters.head}}",
               "base": "{{inputs.parameters.base}}",
+              "headSha": "{{inputs.parameters.head_sha}}",
+              "commitSha": "{{inputs.parameters.commit_sha}}",
+              "prNumber": "{{inputs.parameters.pr_number}}",
+              "prUrl": "{{inputs.parameters.pr_url}}",
               "iteration": "${ITERATION}",
               "iteration_cycle": "${ITERATION_CYCLE}",
               "iterations": "${ITERATIONS}",
@@ -1070,6 +1204,23 @@ spec:
               fi
               if [[ -n "$sha" ]]; then
                 echo "$sha" > "$HEAD_SHA_PATH"
+              fi
+
+              if [[ -n "${JANGAR_BASE_URL:-}" ]]; then
+                local payload
+                payload=$(jq -n \
+                  --arg workflowName "{{workflow.name}}" \
+                  --arg workflowNamespace "{{workflow.namespace}}" \
+                  --arg repository "$REPO" \
+                  --arg headBranch "$HEAD" \
+                  --arg decision "$decision" \
+                  --arg reason "$reason" \
+                  --arg nextPrompt "$prompt" \
+                  --arg prNumber "$number" \
+                  --arg prUrl "$url" \
+                  --arg headSha "$sha" \
+                  '{workflow_name: $workflowName, workflow_namespace: $workflowNamespace, repository: $repository, head_branch: $headBranch, stage: "gate", gate_decision: $decision, gate_reason: $reason, gate_next_prompt: $nextPrompt, pr_number: (try ($prNumber | tonumber) catch null), pr_url: $prUrl, head_sha: $headSha}')
+                curl -sSf -X POST -H 'content-type: application/json' --data "$payload" "${JANGAR_BASE_URL%/}/api/codex/notify" >/dev/null || true
               fi
             }
 
@@ -1409,45 +1560,71 @@ spec:
           - name: attempt
           - name: parent_run_uid
           - name: iteration_cycle
-      resource:
-        action: create
-        manifest: |
-          apiVersion: argoproj.io/v1alpha1
-          kind: Workflow
-          metadata:
-            generateName: codex-autonomous-rerun-
-            namespace: argo-workflows
-            labels:
-              codex.parent: "{{workflow.name}}"
-              codex.repository: "{{inputs.parameters.repository}}"
-              codex.issue: "{{inputs.parameters.issue_number}}"
-              codex.attempt: "{{inputs.parameters.attempt}}"
-          spec:
-            workflowTemplateRef:
-              name: codex-autonomous
-            arguments:
-              parameters:
-                - name: repository
-                  value: "{{inputs.parameters.repository}}"
-                - name: issue_number
-                  value: "{{inputs.parameters.issue_number}}"
-                - name: base
-                  value: "{{inputs.parameters.base}}"
-                - name: head
-                  value: "{{inputs.parameters.head}}"
-                - name: prompt
-                  value: "{{inputs.parameters.prompt}}"
-                - name: judge_prompt
-                  value: "{{workflow.parameters.judge_prompt}}"
-                - name: implementation_iterations
-                  value: "{{workflow.parameters.implementation_iterations}}"
-                - name: attempt
-                  value: "{{inputs.parameters.attempt}}"
-                - name: parent_run_uid
-                  value: "{{inputs.parameters.parent_run_uid}}"
-                - name: rawEvent
-                  value: "{{workflow.parameters.rawEvent}}"
-                - name: eventBody
-                  value: "{{workflow.parameters.eventBody}}"
-                - name: iteration_cycle
-                  value: "{{inputs.parameters.iteration_cycle}}"
+          - name: run_id
+          - name: workflow_name
+          - name: workflow_namespace
+      container:
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
+        env:
+          - name: JANGAR_BASE_URL
+            value: http://jangar.jangar.svc.cluster.local
+        command: ["/bin/bash", "-lc"]
+        args:
+          - |
+            set -euo pipefail
+
+            REPO="{{inputs.parameters.repository}}"
+            ISSUE_NUMBER="{{inputs.parameters.issue_number}}"
+            BASE="{{inputs.parameters.base}}"
+            HEAD="{{inputs.parameters.head}}"
+            PROMPT="{{inputs.parameters.prompt}}"
+            ATTEMPT="{{inputs.parameters.attempt}}"
+            PARENT_RUN_UID="{{inputs.parameters.parent_run_uid}}"
+            ITERATION_CYCLE="{{inputs.parameters.iteration_cycle}}"
+            RUN_ID="{{inputs.parameters.run_id}}"
+            WORKFLOW_NAME="{{inputs.parameters.workflow_name}}"
+            WORKFLOW_NAMESPACE="{{inputs.parameters.workflow_namespace}}"
+            DELIVERY_ID="${WORKFLOW_NAME}:${ATTEMPT}"
+
+            PAYLOAD_PATH="/workspace/lab/.codex-rerun-payload.json"
+            RESPONSE_PATH="/workspace/lab/.codex-rerun-response.json"
+            RUN_ID_PATH="/workspace/lab/.codex-rerun-id.txt"
+            mkdir -p /workspace/lab
+            : > "$RUN_ID_PATH"
+
+            if [[ -z "${JANGAR_BASE_URL:-}" ]]; then
+              echo "Missing JANGAR_BASE_URL for rerun enqueue" >&2
+              exit 1
+            fi
+
+            cat > "$PAYLOAD_PATH" <<JSON
+            {
+              "repository": "$REPO",
+              "issue_number": "$ISSUE_NUMBER",
+              "base": "$BASE",
+              "head": "$HEAD",
+              "prompt": "$PROMPT",
+              "attempt": "$ATTEMPT",
+              "parent_run_uid": "$PARENT_RUN_UID",
+              "iteration_cycle": "$ITERATION_CYCLE",
+              "run_id": "$RUN_ID",
+              "workflow_name": "$WORKFLOW_NAME",
+              "workflow_namespace": "$WORKFLOW_NAMESPACE",
+              "delivery_id": "$DELIVERY_ID"
+            }
+            JSON
+
+            curl -sSf -X POST -H 'content-type: application/json' --data @"$PAYLOAD_PATH" "${JANGAR_BASE_URL%/}/api/codex/rerun" > "$RESPONSE_PATH"
+
+            if command -v jq >/dev/null 2>&1; then
+              jq -r '.submission.id // empty' "$RESPONSE_PATH" > "$RUN_ID_PATH" || true
+            fi
+        volumeMounts:
+          - name: workdir
+            mountPath: /workspace
+      outputs:
+        parameters:
+          - name: rerun_submission_id
+            valueFrom:
+              path: /workspace/lab/.codex-rerun-id.txt
