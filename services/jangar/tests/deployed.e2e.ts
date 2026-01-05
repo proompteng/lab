@@ -277,28 +277,24 @@ test.describe('deployed jangar e2e', () => {
   test('worktree snapshot renders a hierarchical file tree', async ({ page }) => {
     await page.goto('/github/pulls/proompteng/lab/2311')
     await page.getByRole('button', { name: 'Files' }).click()
-    const tree = page.getByTestId('file-tree')
+    const tree = page.getByRole('tree', { name: 'Worktree files' })
     await expect(tree).toBeVisible()
 
-    const directoryButton = tree.locator('button[data-tree-type="dir"]').first()
-    await expect(directoryButton).toBeVisible()
-    const dirPath = await directoryButton.getAttribute('data-tree-path')
-    expect(dirPath).toBeTruthy()
+    const directoryItem = tree.locator('[role="treeitem"][aria-expanded]').first()
+    await expect(directoryItem).toBeVisible()
 
-    const hasNestedFile = await tree.evaluate(
-      (root, path) =>
-        Array.from(root.querySelectorAll('button[data-tree-type="file"]')).some((button) =>
-          (button as HTMLElement).dataset.treePath?.startsWith(`${path}/`),
-        ),
-      dirPath,
+    const hasNestedItems = await tree.evaluate((root) =>
+      Array.from(root.querySelectorAll('[role="treeitem"]')).some(
+        (item) => Number(item.getAttribute('aria-level') || '1') > 1,
+      ),
     )
-    expect(hasNestedFile).toBe(true)
+    expect(hasNestedItems).toBe(true)
 
-    await expect(directoryButton).toHaveAttribute('aria-expanded', 'true')
-    await directoryButton.click()
-    await expect(directoryButton).toHaveAttribute('aria-expanded', 'false')
-    await directoryButton.click()
-    await expect(directoryButton).toHaveAttribute('aria-expanded', 'true')
+    await expect(directoryItem).toHaveAttribute('aria-expanded', 'true')
+    await directoryItem.click()
+    await expect(directoryItem).toHaveAttribute('aria-expanded', 'false')
+    await directoryItem.click()
+    await expect(directoryItem).toHaveAttribute('aria-expanded', 'true')
   })
 
   test('torghut visuals render overlays and signals', async ({ page, request }) => {
