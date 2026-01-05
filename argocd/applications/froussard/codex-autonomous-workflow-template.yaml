@@ -519,7 +519,7 @@ spec:
           - name: AGENT_ROLE
             value: assistant
           - name: AGENT_OUTPUT_PATH
-            value: /workspace/lab/.codex-implementation-agent.log
+            value: /workspace/lab/.codex-{{inputs.parameters.stage}}-agent.log
           - name: CODEX_ATTEMPT
             value: '{{inputs.parameters.attempt}}'
           - name: CODEX_PARENT_RUN_UID
