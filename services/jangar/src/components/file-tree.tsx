@@ -1,5 +1,5 @@
-import * as React from 'react'
 import { FileText, Folder, FolderOpen } from 'lucide-react'
+import * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -32,7 +32,6 @@ const collectFolderPaths = (nodes: FileTreeNode[]) => {
 
 export function FileTreeView({ nodes, selectedPath, onSelect }: FileTreeViewProps) {
   const autoExpanded = React.useMemo(() => collectFolderPaths(nodes), [nodes])
-  const autoExpandedKey = React.useMemo(() => autoExpanded.join('|'), [autoExpanded])
   const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(() => new Set(autoExpanded))
 
   React.useEffect(() => {
@@ -44,7 +43,7 @@ export function FileTreeView({ nodes, selectedPath, onSelect }: FileTreeViewProp
       }
       return next
     })
-  }, [autoExpanded, autoExpandedKey])
+  }, [autoExpanded])
 
   const togglePath = React.useCallback((path: string) => {
     setExpandedPaths((prev) => {

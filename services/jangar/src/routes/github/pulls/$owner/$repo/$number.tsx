@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
 
-import { FileTreeView, type FileTreeNode } from '@/components/file-tree'
+import { type FileTreeNode, FileTreeView } from '@/components/file-tree'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { CodexRunRecord } from '@/data/codex'
