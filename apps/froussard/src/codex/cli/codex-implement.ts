@@ -867,6 +867,10 @@ const createPullRequest = async (
   const result = await runCommand('gh', args)
   if (result.exitCode !== 0) {
     const message = result.stderr.trim() || result.stdout.trim()
+    const existing = await listPullRequestByHead(repository, headBranch).catch(() => null)
+    if (existing) {
+      return existing
+    }
     throw new Error(`Failed to create PR for ${headBranch}: ${message}`)
   }
   return listPullRequestByHead(repository, headBranch)
