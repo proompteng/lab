@@ -6,6 +6,7 @@ spec:
   name: agent-comms
   subjects:
     - argo.workflow.>
+    - workflow_comms.agent_messages.>
   retention: limits
   storage: file
   maxAge: 168h

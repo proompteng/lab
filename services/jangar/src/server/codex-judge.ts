@@ -52,7 +52,8 @@ storeReady.catch((error) => {
 const config = globalOverrides.__codexJudgeConfigMock ?? loadCodexJudgeConfig()
 const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
 const effectiveJudgeMode = config.judgeMode === 'local' && isTestEnv ? 'local' : 'argo'
-if (config.judgeMode !== 'argo' && !isTestEnv) {
+const requestedJudgeMode = (process.env.JANGAR_CODEX_JUDGE_MODE ?? 'argo').trim().toLowerCase()
+if (!isTestEnv && requestedJudgeMode !== 'argo') {
   console.warn(
     'Jangar local judge mode is deprecated and disabled in production; forcing JANGAR_CODEX_JUDGE_MODE=argo.',
   )

@@ -33,6 +33,7 @@ config:
               - "workflow_comms.agent_messages.>"
             subscribe:
               - "_INBOX.>"
+              - "argo.workflow.>"
               - "workflow_comms.agent_messages.>"
         - user: jangar
           password: << $NATS_JANGAR_PASSWORD >>

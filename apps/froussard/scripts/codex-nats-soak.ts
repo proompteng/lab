@@ -133,12 +133,16 @@ const filterMessages = (
   filters: { repository?: string; issueNumber?: number | null; branch?: string },
 ) => {
   return messages.filter((message) => {
-    if (filters.repository && message.repository && message.repository !== filters.repository) return false
+    if (filters.repository) {
+      if (!message.repository || message.repository !== filters.repository) return false
+    }
     if (filters.issueNumber != null) {
       const normalized = normalizeIssueNumber(message.issueNumber ?? null)
-      if (normalized != null && normalized !== filters.issueNumber) return false
+      if (normalized == null || normalized !== filters.issueNumber) return false
     }
-    if (filters.branch && message.branch && message.branch !== filters.branch) return false
+    if (filters.branch) {
+      if (!message.branch || message.branch !== filters.branch) return false
+    }
     if (message.channel && message.channel !== 'general') return false
     return true
   })
@@ -147,7 +151,7 @@ const filterMessages = (
 const run = () => {
   const options: Options = {
     stream: coerceNonEmpty(process.env.NATS_STREAM) ?? 'agent-comms',
-    subject: coerceNonEmpty(process.env.NATS_CONTEXT_SUBJECT) ?? 'workflow_comms.agent_messages.general.>',
+    subject: coerceNonEmpty(process.env.NATS_CONTEXT_SUBJECT) ?? 'argo.workflow.general.>',
     count: parseNumber(process.env.NATS_CONTEXT_COUNT, 50),
     outputPath: coerceNonEmpty(process.env.NATS_CONTEXT_PATH) ?? undefined,
   }
