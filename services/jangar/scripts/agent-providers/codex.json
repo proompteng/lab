@@ -1,0 +1,9 @@
+{
+  "name": "codex",
+  "binary": "/usr/local/bin/codex-implement",
+  "argsTemplate": ["{{payloads.eventBodyPath}}"],
+  "envTemplate": {
+    "WORKFLOW_STAGE": "{{inputs.stage}}",
+    "CODEX_STAGE": "{{inputs.stage}}"
+  }
+}

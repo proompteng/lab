@@ -1,0 +1,336 @@
+#!/usr/bin/env bun
+import { spawn } from 'node:child_process'
+import { createWriteStream } from 'node:fs'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import process from 'node:process'
+
+type AgentSpec = {
+  provider?: string
+  inputs?: Record<string, unknown>
+  payloads?: Record<string, unknown>
+  env?: Record<string, unknown>
+  observability?: Record<string, unknown>
+  artifacts?: {
+    statusPath?: string
+    logPath?: string
+  }
+  providerSpec?: ProviderSpec
+}
+
+type ProviderSpec = {
+  name?: string
+  binary: string
+  argsTemplate?: string[]
+  envTemplate?: Record<string, string>
+  inputFiles?: Array<{ path: string; content: string }>
+  outputArtifacts?: Array<{ name: string; path: string }>
+}
+
+const AGENT_STATUS_DEFAULT = '/workspace/.agent/status.json'
+const AGENT_LOG_DEFAULT = '/workspace/.agent/runner.log'
+
+const fileExists = async (path: string) => {
+  try {
+    await stat(path)
+    return true
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return false
+    }
+    throw error
+  }
+}
+
+const ensureDir = async (path: string) => {
+  await mkdir(dirname(path), { recursive: true })
+}
+
+const decodeMaybeBase64 = (raw: string) => {
+  const trimmed = raw.trim()
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    return raw
+  }
+  try {
+    const decoded = Buffer.from(raw, 'base64').toString('utf8')
+    return decoded || raw
+  } catch {
+    return raw
+  }
+}
+
+const getValue = (value: unknown, path: string) => {
+  const parts = path.split('.').filter((part) => part.length > 0)
+  let current: unknown = value
+  for (const part of parts) {
+    if (!current || typeof current !== 'object') return undefined
+    if (!(part in current)) return undefined
+    current = (current as Record<string, unknown>)[part]
+  }
+  return current
+}
+
+const renderTemplate = (template: string, context: Record<string, unknown>) =>
+  template.replace(/{{\s*([^}]+)\s*}}/g, (_, rawKey) => {
+    const key = String(rawKey).trim()
+    const value = getValue(context, key)
+    if (value === null || value === undefined) return ''
+    return typeof value === 'string' ? value : JSON.stringify(value)
+  })
+
+const parseArgs = () => {
+  const args = process.argv.slice(2)
+  const result: { specPath?: string; specEnv?: string } = {}
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]
+    if (arg === '--spec' && args[i + 1]) {
+      result.specPath = args[i + 1]
+      i += 1
+      continue
+    }
+    if (arg === '--spec-env' && args[i + 1]) {
+      result.specEnv = args[i + 1]
+      i += 1
+    }
+  }
+  return result
+}
+
+const loadSpec = async () => {
+  const { specPath, specEnv } = parseArgs()
+  const resolvedPath = specPath || process.env.AGENT_SPEC_PATH || undefined
+  if (resolvedPath) {
+    const raw = await readFile(resolvedPath, 'utf8')
+    return JSON.parse(raw) as AgentSpec
+  }
+  const envKey = specEnv || process.env.AGENT_SPEC_ENV || 'AGENT_SPEC'
+  const raw = process.env[envKey]
+  if (!raw) {
+    throw new Error('Missing agent spec. Provide --spec <path> or set AGENT_SPEC.')
+  }
+  return JSON.parse(raw) as AgentSpec
+}
+
+const loadProviderSpec = async (provider: string, override?: ProviderSpec) => {
+  if (override) {
+    return override
+  }
+  const providerPath = process.env.AGENT_PROVIDER_PATH?.trim()
+  const providerDir = (process.env.AGENT_PROVIDER_DIR ?? '/etc/agent-providers').trim()
+  const resolvedPath = providerPath || join(providerDir, `${provider}.json`)
+  if (await fileExists(resolvedPath)) {
+    const raw = await readFile(resolvedPath, 'utf8')
+    return JSON.parse(raw) as ProviderSpec
+  }
+  if (provider === 'codex') {
+    return {
+      name: 'codex',
+      binary: '/usr/local/bin/codex-implement',
+      argsTemplate: ['{{payloads.eventBodyPath}}'],
+      envTemplate: {
+        WORKFLOW_STAGE: '{{inputs.stage}}',
+        CODEX_STAGE: '{{inputs.stage}}',
+      },
+    }
+  }
+  if (provider === 'codex-research') {
+    return {
+      name: 'codex-research',
+      binary: '/usr/local/bin/codex-research',
+      argsTemplate: ['{{payloads.promptPath}}', '{{payloads.metadataPath}}'],
+      envTemplate: {
+        WORKFLOW_STAGE: '{{inputs.stage}}',
+      },
+    }
+  }
+  throw new Error(`Agent provider "${provider}" not found at ${resolvedPath}`)
+}
+
+const ensurePayloadFile = async ({
+  payloads,
+  pathKey,
+  rawKey,
+  defaultName,
+}: {
+  payloads: Record<string, unknown>
+  pathKey: string
+  rawKey: string
+  defaultName: string
+}) => {
+  if (typeof payloads[pathKey] === 'string' && payloads[pathKey]) {
+    const existing = payloads[pathKey] as string
+    if (!(await fileExists(existing))) {
+      throw new Error(`Payload file missing at ${existing}`)
+    }
+    return
+  }
+  const rawValue = payloads[rawKey]
+  if (typeof rawValue !== 'string' || rawValue.trim() === '') {
+    return
+  }
+  const resolved = decodeMaybeBase64(rawValue)
+  const dir = process.env.AGENT_TMP_DIR?.trim() || '/tmp'
+  const path = join(dir, defaultName)
+  await ensureDir(path)
+  await writeFile(path, resolved)
+  payloads[pathKey] = path
+}
+
+const buildEnvironment = (base: Record<string, string | undefined>, updates: Record<string, string>) => {
+  const env = { ...base }
+  for (const [key, value] of Object.entries(updates)) {
+    env[key] = value
+  }
+  return env
+}
+
+const run = async () => {
+  const spec = await loadSpec()
+  const providerName = spec.provider?.trim()
+  if (!providerName) {
+    throw new Error('Agent spec missing provider name')
+  }
+
+  const providerSpec = await loadProviderSpec(providerName, spec.providerSpec)
+
+  const inputs = spec.inputs ?? {}
+  const payloads = { ...(spec.payloads ?? {}) }
+  const observability = spec.observability ?? {}
+  const artifacts = spec.artifacts ?? {}
+  const envOverrides = spec.env ?? {}
+
+  await ensurePayloadFile({
+    payloads,
+    pathKey: 'eventBodyPath',
+    rawKey: 'eventBodyB64',
+    defaultName: `agent-event-${Date.now()}.json`,
+  })
+  await ensurePayloadFile({
+    payloads,
+    pathKey: 'promptPath',
+    rawKey: 'promptB64',
+    defaultName: `agent-prompt-${Date.now()}.txt`,
+  })
+  await ensurePayloadFile({
+    payloads,
+    pathKey: 'metadataPath',
+    rawKey: 'metadataB64',
+    defaultName: `agent-metadata-${Date.now()}.json`,
+  })
+
+  const context = {
+    inputs,
+    payloads,
+    observability,
+    artifacts,
+    env: envOverrides,
+  }
+
+  if (providerSpec.inputFiles) {
+    for (const entry of providerSpec.inputFiles) {
+      const resolvedPath = renderTemplate(entry.path, context)
+      const resolvedContent = renderTemplate(entry.content, context)
+      await ensureDir(resolvedPath)
+      await writeFile(resolvedPath, resolvedContent)
+    }
+  }
+
+  const renderedEnv: Record<string, string> = {}
+  for (const [key, value] of Object.entries(envOverrides)) {
+    renderedEnv[key] = typeof value === 'string' ? value : JSON.stringify(value)
+  }
+  if (providerSpec.envTemplate) {
+    for (const [key, value] of Object.entries(providerSpec.envTemplate)) {
+      renderedEnv[key] = renderTemplate(value, context)
+    }
+  }
+  if (typeof observability.natsUrl === 'string' && !renderedEnv.NATS_URL) {
+    renderedEnv.NATS_URL = observability.natsUrl
+  }
+  if (typeof observability.grafBaseUrl === 'string' && !renderedEnv.CODEX_GRAF_BASE_URL) {
+    renderedEnv.CODEX_GRAF_BASE_URL = observability.grafBaseUrl
+  }
+
+  const args = (providerSpec.argsTemplate ?? []).map((arg) => renderTemplate(arg, context)).filter((arg) => arg !== '')
+  const command = providerSpec.binary
+
+  const statusPath = artifacts.statusPath ?? AGENT_STATUS_DEFAULT
+  const logPath = artifacts.logPath ?? AGENT_LOG_DEFAULT
+  await ensureDir(statusPath)
+  await ensureDir(logPath)
+
+  const startTime = new Date()
+  const logStream = createWriteStream(logPath, { flags: 'a' })
+
+  const child = spawn(command, args, {
+    env: buildEnvironment(process.env, renderedEnv),
+    stdio: ['inherit', 'pipe', 'pipe'],
+    cwd: process.cwd(),
+  })
+
+  child.stdout?.on('data', (chunk) => {
+    process.stdout.write(chunk)
+    logStream.write(chunk)
+  })
+  child.stderr?.on('data', (chunk) => {
+    process.stderr.write(chunk)
+    logStream.write(chunk)
+  })
+
+  const exitCode = await new Promise<number>((resolve, reject) => {
+    child.on('error', (error) => reject(error))
+    child.on('close', (code) => resolve(code ?? 1))
+  }).catch(async (error) => {
+    const failure = error instanceof Error ? error.message : String(error)
+    await writeFile(
+      statusPath,
+      JSON.stringify(
+        {
+          provider: providerName,
+          status: 'failed',
+          error: failure,
+          startedAt: startTime.toISOString(),
+          finishedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+    )
+    throw error
+  })
+
+  logStream.end()
+
+  const finishedAt = new Date()
+  const outputArtifacts =
+    providerSpec.outputArtifacts?.map((artifact) => {
+      const resolvedPath = renderTemplate(artifact.path, context)
+      return { name: artifact.name, path: resolvedPath }
+    }) ?? []
+
+  await writeFile(
+    statusPath,
+    JSON.stringify(
+      {
+        provider: providerName,
+        status: exitCode === 0 ? 'succeeded' : 'failed',
+        exitCode,
+        command: [command, ...args],
+        cwd: process.cwd(),
+        startedAt: startTime.toISOString(),
+        finishedAt: finishedAt.toISOString(),
+        durationMs: finishedAt.getTime() - startTime.getTime(),
+        artifacts: outputArtifacts,
+      },
+      null,
+      2,
+    ),
+  )
+
+  process.exit(exitCode)
+}
+
+run().catch((error) => {
+  console.error('agent-runner failed', error)
+  process.exit(1)
+})

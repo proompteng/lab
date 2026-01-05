@@ -126,7 +126,25 @@ spec:
 
             echo "Launching Codex research run"
             set +e
-            codex-research "$PROMPT_FILE" "$METADATA_FILE"
+            AGENT_SPEC=$(mktemp)
+            cat > "$AGENT_SPEC" <<JSON
+            {
+              "provider": "codex-research",
+              "inputs": {
+                "stage": "research"
+              },
+              "payloads": {
+                "promptPath": "$PROMPT_FILE",
+                "metadataPath": "$METADATA_FILE"
+              },
+              "artifacts": {
+                "statusPath": "/workspace/lab/.agent-status.json",
+                "logPath": "/workspace/lab/.agent-runner.log"
+              }
+            }
+            JSON
+
+            /usr/local/bin/agent-runner --spec "$AGENT_SPEC"
             EXIT_CODE=$?
             set -e
 

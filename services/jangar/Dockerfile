@@ -484,7 +484,10 @@ RUN mkdir -p /root/.codex
 RUN --mount=type=secret,id=codexauth,target=/tmp/codex_auth.json \
   install -m 600 /tmp/codex_auth.json /root/.codex/auth.json
 COPY --from=jangar-build /app/services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml
+COPY --from=jangar-build /app/services/jangar/scripts/agent-runner.ts /usr/local/bin/agent-runner
+COPY --from=jangar-build /app/services/jangar/scripts/agent-providers /etc/agent-providers
 COPY skills/ /root/.codex/skills/
+RUN chmod +x /usr/local/bin/agent-runner
 
 # Start the compiled Nitro server produced by `bun --bun vite build`
 CMD ["bun", "run", ".output/server/index.mjs"]
