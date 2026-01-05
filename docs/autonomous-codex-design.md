@@ -196,7 +196,8 @@ Key components evolve from the current codebase:
 1. **Automated Tests**
    - Workflow steps must run repo-specific commands (e.g., `bun run lint:<app>`, `go test ./...`).
    - Results appended to progress comment and stored in `runs`.
-   - Implementation runs must always auto-commit changes, even on failure, so the worktree diff stays authoritative.
+   - Implementation runs must always auto-commit changes, even on failure, so the worktree diff stays authoritative. This keeps
+     the progress record aligned with the exact patch produced during the run.
 
 2. **Policy Checks**
    - Integration stage ensures branch protection rules (status checks, reviewer approvals).
