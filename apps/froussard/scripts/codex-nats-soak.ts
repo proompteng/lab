@@ -55,12 +55,12 @@ const resolveViewCountArgs = (count: number) => {
   const help = spawnSync('nats', ['stream', 'view', '--help'], { encoding: 'utf8' })
   const helpText = `${help.stdout ?? ''}${help.stderr ?? ''}`
   if (helpText.includes('--count')) {
-    return ['--count', String(desired)]
+    return { args: ['--count', String(desired)], requiresTty: false }
   }
   if (helpText.includes('--limit')) {
-    return ['--limit', String(desired)]
+    return { args: ['--limit', String(desired)], requiresTty: false }
   }
-  return [String(Math.min(desired, 25))]
+  return { args: [String(Math.min(desired, 25))], requiresTty: true }
 }
 
 const resolveCredsFile = () => {
@@ -105,18 +105,29 @@ const buildNatsArgs = (credsFile: string | null) => {
   return args
 }
 
+const shellEscape = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
+
+const runNatsCommand = (args: string[], requiresTty: boolean) => {
+  if (!requiresTty) {
+    return spawnSync('nats', args, { encoding: 'utf8' })
+  }
+
+  const command = ['nats', ...args].map(shellEscape).join(' ')
+  return spawnSync('script', ['-q', '-c', command, '/dev/null'], { encoding: 'utf8', input: 'q\n' })
+}
+
 const parseMessages = (raw: string): NatsMessage[] => {
-  if (!raw.trim()) return []
+  const cleaned = raw.replaceAll('\u0000', '')
+  if (!cleaned.trim()) return []
   const messages: NatsMessage[] = []
-  for (const line of raw.split(/\r?\n/)) {
+  for (const line of cleaned.split(/\r?\n/)) {
     const trimmed = line.trim()
     if (!trimmed) continue
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) continue
     try {
       const parsed = JSON.parse(trimmed) as NatsMessage
       messages.push(parsed)
-    } catch {
-      messages.push({ content: trimmed })
-    }
+    } catch {}
   }
   return messages
 }
@@ -162,18 +173,9 @@ const run = () => {
 
   const creds = resolveCredsFile()
   try {
-    const args = [
-      'stream',
-      'view',
-      options.stream,
-      ...resolveViewCountArgs(options.count),
-      '--subject',
-      options.subject,
-      '--raw',
-    ]
-    const command = spawnSync('nats', [...buildNatsArgs(creds.path), ...args], {
-      encoding: 'utf8',
-    })
+    const viewArgs = resolveViewCountArgs(options.count)
+    const args = ['stream', 'view', options.stream, ...viewArgs.args, '--subject', options.subject, '--raw']
+    const command = runNatsCommand([...buildNatsArgs(creds.path), ...args], viewArgs.requiresTty)
 
     if (command.status !== 0) {
       const stderr = command.stderr?.trim() || command.stdout?.trim()
