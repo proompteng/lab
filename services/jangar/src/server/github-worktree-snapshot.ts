@@ -1,11 +1,14 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, stat } from 'node:fs/promises'
+import { mkdir, readFile, stat, unlink } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
 import { createGithubReviewStore, type GithubPrFile } from '~/server/github-review-store'
 
 const WORKTREE_DIR_NAME = '.worktrees'
+const LOCK_STALE_MS = 2 * 60 * 1000
+const LOCK_RETRY_ATTEMPTS = 3
+const LOCK_RETRY_DELAY_MS = 750
 
 const resolveRepoRoot = () => process.env.CODEX_CWD?.trim() || process.cwd()
 
@@ -72,6 +75,87 @@ const resolveRef = async (repoRoot: string, ref: string) => {
   throw new Error(`Unable to resolve git ref: ${ref}`)
 }
 
+const sleep = (ms: number) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms))
+
+const resolveGitDirFromWorktree = async (worktreePath: string) => {
+  const gitPath = join(worktreePath, '.git')
+  const stats = await stat(gitPath).catch(() => null)
+  if (!stats) return null
+  if (stats.isDirectory()) return gitPath
+  const contents = await readFile(gitPath, 'utf8').catch(() => null)
+  if (!contents) return null
+  const match = contents.match(/^gitdir:\s*(.+)\s*$/m)
+  if (!match) return null
+  return resolve(worktreePath, match[1] ?? '')
+}
+
+const resolveIndexLockPaths = async (repoRoot: string, worktreeName: string, worktreePath: string) => {
+  const paths = new Set<string>()
+  paths.add(join(repoRoot, '.git', 'index.lock'))
+  paths.add(join(repoRoot, '.git', 'worktrees', worktreeName, 'index.lock'))
+  const gitDir = await resolveGitDirFromWorktree(worktreePath)
+  if (gitDir) {
+    paths.add(join(gitDir, 'index.lock'))
+  }
+  return Array.from(paths)
+}
+
+const cleanupIndexLocks = async (paths: string[], label: string) => {
+  let removed = false
+  let blockedByFreshLock = false
+  const now = Date.now()
+
+  for (const lockPath of paths) {
+    const lockStat = await stat(lockPath).catch(() => null)
+    if (!lockStat) continue
+    const ageMs = now - lockStat.mtimeMs
+    if (ageMs < LOCK_STALE_MS) {
+      blockedByFreshLock = true
+      continue
+    }
+    await unlink(lockPath).catch((error) => {
+      console.warn('[github-worktree] failed to remove stale index.lock', {
+        label,
+        lockPath,
+        error: String(error),
+      })
+    })
+    removed = true
+    console.warn('[github-worktree] removed stale index.lock', { label, lockPath, ageMs })
+  }
+
+  return { removed, blockedByFreshLock }
+}
+
+const shouldRetryForIndexLock = (result: GitResult) =>
+  result.stderr.includes('index.lock') || result.stdout.includes('index.lock')
+
+const runGitWithLockRecovery = async (
+  args: string[],
+  cwd: string,
+  options: { repoRoot: string; worktreeName: string; worktreePath: string; label: string },
+) => {
+  let lastResult: GitResult | null = null
+  for (let attempt = 0; attempt < LOCK_RETRY_ATTEMPTS; attempt += 1) {
+    const result = await runGit(args, cwd)
+    if (result.exitCode === 0) return result
+    lastResult = result
+    if (!shouldRetryForIndexLock(result)) break
+
+    const lockPaths = await resolveIndexLockPaths(options.repoRoot, options.worktreeName, options.worktreePath)
+    const cleanup = await cleanupIndexLocks(lockPaths, options.label)
+    if (!cleanup.removed && cleanup.blockedByFreshLock) {
+      await sleep(LOCK_RETRY_DELAY_MS)
+      continue
+    }
+    if (cleanup.removed) {
+      continue
+    }
+    break
+  }
+  return lastResult ?? { exitCode: 1, stdout: '', stderr: 'git command failed' }
+}
+
 const ensureWorktreePath = async (worktreeRoot: string, worktreeName: string) => {
   await mkdir(worktreeRoot, { recursive: true })
   const worktreePath = join(worktreeRoot, worktreeName)
@@ -92,20 +176,35 @@ const ensureWorktreePath = async (worktreeRoot: string, worktreeName: string) =>
   return { worktreePath, exists: false }
 }
 
-const checkoutWorktree = async (repoRoot: string, worktreePath: string, headRef: string, exists: boolean) => {
+const checkoutWorktree = async (
+  repoRoot: string,
+  worktreeName: string,
+  worktreePath: string,
+  headRef: string,
+  exists: boolean,
+) => {
+  const lockOptions = { repoRoot, worktreeName, worktreePath, label: worktreeName }
   if (!exists) {
-    const addResult = await runGit(['worktree', 'add', '--detach', worktreePath, headRef], repoRoot)
+    const addResult = await runGitWithLockRecovery(
+      ['worktree', 'add', '--detach', worktreePath, headRef],
+      repoRoot,
+      lockOptions,
+    )
     if (addResult.exitCode !== 0) {
       throw new Error(`git worktree add failed: ${addResult.stderr.trim() || addResult.stdout.trim()}`)
     }
   }
 
-  const checkoutResult = await runGit(['checkout', '--detach', '--force', headRef], worktreePath)
+  const checkoutResult = await runGitWithLockRecovery(
+    ['checkout', '--detach', '--force', headRef],
+    worktreePath,
+    lockOptions,
+  )
   if (checkoutResult.exitCode !== 0) {
     throw new Error(`git checkout failed: ${checkoutResult.stderr.trim() || checkoutResult.stdout.trim()}`)
   }
 
-  const resetResult = await runGit(['reset', '--hard', headRef], worktreePath)
+  const resetResult = await runGitWithLockRecovery(['reset', '--hard', headRef], worktreePath, lockOptions)
   if (resetResult.exitCode !== 0) {
     throw new Error(`git reset failed: ${resetResult.stderr.trim() || resetResult.stdout.trim()}`)
   }
@@ -185,7 +284,7 @@ export const refreshWorktreeSnapshot = async (input: {
   const headRef = await resolveRef(repoRoot, input.headRef)
   const baseRef = await resolveRef(repoRoot, input.baseRef)
 
-  await checkoutWorktree(repoRoot, worktreePath, headRef, exists)
+  await checkoutWorktree(repoRoot, worktreeName, worktreePath, headRef, exists)
 
   const headShaResult = await runGit(['rev-parse', 'HEAD'], worktreePath)
   if (headShaResult.exitCode !== 0) {
