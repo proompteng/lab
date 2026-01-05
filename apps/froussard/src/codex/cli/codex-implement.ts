@@ -222,7 +222,7 @@ const initializeOutputFiles = async (paths: string[], logger: CodexLogger) => {
     paths.map(async (path) => {
       try {
         await ensureFileDirectory(path)
-        await writeFile(path, '', 'utf8')
+        await writeFile(path, '', { flag: 'a' })
       } catch (error) {
         logger.warn(`Failed to initialize output file at ${path}`, error)
       }
