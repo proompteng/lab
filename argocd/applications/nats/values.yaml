@@ -27,9 +27,13 @@ config:
           password: << $NATS_AGENTS_PASSWORD >>
           permissions:
             publish:
+              - "$JS.API.>"
+              - "$JS.ACK.>"
               - "argo.workflow.>"
+              - "workflow_comms.agent_messages.>"
             subscribe:
               - "_INBOX.>"
+              - "workflow_comms.agent_messages.>"
         - user: jangar
           password: << $NATS_JANGAR_PASSWORD >>
           permissions:
@@ -39,6 +43,7 @@ config:
             subscribe:
               - "argo.workflow.>"
               - "_INBOX.>"
+              - "workflow_comms.agent_messages.>"
 
 container:
   env:

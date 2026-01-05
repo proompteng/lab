@@ -50,6 +50,19 @@ const parseNumber = (value: string | undefined, fallback: number) => {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+const resolveViewCountArgs = (count: number) => {
+  const desired = Math.max(1, count)
+  const help = spawnSync('nats', ['stream', 'view', '--help'], { encoding: 'utf8' })
+  const helpText = `${help.stdout ?? ''}${help.stderr ?? ''}`
+  if (helpText.includes('--count')) {
+    return ['--count', String(desired)]
+  }
+  if (helpText.includes('--limit')) {
+    return ['--limit', String(desired)]
+  }
+  return [String(Math.min(desired, 25))]
+}
+
 const resolveCredsFile = () => {
   const explicitPath = coerceNonEmpty(process.env.NATS_CREDS_FILE)
   if (explicitPath) return { path: explicitPath, cleanup: () => {} }
@@ -149,10 +162,9 @@ const run = () => {
       'stream',
       'view',
       options.stream,
+      ...resolveViewCountArgs(options.count),
       '--subject',
       options.subject,
-      '--count',
-      String(options.count),
       '--raw',
     ]
     const command = spawnSync('nats', [...buildNatsArgs(creds.path), ...args], {
