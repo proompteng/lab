@@ -3,6 +3,8 @@ kind: WorkflowTemplate
 metadata:
   name: codex-autonomous
   namespace: argo-workflows
+  annotations:
+    codex-universal-image-digest: sha256:7c78969e7526279cfab447336cc80aab5c5bd09b9f91c82e104a8739b47984d1
 spec:
   serviceAccountName: codex-workflow
   parallelism: 1
