@@ -64,6 +64,27 @@ describe('runCodexImplementation', () => {
   let remoteDir: string
   let eventPath: string
 
+  const runGitCapture = async (args: string[]) =>
+    await new Promise<string>((resolve, reject) => {
+      const proc = spawn('git', args, { cwd: workdir })
+      let stdout = ''
+      let stderr = ''
+      proc.stdout?.on('data', (chunk) => {
+        stdout += chunk.toString()
+      })
+      proc.stderr?.on('data', (chunk) => {
+        stderr += chunk.toString()
+      })
+      proc.on('error', reject)
+      proc.on('close', (code) => {
+        if (code === 0) {
+          resolve(stdout.trim())
+        } else {
+          reject(new Error(`git ${args.join(' ')} exited with ${code}: ${stderr}`))
+        }
+      })
+    })
+
   beforeEach(async () => {
     workdir = await mkdtemp(join(tmpdir(), 'codex-impl-test-'))
     remoteDir = await mkdtemp(join(tmpdir(), 'codex-impl-remote-'))
@@ -173,6 +194,27 @@ describe('runCodexImplementation', () => {
     const resumeMetadataRaw = await readFile(resumeMetadataPath, 'utf8')
     const resumeMetadata = JSON.parse(resumeMetadataRaw) as Record<string, unknown>
     expect(resumeMetadata.state).toBe('cleared')
+  })
+
+  it('auto-commits when the worktree is dirty', async () => {
+    await writeFile(join(workdir, 'uncommitted.txt'), 'hello', 'utf8')
+
+    await runCodexImplementation(eventPath)
+
+    const status = await runGitCapture(['status', '--porcelain'])
+    expect(status.split('\n').some((line) => line.includes('uncommitted.txt'))).toBe(false)
+    await expect(runGitCapture(['log', '-1', '--pretty=%s'])).resolves.toMatch(/chore\(codex\)/)
+  })
+
+  it('auto-commits even when the implementation run fails', async () => {
+    await writeFile(join(workdir, 'uncommitted.txt'), 'hello', 'utf8')
+    runCodexSessionMock.mockRejectedValueOnce(new Error('boom'))
+
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow(/boom/)
+
+    const status = await runGitCapture(['status', '--porcelain'])
+    expect(status.split('\n').some((line) => line.includes('uncommitted.txt'))).toBe(false)
+    await expect(runGitCapture(['log', '-1', '--pretty=%s'])).resolves.toMatch(/chore\(codex\)/)
   })
 
   it('throws when the event file is missing', async () => {

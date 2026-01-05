@@ -941,6 +941,127 @@ const runCommand = async (command: string, args: string[], options: { cwd?: stri
   })
 }
 
+const readGitConfigValue = async (worktree: string, key: string) => {
+  try {
+    const result = await runCommand('git', ['config', '--get', key], { cwd: worktree })
+    if (result.exitCode !== 0) {
+      return null
+    }
+    const value = result.stdout.trim()
+    return value.length > 0 ? value : null
+  } catch {
+    return null
+  }
+}
+
+const ensureGitIdentity = async (worktree: string, logger: CodexLogger) => {
+  const fallbackName = (process.env.CODEX_GIT_AUTHOR_NAME ?? process.env.GIT_AUTHOR_NAME ?? 'Codex').trim()
+  const fallbackEmail = (
+    process.env.CODEX_GIT_AUTHOR_EMAIL ??
+    process.env.GIT_AUTHOR_EMAIL ??
+    'codex@proompteng.ai'
+  ).trim()
+
+  const name = fallbackName.length > 0 ? fallbackName : 'Codex'
+  const email = fallbackEmail.length > 0 ? fallbackEmail : 'codex@proompteng.ai'
+
+  const existingName = await readGitConfigValue(worktree, 'user.name')
+  if (!existingName) {
+    const result = await runCommand('git', ['config', 'user.name', name], { cwd: worktree })
+    if (result.exitCode !== 0) {
+      logger.warn(`Failed to set git user.name (${result.exitCode})`, result.stderr.trim())
+    }
+  }
+
+  const existingEmail = await readGitConfigValue(worktree, 'user.email')
+  if (!existingEmail) {
+    const result = await runCommand('git', ['config', 'user.email', email], { cwd: worktree })
+    if (result.exitCode !== 0) {
+      logger.warn(`Failed to set git user.email (${result.exitCode})`, result.stderr.trim())
+    }
+  }
+}
+
+const resolveBaseRef = async (worktree: string, baseBranch: string, logger: CodexLogger) => {
+  const candidates = [baseBranch ? `origin/${baseBranch}` : '', baseBranch, 'HEAD^'].filter(
+    (value) => value && value.trim().length > 0,
+  )
+  for (const candidate of candidates) {
+    const result = await runCommand('git', ['rev-parse', '--verify', candidate], { cwd: worktree })
+    if (result.exitCode === 0) {
+      return candidate
+    }
+  }
+  logger.warn('Failed to resolve base ref for implementation artifacts', { baseBranch, candidates })
+  return null
+}
+
+const commitWorkingTreeIfNeeded = async ({
+  worktree,
+  issueNumber,
+  issueTitle,
+  logger,
+}: {
+  worktree: string
+  issueNumber: string
+  issueTitle?: string | null
+  logger: CodexLogger
+}) => {
+  const isCodexArtifactPath = (value: string) => value.startsWith('.codex')
+  const collectPaths = (raw: string) =>
+    raw
+      .split('\n')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0 && !isCodexArtifactPath(entry))
+
+  const trackedResult = await runCommand('git', ['diff', '--name-only', '--diff-filter=ACMRTUXB'], { cwd: worktree })
+  if (trackedResult.exitCode !== 0) {
+    logger.warn('git diff --name-only failed; skipping auto-commit', trackedResult.stderr.trim())
+    return false
+  }
+  const deletedResult = await runCommand('git', ['diff', '--name-only', '--diff-filter=D'], { cwd: worktree })
+  if (deletedResult.exitCode !== 0) {
+    logger.warn('git diff --name-only for deletions failed; skipping auto-commit', deletedResult.stderr.trim())
+    return false
+  }
+  const untrackedResult = await runCommand('git', ['ls-files', '--others', '--exclude-standard'], { cwd: worktree })
+  if (untrackedResult.exitCode !== 0) {
+    logger.warn('git ls-files failed; skipping auto-commit', untrackedResult.stderr.trim())
+    return false
+  }
+
+  const paths = new Set([
+    ...collectPaths(trackedResult.stdout),
+    ...collectPaths(deletedResult.stdout),
+    ...collectPaths(untrackedResult.stdout),
+  ])
+  if (paths.size === 0) {
+    return false
+  }
+
+  await ensureGitIdentity(worktree, logger)
+
+  const addResult = await runCommand('git', ['add', '-A', '--', ...paths], { cwd: worktree })
+  if (addResult.exitCode !== 0) {
+    const message = addResult.stderr.trim() || addResult.stdout.trim()
+    throw new Error(`git add failed (${addResult.exitCode}): ${message}`)
+  }
+
+  const defaultMessage = issueTitle?.trim()
+    ? `chore(codex): ${issueTitle.trim()}`
+    : `chore(codex): issue #${issueNumber}`
+  const commitMessage = (process.env.CODEX_COMMIT_MESSAGE ?? defaultMessage).trim() || defaultMessage
+
+  const commitResult = await runCommand('git', ['commit', '-m', commitMessage], { cwd: worktree })
+  if (commitResult.exitCode !== 0) {
+    const message = commitResult.stderr.trim() || commitResult.stdout.trim()
+    throw new Error(`git commit failed (${commitResult.exitCode}): ${message}`)
+  }
+
+  logger.info('Committed implementation changes', { message: commitMessage })
+  return true
+}
+
 const truncateContextLine = (value: string, max = 400) => {
   if (value.length <= max) return value
   return `${value.slice(0, max)}…`
@@ -1161,6 +1282,7 @@ interface CaptureImplementationArtifactsOptions {
   manifestPath: string
   jsonEventsPath?: string
   resumeMetadataPath: string
+  baseRef?: string | null
   repository: string
   issueNumber: string
   prompt: string
@@ -1479,6 +1601,7 @@ const captureImplementationArtifacts = async ({
   manifestPath,
   jsonEventsPath,
   resumeMetadataPath,
+  baseRef,
   repository,
   issueNumber,
   prompt,
@@ -1522,9 +1645,10 @@ const captureImplementationArtifacts = async ({
     await ensureFileDirectory(join(metadataDir, 'git-status.txt'))
     await writeFile(join(metadataDir, 'git-status.txt'), `${statusContent}\n`, 'utf8')
 
+    const diffSpec = baseRef ? `${baseRef}..HEAD` : 'HEAD'
     let diffContent = ''
     try {
-      const diffResult = await runCommand('git', ['diff', '--binary', 'HEAD'], { cwd: worktree })
+      const diffResult = await runCommand('git', ['diff', '--binary', diffSpec], { cwd: worktree })
       if (diffResult.exitCode === 0) {
         diffContent = diffResult.stdout
       } else {
@@ -1545,7 +1669,7 @@ const captureImplementationArtifacts = async ({
     const deletedFiles: string[] = []
 
     try {
-      const trackedResult = await runCommand('git', ['diff', '--name-only', '--diff-filter=ACMRTUXB', 'HEAD'], {
+      const trackedResult = await runCommand('git', ['diff', '--name-only', '--diff-filter=ACMRTUXB', diffSpec], {
         cwd: worktree,
       })
       if (trackedResult.exitCode === 0) {
@@ -1564,7 +1688,7 @@ const captureImplementationArtifacts = async ({
     }
 
     try {
-      const deletedResult = await runCommand('git', ['diff', '--name-only', '--diff-filter=D', 'HEAD'], {
+      const deletedResult = await runCommand('git', ['diff', '--name-only', '--diff-filter=D', diffSpec], {
         cwd: worktree,
       })
       if (deletedResult.exitCode === 0) {
@@ -2196,6 +2320,15 @@ export const runCodexImplementation = async (eventPath: string) => {
       logger,
     })
 
+    if (stage === 'implementation') {
+      await commitWorkingTreeIfNeeded({
+        worktree,
+        issueNumber,
+        issueTitle,
+        logger,
+      })
+    }
+
     const logExcerpt = await collectLogExcerpts(
       {
         outputPath,
@@ -2413,6 +2546,17 @@ export const runCodexImplementation = async (eventPath: string) => {
     await ensureNotifyPlaceholder(notifyPath, logger)
     try {
       if (stage === 'implementation') {
+        try {
+          await commitWorkingTreeIfNeeded({
+            worktree,
+            issueNumber,
+            issueTitle,
+            logger,
+          })
+        } catch (error) {
+          logger.warn('Failed to auto-commit implementation changes during cleanup', error)
+        }
+        const baseRef = await resolveBaseRef(worktree, baseBranch, logger)
         await captureImplementationArtifacts({
           worktree,
           archivePath,
@@ -2421,6 +2565,7 @@ export const runCodexImplementation = async (eventPath: string) => {
           manifestPath,
           jsonEventsPath: jsonOutputPath,
           resumeMetadataPath,
+          baseRef,
           repository,
           issueNumber: normalizedIssueNumber,
           prompt,

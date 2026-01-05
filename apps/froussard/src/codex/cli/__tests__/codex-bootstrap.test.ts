@@ -7,7 +7,19 @@ import { runCodexBootstrap } from '../codex-bootstrap'
 
 const bunMocks = vi.hoisted(() => {
   const execMock = vi.fn(async (_options: { command: string; cwd?: string }) => ({ text: async () => '' }))
-  const spawnMock = vi.fn(() => ({ exited: Promise.resolve(0) }))
+  const spawnExitCodeOverrides = new Map<string, number>()
+  const resolveSpawnExitCode = (command: string): number => {
+    for (const [needle, code] of spawnExitCodeOverrides.entries()) {
+      if (command.includes(needle)) {
+        return code
+      }
+    }
+    return 0
+  }
+  const spawnMock = vi.fn((options?: { cmd?: string[] }) => {
+    const command = Array.isArray(options?.cmd) ? options?.cmd.join(' ') : ''
+    return { exited: Promise.resolve(resolveSpawnExitCode(command)) }
+  })
   const whichMock = vi.fn(async (command: string) => command)
   const exitCodeOverrides = new Map<string, number>()
   const isTemplateStringsArray = (value: unknown): value is TemplateStringsArray =>
@@ -47,7 +59,7 @@ const bunMocks = vi.hoisted(() => {
     throw new Error('Invalid invocation of $ stub')
   }
 
-  return { execMock, spawnMock, whichMock, dollar, exitCodeOverrides }
+  return { execMock, spawnMock, whichMock, dollar, exitCodeOverrides, spawnExitCodeOverrides }
 })
 
 vi.mock('bun', () => ({
@@ -60,6 +72,7 @@ const execMock = bunMocks.execMock
 const spawnMock = bunMocks.spawnMock
 const whichMock = bunMocks.whichMock
 const exitCodeOverrides = bunMocks.exitCodeOverrides
+const spawnExitCodeOverrides = bunMocks.spawnExitCodeOverrides
 
 const ORIGINAL_ENV = { ...process.env }
 
@@ -87,6 +100,7 @@ describe('runCodexBootstrap', () => {
     spawnMock.mockClear()
     whichMock.mockClear()
     exitCodeOverrides.clear()
+    spawnExitCodeOverrides.clear()
     chdirSpy = vi.spyOn(process, 'chdir').mockImplementation(() => undefined)
   })
 
@@ -109,14 +123,14 @@ describe('runCodexBootstrap', () => {
 
   it('retries bun install without frozen lockfile when frozen install fails', async () => {
     await mkdir(join(workdir, '.git'), { recursive: true })
-    exitCodeOverrides.set('bun install --frozen-lockfile', 1)
+    spawnExitCodeOverrides.set('install --frozen-lockfile', 1)
 
     const exitCode = await runCodexBootstrap()
 
     expect(exitCode).toBe(0)
-    const commands = execMock.mock.calls.map((call) => call[0]?.command)
+    const commands = spawnMock.mock.calls.map((call) => (Array.isArray(call[0]?.cmd) ? call[0].cmd.join(' ') : ''))
     expect(commands).toContain('bun install --frozen-lockfile')
-    expect(commands).toContain('bun install')
+    expect(commands).toContain('bun install --no-cache --backend=copyfile')
   })
 
   it('clones the repository when the worktree is missing', async () => {
@@ -134,7 +148,7 @@ describe('runCodexBootstrap', () => {
   })
 
   it('runs the requested command and returns its exit code', async () => {
-    spawnMock.mockImplementationOnce(() => ({ exited: Promise.resolve(7) }))
+    spawnExitCodeOverrides.set('ls -la', 7)
     await mkdir(join(workdir, '.git'), { recursive: true })
 
     const exitCode = await runCodexBootstrap(['ls', '-la'])
