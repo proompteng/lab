@@ -150,6 +150,12 @@ spec:
             fi
             printf '%s' "$EVENT_BODY_B64" | base64 --decode > "$EVENT_FILE"
 
+            # Ensure output paths exist before any early exits so Argo output collection never fails.
+            mkdir -p /workspace/lab /workspace/.codex
+            : > "/workspace/lab/.codex-judge-decision.txt"
+            : > "/workspace/lab/.codex-judge-next-prompt.txt"
+            : > "/workspace/lab/.codex-nats-context.json"
+
             WORKTREE_DIR="${WORKTREE:-/workspace/lab}"
 
             STAGE=$(jq -r '.stage // ""' "$EVENT_FILE")
@@ -189,12 +195,6 @@ spec:
             fi
 
             git -C "$WORKTREE_DIR" fetch --all --prune
-
-            mkdir -p /workspace/lab /workspace/.codex
-            # Ensure judge output files exist for all stages to satisfy Argo output collection.
-            : > "/workspace/lab/.codex-judge-decision.txt"
-            : > "/workspace/lab/.codex-judge-next-prompt.txt"
-            : > "/workspace/lab/.codex-nats-context.json"
 
             if ! git -C "$WORKTREE_DIR" rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1 \
               && ! git -C "$WORKTREE_DIR" rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
