@@ -50,6 +50,10 @@ const parseNumber = (value: string | undefined, fallback: number) => {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+// biome-ignore lint/complexity/useRegexLiterals: avoid literal control characters in source.
+const ANSI_ESCAPE_PATTERN = new RegExp(String.raw`\u001b\[[0-9;]*[a-zA-Z]`, 'g')
+const stripAnsi = (value: string) => value.replace(ANSI_ESCAPE_PATTERN, '')
+
 const resolveViewCountArgs = (count: number) => {
   const desired = Math.max(1, count)
   const help = spawnSync('nats', ['stream', 'view', '--help'], { encoding: 'utf8' })
@@ -108,24 +112,41 @@ const buildNatsArgs = (credsFile: string | null) => {
 const shellEscape = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
 
 const runNatsCommand = (args: string[], requiresTty: boolean) => {
+  const timeoutMs = parseNumber(process.env.NATS_CONTEXT_TIMEOUT_MS, 15_000)
+  const env = {
+    ...process.env,
+    PAGER: process.env.PAGER ?? 'cat',
+    NATS_PAGER: process.env.NATS_PAGER ?? 'cat',
+    LESS: process.env.LESS ?? 'FRX',
+  }
+
   if (!requiresTty) {
-    return spawnSync('nats', args, { encoding: 'utf8' })
+    return spawnSync('nats', args, { encoding: 'utf8', env, timeout: timeoutMs })
   }
 
   const command = ['nats', ...args].map(shellEscape).join(' ')
-  return spawnSync('script', ['-q', '-c', command, '/dev/null'], { encoding: 'utf8', input: 'q\n' })
+  return spawnSync('script', ['-q', '-c', command, '/dev/null'], {
+    encoding: 'utf8',
+    env,
+    timeout: timeoutMs,
+    input: 'n\n',
+  })
 }
 
 const parseMessages = (raw: string): NatsMessage[] => {
-  const cleaned = raw.replaceAll('\u0000', '')
+  const cleaned = stripAnsi(raw.replaceAll('\u0000', ''))
   if (!cleaned.trim()) return []
   const messages: NatsMessage[] = []
   for (const line of cleaned.split(/\r?\n/)) {
     const trimmed = line.trim()
     if (!trimmed) continue
-    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) continue
+    const braceIndex = trimmed.indexOf('{')
+    const bracketIndex = trimmed.indexOf('[')
+    const startIndex =
+      braceIndex === -1 ? bracketIndex : bracketIndex === -1 ? braceIndex : Math.min(braceIndex, bracketIndex)
+    if (startIndex === -1) continue
     try {
-      const parsed = JSON.parse(trimmed) as NatsMessage
+      const parsed = JSON.parse(trimmed.slice(startIndex)) as NatsMessage
       messages.push(parsed)
     } catch {}
   }
@@ -177,12 +198,19 @@ const run = () => {
     const args = ['stream', 'view', options.stream, ...viewArgs.args, '--subject', options.subject, '--raw']
     const command = runNatsCommand([...buildNatsArgs(creds.path), ...args], viewArgs.requiresTty)
 
-    if (command.status !== 0) {
-      const stderr = command.stderr?.trim() || command.stdout?.trim()
+    const timedOut = command.error && (command.error as NodeJS.ErrnoException).code === 'ETIMEDOUT'
+    const stdoutValue = command.stdout ?? ''
+
+    if (timedOut && !stdoutValue.trim()) {
+      throw new Error('nats stream view timed out')
+    }
+
+    if (command.status !== 0 && !timedOut) {
+      const stderr = command.stderr?.trim() || stdoutValue.trim()
       throw new Error(stderr || 'nats stream view failed')
     }
 
-    const messages = parseMessages(command.stdout ?? '')
+    const messages = parseMessages(stdoutValue)
     const filtered = filterMessages(messages, {
       repository: coerceNonEmpty(process.env.CODEX_REPOSITORY) ?? coerceNonEmpty(process.env.ISSUE_REPO) ?? undefined,
       issueNumber: normalizeIssueNumber(coerceNonEmpty(process.env.CODEX_ISSUE_NUMBER)),
