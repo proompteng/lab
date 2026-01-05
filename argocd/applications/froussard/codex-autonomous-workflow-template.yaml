@@ -4,7 +4,7 @@ metadata:
   name: codex-autonomous
   namespace: argo-workflows
   annotations:
-    codex-universal-image-digest: sha256:9535df91f16138a85b755d350fc716e3779c9b5ae78a939013a67d08613b8fc6
+    codex-universal-image-digest: sha256:5b7d7fef0161cde502f8cc18ea18160d7c5595d4ccd1fc28de04ea09c026ab45
 spec:
   serviceAccountName: codex-workflow
   parallelism: 1
@@ -757,7 +757,26 @@ spec:
 
             echo "Executing ${WORKFLOW_STAGE} workflow" >&2
             set +e
-            /usr/local/bin/codex-implement "$EVENT_FILE"
+            AGENT_SPEC=$(mktemp)
+            cat > "$AGENT_SPEC" <<JSON
+            {
+              "provider": "codex",
+              "inputs": {
+                "base": "${BASE_BRANCH}",
+                "head": "${HEAD_BRANCH}",
+                "stage": "${WORKFLOW_STAGE}"
+              },
+              "payloads": {
+                "eventBodyPath": "$EVENT_FILE"
+              },
+              "artifacts": {
+                "statusPath": "/workspace/lab/.agent-status.json",
+                "logPath": "/workspace/lab/.agent-runner.log"
+              }
+            }
+            JSON
+
+            /usr/local/bin/agent-runner --spec "$AGENT_SPEC"
             EXIT_CODE=$?
             set -e
 

@@ -352,7 +352,26 @@ spec:
 
             echo "Executing implementation workflow" >&2
             set +e
-            /usr/local/bin/codex-implement "$EVENT_FILE"
+            AGENT_SPEC=$(mktemp)
+            cat > "$AGENT_SPEC" <<JSON
+            {
+              "provider": "codex",
+              "inputs": {
+                "base": "{{inputs.parameters.base}}",
+                "head": "{{inputs.parameters.head}}",
+                "stage": "implementation"
+              },
+              "payloads": {
+                "eventBodyPath": "$EVENT_FILE"
+              },
+              "artifacts": {
+                "statusPath": "/workspace/lab/.agent-status.json",
+                "logPath": "/workspace/lab/.agent-runner.log"
+              }
+            }
+            JSON
+
+            /usr/local/bin/agent-runner --spec "$AGENT_SPEC"
             EXIT_CODE=$?
             set -e
 
@@ -796,7 +815,26 @@ spec:
 
             echo "Executing ${WORKFLOW_STAGE} workflow" >&2
             set +e
-            /usr/local/bin/codex-implement "$EVENT_FILE"
+            AGENT_SPEC=$(mktemp)
+            cat > "$AGENT_SPEC" <<JSON
+            {
+              "provider": "codex",
+              "inputs": {
+                "base": "${BASE_BRANCH}",
+                "head": "${HEAD_BRANCH}",
+                "stage": "${WORKFLOW_STAGE}"
+              },
+              "payloads": {
+                "eventBodyPath": "$EVENT_FILE"
+              },
+              "artifacts": {
+                "statusPath": "/workspace/lab/.agent-status.json",
+                "logPath": "/workspace/lab/.agent-runner.log"
+              }
+            }
+            JSON
+
+            /usr/local/bin/agent-runner --spec "$AGENT_SPEC"
             EXIT_CODE=$?
             set -e
 

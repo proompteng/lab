@@ -117,7 +117,24 @@ spec:
             export JSON_OUTPUT_PATH="${JSON_OUTPUT_PATH:-/workspace/lab/.codex-implementation-events.jsonl}"
             export AGENT_OUTPUT_PATH="${AGENT_OUTPUT_PATH:-/workspace/lab/.codex-implementation-agent.log}"
 
-            codex-implement
+            AGENT_SPEC=$(mktemp)
+            cat > "$AGENT_SPEC" <<JSON
+            {
+              "provider": "codex",
+              "inputs": {
+                "stage": "${CODEX_STAGE}"
+              },
+              "payloads": {
+                "eventBodyPath": "$PAYLOAD_FILE"
+              },
+              "artifacts": {
+                "statusPath": "/workspace/lab/.agent-status.json",
+                "logPath": "/workspace/lab/.agent-runner.log"
+              }
+            }
+            JSON
+
+            /usr/local/bin/agent-runner --spec "$AGENT_SPEC"
 
             if [[ -s "$OUTPUT_PATH" ]]; then
               echo "Codex implementation output:" >&2

@@ -1,0 +1,8 @@
+{
+  "name": "codex-research",
+  "binary": "/usr/local/bin/codex-research",
+  "argsTemplate": ["{{payloads.promptPath}}", "{{payloads.metadataPath}}"],
+  "envTemplate": {
+    "WORKFLOW_STAGE": "{{inputs.stage}}"
+  }
+}
