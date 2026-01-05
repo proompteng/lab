@@ -37,6 +37,12 @@ const globalState = globalThis as typeof globalThis & {
     promptTuningFailureThreshold: number
     promptTuningWindowHours: number
     promptTuningCooldownHours: number
+    rerunWorkflowTemplate: string | null
+    rerunWorkflowNamespace: string
+    systemImprovementWorkflowTemplate: string | null
+    systemImprovementWorkflowNamespace: string
+    systemImprovementJudgePrompt: string
+    defaultJudgePrompt: string
   }
   __githubReviewStoreMock?: {
     recordEvent: ReturnType<typeof vi.fn>
@@ -81,7 +87,7 @@ const githubMock = {
   createPullRequest: vi.fn(),
 }
 
-const configMock = {
+const configMock: NonNullable<typeof globalState.__codexJudgeConfigMock> = {
   githubToken: null,
   githubApiBaseUrl: 'https://api.github.com',
   codexReviewers: [],
@@ -102,6 +108,12 @@ const configMock = {
   promptTuningFailureThreshold: 3,
   promptTuningWindowHours: 24,
   promptTuningCooldownHours: 6,
+  rerunWorkflowTemplate: 'codex-autonomous',
+  rerunWorkflowNamespace: 'argo-workflows',
+  systemImprovementWorkflowTemplate: 'codex-autonomous',
+  systemImprovementWorkflowNamespace: 'argo-workflows',
+  systemImprovementJudgePrompt: 'system-improvement prompt',
+  defaultJudgePrompt: 'default-judge-prompt',
 }
 
 const githubReviewStoreMock = {
