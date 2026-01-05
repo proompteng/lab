@@ -47,6 +47,8 @@ spec:
         image: registry.ide-newton.ts.net/lab/codex-universal:latest
         imagePullPolicy: Always
         env:
+          - name: CODEX_CWD
+            value: /workspace/lab
           - name: HEAD_BRANCH
             value: '{{inputs.parameters.head}}'
           - name: BASE_BRANCH
@@ -103,6 +105,20 @@ spec:
                 name: nats-agent-creds
                 key: creds
                 optional: true
+          - name: MINIO_ENDPOINT
+            value: observability-minio.minio.svc.cluster.local:9000
+          - name: MINIO_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: observability-minio-creds
+                key: accesskey
+          - name: MINIO_SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: observability-minio-creds
+                key: secretkey
+          - name: MINIO_SECURE
+            value: 'false'
           - name: CODEX_NATS_SOAK_REQUIRED
             value: "true"
           - name: NATS_CONTEXT_PATH
