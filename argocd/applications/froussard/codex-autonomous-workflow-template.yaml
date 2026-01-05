@@ -4,7 +4,7 @@ metadata:
   name: codex-autonomous
   namespace: argo-workflows
   annotations:
-    codex-universal-image-digest: sha256:8b18875b74fb1a0f2061c4a45c0620619713ce6e59b96e18b88342cbfafc6f3f
+    codex-universal-image-digest: sha256:9535df91f16138a85b755d350fc716e3779c9b5ae78a939013a67d08613b8fc6
 spec:
   serviceAccountName: codex-workflow
   parallelism: 1
