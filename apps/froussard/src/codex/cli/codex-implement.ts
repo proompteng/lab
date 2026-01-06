@@ -10,6 +10,7 @@ import { pushCodexEventsToLoki, type RunCodexSessionResult, runCodexSession } fr
 import {
   buildDiscordChannelCommand,
   copyAgentLogIfNeeded,
+  parseBoolean,
   pathExists,
   randomRunId,
   timestampUtc,
@@ -90,6 +91,19 @@ type CodexNotifyLogExcerpt = {
   status?: string | null
 }
 
+type WorktreeReuseState = {
+  preserveWorktree: boolean
+  resetPerformed: boolean
+  checkoutCreated: boolean
+  initialHeadSha: string | null
+  headShaAfterSync: string | null
+  headShaChanged: boolean
+  resumeMetadataDetected: boolean
+  resumeArchiveDetected: boolean
+  resumeApplied: boolean
+  resumedSessionId?: string | null
+}
+
 type CodexNotifyPayload = {
   type: 'agent-turn-complete'
   repository: string
@@ -128,6 +142,8 @@ type CodexNotifyPayload = {
   iteration?: number | null
   iteration_cycle?: number | null
   iterations?: number | null
+  worktree_reuse?: WorktreeReuseState | null
+  worktreeReuse?: WorktreeReuseState | null
   input_messages: string[]
   last_assistant_message: string | null
   logs?: CodexNotifyLogExcerpt
@@ -380,6 +396,7 @@ const buildNotifyPayload = ({
   iteration,
   iterationCycle,
   iterations,
+  worktreeReuse,
 }: {
   repository: string
   issueNumber: string
@@ -413,6 +430,7 @@ const buildNotifyPayload = ({
   iteration?: number | null
   iterationCycle?: number | null
   iterations?: number | null
+  worktreeReuse?: WorktreeReuseState | null
 }): CodexNotifyPayload => {
   return {
     type: 'agent-turn-complete',
@@ -443,6 +461,8 @@ const buildNotifyPayload = ({
     iteration: iteration ?? null,
     iteration_cycle: iterationCycle ?? null,
     iterations: iterations ?? null,
+    worktree_reuse: worktreeReuse ?? null,
+    worktreeReuse: worktreeReuse ?? null,
     input_messages: [prompt],
     last_assistant_message: lastAssistantMessage ?? null,
     logs: logExcerpt,
@@ -1344,6 +1364,7 @@ interface CaptureImplementationArtifactsOptions {
   sessionId?: string
   resumedSessionId?: string
   markForResume: boolean
+  worktreeReuse?: WorktreeReuseState
   logger: CodexLogger
 }
 
@@ -1361,6 +1382,8 @@ interface ImplementationManifest {
   session_id?: string
   trackedFiles: string[]
   deletedFiles: string[]
+  worktreeReuse?: WorktreeReuseState
+  worktree_reuse?: WorktreeReuseState
 }
 
 interface ResumeMetadataFile extends ImplementationManifest {
@@ -1663,6 +1686,7 @@ const captureImplementationArtifacts = async ({
   sessionId,
   resumedSessionId,
   markForResume,
+  worktreeReuse,
   logger,
 }: CaptureImplementationArtifactsOptions) => {
   const cleanupBundle = async (bundleRoot: string) => {
@@ -1806,6 +1830,8 @@ const captureImplementationArtifacts = async ({
       session_id: resolvedSessionId,
       trackedFiles: Array.from(trackedFiles).sort(),
       deletedFiles: deletedFiles.sort(),
+      worktreeReuse: worktreeReuse ?? undefined,
+      worktree_reuse: worktreeReuse ?? undefined,
     } satisfies ImplementationManifest
 
     await ensureFileDirectory(join(metadataDir, 'manifest.json'))
@@ -1948,6 +1974,22 @@ export const runCodexImplementation = async (eventPath: string) => {
     throw new Error('Missing head branch metadata in event payload')
   }
 
+  const preserveWorktree = parseBoolean(process.env.CODEX_PRESERVE_WORKTREE, false)
+  const initialHeadSha = await resolveHeadSha(worktree, consoleLogger)
+  const resumeMetadataDetected = await pathExists(resumeMetadataPath)
+  const resumeArchiveDetected = await pathExists(archivePath)
+  const worktreeReuseState: WorktreeReuseState = {
+    preserveWorktree,
+    resetPerformed: false,
+    checkoutCreated: false,
+    initialHeadSha,
+    headShaAfterSync: null,
+    headShaChanged: false,
+    resumeMetadataDetected,
+    resumeArchiveDetected,
+    resumeApplied: false,
+  }
+
   const assertCommandSuccess = (result: CommandResult, description: string) => {
     if (result.exitCode !== 0) {
       const output = [result.stderr, result.stdout].filter(Boolean).join('\n').trim()
@@ -1973,8 +2015,14 @@ export const runCodexImplementation = async (eventPath: string) => {
         await runCommand('git', ['checkout', '-B', headBranch, fromRef], { cwd: worktree }),
         'git checkout -B head',
       )
+      worktreeReuseState.checkoutCreated = true
     } else {
       assertCommandSuccess(checkoutResult, 'git checkout head')
+      worktreeReuseState.checkoutCreated = false
+    }
+
+    if (preserveWorktree) {
+      return
     }
 
     const candidateRefs = remoteHeadExists ? [`origin/${headBranch}`, `origin/${baseBranch}`] : [`origin/${baseBranch}`]
@@ -1984,6 +2032,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       const resetResult = await runCommand('git', ['reset', '--hard', ref], { cwd: worktree })
       if (resetResult.exitCode === 0) {
         assertCommandSuccess(resetResult, `git reset --hard ${ref}`)
+        worktreeReuseState.resetPerformed = true
         return
       }
       resetErrors.push(`reset ${ref} failed (exit ${resetResult.exitCode}) ${resetResult.stderr || resetResult.stdout}`)
@@ -1993,6 +2042,11 @@ export const runCodexImplementation = async (eventPath: string) => {
   }
 
   await syncWorktreeToHead()
+  worktreeReuseState.headShaAfterSync = await resolveHeadSha(worktree, consoleLogger)
+  worktreeReuseState.headShaChanged =
+    Boolean(worktreeReuseState.initialHeadSha) &&
+    Boolean(worktreeReuseState.headShaAfterSync) &&
+    worktreeReuseState.initialHeadSha !== worktreeReuseState.headShaAfterSync
 
   const planCommentId =
     event.planCommentId !== undefined && event.planCommentId !== null ? String(event.planCommentId) : ''
@@ -2093,6 +2147,13 @@ export const runCodexImplementation = async (eventPath: string) => {
       run_id: channelRunId || undefined,
     },
   })
+  logger.info('Worktree reuse state', worktreeReuseState)
+  if (preserveWorktree && worktreeReuseState.headShaChanged) {
+    logger.warn('Worktree head SHA changed despite preserve flag', {
+      initialHeadSha: worktreeReuseState.initialHeadSha,
+      headShaAfterSync: worktreeReuseState.headShaAfterSync,
+    })
+  }
 
   const natsSoakRequired =
     (process.env.CODEX_NATS_SOAK_REQUIRED ?? 'true').trim().toLowerCase() !== 'false' &&
@@ -2159,7 +2220,11 @@ export const runCodexImplementation = async (eventPath: string) => {
           `Found pending resume state from ${resumeContext.metadata.generatedAt}; attempting to restore implementation changes`,
         )
         const applied = await applyResumeContext({ worktree, context: resumeContext, logger })
+        worktreeReuseState.resumeApplied = applied
         if (applied) {
+          if (resumeContext.metadata.sessionId) {
+            worktreeReuseState.resumedSessionId = resumeContext.metadata.sessionId.trim()
+          }
           if (resumeContext.metadata.sessionId && resumeContext.metadata.sessionId.trim().length > 0) {
             resumeSessionId = resumeContext.metadata.sessionId.trim()
             logger.info(`Resuming Codex session ${resumeSessionId}`)
@@ -2507,6 +2572,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       iteration,
       iterationCycle,
       iterations,
+      worktreeReuse: worktreeReuseState,
     })
     try {
       await ensureFileDirectory(notifyPath)
@@ -2628,6 +2694,7 @@ export const runCodexImplementation = async (eventPath: string) => {
           sessionId: capturedSessionId,
           resumedSessionId: resumeContext?.metadata.sessionId,
           markForResume: !runSucceeded,
+          worktreeReuse: worktreeReuseState,
           logger,
         })
       }

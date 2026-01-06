@@ -59,7 +59,7 @@ const resetEnv = () => {
   }
 }
 
-describe('runCodexImplementation', () => {
+describe.sequential('runCodexImplementation', () => {
   let workdir: string
   let remoteDir: string
   let eventPath: string
@@ -102,6 +102,9 @@ describe('runCodexImplementation', () => {
     process.env.CHANNEL_SCRIPT = ''
     process.env.CODEX_SKIP_PR_CHECK = '1'
     process.env.CODEX_NATS_SOAK_REQUIRED = 'false'
+    process.env.JANGAR_BASE_URL = ''
+    process.env.CODEX_NOTIFY_URL = ''
+    delete process.env.NATS_URL
 
     const payload = {
       prompt: 'Implementation prompt',
@@ -194,6 +197,12 @@ describe('runCodexImplementation', () => {
     const resumeMetadataRaw = await readFile(resumeMetadataPath, 'utf8')
     const resumeMetadata = JSON.parse(resumeMetadataRaw) as Record<string, unknown>
     expect(resumeMetadata.state).toBe('cleared')
+    expect(resumeMetadata.worktreeReuse).toEqual(
+      expect.objectContaining({
+        preserveWorktree: false,
+        resetPerformed: true,
+      }),
+    )
   })
 
   it('auto-commits when the worktree is dirty', async () => {
@@ -215,6 +224,33 @@ describe('runCodexImplementation', () => {
     const status = await runGitCapture(['status', '--porcelain'])
     expect(status.split('\n').some((line) => line.includes('uncommitted.txt'))).toBe(false)
     await expect(runGitCapture(['log', '-1', '--pretty=%s'])).resolves.toMatch(/chore\(codex\)/)
+  })
+
+  it('preserves worktree state when CODEX_PRESERVE_WORKTREE is set', async () => {
+    process.env.CODEX_PRESERVE_WORKTREE = '1'
+
+    await runGitCapture(['checkout', 'codex/issue-42'])
+    await writeFile(join(workdir, 'preserved.txt'), 'keep me', 'utf8')
+    await runGitCapture(['add', 'preserved.txt'])
+    await runGitCapture(['commit', '-m', 'feat: preserve worktree'])
+    const headSha = await runGitCapture(['rev-parse', 'HEAD'])
+
+    await writeFile(join(workdir, '.codex-implementation-changes.tar.gz'), 'existing', 'utf8')
+
+    await runCodexImplementation(eventPath)
+
+    const finalSha = await runGitCapture(['rev-parse', 'HEAD'])
+    await expect(runGitCapture(['merge-base', '--is-ancestor', headSha, finalSha])).resolves.toBe('')
+
+    const manifestRaw = await readFile(join(workdir, '.codex-implementation-changes-manifest.json'), 'utf8')
+    const manifest = JSON.parse(manifestRaw) as Record<string, unknown>
+    expect(manifest.worktreeReuse).toEqual(
+      expect.objectContaining({
+        preserveWorktree: true,
+        resetPerformed: false,
+        resumeArchiveDetected: true,
+      }),
+    )
   })
 
   it('throws when the event file is missing', async () => {
@@ -359,7 +395,7 @@ describe('runCodexImplementation', () => {
     } finally {
       await rm(resumeSourceDir, { recursive: true, force: true })
     }
-  })
+  }, 10000)
 
   it('still writes artifact placeholders when implementation fails', async () => {
     const linkTargetPath = join(workdir, 'linked.txt')
@@ -413,5 +449,5 @@ describe('runCodexImplementation', () => {
     } finally {
       await rm(extractionDir, { recursive: true, force: true })
     }
-  })
+  }, 10000)
 })
