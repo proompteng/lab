@@ -1,0 +1,97 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: agentrun-argo
+  labels:
+    runtime: argo
+spec:
+  compositeTypeRef:
+    apiVersion: agents.proompteng.ai/v1alpha1
+    kind: XAgentRun
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: workflow
+            base:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                namespace: argo-workflows
+              spec:
+                workflowTemplateRef:
+                  name: ""
+                arguments:
+                  parameters: []
+            patches:
+              - fromFieldPath: spec.runtimeOverrides.argo.namespace
+                toFieldPath: metadata.namespace
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.runtimeOverrides.argo.serviceAccount
+                toFieldPath: spec.serviceAccountName
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.agentRef.name
+                toFieldPath: spec.workflowTemplateRef.name
+              - fromFieldPath: spec.parameters
+                toFieldPath: spec.arguments.parameters
+                policy:
+                  fromFieldPath: Optional
+            connectionDetails:
+              - fromFieldPath: metadata.name
+                name: workflowName
+            readinessChecks:
+              - type: None
+    - step: parameters-map-to-list
+      functionRef:
+        name: function-map-to-list
+      input:
+        apiVersion: fn.proompteng.ai/v1alpha1
+        kind: MapToList
+        spec:
+          fromFieldPath: spec.parameters
+          toResource: workflow
+          toFieldPath: spec.arguments.parameters
+          listKeys:
+            nameField: name
+            valueField: value
+    - step: status-mapping
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: workflow
+            patches:
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.phase
+                toFieldPath: status.phase
+                policy:
+                  fromFieldPath: Optional
+              - type: ToCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: status.workflowName
+                policy:
+                  fromFieldPath: Optional
+              - type: ToCompositeFieldPath
+                fromFieldPath: metadata.uid
+                toFieldPath: status.workflowUID
+                policy:
+                  fromFieldPath: Optional
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.startedAt
+                toFieldPath: status.submittedAt
+                policy:
+                  fromFieldPath: Optional
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.finishedAt
+                toFieldPath: status.finishedAt
+                policy:
+                  fromFieldPath: Optional

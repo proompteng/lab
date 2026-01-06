@@ -1,0 +1,65 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xmemories.memory.proompteng.ai
+spec:
+  group: memory.proompteng.ai
+  names:
+    kind: XMemory
+    plural: xmemories
+  claimNames:
+    kind: Memory
+    plural: memories
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - providerRef
+                - dataset
+              properties:
+                providerRef:
+                  type: object
+                  required: [name]
+                  properties:
+                    name: { type: string }
+                dataset:
+                  type: object
+                  required: [name, schema]
+                  properties:
+                    name: { type: string }
+                    schema: { type: string }
+                retention:
+                  type: object
+                  properties:
+                    ttlDays: { type: integer, default: 90 }
+                embeddings:
+                  type: object
+                  properties:
+                    enabled: { type: boolean, default: true }
+                    dimension: { type: integer, default: 1536 }
+                access:
+                  type: object
+                  properties:
+                    readerRole: { type: string }
+                    writerRole: { type: string }
+            status:
+              type: object
+              properties:
+                providerType: { type: string }
+                endpoint: { type: string }
+                database: { type: string }
+                schema: { type: string }
+                connectionSecretRef:
+                  type: object
+                  properties:
+                    name: { type: string }
+                    namespace: { type: string }

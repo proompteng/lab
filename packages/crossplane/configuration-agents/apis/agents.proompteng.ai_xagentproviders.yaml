@@ -1,0 +1,49 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xagentproviders.agents.proompteng.ai
+spec:
+  group: agents.proompteng.ai
+  names:
+    kind: XAgentProvider
+    plural: xagentproviders
+  claimNames:
+    kind: AgentProvider
+    plural: agentproviders
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required: [binary]
+              properties:
+                binary: { type: string }
+                argsTemplate:
+                  type: array
+                  items: { type: string }
+                envTemplate:
+                  type: object
+                  additionalProperties: { type: string }
+                inputFiles:
+                  type: array
+                  items:
+                    type: object
+                    required: [path, content]
+                    properties:
+                      path: { type: string }
+                      content: { type: string }
+                outputArtifacts:
+                  type: array
+                  items:
+                    type: object
+                    required: [name, path]
+                    properties:
+                      name: { type: string }
+                      path: { type: string }

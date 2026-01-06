@@ -1,0 +1,131 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: memory-postgres
+  labels:
+    provider: postgres
+spec:
+  compositeTypeRef:
+    apiVersion: memory.proompteng.ai/v1alpha1
+    kind: XMemory
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: memory-sql
+            base:
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                name: memory-sql
+                namespace: facteur
+              data:
+                memory.sql: |
+                  CREATE EXTENSION IF NOT EXISTS vector;
+                  CREATE SCHEMA IF NOT EXISTS :"schema";
+                  SET search_path TO :"schema";
+
+                  CREATE TABLE IF NOT EXISTS memory_events (
+                    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                    dataset text NOT NULL,
+                    event_type text NOT NULL,
+                    payload jsonb NOT NULL,
+                    created_at timestamptz NOT NULL DEFAULT now()
+                  );
+
+                  CREATE TABLE IF NOT EXISTS memory_embeddings (
+                    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                    dataset text NOT NULL,
+                    key text NOT NULL,
+                    embedding vector({{EMBEDDINGS_DIMENSION}}),
+                    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+                    created_at timestamptz NOT NULL DEFAULT now()
+                  );
+
+                  CREATE INDEX IF NOT EXISTS memory_embeddings_dataset_key_idx ON memory_embeddings(dataset, key);
+                  CREATE INDEX IF NOT EXISTS memory_embeddings_vector_idx ON memory_embeddings USING ivfflat (embedding vector_cosine_ops);
+
+                  CREATE TABLE IF NOT EXISTS memory_kv (
+                    dataset text NOT NULL,
+                    key text NOT NULL,
+                    value jsonb NOT NULL,
+                    updated_at timestamptz NOT NULL DEFAULT now(),
+                    PRIMARY KEY (dataset, key)
+                  );
+          - name: init-sql-job
+            base:
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                name: memory-init
+                namespace: facteur
+              spec:
+                template:
+                  spec:
+                    restartPolicy: OnFailure
+                    containers:
+                      - name: init
+                        image: postgres:16
+                        command: ["/bin/bash", "-lc"]
+                        args:
+                          - |
+                            psql "$POSTGRES_DSN" -v schema="$PGSCHEMA" -f /migrations/memory.sql
+                        env:
+                          - name: POSTGRES_DSN
+                            value: __POSTGRES_DSN__
+                          - name: PGSCHEMA
+                            value: ""
+                        volumeMounts:
+                          - name: migrations
+                            mountPath: /migrations
+                    volumes:
+                      - name: migrations
+                        configMap:
+                          name: memory-sql
+            patches:
+              - fromFieldPath: spec.dataset.schema
+                toFieldPath: spec.template.spec.containers[0].env[1].value
+              - fromFieldPath: spec.dataset.schema
+                toFieldPath: metadata.labels["memory.proompteng.ai/schema"]
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.dataset.name
+                toFieldPath: metadata.labels["memory.proompteng.ai/dataset"]
+                policy:
+                  fromFieldPath: Optional
+    - step: render-sql
+      functionRef:
+        name: function-memory-sql
+      input:
+        apiVersion: fn.proompteng.ai/v1alpha1
+        kind: MemorySqlRender
+        spec:
+          targetConfigMap: memory-sql
+          sqlKey: memory.sql
+          embeddingsDimensionFieldPath: spec.embeddings.dimension
+    - step: bind-provider-connection
+      functionRef:
+        name: function-memory-connection
+      input:
+        apiVersion: fn.proompteng.ai/v1alpha1
+        kind: MemoryConnectionBinding
+        spec:
+          providerRefFieldPath: spec.providerRef.name
+          resources:
+            job: init-sql-job
+            configMap: memory-sql
+          targetNamespaceFieldPaths:
+            job: metadata.namespace
+            configMap: metadata.namespace
+          dsnEnvVar: POSTGRES_DSN
+          schemaEnvVar: PGSCHEMA
+          connectionSecretRefFieldPath: status.connectionSecretRef
+          statusFieldPaths:
+            endpoint: status.endpoint
+            database: status.database
+            schema: status.schema

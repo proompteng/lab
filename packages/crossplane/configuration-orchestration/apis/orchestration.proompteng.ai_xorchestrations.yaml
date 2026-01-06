@@ -1,0 +1,74 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xorchestrations.orchestration.proompteng.ai
+spec:
+  group: orchestration.proompteng.ai
+  names:
+    kind: XOrchestration
+    plural: xorchestrations
+  claimNames:
+    kind: Orchestration
+    plural: orchestrations
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [entrypoint, steps]
+              properties:
+                entrypoint: { type: string }
+                steps:
+                  type: array
+                  items:
+                    type: object
+                    required: [name, kind]
+                    properties:
+                      name: { type: string }
+                      kind:
+                        type: string
+                        enum: [AgentRun, ToolRun, MemoryOp, ApprovalGate, SignalWait, SubOrchestration, Checkpoint]
+                      dependsOn:
+                        type: array
+                        items: { type: string }
+                      agentRef:
+                        type: string
+                      toolRef:
+                        type: string
+                      memoryRef:
+                        type: string
+                      policyRef:
+                        type: string
+                      with:
+                        type: object
+                        additionalProperties: { type: string }
+                policies:
+                  type: object
+                  properties:
+                    retries:
+                      type: object
+                      properties:
+                        limit: { type: integer, default: 0 }
+                    timeouts:
+                      type: object
+                      properties:
+                        totalSeconds: { type: integer }
+            status:
+              type: object
+              properties:
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status]
+                    properties:
+                      type: { type: string }
+                      status: { type: string }
+                      reason: { type: string }
+                      message: { type: string }
