@@ -717,38 +717,52 @@ const buildDefaultJudgePrompt = (input: {
 const listPullRequestByHead = async (repository: string, headBranch: string) => {
   const owner = repository.includes('/') ? (repository.split('/')[0] ?? '') : ''
   const headSelector = headBranch.includes(':') || !owner ? headBranch : `${owner}:${headBranch}`
-  const result = await runCommand('gh', [
-    'pr',
-    'list',
-    '--repo',
-    repository,
-    '--state',
-    'all',
-    '--head',
-    headSelector,
-    '--json',
-    'number,url,title,body,headRefOid,headRefName,baseRefName',
-    '--limit',
-    '1',
-  ])
-  if (result.exitCode !== 0) {
-    const message = result.stderr.trim() || result.stdout.trim()
-    throw new Error(`Failed to list PR for ${repository}#${headSelector}: ${message}`)
+  const selectors = Array.from(new Set([headSelector, headBranch].filter(Boolean)))
+  let lastError: Error | undefined
+
+  for (const selector of selectors) {
+    const result = await runCommand('gh', [
+      'pr',
+      'list',
+      '--repo',
+      repository,
+      '--state',
+      'all',
+      '--head',
+      selector,
+      '--json',
+      'number,url,title,body,headRefOid,headRefName,baseRefName',
+      '--limit',
+      '1',
+    ])
+    if (result.exitCode !== 0) {
+      const message = result.stderr.trim() || result.stdout.trim()
+      lastError = new Error(`Failed to list PR for ${repository}#${selector}: ${message}`)
+      continue
+    }
+    const parsed = JSON.parse(result.stdout || '[]') as Array<
+      PullRequestInfo & { headRefOid?: string | null; headRefName?: string | null; baseRefName?: string | null }
+    >
+    if (parsed.length === 0) {
+      lastError = new Error(`No pull request found for branch '${selector}' in ${repository}`)
+      continue
+    }
+    const entry = parsed[0]
+    return {
+      number: entry.number,
+      url: entry.url,
+      title: entry.title ?? null,
+      body: entry.body ?? null,
+      headSha: entry.headSha ?? entry.headRefOid ?? null,
+      headRef: entry.headRef ?? entry.headRefName ?? null,
+      baseRef: entry.baseRef ?? entry.baseRefName ?? null,
+    }
   }
-  const parsed = JSON.parse(result.stdout || '[]') as Array<
-    PullRequestInfo & { headRefOid?: string | null; headRefName?: string | null; baseRefName?: string | null }
-  >
-  if (parsed.length === 0) return null
-  const entry = parsed[0]
-  return {
-    number: entry.number,
-    url: entry.url,
-    title: entry.title ?? null,
-    body: entry.body ?? null,
-    headSha: entry.headSha ?? entry.headRefOid ?? null,
-    headRef: entry.headRef ?? entry.headRefName ?? null,
-    baseRef: entry.baseRef ?? entry.baseRefName ?? null,
+
+  if (lastError) {
+    throw lastError
   }
+  return null
 }
 
 const fetchPullRequestDetails = async (input: {
@@ -837,9 +851,25 @@ const fetchIssueDetails = async (input: {
 const updatePullRequest = async (repository: string, pr: PullRequestInfo, title: string, body: string) => {
   const args = ['pr', 'edit', String(pr.number), '--repo', repository, '--title', title, '--body', body]
   const result = await runCommand('gh', args)
-  if (result.exitCode !== 0) {
-    const message = result.stderr.trim() || result.stdout.trim()
-    throw new Error(`Failed to update PR ${pr.number}: ${message}`)
+  if (result.exitCode === 0) {
+    return
+  }
+  const message = result.stderr.trim() || result.stdout.trim()
+  const payload = JSON.stringify({ title, body })
+  const tmpDir = await mkdtemp(join(tmpdir(), 'codex-pr-update-'))
+  const payloadPath = join(tmpDir, 'payload.json')
+  await writeFile(payloadPath, payload, 'utf8')
+  const apiResult = await runCommand('gh', [
+    'api',
+    `repos/${repository}/pulls/${pr.number}`,
+    '--method',
+    'PATCH',
+    '--input',
+    payloadPath,
+  ])
+  if (apiResult.exitCode !== 0) {
+    const apiMessage = apiResult.stderr.trim() || apiResult.stdout.trim()
+    throw new Error(`Failed to update PR ${pr.number}: ${message || apiMessage}`)
   }
 }
 
