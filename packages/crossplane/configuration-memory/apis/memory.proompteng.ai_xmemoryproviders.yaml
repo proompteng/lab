@@ -1,0 +1,45 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xmemoryproviders.memory.proompteng.ai
+spec:
+  group: memory.proompteng.ai
+  names:
+    kind: XMemoryProvider
+    plural: xmemoryproviders
+  claimNames:
+    kind: MemoryProvider
+    plural: memoryproviders
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [type]
+              properties:
+                type:
+                  type: string
+                  enum: [postgres, redis, s3, custom]
+                postgres:
+                  type: object
+                  properties:
+                    clusterRef:
+                      type: object
+                      required: [name, namespace]
+                      properties:
+                        name: { type: string }
+                        namespace: { type: string }
+                    database: { type: string }
+                    schema: { type: string }
+                    enablePgVector: { type: boolean, default: true }
+                    connectionSecret:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        namespace: { type: string }

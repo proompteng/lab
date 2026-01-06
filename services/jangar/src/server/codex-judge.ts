@@ -3386,11 +3386,30 @@ const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: Co
 
 type RerunSubmissionResult = { status: 'submitted' | 'skipped' | 'failed'; error?: string }
 
+const resolveResumeArtifactKeys = async (run: CodexRunRecord) => {
+  try {
+    const artifactRecords = await store.listArtifactsForRun(run.id)
+    if (artifactRecords.length === 0) {
+      return { resumeKey: null, changesKey: null }
+    }
+    const artifactMap = buildArtifactIndex(artifactRecords.map((artifact) => toResolvedArtifact(artifact)))
+    return {
+      resumeKey: artifactMap.get('implementation-resume')?.key ?? null,
+      changesKey: artifactMap.get('implementation-changes')?.key ?? null,
+    }
+  } catch (error) {
+    console.warn('Failed to resolve resume artifact keys for rerun', error)
+    return { resumeKey: null, changesKey: null }
+  }
+}
+
 const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number): Promise<RerunSubmissionResult> => {
   const latestRun = await store.getRunById(run.id)
   if (!latestRun || latestRun.status === 'superseded') {
     return { status: 'skipped' }
   }
+
+  const resumeArtifacts = await resolveResumeArtifactKeys(run)
 
   const deliveryId = `jangar-${run.id}-attempt-${attempt}`
   const claimed = await store.claimRerunSubmission({ parentRunId: run.id, attempt, deliveryId })
@@ -3430,6 +3449,12 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
         `parent_run_uid=${run.workflowUid ?? run.id}`,
         `iteration_cycle=${iterationCycle}`,
       ]
+      if (resumeArtifacts.resumeKey) {
+        parameters.push(`implementation_resume_key=${resumeArtifacts.resumeKey}`)
+      }
+      if (resumeArtifacts.changesKey) {
+        parameters.push(`implementation_changes_key=${resumeArtifacts.changesKey}`)
+      }
       if (iterationsCount && iterationsCount > 0) {
         parameters.push(`implementation_iterations=${iterationsCount}`)
       }

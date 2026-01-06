@@ -152,6 +152,8 @@ func TestImplementer_Success(t *testing.T) {
 	require.Equal(t, "implementer-sa", input.ServiceAccount)
 	require.Equal(t, "github-codex-implementation-", input.GenerateNamePrefix)
 	require.Equal(t, "staging", input.Parameters["environment"])
+	require.Equal(t, "proompteng/lab", input.Parameters["repository"])
+	require.Equal(t, "1966", input.Parameters["issue_number"])
 	require.Equal(t, "codex/issue-1966-demo", input.Parameters["head"])
 	require.Equal(t, "main", input.Parameters["base"])
 	require.Equal(t, "Implement work", input.Parameters["prompt"])

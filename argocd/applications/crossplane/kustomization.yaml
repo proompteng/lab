@@ -3,6 +3,9 @@ kind: Kustomization
 namespace: crossplane
 resources:
   - namespace.yaml
+  - configurations/configuration-agents.yaml
+  - configurations/configuration-memory.yaml
+  - configurations/configuration-orchestration.yaml
 helmCharts:
   - name: crossplane
     repo: https://charts.crossplane.io/stable

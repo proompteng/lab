@@ -1,0 +1,125 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xagents.agents.proompteng.ai
+spec:
+  group: agents.proompteng.ai
+  names:
+    kind: XAgent
+    plural: xagents
+  claimNames:
+    kind: Agent
+    plural: agents
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - providerRef
+                - runtime
+              properties:
+                providerRef:
+                  type: object
+                  required: [name]
+                  properties:
+                    name:
+                      type: string
+                runtime:
+                  type: object
+                  required: [type]
+                  properties:
+                    type:
+                      type: string
+                      enum: [argo, temporal, job, custom]
+                    argo:
+                      type: object
+                      properties:
+                        workflowTemplate:
+                          type: string
+                        namespace:
+                          type: string
+                          default: argo-workflows
+                        serviceAccount:
+                          type: string
+                          default: codex-workflow
+                    temporal:
+                      type: object
+                      properties:
+                        workflowType:
+                          type: string
+                        taskQueue:
+                          type: string
+                    job:
+                      type: object
+                      properties:
+                        image:
+                          type: string
+                        command:
+                          type: array
+                          items:
+                            type: string
+                inputs:
+                  type: object
+                  properties:
+                    repository: { type: string }
+                    issueNumber: { type: integer }
+                    base: { type: string }
+                    head: { type: string }
+                    stage: { type: string }
+                payloads:
+                  type: object
+                  properties:
+                    rawEventB64: { type: string }
+                    eventBodyB64: { type: string }
+                    promptJson: { type: string }
+                resources:
+                  type: object
+                  properties:
+                    cpu: { type: string }
+                    memory: { type: string }
+                    ephemeral: { type: string }
+                env:
+                  type: array
+                  items:
+                    type: object
+                    required: [name, value]
+                    properties:
+                      name: { type: string }
+                      value: { type: string }
+                observability:
+                  type: object
+                  properties:
+                    natsEnabled: { type: boolean, default: true }
+                    kafkaCompletions: { type: boolean, default: true }
+                    grafEnabled: { type: boolean, default: false }
+                security:
+                  type: object
+                  properties:
+                    allowPrivileged: { type: boolean, default: false }
+                    allowedServiceAccounts:
+                      type: array
+                      items: { type: string }
+                    allowedSecrets:
+                      type: array
+                      items: { type: string }
+            status:
+              type: object
+              properties:
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status]
+                    properties:
+                      type: { type: string }
+                      status: { type: string }
+                      reason: { type: string }
+                      message: { type: string }

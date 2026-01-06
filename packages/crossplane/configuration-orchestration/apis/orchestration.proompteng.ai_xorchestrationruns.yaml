@@ -1,0 +1,50 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xorchestrationruns.orchestration.proompteng.ai
+spec:
+  group: orchestration.proompteng.ai
+  names:
+    kind: XOrchestrationRun
+    plural: xorchestrationruns
+  claimNames:
+    kind: OrchestrationRun
+    plural: orchestrationruns
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [orchestrationRef]
+              properties:
+                orchestrationRef:
+                  type: object
+                  required: [name]
+                  properties:
+                    name: { type: string }
+                parameters:
+                  type: object
+                  additionalProperties: { type: string }
+                deliveryId: { type: string }
+            status:
+              type: object
+              properties:
+                phase: { type: string }
+                runId: { type: string }
+                startedAt: { type: string }
+                finishedAt: { type: string }
+                stepStatuses:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name: { type: string }
+                      phase: { type: string }
+                      startedAt: { type: string }
+                      finishedAt: { type: string }

@@ -4,10 +4,13 @@ metadata:
   name: codex-autonomous
   namespace: argo-workflows
   annotations:
-    codex-universal-image-digest: sha256:24c1b46ad8f6f886135f9552f3ca260cc557bc2b4a644ec14bee2054b35ad46c
+    codex-universal-image-digest: latest
 spec:
   serviceAccountName: codex-workflow
   parallelism: 1
+  synchronization:
+    mutex:
+      name: "codex-{{=sprig.replace(\"/\", \"-\", workflow.parameters.repository)}}-{{workflow.parameters.issue_number}}"
   entrypoint: codex-dag
   arguments:
     parameters:
@@ -45,6 +48,10 @@ spec:
         value: '{}'
       - name: eventBody
         value: '{}'
+      - name: implementation_resume_key
+        value: ''
+      - name: implementation_changes_key
+        value: ''
   volumeClaimTemplates:
     - metadata:
         name: workdir
@@ -95,6 +102,10 @@ spec:
                   value: '{{workflow.parameters.implementation_iterations}}'
                 - name: judge_commit_sha
                   value: '{{workflow.parameters.judge_commit_sha}}'
+                - name: implementation_resume_key
+                  value: '{{workflow.parameters.implementation_resume_key}}'
+                - name: implementation_changes_key
+                  value: '{{workflow.parameters.implementation_changes_key}}'
           - name: judge
             dependencies: [implementation-loop]
             template: codex-run
@@ -128,6 +139,10 @@ spec:
                   value: '{{workflow.parameters.implementation_iterations}}'
                 - name: judge_commit_sha
                   value: '{{workflow.parameters.judge_commit_sha}}'
+                - name: implementation_resume_key
+                  value: '{{workflow.parameters.implementation_resume_key}}'
+                - name: implementation_changes_key
+                  value: '{{workflow.parameters.implementation_changes_key}}'
           - name: judge-run-complete
             dependencies: [judge]
             continueOn:
@@ -300,6 +315,8 @@ spec:
           - name: iteration_cycle
           - name: iterations
           - name: judge_commit_sha
+          - name: implementation_resume_key
+          - name: implementation_changes_key
       steps:
         - - name: implementation
             template: codex-run
@@ -333,6 +350,10 @@ spec:
                   value: '{{inputs.parameters.iterations}}'
                 - name: judge_commit_sha
                   value: '{{inputs.parameters.judge_commit_sha}}'
+                - name: implementation_resume_key
+                  value: '{{inputs.parameters.implementation_resume_key}}'
+                - name: implementation_changes_key
+                  value: '{{inputs.parameters.implementation_changes_key}}'
         - - name: run-complete
             continueOn:
               failed: true
@@ -414,6 +435,37 @@ spec:
           - name: iteration_cycle
           - name: iterations
           - name: judge_commit_sha
+          - name: implementation_resume_key
+          - name: implementation_changes_key
+        artifacts:
+          - name: implementation-resume
+            path: /workspace/.codex-resume/implementation-resume.json
+            optional: true
+            s3:
+              endpoint: observability-minio.minio.svc.cluster.local:9000
+              bucket: argo-workflows
+              key: "{{inputs.parameters.implementation_resume_key}}"
+              insecure: true
+              accessKeySecret:
+                name: observability-minio-creds
+                key: accesskey
+              secretKeySecret:
+                name: observability-minio-creds
+                key: secretkey
+          - name: implementation-changes
+            path: /workspace/.codex-resume/implementation-changes.tar.gz
+            optional: true
+            s3:
+              endpoint: observability-minio.minio.svc.cluster.local:9000
+              bucket: argo-workflows
+              key: "{{inputs.parameters.implementation_changes_key}}"
+              insecure: true
+              accessKeySecret:
+                name: observability-minio-creds
+                key: accesskey
+              secretKeySecret:
+                name: observability-minio-creds
+                key: secretkey
       container:
         image: registry.ide-newton.ts.net/lab/codex-universal:latest
         imagePullPolicy: Always
@@ -530,6 +582,8 @@ spec:
             value: '{{inputs.parameters.iteration_cycle}}'
           - name: CODEX_ITERATIONS_COUNT
             value: '{{inputs.parameters.iterations}}'
+          - name: CODEX_PRESERVE_WORKTREE
+            value: '{{=sprig.ternary("1", "0", (sprig.gt(int(inputs.parameters.iteration), 1) || sprig.gt(int(inputs.parameters.iteration_cycle), 1) || sprig.gt(int(inputs.parameters.attempt), 1) || (inputs.parameters.implementation_resume_key != "")))}}'
           - name: CODEX_JUDGE_COMMIT_SHA
             value: '{{inputs.parameters.judge_commit_sha}}'
           - name: RUN_ID
@@ -696,6 +750,17 @@ spec:
             fi
 
             git -C "$WORKTREE_DIR" fetch --all --prune
+
+            RESUME_DIR="/workspace/.codex-resume"
+            RESUME_METADATA="${RESUME_DIR}/implementation-resume.json"
+            RESUME_ARCHIVE="${RESUME_DIR}/implementation-changes.tar.gz"
+            if [[ -f "$RESUME_METADATA" ]]; then
+              mkdir -p "/workspace/lab/.codex"
+              cp "$RESUME_METADATA" "/workspace/lab/.codex/implementation-resume.json"
+            fi
+            if [[ -f "$RESUME_ARCHIVE" ]]; then
+              cp "$RESUME_ARCHIVE" "/workspace/lab/.codex-implementation-changes.tar.gz"
+            fi
 
             # Ensure judge output files exist for all stages to satisfy Argo output collection.
             : > "/workspace/lab/.codex-judge-decision.txt"

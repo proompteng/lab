@@ -1,0 +1,49 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: orchestration-argo-template
+  labels:
+    runtime: argo
+spec:
+  compositeTypeRef:
+    apiVersion: orchestration.proompteng.ai/v1alpha1
+    kind: XOrchestration
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: workflow-template
+            base:
+              apiVersion: argoproj.io/v1alpha1
+              kind: WorkflowTemplate
+              metadata:
+                name: ""
+                namespace: argo-workflows
+              spec:
+                entrypoint: ""
+                templates:
+                  - name: main
+                    dag:
+                      tasks: []
+            patches:
+              - fromFieldPath: spec.entrypoint
+                toFieldPath: spec.entrypoint
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+                policy:
+                  fromFieldPath: Optional
+    - step: build-argo-dag
+      functionRef:
+        name: function-orchestration-dag
+      input:
+        apiVersion: fn.proompteng.ai/v1alpha1
+        kind: OrchestrationDag
+        spec:
+          stepsFieldPath: spec.steps
+          entrypointFieldPath: spec.entrypoint
+          targetWorkflowTemplate: workflow-template

@@ -333,6 +333,12 @@ func (i *implementer) execute(ctx context.Context, span trace.Span, deliveryID s
 	parameters := cloneParameters(i.cfg.Parameters)
 	parameters["rawEvent"] = base64.StdEncoding.EncodeToString(rawEvent)
 	parameters["eventBody"] = base64.StdEncoding.EncodeToString(eventBody)
+	if repository := strings.TrimSpace(task.GetRepository()); repository != "" {
+		parameters["repository"] = repository
+	}
+	if issueNumber := task.GetIssueNumber(); issueNumber > 0 {
+		parameters["issue_number"] = strconv.FormatInt(issueNumber, 10)
+	}
 	parameters["head"] = task.GetHead()
 	parameters["base"] = base
 	parameters["prompt"] = task.GetPrompt()

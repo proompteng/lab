@@ -1,0 +1,48 @@
+name: crossplane-xpkg
+on:
+  pull_request:
+    paths:
+      - 'packages/crossplane/**'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/crossplane/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          if [ -f crp ]; then
+            sudo mv crp /usr/local/bin/crossplane
+          else
+            sudo mv crossplane /usr/local/bin/crossplane
+          fi
+      - name: Build agents package
+        working-directory: packages/crossplane/configuration-agents
+        run: |
+          crossplane xpkg build --package-root=. --ignore='**/examples/**'
+      - name: Build memory package
+        working-directory: packages/crossplane/configuration-memory
+        run: |
+          crossplane xpkg build --package-root=. --ignore='**/examples/**'
+      - name: Build orchestration package
+        working-directory: packages/crossplane/configuration-orchestration
+        run: |
+          crossplane xpkg build --package-root=. --ignore='**/examples/**'
+      - name: Push packages (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          TARGET_REGISTRY: registry.ide-newton.ts.net/lab
+        run: |
+          set -euo pipefail
+          TAG_SHA="${GITHUB_SHA::12}"
+          for name in agents memory orchestration; do
+            pkg_dir="packages/crossplane/configuration-${name}"
+            pkg_file="$(ls "${pkg_dir}"/*.xpkg)"
+            crossplane xpkg push -f "${pkg_file}" "${TARGET_REGISTRY}/configuration-${name}:latest"
+            crossplane xpkg push -f "${pkg_file}" "${TARGET_REGISTRY}/configuration-${name}:${TAG_SHA}"
+          done
