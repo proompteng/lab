@@ -93,11 +93,18 @@ type CodexNotifyLogExcerpt = {
 
 type WorktreeReuseState = {
   preserveWorktree: boolean
+  reuseRequired: boolean
   resetPerformed: boolean
   checkoutCreated: boolean
   initialHeadSha: string | null
   headShaAfterSync: string | null
   headShaChanged: boolean
+  previousMarkerDetected: boolean
+  previousHeadSha: string | null
+  previousHeadShaMatches: boolean | null
+  previousIteration: number | null
+  previousIterationCycle: number | null
+  previousUpdatedAt: string | null
   resumeMetadataDetected: boolean
   resumeArchiveDetected: boolean
   resumeApplied: boolean
@@ -1399,9 +1406,18 @@ interface ResumeContext {
   metadata: ResumeMetadataFile
 }
 
+type WorktreeReuseMarker = {
+  headSha: string | null
+  iteration: number | null
+  iterationCycle: number | null
+  updatedAt: string
+}
+
 const RESUME_METADATA_RELATIVE_PATH = ['.codex', 'implementation-resume.json']
+const WORKTREE_REUSE_MARKER_RELATIVE_PATH = ['.codex', 'worktree-reuse.json']
 
 const getResumeMetadataPath = (worktree: string) => join(worktree, ...RESUME_METADATA_RELATIVE_PATH)
+const getWorktreeReuseMarkerPath = (worktree: string) => join(worktree, ...WORKTREE_REUSE_MARKER_RELATIVE_PATH)
 
 const isSafeRelativePath = (filePath: string) => {
   return !!filePath && !filePath.startsWith('/') && !filePath.includes('..')
@@ -1498,6 +1514,62 @@ const readResumeContext = async (path: string, logger: CodexLogger): Promise<Res
     }
     logger.warn(`Failed to parse implementation resume metadata at ${path}`, error)
     return undefined
+  }
+}
+
+const readWorktreeReuseMarker = async (path: string, logger: CodexLogger): Promise<WorktreeReuseMarker | undefined> => {
+  if (!(await pathExists(path))) {
+    return undefined
+  }
+  try {
+    const raw = await readFile(path, 'utf8')
+    const parsed = JSON.parse(raw) as Partial<WorktreeReuseMarker>
+    if (typeof parsed.updatedAt !== 'string') {
+      logger.warn(`Invalid worktree reuse marker at ${path}`)
+      return undefined
+    }
+    return {
+      headSha: typeof parsed.headSha === 'string' ? parsed.headSha : null,
+      iteration: typeof parsed.iteration === 'number' && Number.isFinite(parsed.iteration) ? parsed.iteration : null,
+      iterationCycle:
+        typeof parsed.iterationCycle === 'number' && Number.isFinite(parsed.iterationCycle)
+          ? parsed.iterationCycle
+          : null,
+      updatedAt: parsed.updatedAt,
+    }
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return undefined
+    }
+    logger.warn(`Failed to parse worktree reuse marker at ${path}`, error)
+    return undefined
+  }
+}
+
+const writeWorktreeReuseMarker = async ({
+  worktree,
+  iteration,
+  iterationCycle,
+  logger,
+}: {
+  worktree: string
+  iteration: number | null
+  iterationCycle: number | null
+  logger: CodexLogger
+}) => {
+  const markerPath = getWorktreeReuseMarkerPath(worktree)
+  try {
+    const headSha = await resolveHeadSha(worktree, logger)
+    const marker: WorktreeReuseMarker = {
+      headSha,
+      iteration,
+      iterationCycle,
+      updatedAt: new Date().toISOString(),
+    }
+    await ensureFileDirectory(markerPath)
+    await writeFile(markerPath, JSON.stringify(marker, null, 2), 'utf8')
+  } catch (error) {
+    logger.warn('Failed to write worktree reuse marker', error)
   }
 }
 
@@ -1975,16 +2047,27 @@ export const runCodexImplementation = async (eventPath: string) => {
   }
 
   const preserveWorktree = parseBoolean(process.env.CODEX_PRESERVE_WORKTREE, false)
+  const worktreeReuseRequired = parseBoolean(process.env.CODEX_WORKTREE_REUSE_REQUIRED, false)
+  const worktreeReuseMarkerPath = getWorktreeReuseMarkerPath(worktree)
+  const previousMarker = await readWorktreeReuseMarker(worktreeReuseMarkerPath, consoleLogger)
+  const previousMarkerDetected = Boolean(previousMarker)
   const initialHeadSha = await resolveHeadSha(worktree, consoleLogger)
   const resumeMetadataDetected = await pathExists(resumeMetadataPath)
   const resumeArchiveDetected = await pathExists(archivePath)
   const worktreeReuseState: WorktreeReuseState = {
     preserveWorktree,
+    reuseRequired: worktreeReuseRequired,
     resetPerformed: false,
     checkoutCreated: false,
     initialHeadSha,
     headShaAfterSync: null,
     headShaChanged: false,
+    previousMarkerDetected,
+    previousHeadSha: previousMarker?.headSha ?? null,
+    previousHeadShaMatches: null,
+    previousIteration: previousMarker?.iteration ?? null,
+    previousIterationCycle: previousMarker?.iterationCycle ?? null,
+    previousUpdatedAt: previousMarker?.updatedAt ?? null,
     resumeMetadataDetected,
     resumeArchiveDetected,
     resumeApplied: false,
@@ -2047,6 +2130,16 @@ export const runCodexImplementation = async (eventPath: string) => {
     Boolean(worktreeReuseState.initialHeadSha) &&
     Boolean(worktreeReuseState.headShaAfterSync) &&
     worktreeReuseState.initialHeadSha !== worktreeReuseState.headShaAfterSync
+  worktreeReuseState.previousHeadShaMatches =
+    Boolean(worktreeReuseState.previousHeadSha) &&
+    Boolean(worktreeReuseState.headShaAfterSync) &&
+    worktreeReuseState.previousHeadSha === worktreeReuseState.headShaAfterSync
+
+  if (worktreeReuseRequired && !previousMarkerDetected && (iteration ?? 1) > 1) {
+    throw new Error(
+      `Worktree reuse is required for iteration ${iteration} but no reuse marker was found at ${worktreeReuseMarkerPath}`,
+    )
+  }
 
   const planCommentId =
     event.planCommentId !== undefined && event.planCommentId !== null ? String(event.planCommentId) : ''
@@ -2697,6 +2790,7 @@ export const runCodexImplementation = async (eventPath: string) => {
           worktreeReuse: worktreeReuseState,
           logger,
         })
+        await writeWorktreeReuseMarker({ worktree, iteration, iterationCycle, logger })
       }
     } catch (error) {
       logger.error('Failed while finalizing implementation artifacts', error)

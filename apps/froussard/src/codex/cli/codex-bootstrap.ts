@@ -187,6 +187,7 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
     attempt > 1 ||
     (await pathExists(resumeMetadataPath)) ||
     (await pathExists(resumeArchivePath))
+  const worktreeReuseRequired = parseBool(process.env.CODEX_WORKTREE_REUSE_REQUIRED)
 
   configureNonInteractiveEnvironment()
   normalizeDockerEnv()
@@ -206,6 +207,11 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
       await $`git -C ${targetDir} reset --hard origin/${baseBranch}`
     }
   } else {
+    if (worktreeReuseRequired) {
+      throw new Error(
+        `Worktree reuse is required but no git checkout exists at ${targetDir}. Ensure iteration 2+ reuses the prior PVC.`,
+      )
+    }
     await rm(targetDir, { recursive: true, force: true })
     await $`gh repo clone ${repoUrl} ${targetDir}`
     await $`git -C ${targetDir} checkout ${baseBranch}`

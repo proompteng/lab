@@ -251,6 +251,26 @@ describe.sequential('runCodexImplementation', () => {
         resumeArchiveDetected: true,
       }),
     )
+
+    const markerRaw = await readFile(join(workdir, '.codex', 'worktree-reuse.json'), 'utf8')
+    const marker = JSON.parse(markerRaw) as Record<string, unknown>
+    expect(marker.headSha).toBe(finalSha)
+  })
+
+  it('fails when worktree reuse is required but no marker exists', async () => {
+    process.env.CODEX_WORKTREE_REUSE_REQUIRED = '1'
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      iteration: 2,
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow(/worktree reuse is required/i)
   })
 
   it('throws when the event file is missing', async () => {

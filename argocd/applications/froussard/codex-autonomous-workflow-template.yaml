@@ -584,6 +584,8 @@ spec:
             value: '{{inputs.parameters.iterations}}'
           - name: CODEX_PRESERVE_WORKTREE
             value: '{{=sprig.ternary("1", "0", (sprig.gt(int(inputs.parameters.iteration), 1) || sprig.gt(int(inputs.parameters.iteration_cycle), 1) || sprig.gt(int(inputs.parameters.attempt), 1) || (inputs.parameters.implementation_resume_key != "")))}}'
+          - name: CODEX_WORKTREE_REUSE_REQUIRED
+            value: '{{=sprig.ternary("1", "0", sprig.gt(int(inputs.parameters.iteration), 1))}}'
           - name: CODEX_JUDGE_COMMIT_SHA
             value: '{{inputs.parameters.judge_commit_sha}}'
           - name: RUN_ID
