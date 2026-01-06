@@ -1,0 +1,32 @@
+name: crossplane-xpkg
+on:
+  pull_request:
+    paths:
+      - 'packages/crossplane/**'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/crossplane/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          if [ -f crp ]; then
+            sudo mv crp /usr/local/bin/crossplane
+          else
+            sudo mv crossplane /usr/local/bin/crossplane
+          fi
+      - name: Build agents package
+        run: |
+          crossplane xpkg build --package-root=packages/crossplane/configuration-agents --ignore='**/examples/**'
+      - name: Build memory package
+        run: |
+          crossplane xpkg build --package-root=packages/crossplane/configuration-memory --ignore='**/examples/**'
+      - name: Build orchestration package
+        run: |
+          crossplane xpkg build --package-root=packages/crossplane/configuration-orchestration --ignore='**/examples/**'
