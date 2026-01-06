@@ -8,6 +8,8 @@ metadata:
 spec:
   serviceAccountName: codex-workflow
   synchronization:
+    mutex:
+      name: "codex-{{=sprig.replace(\"/\", \"-\", workflow.parameters.repository)}}-{{workflow.parameters.issue_number}}"
     semaphore:
       configMapKeyRef:
         name: argo-workflows-implementation-semaphore
@@ -15,6 +17,10 @@ spec:
   entrypoint: implement
   arguments:
     parameters:
+      - name: repository
+        value: ''
+      - name: issue_number
+        value: ''
       - name: rawEvent
         value: '{}'
       - name: eventBody
@@ -37,6 +43,8 @@ spec:
     - name: implement
       inputs:
         parameters:
+          - name: repository
+          - name: issue_number
           - name: rawEvent
           - name: eventBody
           - name: head

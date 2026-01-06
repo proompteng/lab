@@ -1096,6 +1096,27 @@ const commitWorkingTreeIfNeeded = async ({
   return true
 }
 
+const pushHeadBranch = async ({
+  worktree,
+  headBranch,
+  logger,
+}: {
+  worktree: string
+  headBranch: string
+  logger: CodexLogger
+}) => {
+  if (!headBranch) {
+    throw new Error('Head branch is required to push implementation changes')
+  }
+  const pushRef = `HEAD:${headBranch}`
+  const result = await runCommand('git', ['push', '-u', 'origin', pushRef], { cwd: worktree })
+  if (result.exitCode !== 0) {
+    const message = result.stderr.trim() || result.stdout.trim()
+    throw new Error(`git push failed (${result.exitCode}): ${message}`)
+  }
+  logger.info('Pushed implementation branch', { headBranch })
+}
+
 const truncateContextLine = (value: string, max = 400) => {
   if (value.length <= max) return value
   return `${value.slice(0, max)}…`
@@ -2361,6 +2382,7 @@ export const runCodexImplementation = async (eventPath: string) => {
         issueTitle,
         logger,
       })
+      await pushHeadBranch({ worktree, headBranch, logger })
     }
 
     const logExcerpt = await collectLogExcerpts(
