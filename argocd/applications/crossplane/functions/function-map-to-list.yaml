@@ -1,0 +1,6 @@
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-map-to-list
+spec:
+  package: registry.ide-newton.ts.net/lab/function-map-to-list:latest

@@ -7,6 +7,8 @@ resources:
   - configurations/configuration-memory.yaml
   - configurations/configuration-orchestration.yaml
   - functions/function-patch-and-transform.yaml
+  - functions/function-map-to-list.yaml
+  - functions/function-orchestration-dag.yaml
   - functions/function-memory-sql.yaml
   - functions/function-memory-connection.yaml
 helmCharts:
