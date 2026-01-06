@@ -22,7 +22,6 @@ spec:
               apiVersion: v1
               kind: ConfigMap
               metadata:
-                name: memory-sql
                 namespace: facteur
               data:
                 memory.sql: |
@@ -57,12 +56,18 @@ spec:
                     updated_at timestamptz NOT NULL DEFAULT now(),
                     PRIMARY KEY (dataset, key)
                   );
+            patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+                transforms:
+                  - type: string
+                    string:
+                      fmt: '%s-memory-sql'
           - name: init-sql-job
             base:
               apiVersion: batch/v1
               kind: Job
               metadata:
-                name: memory-init
                 namespace: facteur
               spec:
                 template:
@@ -86,8 +91,20 @@ spec:
                     volumes:
                       - name: migrations
                         configMap:
-                          name: memory-sql
+                          name: ""
             patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+                transforms:
+                  - type: string
+                    string:
+                      fmt: '%s-memory-init'
+              - fromFieldPath: metadata.name
+                toFieldPath: spec.template.spec.volumes[0].configMap.name
+                transforms:
+                  - type: string
+                    string:
+                      fmt: '%s-memory-sql'
               - fromFieldPath: spec.dataset.schema
                 toFieldPath: spec.template.spec.containers[0].env[1].value
               - fromFieldPath: spec.dataset.schema
