@@ -686,7 +686,6 @@ spec:
             if command -v jq >/dev/null 2>&1; then
               TMP_EVENT=$(mktemp)
               jq \
-                --arg prompt "{{inputs.parameters.prompt}}" \
                 --arg stage "{{inputs.parameters.stage}}" \
                 --arg repo "{{inputs.parameters.repository}}" \
                 --arg issue "{{inputs.parameters.issue_number}}" \
@@ -697,7 +696,7 @@ spec:
                 --arg iteration "{{inputs.parameters.iteration}}" \
                 --arg iterationCycle "{{inputs.parameters.iteration_cycle}}" \
                 --arg iterations "{{inputs.parameters.iterations}}" \
-                '.prompt = (if ($prompt | length) > 0 then $prompt else .prompt end) | .stage = ($stage // .stage) | .repository = ($repo // .repository) | .issueNumber = ($issue // .issueNumber) | .base = ($base // .base) | .head = ($head // .head) | .attempt = ($attempt // .attempt) | .parentRunUid = ($parentRunUid // .parentRunUid) | .iteration = (if ($iteration | length) > 0 then ($iteration | tonumber?) else .iteration end) | .iteration_cycle = (if ($iterationCycle | length) > 0 then ($iterationCycle | tonumber?) else .iteration_cycle end) | .iterations = (if ($iterations | length) > 0 then ($iterations | tonumber?) else .iterations end)' \
+                '.stage = ($stage // .stage) | .repository = ($repo // .repository) | .issueNumber = ($issue // .issueNumber) | .base = ($base // .base) | .head = ($head // .head) | .attempt = ($attempt // .attempt) | .parentRunUid = ($parentRunUid // .parentRunUid) | .iteration = (if ($iteration | length) > 0 then ($iteration | tonumber?) else .iteration end) | .iteration_cycle = (if ($iterationCycle | length) > 0 then ($iterationCycle | tonumber?) else .iteration_cycle end) | .iterations = (if ($iterations | length) > 0 then ($iterations | tonumber?) else .iterations end)' \
                 "$EVENT_FILE" > "$TMP_EVENT" && mv "$TMP_EVENT" "$EVENT_FILE"
             fi
 

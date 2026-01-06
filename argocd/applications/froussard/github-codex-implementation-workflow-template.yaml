@@ -723,7 +723,6 @@ spec:
             if command -v jq >/dev/null 2>&1; then
               TMP_EVENT=$(mktemp)
               jq \
-                --arg prompt "{{inputs.parameters.prompt}}" \
                 --arg stage "{{inputs.parameters.stage}}" \
                 --arg repo "{{inputs.parameters.repository}}" \
                 --arg issue "{{inputs.parameters.issue_number}}" \
@@ -731,7 +730,7 @@ spec:
                 --arg head "{{inputs.parameters.head}}" \
                 --arg iteration "{{inputs.parameters.iteration}}" \
                 --arg iterationCycle "{{inputs.parameters.iteration_cycle}}" \
-                '.prompt = (if ($prompt | length) > 0 then $prompt else .prompt end) | .stage = ($stage // .stage) | .repository = ($repo // .repository) | .issueNumber = ($issue // .issueNumber) | .base = ($base // .base) | .head = ($head // .head) | .iteration = (if ($iteration | length) > 0 then ($iteration | tonumber?) else .iteration end) | .iteration_cycle = (if ($iterationCycle | length) > 0 then ($iterationCycle | tonumber?) else .iteration_cycle end)' \
+                '.stage = ($stage // .stage) | .repository = ($repo // .repository) | .issueNumber = ($issue // .issueNumber) | .base = ($base // .base) | .head = ($head // .head) | .iteration = (if ($iteration | length) > 0 then ($iteration | tonumber?) else .iteration end) | .iteration_cycle = (if ($iterationCycle | length) > 0 then ($iterationCycle | tonumber?) else .iteration_cycle end)' \
                 "$EVENT_FILE" > "$TMP_EVENT" && mv "$TMP_EVENT" "$EVENT_FILE"
             fi
 
