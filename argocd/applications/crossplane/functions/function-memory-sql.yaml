@@ -1,0 +1,6 @@
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-memory-sql
+spec:
+  package: registry.ide-newton.ts.net/lab/function-memory-sql:latest

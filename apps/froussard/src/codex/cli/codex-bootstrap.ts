@@ -174,7 +174,19 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
   const targetDir = process.env.TARGET_DIR ?? worktreeDefault
   const baseBranch = process.env.BASE_BRANCH ?? 'main'
   const headBranch = process.env.HEAD_BRANCH ?? ''
-  const preserveWorktree = parseBool(process.env.CODEX_PRESERVE_WORKTREE)
+  const resumeDir = process.env.CODEX_RESUME_DIR?.trim() || '/workspace/.codex-resume'
+  const resumeMetadataPath = join(resumeDir, 'implementation-resume.json')
+  const resumeArchivePath = join(resumeDir, 'implementation-changes.tar.gz')
+  const iteration = parsePositiveInt(process.env.CODEX_ITERATION, 0)
+  const iterationCycle = parsePositiveInt(process.env.CODEX_ITERATION_CYCLE, 0)
+  const attempt = parsePositiveInt(process.env.CODEX_ATTEMPT, 0)
+  const preserveWorktree =
+    parseBool(process.env.CODEX_PRESERVE_WORKTREE) ||
+    iteration > 1 ||
+    iterationCycle > 1 ||
+    attempt > 1 ||
+    (await pathExists(resumeMetadataPath)) ||
+    (await pathExists(resumeArchivePath))
 
   configureNonInteractiveEnvironment()
   normalizeDockerEnv()
