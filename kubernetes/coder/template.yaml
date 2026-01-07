@@ -1,5 +1,5 @@
 name: k8s-arm64
-version: "1.0.19"
+version: "1.0.25"
 display_name: Kubernetes Workspace (arm64)
 description: Coder workspace on Kubernetes with arm64 agent and code-server.
 icon: https://raw.githubusercontent.com/coder/coder/main/site/static/icon/code.svg
