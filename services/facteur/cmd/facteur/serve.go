@@ -55,14 +55,16 @@ func NewServeCommand() *cobra.Command {
 			}
 			cfg.Postgres.DSN = dsn
 
+			implementerNamespace := firstNonEmpty(cfg.Implementer.AutonomousNamespace, cfg.Implementer.Namespace, cfg.Argo.Namespace, "jangar")
+			implementerTemplate := firstNonEmpty(cfg.Implementer.AutonomousWorkflowTemplate, "codex-autonomous")
 			cmd.Printf(
 				"config: argo ns=%s template=%s sa=%s implementer_enabled=%t implementer_ns=%s implementer_template=%s redis=%s postgres=%s listen=%s\n",
 				cfg.Argo.Namespace,
 				cfg.Argo.WorkflowTemplate,
 				cfg.Argo.ServiceAccount,
 				cfg.Implementer.Enabled,
-				firstNonEmpty(cfg.Implementer.Namespace, cfg.Argo.Namespace),
-				firstNonEmpty(cfg.Implementer.WorkflowTemplate, cfg.Argo.WorkflowTemplate),
+				implementerNamespace,
+				implementerTemplate,
 				redactURL(cfg.Redis.URL),
 				redactURL(cfg.Postgres.DSN),
 				cfg.Server.ListenAddress,
@@ -142,7 +144,6 @@ func NewServeCommand() *cobra.Command {
 				if implementerCfg.ServiceAccount == "" {
 					implementerCfg.ServiceAccount = cfg.Argo.ServiceAccount
 				}
-				implementerCfg.GenerateNamePrefix = "github-codex-implementation-"
 				if implementerCfg.AutonomousWorkflowTemplate == "" {
 					implementerCfg.AutonomousWorkflowTemplate = "codex-autonomous"
 				}
@@ -159,10 +160,12 @@ func NewServeCommand() *cobra.Command {
 					Enabled:     true,
 					Implementer: implementer,
 				}
+				effectiveNamespace := firstNonEmpty(implementerCfg.AutonomousNamespace, implementerCfg.Namespace, "jangar")
+				effectiveTemplate := firstNonEmpty(implementerCfg.AutonomousWorkflowTemplate, "codex-autonomous")
 				cmd.Printf(
 					"codex implementation orchestration enabled (namespace=%s template=%s)\n",
-					implementerCfg.Namespace,
-					implementerCfg.WorkflowTemplate,
+					effectiveNamespace,
+					effectiveTemplate,
 				)
 			}
 

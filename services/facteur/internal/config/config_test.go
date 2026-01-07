@@ -33,7 +33,7 @@ codex_implementation_orchestrator:
   enabled: true
   namespace: implementation
   autonomous_namespace: jangar
-  workflow_template: github-codex-implementation
+  workflow_template: codex-autonomous
   service_account: implementer
   autonomous_service_account: jangar-inspector
   parameters:
@@ -71,7 +71,7 @@ codex_listener:
 		require.True(t, cfg.Implementer.Enabled)
 		require.Equal(t, "implementation", cfg.Implementer.Namespace)
 		require.Equal(t, "jangar", cfg.Implementer.AutonomousNamespace)
-		require.Equal(t, "github-codex-implementation", cfg.Implementer.WorkflowTemplate)
+		require.Equal(t, "codex-autonomous", cfg.Implementer.WorkflowTemplate)
 		require.Equal(t, "implementer", cfg.Implementer.ServiceAccount)
 		require.Equal(t, "jangar-inspector", cfg.Implementer.AutonomousServiceAccount)
 		require.Equal(t, map[string]string{"eventbody": "{}"}, cfg.Implementer.Parameters)
@@ -106,7 +106,7 @@ argo:
 		t.Setenv("FACTEUR_ARGO_WORKFLOW_TEMPLATE", "env-template")
 		t.Setenv("FACTEUR_POSTGRES_DSN", "postgres://override")
 		t.Setenv("FACTEUR_CODEX_ENABLE_IMPLEMENTATION_ORCHESTRATION", "true")
-		t.Setenv("FACTEUR_CODEX_IMPLEMENTATION_ORCHESTRATOR_WORKFLOW_TEMPLATE", "env-implementation")
+		t.Setenv("FACTEUR_CODEX_IMPLEMENTATION_ORCHESTRATOR_WORKFLOW_TEMPLATE", "env-autonomous")
 
 		cfg, err := config.LoadWithOptions(config.Options{Path: path, EnvPrefix: "FACTEUR"})
 		require.NoError(t, err)
@@ -116,7 +116,7 @@ argo:
 		require.Equal(t, ":8080", cfg.Server.ListenAddress)
 		require.False(t, cfg.Codex.Enabled)
 		require.True(t, cfg.Implementer.Enabled)
-		require.Equal(t, "env-implementation", cfg.Implementer.WorkflowTemplate)
+		require.Equal(t, "env-autonomous", cfg.Implementer.WorkflowTemplate)
 	})
 
 	t.Run("missing required fields", func(t *testing.T) {

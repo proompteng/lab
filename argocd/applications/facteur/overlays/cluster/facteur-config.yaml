@@ -15,7 +15,7 @@ data:
       enabled: true
       namespace: argo-workflows
       autonomous_namespace: jangar
-      workflow_template: github-codex-implementation
+      workflow_template: codex-autonomous
       autonomous_workflow_template: codex-autonomous
       service_account: codex-workflow
       autonomous_service_account: jangar-inspector

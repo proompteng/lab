@@ -106,7 +106,7 @@ Cluster deployments rely on a namespace-scoped Grafana Alloy deployment (`argocd
 
 ### Codex implementation orchestration
 
-Implementation runs through the implementation orchestrator (`codex_implementation_orchestrator.enabled=true`, or the env alias `FACTEUR_CODEX_ENABLE_IMPLEMENTATION_ORCHESTRATION`) to submit the `github-codex-implementation` workflow with the same persistence + idempotency guarantees. When a Codex task is marked autonomous, Facteur switches to the `codex-autonomous` workflow template (configurable via `codex_implementation_orchestrator.autonomous_workflow_template`).
+Implementation runs through the implementation orchestrator (`codex_implementation_orchestrator.enabled=true`, or the env alias `FACTEUR_CODEX_ENABLE_IMPLEMENTATION_ORCHESTRATION`) and submits the `codex-autonomous` workflow template (configurable via `codex_implementation_orchestrator.autonomous_workflow_template`, defaulting to `codex-autonomous` in the `jangar` namespace).
 
 ## Container image
 

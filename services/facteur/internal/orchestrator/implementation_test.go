@@ -99,16 +99,20 @@ func TestImplementer_Success(t *testing.T) {
 	store := &fakeStore{}
 	runner := &fakeRunner{
 		responses: []runnerResponse{
-			{result: argo.RunResult{Namespace: "argo-workflows", WorkflowName: "github-codex-implementation-123", SubmittedAt: time.Unix(1735601000, 0)}},
+			{result: argo.RunResult{Namespace: "jangar", WorkflowName: "codex-autonomous-123", SubmittedAt: time.Unix(1735601000, 0)}},
 		},
 	}
 
 	implementerInstance, err := NewImplementer(store, runner, Config{
-		Namespace:          "argo-workflows",
-		WorkflowTemplate:   "github-codex-implementation",
-		ServiceAccount:     "implementer-sa",
-		Parameters:         map[string]string{"environment": "staging"},
-		GenerateNamePrefix: "github-codex-implementation-",
+		Namespace:                    "argo-workflows",
+		AutonomousNamespace:          "jangar",
+		WorkflowTemplate:             "codex-autonomous",
+		AutonomousWorkflowTemplate:   "codex-autonomous",
+		ServiceAccount:               "implementer-sa",
+		AutonomousServiceAccount:     "jangar-inspector",
+		Parameters:                   map[string]string{"environment": "staging"},
+		GenerateNamePrefix:           "codex-autonomous-",
+		AutonomousGenerateNamePrefix: "codex-autonomous-",
 	})
 	require.NoError(t, err)
 
@@ -148,10 +152,10 @@ func TestImplementer_Success(t *testing.T) {
 	require.Equal(t, 1, runner.calls)
 	require.Len(t, runner.inputs, 1)
 	input := runner.inputs[0]
-	require.Equal(t, "argo-workflows", input.Namespace)
-	require.Equal(t, "github-codex-implementation", input.WorkflowTemplate)
-	require.Equal(t, "implementer-sa", input.ServiceAccount)
-	require.Equal(t, "github-codex-implementation-", input.GenerateNamePrefix)
+	require.Equal(t, "jangar", input.Namespace)
+	require.Equal(t, "codex-autonomous", input.WorkflowTemplate)
+	require.Equal(t, "jangar-inspector", input.ServiceAccount)
+	require.Equal(t, "codex-autonomous-", input.GenerateNamePrefix)
 	require.Equal(t, "staging", input.Parameters["environment"])
 	require.Equal(t, "proompteng/lab", input.Parameters["repository"])
 	require.Equal(t, "1966", input.Parameters["issue_number"])
@@ -198,7 +202,7 @@ func TestImplementer_AutonomousOverrides(t *testing.T) {
 	implementerInstance, err := NewImplementer(store, runner, Config{
 		Namespace:                  "argo-workflows",
 		AutonomousNamespace:        "jangar",
-		WorkflowTemplate:           "github-codex-implementation",
+		WorkflowTemplate:           "codex-autonomous",
 		AutonomousWorkflowTemplate: "codex-autonomous",
 		ServiceAccount:             "codex-workflow",
 		AutonomousServiceAccount:   "jangar-inspector",
@@ -230,7 +234,7 @@ func TestImplementer_DuplicateDelivery(t *testing.T) {
 	store := &fakeStore{}
 	runner := &fakeRunner{
 		responses: []runnerResponse{
-			{result: argo.RunResult{Namespace: "codex", WorkflowName: "github-codex-implementation-456", SubmittedAt: time.Unix(1735601001, 0)}},
+			{result: argo.RunResult{Namespace: "jangar", WorkflowName: "codex-autonomous-456", SubmittedAt: time.Unix(1735601001, 0)}},
 		},
 	}
 

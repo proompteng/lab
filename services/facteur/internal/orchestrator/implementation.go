@@ -25,7 +25,7 @@ import (
 
 const (
 	implementationStageLabel    = "implementation"
-	defaultImplementationName   = "github-codex-implementation-"
+	defaultImplementationName   = "codex-autonomous-"
 	maxImplementationIterations = 25
 )
 
@@ -294,9 +294,32 @@ func (i *implementer) execute(ctx context.Context, span trace.Span, deliveryID s
 		UpdatedAt: now,
 	}
 
+	namespace := strings.TrimSpace(i.cfg.AutonomousNamespace)
+	if namespace == "" {
+		namespace = strings.TrimSpace(i.cfg.Namespace)
+	}
+	if namespace == "" {
+		namespace = "jangar"
+	}
+
+	workflowTemplate := strings.TrimSpace(i.cfg.AutonomousWorkflowTemplate)
+	if workflowTemplate == "" {
+		workflowTemplate = "codex-autonomous"
+	}
+
+	generateNamePrefix := strings.TrimSpace(i.cfg.AutonomousGenerateNamePrefix)
+	if generateNamePrefix == "" {
+		generateNamePrefix = "codex-autonomous-"
+	}
+
+	serviceAccount := strings.TrimSpace(i.cfg.AutonomousServiceAccount)
+	if serviceAccount == "" {
+		serviceAccount = strings.TrimSpace(i.cfg.ServiceAccount)
+	}
+
 	runMetadata, err := json.Marshal(map[string]any{
 		"deliveryId":       deliveryID,
-		"workflowTemplate": i.cfg.WorkflowTemplate,
+		"workflowTemplate": workflowTemplate,
 	})
 	if err != nil {
 		span.RecordError(err)
@@ -352,39 +375,6 @@ func (i *implementer) execute(ctx context.Context, span trace.Span, deliveryID s
 	}
 
 	span.SetAttributes(attribute.String(attributeArgoParameters, strings.Join(sortedKeys(parameters), ",")))
-
-	namespace := i.cfg.Namespace
-	if namespace == "" {
-		namespace = "argo-workflows"
-	}
-	workflowTemplate := i.cfg.WorkflowTemplate
-	generateNamePrefix := i.cfg.GenerateNamePrefix
-	serviceAccount := i.cfg.ServiceAccount
-	if workflowTemplate == "" {
-		workflowTemplate = "github-codex-implementation"
-	}
-	if generateNamePrefix == "" {
-		generateNamePrefix = defaultImplementationName
-	}
-
-	if task.GetAutonomous() {
-		if i.cfg.AutonomousNamespace != "" {
-			namespace = i.cfg.AutonomousNamespace
-		}
-		if i.cfg.AutonomousWorkflowTemplate != "" {
-			workflowTemplate = i.cfg.AutonomousWorkflowTemplate
-		} else {
-			workflowTemplate = "codex-autonomous"
-		}
-		if i.cfg.AutonomousServiceAccount != "" {
-			serviceAccount = i.cfg.AutonomousServiceAccount
-		}
-		if i.cfg.AutonomousGenerateNamePrefix != "" {
-			generateNamePrefix = i.cfg.AutonomousGenerateNamePrefix
-		} else {
-			generateNamePrefix = "codex-autonomous-"
-		}
-	}
 
 	labels, annotations := buildCodexWorkflowMetadata(task, base)
 
