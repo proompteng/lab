@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/proompteng/lab/services/facteur/internal/argo"
 	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
@@ -210,7 +211,7 @@ func TestImplementer_AutonomousOverrides(t *testing.T) {
 		Head:        "codex/issue-2000-demo",
 		IssueNumber: 2000,
 		DeliveryId:  "delivery-autonomous",
-		Autonomous:  true,
+		Autonomous:  proto.Bool(true),
 	}
 
 	result, err := implementerInstance.Implement(context.Background(), task)
