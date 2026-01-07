@@ -262,10 +262,11 @@ resource "kubernetes_service_account" "workspace_admin" {
   automount_service_account_token = true
 }
 
-resource "kubernetes_cluster_role_binding" "workspace_admin" {
+resource "kubernetes_role_binding" "workspace_admin" {
   count = data.coder_workspace.me.start_count
   metadata {
-    name = "coder-workspace-${data.coder_workspace.me.id}-cluster-admin"
+    name      = "coder-workspace-${data.coder_workspace.me.id}-admin"
+    namespace = var.namespace
     labels = {
       "app.kubernetes.io/name"     = "coder-workspace"
       "app.kubernetes.io/instance" = "coder-workspace-${data.coder_workspace.me.id}"
@@ -296,7 +297,7 @@ resource "kubernetes_deployment" "main" {
   count = data.coder_workspace.me.start_count
   depends_on = [
     kubernetes_persistent_volume_claim.home,
-    kubernetes_cluster_role_binding.workspace_admin
+    kubernetes_role_binding.workspace_admin
   ]
   wait_for_rollout = false
   metadata {
@@ -535,11 +536,6 @@ resource "coder_script" "bootstrap_tools" {
         fail "Codex CLI install failed; see $LOG_DIR/codex-install.log"
       fi
     fi
-    CODEX_BIN="$BUN_INSTALL/bin/codex"
-    if [ ! -x "$CODEX_BIN" ]; then
-      fail "Codex CLI not found at $CODEX_BIN; check $LOG_DIR/codex-install.log"
-    fi
-    ln -sf "$CODEX_BIN" /tmp/coder-script-data/bin/codex
 
     if ! command -v kubectl >/dev/null 2>&1; then
       log "Installing kubectl"
