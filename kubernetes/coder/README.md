@@ -6,7 +6,7 @@ This template provisions a Coder workspace on Kubernetes with:
 - `code-server` exposed at <http://localhost:13337>
 - Persistent home volume sized via the `home_disk_size` parameter
 - Git checkout via `coder/git-clone`, followed by dependency install on first boot
-- Cursor launcher, Node.js via nvm (LTS), kubectl, Argo CD CLI, Convex CLI, and OpenAI Codex CLI
+- Cursor launcher, Bun, kubectl, Argo CD CLI, Convex CLI, OpenAI Codex CLI, and GitHub CLI
 
 ## Install
 
@@ -47,10 +47,9 @@ coder workspaces create sutro --template "kubernetes/coder"
 
 - `coder/git-clone@1.1.1` for repository checkout
 - `coder/cursor@1.3.2` to expose Cursor Desktop
-- `thezoker/nodejs@1.0.11` to install Node.js via nvm
 - `coder_script.bootstrap_tools` runs on start to:
-  - Install Node.js LTS (fallback to 22) and Bun 1.3.5
-  - Install Convex CLI, OpenAI Codex CLI, kubectl, and Argo CD CLI when missing
+  - Install Bun (via the official installer)
+  - Install Convex CLI, OpenAI Codex CLI, kubectl, Argo CD CLI, and GitHub CLI when missing
   - Expand the repository path, then run `bun install --frozen-lockfile` or `bun install` based on repo files
   - Persist Bun environment variables in `.profile` and `.zshrc`
 

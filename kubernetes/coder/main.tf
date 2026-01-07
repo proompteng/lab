@@ -379,14 +379,6 @@ module "cursor" {
   depends_on = [module.git-clone]
 }
 
-module "nodejs" {
-  source               = "registry.coder.com/thezoker/nodejs/coder"
-  version              = "1.0.11"
-  agent_id             = coder_agent.main.id
-  node_versions        = ["20", "22"]
-  default_node_version = "22"
-}
-
 resource "coder_script" "bootstrap_tools" {
   agent_id           = coder_agent.main.id
   display_name       = "Bootstrap developer tools"
@@ -405,84 +397,6 @@ resource "coder_script" "bootstrap_tools" {
       exit 1
     }
 
-    wait_for_path() {
-      local target="$1"
-      local attempts="$${2:-60}"
-      local sleep_seconds="$${3:-2}"
-      local i
-      for ((i = 0; i < attempts; i++)); do
-        if [ -s "$target" ]; then
-          return 0
-        fi
-        sleep "$sleep_seconds"
-      done
-      return 1
-    }
-
-    normalize_nvm_dir() {
-      if [ -s "$NVM_DIR/nvm.sh" ]; then
-        return 0
-      fi
-      if [ -s "$NVM_DIR/nvm/nvm.sh" ]; then
-        NVM_DIR="$NVM_DIR/nvm"
-        export NVM_DIR
-        return 0
-      fi
-      return 1
-    }
-
-    wait_for_nvm_dir() {
-      local attempts="$${1:-60}"
-      local sleep_seconds="$${2:-2}"
-      local i
-      for ((i = 0; i < attempts; i++)); do
-        if normalize_nvm_dir; then
-          return 0
-        fi
-        sleep "$sleep_seconds"
-      done
-      return 1
-    }
-
-    wait_for_command() {
-      local cmd="$1"
-      local attempts="$${2:-60}"
-      local sleep_seconds="$${3:-2}"
-      local i
-      for ((i = 0; i < attempts; i++)); do
-        if command -v "$cmd" >/dev/null 2>&1; then
-          return 0
-        fi
-        sleep "$sleep_seconds"
-      done
-      return 1
-    }
-
-    has_nvm_version() {
-      local major="$1"
-      local candidate
-      for candidate in "$NVM_DIR"/versions/node/v"$major".*/bin/node; do
-        if [ -x "$candidate" ]; then
-          return 0
-        fi
-      done
-      return 1
-    }
-
-    wait_for_nvm_version() {
-      local major="$1"
-      local attempts="$${2:-60}"
-      local sleep_seconds="$${3:-2}"
-      local i
-      for ((i = 0; i < attempts; i++)); do
-        if has_nvm_version "$major"; then
-          return 0
-        fi
-        sleep "$sleep_seconds"
-      done
-      return 1
-    }
-
     LOG_DIR="/tmp/coder-bootstrap"
     mkdir -p "$LOG_DIR"
     LOG_FILE="$LOG_DIR/bootstrap.log"
@@ -496,57 +410,6 @@ resource "coder_script" "bootstrap_tools" {
       *:"$BUN_INSTALL/bin":*) ;;
       *) export PATH="$BUN_INSTALL/bin:$PATH" ;;
     esac
-
-    export NVM_DIR="$HOME/.nvm"
-    NVM_VERSION="v0.39.7"
-    DEFAULT_NODE_MAJOR="22"
-    mkdir -p "$NVM_DIR"
-
-    if ! normalize_nvm_dir; then
-      log "Waiting for nvm from module.nodejs"
-      if ! wait_for_nvm_dir 90 2; then
-        log "module.nodejs did not publish nvm in time; installing nvm $NVM_VERSION"
-        if ! curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/$NVM_VERSION/install.sh" | bash >"$LOG_DIR/nvm-install.log" 2>&1; then
-          fail "nvm install failed; see $LOG_DIR/nvm-install.log"
-        fi
-        normalize_nvm_dir || fail "nvm not available after install; see $LOG_DIR/nvm-install.log"
-      fi
-    fi
-
-    if normalize_nvm_dir; then
-      . "$NVM_DIR/nvm.sh"
-    else
-      fail "nvm not available after install; see $LOG_DIR/nvm-install.log"
-    fi
-
-    if ! wait_for_nvm_version "$DEFAULT_NODE_MAJOR" 90 2; then
-      log "Node.js $DEFAULT_NODE_MAJOR not detected; installing via nvm"
-      if ! nvm install "$DEFAULT_NODE_MAJOR" >"$LOG_DIR/node-install.log" 2>&1; then
-        fail "Node.js install failed; see $LOG_DIR/node-install.log"
-      fi
-    else
-      log "Detected Node.js $DEFAULT_NODE_MAJOR provisioned by module.nodejs"
-    fi
-
-    if ! nvm use "$DEFAULT_NODE_MAJOR" >/dev/null 2>&1; then
-      log "Retrying Node.js $DEFAULT_NODE_MAJOR install"
-      if ! nvm install "$DEFAULT_NODE_MAJOR" >"$LOG_DIR/node-install.log" 2>&1; then
-        fail "Node.js install failed; see $LOG_DIR/node-install.log"
-      fi
-      nvm use "$DEFAULT_NODE_MAJOR" >/dev/null 2>&1 || fail "Unable to switch to Node.js $DEFAULT_NODE_MAJOR"
-    fi
-
-    nvm alias default "$DEFAULT_NODE_MAJOR" >/dev/null 2>&1 || true
-    hash -r
-
-    if command -v node >/dev/null 2>&1; then
-      NODE_VERSION=$(node --version 2>/dev/null || echo "unknown")
-      log "Node $NODE_VERSION ready"
-    fi
-
-    if ! wait_for_command npm 60 2; then
-      fail "npm not found after Node.js install; see $LOG_DIR/node-install.log"
-    fi
 
     if ! command -v bun >/dev/null 2>&1; then
       log "Installing Bun runtime"
@@ -567,14 +430,14 @@ resource "coder_script" "bootstrap_tools" {
 
     if ! command -v convex >/dev/null 2>&1; then
       log "Installing Convex CLI"
-      if ! npm install -g convex@1.27.0 >"$LOG_DIR/convex-install.log" 2>&1; then
+      if ! bun add -g convex@1.27.0 >"$LOG_DIR/convex-install.log" 2>&1; then
         fail "Convex CLI install failed; see $LOG_DIR/convex-install.log"
       fi
     fi
 
     if ! command -v codex >/dev/null 2>&1; then
       log "Installing OpenAI Codex CLI"
-      if ! npm install -g @openai/codex >"$LOG_DIR/codex-install.log" 2>&1; then
+      if ! bun add -g @openai/codex >"$LOG_DIR/codex-install.log" 2>&1; then
         fail "Codex CLI install failed; see $LOG_DIR/codex-install.log"
       fi
     fi
@@ -643,26 +506,6 @@ resource "coder_script" "bootstrap_tools" {
       rm -rf "$GH_TMP"
     fi
 
-    NVM_SNIPPET="$(cat <<BASH_SNIPPET
-export NVM_DIR="$NVM_DIR"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"
-BASH_SNIPPET
-    )"
-
-    for rc_file in "$HOME/.profile" "$HOME/.bashrc"; do
-      if ! grep -q "NVM_DIR" "$rc_file" 2>/dev/null; then
-        printf '%s\n' "$NVM_SNIPPET" >> "$rc_file"
-      fi
-    done
-
-    if ! grep -q "NVM_DIR" "$HOME/.zshrc" 2>/dev/null; then
-      cat <<ZSHRC_NVM >> "$HOME/.zshrc"
-export NVM_DIR="$NVM_DIR"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-ZSHRC_NVM
-    fi
-
     if ! grep -q "BUN_INSTALL" "$HOME/.profile" 2>/dev/null; then
       cat <<'PROFILE' >> "$HOME/.profile"
 export BUN_INSTALL="$HOME/.bun"
@@ -706,7 +549,7 @@ ZSHRC
           fail "bun install failed; see $LOG_DIR/bun-install.log"
         fi
       else
-        log "No Node.js manifest found in $REPO_ROOT; skipping dependency install"
+        log "No JS manifest found in $REPO_ROOT; skipping dependency install"
       fi
     else
       log "Repository directory '$REPO_ROOT' not found; skipping dependency install"
@@ -715,5 +558,5 @@ ZSHRC
     log "Bootstrap complete"
   EOT
 
-  depends_on = [module.git-clone, module.nodejs]
+  depends_on = [module.git-clone]
 }
