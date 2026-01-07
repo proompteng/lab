@@ -49,6 +49,7 @@ coder workspaces create sutro --template "kubernetes/coder"
 - `coder/cursor@1.3.2` to expose Cursor Desktop
 - `coder_script.bootstrap_tools` runs on start to:
   - Install Bun (via the official installer)
+  - Install Node.js LTS via nvm
   - Install Convex CLI, OpenAI Codex CLI, kubectl, Argo CD CLI, and GitHub CLI when missing (Codex via Bun global)
   - Expand the repository path, then run `bun install --frozen-lockfile` or `bun install` based on repo files
   - Persist Bun environment variables in `.profile` and `.zshrc`
