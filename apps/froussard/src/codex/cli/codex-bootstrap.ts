@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { mkdir, rm, stat } from 'node:fs/promises'
+import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { dirname, join, sep } from 'node:path'
 import process from 'node:process'
 import { $, spawn, which } from 'bun'
@@ -98,7 +98,38 @@ const configureBunCache = async (targetDir: string) => {
     process.env.BUN_INSTALL_CACHE_DIR = cacheDir
   }
   await mkdir(cacheDir, { recursive: true })
+  await seedBunCache(cacheDir)
   return cacheDir
+}
+
+const isDirEmpty = async (path: string) => {
+  try {
+    const entries = await readdir(path)
+    return entries.length === 0
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return true
+    }
+    throw error
+  }
+}
+
+const seedBunCache = async (cacheDir: string) => {
+  const seedDir = process.env.BUN_INSTALL_CACHE_SEED_DIR?.trim()
+  if (!seedDir || seedDir === cacheDir) {
+    return
+  }
+  if (!(await pathExists(seedDir))) {
+    return
+  }
+  if (!(await isDirEmpty(cacheDir))) {
+    return
+  }
+  try {
+    await $`cp -R ${seedDir}/. ${cacheDir}/`
+  } catch (error) {
+    console.warn(`Failed to seed Bun cache from ${seedDir}: ${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 const resetBunCache = async (cacheDir: string) => {

@@ -93,6 +93,8 @@ spec:
               value: none
             - name: BUMBA_WORKSPACE_ROOT
               value: /workspace/lab
+            - name: BUN_INSTALL_CACHE_DIR
+              value: /workspace/.bun-install-cache
             - name: BUMBA_HEALTH_PORT
               value: "3001"
             - name: REPOSITORY

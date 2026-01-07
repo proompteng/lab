@@ -15,6 +15,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     GIT_TERMINAL_PROMPT=0 \
     BUN_INSTALL=/usr/local \
     BUN_INSTALL_CACHE_DIR=/opt/bun/install/cache \
+    BUN_INSTALL_CACHE_SEED_DIR=/opt/bun/install/cache \
     DOCKER_HOST=tcp://localhost:2375 \
     DOCKER_ENABLED=0
 

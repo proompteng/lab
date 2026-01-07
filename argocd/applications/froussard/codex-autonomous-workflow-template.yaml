@@ -101,6 +101,8 @@ spec:
             value: /workspace/lab/.worktrees/{{inputs.parameters.head}}
           - name: BUN_INSTALL_CACHE_DIR
             value: /workspace/.bun-install-cache
+          - name: BUN_INSTALL_CACHE_SEED_DIR
+            value: /opt/bun/install/cache
           - name: CODEX_ITERATION
             value: '{{inputs.parameters.iteration}}'
           - name: CODEX_ITERATION_CYCLE
