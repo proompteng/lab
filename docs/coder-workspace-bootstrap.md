@@ -49,8 +49,8 @@ This document explains how to maintain the single `k8s-arm64` template in Coder,
 
 - Installs Bun (via the official shell script) so package scripts use the same runtime locally and in automation.
 - Installs CLI dependencies in this order: `bun`, `convex@1.27.0`, `@openai/codex` (via `bun install -g`), `kubectl`, `argocd`, `gh`.
-- Symlinks `kubectl`, `argocd`, and `gh` into `/tmp/coder-script-data/bin` so non-interactive shells can reach them.
-- Workspace pods run with a service account bound to `cluster-admin` via a RoleBinding (namespace-scoped) so in-cluster `kubectl` has admin access.
+- Symlinks `codex`, `kubectl`, `argocd`, and `gh` into `/tmp/coder-script-data/bin` so non-interactive shells can reach them.
+- Workspace pods run with a service account bound to `cluster-admin` so in-cluster `kubectl` has admin access.
 - Appends `BUN_INSTALL/bin` and `~/.local/bin` to the login shells (`.profile`, `.bashrc`, `.zshrc`) so future shells inherit the toolchain.
 - Dependency install runs only when a manifest exists: `bun install --frozen-lockfile` when a Bun lockfile is present, otherwise `bun install` when only `package.json` is present.
 
