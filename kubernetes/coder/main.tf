@@ -441,6 +441,9 @@ resource "coder_script" "bootstrap_tools" {
         fail "Codex CLI install failed; see $LOG_DIR/codex-install.log"
       fi
     fi
+    if command -v codex >/dev/null 2>&1; then
+      ln -sf "$(command -v codex)" /tmp/coder-script-data/bin/codex
+    fi
 
     if ! command -v kubectl >/dev/null 2>&1; then
       log "Installing kubectl"

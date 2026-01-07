@@ -49,6 +49,7 @@ This document explains how to maintain the single `k8s-arm64` template in Coder,
 
 - Installs Bun (via the official shell script) so package scripts use the same runtime locally and in automation.
 - Installs CLI dependencies in this order: `bun`, `convex@1.27.0`, `@openai/codex`, `kubectl`, `argocd`, `gh`.
+- Symlinks `codex`, `kubectl`, `argocd`, and `gh` into `/tmp/coder-script-data/bin` so non-interactive shells can reach them.
 - Appends `BUN_INSTALL/bin` and `~/.local/bin` to the login shells (`.profile`, `.bashrc`, `.zshrc`) so future shells inherit the toolchain.
 - Dependency install runs only when a manifest exists: `bun install --frozen-lockfile` when a Bun lockfile is present, otherwise `bun install` when only `package.json` is present.
 
@@ -128,4 +129,4 @@ Following this loop keeps the template lineage clean and ensures future Codex ru
 
 - Template version `1.0.18` removes the Node.js module and relies on Bun for JavaScript tooling.
 - CLI installs now use Bun (`bun add -g`) for `convex` and `@openai/codex`.
-- `kubectl`, `argocd`, and `gh` binaries remain symlinked into `/tmp/coder-script-data/bin` for non-interactive shells.
+- `codex`, `kubectl`, `argocd`, and `gh` binaries are symlinked into `/tmp/coder-script-data/bin` for non-interactive shells.
