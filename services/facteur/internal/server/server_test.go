@@ -101,8 +101,8 @@ func TestEventsEndpointRejectsEmptyPayload(t *testing.T) {
 
 func TestCodexTasksImplementationDispatches(t *testing.T) {
 	implementer := &stubImplementer{result: orchestrator.Result{
-		Namespace:    "argo-workflows",
-		WorkflowName: "github-codex-implementation-abc123",
+		Namespace:    "jangar",
+		WorkflowName: "codex-autonomous-abc123",
 		SubmittedAt:  time.Unix(1735600400, 0).UTC(),
 	}}
 	srv, err := server.New(server.Options{
@@ -134,8 +134,8 @@ func TestCodexTasksImplementationDispatches(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&data))
 	_ = resp.Body.Close()
 	require.Equal(t, "implementation", data["stage"])
-	require.Equal(t, "argo-workflows", data["namespace"])
-	require.Equal(t, "github-codex-implementation-abc123", data["workflowName"])
+	require.Equal(t, "jangar", data["namespace"])
+	require.Equal(t, "codex-autonomous-abc123", data["workflowName"])
 	require.Equal(t, implementer.result.SubmittedAt.Format(time.RFC3339), data["submittedAt"])
 	require.False(t, data["duplicate"].(bool))
 	require.Equal(t, 1, implementer.calls)
