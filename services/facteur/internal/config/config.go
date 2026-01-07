@@ -45,9 +45,11 @@ type ArgoConfig struct {
 type ImplementerConfig struct {
 	Enabled                      bool              `mapstructure:"enabled"`
 	Namespace                    string            `mapstructure:"namespace"`
+	AutonomousNamespace          string            `mapstructure:"autonomous_namespace"`
 	WorkflowTemplate             string            `mapstructure:"workflow_template"`
 	AutonomousWorkflowTemplate   string            `mapstructure:"autonomous_workflow_template"`
 	ServiceAccount               string            `mapstructure:"service_account"`
+	AutonomousServiceAccount     string            `mapstructure:"autonomous_service_account"`
 	Parameters                   map[string]string `mapstructure:"parameters"`
 	AutonomousGenerateNamePrefix string            `mapstructure:"autonomous_generate_name_prefix"`
 	JudgePrompt                  string            `mapstructure:"judge_prompt"`
@@ -139,9 +141,11 @@ func LoadWithOptions(opts Options) (*Config, error) {
 			envs: []string{"FACTEUR_CODEX_ENABLE_IMPLEMENTATION_ORCHESTRATION"},
 		},
 		{key: "codex_implementation_orchestrator.namespace"},
+		{key: "codex_implementation_orchestrator.autonomous_namespace"},
 		{key: "codex_implementation_orchestrator.workflow_template"},
 		{key: "codex_implementation_orchestrator.autonomous_workflow_template"},
 		{key: "codex_implementation_orchestrator.service_account"},
+		{key: "codex_implementation_orchestrator.autonomous_service_account"},
 		{key: "codex_implementation_orchestrator.parameters"},
 		{key: "codex_implementation_orchestrator.autonomous_generate_name_prefix"},
 		{key: "codex_implementation_orchestrator.judge_prompt"},

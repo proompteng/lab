@@ -6,6 +6,7 @@ resources:
   - event-bus.yaml
   - workflow-completions-eventsource.yaml
   - workflow-completions-sensor.yaml
+  - workflow-completions-sensor-jangar.yaml
   - argo-workflows-completions-topic.yaml
   - github-webhook-topic.yaml
   - github-webhook-codex-judge-topic.yaml

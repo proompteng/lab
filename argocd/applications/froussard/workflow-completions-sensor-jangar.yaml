@@ -1,0 +1,269 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: workflow-completions-jangar
+  namespace: argo-workflows
+spec:
+  dependencies:
+    - name: workflow-completion-jangar
+      eventSourceName: workflow-completions
+      eventName: workflowCompletionsJangar
+      filters:
+        data:
+          - path: body.status.finishedAt
+            type: string
+            value:
+              - ".+"
+          - path: body.status.phase
+            type: string
+            value:
+              - Succeeded
+              - Failed
+              - Error
+  eventBusName: default
+  template:
+    serviceAccountName: workflow-completions-sensor
+  triggers:
+    - template:
+        name: log-workflow-completion-jangar
+        log: {}
+    - template:
+        name: publish-workflow-completion-jangar
+        kafka:
+          url: kafka-kafka-bootstrap.kafka:9092
+          topic: argo.workflows.completions
+          sasl:
+            mechanism: SCRAM-SHA-512
+            userSecret:
+              name: kafka-codex-username
+              key: username
+            passwordSecret:
+              name: kafka-codex-credentials
+              key: password
+          payload:
+            - dest: workflowName
+              src:
+                dependencyName: workflow-completion-jangar
+                useRawData: true
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $meta := coalesce (index $wf "metadata") (dict) -}}
+                  {{- default "" (index $meta "name") -}}
+            - dest: workflowNamespace
+              src:
+                dependencyName: workflow-completion-jangar
+                useRawData: true
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $meta := coalesce (index $wf "metadata") (dict) -}}
+                  {{- default "" (index $meta "namespace") -}}
+            - dest: workflowUid
+              src:
+                dependencyName: workflow-completion-jangar
+                useRawData: true
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $meta := coalesce (index $wf "metadata") (dict) -}}
+                  {{- default "" (index $meta "uid") -}}
+            - dest: repository
+              src:
+                dependencyName: workflow-completion-jangar
+                useRawData: true
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $spec := coalesce (index $wf "spec") (dict) -}}
+                  {{- $args := coalesce (index $spec "arguments") (dict) -}}
+                  {{- $params := coalesce (index $args "parameters") (list) -}}
+                  {{- $eventBody := "" -}}
+                  {{- range $param := $params -}}
+                    {{- if eq (index $param "name") "eventBody" -}}
+                      {{- $eventBody = (index $param "value") -}}
+                    {{- end -}}
+                  {{- end -}}
+                  {{- $event := dict -}}
+                  {{- if $eventBody -}}
+                    {{- $event = fromJson (b64dec $eventBody) -}}
+                  {{- end -}}
+                  {{- $repo := default "" (index $event "repository") -}}
+                  {{- if not $repo -}}
+                    {{- $repo = default "" (index $event "repo") -}}
+                  {{- end -}}
+                  {{- $repo -}}
+            - dest: issueNumber
+              src:
+                dependencyName: workflow-completion-jangar
+                useRawData: true
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $spec := coalesce (index $wf "spec") (dict) -}}
+                  {{- $args := coalesce (index $spec "arguments") (dict) -}}
+                  {{- $params := coalesce (index $args "parameters") (list) -}}
+                  {{- $eventBody := "" -}}
+                  {{- range $param := $params -}}
+                    {{- if eq (index $param "name") "eventBody" -}}
+                      {{- $eventBody = (index $param "value") -}}
+                    {{- end -}}
+                  {{- end -}}
+                  {{- $event := dict -}}
+                  {{- if $eventBody -}}
+                    {{- $event = fromJson (b64dec $eventBody) -}}
+                  {{- end -}}
+                  {{- $issue := default "" (index $event "issueNumber") -}}
+                  {{- if not $issue -}}
+                    {{- $issue = default "" (index $event "issue_number") -}}
+                  {{- end -}}
+                  {{- $issue -}}
+            - dest: branch
+              src:
+                dependencyName: workflow-completion-jangar
+                useRawData: true
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $spec := coalesce (index $wf "spec") (dict) -}}
+                  {{- $args := coalesce (index $spec "arguments") (dict) -}}
+                  {{- $params := coalesce (index $args "parameters") (list) -}}
+                  {{- $eventBody := "" -}}
+                  {{- range $param := $params -}}
+                    {{- if eq (index $param "name") "eventBody" -}}
+                      {{- $eventBody = (index $param "value") -}}
+                    {{- end -}}
+                  {{- end -}}
+                  {{- $event := dict -}}
+                  {{- if $eventBody -}}
+                    {{- $event = fromJson (b64dec $eventBody) -}}
+                  {{- end -}}
+                  {{- default "" (index $event "head") -}}
+            - dest: base
+              src:
+                dependencyName: workflow-completion-jangar
+                useRawData: true
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $spec := coalesce (index $wf "spec") (dict) -}}
+                  {{- $args := coalesce (index $spec "arguments") (dict) -}}
+                  {{- $params := coalesce (index $args "parameters") (list) -}}
+                  {{- $eventBody := "" -}}
+                  {{- range $param := $params -}}
+                    {{- if eq (index $param "name") "eventBody" -}}
+                      {{- $eventBody = (index $param "value") -}}
+                    {{- end -}}
+                  {{- end -}}
+                  {{- $event := dict -}}
+                  {{- if $eventBody -}}
+                    {{- $event = fromJson (b64dec $eventBody) -}}
+                  {{- end -}}
+                  {{- default "" (index $event "base") -}}
+            - dest: prompt
+              src:
+                dependencyName: workflow-completion-jangar
+                useRawData: true
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $spec := coalesce (index $wf "spec") (dict) -}}
+                  {{- $args := coalesce (index $spec "arguments") (dict) -}}
+                  {{- $params := coalesce (index $args "parameters") (list) -}}
+                  {{- $eventBody := "" -}}
+                  {{- range $param := $params -}}
+                    {{- if eq (index $param "name") "eventBody" -}}
+                      {{- $eventBody = (index $param "value") -}}
+                    {{- end -}}
+                  {{- end -}}
+                  {{- $event := dict -}}
+                  {{- if $eventBody -}}
+                    {{- $event = fromJson (b64dec $eventBody) -}}
+                  {{- end -}}
+                  {{- default "" (index $event "prompt") -}}
+            - dest: startedAt
+              src:
+                dependencyName: workflow-completion-jangar
+                useRawData: true
+                dataTemplate: |
+                  {{- $status := coalesce (index .Input.body "status") (dict) -}}
+                  {{- default "" (index $status "startedAt") -}}
+            - dest: finishedAt
+              src:
+                dependencyName: workflow-completion-jangar
+                useRawData: true
+                dataTemplate: |
+                  {{- $status := coalesce (index .Input.body "status") (dict) -}}
+                  {{- default "" (index $status "finishedAt") -}}
+            - dest: metadata
+              src:
+                dependencyName: workflow-completion-jangar
+                useRawData: true
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $meta := coalesce (index $wf "metadata") (dict) -}}
+                  {{- $labels := coalesce (index $meta "labels") (dict) -}}
+                  {{- $annotations := coalesce (index $meta "annotations") (dict) -}}
+                  {{- toJson (dict
+                        "name" (default "" (index $meta "name"))
+                        "namespace" (default "" (index $meta "namespace"))
+                        "uid" (default "" (index $meta "uid"))
+                        "labels" $labels
+                        "annotations" $annotations
+                    ) }}
+            - dest: status
+              src:
+                dependencyName: workflow-completion-jangar
+                useRawData: true
+                dataTemplate: |
+                  {{- $status := coalesce (index .Input.body "status") (dict) -}}
+                  {{- toJson (dict
+                        "phase" (default "" (index $status "phase"))
+                        "startedAt" (default "" (index $status "startedAt"))
+                        "finishedAt" (default "" (index $status "finishedAt"))
+                    ) }}
+            - dest: arguments
+              src:
+                dependencyName: workflow-completion-jangar
+                useRawData: true
+                dataTemplate: |
+                  {{- $spec := coalesce (index .Input.body "spec") (dict) -}}
+                  {{- toJson (coalesce (index $spec "arguments") (dict)) }}
+            - dest: artifacts
+              src:
+                dependencyName: workflow-completion-jangar
+                useRawData: true
+                dataTemplate: |
+                  {{- $nodes := coalesce (index .Input.body "status" "nodes") (dict) -}}
+                  {{- $artifacts := list -}}
+                  {{- range $nodeName, $node := $nodes -}}
+                    {{- $outputs := coalesce (index $node "outputs") (dict) -}}
+                    {{- $nodeArtifacts := coalesce (index $outputs "artifacts") (list) -}}
+                    {{- range $artifact := $nodeArtifacts -}}
+                      {{- $s3 := coalesce (index $artifact "s3") (dict) -}}
+                      {{- $entry := dict
+                            "name" (default "" (index $artifact "name"))
+                            "key" (default "" (index $s3 "key"))
+                            "bucket" (default "" (index $s3 "bucket"))
+                            "url" (default "" (index $s3 "endpoint")) -}}
+                      {{- $artifacts = append $artifacts $entry -}}
+                    {{- end -}}
+                  {{- end -}}
+                  {{- toJson $artifacts -}}
+            - dest: stage
+              src:
+                dependencyName: workflow-completion-jangar
+                dataTemplate: |
+                  {{- $wf := .Input.body -}}
+                  {{- $meta := coalesce (index $wf "metadata") (dict) -}}
+                  {{- $labels := coalesce (index $meta "labels") (dict) -}}
+                  {{- $labelStage := default "" (index $labels "codex.stage") -}}
+                  {{- if $labelStage -}}
+                    {{- $labelStage -}}
+                  {{- else -}}
+                    {{- $spec := coalesce (index $wf "spec") (dict) -}}
+                    {{- $templateRef := coalesce (index $spec "workflowTemplateRef") (dict) -}}
+                    {{- $templateName := default "" (index $templateRef "name") -}}
+                    {{- if $templateName -}}
+                      {{- $segments := splitList "-" $templateName -}}
+                      {{- if gt (len $segments) 0 -}}
+                        {{- index $segments (sub (len $segments) 1) -}}
+                      {{- else -}}
+                        {{- "" -}}
+                      {{- end -}}
+                    {{- else -}}
+                      {{- "" -}}
+                    {{- end -}}
+                  {{- end -}}

@@ -32,8 +32,10 @@ argo:
 codex_implementation_orchestrator:
   enabled: true
   namespace: implementation
+  autonomous_namespace: jangar
   workflow_template: github-codex-implementation
   service_account: implementer
+  autonomous_service_account: jangar-inspector
   parameters:
     eventBody: '{}'
 server:
@@ -68,8 +70,10 @@ codex_listener:
 		require.Equal(t, map[string]string{"payload": "{}"}, cfg.Argo.Parameters)
 		require.True(t, cfg.Implementer.Enabled)
 		require.Equal(t, "implementation", cfg.Implementer.Namespace)
+		require.Equal(t, "jangar", cfg.Implementer.AutonomousNamespace)
 		require.Equal(t, "github-codex-implementation", cfg.Implementer.WorkflowTemplate)
 		require.Equal(t, "implementer", cfg.Implementer.ServiceAccount)
+		require.Equal(t, "jangar-inspector", cfg.Implementer.AutonomousServiceAccount)
 		require.Equal(t, map[string]string{"eventbody": "{}"}, cfg.Implementer.Parameters)
 		require.Equal(t, ":9000", cfg.Server.ListenAddress)
 		require.Equal(t, map[string][]string{

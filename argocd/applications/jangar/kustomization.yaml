@@ -23,6 +23,7 @@ resources:
   - alloy-deployment.yaml
   - serviceaccount.yaml
   - clusterrolebinding.yaml
+  - workflow-completions-rbac.yaml
 
 helmCharts:
   - name: open-webui
