@@ -2,9 +2,9 @@ apiVersion: v2
 appVersion: 0.0.1
 description: Coder open source developer platform
 name: coder
-version: 2.27.0
+version: 2.28.6
 type: application
 dependencies:
   - name: coder
-    version: 2.27.0
+    version: 2.28.6
     repository: https://helm.coder.com/v2
