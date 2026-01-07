@@ -484,6 +484,24 @@ resource "coder_script" "bootstrap_tools" {
       log "bun $BUN_VERSION ready"
     fi
 
+    if command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+      log "Installing recommended CLI tools"
+      if ! sudo apt-get update -y >"$LOG_DIR/apt-update.log" 2>&1; then
+        log "apt-get update failed; skipping recommended CLI tools"
+      else
+        if ! sudo apt-get install -y --no-install-recommends ripgrep fd-find fzf bat jq >"$LOG_DIR/apt-install.log" 2>&1; then
+          log "apt-get install failed; skipping recommended CLI tools"
+        else
+          if command -v fdfind >/dev/null 2>&1; then
+            ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
+          fi
+          if command -v batcat >/dev/null 2>&1; then
+            ln -sf "$(command -v batcat)" "$HOME/.local/bin/bat"
+          fi
+        fi
+      fi
+    fi
+
     export NVM_DIR="$HOME/.nvm"
     NVM_VERSION="v0.39.7"
     mkdir -p "$NVM_DIR"
@@ -494,17 +512,22 @@ resource "coder_script" "bootstrap_tools" {
       fi
     fi
 
+    set +u
+
     if [ -s "$NVM_DIR/nvm.sh" ]; then
+      log "Loading nvm"
       . "$NVM_DIR/nvm.sh"
     else
       fail "nvm not available after install; see $LOG_DIR/nvm-install.log"
     fi
 
-    if ! nvm ls "lts/*" >/dev/null 2>&1; then
-      log "Installing Node.js LTS via nvm"
-      if ! nvm install --lts >"$LOG_DIR/node-install.log" 2>&1; then
-        fail "Node.js install failed; see $LOG_DIR/node-install.log"
-      fi
+    if ! command -v nvm >/dev/null 2>&1; then
+      fail "nvm command not available after sourcing; see $LOG_DIR/nvm-install.log"
+    fi
+
+    log "Installing Node.js LTS via nvm"
+    if ! nvm install --lts >"$LOG_DIR/node-install.log" 2>&1; then
+      fail "Node.js install failed; see $LOG_DIR/node-install.log"
     fi
 
     if ! nvm use --lts >/dev/null 2>&1; then
@@ -522,6 +545,8 @@ resource "coder_script" "bootstrap_tools" {
       NODE_VERSION=$(node --version 2>/dev/null || echo "unknown")
       log "Node $NODE_VERSION ready"
     fi
+
+    set -u
 
     if ! command -v convex >/dev/null 2>&1; then
       log "Installing Convex CLI"
