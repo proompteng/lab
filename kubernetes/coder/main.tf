@@ -240,10 +240,64 @@ resource "kubernetes_persistent_volume_claim" "home" {
   }
 }
 
+resource "kubernetes_service_account" "workspace_admin" {
+  count = data.coder_workspace.me.start_count
+  metadata {
+    name      = "coder-workspace-${data.coder_workspace.me.id}"
+    namespace = var.namespace
+    labels = {
+      "app.kubernetes.io/name"     = "coder-workspace"
+      "app.kubernetes.io/instance" = "coder-workspace-${data.coder_workspace.me.id}"
+      "app.kubernetes.io/part-of"  = "coder"
+      "com.coder.resource"         = "true"
+      "com.coder.workspace.id"     = data.coder_workspace.me.id
+      "com.coder.workspace.name"   = data.coder_workspace.me.name
+      "com.coder.user.id"          = data.coder_workspace_owner.me.id
+      "com.coder.user.username"    = data.coder_workspace_owner.me.name
+    }
+    annotations = {
+      "com.coder.user.email" = data.coder_workspace_owner.me.email
+    }
+  }
+  automount_service_account_token = true
+}
+
+resource "kubernetes_role_binding" "workspace_admin" {
+  count = data.coder_workspace.me.start_count
+  metadata {
+    name      = "coder-workspace-${data.coder_workspace.me.id}-admin"
+    namespace = var.namespace
+    labels = {
+      "app.kubernetes.io/name"     = "coder-workspace"
+      "app.kubernetes.io/instance" = "coder-workspace-${data.coder_workspace.me.id}"
+      "app.kubernetes.io/part-of"  = "coder"
+      "com.coder.resource"         = "true"
+      "com.coder.workspace.id"     = data.coder_workspace.me.id
+      "com.coder.workspace.name"   = data.coder_workspace.me.name
+      "com.coder.user.id"          = data.coder_workspace_owner.me.id
+      "com.coder.user.username"    = data.coder_workspace_owner.me.name
+    }
+    annotations = {
+      "com.coder.user.email" = data.coder_workspace_owner.me.email
+    }
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = "cluster-admin"
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.workspace_admin[0].metadata[0].name
+    namespace = var.namespace
+  }
+}
+
 resource "kubernetes_deployment" "main" {
   count = data.coder_workspace.me.start_count
   depends_on = [
-    kubernetes_persistent_volume_claim.home
+    kubernetes_persistent_volume_claim.home,
+    kubernetes_role_binding.workspace_admin
   ]
   wait_for_rollout = false
   metadata {
@@ -296,6 +350,8 @@ resource "kubernetes_deployment" "main" {
         }
       }
       spec {
+        service_account_name            = kubernetes_service_account.workspace_admin[0].metadata[0].name
+        automount_service_account_token = true
         security_context {
           run_as_user     = 1000
           fs_group        = 1000
@@ -437,12 +493,9 @@ resource "coder_script" "bootstrap_tools" {
 
     if ! command -v codex >/dev/null 2>&1; then
       log "Installing OpenAI Codex CLI"
-      if ! bun add -g @openai/codex >"$LOG_DIR/codex-install.log" 2>&1; then
+      if ! bun install -g @openai/codex >"$LOG_DIR/codex-install.log" 2>&1; then
         fail "Codex CLI install failed; see $LOG_DIR/codex-install.log"
       fi
-    fi
-    if command -v codex >/dev/null 2>&1; then
-      ln -sf "$(command -v codex)" /tmp/coder-script-data/bin/codex
     fi
 
     if ! command -v kubectl >/dev/null 2>&1; then
@@ -484,7 +537,11 @@ resource "coder_script" "bootstrap_tools" {
         x86_64|amd64)  GH_ARCH="amd64" ;;
         *)             GH_ARCH="amd64" ;;
       esac
-      GH_VERSION="$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest 2>/dev/null | grep -m1 '\"tag_name\"' | sed -E 's/.*\"tag_name\": *\"v?([^\" ]+)\".*/\\1/')"
+      GH_VERSION="2.55.0"
+      GH_JSON=""
+      if GH_JSON="$(curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors https://api.github.com/repos/cli/cli/releases/latest 2>"$LOG_DIR/gh-version.log")"; then
+        GH_VERSION="$(printf '%s' "$GH_JSON" | grep -m1 '\"tag_name\"' | sed -E 's/.*\"tag_name\": *\"v?([^\" ]+)\".*/\\1/')"
+      fi
       if [ -z "$GH_VERSION" ]; then
         GH_VERSION="2.55.0"
         log "Unable to determine latest GitHub CLI version; falling back to $GH_VERSION"
@@ -515,6 +572,14 @@ export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 export PATH="$HOME/.local/bin:$PATH"
 PROFILE
+    fi
+
+    if ! grep -q "BUN_INSTALL" "$HOME/.bashrc" 2>/dev/null; then
+      cat <<'BASHRC' >> "$HOME/.bashrc"
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
+BASHRC
     fi
 
     if ! grep -q "BUN_INSTALL" "$HOME/.zshrc" 2>/dev/null; then
