@@ -96,7 +96,7 @@ RUN set -eux; \
     install -m 0755 "${TEMPORAL_TMPDIR}/temporal" /usr/local/bin/temporal; \
     rm -rf "${TEMPORAL_TMPDIR}"
 
-RUN bash -lc 'source /root/.nvm/nvm.sh && npm install -g @openai/codex@latest && ln -sf "$(command -v codex)" /usr/local/bin/codex && ln -sf "$(command -v node)" /usr/local/bin/node && ln -sf "$(command -v npm)" /usr/local/bin/npm'
+RUN bash -lc 'source /root/.nvm/nvm.sh && npm install -g @openai/codex@latest node-gyp && ln -sf "$(command -v codex)" /usr/local/bin/codex && ln -sf "$(command -v node)" /usr/local/bin/node && ln -sf "$(command -v npm)" /usr/local/bin/npm && ln -sf "$(command -v node-gyp)" /usr/local/bin/node-gyp'
 
 RUN mkdir -p "$WORKSPACE" /root/.codex "$BUN_INSTALL_CACHE_DIR"
 
