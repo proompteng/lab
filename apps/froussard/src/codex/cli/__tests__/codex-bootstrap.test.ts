@@ -163,6 +163,27 @@ describe('runCodexBootstrap', () => {
     expect(exitCode).toBe(7)
   })
 
+  it('creates a worktree from the repo root when target is nested', async () => {
+    const repoRoot = join(workdir, 'lab')
+    const worktreeDir = join(repoRoot, '.worktrees', 'codex-issue-1234')
+    await mkdir(join(repoRoot, '.git'), { recursive: true })
+    process.env.WORKTREE = worktreeDir
+    process.env.TARGET_DIR = worktreeDir
+    process.env.HEAD_BRANCH = 'codex/issue-1234'
+
+    const exitCode = await runCodexBootstrap()
+
+    expect(exitCode).toBe(0)
+    const commands = execMock.mock.calls.map((call) => call[0]?.command)
+    expect(commands).toContain(`git -C ${repoRoot} fetch --all --prune`)
+    expect(
+      commands.some((command) =>
+        command?.includes(`git -C ${repoRoot} worktree add -B ${process.env.HEAD_BRANCH} ${worktreeDir}`),
+      ),
+    ).toBe(true)
+    expect(chdirSpy).toHaveBeenCalledWith(worktreeDir)
+  })
+
   it('configures non-interactive env defaults without overriding explicit values', async () => {
     await mkdir(join(workdir, '.git'), { recursive: true })
     delete process.env.PAGER

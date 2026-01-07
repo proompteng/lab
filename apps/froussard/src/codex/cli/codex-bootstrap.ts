@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { mkdir, rm, stat } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import process from 'node:process'
 import { $, spawn, which } from 'bun'
 import { runCli } from './lib/cli'
@@ -67,6 +67,21 @@ const configureNonInteractiveEnvironment = () => {
   setDefaultEnv('KUBECTL_PAGER', 'cat')
   setDefaultEnv('BAT_PAGER', 'cat')
   ensureLessFlags()
+}
+
+const resolveRepoRoot = (targetDir: string) => {
+  const explicitRoot = process.env.REPO_ROOT?.trim()
+  if (explicitRoot) {
+    return explicitRoot
+  }
+
+  const marker = `${sep}.worktrees${sep}`
+  const markerIndex = targetDir.indexOf(marker)
+  if (markerIndex !== -1) {
+    return targetDir.slice(0, markerIndex)
+  }
+
+  return targetDir
 }
 
 const normalizeDockerEnv = () => {
@@ -168,6 +183,7 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
   const targetDir = process.env.TARGET_DIR ?? worktreeDefault
   const baseBranch = process.env.BASE_BRANCH ?? 'main'
   const headBranch = process.env.HEAD_BRANCH ?? ''
+  const repoRoot = resolveRepoRoot(targetDir)
 
   configureNonInteractiveEnvironment()
   normalizeDockerEnv()
@@ -177,16 +193,29 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
   process.env.BASE_BRANCH = baseBranch
   process.env.HEAD_BRANCH = headBranch
 
+  await ensureParentDir(repoRoot)
   await ensureParentDir(targetDir)
 
-  const gitDir = join(targetDir, '.git')
+  const gitDir = join(repoRoot, '.git')
 
   if (await pathExists(gitDir)) {
-    await $`git -C ${targetDir} fetch --all --prune`
+    await $`git -C ${repoRoot} fetch --all --prune`
   } else {
-    await rm(targetDir, { recursive: true, force: true })
-    await $`gh repo clone ${repoUrl} ${targetDir}`
-    await $`git -C ${targetDir} checkout ${baseBranch}`
+    await rm(repoRoot, { recursive: true, force: true })
+    await $`gh repo clone ${repoUrl} ${repoRoot}`
+    await $`git -C ${repoRoot} checkout ${baseBranch}`
+  }
+
+  if (targetDir !== repoRoot) {
+    if (!(await pathExists(targetDir))) {
+      const branchName = headBranch || baseBranch
+      const remoteHead = headBranch
+        ? await $`git -C ${repoRoot} rev-parse --verify --quiet origin/${headBranch}`.nothrow()
+        : null
+      const hasRemoteHead = remoteHead?.exitCode === 0
+      const fromRef = hasRemoteHead ? `origin/${headBranch}` : `origin/${baseBranch}`
+      await $`git -C ${repoRoot} worktree add -B ${branchName} ${targetDir} ${fromRef}`
+    }
   }
 
   process.chdir(targetDir)
@@ -194,7 +223,7 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
   const bunCacheDir = await configureBunCache(targetDir)
 
   if (headBranch && headBranch !== baseBranch) {
-    const remoteHead = await $`git -C ${targetDir} rev-parse --verify --quiet origin/${headBranch}`.nothrow()
+    const remoteHead = await $`git -C ${repoRoot} rev-parse --verify --quiet origin/${headBranch}`.nothrow()
     const hasRemoteHead = remoteHead.exitCode === 0
 
     const checkoutResult = await $`git -C ${targetDir} checkout ${headBranch}`.nothrow()
