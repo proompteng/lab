@@ -604,7 +604,7 @@ resource "coder_script" "bootstrap_tools" {
       GH_VERSION="2.55.0"
       GH_JSON=""
       if GH_JSON="$(curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors https://api.github.com/repos/cli/cli/releases/latest 2>"$LOG_DIR/gh-version.log")"; then
-        GH_VERSION="$(printf '%s' "$GH_JSON" | grep -m1 '\"tag_name\"' | sed -E 's/.*\"tag_name\": *\"v?([^\" ]+)\".*/\\1/')"
+        GH_VERSION="$(printf '%s' "$GH_JSON" | grep -m1 '\"tag_name\"' | sed -E 's/.*\"tag_name\": *\"v?([^\" ]+)\".*/\\1/' || true)"
       fi
       if [ -z "$GH_VERSION" ]; then
         GH_VERSION="2.55.0"
@@ -620,7 +620,7 @@ resource "coder_script" "bootstrap_tools" {
         rm -rf "$GH_TMP"
         fail "GitHub CLI extract failed; see $LOG_DIR/gh-install.log"
       fi
-      GH_DIR="$(find "$GH_TMP" -maxdepth 1 -type d -name 'gh_*' | head -n1)"
+      GH_DIR="$(find "$GH_TMP" -maxdepth 1 -type d -name 'gh_*' -print -quit)"
       if [ -z "$GH_DIR" ] || [ ! -x "$GH_DIR/bin/gh" ]; then
         rm -rf "$GH_TMP"
         fail "GitHub CLI archive missing expected binary; see $LOG_DIR/gh-install.log"
