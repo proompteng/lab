@@ -77,6 +77,8 @@ spec:
               value: /usr/local/bin/codex
             - name: CODEX_CWD
               value: /workspace/lab
+            - name: BUN_INSTALL_CACHE_DIR
+              value: /workspace/.bun-install-cache
             - name: CODEX_REPO_SLUG
               value: proompteng/lab
             - name: CODEX_REPO_URL
