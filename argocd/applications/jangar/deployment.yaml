@@ -137,11 +137,11 @@ spec:
             - name: JANGAR_CODEX_RERUN_TEMPLATE
               value: codex-autonomous
             - name: JANGAR_CODEX_RERUN_NAMESPACE
-              value: argo-workflows
+              value: jangar
             - name: JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE
               value: codex-autonomous
             - name: JANGAR_SYSTEM_IMPROVEMENT_NAMESPACE
-              value: argo-workflows
+              value: jangar
             - name: DISCORD_BOT_TOKEN
               valueFrom:
                 secretKeyRef:

@@ -116,9 +116,11 @@ func NewServeCommand() *cobra.Command {
 			if cfg.Implementer.Enabled {
 				implementerCfg := orchestrator.Config{
 					Namespace:                    cfg.Implementer.Namespace,
+					AutonomousNamespace:          cfg.Implementer.AutonomousNamespace,
 					WorkflowTemplate:             cfg.Implementer.WorkflowTemplate,
 					AutonomousWorkflowTemplate:   cfg.Implementer.AutonomousWorkflowTemplate,
 					ServiceAccount:               cfg.Implementer.ServiceAccount,
+					AutonomousServiceAccount:     cfg.Implementer.AutonomousServiceAccount,
 					Parameters:                   map[string]string{},
 					AutonomousGenerateNamePrefix: cfg.Implementer.AutonomousGenerateNamePrefix,
 					JudgePrompt:                  cfg.Implementer.JudgePrompt,

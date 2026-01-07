@@ -10,9 +10,11 @@ import (
 // Config holds the settings needed to dispatch implementation workflows.
 type Config struct {
 	Namespace                    string
+	AutonomousNamespace          string
 	WorkflowTemplate             string
 	AutonomousWorkflowTemplate   string
 	ServiceAccount               string
+	AutonomousServiceAccount     string
 	Parameters                   map[string]string
 	GenerateNamePrefix           string
 	AutonomousGenerateNamePrefix string

@@ -44,9 +44,11 @@ argo:
 codex_implementation_orchestrator:
   enabled: false
   namespace: argo
+  autonomous_namespace: jangar
   workflow_template: github-codex-implementation
   autonomous_workflow_template: codex-autonomous
   service_account: facteur
+  autonomous_service_account: jangar-inspector
   autonomous_generate_name_prefix: codex-autonomous-
   judge_prompt: ""
   parameters:

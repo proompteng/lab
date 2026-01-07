@@ -15,3 +15,10 @@ spec:
       resource: workflows
       eventTypes:
         - UPDATE
+    workflowCompletionsJangar:
+      namespace: jangar
+      group: argoproj.io
+      version: v1alpha1
+      resource: workflows
+      eventTypes:
+        - UPDATE

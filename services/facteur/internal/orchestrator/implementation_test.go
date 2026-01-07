@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/proompteng/lab/services/facteur/internal/argo"
 	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
@@ -184,6 +185,45 @@ func TestImplementer_Success(t *testing.T) {
 	var rawPayload map[string]any
 	require.NoError(t, json.Unmarshal(decodedRawEvent, &rawPayload))
 	require.Equal(t, "CODEX_TASK_STAGE_IMPLEMENTATION", rawPayload["stage"])
+}
+
+func TestImplementer_AutonomousOverrides(t *testing.T) {
+	store := &fakeStore{}
+	runner := &fakeRunner{
+		responses: []runnerResponse{
+			{result: argo.RunResult{Namespace: "jangar", WorkflowName: "codex-autonomous-123", SubmittedAt: time.Unix(1735602000, 0)}},
+		},
+	}
+
+	implementerInstance, err := NewImplementer(store, runner, Config{
+		Namespace:                  "argo-workflows",
+		AutonomousNamespace:        "jangar",
+		WorkflowTemplate:           "github-codex-implementation",
+		AutonomousWorkflowTemplate: "codex-autonomous",
+		ServiceAccount:             "codex-workflow",
+		AutonomousServiceAccount:   "jangar-inspector",
+	})
+	require.NoError(t, err)
+
+	task := &froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
+		Repository:  "proompteng/lab",
+		Head:        "codex/issue-2000-demo",
+		IssueNumber: 2000,
+		DeliveryId:  "delivery-autonomous",
+		Autonomous:  proto.Bool(true),
+	}
+
+	result, err := implementerInstance.Implement(context.Background(), task)
+	require.NoError(t, err)
+	require.False(t, result.Duplicate)
+
+	require.Equal(t, 1, runner.calls)
+	require.Len(t, runner.inputs, 1)
+	input := runner.inputs[0]
+	require.Equal(t, "jangar", input.Namespace)
+	require.Equal(t, "codex-autonomous", input.WorkflowTemplate)
+	require.Equal(t, "jangar-inspector", input.ServiceAccount)
 }
 
 func TestImplementer_DuplicateDelivery(t *testing.T) {

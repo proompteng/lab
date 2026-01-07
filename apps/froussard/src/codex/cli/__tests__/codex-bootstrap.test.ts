@@ -110,20 +110,8 @@ describe('runCodexBootstrap', () => {
     resetEnv()
   })
 
-  it('fetches and resets when the repository already exists', async () => {
+  it('fetches when the repository already exists', async () => {
     await mkdir(join(workdir, '.git'), { recursive: true })
-
-    const exitCode = await runCodexBootstrap()
-
-    expect(exitCode).toBe(0)
-    const commands = execMock.mock.calls.map((call) => call[0]?.command)
-    expect(commands).toContain(`git -C ${workdir} fetch --all --prune`)
-    expect(commands).toContain(`git -C ${workdir} reset --hard origin/main`)
-  })
-
-  it('skips hard reset when preserving worktree for later iterations', async () => {
-    await mkdir(join(workdir, '.git'), { recursive: true })
-    process.env.CODEX_ITERATION = '2'
 
     const exitCode = await runCodexBootstrap()
 
@@ -209,10 +197,10 @@ describe('runCodexBootstrap', () => {
     expect(exitCode).toBe(0)
     const commands = execMock.mock.calls.map((call) => call[0]?.command)
     expect(commands).toContain(`git -C ${workdir} checkout -B ${process.env.HEAD_BRANCH} origin/main`)
-    expect(commands).toContain(`git -C ${workdir} reset --hard origin/main`)
+    expect(commands).not.toContain(`git -C ${workdir} reset --hard origin/main`)
   })
 
-  it('resets to base when remote tracking ref is missing even if checkout succeeds', async () => {
+  it('does not reset when remote tracking ref is missing but checkout succeeds', async () => {
     await mkdir(join(workdir, '.git'), { recursive: true })
     process.env.HEAD_BRANCH = 'codex/issue-1234'
     // Simulate remote ref missing; checkout succeeds (default exit 0).
@@ -222,21 +210,7 @@ describe('runCodexBootstrap', () => {
 
     expect(exitCode).toBe(0)
     const commands = execMock.mock.calls.map((call) => call[0]?.command)
-    // Ensure we don't reset against a non-existent origin/head.
-    expect(commands).toContain(`git -C ${workdir} reset --hard origin/main`)
-  })
-
-  it('falls back to base reset if resetting against head fails', async () => {
-    await mkdir(join(workdir, '.git'), { recursive: true })
-    process.env.HEAD_BRANCH = 'codex/issue-5555'
-    // Pretend remote head exists so we try it, but make reset fail.
-    exitCodeOverrides.set(`git -C ${workdir} reset --hard origin/${process.env.HEAD_BRANCH}`, 128)
-
-    const exitCode = await runCodexBootstrap()
-
-    expect(exitCode).toBe(0)
-    const commands = execMock.mock.calls.map((call) => call[0]?.command)
-    expect(commands).toContain(`git -C ${workdir} reset --hard origin/${process.env.HEAD_BRANCH}`)
-    expect(commands).toContain(`git -C ${workdir} reset --hard origin/main`)
+    expect(commands).toContain(`git -C ${workdir} checkout ${process.env.HEAD_BRANCH}`)
+    expect(commands).not.toContain(`git -C ${workdir} reset --hard origin/main`)
   })
 })

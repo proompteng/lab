@@ -33,12 +33,6 @@ const parsePositiveInt = (value: string | undefined, fallback: number) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
-const parseBool = (value: string | undefined) => {
-  if (!value) return false
-  const normalized = value.trim().toLowerCase()
-  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
-}
-
 const ensureLessFlags = () => {
   const requiredFlags = new Set(['F', 'R', 'S', 'X'])
   const current = process.env.LESS ?? ''
@@ -174,19 +168,6 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
   const targetDir = process.env.TARGET_DIR ?? worktreeDefault
   const baseBranch = process.env.BASE_BRANCH ?? 'main'
   const headBranch = process.env.HEAD_BRANCH ?? ''
-  const resumeDir = process.env.CODEX_RESUME_DIR?.trim() || '/workspace/.codex-resume'
-  const resumeMetadataPath = join(resumeDir, 'implementation-resume.json')
-  const resumeArchivePath = join(resumeDir, 'implementation-changes.tar.gz')
-  const iteration = parsePositiveInt(process.env.CODEX_ITERATION, 0)
-  const iterationCycle = parsePositiveInt(process.env.CODEX_ITERATION_CYCLE, 0)
-  const attempt = parsePositiveInt(process.env.CODEX_ATTEMPT, 0)
-  const preserveWorktree =
-    parseBool(process.env.CODEX_PRESERVE_WORKTREE) ||
-    iteration > 1 ||
-    iterationCycle > 1 ||
-    attempt > 1 ||
-    (await pathExists(resumeMetadataPath)) ||
-    (await pathExists(resumeArchivePath))
 
   configureNonInteractiveEnvironment()
   normalizeDockerEnv()
@@ -202,9 +183,6 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
 
   if (await pathExists(gitDir)) {
     await $`git -C ${targetDir} fetch --all --prune`
-    if (!preserveWorktree && baseBranch) {
-      await $`git -C ${targetDir} reset --hard origin/${baseBranch}`
-    }
   } else {
     await rm(targetDir, { recursive: true, force: true })
     await $`gh repo clone ${repoUrl} ${targetDir}`
@@ -223,23 +201,6 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
     if (checkoutResult.exitCode !== 0) {
       const fromRef = hasRemoteHead ? `origin/${headBranch}` : `origin/${baseBranch}`
       await $`git -C ${targetDir} checkout -B ${headBranch} ${fromRef}`.nothrow()
-    }
-
-    if (!preserveWorktree) {
-      const resetRefs = hasRemoteHead ? [`origin/${headBranch}`, `origin/${baseBranch}`] : [`origin/${baseBranch}`]
-
-      let resetSucceeded = false
-      for (const ref of resetRefs) {
-        const resetResult = await $`git -C ${targetDir} reset --hard ${ref}`.nothrow()
-        if (resetResult.exitCode === 0) {
-          resetSucceeded = true
-          break
-        }
-      }
-
-      if (!resetSucceeded) {
-        throw new Error(`Failed to reset worktree to ${resetRefs.join(' then ')}`)
-      }
     }
   }
 

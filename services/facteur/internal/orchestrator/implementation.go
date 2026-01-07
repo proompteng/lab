@@ -76,9 +76,11 @@ func NewImplementer(store knowledgeStore, runner argo.Runner, cfg Config) (Imple
 		runner: runner,
 		cfg: Config{
 			Namespace:                    cfg.Namespace,
+			AutonomousNamespace:          cfg.AutonomousNamespace,
 			WorkflowTemplate:             cfg.WorkflowTemplate,
 			AutonomousWorkflowTemplate:   cfg.AutonomousWorkflowTemplate,
 			ServiceAccount:               cfg.ServiceAccount,
+			AutonomousServiceAccount:     cfg.AutonomousServiceAccount,
 			Parameters:                   mergedParams,
 			GenerateNamePrefix:           cfg.GenerateNamePrefix,
 			AutonomousGenerateNamePrefix: cfg.AutonomousGenerateNamePrefix,
@@ -357,6 +359,7 @@ func (i *implementer) execute(ctx context.Context, span trace.Span, deliveryID s
 	}
 	workflowTemplate := i.cfg.WorkflowTemplate
 	generateNamePrefix := i.cfg.GenerateNamePrefix
+	serviceAccount := i.cfg.ServiceAccount
 	if workflowTemplate == "" {
 		workflowTemplate = "github-codex-implementation"
 	}
@@ -365,10 +368,16 @@ func (i *implementer) execute(ctx context.Context, span trace.Span, deliveryID s
 	}
 
 	if task.GetAutonomous() {
+		if i.cfg.AutonomousNamespace != "" {
+			namespace = i.cfg.AutonomousNamespace
+		}
 		if i.cfg.AutonomousWorkflowTemplate != "" {
 			workflowTemplate = i.cfg.AutonomousWorkflowTemplate
 		} else {
 			workflowTemplate = "codex-autonomous"
+		}
+		if i.cfg.AutonomousServiceAccount != "" {
+			serviceAccount = i.cfg.AutonomousServiceAccount
 		}
 		if i.cfg.AutonomousGenerateNamePrefix != "" {
 			generateNamePrefix = i.cfg.AutonomousGenerateNamePrefix
@@ -382,7 +391,7 @@ func (i *implementer) execute(ctx context.Context, span trace.Span, deliveryID s
 	result, err := i.runner.Run(ctx, argo.RunInput{
 		Namespace:          namespace,
 		WorkflowTemplate:   workflowTemplate,
-		ServiceAccount:     i.cfg.ServiceAccount,
+		ServiceAccount:     serviceAccount,
 		Parameters:         parameters,
 		Labels:             labels,
 		Annotations:        annotations,
