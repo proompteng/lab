@@ -487,16 +487,18 @@ resource "coder_script" "bootstrap_tools" {
     if command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
       log "Installing recommended CLI tools"
       if ! sudo apt-get update -y >"$LOG_DIR/apt-update.log" 2>&1; then
-        fail "apt-get update failed; see $LOG_DIR/apt-update.log"
-      fi
-      if ! sudo apt-get install -y --no-install-recommends ripgrep fd-find fzf bat jq >"$LOG_DIR/apt-install.log" 2>&1; then
-        fail "apt-get install failed; see $LOG_DIR/apt-install.log"
-      fi
-      if command -v fdfind >/dev/null 2>&1; then
-        ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
-      fi
-      if command -v batcat >/dev/null 2>&1; then
-        ln -sf "$(command -v batcat)" "$HOME/.local/bin/bat"
+        log "apt-get update failed; skipping recommended CLI tools"
+      else
+        if ! sudo apt-get install -y --no-install-recommends ripgrep fd-find fzf bat jq >"$LOG_DIR/apt-install.log" 2>&1; then
+          log "apt-get install failed; skipping recommended CLI tools"
+        else
+          if command -v fdfind >/dev/null 2>&1; then
+            ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
+          fi
+          if command -v batcat >/dev/null 2>&1; then
+            ln -sf "$(command -v batcat)" "$HOME/.local/bin/bat"
+          fi
+        fi
       fi
     fi
 
@@ -513,16 +515,19 @@ resource "coder_script" "bootstrap_tools" {
     set +u
 
     if [ -s "$NVM_DIR/nvm.sh" ]; then
+      log "Loading nvm"
       . "$NVM_DIR/nvm.sh"
     else
       fail "nvm not available after install; see $LOG_DIR/nvm-install.log"
     fi
 
-    if ! nvm ls "lts/*" >/dev/null 2>&1; then
-      log "Installing Node.js LTS via nvm"
-      if ! nvm install --lts >"$LOG_DIR/node-install.log" 2>&1; then
-        fail "Node.js install failed; see $LOG_DIR/node-install.log"
-      fi
+    if ! command -v nvm >/dev/null 2>&1; then
+      fail "nvm command not available after sourcing; see $LOG_DIR/nvm-install.log"
+    fi
+
+    log "Installing Node.js LTS via nvm"
+    if ! nvm install --lts >"$LOG_DIR/node-install.log" 2>&1; then
+      fail "Node.js install failed; see $LOG_DIR/node-install.log"
     fi
 
     if ! nvm use --lts >/dev/null 2>&1; then
