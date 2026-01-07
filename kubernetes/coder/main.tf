@@ -484,6 +484,45 @@ resource "coder_script" "bootstrap_tools" {
       log "bun $BUN_VERSION ready"
     fi
 
+    export NVM_DIR="$HOME/.nvm"
+    NVM_VERSION="v0.39.7"
+    mkdir -p "$NVM_DIR"
+    if [ ! -s "$NVM_DIR/nvm.sh" ]; then
+      log "Installing nvm $NVM_VERSION"
+      if ! curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/$NVM_VERSION/install.sh" | bash >"$LOG_DIR/nvm-install.log" 2>&1; then
+        fail "nvm install failed; see $LOG_DIR/nvm-install.log"
+      fi
+    fi
+
+    if [ -s "$NVM_DIR/nvm.sh" ]; then
+      . "$NVM_DIR/nvm.sh"
+    else
+      fail "nvm not available after install; see $LOG_DIR/nvm-install.log"
+    fi
+
+    if ! nvm ls "lts/*" >/dev/null 2>&1; then
+      log "Installing Node.js LTS via nvm"
+      if ! nvm install --lts >"$LOG_DIR/node-install.log" 2>&1; then
+        fail "Node.js install failed; see $LOG_DIR/node-install.log"
+      fi
+    fi
+
+    if ! nvm use --lts >/dev/null 2>&1; then
+      log "Retrying Node.js LTS install"
+      if ! nvm install --lts >"$LOG_DIR/node-install.log" 2>&1; then
+        fail "Node.js install failed; see $LOG_DIR/node-install.log"
+      fi
+      nvm use --lts >/dev/null 2>&1 || fail "Unable to switch to Node.js LTS"
+    fi
+
+    nvm alias default "lts/*" >/dev/null 2>&1 || true
+    hash -r
+
+    if command -v node >/dev/null 2>&1; then
+      NODE_VERSION=$(node --version 2>/dev/null || echo "unknown")
+      log "Node $NODE_VERSION ready"
+    fi
+
     if ! command -v convex >/dev/null 2>&1; then
       log "Installing Convex CLI"
       if ! bun add -g convex@1.27.0 >"$LOG_DIR/convex-install.log" 2>&1; then
@@ -588,6 +627,27 @@ export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 export PATH="$HOME/.local/bin:$PATH"
 ZSHRC
+    fi
+
+    if ! grep -q "NVM_DIR" "$HOME/.profile" 2>/dev/null; then
+      cat <<'PROFILE_NVM' >> "$HOME/.profile"
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+PROFILE_NVM
+    fi
+
+    if ! grep -q "NVM_DIR" "$HOME/.bashrc" 2>/dev/null; then
+      cat <<'BASHRC_NVM' >> "$HOME/.bashrc"
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+BASHRC_NVM
+    fi
+
+    if ! grep -q "NVM_DIR" "$HOME/.zshrc" 2>/dev/null; then
+      cat <<'ZSHRC_NVM' >> "$HOME/.zshrc"
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+ZSHRC_NVM
     fi
 
     REPO_ROOT="${local.repository_folder}"

@@ -48,6 +48,7 @@ This document explains how to maintain the single `k8s-arm64` template in Coder,
 ## Bootstrap Script Overview
 
 - Installs Bun (via the official shell script) so package scripts use the same runtime locally and in automation.
+- Installs Node.js LTS via nvm.
 - Installs CLI dependencies in this order: `bun`, `convex@1.27.0`, `@openai/codex` (via `bun install -g`), `kubectl`, `argocd`, `gh`.
 - Symlinks `kubectl`, `argocd`, and `gh` into `/tmp/coder-script-data/bin` so non-interactive shells can reach them.
 - Workspace pods run with a service account bound to `cluster-admin` via a RoleBinding (namespace-scoped) so in-cluster `kubectl` has admin access.
@@ -128,6 +129,6 @@ Following this loop keeps the template lineage clean and ensures future Codex ru
 
 ## Latest Update (January 7, 2026)
 
-- Template version `1.0.18` removes the Node.js module and relies on Bun for JavaScript tooling.
-- CLI installs now use Bun (`bun add -g`) for `convex` and `@openai/codex`.
-- `codex`, `kubectl`, `argocd`, and `gh` binaries are symlinked into `/tmp/coder-script-data/bin` for non-interactive shells.
+- Template version `1.0.27` installs Node.js LTS via nvm alongside Bun.
+- CLI installs use Bun (`bun add -g` for `convex`, `bun install -g` for `@openai/codex`).
+- `kubectl`, `argocd`, and `gh` binaries are symlinked into `/tmp/coder-script-data/bin` for non-interactive shells.
