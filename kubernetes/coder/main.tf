@@ -595,6 +595,16 @@ resource "coder_script" "bootstrap_tools" {
 
     if ! command -v gh >/dev/null 2>&1; then
       log "Installing GitHub CLI"
+      if command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+        if sudo apt-get install -y --no-install-recommends gh >"$LOG_DIR/gh-apt-install.log" 2>&1; then
+          log "GitHub CLI installed via apt"
+        else
+          log "apt-get install gh failed; falling back to GitHub release"
+        fi
+      fi
+    fi
+
+    if ! command -v gh >/dev/null 2>&1; then
       GH_ARCH="$(uname -m)"
       case "$GH_ARCH" in
         aarch64|arm64) GH_ARCH="arm64" ;;
@@ -612,22 +622,34 @@ resource "coder_script" "bootstrap_tools" {
       fi
       GH_TMP="$(mktemp -d)"
       GH_TAR="$GH_TMP/gh.tar.gz"
-      if ! curl -fsSLo "$GH_TAR" "https://github.com/cli/cli/releases/download/v$${GH_VERSION}/gh_$${GH_VERSION}_linux_$${GH_ARCH}.tar.gz" 2>"$LOG_DIR/gh-install.log"; then
-        rm -rf "$GH_TMP"
-        fail "GitHub CLI download failed; see $LOG_DIR/gh-install.log"
+      if ! curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o "$GH_TAR" "https://github.com/cli/cli/releases/download/v$${GH_VERSION}/gh_$${GH_VERSION}_linux_$${GH_ARCH}.tar.gz" 2>"$LOG_DIR/gh-install.log"; then
+        log "GitHub CLI download failed for v$GH_VERSION; trying latest"
+        if ! curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o "$GH_TAR" "https://github.com/cli/cli/releases/latest/download/gh_$${GH_VERSION}_linux_$${GH_ARCH}.tar.gz" 2>>"$LOG_DIR/gh-install.log"; then
+          rm -rf "$GH_TMP"
+          log "GitHub CLI download failed; see $LOG_DIR/gh-install.log"
+        fi
       fi
-      if ! tar -xzf "$GH_TAR" -C "$GH_TMP" >>"$LOG_DIR/gh-install.log" 2>&1; then
-        rm -rf "$GH_TMP"
-        fail "GitHub CLI extract failed; see $LOG_DIR/gh-install.log"
+      if [ -f "$GH_TAR" ]; then
+        if ! tar -xzf "$GH_TAR" -C "$GH_TMP" >>"$LOG_DIR/gh-install.log" 2>&1; then
+          rm -rf "$GH_TMP"
+          log "GitHub CLI extract failed; see $LOG_DIR/gh-install.log"
+        else
+          GH_DIR="$(find "$GH_TMP" -maxdepth 1 -type d -name 'gh_*' -print -quit)"
+          if [ -z "$GH_DIR" ] || [ ! -x "$GH_DIR/bin/gh" ]; then
+            rm -rf "$GH_TMP"
+            log "GitHub CLI archive missing expected binary; see $LOG_DIR/gh-install.log"
+          else
+            install -m 0755 "$GH_DIR/bin/gh" "$HOME/.local/bin/gh"
+            rm -rf "$GH_TMP"
+          fi
+        fi
       fi
-      GH_DIR="$(find "$GH_TMP" -maxdepth 1 -type d -name 'gh_*' -print -quit)"
-      if [ -z "$GH_DIR" ] || [ ! -x "$GH_DIR/bin/gh" ]; then
-        rm -rf "$GH_TMP"
-        fail "GitHub CLI archive missing expected binary; see $LOG_DIR/gh-install.log"
-      fi
-      install -m 0755 "$GH_DIR/bin/gh" "$HOME/.local/bin/gh"
-      ln -sf "$HOME/.local/bin/gh" /tmp/coder-script-data/bin/gh
-      rm -rf "$GH_TMP"
+    fi
+
+    if command -v gh >/dev/null 2>&1; then
+      ln -sf "$(command -v gh)" /tmp/coder-script-data/bin/gh
+    else
+      log "GitHub CLI not installed; continuing without it"
     fi
 
     if ! grep -q "BUN_INSTALL" "$HOME/.profile" 2>/dev/null; then
