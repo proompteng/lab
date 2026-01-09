@@ -34,6 +34,29 @@ jobs:
         working-directory: packages/crossplane/configuration-orchestration
         run: |
           crossplane xpkg build --package-root=. --ignore='**/examples/**'
+  golangci-functions:
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - packages/crossplane/functions/function-map-to-list
+          - packages/crossplane/functions/function-orchestration-dag
+          - packages/crossplane/functions/function-memory-sql
+          - packages/crossplane/functions/function-memory-connection
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: ${{ matrix.module }}
   build-main:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: self-hosted
