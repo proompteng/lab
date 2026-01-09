@@ -6,6 +6,8 @@ resources:
   - knative-service.yaml
   - graf-api-secret.yaml
   - graf-auth-secret.yaml
+  - ingressroute.yaml
+  - graf-metallb-service.yaml
   - neo4j-browser-service.yaml
   - graf-workflows-clusterrolebinding.yaml
   - graf-otel-configmap.yaml
