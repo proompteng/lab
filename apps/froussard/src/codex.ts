@@ -133,5 +133,4 @@ export interface CodexTaskMessage {
   iterations?: CodexIterationsPolicy
   iteration?: number
   iterationCycle?: number
-  autonomous?: boolean
 }

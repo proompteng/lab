@@ -12,7 +12,6 @@ export interface CodexIterationsPolicy {
 export interface CodexIssueMetadata {
   version: number | null
   iterations: CodexIterationsPolicy
-  autonomous: boolean
 }
 
 const DEFAULT_ITERATIONS: CodexIterationsPolicy = {
@@ -160,7 +159,7 @@ const parseIterationsPolicy = (value: unknown): CodexIterationsPolicy => {
 export const parseCodexIssueMetadata = (body: string): CodexIssueMetadata => {
   const block = extractCodexBlock(body)
   if (!block) {
-    return { version: null, iterations: { ...DEFAULT_ITERATIONS }, autonomous: false }
+    return { version: null, iterations: { ...DEFAULT_ITERATIONS } }
   }
 
   let parsed: Record<string, unknown> = {}
@@ -177,23 +176,17 @@ export const parseCodexIssueMetadata = (body: string): CodexIssueMetadata => {
   const versionRaw = parsed.version
   const version = typeof versionRaw === 'number' ? versionRaw : Number.parseInt(String(versionRaw ?? ''), 10)
   if (!Number.isFinite(version) || version <= 0) {
-    return { version: null, iterations: { ...DEFAULT_ITERATIONS }, autonomous: false }
+    return { version: null, iterations: { ...DEFAULT_ITERATIONS } }
   }
 
   if (version !== 1) {
-    return { version, iterations: { ...DEFAULT_ITERATIONS }, autonomous: false }
+    return { version, iterations: { ...DEFAULT_ITERATIONS } }
   }
 
   const iterations = parseIterationsPolicy(parsed.iterations ?? parsed.iteration)
-  const autonomousFlag =
-    parsed.autonomous === true ||
-    parsed.autonomous === 'true' ||
-    parsed.pipeline === 'autonomous' ||
-    parsed.pipeline === 'auto'
 
   return {
     version,
     iterations,
-    autonomous: Boolean(autonomousFlag),
   }
 }

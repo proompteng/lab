@@ -277,7 +277,6 @@ func (i *implementer) execute(ctx context.Context, span trace.Span, deliveryID s
 		"issueNumber": task.GetIssueNumber(),
 		"head":        task.GetHead(),
 		"base":        base,
-		"autonomous":  task.GetAutonomous(),
 	})
 	if err != nil {
 		span.RecordError(err)
