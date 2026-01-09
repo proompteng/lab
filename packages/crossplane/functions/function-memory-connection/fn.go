@@ -279,10 +279,16 @@ func getStringField(obj map[string]any, path string) string {
 		return ""
 	}
 	value, err := fieldpath.Pave(obj).GetValue(path)
-	if err != nil {
+	if err == nil {
+		if s, ok := value.(string); ok {
+			return s
+		}
+	}
+	segments := strings.Split(path, ".")
+	if len(segments) == 0 {
 		return ""
 	}
-	if s, ok := value.(string); ok {
+	if s, found, err := unstructured.NestedString(obj, segments...); err == nil && found {
 		return s
 	}
 	return ""
