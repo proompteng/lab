@@ -92,7 +92,8 @@ linters:
 
     # Warns about if err := Foo(); err != nil style error checks. Seems to go
     # against idiomatic Go programming, which encourages this approach - e.g.
-    # to scope errors.  settings:
+    # to scope errors.
+  settings:
     depguard:
       rules:
         no_third_party_test_libraries:
