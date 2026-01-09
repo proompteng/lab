@@ -11,6 +11,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from '@/components/ui/pagination'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { type CodexRunSummaryRecord, fetchCodexRecentRuns, fetchCodexRunsPage } from '@/data/codex'
 import { cn } from '@/lib/utils'
 
@@ -247,71 +248,6 @@ function CodexRunsPage() {
         </form>
       </section>
 
-      <section className="rounded-none border bg-card">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 text-xs text-muted-foreground">
-          <span>Review queue</span>
-          <span className="tabular-nums">{reviewQueue.length}</span>
-        </div>
-        {reviewQueue.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-xs">
-              <thead className="bg-muted/40 text-muted-foreground">
-                <tr className="border-b">
-                  <th className="px-3 py-2 text-left font-medium">Issue</th>
-                  <th className="px-3 py-2 text-left font-medium">Repository</th>
-                  <th className="px-3 py-2 text-left font-medium">Review status</th>
-                  <th className="px-3 py-2 text-left font-medium">PR</th>
-                  <th className="px-3 py-2 text-left font-medium">PR status</th>
-                  <th className="px-3 py-2 text-left font-medium">Updated</th>
-                </tr>
-              </thead>
-              <tbody>
-                {reviewQueue.map((run) => {
-                  const prStatus = getPrStatus(run)
-                  return (
-                    <tr key={`review-${run.id}`} className="border-b last:border-0">
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        <Link
-                          to="/codex/search"
-                          search={{
-                            repository: run.repository,
-                            issueNumber: run.issueNumber,
-                            branch: '',
-                            limit: DEFAULT_SEARCH_LIMIT,
-                          }}
-                          className="text-primary hover:underline"
-                        >
-                          #{run.issueNumber}
-                        </Link>
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.repository}</td>
-                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                        {run.reviewStatus ?? 'pending'}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {run.prUrl ? (
-                          <ExternalLink href={run.prUrl}>PR #{run.prNumber ?? '—'}</ExternalLink>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                        {prStatus ? <StatusPill value={prStatus} tone="muted" /> : '—'}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                        {formatDateTime(run.updatedAt)}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="p-6 text-center text-xs text-muted-foreground">No review queue items.</div>
-        )}
-      </section>
-
       {error ? (
         <section className="rounded-none p-4 text-xs border border-destructive/40 bg-destructive/10 text-destructive">
           {error}
@@ -324,141 +260,215 @@ function CodexRunsPage() {
         </div>
       ) : null}
 
-      <section className="rounded-none border bg-card">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 text-xs text-muted-foreground">
-          <span>{rangeLabel}</span>
-          <span>{pageLabel}</span>
+      <Tabs defaultValue={reviewQueue.length > 0 ? 'review' : 'runs'} className="rounded-none border bg-card">
+        <div className="border-b px-4 py-3">
+          <TabsList variant="line" className="flex items-center gap-2 p-0 h-auto bg-transparent">
+            <TabsTrigger value="review" className="rounded-none px-3 py-1.5 text-xs">
+              Review queue
+              <span className="ml-2 tabular-nums text-muted-foreground">{reviewQueue.length}</span>
+            </TabsTrigger>
+            <TabsTrigger value="runs" className="rounded-none px-3 py-1.5 text-xs">
+              All runs
+              <span className="ml-2 tabular-nums text-muted-foreground">{total}</span>
+            </TabsTrigger>
+          </TabsList>
         </div>
-        {runs.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-xs">
-              <thead className="bg-muted/40 text-muted-foreground">
-                <tr className="border-b">
-                  <th className="px-3 py-2 text-left font-medium">Issue</th>
-                  <th className="px-3 py-2 text-left font-medium">Repository</th>
-                  <th className="px-3 py-2 text-left font-medium">Attempt</th>
-                  <th className="px-3 py-2 text-left font-medium">Iteration</th>
-                  <th className="px-3 py-2 text-left font-medium">Status</th>
-                  <th className="px-3 py-2 text-left font-medium">Stage / Phase</th>
-                  <th className="px-3 py-2 text-left font-medium">Judge</th>
-                  <th className="px-3 py-2 text-left font-medium">Workflow</th>
-                  <th className="px-3 py-2 text-left font-medium">Branch</th>
-                  <th className="px-3 py-2 text-left font-medium">PR</th>
-                  <th className="px-3 py-2 text-left font-medium">PR status</th>
-                  <th className="px-3 py-2 text-left font-medium">CI</th>
-                  <th className="px-3 py-2 text-left font-medium">Review</th>
-                  <th className="px-3 py-2 text-left font-medium">Created</th>
-                </tr>
-              </thead>
-              <tbody>
-                {runs.map((run) => {
-                  const prStatus = getPrStatus(run)
-                  return (
-                    <tr key={run.id} className="border-b last:border-0">
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        <Link
-                          to="/codex/search"
-                          search={{
-                            repository: run.repository,
-                            issueNumber: run.issueNumber,
-                            branch: '',
-                            limit: DEFAULT_SEARCH_LIMIT,
-                          }}
-                          className="text-primary hover:underline"
-                        >
-                          #{run.issueNumber}
-                        </Link>
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.repository}</td>
-                      <td className="px-3 py-2 whitespace-nowrap tabular-nums">#{run.attempt}</td>
-                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                        {run.iteration ? (
-                          <span className="tabular-nums">
-                            {run.iteration}
-                            {run.iterationCycle ? `/${run.iterationCycle}` : ''}
-                          </span>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        <StatusPill value={run.status} />
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                        {run.stage ?? '—'} / {run.phase ?? '—'}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.decision ?? '—'}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        <div className="text-foreground">{run.workflowName}</div>
-                        {run.workflowNamespace ? (
-                          <div className="text-muted-foreground">{run.workflowNamespace}</div>
-                        ) : null}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.branch}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {run.prUrl ? (
-                          <ExternalLink href={run.prUrl}>PR #{run.prNumber ?? '—'}</ExternalLink>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                        {prStatus ? <StatusPill value={prStatus} tone="muted" /> : '—'}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.ciStatus ?? '—'}</td>
-                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.reviewStatus ?? '—'}</td>
-                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                        {formatDateTime(run.createdAt)}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+        <TabsContent value="review" className="m-0">
+          {reviewQueue.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-xs">
+                <thead className="bg-muted/40 text-muted-foreground">
+                  <tr className="border-b">
+                    <th className="px-3 py-2 text-left font-medium">Issue</th>
+                    <th className="px-3 py-2 text-left font-medium">Repository</th>
+                    <th className="px-3 py-2 text-left font-medium">Review status</th>
+                    <th className="px-3 py-2 text-left font-medium">PR</th>
+                    <th className="px-3 py-2 text-left font-medium">PR status</th>
+                    <th className="px-3 py-2 text-left font-medium">Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reviewQueue.map((run) => {
+                    const prStatus = getPrStatus(run)
+                    return (
+                      <tr key={`review-${run.id}`} className="border-b last:border-0">
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <Link
+                            to="/codex/search"
+                            search={{
+                              repository: run.repository,
+                              issueNumber: run.issueNumber,
+                              branch: '',
+                              limit: DEFAULT_SEARCH_LIMIT,
+                            }}
+                            className="text-primary hover:underline"
+                          >
+                            #{run.issueNumber}
+                          </Link>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.repository}</td>
+                        <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                          {run.reviewStatus ?? 'pending'}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {run.prUrl ? (
+                            <ExternalLink href={run.prUrl}>PR #{run.prNumber ?? '—'}</ExternalLink>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                          {prStatus ? <StatusPill value={prStatus} tone="muted" /> : '—'}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                          {formatDateTime(run.updatedAt)}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="p-6 text-center text-xs text-muted-foreground">No review queue items.</div>
+          )}
+        </TabsContent>
+        <TabsContent value="runs" className="m-0">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 text-xs text-muted-foreground">
+            <span>{rangeLabel}</span>
+            <span>{pageLabel}</span>
           </div>
-        ) : (
-          <div className="p-6 text-center text-xs text-muted-foreground">No runs loaded yet.</div>
-        )}
-        {totalPages > 1 ? (
-          <div className="border-t px-3 py-2">
-            <Pagination>
-              <PaginationContent>
-                <PaginationItem>
-                  <PaginationPrevious
-                    aria-disabled={isFirstPage}
-                    className={isFirstPage ? 'pointer-events-none opacity-50' : undefined}
-                    onClick={() => {
-                      if (isFirstPage) return
-                      goToPage(Math.max(1, clampedPage - 1))
-                    }}
-                  />
-                </PaginationItem>
-              </PaginationContent>
-              <PaginationContent>
-                {pageNumbers.map((page) => (
-                  <PaginationItem key={page}>
-                    <PaginationLink isActive={page === clampedPage} onClick={() => goToPage(page)}>
-                      {page}
-                    </PaginationLink>
+          {runs.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-xs">
+                <thead className="bg-muted/40 text-muted-foreground">
+                  <tr className="border-b">
+                    <th className="px-3 py-2 text-left font-medium">Issue</th>
+                    <th className="px-3 py-2 text-left font-medium">Repository</th>
+                    <th className="px-3 py-2 text-left font-medium">Attempt</th>
+                    <th className="px-3 py-2 text-left font-medium">Iteration</th>
+                    <th className="px-3 py-2 text-left font-medium">Status</th>
+                    <th className="px-3 py-2 text-left font-medium">Stage / Phase</th>
+                    <th className="px-3 py-2 text-left font-medium">Judge</th>
+                    <th className="px-3 py-2 text-left font-medium">Workflow</th>
+                    <th className="px-3 py-2 text-left font-medium">Branch</th>
+                    <th className="px-3 py-2 text-left font-medium">PR</th>
+                    <th className="px-3 py-2 text-left font-medium">PR status</th>
+                    <th className="px-3 py-2 text-left font-medium">CI</th>
+                    <th className="px-3 py-2 text-left font-medium">Review</th>
+                    <th className="px-3 py-2 text-left font-medium">Created</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map((run) => {
+                    const prStatus = getPrStatus(run)
+                    return (
+                      <tr key={run.id} className="border-b last:border-0">
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <Link
+                            to="/codex/search"
+                            search={{
+                              repository: run.repository,
+                              issueNumber: run.issueNumber,
+                              branch: '',
+                              limit: DEFAULT_SEARCH_LIMIT,
+                            }}
+                            className="text-primary hover:underline"
+                          >
+                            #{run.issueNumber}
+                          </Link>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.repository}</td>
+                        <td className="px-3 py-2 whitespace-nowrap tabular-nums">#{run.attempt}</td>
+                        <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                          {run.iteration ? (
+                            <span className="tabular-nums">
+                              {run.iteration}
+                              {run.iterationCycle ? `/${run.iterationCycle}` : ''}
+                            </span>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <StatusPill value={run.status} />
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                          {run.stage ?? '—'} / {run.phase ?? '—'}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.decision ?? '—'}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <div className="text-foreground">{run.workflowName}</div>
+                          {run.workflowNamespace ? (
+                            <div className="text-muted-foreground">{run.workflowNamespace}</div>
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.branch}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {run.prUrl ? (
+                            <ExternalLink href={run.prUrl}>PR #{run.prNumber ?? '—'}</ExternalLink>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                          {prStatus ? <StatusPill value={prStatus} tone="muted" /> : '—'}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.ciStatus ?? '—'}</td>
+                        <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.reviewStatus ?? '—'}</td>
+                        <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                          {formatDateTime(run.createdAt)}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="p-6 text-center text-xs text-muted-foreground">No runs loaded yet.</div>
+          )}
+          {totalPages > 1 ? (
+            <div className="border-t px-3 py-2">
+              <Pagination>
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPrevious
+                      aria-disabled={isFirstPage}
+                      className={isFirstPage ? 'pointer-events-none opacity-50' : undefined}
+                      onClick={() => {
+                        if (isFirstPage) return
+                        goToPage(Math.max(1, clampedPage - 1))
+                      }}
+                    />
                   </PaginationItem>
-                ))}
-              </PaginationContent>
-              <PaginationContent>
-                <PaginationItem>
-                  <PaginationNext
-                    aria-disabled={isLastPage}
-                    className={isLastPage ? 'pointer-events-none opacity-50' : undefined}
-                    onClick={() => {
-                      if (isLastPage) return
-                      goToPage(Math.min(totalPages, clampedPage + 1))
-                    }}
-                  />
-                </PaginationItem>
-              </PaginationContent>
-            </Pagination>
-          </div>
-        ) : null}
-      </section>
+                </PaginationContent>
+                <PaginationContent>
+                  {pageNumbers.map((page) => (
+                    <PaginationItem key={page}>
+                      <PaginationLink isActive={page === clampedPage} onClick={() => goToPage(page)}>
+                        {page}
+                      </PaginationLink>
+                    </PaginationItem>
+                  ))}
+                </PaginationContent>
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationNext
+                      aria-disabled={isLastPage}
+                      className={isLastPage ? 'pointer-events-none opacity-50' : undefined}
+                      onClick={() => {
+                        if (isLastPage) return
+                        goToPage(Math.min(totalPages, clampedPage + 1))
+                      }}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            </div>
+          ) : null}
+        </TabsContent>
+      </Tabs>
     </main>
   )
 }
