@@ -35,6 +35,8 @@ type orchestrationStep struct {
 }
 
 // RunFunction runs the Function.
+//
+//nolint:gocognit // Composition orchestration requires multiple guard clauses and branches.
 func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) (*fnv1.RunFunctionResponse, error) {
 	rsp := response.To(req, response.DefaultTTL)
 
@@ -91,7 +93,11 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	}
 
 	templates, found, err := unstructured.NestedSlice(target.Resource.Object, "spec", "templates")
-	if err != nil || !found || len(templates) == 0 {
+	if err != nil {
+		response.Fatal(rsp, errors.Wrap(err, "cannot read workflow templates"))
+		return rsp, err
+	}
+	if !found || len(templates) == 0 {
 		response.Fatal(rsp, errors.New("workflow template missing spec.templates"))
 		return rsp, nil
 	}

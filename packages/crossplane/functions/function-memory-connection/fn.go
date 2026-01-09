@@ -32,6 +32,8 @@ type Function struct {
 }
 
 // RunFunction runs the Function.
+//
+//nolint:gocognit // Connection binding requires multiple guard clauses and branches.
 func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) (*fnv1.RunFunctionResponse, error) {
 	rsp := response.To(req, response.DefaultTTL)
 
@@ -165,8 +167,13 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 }
 
 func setRequirement(rsp *fnv1.RunFunctionResponse, key, apiVersion, kind, name, namespace string) {
-	if rsp.Requirements == nil {
-		rsp.Requirements = &fnv1.Requirements{Resources: map[string]*fnv1.ResourceSelector{}}
+	reqs := rsp.GetRequirements()
+	if reqs == nil {
+		reqs = &fnv1.Requirements{Resources: map[string]*fnv1.ResourceSelector{}}
+		rsp.Requirements = reqs
+	}
+	if reqs.GetResources() == nil {
+		reqs.Resources = map[string]*fnv1.ResourceSelector{}
 	}
 	selector := &fnv1.ResourceSelector{
 		ApiVersion: apiVersion,
@@ -177,7 +184,7 @@ func setRequirement(rsp *fnv1.RunFunctionResponse, key, apiVersion, kind, name, 
 		ns := namespace
 		selector.Namespace = &ns
 	}
-	rsp.Requirements.Resources[key] = selector
+	reqs.Resources[key] = selector
 }
 
 func findRequired(required map[string][]resource.Required, key string) *unstructured.Unstructured {

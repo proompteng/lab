@@ -78,7 +78,11 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	}
 
 	data, found, err := unstructured.NestedStringMap(target.Resource.Object, "data")
-	if err != nil || !found {
+	if err != nil {
+		response.Fatal(rsp, errors.Wrap(err, "cannot read configmap data"))
+		return rsp, err
+	}
+	if !found {
 		response.Fatal(rsp, errors.Errorf("configmap %q missing data field", in.Spec.TargetConfigMap))
 		return rsp, nil
 	}
