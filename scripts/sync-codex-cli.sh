@@ -8,6 +8,7 @@ DEFAULT_LOCAL_AUTH="$HOME/.codex/auth.json"
 DEFAULT_CONFIG_TEMPLATE="$SCRIPT_DIR/codex-config-template.toml"
 DEFAULT_REMOTE_AUTH="${DEFAULT_REMOTE_HOME}/.codex/auth.json"
 DEFAULT_REMOTE_CONFIG="${DEFAULT_REMOTE_HOME}/.codex/config.toml"
+DEFAULT_LOCAL_REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 usage() {
   cat <<'USAGE'
@@ -17,6 +18,7 @@ Options:
   -w, --workspace NAME     Coder workspace name (default: proompteng)
   -a, --auth PATH          Local auth.json path (default: ~/.codex/auth.json)
   -c, --config PATH        Local config template path (default: scripts/codex-config-template.toml)
+  -r, --repo PATH          Local repo root to sync skills from (default: repo containing this script)
       --remote-auth PATH   Remote auth destination (default: ~/.codex/auth.json)
       --remote-config PATH Remote config destination (default: ~/.codex/config.toml)
       --remote-home PATH   Remote home directory (default: /home/coder)
@@ -36,6 +38,7 @@ remote_auth="$DEFAULT_REMOTE_AUTH"
 remote_config="$DEFAULT_REMOTE_CONFIG"
 remote_home="$DEFAULT_REMOTE_HOME"
 remote_repo=""
+local_repo_root="$DEFAULT_LOCAL_REPO_ROOT"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -49,6 +52,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -c|--config)
       template_path="$2"
+      shift 2
+      ;;
+    -r|--repo)
+      local_repo_root="$2"
       shift 2
       ;;
     --remote-auth)
@@ -166,19 +173,36 @@ RSYNC_RSH="ssh -o BatchMode=yes -o ConnectTimeout=10" rsync -av --progress "$tmp
 # shellcheck disable=SC2029
 ssh "${ssh_opts[@]}" "$coder_host" "chmod 600 $(shell_escape "$remote_config")"
 
+local_skills_dir="${local_repo_root%/}/skills"
+remote_skills_dir="${remote_home%/}/.codex/skills"
+if [[ -d "$local_skills_dir" ]]; then
+  # shellcheck disable=SC2029
+  ssh "${ssh_opts[@]}" "$coder_host" "mkdir -p $(shell_escape "$remote_skills_dir")"
+  echo "Syncing skills to $(shell_escape "$workspace:$remote_skills_dir")"
+  RSYNC_RSH="ssh -o BatchMode=yes -o ConnectTimeout=10" rsync -av --progress "$local_skills_dir"/ "$coder_host:$remote_skills_dir"/
+else
+  echo "No local skills directory found at $local_skills_dir; skipping skills sync"
+fi
+
 ssh "${ssh_opts[@]}" "$coder_host" bash -s <<'REMOTE'
 set -euo pipefail
 codex_marker="# Managed by sync-codex-cli codex wrapper"
-codex_function=$'codex() {\n  command codex --full-auto --dangerously-bypass-approvals-and-sandbox --search --model gpt-5.2-codex "$@"\n}'
 for rc in ~/.profile ~/.bashrc ~/.zshrc; do
   touch "${rc}"
   tmp="$(mktemp)"
-  sed -e '/^alias codex=.*/d' -e '/shopt -s expand_aliases/d' "${rc}" > "${tmp}"
+  awk -v marker="$codex_marker" '
+    BEGIN { skip = 0 }
+    $0 == marker { skip = 1; next }
+    skip {
+      if ($0 ~ /^}\s*$/) { skip = 0 }
+      next
+    }
+    /^alias codex=.*/ { next }
+    /^shopt -s expand_aliases/ { next }
+    { print }
+  ' "${rc}" > "${tmp}"
   mv "${tmp}" "${rc}"
-  if ! grep -F "${codex_marker}" "${rc}" >/dev/null 2>&1; then
-    printf '\n%s\n%s\n' "${codex_marker}" "${codex_function}" >> "${rc}"
-  fi
 done
 REMOTE
 
-echo "Codex auth, config, and wrapper synced to $workspace"
+echo "Codex auth, config, and skills synced to $workspace"

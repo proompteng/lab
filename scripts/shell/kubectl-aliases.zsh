@@ -28,7 +28,17 @@ alias kdes='kubectl describe'
 alias kaf='kubectl apply -f'
 alias kdel='kubectl delete'
 alias ktop='kubectl top pod'
-alias kbad='(kubectl get pods -A --no-headers | awk "{ if (\\$4!=\"Running\" && \\$4!=\"Completed\") print }"; kubectl get sts -A --no-headers | awk -F"[/ ]+" "{ if (\\$3!=\\$4) print }"; kubectl get ds -A --no-headers | awk "{ if (\\$3!=\\$5 || \\$3!=\\$7) print }")'
+
+# shellcheck disable=SC2154
+(( $+aliases[kbad] )) && unalias kbad
+
+kbad() {
+  (
+    kubectl get pods -A --no-headers | awk '{ if ($4!="Running" && $4!="Completed") print }'
+    kubectl get sts -A --no-headers | awk -F'[/ ]+' '{ if ($3!=$4) print }'
+    kubectl get ds -A --no-headers | awk '{ if ($3!=$5 || $3!=$7) print }'
+  )
+}
 
 # shellcheck disable=SC2154
 if (( $+functions[compdef] )); then

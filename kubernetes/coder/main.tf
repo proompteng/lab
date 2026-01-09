@@ -489,7 +489,7 @@ resource "coder_script" "bootstrap_tools" {
       if ! sudo apt-get update -y >"$LOG_DIR/apt-update.log" 2>&1; then
         log "apt-get update failed; skipping recommended CLI tools"
       else
-        if ! sudo apt-get install -y --no-install-recommends ripgrep fd-find fzf bat jq >"$LOG_DIR/apt-install.log" 2>&1; then
+        if ! sudo apt-get install -y --no-install-recommends ripgrep fd-find fzf bat jq tmux >"$LOG_DIR/apt-install.log" 2>&1; then
           log "apt-get install failed; skipping recommended CLI tools"
         else
           if command -v fdfind >/dev/null 2>&1; then
