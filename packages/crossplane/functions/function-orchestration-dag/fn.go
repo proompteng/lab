@@ -125,7 +125,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 			"name": step.Name,
 		}
 		if len(step.DependsOn) > 0 {
-			task["dependencies"] = step.DependsOn
+			task["dependencies"] = toAnySlice(step.DependsOn)
 		}
 		if len(step.With) > 0 {
 			params := mapToParameters(step.With)
@@ -265,4 +265,12 @@ func mapToParameters(value map[string]any) []any {
 	}
 
 	return params
+}
+
+func toAnySlice(values []string) []any {
+	out := make([]any, 0, len(values))
+	for _, value := range values {
+		out = append(out, value)
+	}
+	return out
 }
