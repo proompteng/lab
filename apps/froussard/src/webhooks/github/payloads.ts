@@ -51,6 +51,5 @@ export const toCodexTaskProto = (message: CodexTaskMessage, deliveryId: string):
     iterations,
     iteration: message.iteration,
     iterationCycle: message.iterationCycle,
-    autonomous: message.autonomous,
   })
 }

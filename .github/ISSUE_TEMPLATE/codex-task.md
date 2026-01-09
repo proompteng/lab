@@ -16,8 +16,6 @@ Only the keys below are currently parsed. Unknown keys are ignored.
 -->
 ```codex
 version: 1
-# true to force autonomous pipeline
-autonomous: false
 iterations:
   # fixed | until | budget | adaptive
   mode: fixed
@@ -33,7 +31,6 @@ iterations:
 <!--
 Notes:
 - You can also set iterations as a scalar: `iterations: 3` or `iteration: 3`.
-- `pipeline: autonomous` is also accepted as a shorthand for autonomous mode.
 -->
 
 ## Context

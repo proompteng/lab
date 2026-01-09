@@ -703,37 +703,37 @@ export const createCodexJudgeStore = (
           .onRef('jangar_github.pr_state.pr_number', '=', 'codex_judge.runs.pr_number'),
       )
       .select([
-        'id',
-        'repository',
-        'issue_number',
-        'branch',
-        'attempt',
-        'workflow_name',
-        'workflow_namespace',
-        'stage',
-        'status',
-        'phase',
-        'iteration',
-        'iteration_cycle',
-        'commit_sha',
-        'pr_number',
-        'pr_url',
+        'codex_judge.runs.id as id',
+        'codex_judge.runs.repository as repository',
+        'codex_judge.runs.issue_number as issue_number',
+        'codex_judge.runs.branch as branch',
+        'codex_judge.runs.attempt as attempt',
+        'codex_judge.runs.workflow_name as workflow_name',
+        'codex_judge.runs.workflow_namespace as workflow_namespace',
+        'codex_judge.runs.stage as stage',
+        'codex_judge.runs.status as status',
+        'codex_judge.runs.phase as phase',
+        'codex_judge.runs.iteration as iteration',
+        'codex_judge.runs.iteration_cycle as iteration_cycle',
+        'codex_judge.runs.commit_sha as commit_sha',
+        'codex_judge.runs.pr_number as pr_number',
+        'codex_judge.runs.pr_url as pr_url',
         'jangar_github.pr_state.state as pr_state',
         'jangar_github.pr_state.merged as pr_merged',
-        'ci_status',
-        'review_status',
-        'created_at',
-        'updated_at',
-        'started_at',
-        'finished_at',
+        'codex_judge.runs.ci_status as ci_status',
+        'codex_judge.runs.review_status as review_status',
+        'codex_judge.runs.created_at as created_at',
+        'codex_judge.runs.updated_at as updated_at',
+        'codex_judge.runs.started_at as started_at',
+        'codex_judge.runs.finished_at as finished_at',
         sql<string>`(select decision from codex_judge.evaluations e where e.run_id = codex_judge.runs.id order by e.created_at desc limit 1)`.as(
           'decision',
         ),
       ])
-      .orderBy('created_at desc')
+      .orderBy('codex_judge.runs.created_at desc')
 
     if (repository) {
-      query = query.where('repository', '=', repository)
+      query = query.where('codex_judge.runs.repository', '=', repository)
     }
 
     const rows = await query.limit(limit).execute()
@@ -761,34 +761,34 @@ export const createCodexJudgeStore = (
           .onRef('jangar_github.pr_state.pr_number', '=', 'codex_judge.runs.pr_number'),
       )
       .select([
-        'id',
-        'repository',
-        'issue_number',
-        'branch',
-        'attempt',
-        'workflow_name',
-        'workflow_namespace',
-        'stage',
-        'status',
-        'phase',
-        'iteration',
-        'iteration_cycle',
-        'commit_sha',
-        'pr_number',
-        'pr_url',
+        'codex_judge.runs.id as id',
+        'codex_judge.runs.repository as repository',
+        'codex_judge.runs.issue_number as issue_number',
+        'codex_judge.runs.branch as branch',
+        'codex_judge.runs.attempt as attempt',
+        'codex_judge.runs.workflow_name as workflow_name',
+        'codex_judge.runs.workflow_namespace as workflow_namespace',
+        'codex_judge.runs.stage as stage',
+        'codex_judge.runs.status as status',
+        'codex_judge.runs.phase as phase',
+        'codex_judge.runs.iteration as iteration',
+        'codex_judge.runs.iteration_cycle as iteration_cycle',
+        'codex_judge.runs.commit_sha as commit_sha',
+        'codex_judge.runs.pr_number as pr_number',
+        'codex_judge.runs.pr_url as pr_url',
         'jangar_github.pr_state.state as pr_state',
         'jangar_github.pr_state.merged as pr_merged',
-        'ci_status',
-        'review_status',
-        'created_at',
-        'updated_at',
-        'started_at',
-        'finished_at',
+        'codex_judge.runs.ci_status as ci_status',
+        'codex_judge.runs.review_status as review_status',
+        'codex_judge.runs.created_at as created_at',
+        'codex_judge.runs.updated_at as updated_at',
+        'codex_judge.runs.started_at as started_at',
+        'codex_judge.runs.finished_at as finished_at',
         sql<string>`(select decision from codex_judge.evaluations e where e.run_id = codex_judge.runs.id order by e.created_at desc limit 1)`.as(
           'decision',
         ),
       ])
-      .orderBy('created_at desc')
+      .orderBy('codex_judge.runs.created_at desc')
       .limit(pageSize)
       .offset(offset)
       .execute()

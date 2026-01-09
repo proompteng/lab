@@ -161,12 +161,6 @@ export const handleIssueOpened = async (params: BaseIssueParams): Promise<Workfl
   const issueBody = typeof issue?.body === 'string' ? issue.body : ''
   const issueUrl = typeof issue?.html_url === 'string' ? issue.html_url : ''
   const metadata = parseCodexIssueMetadata(issueBody)
-  const labelNames = (issue?.labels ?? [])
-    .map((label) => (typeof label?.name === 'string' ? label.name.trim().toLowerCase() : ''))
-    .filter((label) => label.length > 0)
-  const hasAutonomousLabel = labelNames.some((label) => config.codexAutonomousLabels.includes(label))
-  const hasAutonomousRepo = config.codexAutonomousRepos.includes(repositoryFullName.toLowerCase())
-  const autonomous = metadata.autonomous || hasAutonomousLabel || hasAutonomousRepo
   const prompt = buildCodexPrompt({
     issueTitle,
     issueBody,
@@ -191,7 +185,6 @@ export const handleIssueOpened = async (params: BaseIssueParams): Promise<Workfl
     issuedAt: new Date().toISOString(),
     metadataVersion: metadata.version ?? undefined,
     iterations: metadata.iterations,
-    autonomous,
   }
 
   const codexStructuredMessage = toCodexTaskProto(codexMessage, deliveryId)
@@ -314,12 +307,6 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
   const issueBody = typeof issue?.body === 'string' ? issue.body : ''
   const issueUrl = typeof issue?.html_url === 'string' ? issue.html_url : ''
   const metadata = parseCodexIssueMetadata(issueBody)
-  const labelNames = (issue?.labels ?? [])
-    .map((label) => (typeof label?.name === 'string' ? label.name.trim().toLowerCase() : ''))
-    .filter((label) => label.length > 0)
-  const hasAutonomousLabel = labelNames.some((label) => config.codexAutonomousLabels.includes(label))
-  const hasAutonomousRepo = config.codexAutonomousRepos.includes(repositoryFullName.toLowerCase())
-  const autonomous = metadata.autonomous || hasAutonomousLabel || hasAutonomousRepo
 
   const prompt = buildCodexPrompt({
     issueTitle,
@@ -345,7 +332,6 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
     issuedAt: new Date().toISOString(),
     metadataVersion: metadata.version ?? undefined,
     iterations: metadata.iterations,
-    autonomous,
   }
 
   const codexStructuredMessage = toCodexTaskProto(codexMessage, deliveryId)

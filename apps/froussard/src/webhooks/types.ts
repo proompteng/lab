@@ -18,8 +18,6 @@ export interface WebhookConfig {
   codexTriggerLogins: readonly string[]
   codexWorkflowLogin: string
   codexImplementationTriggerPhrase: string
-  codexAutonomousRepos: readonly string[]
-  codexAutonomousLabels: readonly string[]
   topics: {
     raw: string
     codexStructured: string
