@@ -57,6 +57,7 @@ jobs:
         with:
           version: v2.0.0
           working-directory: ${{ matrix.module }}
+          install-mode: go
   build-main:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: self-hosted
