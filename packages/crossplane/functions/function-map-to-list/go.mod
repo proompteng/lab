@@ -1,6 +1,6 @@
 module github.com/crossplane/function-map-to-list
 
-go 1.24.9
+go 1.25.5
 
 require (
 	github.com/alecthomas/kong v1.13.0
