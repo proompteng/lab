@@ -2265,7 +2265,9 @@ const evaluateRun = async (runId: string) => {
     }
 
     const argoJudgeOnly = effectiveJudgeMode === 'argo'
-    const isJudgeStage = run.stage === 'judge' || run.runCompletePayload?.stage === 'judge'
+    const notifyStage = typeof run.notifyPayload?.stage === 'string' ? run.notifyPayload.stage : null
+    const isJudgeStage =
+      run.stage === 'judge' || run.runCompletePayload?.stage === 'judge' || notifyStage === 'judge'
 
     if (argoJudgeOnly) {
       await store.updateRunPrompt(run.id, run.prompt, run.nextPrompt)
@@ -4307,6 +4309,7 @@ export const handleNotify = async (payload: Record<string, unknown>) => {
     issueNumber: parsed.issueNumber,
     branch: parsed.branch,
     prompt: parsed.prompt,
+    stage: parsed.stage,
     iteration: parsed.iteration,
     iterationCycle: parsed.iterationCycle,
   })
