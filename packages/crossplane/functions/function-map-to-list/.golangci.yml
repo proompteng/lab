@@ -23,7 +23,8 @@ linters:
     # These linters add whitespace in an attempt to make code more readable.
     # This isn't a widely accepted Go best practice, and would be laborious to
     # apply to existing code.
-    - wsl    - nlreturn
+    - wsl
+    - nlreturn
 
     # Warns about uses of fmt.Sprintf that are less performant than alternatives
     # such as string concatenation. We value readability more than performance
