@@ -17,17 +17,13 @@ linters:
     - testpackage
     - paralleltest
     - nilnil
-    - funcorder
-
     # Below are linters that lint for things we don't value. Each entry below
     # this line must have a comment explaining the rationale.
 
     # These linters add whitespace in an attempt to make code more readable.
     # This isn't a widely accepted Go best practice, and would be laborious to
     # apply to existing code.
-    - wsl
-    - wsl_v5
-    - nlreturn
+    - wsl    - nlreturn
 
     # Warns about uses of fmt.Sprintf that are less performant than alternatives
     # such as string concatenation. We value readability more than performance
@@ -95,9 +91,7 @@ linters:
 
     # Warns about if err := Foo(); err != nil style error checks. Seems to go
     # against idiomatic Go programming, which encourages this approach - e.g.
-    # to scope errors.
-    - noinlineerr
-  settings:
+    # to scope errors.  settings:
     depguard:
       rules:
         no_third_party_test_libraries:
