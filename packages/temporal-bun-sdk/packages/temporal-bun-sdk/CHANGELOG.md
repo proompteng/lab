@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.5.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.4.0...temporal-bun-sdk-v0.5.0) (2026-01-09)
+
+
+### Features
+
+* add inbound workflow signal and query support ([#1825](https://github.com/proompteng/lab/issues/1825)) ([a093aff](https://github.com/proompteng/lab/commit/a093aff67536df42d2ece3dffc28d17d70991cae))
+* add observability layer to temporal-bun-sdk ([#1770](https://github.com/proompteng/lab/issues/1770)) ([66ed9fe](https://github.com/proompteng/lab/commit/66ed9feb5f419321b7026c8b0ccccc85d1ce5408))
+* add payload codec and failure converter stack ([#1852](https://github.com/proompteng/lab/issues/1852)) ([c94f93a](https://github.com/proompteng/lab/commit/c94f93a4d3aee54074a8c31465d79b9ab04fe39b))
+* add repository enrichment workflow ([#2074](https://github.com/proompteng/lab/issues/2074)) ([9e96d7f](https://github.com/proompteng/lab/commit/9e96d7f6873ccfd16fc0442d6eebc4ad8c60459b))
+* add temporal-bun replay CLI ([#1784](https://github.com/proompteng/lab/issues/1784)) ([#1785](https://github.com/proompteng/lab/issues/1785)) ([b4e8b76](https://github.com/proompteng/lab/commit/b4e8b763c6182c2d3c6b58ac0638c2184ef70a9b))
+* add worker load/perf tests ([#1782](https://github.com/proompteng/lab/issues/1782)) ([c6e3cf4](https://github.com/proompteng/lab/commit/c6e3cf405ceb6da3459aefd1b2f7056316b554e1))
+* add workflow update executor plumbing ([#1824](https://github.com/proompteng/lab/issues/1824)) ([335c6e8](https://github.com/proompteng/lab/commit/335c6e8a265aa952305fb787cdf90c842662c281))
+* **codex:** implement autonomous pipeline ([#2329](https://github.com/proompteng/lab/issues/2329)) ([#2333](https://github.com/proompteng/lab/issues/2333)) ([faaa00a](https://github.com/proompteng/lab/commit/faaa00ab1b6ae661d768d1ea870c3b3fd37751d5))
+* expand workflow command coverage ([#1817](https://github.com/proompteng/lab/issues/1817)) ([#1834](https://github.com/proompteng/lab/issues/1834)) ([8dc276e](https://github.com/proompteng/lab/commit/8dc276e641a7665e3312e43ace1fb126ed1cd341))
+* finish Effect layer refactor for temporal-bun-sdk ([#1792](https://github.com/proompteng/lab/issues/1792)) ([e546652](https://github.com/proompteng/lab/commit/e546652622f70b67492a6524f2f65ea7ada37532))
+* finish history replay and sticky cache ([#1707](https://github.com/proompteng/lab/issues/1707)) ([#1708](https://github.com/proompteng/lab/issues/1708)) ([2d0fdd0](https://github.com/proompteng/lab/commit/2d0fdd0a9843efa3b120a774d7a5a7ed296dd694))
+* harden Temporal Bun SDK client resilience ([#1781](https://github.com/proompteng/lab/issues/1781)) ([ccbe32b](https://github.com/proompteng/lab/commit/ccbe32be1a151d2f7403253fc0958c8d00338505))
+* improve bumba enrichment and otel wiring ([#2084](https://github.com/proompteng/lab/issues/2084)) ([6611e0c](https://github.com/proompteng/lab/commit/6611e0c206d292bff1d6e9bce860ddb331cd5d76))
+* interceptor framework for temporal-bun-sdk ([#1841](https://github.com/proompteng/lab/issues/1841)) ([#1843](https://github.com/proompteng/lab/issues/1843)) ([12b3646](https://github.com/proompteng/lab/commit/12b36463a782d157dc4c843a75b374abec308cbd))
+* **observability:** codex pipeline Kafka/NATS/Jangar ([#2252](https://github.com/proompteng/lab/issues/2252)) ([#2255](https://github.com/proompteng/lab/issues/2255)) ([a7ffc25](https://github.com/proompteng/lab/commit/a7ffc258a3e2fb68d1e3c18b45089cd4f05c11c3))
+* **temporal-bun-sdk:** reduce determinism marker chatter ([#2106](https://github.com/proompteng/lab/issues/2106)) ([d49ac1d](https://github.com/proompteng/lab/commit/d49ac1dffcb595035e494727b6427cb394911aa6))
+* wire opentelemetry for bumba worker ([#2079](https://github.com/proompteng/lab/issues/2079)) ([9395e0c](https://github.com/proompteng/lab/commit/9395e0cd1c53bdcae301c2f8a5bf32045a3c3d8b))
+
+
+### Bug Fixes
+
+* **argo:** add nats-context artifact output ([#2322](https://github.com/proompteng/lab/issues/2322)) ([5c8df5b](https://github.com/proompteng/lab/commit/5c8df5b70ab0ec01edd2384f53c95645dff39746))
+* avoid child workflow id collisions across runs ([996af98](https://github.com/proompteng/lab/commit/996af98604440a7b071c7aaff303661da57d6585))
+* **bonjour:** switch to bun-only build ([#2234](https://github.com/proompteng/lab/issues/2234)) ([580ef40](https://github.com/proompteng/lab/commit/580ef40a0fe447f9226b241559ea8131534bb6fe))
+* **bumba:** stop otlp timeout noise ([#2101](https://github.com/proompteng/lab/issues/2101)) ([f6e2161](https://github.com/proompteng/lab/commit/f6e2161880d95958879ef9256a6839bd71ecd911))
+* **bumba:** throttle repo indexing concurrency ([#2086](https://github.com/proompteng/lab/issues/2086)) ([45cc3e7](https://github.com/proompteng/lab/commit/45cc3e71eddfc4c1ae9e7a76d4db394a3f323987))
+* finalize temporal bun sdk ga readiness ([#1813](https://github.com/proompteng/lab/issues/1813)) ([0429122](https://github.com/proompteng/lab/commit/0429122c9fad087944a30322a250c83f12ed9436))
+* handle temporal poll timeouts and update kubectl install ([#1898](https://github.com/proompteng/lab/issues/1898)) ([039eed4](https://github.com/proompteng/lab/commit/039eed4b5a02fdb43855820fa40726f28bef8381))
+* handle temporal query-only tasks ([#1816](https://github.com/proompteng/lab/issues/1816)) ([#1836](https://github.com/proompteng/lab/issues/1836)) ([26435b7](https://github.com/proompteng/lab/commit/26435b76152e6feed09578f0f852cb9cfe6ad404))
+* move bumba workflow work into activities ([#2067](https://github.com/proompteng/lab/issues/2067)) ([31575ed](https://github.com/proompteng/lab/commit/31575ed6127a23f4d62cdf0e7df13adb91f89855))
+* register build-id compatibility for Bun worker ([#1765](https://github.com/proompteng/lab/issues/1765)) ([4a359bf](https://github.com/proompteng/lab/commit/4a359bfdbfd84ee708da24b232ef95c0515dec42))
+* remove zig bootstrap step ([#1763](https://github.com/proompteng/lab/issues/1763)) ([6426a85](https://github.com/proompteng/lab/commit/6426a85e0991653a273d8a3b31008f4b5006f949))
+* **temporal-bun-sdk:** avoid child workflow id collisions ([#2085](https://github.com/proompteng/lab/issues/2085)) ([996af98](https://github.com/proompteng/lab/commit/996af98604440a7b071c7aaff303661da57d6585))
+
 ## [0.4.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.3.0...temporal-bun-sdk-v0.4.0) (2025-12-06)
 
 
