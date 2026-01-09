@@ -95,7 +95,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
-	templateIndex := 0
+	templateIndex := -1
 	for i, tplRaw := range templates {
 		tpl, ok := tplRaw.(map[string]any)
 		if !ok {
@@ -106,6 +106,10 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 			templateIndex = i
 			break
 		}
+	}
+	if templateIndex < 0 {
+		response.Fatal(rsp, errors.Errorf("entrypoint template %q not found in spec.templates", entrypoint))
+		return rsp, nil
 	}
 
 	tpl, ok := templates[templateIndex].(map[string]any)
