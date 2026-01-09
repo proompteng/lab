@@ -11,6 +11,7 @@ metadata:
     argocd.argoproj.io/compare-options: IgnoreExtraneous
     serving.knative.dev/rollout-duration: 10s
     argocd.argoproj.io/tracking-id: graf:serving.knative.dev/Service:graf/graf
+    networking.knative.dev/visibility: cluster-local
 spec:
   template:
     metadata:
