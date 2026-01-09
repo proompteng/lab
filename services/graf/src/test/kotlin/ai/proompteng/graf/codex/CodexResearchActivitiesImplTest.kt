@@ -169,6 +169,30 @@ class CodexResearchActivitiesImplTest {
       coVerify { graphPersistence.upsertRelationships(match { it.relationships.size == 1 }) }
     }
 
+  @Test
+  fun `persistCodexArtifact merges concatenated json objects`() =
+    runBlocking {
+      val payload =
+        """{"entities":[{"label":"Node","properties":{"id":"node:1"}}]}
+           {"relationships":[{"type":"LINKS","fromId":"node:1","toId":"node:2"}]}"""
+      coEvery { graphPersistence.upsertEntities(any()) } returns BatchResponse(emptyList())
+      coEvery { graphPersistence.upsertRelationships(any()) } returns BatchResponse(emptyList())
+
+      activities.persistCodexArtifact(
+        payload,
+        CodexResearchWorkflowInput(
+          prompt = "prompt",
+          metadata = emptyMap(),
+          argoWorkflowName = "name",
+          artifactKey = "key",
+          argoPollTimeoutSeconds = 7200,
+        ),
+      )
+
+      coVerify { graphPersistence.upsertEntities(match { it.entities.size == 1 }) }
+      coVerify { graphPersistence.upsertRelationships(match { it.relationships.size == 1 }) }
+    }
+
   private fun tarArchive(vararg files: Pair<String, String>): ByteArray {
     val tarBytes = ByteArrayOutputStream()
     TarArchiveOutputStream(tarBytes).use { tar ->

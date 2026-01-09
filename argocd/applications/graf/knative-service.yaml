@@ -7,6 +7,7 @@ metadata:
     app.kubernetes.io/name: graf
     app.kubernetes.io/component: persistence
     app.kubernetes.io/part-of: lab
+    networking.knative.dev/visibility: cluster-local
   annotations:
     argocd.argoproj.io/compare-options: IgnoreExtraneous
     serving.knative.dev/rollout-duration: 10s
@@ -17,14 +18,14 @@ spec:
       annotations:
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/target: "60"
-        client.knative.dev/updateTimestamp: 2025-12-29T07:38:13.277Z
+        client.knative.dev/updateTimestamp: 2026-01-09T08:49:27.387Z
     spec:
       timeoutSeconds: 60
       containerConcurrency: 0
       serviceAccountName: graf
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/proompteng/graf@sha256:71a3830bfcf07f0c8d7d183724e41615768ec0a996b4029f1bba4879bb5aa17f
+          image: registry.ide-newton.ts.net/proompteng/graf@sha256:bbaa31dfb922f201b1257e0d906a49e5e033535fa995901da972fd811287f4eb
           imagePullPolicy: Always
           ports:
             - name: http1
@@ -51,9 +52,9 @@ spec:
                   name: graf-api
                   key: bearer-tokens
             - name: GRAF_VERSION
-              value: v0.376.0-11-gbf8e763f
+              value: v0.402.1-5-g78d90c0e4
             - name: GRAF_COMMIT
-              value: bf8e763fd6c6b70381c6b0872b0bf757f77d8a80
+              value: 78d90c0e4e18a4d4e8333b4494badbf352abf2af
             - name: MINIO_ENDPOINT
               value: http://observability-minio.minio.svc.cluster.local:9000
             - name: MINIO_BUCKET

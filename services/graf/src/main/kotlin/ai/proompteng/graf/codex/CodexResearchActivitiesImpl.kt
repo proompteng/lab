@@ -6,8 +6,11 @@ import ai.proompteng.graf.model.RelationshipBatchRequest
 import ai.proompteng.graf.services.GraphPersistence
 import io.temporal.activity.Activity
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import org.apache.commons.compress.archivers.ArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import java.io.ByteArrayInputStream
@@ -50,7 +53,7 @@ class CodexResearchActivitiesImpl(
     input: CodexResearchWorkflowInput,
   ) {
     runBlocking {
-      val artifact = json.decodeFromString(CodexArtifact.serializer(), payload)
+      val artifact = parseCodexArtifact(payload)
       if (artifact.entities.isNotEmpty()) {
         graphPersistence.upsertEntities(EntityBatchRequest(artifact.entities))
       }
@@ -105,6 +108,90 @@ class CodexResearchActivitiesImpl(
     val buffer = ByteArrayOutputStream()
     this.copyTo(buffer)
     return buffer.toByteArray()
+  }
+
+  private fun parseCodexArtifact(payload: String): CodexArtifact {
+    val trimmed = payload.trim()
+    if (trimmed.isEmpty()) return CodexArtifact()
+    try {
+      return json.decodeFromString(CodexArtifact.serializer(), trimmed)
+    } catch (ex: SerializationException) {
+      val arrayArtifacts = parseArtifactArray(trimmed)
+      if (arrayArtifacts != null) {
+        return mergeArtifacts(arrayArtifacts)
+      }
+      val chunks = splitJsonObjects(trimmed)
+      if (chunks.isNotEmpty()) {
+        val artifacts =
+          chunks.mapNotNull { chunk ->
+            runCatching { json.decodeFromString(CodexArtifact.serializer(), chunk) }.getOrNull()
+          }
+        if (artifacts.isNotEmpty()) {
+          return mergeArtifacts(artifacts)
+        }
+      }
+      throw ex
+    }
+  }
+
+  private fun parseArtifactArray(payload: String): List<CodexArtifact>? {
+    val trimmed = payload.trim()
+    if (!trimmed.startsWith("[")) return null
+    return runCatching {
+      json.decodeFromString(ListSerializer(CodexArtifact.serializer()), trimmed)
+    }.getOrNull()
+  }
+
+  private fun mergeArtifacts(artifacts: List<CodexArtifact>): CodexArtifact {
+    if (artifacts.size == 1) return artifacts.first()
+    val mergedEntities = artifacts.flatMap { it.entities }
+    val mergedRelationships = artifacts.flatMap { it.relationships }
+    val mergedMetadata =
+      artifacts.fold(mutableMapOf<String, JsonElement>()) { acc, artifact ->
+        artifact.metadata.forEach { (key, value) -> acc[key] = value }
+        acc
+      }
+    return CodexArtifact(
+      entities = mergedEntities,
+      relationships = mergedRelationships,
+      metadata = mergedMetadata,
+    )
+  }
+
+  private fun splitJsonObjects(payload: String): List<String> {
+    val chunks = mutableListOf<String>()
+    var depth = 0
+    var inString = false
+    var escape = false
+    var startIndex = -1
+    payload.forEachIndexed { index, ch ->
+      if (inString) {
+        if (escape) {
+          escape = false
+        } else {
+          when (ch) {
+            '\\' -> escape = true
+            '"' -> inString = false
+          }
+        }
+        return@forEachIndexed
+      }
+      when (ch) {
+        '"' -> inString = true
+        '{' -> {
+          if (depth == 0) startIndex = index
+          depth += 1
+        }
+        '}' -> {
+          depth -= 1
+          if (depth == 0 && startIndex >= 0) {
+            chunks.add(payload.substring(startIndex, index + 1))
+            startIndex = -1
+          }
+        }
+      }
+    }
+    return chunks
   }
 
   private companion object {
