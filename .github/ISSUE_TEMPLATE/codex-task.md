@@ -9,6 +9,30 @@ assignees: ''
 ## Summary
 <!-- One paragraph: what needs to change and why now. Include key links. -->
 
+## Codex Metadata (Optional)
+<!--
+This block configures Codex behavior from the GitHub issue body.
+Only the keys below are currently parsed. Unknown keys are ignored.
+-->
+```codex
+version: 1
+autonomous: false # true to force autonomous pipeline
+iterations:
+  mode: fixed # fixed | until | budget | adaptive
+  count: 1 # default 1, max 25
+  min: 1
+  max: 5
+  stop_on:
+    - success
+    - needs_human
+  reason: "optional rationale"
+```
+<!--
+Notes:
+- You can also set iterations as a scalar: `iterations: 3` or `iteration: 3`.
+- `pipeline: autonomous` is also accepted as a shorthand for autonomous mode.
+-->
+
 ## Context
 <!-- Current behavior, relevant files/services, and prior art. Link to docs, runbooks, or related PRs. -->
 
