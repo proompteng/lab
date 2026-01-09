@@ -16,10 +16,13 @@ Only the keys below are currently parsed. Unknown keys are ignored.
 -->
 ```codex
 version: 1
-autonomous: false # true to force autonomous pipeline
+# true to force autonomous pipeline
+autonomous: false
 iterations:
-  mode: fixed # fixed | until | budget | adaptive
-  count: 1 # default 1, max 25
+  # fixed | until | budget | adaptive
+  mode: fixed
+  # default 1, max 25
+  count: 1
   min: 1
   max: 5
   stop_on:
