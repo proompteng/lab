@@ -28,12 +28,15 @@ Use GitOps-first changes for infra and deployment workflows, then validate local
    - Ansible: `bun run ansible`
 
 4) **Rollout discipline**
-   - Note rollout/impact for changes in `argocd/`, `kubernetes/`, `tofu/`, `ansible/`.
-   - For Helm charts with kustomize, use: `mise exec helm@3 -- kustomize build --enable-helm <path>`.
+  - Note rollout/impact for changes in `argocd/`, `kubernetes/`, `tofu/`, `ansible/`.
+  - For Helm charts with kustomize, use: `mise exec helm@3 -- kustomize build --enable-helm <path>`.
 
 5) **Cluster access (exception-only)**
-   - Use direct `kubectl apply` only when explicitly asked or in emergencies.
-   - Always set namespace: `kubectl ... -n <ns>`.
+  - Use direct `kubectl apply` only when explicitly asked or in emergencies.
+  - Always set namespace: `kubectl ... -n <ns>`.
+
+6) **Deploy completion guardrail**
+   - Only call a deploy "completed" after the Argo CD application is synced and healthy.
 
 ## Pointers
 
