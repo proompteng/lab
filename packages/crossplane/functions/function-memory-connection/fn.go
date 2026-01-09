@@ -110,13 +110,6 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	}
 
 	required, _ := request.GetRequiredResources(req)
-	extra, _ := request.GetExtraResources(req)
-	for key, items := range extra {
-		existing, exists := required[key]
-		if !exists || len(existing) == 0 {
-			required[key] = items
-		}
-	}
 	providerResource := findRequired(required, providerRequirementKey)
 	if providerResource == nil || providerResource.GetName() != providerName {
 		requireNamespace := firstNonEmpty(claimNamespace, xr.Resource.GetNamespace())
@@ -244,16 +237,12 @@ func setRequirement(rsp *fnv1.RunFunctionResponse, key, apiVersion, kind, name, 
 	reqs := rsp.GetRequirements()
 	if reqs == nil {
 		reqs = &fnv1.Requirements{
-			Resources:      map[string]*fnv1.ResourceSelector{},
-			ExtraResources: map[string]*fnv1.ResourceSelector{},
+			Resources: map[string]*fnv1.ResourceSelector{},
 		}
 		rsp.Requirements = reqs
 	}
 	if reqs.GetResources() == nil {
 		reqs.Resources = map[string]*fnv1.ResourceSelector{}
-	}
-	if reqs.GetExtraResources() == nil {
-		reqs.ExtraResources = map[string]*fnv1.ResourceSelector{}
 	}
 	selector := &fnv1.ResourceSelector{
 		ApiVersion: apiVersion,
@@ -265,7 +254,6 @@ func setRequirement(rsp *fnv1.RunFunctionResponse, key, apiVersion, kind, name, 
 		selector.Namespace = &ns
 	}
 	reqs.Resources[key] = selector
-	reqs.ExtraResources[key] = selector
 }
 
 func findRequired(required map[string][]resource.Required, key string) *unstructured.Unstructured {
