@@ -62,6 +62,7 @@ spec:
                 transforms:
                   - type: string
                     string:
+                      type: Format
                       fmt: '%s-memory-sql'
           - name: init-sql-job
             base:
@@ -98,12 +99,14 @@ spec:
                 transforms:
                   - type: string
                     string:
+                      type: Format
                       fmt: '%s-memory-init'
               - fromFieldPath: metadata.name
                 toFieldPath: spec.template.spec.volumes[0].configMap.name
                 transforms:
                   - type: string
                     string:
+                      type: Format
                       fmt: '%s-memory-sql'
               - fromFieldPath: spec.dataset.schema
                 toFieldPath: spec.template.spec.containers[0].env[1].value
