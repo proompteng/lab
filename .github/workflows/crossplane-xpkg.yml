@@ -52,12 +52,11 @@ jobs:
         with:
           go-version-file: ${{ matrix.module }}/go.mod
           cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.0.0
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
-        with:
-          version: v2.0.0
-          working-directory: ${{ matrix.module }}
-          install-mode: go
+        working-directory: ${{ matrix.module }}
+        run: golangci-lint run --path-prefix=${{ matrix.module }}
   build-main:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: self-hosted
