@@ -50,6 +50,8 @@ export type CodexRunSummaryRecord = {
   commitSha: string | null
   prNumber: number | null
   prUrl: string | null
+  prState: string | null
+  prMerged: boolean | null
   ciStatus: string | null
   reviewStatus: string | null
   createdAt: string

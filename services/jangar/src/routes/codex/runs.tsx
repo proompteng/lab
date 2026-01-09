@@ -261,42 +261,49 @@ function CodexRunsPage() {
                   <th className="px-3 py-2 text-left font-medium">Repository</th>
                   <th className="px-3 py-2 text-left font-medium">Review status</th>
                   <th className="px-3 py-2 text-left font-medium">PR</th>
+                  <th className="px-3 py-2 text-left font-medium">PR status</th>
                   <th className="px-3 py-2 text-left font-medium">Updated</th>
                 </tr>
               </thead>
               <tbody>
-                {reviewQueue.map((run) => (
-                  <tr key={`review-${run.id}`} className="border-b last:border-0">
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <Link
-                        to="/codex/search"
-                        search={{
-                          repository: run.repository,
-                          issueNumber: run.issueNumber,
-                          branch: '',
-                          limit: DEFAULT_SEARCH_LIMIT,
-                        }}
-                        className="text-primary hover:underline"
-                      >
-                        #{run.issueNumber}
-                      </Link>
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.repository}</td>
-                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                      {run.reviewStatus ?? 'pending'}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {run.prUrl ? (
-                        <ExternalLink href={run.prUrl}>PR #{run.prNumber ?? '—'}</ExternalLink>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                      {formatDateTime(run.updatedAt)}
-                    </td>
-                  </tr>
-                ))}
+                {reviewQueue.map((run) => {
+                  const prStatus = getPrStatus(run)
+                  return (
+                    <tr key={`review-${run.id}`} className="border-b last:border-0">
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <Link
+                          to="/codex/search"
+                          search={{
+                            repository: run.repository,
+                            issueNumber: run.issueNumber,
+                            branch: '',
+                            limit: DEFAULT_SEARCH_LIMIT,
+                          }}
+                          className="text-primary hover:underline"
+                        >
+                          #{run.issueNumber}
+                        </Link>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.repository}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                        {run.reviewStatus ?? 'pending'}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {run.prUrl ? (
+                          <ExternalLink href={run.prUrl}>PR #{run.prNumber ?? '—'}</ExternalLink>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                        {prStatus ? <StatusPill value={prStatus} tone="muted" /> : '—'}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                        {formatDateTime(run.updatedAt)}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -337,68 +344,75 @@ function CodexRunsPage() {
                   <th className="px-3 py-2 text-left font-medium">Workflow</th>
                   <th className="px-3 py-2 text-left font-medium">Branch</th>
                   <th className="px-3 py-2 text-left font-medium">PR</th>
+                  <th className="px-3 py-2 text-left font-medium">PR status</th>
                   <th className="px-3 py-2 text-left font-medium">CI</th>
                   <th className="px-3 py-2 text-left font-medium">Review</th>
                   <th className="px-3 py-2 text-left font-medium">Created</th>
                 </tr>
               </thead>
               <tbody>
-                {runs.map((run) => (
-                  <tr key={run.id} className="border-b last:border-0">
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <Link
-                        to="/codex/search"
-                        search={{
-                          repository: run.repository,
-                          issueNumber: run.issueNumber,
-                          branch: '',
-                          limit: DEFAULT_SEARCH_LIMIT,
-                        }}
-                        className="text-primary hover:underline"
-                      >
-                        #{run.issueNumber}
-                      </Link>
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.repository}</td>
-                    <td className="px-3 py-2 whitespace-nowrap tabular-nums">#{run.attempt}</td>
-                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                      {run.iteration ? (
-                        <span className="tabular-nums">
-                          {run.iteration}
-                          {run.iterationCycle ? `/${run.iterationCycle}` : ''}
-                        </span>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <StatusPill value={run.status} />
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                      {run.stage ?? '—'} / {run.phase ?? '—'}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.decision ?? '—'}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <div className="text-foreground">{run.workflowName}</div>
-                      {run.workflowNamespace ? (
-                        <div className="text-muted-foreground">{run.workflowNamespace}</div>
-                      ) : null}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.branch}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {run.prUrl ? (
-                        <ExternalLink href={run.prUrl}>PR #{run.prNumber ?? '—'}</ExternalLink>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.ciStatus ?? '—'}</td>
-                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.reviewStatus ?? '—'}</td>
-                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                      {formatDateTime(run.createdAt)}
-                    </td>
-                  </tr>
-                ))}
+                {runs.map((run) => {
+                  const prStatus = getPrStatus(run)
+                  return (
+                    <tr key={run.id} className="border-b last:border-0">
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <Link
+                          to="/codex/search"
+                          search={{
+                            repository: run.repository,
+                            issueNumber: run.issueNumber,
+                            branch: '',
+                            limit: DEFAULT_SEARCH_LIMIT,
+                          }}
+                          className="text-primary hover:underline"
+                        >
+                          #{run.issueNumber}
+                        </Link>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.repository}</td>
+                      <td className="px-3 py-2 whitespace-nowrap tabular-nums">#{run.attempt}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                        {run.iteration ? (
+                          <span className="tabular-nums">
+                            {run.iteration}
+                            {run.iterationCycle ? `/${run.iterationCycle}` : ''}
+                          </span>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <StatusPill value={run.status} />
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                        {run.stage ?? '—'} / {run.phase ?? '—'}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.decision ?? '—'}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <div className="text-foreground">{run.workflowName}</div>
+                        {run.workflowNamespace ? (
+                          <div className="text-muted-foreground">{run.workflowNamespace}</div>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.branch}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {run.prUrl ? (
+                          <ExternalLink href={run.prUrl}>PR #{run.prNumber ?? '—'}</ExternalLink>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                        {prStatus ? <StatusPill value={prStatus} tone="muted" /> : '—'}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.ciStatus ?? '—'}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{run.reviewStatus ?? '—'}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                        {formatDateTime(run.createdAt)}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -468,6 +482,12 @@ function StatusPill({ value, tone }: { value: string; tone?: 'muted' | 'default'
       {value}
     </span>
   )
+}
+
+const getPrStatus = (run: CodexRunSummaryRecord): string | null => {
+  if (run.prNumber == null) return null
+  if (run.prMerged) return 'merged'
+  return run.prState ?? null
 }
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
