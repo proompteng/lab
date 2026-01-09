@@ -31,7 +31,7 @@ func (in *MemoryConnectionBinding) DeepCopyObject() runtime.Object {
 	}
 	out := new(MemoryConnectionBinding)
 	*out = *in
-	out.ObjectMeta = *in.ObjectMeta.DeepCopy()
+	out.ObjectMeta = *in.DeepCopy()
 	return out
 }
 

@@ -31,7 +31,7 @@ func (in *OrchestrationDag) DeepCopyObject() runtime.Object {
 	}
 	out := new(OrchestrationDag)
 	*out = *in
-	out.ObjectMeta = *in.ObjectMeta.DeepCopy()
+	out.ObjectMeta = *in.DeepCopy()
 	return out
 }
 

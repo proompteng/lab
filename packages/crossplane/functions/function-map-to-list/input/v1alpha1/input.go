@@ -31,7 +31,7 @@ func (in *MapToList) DeepCopyObject() runtime.Object {
 	}
 	out := new(MapToList)
 	*out = *in
-	out.ObjectMeta = *in.ObjectMeta.DeepCopy()
+	out.ObjectMeta = *in.DeepCopy()
 	return out
 }
 

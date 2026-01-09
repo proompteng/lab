@@ -31,7 +31,7 @@ func (in *MemorySqlRender) DeepCopyObject() runtime.Object {
 	}
 	out := new(MemorySqlRender)
 	*out = *in
-	out.ObjectMeta = *in.ObjectMeta.DeepCopy()
+	out.ObjectMeta = *in.DeepCopy()
 	return out
 }
 

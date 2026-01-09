@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -55,7 +54,7 @@ func TestRunFunction_RendersSql(t *testing.T) {
 	}
 
 	f := &Function{log: logging.NewNopLogger()}
-	rsp, err := f.RunFunction(context.Background(), req)
+	rsp, err := f.RunFunction(t.Context(), req)
 	if err != nil {
 		t.Fatalf("RunFunction returned error: %v", err)
 	}
@@ -112,7 +111,7 @@ func TestRunFunction_DefaultsDimension(t *testing.T) {
 	}
 
 	f := &Function{log: logging.NewNopLogger()}
-	rsp, err := f.RunFunction(context.Background(), req)
+	rsp, err := f.RunFunction(t.Context(), req)
 	if err != nil {
 		t.Fatalf("RunFunction returned error: %v", err)
 	}
@@ -140,7 +139,7 @@ func desiredResource(t *testing.T, rsp *fnv1.RunFunctionResponse, name string) *
 	}
 
 	out := &unstructured.Unstructured{}
-	if err := resource.AsObject(res.Resource, out); err != nil {
+	if err := resource.AsObject(res.GetResource(), out); err != nil {
 		t.Fatalf("decoding desired resource %q: %v", name, err)
 	}
 

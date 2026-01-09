@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -83,7 +82,7 @@ func TestRunFunction_BuildsDagTasks(t *testing.T) {
 	}
 
 	f := &Function{log: logging.NewNopLogger()}
-	rsp, err := f.RunFunction(context.Background(), req)
+	rsp, err := f.RunFunction(t.Context(), req)
 	if err != nil {
 		t.Fatalf("RunFunction returned error: %v", err)
 	}
@@ -166,7 +165,7 @@ func TestRunFunction_MissingEntrypointTemplate(t *testing.T) {
 	}
 
 	f := &Function{log: logging.NewNopLogger()}
-	rsp, err := f.RunFunction(context.Background(), req)
+	rsp, err := f.RunFunction(t.Context(), req)
 	if err != nil {
 		t.Fatalf("RunFunction returned error: %v", err)
 	}
@@ -188,7 +187,7 @@ func desiredTemplate(t *testing.T, rsp *fnv1.RunFunctionResponse, resourceName, 
 	}
 
 	obj := &unstructured.Unstructured{}
-	if err := resource.AsObject(res.Resource, obj); err != nil {
+	if err := resource.AsObject(res.GetResource(), obj); err != nil {
 		t.Fatalf("decoding desired resource %q: %v", resourceName, err)
 	}
 

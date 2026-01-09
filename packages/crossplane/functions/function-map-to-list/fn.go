@@ -6,14 +6,15 @@ import (
 	"sort"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/fieldpath"
+
+	"github.com/crossplane/function-map-to-list/input/v1alpha1"
+
 	"github.com/crossplane/function-sdk-go/errors"
 	"github.com/crossplane/function-sdk-go/logging"
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
 	"github.com/crossplane/function-sdk-go/request"
 	"github.com/crossplane/function-sdk-go/resource"
 	"github.com/crossplane/function-sdk-go/response"
-
-	"github.com/crossplane/function-map-to-list/input/v1alpha1"
 )
 
 // Function maps a fieldpath map into a list on a composed resource.
