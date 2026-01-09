@@ -3,4 +3,6 @@ apiVersion: meta.pkg.crossplane.io/v1beta1
 kind: Function
 metadata:
   name: function-memory-sql
-spec: {}
+spec:
+  capabilities:
+    - composition
