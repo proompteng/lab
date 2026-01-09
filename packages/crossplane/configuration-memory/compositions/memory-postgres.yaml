@@ -27,7 +27,7 @@ spec:
                 memory.sql: |
                   CREATE EXTENSION IF NOT EXISTS vector;
                   CREATE SCHEMA IF NOT EXISTS :"schema";
-                  SET search_path TO :"schema";
+                  SET search_path TO :"schema", public;
 
                   CREATE TABLE IF NOT EXISTS memory_events (
                     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -64,6 +64,8 @@ spec:
                     string:
                       type: Format
                       fmt: '%s-memory-sql'
+            readinessChecks:
+              - type: None
           - name: init-sql-job
             base:
               apiVersion: batch/v1
@@ -118,6 +120,8 @@ spec:
                 toFieldPath: metadata.labels["memory.proompteng.ai/dataset"]
                 policy:
                   fromFieldPath: Optional
+            readinessChecks:
+              - type: None
     - step: render-sql
       functionRef:
         name: function-memory-sql

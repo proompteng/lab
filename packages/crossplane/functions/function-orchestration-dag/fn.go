@@ -57,6 +57,8 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
+	observedXR, _ := request.GetObservedCompositeResource(req)
+
 	dcds, err := request.GetDesiredComposedResources(req)
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot get desired composed resources"))
@@ -64,6 +66,9 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	}
 
 	entrypointRaw, err := fieldpath.Pave(xr.Resource.Object).GetValue(in.Spec.EntrypointFieldPath)
+	if err != nil && observedXR != nil {
+		entrypointRaw, err = fieldpath.Pave(observedXR.Resource.Object).GetValue(in.Spec.EntrypointFieldPath)
+	}
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot read entrypoint"))
 		return rsp, nil
@@ -75,6 +80,9 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	}
 
 	stepsRaw, err := fieldpath.Pave(xr.Resource.Object).GetValue(in.Spec.StepsFieldPath)
+	if err != nil && observedXR != nil {
+		stepsRaw, err = fieldpath.Pave(observedXR.Resource.Object).GetValue(in.Spec.StepsFieldPath)
+	}
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot read steps"))
 		return rsp, nil

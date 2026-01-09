@@ -1,0 +1,57 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: memoryprovider-postgres
+  labels:
+    provider: postgres
+spec:
+  compositeTypeRef:
+    apiVersion: memory.proompteng.ai/v1alpha1
+    kind: XMemoryProvider
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: provider-marker
+            base:
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                namespace: crossplane
+              data:
+                provider: postgres
+            patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: '%s-provider'
+              - fromFieldPath: spec.claimRef.namespace
+                toFieldPath: metadata.namespace
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.claimRef.name
+                toFieldPath: data.claimName
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.type
+                toFieldPath: data.type
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.postgres.database
+                toFieldPath: data.database
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.postgres.schema
+                toFieldPath: data.schema
+                policy:
+                  fromFieldPath: Optional
+            readinessChecks:
+              - type: None

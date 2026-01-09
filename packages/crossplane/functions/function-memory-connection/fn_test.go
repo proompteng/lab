@@ -42,6 +42,53 @@ func TestRunFunction_RequiresProvider(t *testing.T) {
 	}
 }
 
+func TestRunFunction_BindsSecretRefWhenSecretMissing(t *testing.T) {
+	req := baseRequest()
+	req.RequiredResources = map[string]*fnv1.Resources{
+		providerRequirementKey: {
+			Items: []*fnv1.Resource{
+				{
+					Resource: resource.MustStructJSON(`{
+						"apiVersion": "memory.proompteng.ai/v1alpha1",
+						"kind": "MemoryProvider",
+						"metadata": {
+							"name": "provider-1",
+							"namespace": "providers"
+						},
+						"spec": {
+							"postgres": {
+								"database": "memdb",
+								"connectionSecret": {
+									"name": "mem-conn",
+									"namespace": "dbns"
+								},
+								"clusterRef": {
+									"namespace": "cluster-ns"
+								}
+							}
+						}
+					}`),
+				},
+			},
+		},
+	}
+
+	f := &Function{log: logging.NewNopLogger()}
+	rsp, err := f.RunFunction(t.Context(), req)
+	if err != nil {
+		t.Fatalf("RunFunction returned error: %v", err)
+	}
+
+	job := desiredResource(t, rsp, "schema-job")
+	secretRef := jobEnvSecretRef(t, job.Object, "DATABASE_URL")
+	if secretRef["name"] != "mem-conn" {
+		t.Fatalf("secret name mismatch: %v", secretRef["name"])
+	}
+	if secretRef["key"] != "uri" {
+		t.Fatalf("secret key mismatch: %v", secretRef["key"])
+	}
+}
+
 func TestRunFunction_BindsConnection(t *testing.T) {
 	req := baseRequest()
 	dsn := "postgresql://user:pass@db.example.com:5432/memdb"
@@ -130,6 +177,177 @@ func TestRunFunction_BindsConnection(t *testing.T) {
 	cfg := desiredResource(t, rsp, "sql-config")
 	if ns := cfg.GetNamespace(); ns != "dbns" {
 		t.Fatalf("configmap namespace mismatch: %q", ns)
+	}
+}
+
+func TestRunFunction_BindsConnectionFromExtraResources(t *testing.T) {
+	req := baseRequest()
+	dsn := "postgresql://user:pass@db.example.com:5432/memdb"
+	encoded := base64.StdEncoding.EncodeToString([]byte(dsn))
+
+	req.RequiredResources = nil
+	req.ExtraResources = map[string]*fnv1.Resources{
+		providerRequirementKey: {
+			Items: []*fnv1.Resource{
+				{
+					Resource: resource.MustStructJSON(`{
+						"apiVersion": "memory.proompteng.ai/v1alpha1",
+						"kind": "MemoryProvider",
+						"metadata": {
+							"name": "provider-1",
+							"namespace": "providers"
+						},
+						"spec": {
+							"postgres": {
+								"connectionSecret": {
+									"name": "mem-conn",
+									"namespace": "dbns"
+								},
+								"clusterRef": {
+									"namespace": "cluster-ns"
+								}
+							}
+						}
+					}`),
+				},
+			},
+		},
+		secretRequirementKey: {
+			Items: []*fnv1.Resource{
+				{
+					Resource: resource.MustStructJSON(fmt.Sprintf(`{
+						"apiVersion": "v1",
+						"kind": "Secret",
+						"metadata": {
+							"name": "mem-conn",
+							"namespace": "dbns"
+						},
+						"data": {
+							"uri": "%s"
+						}
+					}`, encoded)),
+				},
+			},
+		},
+	}
+
+	f := &Function{log: logging.NewNopLogger()}
+	rsp, err := f.RunFunction(t.Context(), req)
+	if err != nil {
+		t.Fatalf("RunFunction returned error: %v", err)
+	}
+
+	job := desiredResource(t, rsp, "schema-job")
+	env := jobEnv(t, job.Object)
+	if env["DATABASE_URL"] != dsn {
+		t.Fatalf("DATABASE_URL mismatch: %q", env["DATABASE_URL"])
+	}
+	if env["DB_SCHEMA"] != "mem" {
+		t.Fatalf("DB_SCHEMA mismatch: %q", env["DB_SCHEMA"])
+	}
+}
+
+func TestRunFunction_ObservedFallback(t *testing.T) {
+	req := baseRequest()
+	req.Desired.Composite.Resource = resource.MustStructJSON(`{
+		"apiVersion": "memory.proompteng.ai/v1alpha1",
+		"kind": "Memory",
+		"metadata": {
+			"name": "mem",
+			"namespace": "mem-ns"
+		},
+		"spec": {
+			"dataset": {}
+		},
+		"status": {}
+	}`)
+	req.Observed = &fnv1.State{
+		Composite: &fnv1.Resource{
+			Resource: resource.MustStructJSON(`{
+				"apiVersion": "memory.proompteng.ai/v1alpha1",
+				"kind": "Memory",
+				"metadata": {
+					"name": "mem",
+					"namespace": "mem-ns"
+				},
+				"spec": {
+					"providerRef": {
+						"name": "provider-1"
+					},
+					"dataset": {
+						"schema": "mem"
+					}
+				}
+			}`),
+		},
+	}
+	dsn := "postgresql://user:pass@db.example.com:5432/memdb"
+	encoded := base64.StdEncoding.EncodeToString([]byte(dsn))
+
+	req.RequiredResources = map[string]*fnv1.Resources{
+		providerRequirementKey: {
+			Items: []*fnv1.Resource{
+				{
+					Resource: resource.MustStructJSON(`{
+						"apiVersion": "memory.proompteng.ai/v1alpha1",
+						"kind": "MemoryProvider",
+						"metadata": {
+							"name": "provider-1",
+							"namespace": "providers"
+						},
+						"spec": {
+							"postgres": {
+								"connectionSecret": {
+									"name": "mem-conn",
+									"namespace": "dbns"
+								},
+								"clusterRef": {
+									"namespace": "cluster-ns"
+								}
+							}
+						}
+					}`),
+				},
+			},
+		},
+		secretRequirementKey: {
+			Items: []*fnv1.Resource{
+				{
+					Resource: resource.MustStructJSON(fmt.Sprintf(`{
+						"apiVersion": "v1",
+						"kind": "Secret",
+						"metadata": {
+							"name": "mem-conn",
+							"namespace": "dbns"
+						},
+						"data": {
+							"uri": "%s"
+						}
+					}`, encoded)),
+				},
+			},
+		},
+	}
+
+	f := &Function{log: logging.NewNopLogger()}
+	rsp, err := f.RunFunction(t.Context(), req)
+	if err != nil {
+		t.Fatalf("RunFunction returned error: %v", err)
+	}
+
+	xr := desiredComposite(t, rsp)
+	secretRef := nestedMap(t, xr.Object, "status", "connectionSecretRef")
+	if diff := cmp.Diff(map[string]any{"name": "mem-conn", "namespace": "dbns"}, secretRef, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("connection secret ref mismatch (-want +got):\n%s", diff)
+	}
+
+	job := desiredResource(t, rsp, "schema-job")
+	env := jobEnv(t, job.Object)
+	if env["DATABASE_URL"] != dsn {
+		t.Fatalf("DATABASE_URL mismatch: %q", env["DATABASE_URL"])
+	}
+	if env["DB_SCHEMA"] != "mem" {
+		t.Fatalf("DB_SCHEMA mismatch: %q", env["DB_SCHEMA"])
 	}
 }
 
@@ -289,4 +507,32 @@ func jobEnv(t *testing.T, obj map[string]any) map[string]string {
 		}
 	}
 	return env
+}
+
+func jobEnvSecretRef(t *testing.T, obj map[string]any, name string) map[string]any {
+	t.Helper()
+
+	containers, found, err := unstructured.NestedSlice(obj, "spec", "template", "spec", "containers")
+	if err != nil || !found || len(containers) == 0 {
+		t.Fatalf("containers not found")
+	}
+	container, ok := containers[0].(map[string]any)
+	if !ok {
+		t.Fatalf("container invalid")
+	}
+	envRaw, _, _ := unstructured.NestedSlice(container, "env")
+	for _, entry := range envRaw {
+		item, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if item["name"] != name {
+			continue
+		}
+		valueFrom, _ := item["valueFrom"].(map[string]any)
+		secretKeyRef, _ := valueFrom["secretKeyRef"].(map[string]any)
+		return secretKeyRef
+	}
+	t.Fatalf("env var %q not found", name)
+	return nil
 }

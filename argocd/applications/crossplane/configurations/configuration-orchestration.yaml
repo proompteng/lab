@@ -4,3 +4,4 @@ metadata:
   name: configuration-orchestration
 spec:
   package: registry.ide-newton.ts.net/lab/configuration-orchestration:latest
+  packagePullPolicy: Always

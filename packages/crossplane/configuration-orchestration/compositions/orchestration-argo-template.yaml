@@ -37,6 +37,8 @@ spec:
                 toFieldPath: metadata.name
                 policy:
                   fromFieldPath: Optional
+            readinessChecks:
+              - type: None
     - step: build-argo-dag
       functionRef:
         name: function-orchestration-dag
