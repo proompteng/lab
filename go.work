@@ -1,0 +1,15 @@
+go 1.24.1
+
+use (
+	.
+	./packages/crossplane/functions/function-map-to-list
+	./packages/crossplane/functions/function-memory-connection
+	./packages/crossplane/functions/function-memory-sql
+	./packages/crossplane/functions/function-orchestration-dag
+	./services/eclair
+	./services/facteur
+	./services/miel
+	./services/prt
+	./services/saigak/proxy
+	./services/tigresse
+)
