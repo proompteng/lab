@@ -20,6 +20,8 @@ const buildRunSummary = (overrides: Partial<CodexRunSummaryRecord> = {}): CodexR
   commitSha: null,
   prNumber: null,
   prUrl: null,
+  prState: null,
+  prMerged: null,
   ciStatus: null,
   reviewStatus: null,
   createdAt: '2025-01-01T00:00:00Z',

@@ -55,6 +55,8 @@ export type CodexRunSummaryRecord = {
   commitSha: string | null
   prNumber: number | null
   prUrl: string | null
+  prState: string | null
+  prMerged: boolean | null
   ciStatus: string | null
   reviewStatus: string | null
   createdAt: string
@@ -485,6 +487,8 @@ const rowToRunSummary = (row: Record<string, unknown>): CodexRunSummaryRecord =>
   commitSha: row.commit_sha ? String(row.commit_sha) : null,
   prNumber: row.pr_number != null ? Number(row.pr_number) : null,
   prUrl: row.pr_url ? String(row.pr_url) : null,
+  prState: row.pr_state ? String(row.pr_state) : null,
+  prMerged: row.pr_merged != null ? Boolean(row.pr_merged) : null,
   ciStatus: row.ci_status ? String(row.ci_status) : null,
   reviewStatus: row.review_status ? String(row.review_status) : null,
   createdAt: String(row.created_at),
@@ -693,6 +697,11 @@ export const createCodexJudgeStore = (
     const limit = input.limit && input.limit > 0 ? Math.min(input.limit, 200) : 50
     let query = db
       .selectFrom('codex_judge.runs')
+      .leftJoin('jangar_github.pr_state', (join) =>
+        join
+          .onRef('jangar_github.pr_state.repository', '=', 'codex_judge.runs.repository')
+          .onRef('jangar_github.pr_state.pr_number', '=', 'codex_judge.runs.pr_number'),
+      )
       .select([
         'id',
         'repository',
@@ -709,6 +718,8 @@ export const createCodexJudgeStore = (
         'commit_sha',
         'pr_number',
         'pr_url',
+        'jangar_github.pr_state.state as pr_state',
+        'jangar_github.pr_state.merged as pr_merged',
         'ci_status',
         'review_status',
         'created_at',
@@ -744,6 +755,11 @@ export const createCodexJudgeStore = (
     const total = Number(countRow?.count ?? 0)
 
     const rows = await baseQuery
+      .leftJoin('jangar_github.pr_state', (join) =>
+        join
+          .onRef('jangar_github.pr_state.repository', '=', 'codex_judge.runs.repository')
+          .onRef('jangar_github.pr_state.pr_number', '=', 'codex_judge.runs.pr_number'),
+      )
       .select([
         'id',
         'repository',
@@ -760,6 +776,8 @@ export const createCodexJudgeStore = (
         'commit_sha',
         'pr_number',
         'pr_url',
+        'jangar_github.pr_state.state as pr_state',
+        'jangar_github.pr_state.merged as pr_merged',
         'ci_status',
         'review_status',
         'created_at',
