@@ -107,16 +107,6 @@ spec:
             value: '{{inputs.parameters.iteration}}'
           - name: CODEX_ITERATION_CYCLE
             value: '{{inputs.parameters.iteration_cycle}}'
-          - name: GH_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: github-token
-                key: token
-          - name: GITHUB_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: github-token
-                key: token
           - name: DOCKER_HOST
             value: tcp://localhost:2375
           - name: DOCKER_TLS_VERIFY

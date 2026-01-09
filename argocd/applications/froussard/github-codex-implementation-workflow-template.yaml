@@ -79,16 +79,6 @@ spec:
                 name: discord-codex-bot
                 key: category-id
                 optional: true
-          - name: GH_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: github-token
-                key: token
-          - name: GITHUB_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: github-token
-                key: token
           - name: JANGAR_BASE_URL
             value: http://jangar.jangar.svc.cluster.local
           - name: NATS_URL
@@ -187,8 +177,8 @@ spec:
             if ! git -C "$CODEX_CWD" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
               preflight_fail "CODEX_CWD is not a git worktree"
             fi
-            if [[ -z "${GH_TOKEN:-}" && -z "${GITHUB_TOKEN:-}" ]]; then
-              preflight_fail "Missing GitHub token"
+            if ! gh auth status -h github.com >/dev/null 2>&1 && [[ -z "${GH_TOKEN:-}" && -z "${GITHUB_TOKEN:-}" ]]; then
+              preflight_fail "Missing GitHub auth"
             fi
             if [[ -z "${MINIO_ENDPOINT:-}" ]]; then
               preflight_fail "Missing MINIO_ENDPOINT"
@@ -312,8 +302,8 @@ spec:
               exit 1
             fi
 
-            if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-              echo "Missing GITHUB_TOKEN" >&2
+            if ! gh auth status -h github.com >/dev/null 2>&1 && [[ -z "${GH_TOKEN:-}" && -z "${GITHUB_TOKEN:-}" ]]; then
+              echo "Missing GitHub auth" >&2
               exit 1
             fi
 
@@ -553,16 +543,6 @@ spec:
                 name: discord-codex-bot
                 key: category-id
                 optional: true
-          - name: GH_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: github-token
-                key: token
-          - name: GITHUB_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: github-token
-                key: token
           - name: JANGAR_BASE_URL
             value: http://jangar.jangar.svc.cluster.local
           - name: NATS_URL
@@ -659,8 +639,8 @@ spec:
             if ! git -C "$CODEX_CWD" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
               preflight_fail "CODEX_CWD is not a git worktree"
             fi
-            if [[ -z "${GH_TOKEN:-}" && -z "${GITHUB_TOKEN:-}" ]]; then
-              preflight_fail "Missing GitHub token"
+            if ! gh auth status -h github.com >/dev/null 2>&1 && [[ -z "${GH_TOKEN:-}" && -z "${GITHUB_TOKEN:-}" ]]; then
+              preflight_fail "Missing GitHub auth"
             fi
             REPO="{{inputs.parameters.repository}}"
             if [[ -n "$REPO" ]]; then
@@ -761,8 +741,8 @@ spec:
               exit 1
             fi
 
-            if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-              echo "Missing GITHUB_TOKEN" >&2
+            if ! gh auth status -h github.com >/dev/null 2>&1 && [[ -z "${GH_TOKEN:-}" && -z "${GITHUB_TOKEN:-}" ]]; then
+              echo "Missing GitHub auth" >&2
               exit 1
             fi
 
