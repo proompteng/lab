@@ -2266,8 +2266,7 @@ const evaluateRun = async (runId: string) => {
 
     const argoJudgeOnly = effectiveJudgeMode === 'argo'
     const notifyStage = typeof run.notifyPayload?.stage === 'string' ? run.notifyPayload.stage : null
-    const isJudgeStage =
-      run.stage === 'judge' || run.runCompletePayload?.stage === 'judge' || notifyStage === 'judge'
+    const isJudgeStage = run.stage === 'judge' || run.runCompletePayload?.stage === 'judge' || notifyStage === 'judge'
 
     if (argoJudgeOnly) {
       await store.updateRunPrompt(run.id, run.prompt, run.nextPrompt)
