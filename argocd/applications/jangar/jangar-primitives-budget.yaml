@@ -9,7 +9,7 @@ spec:
   limits:
     cpu: "12"
     dollars: 50
-    memory: 24Gi
+    memory: 128Gi
     tokens: 100000
   window:
     period: 30d
