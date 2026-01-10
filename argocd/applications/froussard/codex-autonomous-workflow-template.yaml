@@ -21,11 +21,6 @@ spec:
           requests:
             cpu: "100m"
             memory: 128Mi
-  executor:
-    resources:
-      requests:
-        cpu: "100m"
-        memory: 128Mi
   synchronization:
     mutex:
       name: 'codex-{{=sprig.replace("/", "-", workflow.parameters.repository)}}-{{workflow.parameters.issue_number}}'
