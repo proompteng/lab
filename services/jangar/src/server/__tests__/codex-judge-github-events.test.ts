@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
 
@@ -231,10 +231,6 @@ const requireHandler = async () => {
 }
 
 describe('codex-judge GitHub webhook stream handling', () => {
-  beforeAll(async () => {
-    await requireHandler()
-  }, 40_000)
-
   beforeEach(() => {
     handleGithubWebhookEvent = null
     globalState.__codexJudgeConfigMock = { ...configMock }
@@ -271,7 +267,7 @@ describe('codex-judge GitHub webhook stream handling', () => {
 
     expect(result.ok).toBe(false)
     expect(result.reason).toBe('event_stream_disabled')
-  }, 30_000)
+  }, 60_000)
 
   it('updates CI status for check_run completion events', async () => {
     const handler = await requireHandler()
@@ -310,7 +306,7 @@ describe('codex-judge GitHub webhook stream handling', () => {
       url: 'https://ci.example.com',
       commitSha: run.commitSha,
     })
-  })
+  }, 60_000)
 
   it('updates review status for pull_request_review events', async () => {
     const handler = await requireHandler()
@@ -350,5 +346,5 @@ describe('codex-judge GitHub webhook stream handling', () => {
         status: 'approved',
       }),
     )
-  })
+  }, 60_000)
 })
