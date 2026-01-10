@@ -262,11 +262,10 @@ resource "kubernetes_service_account" "workspace_admin" {
   automount_service_account_token = true
 }
 
-resource "kubernetes_role_binding" "workspace_admin" {
+resource "kubernetes_cluster_role_binding" "workspace_admin" {
   count = data.coder_workspace.me.start_count
   metadata {
     name      = "coder-workspace-${data.coder_workspace.me.id}-admin"
-    namespace = var.namespace
     labels = {
       "app.kubernetes.io/name"     = "coder-workspace"
       "app.kubernetes.io/instance" = "coder-workspace-${data.coder_workspace.me.id}"
@@ -297,7 +296,7 @@ resource "kubernetes_deployment" "main" {
   count = data.coder_workspace.me.start_count
   depends_on = [
     kubernetes_persistent_volume_claim.home,
-    kubernetes_role_binding.workspace_admin
+    kubernetes_cluster_role_binding.workspace_admin
   ]
   wait_for_rollout = false
   metadata {
