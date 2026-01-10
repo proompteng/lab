@@ -14,6 +14,7 @@ import { Terminal } from '@xterm/xterm'
 import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
+import { randomUuid } from '@/lib/uuid'
 import { cn } from '@/lib/utils'
 
 const OUTPUT_FRAME_TYPE = 1
@@ -93,7 +94,7 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
     }
 
     if (!reconnectTokenRef.current) {
-      reconnectTokenRef.current = crypto.randomUUID()
+      reconnectTokenRef.current = randomUuid()
     }
 
     const persist = () => {
