@@ -112,12 +112,11 @@ function GithubPullsPage() {
   const [error, setError] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(false)
 
-  const searchParams = React.useMemo(
-    () => (typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.search)),
-    [searchState],
-  )
+  const searchParams =
+    typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.search)
   const hasRepositoryParam = searchParams.has('repository')
   const hasAuthorParam = searchParams.has('author')
+  const hasLimitParam = searchParams.has('limit')
   const cursorHistory = parseCursorHistory(searchState.cursorHistory)
   const currentPage = cursorHistory.length + 1
   const repositoryValue = repository || (!hasRepositoryParam ? DEFAULT_REPOSITORY : '')
@@ -137,7 +136,7 @@ function GithubPullsPage() {
     if (typeof window === 'undefined') return
     const shouldSetRepository = !hasRepositoryParam
     const shouldSetAuthor = !hasAuthorParam && viewerLogin
-    const shouldSetLimit = !searchParams.has('limit')
+    const shouldSetLimit = !hasLimitParam
     if (!shouldSetRepository && !shouldSetAuthor && !shouldSetLimit) return
     void navigate({
       replace: true,
@@ -150,7 +149,7 @@ function GithubPullsPage() {
         cursorHistory: undefined,
       },
     })
-  }, [hasAuthorParam, hasRepositoryParam, navigate, searchParams, searchState, viewerLogin])
+  }, [hasAuthorParam, hasLimitParam, hasRepositoryParam, navigate, searchState, viewerLogin])
 
   const loadPulls = React.useCallback(
     async (params: PullsSearchState, options: { hasRepository: boolean }) => {
