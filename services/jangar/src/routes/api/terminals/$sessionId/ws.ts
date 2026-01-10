@@ -50,6 +50,7 @@ export const Route = createFileRoute('/api/terminals/$sessionId/ws')({
 })
 
 const peerState = new WeakMap<object, PeerState>()
+const inputEncoder = new TextEncoder()
 
 const jsonMessage = (peer: WebSocketPeer, payload: Record<string, unknown>) => {
   peer.send(JSON.stringify(payload))
@@ -162,25 +163,44 @@ const websocketHooks = defineWebSocket({
 
     if (textPayload !== null) {
       let payload: unknown = null
-      try {
-        payload = message.json()
-      } catch {
-        payload = null
+      const trimmed = textPayload.trim()
+      if (trimmed.startsWith('{')) {
+        try {
+          payload = JSON.parse(trimmed)
+        } catch {
+          payload = null
+        }
       }
-      if (!payload || typeof payload !== 'object') return
-      const type = (payload as Record<string, unknown>).type
-      if (type === 'resize') {
-        const cols = (payload as Record<string, unknown>).cols
-        const rows = (payload as Record<string, unknown>).rows
-        if (typeof cols === 'number' && typeof rows === 'number') {
+
+      if (payload && typeof payload === 'object') {
+        const type = (payload as Record<string, unknown>).type
+        if (type === 'resize') {
+          const cols = (payload as Record<string, unknown>).cols
+          const rows = (payload as Record<string, unknown>).rows
+          if (typeof cols === 'number' && typeof rows === 'number') {
+            const manager = getTerminalPtyManager()
+            manager.resize(state.sessionId, cols, rows)
+          }
+          return
+        }
+        if (type === 'ping') {
+          jsonMessage(peer, { type: 'pong' })
+          return
+        }
+      }
+
+      if (message.arrayBuffer) {
+        const buffer = new Uint8Array(message.arrayBuffer())
+        if (buffer.length > 0) {
           const manager = getTerminalPtyManager()
-          manager.resize(state.sessionId, cols, rows)
+          manager.handleInput(state.sessionId, buffer)
         }
         return
       }
-      if (type === 'ping') {
-        jsonMessage(peer, { type: 'pong' })
-        return
+
+      if (textPayload.length > 0) {
+        const manager = getTerminalPtyManager()
+        manager.handleInput(state.sessionId, inputEncoder.encode(textPayload))
       }
       return
     }
