@@ -33,6 +33,7 @@ import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as ApiEnrichRouteImport } from './routes/api/enrich'
 import { Route as AgentsGeneralRouteImport } from './routes/agents/general'
 import { Route as AgentsRunIdRouteImport } from './routes/agents/$runId'
+import { Route as TerminalsSessionIdIndexRouteImport } from './routes/terminals/$sessionId/index'
 import { Route as GithubPullsIndexRouteImport } from './routes/github/pulls/index'
 import { Route as TerminalsSessionIdFullscreenRouteImport } from './routes/terminals/$sessionId/fullscreen'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
@@ -193,6 +194,11 @@ const AgentsRunIdRoute = AgentsRunIdRouteImport.update({
   id: '/agents/$runId',
   path: '/agents/$runId',
   getParentRoute: () => rootRouteImport,
+} as any)
+const TerminalsSessionIdIndexRoute = TerminalsSessionIdIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => TerminalsSessionIdRoute,
 } as any)
 const GithubPullsIndexRoute = GithubPullsIndexRouteImport.update({
   id: '/',
@@ -453,6 +459,7 @@ export interface FileRoutesByFullPath {
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/github/pulls/': typeof GithubPullsIndexRoute
+  '/terminals/$sessionId/': typeof TerminalsSessionIdIndexRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -495,7 +502,6 @@ export interface FileRoutesByTo {
   '/atlas/search': typeof AtlasSearchRoute
   '/codex/runs': typeof CodexRunsRoute
   '/codex/search': typeof CodexSearchRoute
-  '/terminals/$sessionId': typeof TerminalsSessionIdRouteWithChildren
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
   '/agents': typeof AgentsIndexRoute
@@ -518,6 +524,7 @@ export interface FileRoutesByTo {
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/github/pulls': typeof GithubPullsIndexRoute
+  '/terminals/$sessionId': typeof TerminalsSessionIdIndexRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -585,6 +592,7 @@ export interface FileRoutesById {
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/github/pulls/': typeof GithubPullsIndexRoute
+  '/terminals/$sessionId/': typeof TerminalsSessionIdIndexRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -653,6 +661,7 @@ export interface FileRouteTypes {
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
     | '/github/pulls/'
+    | '/terminals/$sessionId/'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -695,7 +704,6 @@ export interface FileRouteTypes {
     | '/atlas/search'
     | '/codex/runs'
     | '/codex/search'
-    | '/terminals/$sessionId'
     | '/torghut/symbols'
     | '/torghut/visuals'
     | '/agents'
@@ -718,6 +726,7 @@ export interface FileRouteTypes {
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
     | '/github/pulls'
+    | '/terminals/$sessionId'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -784,6 +793,7 @@ export interface FileRouteTypes {
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
     | '/github/pulls/'
+    | '/terminals/$sessionId/'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -1023,6 +1033,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/agents/$runId'
       preLoaderRoute: typeof AgentsRunIdRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/terminals/$sessionId/': {
+      id: '/terminals/$sessionId/'
+      path: '/'
+      fullPath: '/terminals/$sessionId/'
+      preLoaderRoute: typeof TerminalsSessionIdIndexRouteImport
+      parentRoute: typeof TerminalsSessionIdRoute
     }
     '/github/pulls/': {
       id: '/github/pulls/'
@@ -1358,10 +1375,12 @@ const GithubPullsRouteWithChildren = GithubPullsRoute._addFileChildren(
 
 interface TerminalsSessionIdRouteChildren {
   TerminalsSessionIdFullscreenRoute: typeof TerminalsSessionIdFullscreenRoute
+  TerminalsSessionIdIndexRoute: typeof TerminalsSessionIdIndexRoute
 }
 
 const TerminalsSessionIdRouteChildren: TerminalsSessionIdRouteChildren = {
   TerminalsSessionIdFullscreenRoute: TerminalsSessionIdFullscreenRoute,
+  TerminalsSessionIdIndexRoute: TerminalsSessionIdIndexRoute,
 }
 
 const TerminalsSessionIdRouteWithChildren =
