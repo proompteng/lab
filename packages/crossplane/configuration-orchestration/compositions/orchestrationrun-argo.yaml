@@ -86,3 +86,12 @@ spec:
                   fromFieldPath: Optional
             readinessChecks:
               - type: None
+    - step: step-statuses
+      functionRef:
+        name: function-orchestration-status
+      input:
+        apiVersion: fn.proompteng.ai/v1alpha1
+        kind: OrchestrationStatus
+        spec:
+          workflowResource: workflow
+          stepStatusesFieldPath: status.stepStatuses

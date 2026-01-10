@@ -7,6 +7,7 @@ use (
 	./packages/crossplane/functions/function-memory-connection
 	./packages/crossplane/functions/function-memory-sql
 	./packages/crossplane/functions/function-orchestration-dag
+	./packages/crossplane/functions/function-orchestration-status
 	./services/eclair
 	./services/facteur
 	./services/miel

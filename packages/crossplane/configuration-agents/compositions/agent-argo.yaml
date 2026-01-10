@@ -26,13 +26,13 @@ spec:
               spec:
                 serviceAccountName: codex-workflow
                 entrypoint: agent-run
-                volumes:
-                  - name: agent-providers
-                    configMap:
-                      name: ""
-                      optional: true
                 templates:
                   - name: agent-run
+                    volumes:
+                      - name: agent-providers
+                        configMap:
+                          name: ""
+                          optional: true
                     inputs:
                       parameters:
                         - name: provider
@@ -62,23 +62,48 @@ spec:
                         - |
                           set -euo pipefail
                           AGENT_SPEC="$(mktemp)"
-                          cat > "$AGENT_SPEC" <<'JSON'
-                          {
-                            "provider": "{{inputs.parameters.provider}}",
-                            "inputs": {
-                              "repository": "{{inputs.parameters.repository}}",
-                              "issueNumber": "{{inputs.parameters.issueNumber}}",
-                              "base": "{{inputs.parameters.base}}",
-                              "head": "{{inputs.parameters.head}}",
-                              "stage": "{{inputs.parameters.stage}}"
+                          export AGENT_SPEC
+                          node - \
+                            "{{inputs.parameters.provider}}" \
+                            "{{inputs.parameters.repository}}" \
+                            "{{inputs.parameters.issueNumber}}" \
+                            "{{inputs.parameters.base}}" \
+                            "{{inputs.parameters.head}}" \
+                            "{{inputs.parameters.stage}}" \
+                            "{{inputs.parameters.rawEventB64}}" \
+                            "{{inputs.parameters.eventBodyB64}}" \
+                            "{{inputs.parameters.promptJson}}" <<'NODE'
+                          const fs = require('fs');
+                          const [
+                            ,
+                            ,
+                            provider,
+                            repository,
+                            issueNumber,
+                            base,
+                            head,
+                            stage,
+                            rawEventB64,
+                            eventBodyB64,
+                            promptJson,
+                          ] = process.argv;
+                          const spec = {
+                            provider,
+                            inputs: {
+                              repository,
+                              issueNumber,
+                              base,
+                              head,
+                              stage,
                             },
-                            "payloads": {
-                              "rawEventB64": "{{inputs.parameters.rawEventB64}}",
-                              "eventBodyB64": "{{inputs.parameters.eventBodyB64}}",
-                              "promptJson": "{{inputs.parameters.promptJson}}"
-                            }
-                          }
-                          JSON
+                            payloads: {
+                              rawEventB64,
+                              eventBodyB64,
+                              promptJson,
+                            },
+                          };
+                          fs.writeFileSync(process.env.AGENT_SPEC, JSON.stringify(spec));
+                          NODE
                           /usr/local/bin/agent-runner --spec "$AGENT_SPEC"
                       volumeMounts:
                         - name: agent-providers
@@ -86,6 +111,10 @@ spec:
             patches:
               - fromFieldPath: metadata.name
                 toFieldPath: metadata.name
+              - fromFieldPath: metadata.labels["crossplane.io/claim-name"]
+                toFieldPath: metadata.name
+                policy:
+                  fromFieldPath: Optional
               - fromFieldPath: spec.runtime.argo.namespace
                 toFieldPath: metadata.namespace
                 policy:
@@ -97,7 +126,7 @@ spec:
               - fromFieldPath: spec.providerRef.name
                 toFieldPath: spec.templates[0].inputs.parameters[0].default
               - fromFieldPath: spec.providerRef.name
-                toFieldPath: spec.volumes[0].configMap.name
+                toFieldPath: spec.templates[0].volumes[0].configMap.name
                 transforms:
                   - type: string
                     string:

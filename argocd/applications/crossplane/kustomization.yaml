@@ -6,6 +6,7 @@ resources:
   - rbac/crossplane-job-access.yaml
   - rbac/crossplane-function-access.yaml
   - rbac/crossplane-workflowtemplate-access.yaml
+  - rbac/crossplane-supporting-primitives-access.yaml
   - configurations/configuration-agents.yaml
   - configurations/configuration-memory.yaml
   - configurations/configuration-orchestration.yaml
@@ -13,6 +14,7 @@ resources:
   - functions/function-patch-and-transform.yaml
   - functions/function-map-to-list.yaml
   - functions/function-orchestration-dag.yaml
+  - functions/function-orchestration-status.yaml
   - functions/function-memory-sql.yaml
   - functions/function-memory-connection.yaml
   - functions/function-agent-provider-json.yaml

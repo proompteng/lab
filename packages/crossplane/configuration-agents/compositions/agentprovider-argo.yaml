@@ -33,6 +33,15 @@ spec:
                     string:
                       type: Format
                       fmt: '%s-agent-provider'
+              - fromFieldPath: metadata.labels["crossplane.io/claim-name"]
+                toFieldPath: metadata.name
+                policy:
+                  fromFieldPath: Optional
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: '%s-agent-provider'
             readinessChecks:
               - type: None
     - step: render-provider-json

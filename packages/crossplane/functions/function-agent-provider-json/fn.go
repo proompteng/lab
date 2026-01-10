@@ -62,6 +62,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		response.Fatal(rsp, errors.Wrap(err, "cannot get desired composite resource"))
 		return rsp, nil
 	}
+	observedXR, _ := request.GetObservedCompositeResource(req)
 
 	dcds, err := request.GetDesiredComposedResources(req)
 	if err != nil {
@@ -69,12 +70,12 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
-	providerName := ""
-	if xr != nil && xr.Resource != nil {
-		providerName = xr.Resource.GetName()
+	claimName := getClaimName(xr, observedXR)
+	providerName := claimName
+	if providerName == "" {
+		providerName = getCompositeName(xr, observedXR)
 	}
-
-	binary := getStringField(xr.Resource.Object, "spec.binary")
+	binary := getStringFieldWithFallback(xr, observedXR, "spec.binary")
 	if binary == "" {
 		response.Fatal(rsp, errors.New("spec.binary is required"))
 		return rsp, nil
@@ -83,10 +84,10 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	spec := providerSpec{
 		Name:            providerName,
 		Binary:          binary,
-		ArgsTemplate:    getStringSliceField(xr.Resource.Object, "spec.argsTemplate"),
-		EnvTemplate:     getStringMapField(xr.Resource.Object, "spec.envTemplate"),
-		InputFiles:      getInputFilesField(xr.Resource.Object, "spec.inputFiles"),
-		OutputArtifacts: getOutputArtifactsField(xr.Resource.Object, "spec.outputArtifacts"),
+		ArgsTemplate:    getStringSliceFieldWithFallback(xr, observedXR, "spec.argsTemplate"),
+		EnvTemplate:     getStringMapFieldWithFallback(xr, observedXR, "spec.envTemplate"),
+		InputFiles:      getInputFilesFieldWithFallback(xr, observedXR, "spec.inputFiles"),
+		OutputArtifacts: getOutputArtifactsFieldWithFallback(xr, observedXR, "spec.outputArtifacts"),
 	}
 
 	rendered, err := json.Marshal(spec)
@@ -151,6 +152,48 @@ func getStringField(obj map[string]any, path string) string {
 	return ""
 }
 
+func getCompositeName(xr, observedXR *resource.Composite) string {
+	if xr != nil && xr.Resource != nil {
+		if name := xr.Resource.GetName(); name != "" {
+			return name
+		}
+	}
+	if observedXR != nil && observedXR.Resource != nil {
+		return observedXR.Resource.GetName()
+	}
+	return ""
+}
+
+func getClaimName(xr, observedXR *resource.Composite) string {
+	if xr != nil && xr.Resource != nil {
+		if labels := xr.Resource.GetLabels(); labels != nil {
+			if name := labels["crossplane.io/claim-name"]; name != "" {
+				return name
+			}
+		}
+	}
+	if observedXR != nil && observedXR.Resource != nil {
+		if labels := observedXR.Resource.GetLabels(); labels != nil {
+			if name := labels["crossplane.io/claim-name"]; name != "" {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+func getStringFieldWithFallback(xr, observedXR *resource.Composite, path string) string {
+	if xr != nil {
+		if value := getStringField(xr.Resource.Object, path); value != "" {
+			return value
+		}
+	}
+	if observedXR != nil {
+		return getStringField(observedXR.Resource.Object, path)
+	}
+	return ""
+}
+
 func getStringSliceField(obj map[string]any, path string) []string {
 	if obj == nil {
 		return nil
@@ -170,6 +213,18 @@ func getStringSliceField(obj map[string]any, path string) []string {
 		}
 	}
 	return out
+}
+
+func getStringSliceFieldWithFallback(xr, observedXR *resource.Composite, path string) []string {
+	if xr != nil {
+		if value := getStringSliceField(xr.Resource.Object, path); len(value) > 0 {
+			return value
+		}
+	}
+	if observedXR != nil {
+		return getStringSliceField(observedXR.Resource.Object, path)
+	}
+	return nil
 }
 
 func getStringMapField(obj map[string]any, path string) map[string]string {
@@ -196,6 +251,18 @@ func getStringMapField(obj map[string]any, path string) map[string]string {
 	return out
 }
 
+func getStringMapFieldWithFallback(xr, observedXR *resource.Composite, path string) map[string]string {
+	if xr != nil {
+		if value := getStringMapField(xr.Resource.Object, path); len(value) > 0 {
+			return value
+		}
+	}
+	if observedXR != nil {
+		return getStringMapField(observedXR.Resource.Object, path)
+	}
+	return nil
+}
+
 func getInputFilesField(obj map[string]any, path string) []inputFile {
 	rawItems := getListField(obj, path)
 	if rawItems == nil {
@@ -215,6 +282,18 @@ func getInputFilesField(obj map[string]any, path string) []inputFile {
 	return out
 }
 
+func getInputFilesFieldWithFallback(xr, observedXR *resource.Composite, path string) []inputFile {
+	if xr != nil {
+		if value := getInputFilesField(xr.Resource.Object, path); len(value) > 0 {
+			return value
+		}
+	}
+	if observedXR != nil {
+		return getInputFilesField(observedXR.Resource.Object, path)
+	}
+	return nil
+}
+
 func getOutputArtifactsField(obj map[string]any, path string) []outputArtifact {
 	rawItems := getListField(obj, path)
 	if rawItems == nil {
@@ -232,6 +311,18 @@ func getOutputArtifactsField(obj map[string]any, path string) []outputArtifact {
 		})
 	}
 	return out
+}
+
+func getOutputArtifactsFieldWithFallback(xr, observedXR *resource.Composite, path string) []outputArtifact {
+	if xr != nil {
+		if value := getOutputArtifactsField(xr.Resource.Object, path); len(value) > 0 {
+			return value
+		}
+	}
+	if observedXR != nil {
+		return getOutputArtifactsField(observedXR.Resource.Object, path)
+	}
+	return nil
 }
 
 func getListField(obj map[string]any, path string) []any {

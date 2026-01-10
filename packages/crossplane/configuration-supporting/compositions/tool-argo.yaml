@@ -41,6 +41,10 @@ spec:
             patches:
               - fromFieldPath: metadata.name
                 toFieldPath: metadata.name
+              - fromFieldPath: metadata.labels["crossplane.io/claim-name"]
+                toFieldPath: metadata.name
+                policy:
+                  fromFieldPath: Optional
               - fromFieldPath: spec.runtime.argo.namespace
                 toFieldPath: metadata.namespace
                 policy:

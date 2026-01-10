@@ -27,7 +27,7 @@ spec:
               spec:
                 entrypoint: ""
                 serviceAccountName: codex-workflow
-                activeDeadlineSeconds: 0
+                activeDeadlineSeconds: 3600
                 templates:
                   - name: main
                     retryStrategy:

@@ -47,6 +47,7 @@ jobs:
         module:
           - packages/crossplane/functions/function-map-to-list
           - packages/crossplane/functions/function-orchestration-dag
+          - packages/crossplane/functions/function-orchestration-status
           - packages/crossplane/functions/function-memory-sql
           - packages/crossplane/functions/function-memory-connection
           - packages/crossplane/functions/function-agent-provider-json
@@ -71,6 +72,7 @@ jobs:
         module:
           - packages/crossplane/functions/function-map-to-list
           - packages/crossplane/functions/function-orchestration-dag
+          - packages/crossplane/functions/function-orchestration-status
           - packages/crossplane/functions/function-memory-sql
           - packages/crossplane/functions/function-memory-connection
           - packages/crossplane/functions/function-agent-provider-json
