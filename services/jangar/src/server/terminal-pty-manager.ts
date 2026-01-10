@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { readFile, readlink } from 'node:fs/promises'
 import { hostname } from 'node:os'
 
 import { spawn } from 'node-pty'
@@ -80,12 +81,187 @@ type TerminalRuntime = {
   id: string
   worktreeName: string | null
   worktreePath: string
-  pty: ReturnType<typeof spawn>
+  pty: PtyAdapter
   buffer: OutputBuffer
   connections: Map<string, TerminalConnection>
   idleTimer: ReturnType<typeof setTimeout> | null
   lastActivityAt: number
   closed: boolean
+}
+
+type PtyExitEvent = { exitCode: number | null; signal: number | null }
+
+type PtyAdapter = {
+  write: (data: string) => void
+  resize: (cols: number, rows: number) => void
+  kill: () => void
+  onData: (listener: (data: string) => void) => void
+  onExit: (listener: (event: PtyExitEvent) => void) => void
+}
+
+type SpawnPtyOptions = {
+  cwd: string
+  env: Record<string, string>
+  cols: number
+  rows: number
+}
+
+const isBunRuntime = Boolean((globalThis as { Bun?: typeof Bun }).Bun)
+
+const spawnScriptPty = (shell: string, options: SpawnPtyOptions): PtyAdapter => {
+  const bunRuntime = (globalThis as { Bun?: typeof Bun }).Bun
+  if (!bunRuntime) {
+    throw new Error('Bun runtime is required for script-based PTY fallback.')
+  }
+
+  const env = {
+    ...options.env,
+    COLUMNS: String(options.cols),
+    LINES: String(options.rows),
+  }
+
+  const proc = bunRuntime.spawn(['script', '-qfc', `${shell} -l`, '/dev/null'], {
+    cwd: options.cwd,
+    env,
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+
+  const dataListeners = new Set<(data: string) => void>()
+  const exitListeners = new Set<(event: PtyExitEvent) => void>()
+  const encoder = new TextEncoder()
+
+  const readStream = async (stream: ReadableStream<Uint8Array> | null) => {
+    if (!stream) return
+    const reader = stream.getReader()
+    const decoder = new TextDecoder()
+    try {
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        if (!value || value.length === 0) continue
+        const text = decoder.decode(value, { stream: true })
+        if (!text) continue
+        for (const listener of dataListeners) listener(text)
+      }
+      const tail = decoder.decode()
+      if (tail) {
+        for (const listener of dataListeners) listener(tail)
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  void readStream(proc.stdout)
+  void readStream(proc.stderr)
+
+  proc.exited
+    .then((exitCode) => {
+      for (const listener of exitListeners) {
+        listener({ exitCode: exitCode ?? null, signal: null })
+      }
+    })
+    .catch(() => {})
+
+  let ttyPath: string | null = null
+  let pendingResize: { cols: number; rows: number } | null = { cols: options.cols, rows: options.rows }
+  let ttyResolve: Promise<string | null> | null = null
+
+  const resolveTtyPath = async () => {
+    if (!proc.pid) return null
+    try {
+      const children = await readFile(`/proc/${proc.pid}/task/${proc.pid}/children`, 'utf8')
+      const childPid = Number.parseInt(children.trim().split(/\s+/)[0] ?? '', 10)
+      if (!Number.isFinite(childPid)) return null
+      const link = await readlink(`/proc/${childPid}/fd/0`)
+      const tty = link.trim()
+      return tty.startsWith('/dev/') ? tty : null
+    } catch {
+      return null
+    }
+  }
+
+  const ensureTtyPath = async () => {
+    if (ttyPath) return ttyPath
+    if (!ttyResolve) {
+      ttyResolve = resolveTtyPath()
+        .then((resolved) => {
+          ttyPath = resolved
+          return resolved
+        })
+        .finally(() => {
+          ttyResolve = null
+        })
+    }
+    return ttyResolve
+  }
+
+  const applyResize = (cols: number, rows: number) => {
+    const safeCols = Math.max(20, Math.min(400, Math.round(cols)))
+    const safeRows = Math.max(6, Math.min(200, Math.round(rows)))
+    if (!ttyPath) {
+      pendingResize = { cols: safeCols, rows: safeRows }
+      void ensureTtyPath().then((resolved) => {
+        if (!resolved || !pendingResize) return
+        applyResize(pendingResize.cols, pendingResize.rows)
+        pendingResize = null
+      })
+      return
+    }
+    bunRuntime.spawn(['stty', '-F', ttyPath, 'cols', `${safeCols}`, 'rows', `${safeRows}`], {
+      stdin: 'ignore',
+      stdout: 'ignore',
+      stderr: 'ignore',
+    })
+  }
+
+  setTimeout(() => {
+    void ensureTtyPath().then((resolved) => {
+      if (!resolved || !pendingResize) return
+      applyResize(pendingResize.cols, pendingResize.rows)
+      pendingResize = null
+    })
+  }, 100)
+
+  return {
+    write: (data) => {
+      if (!proc.stdin) return
+      try {
+        proc.stdin.write(encoder.encode(data))
+      } catch {
+        // ignore
+      }
+    },
+    resize: (cols, rows) => applyResize(cols, rows),
+    kill: () => {
+      try {
+        proc.kill()
+      } catch {
+        // ignore
+      }
+    },
+    onData: (listener) => {
+      dataListeners.add(listener)
+    },
+    onExit: (listener) => {
+      exitListeners.add(listener)
+    },
+  }
+}
+
+const spawnPty = (shell: string, options: SpawnPtyOptions): PtyAdapter => {
+  if (isBunRuntime) {
+    return spawnScriptPty(shell, options)
+  }
+  return spawn(shell, ['-l'], {
+    name: 'xterm-256color',
+    cwd: options.cwd,
+    env: options.env,
+    cols: options.cols,
+    rows: options.rows,
+  })
 }
 
 export type TerminalManagerOptions = {
@@ -141,8 +317,7 @@ export class TerminalPtyManager {
       JANGAR_WORKTREE_NAME: input.worktreeName ?? '',
       JANGAR_WORKTREE_PATH: input.worktreePath,
     }
-    const pty = spawn(shell, ['-l'], {
-      name: 'xterm-256color',
+    const pty = spawnPty(shell, {
       cwd: input.worktreePath,
       env,
       cols: 120,
