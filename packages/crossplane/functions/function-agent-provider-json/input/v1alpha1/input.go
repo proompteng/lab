@@ -16,6 +16,8 @@ import (
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="ConfigMap",type=string,JSONPath=`.spec.targetConfigMap`
 // +kubebuilder:printcolumn:name="JSON Key",type=string,JSONPath=`.spec.jsonKey`
+//
+//nolint:revive // CRD naming uses Json to align with existing API.
 type AgentProviderJson struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -35,7 +37,9 @@ func (in *AgentProviderJson) DeepCopyObject() runtime.Object {
 }
 
 // AgentProviderJsonSpec configures provider JSON rendering.
+//
+//nolint:revive // CRD naming uses Json to align with existing API.
 type AgentProviderJsonSpec struct {
 	TargetConfigMap string `json:"targetConfigMap"`
-	JsonKey         string `json:"jsonKey,omitempty"` // Optional explicit key for the provider JSON.
+	JsonKey         string `json:"jsonKey,omitempty"` //nolint:revive // JSONKey matches JSON field naming.
 }
