@@ -41,29 +41,58 @@ const globalOverrides = globalThis as typeof globalThis & {
   __codexJudgeArgoMock?: ReturnType<typeof createArgoClient> | null
 }
 
-const store = globalOverrides.__codexJudgeStoreMock ?? createCodexJudgeStore()
-const storeReady = store.ready ?? Promise.resolve()
-const ensureStoreReady = async () => {
-  await storeReady
+let cachedStore: ReturnType<typeof createCodexJudgeStore> | null = null
+const resolveStore = () => {
+  if (globalOverrides.__codexJudgeStoreMock) return globalOverrides.__codexJudgeStoreMock
+  if (!cachedStore) {
+    cachedStore = createCodexJudgeStore()
+  }
+  return cachedStore
 }
-storeReady.catch((error) => {
-  console.error('Codex judge store failed to initialize', error)
+const store = new Proxy({} as ReturnType<typeof createCodexJudgeStore>, {
+  get: (_target, prop) => resolveStore()[prop as keyof ReturnType<typeof createCodexJudgeStore>],
 })
-const config = globalOverrides.__codexJudgeConfigMock ?? loadCodexJudgeConfig()
+const storeReady = () => resolveStore().ready ?? Promise.resolve()
+const ensureStoreReady = async () => {
+  await storeReady()
+}
+const defaultConfig = loadCodexJudgeConfig()
+const resolveConfig = () => globalOverrides.__codexJudgeConfigMock ?? defaultConfig
+const config = new Proxy({} as ReturnType<typeof loadCodexJudgeConfig>, {
+  get: (_target, prop) => resolveConfig()[prop as keyof ReturnType<typeof loadCodexJudgeConfig>],
+})
 const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
-const effectiveJudgeMode = config.judgeMode === 'local' && isTestEnv ? 'local' : 'argo'
+const getEffectiveJudgeMode = () => (resolveConfig().judgeMode === 'local' && isTestEnv ? 'local' : 'argo')
 const requestedJudgeMode = (process.env.JANGAR_CODEX_JUDGE_MODE ?? 'argo').trim().toLowerCase()
 if (!isTestEnv && requestedJudgeMode !== 'argo') {
   console.warn(
     'Jangar local judge mode is deprecated and disabled in production; forcing JANGAR_CODEX_JUDGE_MODE=argo.',
   )
 }
-const github =
-  globalOverrides.__codexJudgeGithubMock ??
-  createGitHubClient({ token: config.githubToken, apiBaseUrl: config.githubApiBaseUrl })
-const argo =
-  globalOverrides.__codexJudgeArgoMock ??
-  (config.argoServerUrl ? createArgoClient({ baseUrl: config.argoServerUrl }) : null)
+let cachedGithub: ReturnType<typeof createGitHubClient> | null = null
+const resolveGithub = () => {
+  if (globalOverrides.__codexJudgeGithubMock) return globalOverrides.__codexJudgeGithubMock
+  if (!cachedGithub) {
+    cachedGithub = createGitHubClient({
+      token: resolveConfig().githubToken,
+      apiBaseUrl: resolveConfig().githubApiBaseUrl,
+    })
+  }
+  return cachedGithub
+}
+const github = new Proxy({} as ReturnType<typeof createGitHubClient>, {
+  get: (_target, prop) => resolveGithub()[prop as keyof ReturnType<typeof createGitHubClient>],
+})
+let cachedArgo: ReturnType<typeof createArgoClient> | null = null
+const resolveArgo = () => {
+  if (globalOverrides.__codexJudgeArgoMock !== undefined) return globalOverrides.__codexJudgeArgoMock
+  const argoUrl = resolveConfig().argoServerUrl
+  if (!cachedArgo && argoUrl) {
+    cachedArgo = createArgoClient({ baseUrl: argoUrl })
+  }
+  return cachedArgo
+}
+const argo = resolveArgo()
 const getMemoryStoreFactory = () => globalOverrides.__codexJudgeMemoryStoreFactory ?? createPostgresMemoriesStore
 
 const scheduledRuns = new Map<string, NodeJS.Timeout>()
@@ -1578,6 +1607,7 @@ const handleReviewStreamEvent = async (event: GithubWebhookStreamEvent) => {
 }
 
 export const handleGithubWebhookEvent = async (payload: Record<string, unknown>) => {
+  const config = resolveConfig()
   if (!config.ciEventStreamEnabled) {
     return { ok: false, reason: 'event_stream_disabled' }
   }
@@ -2264,7 +2294,7 @@ const evaluateRun = async (runId: string) => {
       return
     }
 
-    const argoJudgeOnly = effectiveJudgeMode === 'argo'
+    const argoJudgeOnly = getEffectiveJudgeMode() === 'argo'
     const notifyStage = typeof run.notifyPayload?.stage === 'string' ? run.notifyPayload.stage : null
     const isJudgeStage = run.stage === 'judge' || run.runCompletePayload?.stage === 'judge' || notifyStage === 'judge'
 
@@ -3351,7 +3381,7 @@ if (!_RECONCILE_DISABLED) {
 }
 
 const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: CodexEvaluationRecord) => {
-  if (effectiveJudgeMode === 'argo') {
+  if (getEffectiveJudgeMode() === 'argo') {
     return
   }
   const latestRun = await store.getRunById(run.id)

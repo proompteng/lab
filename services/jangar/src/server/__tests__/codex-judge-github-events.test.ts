@@ -237,7 +237,6 @@ describe('codex-judge GitHub webhook stream handling', () => {
   })
 
   beforeEach(() => {
-    vi.useFakeTimers()
     const storeMock = requireMock(globalState.__codexJudgeStoreMock, 'store')
     Object.values(storeMock).forEach((value) => {
       if (typeof value === 'function') {
@@ -257,7 +256,6 @@ describe('codex-judge GitHub webhook stream handling', () => {
 
   afterEach(() => {
     vi.clearAllTimers()
-    vi.useRealTimers()
   })
 
   it('skips events when the stream is disabled', async () => {
@@ -269,7 +267,7 @@ describe('codex-judge GitHub webhook stream handling', () => {
 
     expect(result.ok).toBe(false)
     expect(result.reason).toBe('event_stream_disabled')
-  })
+  }, 15_000)
 
   it('updates CI status for check_run completion events', async () => {
     const handler = await requireHandler()

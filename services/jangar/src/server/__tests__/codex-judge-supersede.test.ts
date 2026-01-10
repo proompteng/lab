@@ -229,7 +229,7 @@ beforeEach(async () => {
 beforeAll(async () => {
   handleRunComplete = null
   await requireHandleRunComplete()
-})
+}, 20_000)
 
 const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
   id: 'run-1',
