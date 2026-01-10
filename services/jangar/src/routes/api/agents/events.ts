@@ -177,7 +177,7 @@ export const getAgentEvents = async (request: Request) => {
   let connectionClosed = false
 
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
+    async start(controller) {
       recordSseConnection('agent-events', 'opened')
       const push = (payload: unknown) => {
         controller.enqueue(encoder.encode(`data: ${safeJsonStringify(payload)}\n\n`))
@@ -257,7 +257,7 @@ export const getAgentEvents = async (request: Request) => {
         }, POLL_INTERVAL_MS)
       })()
 
-      return keepAlive
+      await keepAlive
     },
     cancel() {
       if (isClosed) return
@@ -275,7 +275,7 @@ export const getAgentEvents = async (request: Request) => {
   return new Response(stream, {
     headers: {
       'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
+      'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive',
       'x-accel-buffering': 'no',
     },
