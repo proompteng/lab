@@ -150,6 +150,7 @@ export const useAgentEventStream = ({ runId, channel, maxMessages }: AgentStream
   const [error, setError] = React.useState<string | null>(null)
   const [lastEventAt, setLastEventAt] = React.useState<string | null>(null)
   const messageKeysRef = React.useRef<Set<string>>(new Set())
+  const openedRef = React.useRef(false)
 
   React.useEffect(() => {
     const shouldConnect = Boolean(runId?.trim()) || Boolean(channel?.trim())
@@ -167,6 +168,7 @@ export const useAgentEventStream = ({ runId, channel, maxMessages }: AgentStream
     setError(null)
     setLastEventAt(null)
     messageKeysRef.current.clear()
+    openedRef.current = false
 
     const params = new URLSearchParams()
     if (runId?.trim()) params.set('runId', runId.trim())
@@ -176,6 +178,7 @@ export const useAgentEventStream = ({ runId, channel, maxMessages }: AgentStream
     const source = new EventSource(url)
 
     source.onopen = () => {
+      openedRef.current = true
       setStatus('open')
       setError(null)
     }
@@ -183,10 +186,15 @@ export const useAgentEventStream = ({ runId, channel, maxMessages }: AgentStream
     source.onerror = () => {
       if (source.readyState === EventSource.CLOSED) {
         setStatus('error')
-        setError('Stream disconnected. Retrying...')
+        setError('Stream disconnected.')
         return
       }
-      setStatus('connecting')
+      if (!openedRef.current) {
+        setStatus('connecting')
+        setError(null)
+        return
+      }
+      setStatus('open')
       setError(null)
     }
 
