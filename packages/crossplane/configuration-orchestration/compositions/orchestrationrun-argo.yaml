@@ -80,3 +80,5 @@ spec:
                 toFieldPath: status.finishedAt
                 policy:
                   fromFieldPath: Optional
+            readinessChecks:
+              - type: None

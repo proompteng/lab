@@ -49,8 +49,6 @@ spec:
                 name: workflowName
             readinessChecks:
               - type: None
-            readinessChecks:
-              - type: None
     - step: parameters-map-to-list
       functionRef:
         name: function-map-to-list
@@ -98,3 +96,5 @@ spec:
                 toFieldPath: status.finishedAt
                 policy:
                   fromFieldPath: Optional
+            readinessChecks:
+              - type: None
