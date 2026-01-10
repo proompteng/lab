@@ -1,0 +1,15 @@
+apiVersion: budgets.proompteng.ai/v1alpha1
+kind: Budget
+metadata:
+  name: jangar-primitives-budget
+  namespace: jangar
+spec:
+  compositionRef:
+    name: budget-kubernetes
+  limits:
+    cpu: "12"
+    dollars: 50
+    memory: 24Gi
+    tokens: 100000
+  window:
+    period: 30d
