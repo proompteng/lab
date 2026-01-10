@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
 
@@ -231,6 +231,12 @@ const requireHandler = async () => {
 }
 
 describe('codex-judge GitHub webhook stream handling', () => {
+  beforeAll(async () => {
+    handleGithubWebhookEvent = null
+    vi.resetModules()
+    await requireHandler()
+  })
+
   beforeEach(() => {
     vi.useFakeTimers()
     const storeMock = requireMock(globalState.__codexJudgeStoreMock, 'store')
