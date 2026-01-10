@@ -26,6 +26,7 @@ spec:
               spec:
                 workflowTemplateRef:
                   name: ""
+                serviceAccountName: codex-workflow
                 arguments:
                   parameters: []
             patches:
