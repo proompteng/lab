@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
 
@@ -259,6 +259,9 @@ describe('codex-judge GitHub webhook stream handling', () => {
     globalState.__githubReviewConfigMock = githubReviewConfigMock
   })
 
+  afterEach(() => {
+    vi.useRealTimers()
+  })
   it('skips events when the stream is disabled', async () => {
     const handler = await requireHandler()
     const config = requireMock(globalState.__codexJudgeConfigMock, 'config')
