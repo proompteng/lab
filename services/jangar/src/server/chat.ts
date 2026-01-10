@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url'
 import * as S from '@effect/schema/Schema'
 import type { CodexAppServerClient } from '@proompteng/codex'
 import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
-
 import {
   ChatCompletionEncoder,
   type ChatCompletionEncoderService,
@@ -15,10 +14,17 @@ import {
 } from './chat-completion-encoder'
 import { safeJsonStringify, stripTerminalControl } from './chat-text'
 import { ChatToolEventRenderer, chatToolEventRendererLive, type ToolRenderer } from './chat-tool-event-renderer'
+import { buildPrompt, compareTranscript, type TranscriptEntry } from './chat-transcript'
 import { getCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
 import { loadConfig } from './config'
 import { recordSseConnection, recordSseError } from './metrics'
 import { ThreadState, ThreadStateLive, type ThreadStateService, ThreadStateUnavailableError } from './thread-state'
+import {
+  TranscriptState,
+  TranscriptStateLive,
+  type TranscriptStateService,
+  TranscriptStateUnavailableError,
+} from './transcript-state'
 import { pickWorktreeCityName } from './worktree-cities'
 import { WorktreeState, WorktreeStateLive, WorktreeStateUnavailableError } from './worktree-state'
 
@@ -49,6 +55,18 @@ class RequestError extends Error {
     super(message)
     this.status = status
     this.code = code
+  }
+}
+
+class ChatStateStoreError extends Error {
+  readonly store: string
+  readonly detail: string
+
+  constructor(store: string, error: unknown) {
+    const detail = error instanceof Error ? error.message : String(error)
+    super(`chat state store error (${store}): ${detail}`)
+    this.store = store
+    this.detail = detail
   }
 }
 
@@ -101,58 +119,6 @@ const parseRequest = async (request: Request): Promise<ChatRequest> => {
   }
   return parsed
 }
-
-const summarizeNonTextPart = (part: Record<string, unknown>) => {
-  const type = typeof part.type === 'string' && part.type.length > 0 ? part.type : 'part'
-  if (type === 'image_url') {
-    const imageUrl = part.image_url
-    if (imageUrl && typeof imageUrl === 'object') {
-      const url = (imageUrl as Record<string, unknown>).url
-      if (typeof url === 'string' && url.length > 0) return ` [image_url] ${url}`
-    }
-    return ' [image_url]'
-  }
-  if (type === 'input_audio') return ' [input_audio]'
-  if (type === 'file') return ' [file]'
-  return ` [${type}]`
-}
-
-const normalizeMessageContent = (content: unknown): string => {
-  if (typeof content === 'string') return content
-
-  if (Array.isArray(content)) {
-    const parts = content
-      .map((part) => {
-        if (typeof part === 'string') return part
-        if (part && typeof part === 'object') {
-          const obj = part as Record<string, unknown>
-          if (typeof obj.text === 'string') return obj.text
-          if (typeof obj.content === 'string') return obj.content
-          return summarizeNonTextPart(obj)
-        }
-        return part == null ? '' : String(part)
-      })
-      .filter((value) => value.length > 0)
-    return parts.join('')
-  }
-
-  if (content && typeof content === 'object') {
-    const obj = content as Record<string, unknown>
-    if (typeof obj.text === 'string') return obj.text
-    if (typeof obj.content === 'string') return obj.content
-    return summarizeNonTextPart(obj)
-  }
-
-  return content == null ? '' : String(content)
-}
-
-const buildPrompt = (messages: ChatRequest['messages']) =>
-  messages
-    .map((msg) => {
-      const prefix = msg.name && msg.name.length > 0 ? `${msg.role}(${msg.name})` : msg.role
-      return `${prefix}: ${normalizeMessageContent(msg.content)}`
-    })
-    .join('\n')
 
 const WORKTREE_DIR_NAME = '.worktrees'
 const WORKTREE_NAME_PATTERN = /^[a-z0-9-]+$/
@@ -672,6 +638,7 @@ export const handleChatCompletionEffect = (request: Request) =>
         const includePlan = parsed.stream_options?.include_plan !== false
         const chatIdHeader = request.headers.get('x-openwebui-chat-id')
         const chatId = typeof chatIdHeader === 'string' && chatIdHeader.trim().length > 0 ? chatIdHeader.trim() : null
+        const statefulChatEnabled = process.env.JANGAR_STATEFUL_CHAT_MODE === '1'
 
         const { config, client, toolRenderer, encoder } = yield* Effect.all({
           config: loadConfig,
@@ -682,95 +649,143 @@ export const handleChatCompletionEffect = (request: Request) =>
 
         let threadContext: ThreadContext | null = null
         let codexCwd = resolveCodexCwd()
+        let transcriptState: TranscriptStateService | null = null
+        let storedTranscript: TranscriptEntry[] | null = null
+
         if (chatId) {
-          const threadState = yield* ThreadState
-          const worktreeState = yield* WorktreeState
+          const resolved = yield* pipe(
+            Effect.gen(function* () {
+              const threadState = yield* ThreadState
+              const worktreeState = yield* WorktreeState
+              const transcriptService = statefulChatEnabled ? yield* TranscriptState : null
 
-          const threadId = yield* pipe(
-            threadState.getThreadId(chatId),
-            Effect.catchAll((error) => {
-              if (error instanceof ThreadStateUnavailableError) {
-                return Effect.fail(new RequestError(500, 'thread_store_unavailable', error.message))
-              }
-              return Effect.fail(
-                new RequestError(
-                  500,
-                  'thread_lookup_failed',
-                  error instanceof Error ? error.message : 'Unable to read chat thread state',
-                ),
+              const threadId = yield* pipe(
+                threadState.getThreadId(chatId),
+                Effect.mapError((error) => new ChatStateStoreError('thread', error)),
               )
-            }),
-          )
 
-          const storedWorktreeName = yield* pipe(
-            worktreeState.getWorktreeName(chatId),
-            Effect.catchAll((error) => {
-              if (error instanceof WorktreeStateUnavailableError) {
-                return Effect.fail(new RequestError(500, 'worktree_store_unavailable', error.message))
-              }
-              return Effect.fail(
-                new RequestError(
-                  500,
-                  'worktree_lookup_failed',
-                  error instanceof Error ? error.message : 'Unable to read chat worktree state',
-                ),
+              const storedWorktreeName = yield* pipe(
+                worktreeState.getWorktreeName(chatId),
+                Effect.mapError((error) => new ChatStateStoreError('worktree', error)),
               )
-            }),
-          )
 
-          let worktreeName = storedWorktreeName
-          let worktreePath: string
+              let worktreeName = storedWorktreeName
+              let worktreePath: string
 
-          if (worktreeName) {
-            const existingName = worktreeName
-            worktreePath = yield* Effect.tryPromise({
-              try: () => ensureWorktreePath(existingName),
-              catch: (error) =>
-                new RequestError(
-                  500,
-                  'worktree_setup_failed',
-                  error instanceof Error ? error.message : 'Unable to ensure chat worktree',
-                ),
-            })
-          } else {
-            const allocation = yield* Effect.tryPromise({
-              try: () => allocateWorktree(),
-              catch: (error) =>
-                new RequestError(
-                  500,
-                  'worktree_setup_failed',
-                  error instanceof Error ? error.message : 'Unable to allocate chat worktree',
-                ),
-            })
-            const allocatedName = allocation.name
-            worktreeName = allocatedName
-            worktreePath = allocation.path
+              if (worktreeName) {
+                const existingName = worktreeName
+                worktreePath = yield* Effect.tryPromise({
+                  try: () => ensureWorktreePath(existingName),
+                  catch: (error) =>
+                    new RequestError(
+                      500,
+                      'worktree_setup_failed',
+                      error instanceof Error ? error.message : 'Unable to ensure chat worktree',
+                    ),
+                })
+              } else {
+                const allocation = yield* Effect.tryPromise({
+                  try: () => allocateWorktree(),
+                  catch: (error) =>
+                    new RequestError(
+                      500,
+                      'worktree_setup_failed',
+                      error instanceof Error ? error.message : 'Unable to allocate chat worktree',
+                    ),
+                })
+                const allocatedName = allocation.name
+                worktreeName = allocatedName
+                worktreePath = allocation.path
 
-            yield* pipe(
-              worktreeState.setWorktreeName(chatId, allocatedName),
-              Effect.catchAll((error) => {
-                if (error instanceof WorktreeStateUnavailableError) {
-                  return Effect.fail(new RequestError(500, 'worktree_store_unavailable', error.message))
-                }
-                return Effect.fail(
-                  new RequestError(
-                    500,
-                    'worktree_write_failed',
-                    error instanceof Error ? error.message : 'Unable to persist chat worktree',
-                  ),
+                yield* pipe(
+                  worktreeState.setWorktreeName(chatId, allocatedName),
+                  Effect.mapError((error) => new ChatStateStoreError('worktree', error)),
                 )
-              }),
-            )
-          }
+              }
 
-          codexCwd = resolveCodexCwd(worktreePath)
-          console.info('[chat] chat id received', { chatId, threadId })
-          console.info('[chat] worktree resolved', { chatId, worktreeName, worktreePath })
-          threadContext = {
-            chatId,
-            threadId,
-            threadState,
-            turnNumber: null,
+              const transcriptSignature = transcriptService
+                ? yield* pipe(
+                    transcriptService.getTranscript(chatId),
+                    Effect.mapError((error) => new ChatStateStoreError('transcript', error)),
+                  )
+                : null
+
+              return {
+                threadContext: {
+                  chatId,
+                  threadId,
+                  threadState,
+                  turnNumber: null,
+                },
+                codexCwd: resolveCodexCwd(worktreePath),
+                transcriptState: transcriptService,
+                transcriptSignature,
+                worktreeName,
+                worktreePath,
+              }
+            }),
+            Effect.catchAll((error) => {
+              if (error instanceof ChatStateStoreError) {
+                console.warn('[chat] openwebui state unavailable; falling back to stateless', {
+                  chatId,
+                  store: error.store,
+                  detail: error.detail,
+                })
+                return Effect.succeed({
+                  threadContext: null,
+                  codexCwd: resolveCodexCwd(),
+                  transcriptState: null,
+                  transcriptSignature: null,
+                  worktreeName: null,
+                  worktreePath: null,
+                })
+              }
+              if (error instanceof ThreadStateUnavailableError || error instanceof WorktreeStateUnavailableError) {
+                console.warn('[chat] openwebui state unavailable; falling back to stateless', {
+                  chatId,
+                  detail: error.message,
+                })
+                return Effect.succeed({
+                  threadContext: null,
+                  codexCwd: resolveCodexCwd(),
+                  transcriptState: null,
+                  transcriptSignature: null,
+                  worktreeName: null,
+                  worktreePath: null,
+                })
+              }
+              if (error instanceof TranscriptStateUnavailableError) {
+                console.warn('[chat] openwebui transcript store unavailable; falling back to stateless', {
+                  chatId,
+                  detail: error.message,
+                })
+                return Effect.succeed({
+                  threadContext: null,
+                  codexCwd: resolveCodexCwd(),
+                  transcriptState: null,
+                  transcriptSignature: null,
+                  worktreeName: null,
+                  worktreePath: null,
+                })
+              }
+              return Effect.fail(error)
+            }),
+          )
+
+          threadContext = resolved.threadContext
+          codexCwd = resolved.codexCwd
+          transcriptState = resolved.transcriptState
+          storedTranscript = resolved.transcriptSignature
+
+          if (threadContext) {
+            console.info('[chat] chat id received', { chatId, threadId: threadContext.threadId })
+          }
+          if (resolved.worktreeName && resolved.worktreePath) {
+            console.info('[chat] worktree resolved', {
+              chatId,
+              worktreeName: resolved.worktreeName,
+              worktreePath: resolved.worktreePath,
+            })
           }
         }
 
@@ -781,7 +796,49 @@ export const handleChatCompletionEffect = (request: Request) =>
           )
         }
 
-        const prompt = buildPrompt(parsed.messages)
+        let promptMessages = parsed.messages
+        let nextTranscriptSignature: TranscriptEntry[] | null = null
+
+        if (threadContext && transcriptState && statefulChatEnabled) {
+          const comparison = compareTranscript(storedTranscript, parsed.messages)
+          promptMessages = comparison.deltaMessages.length > 0 ? comparison.deltaMessages : parsed.messages
+          nextTranscriptSignature = comparison.signature
+
+          if (comparison.resetRequired) {
+            console.info('[chat] transcript mismatch; resetting thread', {
+              chatId: threadContext.chatId,
+              storedLength: storedTranscript?.length ?? 0,
+              incomingLength: parsed.messages.length,
+            })
+            yield* pipe(
+              threadContext.threadState.clearChat(threadContext.chatId),
+              Effect.catchAll((error) => {
+                console.warn('[chat] failed to clear thread after transcript mismatch', {
+                  chatId: threadContext.chatId,
+                  error: String(error),
+                })
+                return Effect.succeed(undefined)
+              }),
+            )
+            threadContext.threadId = null
+            threadContext.turnNumber = null
+          }
+        }
+
+        if (threadContext && transcriptState && statefulChatEnabled && nextTranscriptSignature) {
+          yield* pipe(
+            transcriptState.setTranscript(threadContext.chatId, nextTranscriptSignature),
+            Effect.catchAll((error) => {
+              console.warn('[chat] failed to persist chat transcript signature', {
+                chatId: threadContext.chatId,
+                error: String(error),
+              })
+              return Effect.succeed(undefined)
+            }),
+          )
+        }
+
+        const prompt = buildPrompt(promptMessages)
         return toSseResponse(
           client,
           prompt,
@@ -815,6 +872,7 @@ const handlerRuntime = ManagedRuntime.make(
   Layer.mergeAll(
     ThreadStateLive,
     WorktreeStateLive,
+    TranscriptStateLive,
     Layer.succeed(ChatToolEventRenderer, chatToolEventRendererLive),
     Layer.succeed(ChatCompletionEncoder, chatCompletionEncoderLive),
   ),
