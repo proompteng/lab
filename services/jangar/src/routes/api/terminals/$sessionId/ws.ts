@@ -105,8 +105,19 @@ const websocketHooks = defineWebSocket({
   },
 
   async open(peer: WebSocketPeer) {
-    const sessionId = peer.context?.sessionId
-    const token = peer.context?.reconnectToken
+    let sessionId = peer.context?.sessionId
+    let token = peer.context?.reconnectToken
+    let since = peer.context?.since
+    let cols = peer.context?.cols
+    let rows = peer.context?.rows
+    if ((!sessionId || !token) && peer.request?.url) {
+      const resolved = resolveAttachParams(peer.request.url)
+      sessionId = sessionId ?? resolved.sessionId
+      token = token ?? resolved.reconnectToken
+      since = since ?? resolved.since
+      cols = cols ?? resolved.cols
+      rows = rows ?? resolved.rows
+    }
     if (!sessionId || !token) {
       jsonMessage(peer, { type: 'error', message: 'Invalid session.' })
       peer.close(1008, 'Invalid session')
@@ -124,9 +135,9 @@ const websocketHooks = defineWebSocket({
       const manager = getTerminalPtyManager()
       manager.attach(sessionId, peer, {
         token,
-        since: peer.context?.since,
-        cols: peer.context?.cols,
-        rows: peer.context?.rows,
+        since,
+        cols,
+        rows,
       })
       peerState.set(peer, { sessionId, token })
     } catch (error) {

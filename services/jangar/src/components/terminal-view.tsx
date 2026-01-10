@@ -250,7 +250,9 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
       }
       if (cols > 0 && rows > 0) {
         const payload = JSON.stringify({ type: 'resize', cols, rows })
-        socketRef.current?.send(payload)
+        if (socketRef.current?.readyState === WebSocket.OPEN) {
+          socketRef.current.send(payload)
+        }
       }
     })
     resizeObserver.observe(containerRef.current)
