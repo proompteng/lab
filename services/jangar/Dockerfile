@@ -197,7 +197,7 @@ RUN set -eux; \
     printf '\n# zoxide\nif [ -f /etc/profile.d/zoxide.sh ]; then\n  . /etc/profile.d/zoxide.sh\nfi\n' >> /etc/bash.bashrc; \
   fi
 
-# Install Neovim (official releases) + AstroNvim configuration
+# Install Neovim (official releases) + AstroNvim configuration (template)
 RUN set -eux; \
   ARCH="${TARGETARCH:-$(uname -m)}"; \
   case "$ARCH" in \
@@ -213,9 +213,10 @@ RUN set -eux; \
   rm -f /tmp/nvim.tar.gz; \
   ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim; \
   nvim --version | head -n 1; \
-  mkdir -p /root/.config; \
-  rm -rf /root/.config/nvim; \
-  git clone --depth 1 https://github.com/AstroNvim/AstroNvim /root/.config/nvim
+  rm -rf /root/.config/nvim /root/.local/share/nvim /root/.local/state/nvim /root/.cache/nvim; \
+  git clone --depth 1 https://github.com/AstroNvim/template /root/.config/nvim; \
+  rm -rf /root/.config/nvim/.git; \
+  nvim --headless +q
 
 # Install Node.js once for both Bun and tools that expect node
 RUN set -eux; \
