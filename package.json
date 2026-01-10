@@ -52,6 +52,7 @@
     "deploy:torghut": "bun run packages/scripts/src/torghut/deploy-service.ts",
     "bumba:deploy": "bun run packages/scripts/src/bumba/deploy-service.ts",
     "bumba:enrich-file": "bun run packages/scripts/src/bumba/enrich-file.ts",
+    "jangar:cleanup-worktrees": "bun run packages/scripts/src/jangar/cleanup-worktrees.ts",
     "flink:build": "bun run packages/scripts/src/dorvud/build-and-push.ts",
     "smoke:torghut-ws": "bun run packages/scripts/src/torghut/ws-smoke.ts",
     "atlas:search": "bun run packages/scripts/src/atlas/search.ts"
