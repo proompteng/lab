@@ -280,6 +280,7 @@ const LOCK_FILENAMES = new Set([
   'cargo.lock',
   'gemfile.lock',
   'go.sum',
+  'go.work.sum',
   'package-lock.json',
   'pnpm-lock.yaml',
   'pnpm-lock.yml',

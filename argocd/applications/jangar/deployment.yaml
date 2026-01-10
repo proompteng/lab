@@ -59,8 +59,6 @@ spec:
               value: grpc
             - name: OTEL_EXPORTER_OTLP_METRICS_PROTOCOL
               value: grpc
-            - name: OTEL_EXPORTER_OTLP_TRACES_COMPRESSION
-              value: gzip
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-gateway.observability.svc.cluster.local:4317
             - name: OTEL_EXPORTER_OTLP_TRACES_TIMEOUT
