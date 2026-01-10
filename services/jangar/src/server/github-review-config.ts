@@ -27,7 +27,7 @@ export const loadGithubReviewConfig = (): GithubReviewConfig => {
   const githubToken = (process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? '').trim() || null
   const githubApiBaseUrl = (process.env.GITHUB_API_BASE_URL ?? DEFAULT_GITHUB_API_BASE).trim()
   const reposAllowed = parseList(process.env.JANGAR_GITHUB_REPOS_ALLOWED)
-  const reviewsWriteEnabled = parseBool(process.env.JANGAR_GITHUB_REVIEWS_WRITE, false)
+  const reviewsWriteEnabled = parseBool(process.env.JANGAR_GITHUB_REVIEWS_WRITE, true)
   const mergeWriteEnabled = parseBool(process.env.JANGAR_GITHUB_MERGE_WRITE, false)
   const mergeForceEnabled = parseBool(process.env.JANGAR_GITHUB_MERGE_FORCE, false)
 

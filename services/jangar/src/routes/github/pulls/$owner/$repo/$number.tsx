@@ -353,7 +353,7 @@ function GithubPullDetailPage() {
                 { key: 'judge', label: 'Judge' },
               ] as Array<{ key: TabKey; label: string }>
             ).map((tab) => (
-              <TabsTrigger key={tab.key} value={tab.key}>
+              <TabsTrigger key={tab.key} value={tab.key} className="flex-none justify-start">
                 {tab.label}
               </TabsTrigger>
             ))}

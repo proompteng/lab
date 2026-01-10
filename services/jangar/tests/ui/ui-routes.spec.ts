@@ -95,7 +95,7 @@ const githubPullsResponse = {
     },
   ],
   nextCursor: 'cursor-1',
-  capabilities: { reviewsWriteEnabled: false, mergeWriteEnabled: false },
+  capabilities: { reviewsWriteEnabled: true, mergeWriteEnabled: false },
   repositoriesAllowed: ['proompteng/lab'],
   viewerLogin: 'octocat',
 }
@@ -140,7 +140,7 @@ const githubPullsPageTwoResponse = {
     },
   ],
   nextCursor: null,
-  capabilities: { reviewsWriteEnabled: false, mergeWriteEnabled: false },
+  capabilities: { reviewsWriteEnabled: true, mergeWriteEnabled: false },
   repositoriesAllowed: ['proompteng/lab'],
   viewerLogin: 'octocat',
 }
@@ -185,7 +185,7 @@ const githubPullsSearchResponse = {
     },
   ],
   nextCursor: null,
-  capabilities: { reviewsWriteEnabled: false, mergeWriteEnabled: false },
+  capabilities: { reviewsWriteEnabled: true, mergeWriteEnabled: false },
   repositoriesAllowed: ['proompteng/lab'],
   viewerLogin: 'octocat',
 }
@@ -204,7 +204,7 @@ const githubPullDetailResponse = {
       url: 'https://github.com/proompteng/lab/pull/42#issuecomment-1',
     },
   ],
-  capabilities: { reviewsWriteEnabled: false, mergeWriteEnabled: false },
+  capabilities: { reviewsWriteEnabled: true, mergeWriteEnabled: false },
 }
 const githubPullFilesResponse = {
   ok: true,
@@ -421,10 +421,16 @@ test('github pulls search and pagination', async ({ page }) => {
   await page.goto('/github/pulls')
   await expect(page.getByLabel('Repository')).toHaveValue('proompteng/lab')
   await expect(page.getByLabel('Author')).toHaveValue('octocat')
+  await expect(page).toHaveURL(/repository=proompteng%2Flab/)
+  await expect(page).toHaveURL(/author=octocat/)
+  await expect(page).toHaveURL(/limit=25/)
 
   await page.getByRole('button', { name: 'Next' }).click()
   await expect(page.getByRole('cell', { name: 'proompteng/lab#41' })).toBeVisible()
   await expect(page).toHaveURL(/cursor=cursor-1/)
+  await expect(page).toHaveURL(/repository=proompteng%2Flab/)
+  await expect(page).toHaveURL(/author=octocat/)
+  await expect(page).toHaveURL(/limit=25/)
 
   await page.getByRole('button', { name: 'Previous' }).click()
   await expect(page.getByRole('cell', { name: 'proompteng/lab#42' })).toBeVisible()
@@ -433,11 +439,14 @@ test('github pulls search and pagination', async ({ page }) => {
   await page.getByRole('button', { name: 'Filter' }).click()
   await expect(page.getByRole('cell', { name: 'proompteng/lab#7' })).toBeVisible()
   await expect(page).toHaveURL(/author=reviewer/)
+  await expect(page).toHaveURL(/repository=proompteng%2Flab/)
+  await expect(page).toHaveURL(/limit=25/)
 })
 
 test('github pull detail route screenshot', async ({ page }) => {
   await page.goto('/github/pulls/proompteng/lab/42')
   await expect(page.getByRole('heading', { name: 'feat: add new PR review UI' })).toBeVisible()
   await expect(page.getByText('Merge controls')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Submit review' })).toBeEnabled()
   await expect(page).toHaveScreenshot('github-pull-detail.png', { fullPage: true, animations: 'disabled' })
 })

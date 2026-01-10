@@ -114,9 +114,12 @@ function GithubPullsPage() {
 
   const searchParams =
     typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.search)
-  const hasRepositoryParam = searchParams.has('repository')
-  const hasAuthorParam = searchParams.has('author')
-  const hasLimitParam = searchParams.has('limit')
+  const repositoryParam = searchParams.get('repository')?.trim() ?? ''
+  const authorParam = searchParams.get('author')?.trim() ?? ''
+  const limitParam = parseSearchNumber(searchParams.get('limit') ?? undefined)
+  const hasRepositoryParam = repositoryParam.length > 0
+  const hasAuthorParam = authorParam.length > 0
+  const hasLimitParam = limitParam !== null
   const cursorHistory = parseCursorHistory(searchState.cursorHistory)
   const currentPage = cursorHistory.length + 1
   const repositoryValue = repository || (!hasRepositoryParam ? DEFAULT_REPOSITORY : '')
@@ -201,7 +204,7 @@ function GithubPullsPage() {
     const parsedLimit = parseSearchNumber(limit) ?? DEFAULT_LIMIT
     void navigate({
       search: {
-        repository: repositoryValue.trim(),
+        repository: repositoryValue.trim() || DEFAULT_REPOSITORY,
         state: state.trim(),
         author: authorValue.trim(),
         label: label.trim(),
