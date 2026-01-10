@@ -6,6 +6,7 @@ rules:
   - apiGroups:
       - ""
     resources:
+      - configmaps
       - persistentvolumeclaims
       - resourcequotas
     verbs:

@@ -153,6 +153,10 @@ spec:
                 toFieldPath: metadata.name
                 policy:
                   fromFieldPath: Optional
+              - fromFieldPath: spec.runtime.argo.workflowTemplate
+                toFieldPath: metadata.name
+                policy:
+                  fromFieldPath: Optional
               - fromFieldPath: spec.runtime.argo.namespace
                 toFieldPath: metadata.namespace
                 policy:
@@ -218,6 +222,57 @@ spec:
                   fromFieldPath: Optional
               - fromFieldPath: spec.inputs.stage
                 toFieldPath: spec.templates[0].container.env[5].value
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.observability.natsEnabled
+                toFieldPath: spec.templates[0].container.env[7].value
+                policy:
+                  fromFieldPath: Optional
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: '%v'
+              - fromFieldPath: spec.observability.kafkaCompletions
+                toFieldPath: spec.templates[0].container.env[8].value
+                policy:
+                  fromFieldPath: Optional
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: '%v'
+              - fromFieldPath: spec.observability.grafEnabled
+                toFieldPath: spec.templates[0].container.env[9].value
+                policy:
+                  fromFieldPath: Optional
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: '%v'
+              - fromFieldPath: spec.resources.cpu
+                toFieldPath: spec.templates[0].container.resources.requests.cpu
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.resources.memory
+                toFieldPath: spec.templates[0].container.resources.requests.memory
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.resources.ephemeral
+                toFieldPath: spec.templates[0].container.resources.requests.ephemeral-storage
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.resources.cpu
+                toFieldPath: spec.templates[0].container.resources.limits.cpu
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.resources.memory
+                toFieldPath: spec.templates[0].container.resources.limits.memory
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.resources.ephemeral
+                toFieldPath: spec.templates[0].container.resources.limits.ephemeral-storage
                 policy:
                   fromFieldPath: Optional
               - fromFieldPath: spec.inputs.stage
