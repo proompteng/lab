@@ -57,7 +57,10 @@ func TestRunFunction_BuildsDagTasks(t *testing.T) {
 						{
 							"name": "step-four",
 							"kind": "SignalWait",
-							"dependsOn": ["step-three"]
+							"dependsOn": ["step-three"],
+							"with": {
+								"signalRef": "signal-ref"
+							}
 						},
 						{
 							"name": "step-five",
@@ -150,7 +153,7 @@ func TestRunFunction_BuildsDagTasks(t *testing.T) {
 		t.Fatalf("step-two templateRef mismatch (-want +got):\n%s", diff)
 	}
 	parameters = paramMap(t, stepTwo)
-	if diff := cmp.Diff(map[string]string{"toolRef": "tool-template"}, parameters); diff != "" {
+	if diff := cmp.Diff(map[string]string{}, parameters); diff != "" {
 		t.Fatalf("step-two parameters mismatch (-want +got):\n%s", diff)
 	}
 
@@ -174,6 +177,10 @@ func TestRunFunction_BuildsDagTasks(t *testing.T) {
 	templateRef, _ = stepFour["templateRef"].(map[string]any)
 	if diff := cmp.Diff(map[string]any{"name": "jangar-signal-wait", "template": "wait"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
 		t.Fatalf("step-four templateRef mismatch (-want +got):\n%s", diff)
+	}
+	parameters = paramMap(t, stepFour)
+	if diff := cmp.Diff(map[string]string{"signalRef": "signal-ref"}, parameters); diff != "" {
+		t.Fatalf("step-four parameters mismatch (-want +got):\n%s", diff)
 	}
 
 	stepFive := tasks["step-five"]
@@ -213,6 +220,127 @@ func TestRunFunction_BuildsDagTasks(t *testing.T) {
 	parameters = paramMap(t, stepSeven)
 	if diff := cmp.Diff(map[string]string{"orchestrationRef": "sub-orch", "parameters": "{\"message\":\"hi\"}"}, parameters); diff != "" {
 		t.Fatalf("step-seven parameters mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestRunFunction_ValidatesStepRequirements(t *testing.T) {
+	cases := []struct {
+		name    string
+		steps   string
+		wantErr string
+	}{
+		{
+			name: "missing-agent-ref",
+			steps: `[
+				{
+					"name": "agent",
+					"kind": "AgentRun"
+				}
+			]`,
+			wantErr: "requires agentRef",
+		},
+		{
+			name: "missing-tool-ref",
+			steps: `[
+				{
+					"name": "tool",
+					"kind": "ToolRun"
+				}
+			]`,
+			wantErr: "requires toolRef",
+		},
+		{
+			name: "missing-signal-ref",
+			steps: `[
+				{
+					"name": "signal",
+					"kind": "SignalWait"
+				}
+			]`,
+			wantErr: "requires signalRef or deliveryId",
+		},
+		{
+			name: "missing-sub-orchestration",
+			steps: `[
+				{
+					"name": "sub",
+					"kind": "SubOrchestration",
+					"with": {}
+				}
+			]`,
+			wantErr: "requires orchestrationRef",
+		},
+		{
+			name: "missing-checkpoint-id",
+			steps: `[
+				{
+					"name": "checkpoint",
+					"kind": "Checkpoint",
+					"with": {}
+				}
+			]`,
+			wantErr: "requires checkpointId",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &fnv1.RunFunctionRequest{
+				Meta: &fnv1.RequestMeta{Tag: tc.name},
+				Input: resource.MustStructJSON(`{
+					"apiVersion": "fn.proompteng.ai/v1alpha1",
+					"kind": "OrchestrationDag",
+					"spec": {
+						"stepsFieldPath": "spec.steps",
+						"entrypointFieldPath": "spec.entrypoint",
+						"targetWorkflowTemplate": "workflow"
+					}
+				}`),
+				Desired: &fnv1.State{
+					Composite: &fnv1.Resource{
+						Resource: resource.MustStructJSON(`{
+							"apiVersion": "orchestration.proompteng.ai/v1alpha1",
+							"kind": "Orchestration",
+							"spec": {
+								"entrypoint": "main",
+								"steps": ` + tc.steps + `
+							}
+						}`),
+					},
+					Resources: map[string]*fnv1.Resource{
+						"workflow": {
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "argoproj.io/v1alpha1",
+								"kind": "WorkflowTemplate",
+								"spec": {
+									"templates": [
+										{
+											"name": "main",
+											"dag": {
+												"tasks": []
+											}
+										}
+									]
+								}
+							}`),
+						},
+					},
+				},
+			}
+
+			f := &Function{log: logging.NewNopLogger()}
+			rsp, err := f.RunFunction(t.Context(), req)
+			if err != nil {
+				t.Fatalf("RunFunction returned error: %v", err)
+			}
+
+			if len(rsp.GetResults()) == 0 || rsp.GetResults()[0].GetSeverity() != fnv1.Severity_SEVERITY_FATAL {
+				t.Fatalf("expected fatal result for %s", tc.name)
+			}
+			if msg := rsp.GetResults()[0].GetMessage(); !strings.Contains(msg, tc.wantErr) {
+				t.Fatalf("unexpected fatal message: %q", msg)
+			}
+		})
 	}
 }
 
@@ -265,7 +393,10 @@ func TestRunFunction_ObservedFallback(t *testing.T) {
 						"steps": [
 							{
 								"name": "step-one",
-								"kind": "SignalWait"
+								"kind": "SignalWait",
+								"with": {
+									"signalRef": "signal-ref"
+								}
 							}
 						]
 					}

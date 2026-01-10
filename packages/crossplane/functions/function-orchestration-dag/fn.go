@@ -147,10 +147,6 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 			paramsMap[key] = value
 		}
 		switch step.Kind {
-		case "ToolRun":
-			if step.ToolRef != "" {
-				paramsMap["toolRef"] = step.ToolRef
-			}
 		case "MemoryOp", "Checkpoint":
 			if step.MemoryRef != "" {
 				paramsMap["memoryRef"] = step.MemoryRef
@@ -237,6 +233,9 @@ func parseSteps(raw any) ([]orchestrationStep, error) {
 		if step.Name == "" {
 			return nil, fmt.Errorf("step name is required")
 		}
+		if err := validateStep(step); err != nil {
+			return nil, err
+		}
 
 		steps = append(steps, step)
 	}
@@ -295,6 +294,22 @@ func getStringMap(value any) map[string]any {
 	return nil
 }
 
+func hasNonEmptyKey(value map[string]any, key string) bool {
+	if value == nil {
+		return false
+	}
+	raw, ok := value[key]
+	if !ok {
+		return false
+	}
+	switch typed := raw.(type) {
+	case string:
+		return typed != ""
+	default:
+		return fmt.Sprint(raw) != ""
+	}
+}
+
 func mapToParameters(value map[string]any) []any {
 	if len(value) == 0 {
 		return nil
@@ -317,4 +332,51 @@ func toAnySlice(values []string) []any {
 		out = append(out, value)
 	}
 	return out
+}
+
+func isSupportedStepKind(kind string) bool {
+	switch kind {
+	case "AgentRun", "ToolRun", "MemoryOp", "ApprovalGate", "SignalWait", "SubOrchestration", "Checkpoint":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateStep(step orchestrationStep) error {
+	if step.Kind == "" {
+		return fmt.Errorf("step %q kind is required", step.Name)
+	}
+	if !isSupportedStepKind(step.Kind) {
+		return fmt.Errorf("step %q has unsupported kind %q", step.Name, step.Kind)
+	}
+
+	switch step.Kind {
+	case "AgentRun":
+		if step.AgentRef == "" {
+			return fmt.Errorf("step %q requires agentRef", step.Name)
+		}
+	case "ToolRun":
+		if step.ToolRef == "" {
+			return fmt.Errorf("step %q requires toolRef", step.Name)
+		}
+	case "MemoryOp":
+		if step.MemoryRef == "" {
+			return fmt.Errorf("step %q requires memoryRef", step.Name)
+		}
+	case "SignalWait":
+		if !hasNonEmptyKey(step.With, "signalRef") && !hasNonEmptyKey(step.With, "deliveryId") {
+			return fmt.Errorf("step %q requires signalRef or deliveryId in with", step.Name)
+		}
+	case "SubOrchestration":
+		if !hasNonEmptyKey(step.With, "orchestrationRef") {
+			return fmt.Errorf("step %q requires orchestrationRef in with", step.Name)
+		}
+	case "Checkpoint":
+		if !hasNonEmptyKey(step.With, "checkpointId") {
+			return fmt.Errorf("step %q requires checkpointId in with", step.Name)
+		}
+	}
+
+	return nil
 }
