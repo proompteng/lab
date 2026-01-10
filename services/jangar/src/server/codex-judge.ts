@@ -980,7 +980,9 @@ const matchesCommitSha = (expected: string | null | undefined, actual: string | 
 }
 
 const resolveExistingPrForIssue = async (run: CodexRunRecord, commitSha?: string | null) => {
-  const candidates = await store.listRunsByIssue(run.repository, run.issueNumber, null)
+  const activeStore = getStore()
+  const githubClient = getGithub()
+  const candidates = await activeStore.listRunsByIssue(run.repository, run.issueNumber, null)
   const { owner, repo } = parseRepositoryParts(run.repository)
 
   for (const candidate of candidates) {
@@ -988,7 +990,7 @@ const resolveExistingPrForIssue = async (run: CodexRunRecord, commitSha?: string
     if (!candidate.branch) continue
     try {
       const head = `${owner}:${candidate.branch}`
-      const pr = await github.getPullRequestByHead(owner, repo, head)
+      const pr = await githubClient.getPullRequestByHead(owner, repo, head)
       if (pr && matchesCommitSha(commitSha, pr.headSha)) {
         return { pr, branch: candidate.branch }
       }
@@ -1001,11 +1003,12 @@ const resolveExistingPrForIssue = async (run: CodexRunRecord, commitSha?: string
 }
 
 const fetchCiStatus = async (run: CodexRunRecord, commitSha?: string | null) => {
+  const githubClient = getGithub()
   const { owner, repo } = parseRepositoryParts(run.repository)
   const sha = commitSha ?? run.commitSha
   if (!sha) return { status: 'pending' as const, url: undefined }
   try {
-    return await github.getCheckRuns(owner, repo, sha)
+    return await githubClient.getCheckRuns(owner, repo, sha)
   } catch (error) {
     console.warn('Failed to fetch CI check runs', { repository: run.repository, sha, error })
     return { status: 'pending' as const, url: undefined }
@@ -1018,7 +1021,7 @@ const resolveCiContext = async (run: CodexRunRecord, pr: PullRequest | null) => 
   const existingSha = prSha ? null : run.commitSha
   const commitSha = prSha ?? artifactSha ?? existingSha ?? null
 
-  if (!config.ciEventStreamEnabled) {
+  if (!getConfig().ciEventStreamEnabled) {
     const ci = await fetchCiStatus(run, commitSha)
     return { commitSha, ci, updatedRun: null as CodexRunRecord | null }
   }
@@ -1030,7 +1033,7 @@ const resolveCiContext = async (run: CodexRunRecord, pr: PullRequest | null) => 
 
   if (commitSha && (commitChanged || !run.commitSha || !run.ciStatus)) {
     updatedRun =
-      (await store.updateCiStatus({
+      (await getStore().updateCiStatus({
         runId: run.id,
         status,
         url,
@@ -1043,8 +1046,8 @@ const resolveCiContext = async (run: CodexRunRecord, pr: PullRequest | null) => 
 
 const fetchReviewStatus = async (run: CodexRunRecord, prNumber: number) => {
   const { owner, repo } = parseRepositoryParts(run.repository)
-  const reviewers = config.codexReviewers.map((value) => value.toLowerCase())
-  return github.getReviewSummary(owner, repo, prNumber, reviewers)
+  const reviewers = getConfig().codexReviewers.map((value) => value.toLowerCase())
+  return getGithub().getReviewSummary(owner, repo, prNumber, reviewers)
 }
 
 const normalizeReviewStatus = (value: unknown): ReviewSummary['status'] | null => {
