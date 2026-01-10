@@ -100,6 +100,13 @@ bun --cwd services/jangar run lint
 bun --cwd services/jangar run tsc
 ```
 
+## Deployment
+
+```bash
+bun run packages/scripts/src/jangar/build-image.ts
+bun run packages/scripts/src/jangar/deploy-service.ts
+```
+
 ## API Notes
 
 - `/openai/v1/chat/completions` is **streaming-only**; requests must set `stream: true`. Non-streaming responses are not implemented.
