@@ -1,17 +1,13 @@
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
-  name: codex-autonomous
+  name: codex-run
   namespace: jangar
-  annotations:
-    codex-universal-image-digest: latest
+  labels:
+    codex.stage: implementation
 spec:
   serviceAccountName: jangar-inspector
-  parallelism: 1
-  synchronization:
-    mutex:
-      name: 'codex-{{=sprig.replace("/", "-", workflow.parameters.repository)}}-{{workflow.parameters.issue_number}}'
-  entrypoint: codex-loop
+  entrypoint: codex-run
   arguments:
     parameters:
       - name: repository
@@ -24,198 +20,17 @@ spec:
         value: ''
       - name: prompt
         value: ''
+      - name: stage
+        value: implementation
+      - name: iteration
+        value: ''
+      - name: iteration_cycle
+        value: ''
       - name: rawEvent
         value: '{}'
       - name: eventBody
         value: '{}'
-      - name: implementation_iterations
-        value: '1'
-      - name: iteration_cycle
-        value: '1'
-  volumes:
-    - name: workdir
-      persistentVolumeClaim:
-        claimName: jangar-workspace-rwx
-    - name: docker-lib
-      emptyDir: {}
   templates:
-    - name: codex-loop
-      steps:
-        - - name: exec
-            template: codex-exec
-            withSequence:
-              start: "1"
-              end: "{{workflow.parameters.implementation_iterations}}"
-            arguments:
-              parameters:
-                - name: repository
-                  value: '{{workflow.parameters.repository}}'
-                - name: issue_number
-                  value: '{{workflow.parameters.issue_number}}'
-                - name: base
-                  value: '{{workflow.parameters.base}}'
-                - name: head
-                  value: '{{workflow.parameters.head}}'
-                - name: prompt
-                  value: '{{workflow.parameters.prompt}}'
-                - name: eventBody
-                  value: '{{workflow.parameters.eventBody}}'
-                - name: iteration
-                  value: '{{item}}'
-                - name: iteration_cycle
-                  value: '{{workflow.parameters.iteration_cycle}}'
-        - - name: judge
-            template: codex-run
-            arguments:
-              parameters:
-                - name: repository
-                  value: '{{workflow.parameters.repository}}'
-                - name: issue_number
-                  value: '{{workflow.parameters.issue_number}}'
-                - name: base
-                  value: '{{workflow.parameters.base}}'
-                - name: head
-                  value: '{{workflow.parameters.head}}'
-                - name: prompt
-                  value: '{{workflow.parameters.prompt}}'
-                - name: stage
-                  value: judge
-                - name: iteration
-                  value: '{{workflow.parameters.implementation_iterations}}'
-                - name: iteration_cycle
-                  value: '{{workflow.parameters.iteration_cycle}}'
-                - name: rawEvent
-                  value: '{{workflow.parameters.rawEvent}}'
-                - name: eventBody
-                  value: '{{workflow.parameters.eventBody}}'
-    - name: codex-exec
-      inputs:
-        parameters:
-          - name: repository
-          - name: issue_number
-          - name: base
-          - name: head
-          - name: prompt
-          - name: eventBody
-          - name: iteration
-          - name: iteration_cycle
-      container:
-        image: registry.ide-newton.ts.net/lab/codex-universal:latest
-        imagePullPolicy: Always
-        env:
-          - name: REPO_URL
-            value: 'https://github.com/{{inputs.parameters.repository}}'
-          - name: CODEX_REPO_URL
-            value: 'https://github.com/{{inputs.parameters.repository}}'
-          - name: CODEX_REPO_SLUG
-            value: '{{inputs.parameters.repository}}'
-          - name: BASE_BRANCH
-            value: '{{inputs.parameters.base}}'
-          - name: HEAD_BRANCH
-            value: '{{inputs.parameters.head}}'
-          - name: WORKSPACE
-            value: /workspace/lab
-          - name: REPO_ROOT
-            value: /workspace/lab
-          - name: WORKTREE
-            value: /workspace/lab/.worktrees/{{inputs.parameters.head}}
-          - name: TARGET_DIR
-            value: /workspace/lab/.worktrees/{{inputs.parameters.head}}
-          - name: CODEX_CWD
-            value: /workspace/lab/.worktrees/{{inputs.parameters.head}}
-          - name: BUN_INSTALL_CACHE_DIR
-            value: /workspace/.bun-install-cache
-          - name: BUN_INSTALL_CACHE_SEED_DIR
-            value: /opt/bun/install/cache
-          - name: CODEX_ITERATION
-            value: '{{inputs.parameters.iteration}}'
-          - name: CODEX_ITERATION_CYCLE
-            value: '{{inputs.parameters.iteration_cycle}}'
-          - name: DOCKER_HOST
-            value: tcp://localhost:2375
-          - name: DOCKER_TLS_VERIFY
-            value: ""
-          - name: DOCKER_ENABLED
-            value: "1"
-          - name: DOCKER_WAIT_ATTEMPTS
-            value: "12"
-        command: ["/usr/local/bin/codex-bootstrap"]
-        args:
-          - "/bin/bash"
-          - "-lc"
-          - |
-            set -euo pipefail
-
-            WORKTREE_DIR="/workspace/lab/.worktrees/{{inputs.parameters.head}}"
-
-            EVENT_BODY_B64='{{inputs.parameters.eventBody}}'
-            if [[ -z "$EVENT_BODY_B64" || "$EVENT_BODY_B64" == "{}" ]]; then
-              echo "Missing eventBody payload for prompt" >&2
-              exit 1
-            fi
-
-            if ! EVENT_JSON=$(printf '%s' "$EVENT_BODY_B64" | base64 --decode 2>/dev/null); then
-              echo "Failed to decode eventBody" >&2
-              exit 1
-            fi
-
-            if ! PROMPT=$(printf '%s' "$EVENT_JSON" | node -e 'const fs = require("fs"); const input = fs.readFileSync(0, "utf8"); const parsed = JSON.parse(input); process.stdout.write(parsed.prompt ?? "");'); then
-              echo "Failed to parse prompt from eventBody" >&2
-              exit 1
-            fi
-
-            if [[ -z "$PROMPT" ]]; then
-              echo "Missing prompt in eventBody" >&2
-              exit 1
-            fi
-
-            PROMPT_FILE=$(mktemp)
-            printf '%s' "$PROMPT" > "$PROMPT_FILE"
-
-            OUTPUT_PATH="$WORKTREE_DIR/.codex-exec-events.jsonl"
-            /usr/local/bin/codex exec --json --cd "$WORKTREE_DIR" < "$PROMPT_FILE" | tee "$OUTPUT_PATH"
-        volumeMounts:
-          - name: workdir
-            mountPath: /workspace
-          - name: docker-lib
-            mountPath: /var/lib/docker
-            readOnly: true
-        resources:
-          requests:
-            cpu: "2"
-            memory: 4Gi
-          limits:
-            cpu: "4"
-            memory: 6Gi
-      sidecars:
-        - name: docker
-          image: docker:25.0-dind
-          command: ["dockerd-entrypoint.sh"]
-          args:
-            - "--host=tcp://0.0.0.0:2375"
-          env:
-            - name: DOCKER_TLS_CERTDIR
-              value: ""
-            - name: XDG_RUNTIME_DIR
-              value: /tmp/docker-runtime
-            - name: DOCKER_HOST
-              value: tcp://0.0.0.0:2375
-          ports:
-            - containerPort: 2375
-              name: docker
-          securityContext:
-            privileged: true
-          volumeMounts:
-            - name: docker-lib
-              mountPath: /var/lib/docker
-          resources:
-            requests:
-              cpu: "1"
-              memory: 2Gi
-            limits:
-              cpu: "2"
-              memory: 4Gi
-
     - name: codex-run
       inputs:
         parameters:

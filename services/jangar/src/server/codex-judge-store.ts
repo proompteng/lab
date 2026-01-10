@@ -195,6 +195,7 @@ export type AttachNotifyInput = {
   issueNumber?: number
   branch?: string
   prompt?: string | null
+  stage?: string | null
   iteration?: number | null
   iterationCycle?: number | null
 }
@@ -976,6 +977,7 @@ export const createCodexJudgeStore = (
           attempt,
           workflow_name: input.workflowName,
           workflow_namespace: input.workflowNamespace ?? null,
+          stage: input.stage ?? null,
           status: 'notified',
           iteration: input.iteration ?? null,
           iteration_cycle: input.iterationCycle ?? null,
@@ -996,6 +998,7 @@ export const createCodexJudgeStore = (
         issue_number: input.issueNumber ?? row.issue_number,
         branch: input.branch && input.branch.length > 0 ? input.branch : row.branch,
         prompt: input.prompt ?? row.prompt,
+        stage: input.stage && input.stage.length > 0 ? input.stage : row.stage,
         iteration: input.iteration ?? row.iteration,
         iteration_cycle: input.iterationCycle ?? row.iteration_cycle,
         notify_payload: input.notifyPayload,

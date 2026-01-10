@@ -267,6 +267,7 @@ spec:
             mkdir -p /workspace/lab /workspace/.codex
             : > "/workspace/lab/.codex-judge-decision.txt"
             : > "/workspace/lab/.codex-judge-next-prompt.txt"
+            : > "/workspace/lab/.codex-judge-output.json"
             : > "/workspace/lab/.codex-nats-context.json"
 
             WORKTREE_DIR="${WORKTREE:-/workspace/lab}"
@@ -433,6 +434,8 @@ spec:
             valueFrom:
               path: /workspace/lab/.codex-judge-next-prompt.txt
         artifacts:
+          - name: judge-output
+            path: /workspace/lab/.codex-judge-output.json
           - name: implementation-changes
             path: /workspace/lab/.codex-implementation-changes.tar.gz
           - name: implementation-patch
@@ -681,6 +684,12 @@ spec:
               fi
             fi
 
+            # Ensure output paths exist before any early exits so Argo output collection never fails.
+            mkdir -p /workspace/lab /workspace/.codex
+            : > "/workspace/lab/.codex-judge-decision.txt"
+            : > "/workspace/lab/.codex-judge-next-prompt.txt"
+            : > "/workspace/lab/.codex-judge-output.json"
+
             EVENT_FILE=$(mktemp)
             EVENT_BODY_B64='{{inputs.parameters.eventBody}}'
             if [[ -n "$EVENT_BODY_B64" && "$EVENT_BODY_B64" != "{}" ]]; then
@@ -885,6 +894,8 @@ spec:
             valueFrom:
               path: /workspace/lab/.codex-judge-next-prompt.txt
         artifacts:
+          - name: judge-output
+            path: /workspace/lab/.codex-judge-output.json
           - name: implementation-changes
             path: /workspace/lab/.codex-implementation-changes.tar.gz
           - name: implementation-patch
