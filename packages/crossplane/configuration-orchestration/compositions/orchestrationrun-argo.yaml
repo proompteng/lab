@@ -36,6 +36,8 @@ spec:
                 toFieldPath: spec.arguments.parameters
                 policy:
                   fromFieldPath: Optional
+            readinessChecks:
+              - type: None
     - step: parameters-map-to-list
       functionRef:
         name: function-map-to-list
