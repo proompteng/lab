@@ -18,6 +18,7 @@ ARG KN_VERSION=1.20.0
 ARG ARGO_VERSION=v3.7.4
 ARG ARGOCD_VERSION=v3.2.2
 ARG CNPG_VERSION=1.28.0
+ARG NEOVIM_VERSION=stable
 ARG DOCKER_CLI_VERSION=29.1.2
 ARG BUILDX_VERSION=0.30.1
 ARG GO_VERSION=1.25.5
@@ -35,6 +36,7 @@ ARG KN_VERSION
 ARG ARGO_VERSION
 ARG ARGOCD_VERSION
 ARG CNPG_VERSION
+ARG NEOVIM_VERSION
 ARG DOCKER_CLI_VERSION
 ARG BUILDX_VERSION
 ARG GO_VERSION
@@ -194,6 +196,31 @@ RUN set -eux; \
   if [ -f /etc/bash.bashrc ]; then \
     printf '\n# zoxide\nif [ -f /etc/profile.d/zoxide.sh ]; then\n  . /etc/profile.d/zoxide.sh\nfi\n' >> /etc/bash.bashrc; \
   fi
+
+# Install Neovim (official releases) + AstroNvim configuration (template)
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+  amd64|x86_64) NVIM_ARCH=linux64 ;; \
+  arm64|aarch64) NVIM_ARCH=linux-arm64 ;; \
+  *) echo "Unsupported arch for neovim: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  NVIM_URL="https://github.com/neovim/neovim/releases/download/${NEOVIM_VERSION}/nvim-${NVIM_ARCH}.tar.gz"; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "$NVIM_URL" -o /tmp/nvim.tar.gz; \
+  rm -rf /opt/nvim; \
+  mkdir -p /opt/nvim; \
+  tar -xzf /tmp/nvim.tar.gz -C /opt/nvim --strip-components=1; \
+  rm -f /tmp/nvim.tar.gz; \
+  ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim; \
+  nvim --version | head -n 1; \
+  if [ -d /root/.config/nvim ]; then mv /root/.config/nvim /root/.config/nvim.bak; fi; \
+  if [ -d /root/.local/share/nvim ]; then mv /root/.local/share/nvim /root/.local/share/nvim.bak; fi; \
+  if [ -d /root/.local/state/nvim ]; then mv /root/.local/state/nvim /root/.local/state/nvim.bak; fi; \
+  if [ -d /root/.cache/nvim ]; then mv /root/.cache/nvim /root/.cache/nvim.bak; fi; \
+  mkdir -p /root/.config; \
+  git clone --depth 1 https://github.com/AstroNvim/template /root/.config/nvim; \
+  rm -rf /root/.config/nvim/.git; \
+  nvim --headless +q
 
 # Install Node.js once for both Bun and tools that expect node
 RUN set -eux; \

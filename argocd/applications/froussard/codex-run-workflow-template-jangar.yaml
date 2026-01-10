@@ -8,6 +8,19 @@ metadata:
 spec:
   serviceAccountName: jangar-inspector
   entrypoint: codex-run
+  podSpecPatch: |
+    initContainers:
+      - name: init
+        resources:
+          requests:
+            cpu: "100m"
+            memory: 128Mi
+    containers:
+      - name: wait
+        resources:
+          requests:
+            cpu: "100m"
+            memory: 128Mi
   arguments:
     parameters:
       - name: repository

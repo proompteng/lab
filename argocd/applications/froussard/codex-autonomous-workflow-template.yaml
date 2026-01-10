@@ -8,6 +8,19 @@ metadata:
 spec:
   serviceAccountName: jangar-inspector
   parallelism: 1
+  podSpecPatch: |
+    initContainers:
+      - name: init
+        resources:
+          requests:
+            cpu: "100m"
+            memory: 128Mi
+    containers:
+      - name: wait
+        resources:
+          requests:
+            cpu: "100m"
+            memory: 128Mi
   synchronization:
     mutex:
       name: 'codex-{{=sprig.replace("/", "-", workflow.parameters.repository)}}-{{workflow.parameters.issue_number}}'
