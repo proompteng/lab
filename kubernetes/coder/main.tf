@@ -570,7 +570,7 @@ resource "coder_script" "bootstrap_tools" {
         x86_64|amd64)  NVIM_ARCH="linux64" ;;
         *)             NVIM_ARCH="linux64" ;;
       esac
-      NVIM_URL="https://github.com/neovim/neovim/releases/download/${NVIM_VERSION}/nvim-${NVIM_ARCH}.tar.gz"
+      NVIM_URL="https://github.com/neovim/neovim/releases/download/$${NVIM_VERSION}/nvim-$${NVIM_ARCH}.tar.gz"
       NVIM_TMP="$(mktemp -d)"
       if ! curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o "$NVIM_TMP/nvim.tar.gz" "$NVIM_URL" >"$LOG_DIR/nvim-install.log" 2>&1; then
         log "Neovim download failed; see $LOG_DIR/nvim-install.log"
@@ -590,7 +590,7 @@ resource "coder_script" "bootstrap_tools" {
       log "Installing AstroNvim"
       for dir in "$HOME/.config/nvim" "$HOME/.local/share/nvim" "$HOME/.local/state/nvim" "$HOME/.cache/nvim"; do
         if [ -d "$dir" ]; then
-          mv "$dir" "${dir}.bak"
+          mv "$dir" "$${dir}.bak"
         fi
       done
       mkdir -p "$HOME/.config"
