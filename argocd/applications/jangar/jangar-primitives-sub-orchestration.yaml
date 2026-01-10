@@ -9,7 +9,7 @@ spec:
   entrypoint: main
   steps:
     - name: echo
-      kind: AgentRun
-      agentRef: jangar-primitives-echo
+      kind: ToolRun
+      toolRef: jangar-primitives-tool
       with:
-        message: hello from sub-orchestration
+        action: sub-orchestration

@@ -1,0 +1,65 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xtoolruns.tools.proompteng.ai
+spec:
+  group: tools.proompteng.ai
+  names:
+    kind: XToolRun
+    plural: xtoolruns
+  claimNames:
+    kind: ToolRun
+    plural: toolruns
+  defaultCompositionRef:
+    name: toolrun-argo
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - toolRef
+              properties:
+                toolRef:
+                  type: object
+                  required: [name]
+                  properties:
+                    name: { type: string }
+                    namespace: { type: string }
+                parameters:
+                  type: object
+                  additionalProperties: { type: string }
+                deliveryId:
+                  type: string
+                runtimeOverrides:
+                  type: object
+                  properties:
+                    argo:
+                      type: object
+                      properties:
+                        namespace: { type: string }
+                        serviceAccount: { type: string }
+                retryPolicy:
+                  type: object
+                  properties:
+                    limit: { type: integer, default: 0 }
+                timeoutSeconds:
+                  type: integer
+            status:
+              type: object
+              properties:
+                phase: { type: string }
+                workflowName: { type: string }
+                workflowUID: { type: string }
+                submittedAt: { type: string }
+                finishedAt: { type: string }
+                artifactKeys:
+                  type: array
+                  items: { type: string }
