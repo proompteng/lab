@@ -95,7 +95,7 @@ func TestRunFunction_BuildsDagTasks(t *testing.T) {
 		t.Fatalf("step-one task missing")
 	}
 	templateRef, _ := stepOne["templateRef"].(map[string]any)
-	if diff := cmp.Diff(map[string]any{"name": "agent-template", "template": "step-one"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
+	if diff := cmp.Diff(map[string]any{"name": "agent-template", "template": "agent-run"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
 		t.Fatalf("step-one templateRef mismatch (-want +got):\n%s", diff)
 	}
 	parameters := paramMap(t, stepOne)

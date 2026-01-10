@@ -247,7 +247,7 @@ func parseSteps(raw any) ([]orchestrationStep, error) {
 func resolveTemplateRef(step orchestrationStep) (string, string) {
 	switch step.Kind {
 	case "AgentRun":
-		return step.AgentRef, step.Name
+		return step.AgentRef, "agent-run"
 	case "ToolRun":
 		return step.ToolRef, "run"
 	case "MemoryOp":

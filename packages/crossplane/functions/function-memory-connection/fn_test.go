@@ -284,6 +284,153 @@ func TestRunFunction_ObservedFallback(t *testing.T) {
 	}
 }
 
+func TestRunFunction_UsesProviderSchemaWhenMissing(t *testing.T) {
+	req := baseRequest()
+	req.Desired.Composite.Resource = resource.MustStructJSON(`{
+		"apiVersion": "memory.proompteng.ai/v1alpha1",
+		"kind": "Memory",
+		"metadata": {
+			"name": "mem",
+			"namespace": "mem-ns"
+		},
+		"spec": {
+			"providerRef": {
+				"name": "provider-1"
+			},
+			"dataset": {}
+		},
+		"status": {}
+	}`)
+	dsn := "postgresql://user:pass@db.example.com:5432/memdb"
+	encoded := base64.StdEncoding.EncodeToString([]byte(dsn))
+
+	req.RequiredResources = map[string]*fnv1.Resources{
+		providerRequirementKey: {
+			Items: []*fnv1.Resource{
+				{
+					Resource: resource.MustStructJSON(`{
+						"apiVersion": "memory.proompteng.ai/v1alpha1",
+						"kind": "MemoryProvider",
+						"metadata": {
+							"name": "provider-1",
+							"namespace": "providers"
+						},
+						"spec": {
+							"postgres": {
+								"schema": "provider_schema",
+								"connectionSecret": {
+									"name": "mem-conn",
+									"namespace": "dbns"
+								},
+								"clusterRef": {
+									"namespace": "cluster-ns"
+								}
+							}
+						}
+					}`),
+				},
+			},
+		},
+		secretRequirementKey: {
+			Items: []*fnv1.Resource{
+				{
+					Resource: resource.MustStructJSON(fmt.Sprintf(`{
+						"apiVersion": "v1",
+						"kind": "Secret",
+						"metadata": {
+							"name": "mem-conn",
+							"namespace": "dbns"
+						},
+						"data": {
+							"uri": "%s"
+						}
+					}`, encoded)),
+				},
+			},
+		},
+	}
+
+	f := &Function{log: logging.NewNopLogger()}
+	rsp, err := f.RunFunction(t.Context(), req)
+	if err != nil {
+		t.Fatalf("RunFunction returned error: %v", err)
+	}
+
+	xr := desiredComposite(t, rsp)
+	status := nestedMap(t, xr.Object, "status", "connection")
+	if status["schema"] != "provider_schema" {
+		t.Fatalf("unexpected schema: %v", status["schema"])
+	}
+
+	job := desiredResource(t, rsp, "schema-job")
+	env := jobEnv(t, job.Object)
+	if env["DB_SCHEMA"] != "provider_schema" {
+		t.Fatalf("DB_SCHEMA mismatch: %q", env["DB_SCHEMA"])
+	}
+}
+
+func TestRunFunction_SchemaMismatchFatal(t *testing.T) {
+	req := baseRequest()
+	dsn := "postgresql://user:pass@db.example.com:5432/memdb"
+	encoded := base64.StdEncoding.EncodeToString([]byte(dsn))
+
+	req.RequiredResources = map[string]*fnv1.Resources{
+		providerRequirementKey: {
+			Items: []*fnv1.Resource{
+				{
+					Resource: resource.MustStructJSON(`{
+						"apiVersion": "memory.proompteng.ai/v1alpha1",
+						"kind": "MemoryProvider",
+						"metadata": {
+							"name": "provider-1",
+							"namespace": "providers"
+						},
+						"spec": {
+							"postgres": {
+								"schema": "provider_schema",
+								"connectionSecret": {
+									"name": "mem-conn",
+									"namespace": "dbns"
+								},
+								"clusterRef": {
+									"namespace": "cluster-ns"
+								}
+							}
+						}
+					}`),
+				},
+			},
+		},
+		secretRequirementKey: {
+			Items: []*fnv1.Resource{
+				{
+					Resource: resource.MustStructJSON(fmt.Sprintf(`{
+						"apiVersion": "v1",
+						"kind": "Secret",
+						"metadata": {
+							"name": "mem-conn",
+							"namespace": "dbns"
+						},
+						"data": {
+							"uri": "%s"
+						}
+					}`, encoded)),
+				},
+			},
+		},
+	}
+
+	f := &Function{log: logging.NewNopLogger()}
+	rsp, err := f.RunFunction(t.Context(), req)
+	if err != nil {
+		t.Fatalf("RunFunction returned error: %v", err)
+	}
+
+	if len(rsp.GetResults()) == 0 || rsp.GetResults()[0].GetSeverity() != fnv1.Severity_SEVERITY_FATAL {
+		t.Fatalf("expected fatal result on schema mismatch")
+	}
+}
+
 func baseRequest() *fnv1.RunFunctionRequest {
 	return &fnv1.RunFunctionRequest{
 		Meta: &fnv1.RequestMeta{Tag: "memory-connection"},

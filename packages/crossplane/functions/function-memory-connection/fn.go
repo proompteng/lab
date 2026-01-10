@@ -183,6 +183,14 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 		database = getStringField(providerResource.Object, "spec.postgres.database")
 	}
 	schema := getCompositeString("spec.dataset.schema")
+	providerSchema := getStringField(providerResource.Object, "spec.postgres.schema")
+	if schema == "" && providerSchema != "" {
+		schema = providerSchema
+	}
+	if schema != "" && providerSchema != "" && schema != providerSchema {
+		response.Fatal(rsp, errors.Errorf("memory schema %q does not match provider schema %q", schema, providerSchema))
+		return rsp, nil
+	}
 
 	if in.Spec.Resources.Job != "" {
 		job := dcds[resource.Name(in.Spec.Resources.Job)]
