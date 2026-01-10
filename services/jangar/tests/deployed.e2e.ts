@@ -114,7 +114,10 @@ const waitForTerminalSnapshotContaining = async (sessionId: string, marker: stri
   let snapshot = ''
   while (Date.now() - start < timeoutMs) {
     snapshot = await fetchTerminalSnapshot(sessionId)
-    if (snapshot.includes(marker)) return snapshot
+    if (snapshot.includes(marker)) {
+      const parsed = parseSttySizeFromOutput(snapshot, marker)
+      if (parsed) return snapshot
+    }
     await new Promise((resolve) => setTimeout(resolve, 250))
   }
   throw new Error(`Timed out waiting for terminal snapshot containing ${marker}`)
