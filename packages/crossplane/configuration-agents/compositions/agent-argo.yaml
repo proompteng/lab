@@ -55,6 +55,9 @@ spec:
                           default: ''
                     container:
                       image: registry.ide-newton.ts.net/lab/jangar:latest
+                      resources:
+                        requests: {}
+                        limits: {}
                       command:
                         - /bin/sh
                         - -c
@@ -105,6 +108,27 @@ spec:
                           fs.writeFileSync(process.env.AGENT_SPEC, JSON.stringify(spec));
                           NODE
                           /usr/local/bin/agent-runner --spec "$AGENT_SPEC"
+                      env:
+                        - name: AGENT_PROVIDER
+                          value: ''
+                        - name: AGENT_REPOSITORY
+                          value: ''
+                        - name: AGENT_ISSUE_NUMBER
+                          value: ''
+                        - name: AGENT_BASE
+                          value: ''
+                        - name: AGENT_HEAD
+                          value: ''
+                        - name: AGENT_STAGE
+                          value: ''
+                        - name: WORKFLOW_STAGE
+                          value: ''
+                        - name: WORKFLOW_NATS_ENABLED
+                          value: 'true'
+                        - name: WORKFLOW_KAFKA_COMPLETIONS
+                          value: 'true'
+                        - name: WORKFLOW_GRAF_ENABLED
+                          value: 'false'
                       volumeMounts:
                         - name: agent-providers
                           mountPath: /etc/agent-providers
@@ -136,8 +160,21 @@ spec:
                 toFieldPath: spec.templates[0].inputs.parameters[1].default
                 policy:
                   fromFieldPath: Optional
+              - fromFieldPath: spec.inputs.repository
+                toFieldPath: spec.templates[0].container.env[1].value
+                policy:
+                  fromFieldPath: Optional
               - fromFieldPath: spec.inputs.issueNumber
                 toFieldPath: spec.templates[0].inputs.parameters[2].default
+                policy:
+                  fromFieldPath: Optional
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: '%v'
+              - fromFieldPath: spec.inputs.issueNumber
+                toFieldPath: spec.templates[0].container.env[2].value
                 policy:
                   fromFieldPath: Optional
                 transforms:
@@ -149,12 +186,28 @@ spec:
                 toFieldPath: spec.templates[0].inputs.parameters[3].default
                 policy:
                   fromFieldPath: Optional
+              - fromFieldPath: spec.inputs.base
+                toFieldPath: spec.templates[0].container.env[3].value
+                policy:
+                  fromFieldPath: Optional
               - fromFieldPath: spec.inputs.head
                 toFieldPath: spec.templates[0].inputs.parameters[4].default
                 policy:
                   fromFieldPath: Optional
+              - fromFieldPath: spec.inputs.head
+                toFieldPath: spec.templates[0].container.env[4].value
+                policy:
+                  fromFieldPath: Optional
               - fromFieldPath: spec.inputs.stage
                 toFieldPath: spec.templates[0].inputs.parameters[5].default
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.inputs.stage
+                toFieldPath: spec.templates[0].container.env[5].value
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.inputs.stage
+                toFieldPath: spec.templates[0].container.env[6].value
                 policy:
                   fromFieldPath: Optional
               - fromFieldPath: spec.payloads.rawEventB64
@@ -167,6 +220,61 @@ spec:
                   fromFieldPath: Optional
               - fromFieldPath: spec.payloads.promptJson
                 toFieldPath: spec.templates[0].inputs.parameters[8].default
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.providerRef.name
+                toFieldPath: spec.templates[0].container.env[0].value
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.observability.natsEnabled
+                toFieldPath: spec.templates[0].container.env[7].value
+                policy:
+                  fromFieldPath: Optional
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: '%v'
+              - fromFieldPath: spec.observability.kafkaCompletions
+                toFieldPath: spec.templates[0].container.env[8].value
+                policy:
+                  fromFieldPath: Optional
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: '%v'
+              - fromFieldPath: spec.observability.grafEnabled
+                toFieldPath: spec.templates[0].container.env[9].value
+                policy:
+                  fromFieldPath: Optional
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: '%v'
+              - fromFieldPath: spec.resources.cpu
+                toFieldPath: spec.templates[0].container.resources.requests.cpu
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.resources.cpu
+                toFieldPath: spec.templates[0].container.resources.limits.cpu
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.resources.memory
+                toFieldPath: spec.templates[0].container.resources.requests.memory
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.resources.memory
+                toFieldPath: spec.templates[0].container.resources.limits.memory
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.resources.ephemeral
+                toFieldPath: spec.templates[0].container.resources.requests["ephemeral-storage"]
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.resources.ephemeral
+                toFieldPath: spec.templates[0].container.resources.limits["ephemeral-storage"]
                 policy:
                   fromFieldPath: Optional
             readinessChecks:

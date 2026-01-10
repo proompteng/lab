@@ -253,9 +253,6 @@ func resolveTemplateRef(step orchestrationStep) (string, string) {
 	case "MemoryOp":
 		return "jangar-memory-op", "run"
 	case "ApprovalGate":
-		if step.PolicyRef != "" {
-			return step.PolicyRef, "gate"
-		}
 		return "jangar-approval-gate", "gate"
 	case "SignalWait":
 		return "jangar-signal-wait", "wait"

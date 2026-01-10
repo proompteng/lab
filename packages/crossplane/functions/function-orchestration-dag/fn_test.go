@@ -42,20 +42,26 @@ func TestRunFunction_BuildsDagTasks(t *testing.T) {
 									"count": 2
 								}
 							},
-							{
-								"name": "step-two",
-								"kind": "ToolRun",
-								"toolRef": "tool-template",
-								"dependsOn": ["step-one"]
-							},
-							{
-								"name": "step-three",
-								"kind": "SignalWait",
-								"dependsOn": ["step-two"]
-							}
-						]
-					}
-				}`),
+						{
+							"name": "step-two",
+							"kind": "ToolRun",
+							"toolRef": "tool-template",
+							"dependsOn": ["step-one"]
+						},
+						{
+							"name": "step-three",
+							"kind": "ApprovalGate",
+							"policyRef": "approval-policy",
+							"dependsOn": ["step-two"]
+						},
+						{
+							"name": "step-four",
+							"kind": "SignalWait",
+							"dependsOn": ["step-three"]
+						}
+					]
+				}
+			}`),
 			},
 			Resources: map[string]*fnv1.Resource{
 				"workflow": {
@@ -125,8 +131,21 @@ func TestRunFunction_BuildsDagTasks(t *testing.T) {
 		t.Fatalf("step-three task missing")
 	}
 	templateRef, _ = stepThree["templateRef"].(map[string]any)
-	if diff := cmp.Diff(map[string]any{"name": "jangar-signal-wait", "template": "wait"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
+	if diff := cmp.Diff(map[string]any{"name": "jangar-approval-gate", "template": "gate"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
 		t.Fatalf("step-three templateRef mismatch (-want +got):\n%s", diff)
+	}
+	parameters = paramMap(t, stepThree)
+	if diff := cmp.Diff(map[string]string{"policyRef": "approval-policy"}, parameters); diff != "" {
+		t.Fatalf("step-three parameters mismatch (-want +got):\n%s", diff)
+	}
+
+	stepFour := tasks["step-four"]
+	if stepFour == nil {
+		t.Fatalf("step-four task missing")
+	}
+	templateRef, _ = stepFour["templateRef"].(map[string]any)
+	if diff := cmp.Diff(map[string]any{"name": "jangar-signal-wait", "template": "wait"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("step-four templateRef mismatch (-want +got):\n%s", diff)
 	}
 }
 
