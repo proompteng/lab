@@ -196,7 +196,7 @@ spec:
         resources:
           requests:
             cpu: "1"
-            memory: 2Gi
+            memory: 3Gi
           limits:
             cpu: "4"
             memory: 6Gi
@@ -224,7 +224,7 @@ spec:
           resources:
             requests:
               cpu: "1"
-              memory: 2Gi
+              memory: 1Gi
             limits:
               cpu: "2"
               memory: 4Gi
@@ -578,7 +578,7 @@ spec:
         resources:
           requests:
             cpu: "1"
-            memory: 2Gi
+            memory: 3Gi
           limits:
             cpu: "4"
             memory: 6Gi
@@ -609,7 +609,7 @@ spec:
           resources:
             requests:
               cpu: "1"
-              memory: 2Gi
+              memory: 1Gi
             limits:
               cpu: "2"
               memory: 4Gi
