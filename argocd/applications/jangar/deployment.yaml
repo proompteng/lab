@@ -160,6 +160,8 @@ spec:
               value: codex
             - name: JANGAR_REDIS_URL
               value: redis://jangar-openwebui-redis:6379/1
+            - name: JANGAR_STATEFUL_CHAT_MODE
+              value: "1"
             - name: NATS_URL
               value: nats://nats.nats.svc.cluster.local:4222
             - name: NATS_USER

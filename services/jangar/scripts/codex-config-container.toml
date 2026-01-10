@@ -2,6 +2,8 @@ model = "gpt-5.2-codex"
 model_reasoning_summary = "detailed"
 model_reasoning_effort = "medium"
 model_verbosity = "medium"
+# Keep compaction proactive for long-running OpenWebUI sessions while staying well below model context limits.
+model_auto_compact_token_limit = 24000
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 
