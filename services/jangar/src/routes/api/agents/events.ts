@@ -14,7 +14,7 @@ export const Route = createFileRoute('/api/agents/events')({
   },
 })
 
-const HEARTBEAT_INTERVAL_MS = 15000
+const HEARTBEAT_INTERVAL_MS = 5000
 const POLL_INTERVAL_MS = 1500
 const DEFAULT_HISTORY_LIMIT = 500
 
@@ -177,19 +177,32 @@ export const getAgentEvents = async (request: Request) => {
   let connectionClosed = false
 
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
+    async start(controller) {
       recordSseConnection('agent-events', 'opened')
+      let cleanup: (reason: string, error?: unknown) => Promise<void> = async () => {}
+      const safeEnqueue = (value: string) => {
+        if (isClosed) return
+        try {
+          controller.enqueue(encoder.encode(value))
+        } catch (error) {
+          recordSseError('agent-events', 'enqueue')
+          if (!isClosed) {
+            void cleanup('enqueue-failed', error)
+          }
+        }
+      }
+
       const push = (payload: unknown) => {
-        controller.enqueue(encoder.encode(`data: ${safeJsonStringify(payload)}\n\n`))
+        safeEnqueue(`data: ${safeJsonStringify(payload)}\n\n`)
       }
 
       const comment = (value: string) => {
-        controller.enqueue(encoder.encode(`: ${value.replaceAll('\n', ' ')}\n\n`))
+        safeEnqueue(`: ${value.replaceAll('\n', ' ')}\n\n`)
       }
 
       // Flush headers and establish the SSE connection immediately.
-      controller.enqueue(encoder.encode('retry: 1000\n\n'))
-      controller.enqueue(encoder.encode(': connected\n\n'))
+      safeEnqueue('retry: 1000\n\n')
+      safeEnqueue(': connected\n\n')
 
       const pushRecord = (record: AgentMessageRecord) => {
         if (seenIds.has(record.id)) return
@@ -205,7 +218,7 @@ export const getAgentEvents = async (request: Request) => {
         resolveKeepAlive = resolve
       })
 
-      const cleanup = async () => {
+      cleanup = async (reason: string, error?: unknown) => {
         if (isClosed) return
         isClosed = true
         request.signal.removeEventListener('abort', handleAbort)
@@ -220,18 +233,28 @@ export const getAgentEvents = async (request: Request) => {
           recordSseConnection('agent-events', 'closed')
           connectionClosed = true
         }
-        controller.close()
+        try {
+          controller.close()
+        } catch {
+          // ignore double-close
+        }
         if (resolveKeepAlive) resolveKeepAlive()
+        if (reason !== 'client-abort') {
+          console.warn('Agent events stream closed', {
+            reason,
+            message: error instanceof Error ? error.message : error ? String(error) : undefined,
+          })
+        }
       }
 
       const handleAbort = () => {
-        void cleanup()
+        void cleanup('client-abort')
       }
 
       request.signal.addEventListener('abort', handleAbort)
 
       heartbeat = setInterval(() => {
-        controller.enqueue(encoder.encode(': keep-alive\n\n'))
+        comment('keep-alive')
       }, HEARTBEAT_INTERVAL_MS)
 
       void (async () => {
@@ -257,7 +280,7 @@ export const getAgentEvents = async (request: Request) => {
         }, POLL_INTERVAL_MS)
       })()
 
-      return keepAlive
+      await keepAlive
     },
     cancel() {
       if (isClosed) return
@@ -275,7 +298,7 @@ export const getAgentEvents = async (request: Request) => {
   return new Response(stream, {
     headers: {
       'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
+      'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive',
       'x-accel-buffering': 'no',
     },
