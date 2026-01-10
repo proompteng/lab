@@ -37,6 +37,10 @@ spec:
                 toFieldPath: metadata.name
                 policy:
                   fromFieldPath: Optional
+              - fromFieldPath: spec.claimRef.name
+                toFieldPath: metadata.name
+                policy:
+                  fromFieldPath: Optional
             readinessChecks:
               - type: None
     - step: build-argo-dag
