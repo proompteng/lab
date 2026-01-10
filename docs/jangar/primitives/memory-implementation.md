@@ -184,6 +184,14 @@ Required keys:
 - `username`
 - `password`
 
+`Memory.status.connectionSecretRef` stores only the secret name/namespace. Connection metadata
+is exposed separately on `Memory.status` (`endpoint`, `database`, `schema`).
+
+## 2.5 Schema precedence
+
+`Memory.spec.dataset.schema` is the source of truth. `MemoryProvider.spec.postgres.schema` may
+be used as a default; if both are set and differ, reconciliation should fail.
+
 ## 3) Crossplane Composition (Postgres)
 
 ```yaml

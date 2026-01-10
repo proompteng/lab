@@ -24,16 +24,16 @@ apiVersion: orchestration.proompteng.ai/v1alpha1
 kind: Orchestration
 metadata:
   name: codex-autonomous
+  namespace: jangar
 spec:
-  entrypoint: implement
+  entrypoint: main
   steps:
     - name: implement
       kind: AgentRun
       agentRef: codex-implementation
       with:
-        inputs:
-          repository: proompteng/lab
-          issueNumber: 1966
+        repository: proompteng/lab
+        issueNumber: "1966"
     - name: judge
       kind: AgentRun
       dependsOn: [implement]
@@ -43,11 +43,11 @@ spec:
       dependsOn: [judge]
       policyRef: codex-merge-policy
     - name: merge
-      kind: Tool
+      kind: ToolRun
       dependsOn: [gate]
       toolRef: git-merge
     - name: deploy
-      kind: Tool
+      kind: ToolRun
       dependsOn: [merge]
       toolRef: argocd-deploy
   policies:
@@ -65,28 +65,29 @@ apiVersion: orchestration.proompteng.ai/v1alpha1
 kind: OrchestrationRun
 metadata:
   name: codex-autonomous-20260105-001
+  namespace: jangar
 spec:
   orchestrationRef:
     name: codex-autonomous
   parameters:
     repository: proompteng/lab
-    issueNumber: 1966
+    issueNumber: "1966"
 ```
 
 ## Step model
 
 Each step is an atomic unit with:
 
-- `kind`: AgentRun | Tool | MemoryOp | ApprovalGate | SignalWait | SubOrchestration
+- `kind`: AgentRun | ToolRun | MemoryOp | ApprovalGate | SignalWait | SubOrchestration | Checkpoint
 - `dependsOn`: array of step names
-- `with`: parameter overrides
+- `with`: parameter overrides (string values; encode structured JSON if needed)
 - `outputs`: named outputs for downstream steps
 
 ## Provider decoupling rules
 
 - `Orchestration` is runtime-agnostic.
 - Provider binding happens at reconciliation via Crossplane composition or Jangar runtime routing.
-- Provider-specific fields live under `spec.runtime.<provider>`.
+- Provider-specific overrides may be introduced later.
 
 ## Mapping to Argo (current runtime)
 
@@ -119,5 +120,5 @@ Each step is an atomic unit with:
 
 ## Idempotency
 
-- OrchestrationRun must be idempotent via `deliveryId` (if present)
+- OrchestrationRun is idempotent via `deliveryId` (if present)
 - Jangar owns retries and de-duplication for orchestration creation

@@ -176,10 +176,13 @@ spec:
 - `SubOrchestration`: run another Orchestration
 - `Checkpoint`: persist state snapshot to Memory
 
+Implementation note: `spec.steps[*].with` is a string map. If structured input is required,
+encode it as JSON strings and decode in the runtime template.
+
 ## 5) Idempotency
 
-`OrchestrationRun.spec.deliveryId` is required for idempotent behavior and
-is persisted by Jangar to avoid duplicate dispatch.
+`OrchestrationRun.spec.deliveryId` enables idempotent behavior and should be
+persisted by Jangar to avoid duplicate dispatch.
 
 ## 6) Status mapping
 

@@ -29,6 +29,7 @@ apiVersion: agents.proompteng.ai/v1alpha1
 kind: Agent
 metadata:
   name: codex-implementation
+  namespace: jangar
 spec:
   providerRef:
     name: codex
@@ -62,6 +63,7 @@ apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
   name: codex-implementation-20260105-001
+  namespace: jangar
 spec:
   agentRef:
     name: codex-implementation
@@ -73,11 +75,15 @@ spec:
 ### AgentProvider (CLI adapter)
 Defines how to invoke a provider’s CLI without baking provider-specific logic into workflows.
 
+AgentProvider is cluster-scoped at the composite level. The claim (`AgentProvider`) is namespaced
+and should be created in a control-plane namespace (e.g. `jangar`) and treated as global.
+
 ```yaml
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentProvider
 metadata:
   name: codex
+  namespace: jangar
 spec:
   binary: /usr/local/bin/codex
   argsTemplate:

@@ -23,6 +23,7 @@ apiVersion: memory.proompteng.ai/v1alpha1
 kind: Memory
 metadata:
   name: codex-agent-memory
+  namespace: jangar
 spec:
   providerRef:
     name: postgres-default
@@ -64,6 +65,7 @@ apiVersion: memory.proompteng.ai/v1alpha1
 kind: MemoryProvider
 metadata:
   name: postgres-default
+  namespace: jangar
 spec:
   type: postgres
   postgres:
@@ -77,11 +79,15 @@ spec:
 
 ### Connection contract
 
-`Memory.status.connectionSecretRef` must include:
+`Memory.status.connectionSecretRef` must include the `name` and `namespace` of the connection secret.
+Additional connection metadata is exposed on `Memory.status`:
 
 - `endpoint`
 - `database`
 - `schema`
+
+The referenced secret must contain:
+
 - `username`
 - `password`
 
@@ -104,3 +110,8 @@ is stored on the Memory resource; the backend implementation must honor it.
 ## Observability
 
 Jangar should emit memory lifecycle events and link them to agent/orchestration runs via run IDs.
+
+## Schema precedence
+
+`Memory.spec.dataset.schema` is the source of truth. `MemoryProvider.spec.postgres.schema` may
+provide a default; if both are set and differ, reconciliation should fail.
