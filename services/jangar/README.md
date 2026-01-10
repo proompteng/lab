@@ -100,6 +100,13 @@ bun --cwd services/jangar run lint
 bun --cwd services/jangar run tsc
 ```
 
+## Deployment
+
+```bash
+bun run packages/scripts/src/jangar/build-image.ts
+bun run packages/scripts/src/jangar/deploy-service.ts
+```
+
 ## API Notes
 
 - `/openai/v1/chat/completions` is **streaming-only**; requests must set `stream: true`. Non-streaming responses are not implemented.
@@ -133,8 +140,10 @@ Jangar also exposes JSON endpoints that mirror the MCP memory inputs:
 - `JANGAR_MODELS` (comma-separated list; optional)
 - `JANGAR_DEFAULT_MODEL` (optional)
 - `JANGAR_REDIS_URL` (required only when using `x-openwebui-chat-id` thread persistence)
+- `JANGAR_STATEFUL_CHAT_MODE` (optional; set to `1` to enable additive OpenWebUI transcript handling + reset-on-edit)
 - `JANGAR_CHAT_KEY_PREFIX` (optional; defaults to `openwebui:chat`)
 - `JANGAR_WORKTREE_KEY_PREFIX` (optional; defaults to `openwebui:worktree`)
+- `JANGAR_TRANSCRIPT_KEY_PREFIX` (optional; defaults to `openwebui:transcript`)
 - `JANGAR_MCP_URL` (optional; defaults to `http://127.0.0.1:$PORT/mcp`)
 - `DATABASE_URL` (required to use MCP memories tools)
 - `PGSSLMODE` (optional; defaults to `require`; Jangar does not support `sslrootcert` URL params for Bun’s Postgres client)

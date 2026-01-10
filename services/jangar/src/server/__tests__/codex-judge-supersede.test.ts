@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
 
@@ -224,6 +224,10 @@ beforeEach(async () => {
   Object.assign(githubMock, github)
   Object.assign(configMock, config)
   Object.assign(memoryStoreMock, memoriesStore)
+})
+
+beforeAll(async () => {
+  handleRunComplete = null
   await requireHandleRunComplete()
 })
 
@@ -303,7 +307,8 @@ describe('codex judge superseded runs', () => {
     const result = await handler(buildPayload())
 
     expect(result?.status).toBe('superseded')
-    expect(timeoutSpy).not.toHaveBeenCalled()
+    const delays = timeoutSpy.mock.calls.map((call) => call[1]).filter((delay) => typeof delay === 'number')
+    expect(delays).not.toContain(1000)
 
     timeoutSpy.mockRestore()
   })

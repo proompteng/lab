@@ -10,19 +10,25 @@ import { chatCompletionsHandler } from '~/routes/openai/v1/chat/completions'
 import { handleChatCompletionEffect, resetCodexClient, setCodexClientFactory } from '~/server/chat'
 import { ChatCompletionEncoder, chatCompletionEncoderLive } from '~/server/chat-completion-encoder'
 import { ChatToolEventRenderer, chatToolEventRendererLive } from '~/server/chat-tool-event-renderer'
+import { buildTranscriptSignature } from '~/server/chat-transcript'
 import { ThreadState, type ThreadStateService } from '~/server/thread-state'
+import { TranscriptState, type TranscriptStateService } from '~/server/transcript-state'
 import { WorktreeState, type WorktreeStateService } from '~/server/worktree-state'
 
 describe('chat completions handler', () => {
-  const previousEnv: Partial<Record<'JANGAR_MODELS' | 'JANGAR_DEFAULT_MODEL' | 'CODEX_CWD', string | undefined>> = {}
+  const previousEnv: Partial<
+    Record<'JANGAR_MODELS' | 'JANGAR_DEFAULT_MODEL' | 'CODEX_CWD' | 'JANGAR_STATEFUL_CHAT_MODE', string | undefined>
+  > = {}
   let worktreeRoot: string | null = null
 
   beforeEach(async () => {
     previousEnv.JANGAR_MODELS = process.env.JANGAR_MODELS
     previousEnv.JANGAR_DEFAULT_MODEL = process.env.JANGAR_DEFAULT_MODEL
     previousEnv.CODEX_CWD = process.env.CODEX_CWD
+    previousEnv.JANGAR_STATEFUL_CHAT_MODE = process.env.JANGAR_STATEFUL_CHAT_MODE
     delete process.env.JANGAR_MODELS
     delete process.env.JANGAR_DEFAULT_MODEL
+    delete process.env.JANGAR_STATEFUL_CHAT_MODE
 
     worktreeRoot = await mkdtemp(join(tmpdir(), 'jangar-worktree-'))
     process.env.CODEX_CWD = worktreeRoot
@@ -67,6 +73,12 @@ describe('chat completions handler', () => {
       delete process.env.CODEX_CWD
     } else {
       process.env.CODEX_CWD = previousEnv.CODEX_CWD
+    }
+
+    if (previousEnv.JANGAR_STATEFUL_CHAT_MODE === undefined) {
+      delete process.env.JANGAR_STATEFUL_CHAT_MODE
+    } else {
+      process.env.JANGAR_STATEFUL_CHAT_MODE = previousEnv.JANGAR_STATEFUL_CHAT_MODE
     }
   })
 
@@ -419,6 +431,11 @@ describe('chat completions handler', () => {
       setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
       clearWorktree: vi.fn(() => Effect.succeed(undefined)),
     }
+    const transcriptState: TranscriptStateService = {
+      getTranscript: vi.fn(() => Effect.succeed(null)),
+      setTranscript: vi.fn(() => Effect.succeed(undefined)),
+      clearTranscript: vi.fn(() => Effect.succeed(undefined)),
+    }
 
     const mockClient = {
       runTurnStream: vi.fn(async (_prompt: string, opts?: { threadId?: string }) => {
@@ -472,6 +489,7 @@ describe('chat completions handler', () => {
         Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
         Effect.provideService(ThreadState, threadState),
         Effect.provideService(WorktreeState, worktreeState),
+        Effect.provideService(TranscriptState, transcriptState),
       ),
     )
     const text = await response.text()
@@ -480,6 +498,227 @@ describe('chat completions handler', () => {
     expect(mockClient.runTurnStream).toHaveBeenCalledTimes(2)
     expect(threadState.clearChat).toHaveBeenCalledWith('chat-1')
     expect(threadState.setThreadId).toHaveBeenLastCalledWith('chat-1', 'fresh-thread')
+  })
+
+  it('sends only new messages when OpenWebUI transcript is append-only', async () => {
+    process.env.JANGAR_STATEFUL_CHAT_MODE = '1'
+
+    const threadState: ThreadStateService = {
+      getThreadId: vi.fn(() => Effect.succeed('thread-1')),
+      setThreadId: vi.fn(() => Effect.succeed(undefined)),
+      nextTurn: vi.fn(() => Effect.succeed(1)),
+      clearChat: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const worktreeState: WorktreeStateService = {
+      getWorktreeName: vi.fn(() => Effect.succeed('austin')),
+      setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
+      clearWorktree: vi.fn(() => Effect.succeed(undefined)),
+    }
+
+    const initialMessages = [
+      { role: 'system', content: 'You are helpful.' },
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'hi!' },
+    ]
+    const transcriptState: TranscriptStateService = {
+      getTranscript: vi.fn(() => Effect.succeed(buildTranscriptSignature(initialMessages))),
+      setTranscript: vi.fn(() => Effect.succeed(undefined)),
+      clearTranscript: vi.fn(() => Effect.succeed(undefined)),
+    }
+
+    const mockClient = {
+      runTurnStream: vi.fn(async (_prompt: string) => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'ok' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-openwebui-chat-id': 'chat-1',
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.2-codex',
+        messages: [...initialMessages, { role: 'user', content: 'follow up' }],
+        stream: true,
+      }),
+    })
+
+    const response = await Effect.runPromise(
+      pipe(
+        handleChatCompletionEffect(request),
+        Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
+        Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
+        Effect.provideService(ThreadState, threadState),
+        Effect.provideService(WorktreeState, worktreeState),
+        Effect.provideService(TranscriptState, transcriptState),
+      ),
+    )
+    await response.text()
+
+    const prompt = mockClient.runTurnStream.mock.calls[0]?.[0]
+    expect(prompt).toBe('user: follow up')
+    expect(transcriptState.setTranscript).toHaveBeenCalled()
+  })
+
+  it('resets the thread when OpenWebUI transcript is edited', async () => {
+    process.env.JANGAR_STATEFUL_CHAT_MODE = '1'
+
+    const threadState: ThreadStateService = {
+      getThreadId: vi.fn(() => Effect.succeed('thread-1')),
+      setThreadId: vi.fn(() => Effect.succeed(undefined)),
+      nextTurn: vi.fn(() => Effect.succeed(1)),
+      clearChat: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const worktreeState: WorktreeStateService = {
+      getWorktreeName: vi.fn(() => Effect.succeed('austin')),
+      setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
+      clearWorktree: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const storedMessages = [
+      { role: 'system', content: 'You are helpful.' },
+      { role: 'user', content: 'hello' },
+    ]
+    const transcriptState: TranscriptStateService = {
+      getTranscript: vi.fn(() => Effect.succeed(buildTranscriptSignature(storedMessages))),
+      setTranscript: vi.fn(() => Effect.succeed(undefined)),
+      clearTranscript: vi.fn(() => Effect.succeed(undefined)),
+    }
+
+    const mockClient = {
+      runTurnStream: vi.fn(async (_prompt: string, _opts?: { threadId?: string }) => ({
+        turnId: 'turn-1',
+        threadId: 'thread-2',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'ok' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-openwebui-chat-id': 'chat-1',
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.2-codex',
+        messages: [
+          { role: 'system', content: 'You are *very* helpful.' },
+          { role: 'user', content: 'hello' },
+          { role: 'user', content: 'second message' },
+        ],
+        stream: true,
+      }),
+    })
+
+    const response = await Effect.runPromise(
+      pipe(
+        handleChatCompletionEffect(request),
+        Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
+        Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
+        Effect.provideService(ThreadState, threadState),
+        Effect.provideService(WorktreeState, worktreeState),
+        Effect.provideService(TranscriptState, transcriptState),
+      ),
+    )
+    await response.text()
+
+    expect(threadState.clearChat).toHaveBeenCalledWith('chat-1')
+    const opts = mockClient.runTurnStream.mock.calls[0]?.[1] as { threadId?: string } | undefined
+    expect(opts?.threadId).toBeUndefined()
+    const prompt = mockClient.runTurnStream.mock.calls[0]?.[0]
+    expect(prompt).toContain('system: You are *very* helpful.')
+    expect(prompt).toContain('user: hello')
+    expect(prompt).toContain('user: second message')
+  })
+
+  it('falls back to stateless behavior when Redis state is unavailable', async () => {
+    process.env.JANGAR_STATEFUL_CHAT_MODE = '1'
+
+    const threadState: ThreadStateService = {
+      getThreadId: vi.fn(() => Effect.fail(new Error('redis down'))),
+      setThreadId: vi.fn(() => Effect.succeed(undefined)),
+      nextTurn: vi.fn(() => Effect.succeed(1)),
+      clearChat: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const worktreeState: WorktreeStateService = {
+      getWorktreeName: vi.fn(() => Effect.succeed('austin')),
+      setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
+      clearWorktree: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const transcriptState: TranscriptStateService = {
+      getTranscript: vi.fn(() => Effect.succeed(null)),
+      setTranscript: vi.fn(() => Effect.succeed(undefined)),
+      clearTranscript: vi.fn(() => Effect.succeed(undefined)),
+    }
+
+    const mockClient = {
+      runTurnStream: vi.fn(async (_prompt: string, _opts?: { threadId?: string }) => ({
+        turnId: 'turn-1',
+        threadId: 'thread-2',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'ok' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-openwebui-chat-id': 'chat-1',
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.2-codex',
+        messages: [
+          { role: 'user', content: 'hello' },
+          { role: 'assistant', content: 'hi' },
+          { role: 'user', content: 'follow up' },
+        ],
+        stream: true,
+      }),
+    })
+
+    const response = await Effect.runPromise(
+      pipe(
+        handleChatCompletionEffect(request),
+        Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
+        Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
+        Effect.provideService(ThreadState, threadState),
+        Effect.provideService(WorktreeState, worktreeState),
+        Effect.provideService(TranscriptState, transcriptState),
+      ),
+    )
+    await response.text()
+
+    expect(worktreeState.getWorktreeName).not.toHaveBeenCalled()
+    const opts = mockClient.runTurnStream.mock.calls[0]?.[1] as { threadId?: string } | undefined
+    expect(opts?.threadId).toBeUndefined()
+    const prompt = mockClient.runTurnStream.mock.calls[0]?.[0]
+    expect(prompt).toContain('user: hello')
+    expect(prompt).toContain('assistant: hi')
+    expect(prompt).toContain('user: follow up')
   })
 
   it('does not install dependencies when allocating a new worktree', async () => {
@@ -496,6 +735,11 @@ describe('chat completions handler', () => {
       getWorktreeName: vi.fn(() => Effect.succeed(null)),
       setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
       clearWorktree: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const transcriptState: TranscriptStateService = {
+      getTranscript: vi.fn(() => Effect.succeed(null)),
+      setTranscript: vi.fn(() => Effect.succeed(undefined)),
+      clearTranscript: vi.fn(() => Effect.succeed(undefined)),
     }
 
     const originalBun = (globalThis as { Bun?: unknown }).Bun
@@ -551,6 +795,7 @@ describe('chat completions handler', () => {
           Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
           Effect.provideService(ThreadState, threadState),
           Effect.provideService(WorktreeState, worktreeState),
+          Effect.provideService(TranscriptState, transcriptState),
         ),
       )
       await response.text()
