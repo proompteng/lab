@@ -307,8 +307,7 @@ describe('codex judge superseded runs', () => {
     const result = await handler(buildPayload())
 
     expect(result?.status).toBe('superseded')
-    const delays = timeoutSpy.mock.calls.map((call) => call[1]).filter((delay) => typeof delay === 'number')
-    expect(delays).not.toContain(1000)
+    expect(timeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 1000)
 
     timeoutSpy.mockRestore()
   })

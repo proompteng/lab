@@ -233,7 +233,7 @@ describe('codex-judge CI resolution', () => {
     expect(getCheckRuns).not.toHaveBeenCalled()
     expect(result.commitSha).toBeNull()
     expect(result.ci.status).toBe('pending')
-  }, 15_000)
+  }, 10_000)
 
   it('uses manifest commit SHA when available', async () => {
     const manifestSha = 'a'.repeat(40)

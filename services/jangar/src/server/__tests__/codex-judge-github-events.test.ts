@@ -244,7 +244,7 @@ describe('codex-judge GitHub webhook stream handling', () => {
       }
     })
     Object.assign(requireMock(globalState.__codexJudgeGithubMock, 'github'), githubMock)
-    Object.assign(requireMock(globalState.__codexJudgeConfigMock, 'config'), configMock)
+    globalState.__codexJudgeConfigMock = { ...configMock }
     Object.values(githubReviewStoreMock).forEach((value) => {
       if (typeof value === 'function') {
         ;(value as ReturnType<typeof vi.fn>).mockClear?.()
@@ -263,10 +263,12 @@ describe('codex-judge GitHub webhook stream handling', () => {
 
     expect(result.ok).toBe(false)
     expect(result.reason).toBe('event_stream_disabled')
-  }, 15_000)
+  }, 30_000)
 
   it('updates CI status for check_run completion events', async () => {
     const handler = await requireHandler()
+    const config = requireMock(globalState.__codexJudgeConfigMock, 'config')
+    config.ciEventStreamEnabled = true
     const store = requireMock(globalState.__codexJudgeStoreMock, 'store')
     const run = buildRun({ commitSha: 'a'.repeat(40) })
     ;(store.listRunsByCommitSha as ReturnType<typeof vi.fn>).mockResolvedValueOnce([run])

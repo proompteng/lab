@@ -35,3 +35,13 @@ argocd app sync jangar
 - `/api/terminals` remains the canonical API for session lifecycle and is proxied to the terminal backend
   when `JANGAR_TERMINAL_BACKEND_URL` is configured.
 - `/terminals/$sessionId/fullscreen` provides a full-viewport terminal view intended for new tab usage.
+
+## Reference implementations (inspected)
+
+- Coder web terminal UI: `~/github.com/coder/site/src/pages/TerminalPage/TerminalPage.tsx`
+- Coder reconnecting URL builder: `~/github.com/coder/site/src/utils/terminal.ts`
+- Coder PTY proxy: `~/github.com/coder/coderd/workspaceapps/proxy.go`
+- Coder reconnecting PTY internals: `~/github.com/coder/agent/reconnectingpty/*`
+- VS Code terminal xterm integration: `~/github.com/vscode/src/vs/workbench/contrib/terminal/browser/xterm/xtermTerminal.ts`
+- VS Code xterm addon loader: `~/github.com/vscode/src/vs/workbench/contrib/terminal/browser/xterm/xtermAddonImporter.ts`
+- VS Code xterm dependency set: `~/github.com/vscode/package.json`

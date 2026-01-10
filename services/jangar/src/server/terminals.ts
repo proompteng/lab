@@ -207,11 +207,22 @@ const createFreshWorktree = async () => {
   const repoRoot = resolveCodexBaseCwd()
   const baseRef = await ensureBaseRef(repoRoot)
   await mkdir(resolveWorktreeRoot(), { recursive: true })
-  const suffix = generateSuffix()
-  const worktreeName = buildWorktreeName(suffix)
-  const worktreePath = buildWorktreePath(worktreeName)
-  await createWorktreeAtPath(worktreeName, worktreePath, baseRef, repoRoot)
-  return { worktreeName, worktreePath, baseRef }
+
+  for (let attempt = 0; attempt < MAX_WORKTREE_ATTEMPTS; attempt += 1) {
+    const suffix = generateSuffix()
+    const worktreeName = buildWorktreeName(suffix)
+    const worktreePath = buildWorktreePath(worktreeName)
+    if (existsSync(worktreePath)) continue
+    try {
+      await createWorktreeAtPath(worktreeName, worktreePath, baseRef, repoRoot)
+      return { worktreeName, worktreePath, baseRef }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      console.warn('[terminals] worktree create failed', { worktreeName, detail })
+    }
+  }
+
+  throw new Error('Unable to allocate a new terminal worktree.')
 }
 
 const isSafeWorktreePath = (worktreePath: string, worktreeName: string | null) => {
