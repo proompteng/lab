@@ -17,7 +17,7 @@ spec:
           - name: payload
             default: ''
           - name: namespace
-            default: '{{workflow.labels.crossplane.io/claim-namespace}}'
+            default: "{{workflow.labels['crossplane.io/claim-namespace']}}"
       script:
         image: registry.ide-newton.ts.net/lab/jangar:latest
         command:
