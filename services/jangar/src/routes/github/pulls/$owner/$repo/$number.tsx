@@ -4,6 +4,7 @@ import * as React from 'react'
 import { type FileTreeNode, FileTreeView } from '@/components/file-tree'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { CodexRunRecord } from '@/data/codex'
 import {
   fetchGithubPull,
@@ -299,14 +300,14 @@ function GithubPullDetailPage() {
 
   if (!pull && error) {
     return (
-      <main className="mx-auto max-w-5xl p-6">
+      <main className="p-6 w-full max-w-6xl">
         <div className="rounded-none border bg-card p-6 text-sm text-red-500">{error}</div>
       </main>
     )
   }
 
   return (
-    <main className="mx-auto space-y-6 p-6 w-full max-w-6xl">
+    <main className="space-y-6 p-6 w-full max-w-6xl">
       <header className="space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-2">
@@ -341,8 +342,8 @@ function GithubPullDetailPage() {
       {error ? <div className="text-xs text-red-500">{error}</div> : null}
 
       <section className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-2">
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabKey)} className="space-y-4">
+          <TabsList variant="line" className="w-full justify-start">
             {(
               [
                 { key: 'overview', label: 'Overview' },
@@ -352,19 +353,13 @@ function GithubPullDetailPage() {
                 { key: 'judge', label: 'Judge' },
               ] as Array<{ key: TabKey; label: string }>
             ).map((tab) => (
-              <Button
-                key={tab.key}
-                type="button"
-                size="sm"
-                variant={activeTab === tab.key ? 'default' : 'outline'}
-                onClick={() => setActiveTab(tab.key)}
-              >
+              <TabsTrigger key={tab.key} value={tab.key}>
                 {tab.label}
-              </Button>
+              </TabsTrigger>
             ))}
-          </div>
+          </TabsList>
 
-          {activeTab === 'overview' ? (
+          <TabsContent value="overview">
             <div className="space-y-4 rounded-none border bg-card p-4 text-xs">
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
@@ -387,9 +382,9 @@ function GithubPullDetailPage() {
               <div className="text-muted-foreground">Description</div>
               <div className="whitespace-pre-wrap text-sm">{pull?.body ?? 'No description provided.'}</div>
             </div>
-          ) : null}
+          </TabsContent>
 
-          {activeTab === 'files' ? (
+          <TabsContent value="files">
             <div className="space-y-3 rounded-none border bg-card p-4 text-xs">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-medium">Worktree snapshot</div>
@@ -439,9 +434,9 @@ function GithubPullDetailPage() {
                 </div>
               )}
             </div>
-          ) : null}
+          </TabsContent>
 
-          {activeTab === 'conversation' ? (
+          <TabsContent value="conversation">
             <div className="space-y-4 rounded-none border bg-card p-4 text-xs">
               <div className="space-y-2">
                 <div className="text-sm font-medium">Issue comments</div>
@@ -489,9 +484,9 @@ function GithubPullDetailPage() {
                 )}
               </div>
             </div>
-          ) : null}
+          </TabsContent>
 
-          {activeTab === 'checks' ? (
+          <TabsContent value="checks">
             <div className="space-y-3 rounded-none border bg-card p-4 text-xs">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-medium">Checks summary</div>
@@ -555,9 +550,9 @@ function GithubPullDetailPage() {
                 <div className="text-muted-foreground">No checks stored yet.</div>
               )}
             </div>
-          ) : null}
+          </TabsContent>
 
-          {activeTab === 'judge' ? (
+          <TabsContent value="judge">
             <div className="space-y-3 rounded-none border bg-card p-4 text-xs">
               <div className="text-sm font-medium">Judge runs</div>
               {judgeRuns.length === 0 ? (
@@ -591,8 +586,8 @@ function GithubPullDetailPage() {
                 </div>
               )}
             </div>
-          ) : null}
-        </div>
+          </TabsContent>
+        </Tabs>
 
         <aside className="space-y-4">
           <section className="rounded-none border bg-card p-4 text-xs space-y-3">

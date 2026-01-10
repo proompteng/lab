@@ -81,6 +81,7 @@ const ROOT_LABELS = new Map<string, string>([
   ['/codex', 'Codex'],
   ['/codex/search', 'Search'],
   ['/codex/runs', 'All runs'],
+  ['/github/pulls', 'Pulls'],
   ['/torghut', 'Torghut'],
   ['/torghut/visuals', 'Visuals'],
   ['/torghut/symbols', 'Symbols'],
@@ -95,6 +96,19 @@ const buildBreadcrumbs = (rawPath: string) => {
   if (normalized === '/') return [{ label: ROOT_LABELS.get('/') ?? 'Home', to: '/' }]
 
   const segments = normalized.split('/').filter(Boolean)
+  if (segments[0] === 'github' && segments[1] === 'pulls') {
+    const basePath = '/github/pulls'
+    const baseLabel = ROOT_LABELS.get(basePath) ?? 'Pulls'
+    if (segments.length >= 5) {
+      const [owner, repo, number] = [segments[2], segments[3], segments[4]]
+      const label = `${owner}/${repo} #${number}`
+      return [
+        { label: baseLabel, to: basePath },
+        { label, to: `/${segments.slice(0, 5).join('/')}` },
+      ]
+    }
+    return [{ label: baseLabel, to: basePath }]
+  }
   const crumbs = segments.map((segment, index) => {
     const to = `/${segments.slice(0, index + 1).join('/')}`
     const label = ROOT_LABELS.get(to) ?? toTitle(segment)

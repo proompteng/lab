@@ -5,8 +5,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { fetchGithubPulls, type GithubPullListItem } from '@/data/github'
 
+const DEFAULT_REPOSITORY = 'proompteng/lab'
 const DEFAULT_LIMIT = 25
 const MAX_LIMIT = 100
+const NULL_CURSOR_TOKEN = '~'
 
 const parseSearchNumber = (value: unknown) => {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -45,6 +47,18 @@ const badgeClass = (variant: 'success' | 'warning' | 'danger' | 'neutral') => {
   }
 }
 
+const parseCursorHistory = (raw: string | undefined) => {
+  if (!raw) return [] as Array<string | null>
+  return raw
+    .split(',')
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0)
+    .map((token) => (token === NULL_CURSOR_TOKEN ? null : token))
+}
+
+const serializeCursorHistory = (values: Array<string | null>) =>
+  values.map((value) => value ?? NULL_CURSOR_TOKEN).join(',')
+
 type PullsSearchState = {
   repository: string
   state: string
@@ -53,6 +67,8 @@ type PullsSearchState = {
   reviewDecision: string
   ciStatus: string
   limit: number
+  cursor?: string
+  cursorHistory?: string
 }
 
 export const Route = createFileRoute('/github/pulls/')({
@@ -66,6 +82,11 @@ export const Route = createFileRoute('/github/pulls/')({
       reviewDecision: typeof search.reviewDecision === 'string' ? search.reviewDecision : '',
       ciStatus: typeof search.ciStatus === 'string' ? search.ciStatus : '',
       limit: Math.min(limitRaw, MAX_LIMIT),
+      cursor: typeof search.cursor === 'string' && search.cursor.trim().length > 0 ? search.cursor : undefined,
+      cursorHistory:
+        typeof search.cursorHistory === 'string' && search.cursorHistory.trim().length > 0
+          ? search.cursorHistory
+          : undefined,
     }
   },
   component: GithubPullsPage,
@@ -84,10 +105,23 @@ function GithubPullsPage() {
   const [limit, setLimit] = React.useState(searchState.limit.toString())
 
   const [items, setItems] = React.useState<GithubPullListItem[]>([])
+  const [viewerLogin, setViewerLogin] = React.useState<string | null>(null)
+  const [nextCursor, setNextCursor] = React.useState<string | null>(null)
   const [repositoriesAllowed, setRepositoriesAllowed] = React.useState<string[]>([])
   const [status, setStatus] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(false)
+
+  const searchParams = React.useMemo(
+    () => (typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.search)),
+    [searchState],
+  )
+  const hasRepositoryParam = searchParams.has('repository')
+  const hasAuthorParam = searchParams.has('author')
+  const cursorHistory = parseCursorHistory(searchState.cursorHistory)
+  const currentPage = cursorHistory.length + 1
+  const repositoryValue = repository || (!hasRepositoryParam ? DEFAULT_REPOSITORY : '')
+  const authorValue = author || (!hasAuthorParam ? (viewerLogin ?? '') : '')
 
   React.useEffect(() => {
     setRepository(searchState.repository)
@@ -99,61 +133,115 @@ function GithubPullsPage() {
     setLimit(searchState.limit.toString())
   }, [searchState])
 
-  const loadPulls = React.useCallback(async (params: PullsSearchState) => {
-    setLoading(true)
-    setError(null)
-    setStatus(null)
-    try {
-      const response = await fetchGithubPulls({
-        repository: params.repository || undefined,
-        state: params.state || undefined,
-        author: params.author || undefined,
-        label: params.label || undefined,
-        reviewDecision: params.reviewDecision || undefined,
-        ciStatus: params.ciStatus || undefined,
-        limit: params.limit,
-      })
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return
+    const shouldSetRepository = !hasRepositoryParam
+    const shouldSetAuthor = !hasAuthorParam && viewerLogin
+    const shouldSetLimit = !searchParams.has('limit')
+    if (!shouldSetRepository && !shouldSetAuthor && !shouldSetLimit) return
+    void navigate({
+      replace: true,
+      search: {
+        ...searchState,
+        repository: shouldSetRepository ? DEFAULT_REPOSITORY : searchState.repository,
+        author: shouldSetAuthor ? (viewerLogin ?? '') : searchState.author,
+        limit: searchState.limit,
+        cursor: undefined,
+        cursorHistory: undefined,
+      },
+    })
+  }, [hasAuthorParam, hasRepositoryParam, navigate, searchParams, searchState, viewerLogin])
 
-      if (!response.ok) {
-        setError(response.error)
+  const loadPulls = React.useCallback(
+    async (params: PullsSearchState, options: { hasRepository: boolean }) => {
+      setLoading(true)
+      setError(null)
+      setStatus(null)
+      try {
+        const response = await fetchGithubPulls({
+          repository: options.hasRepository ? params.repository : DEFAULT_REPOSITORY,
+          state: params.state || undefined,
+          author: hasAuthorParam ? params.author : undefined,
+          label: params.label || undefined,
+          reviewDecision: params.reviewDecision || undefined,
+          ciStatus: params.ciStatus || undefined,
+          limit: params.limit,
+          cursor: params.cursor ?? null,
+        })
+
+        if (!response.ok) {
+          setError(response.error)
+          setItems([])
+          setNextCursor(null)
+          return
+        }
+
+        setItems(response.items)
+        setNextCursor(response.nextCursor ?? null)
+        setViewerLogin(response.viewerLogin ?? null)
+        setRepositoriesAllowed(response.repositoriesAllowed ?? [])
+        setStatus(response.items.length === 0 ? 'No pull requests found.' : `Loaded ${response.items.length} pulls.`)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        setError(message)
         setItems([])
-        return
+        setNextCursor(null)
+      } finally {
+        setLoading(false)
       }
-
-      setItems(response.items)
-      setRepositoriesAllowed(response.repositoriesAllowed ?? [])
-      setStatus(response.items.length === 0 ? 'No pull requests found.' : `Loaded ${response.items.length} pulls.`)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      setError(message)
-      setItems([])
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+    },
+    [hasAuthorParam],
+  )
 
   React.useEffect(() => {
-    void loadPulls(searchState)
-  }, [loadPulls, searchState])
+    void loadPulls(searchState, { hasRepository: hasRepositoryParam })
+  }, [hasRepositoryParam, loadPulls, searchState])
 
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const parsedLimit = parseSearchNumber(limit) ?? DEFAULT_LIMIT
     void navigate({
       search: {
-        repository: repository.trim(),
+        repository: repositoryValue.trim(),
         state: state.trim(),
-        author: author.trim(),
+        author: authorValue.trim(),
         label: label.trim(),
         reviewDecision: reviewDecision.trim(),
         ciStatus: ciStatus.trim(),
         limit: Math.min(parsedLimit, MAX_LIMIT),
+        cursor: undefined,
+        cursorHistory: undefined,
+      },
+    })
+  }
+
+  const goToNextPage = () => {
+    if (!nextCursor) return
+    const nextHistory = [...cursorHistory, searchState.cursor ?? null]
+    void navigate({
+      search: {
+        ...searchState,
+        cursor: nextCursor,
+        cursorHistory: serializeCursorHistory(nextHistory),
+      },
+    })
+  }
+
+  const goToPreviousPage = () => {
+    if (cursorHistory.length === 0) return
+    const nextHistory = cursorHistory.slice(0, -1)
+    const previousCursor = cursorHistory[cursorHistory.length - 1]
+    void navigate({
+      search: {
+        ...searchState,
+        cursor: previousCursor ?? undefined,
+        cursorHistory: nextHistory.length > 0 ? serializeCursorHistory(nextHistory) : undefined,
       },
     })
   }
 
   return (
-    <main className="mx-auto space-y-6 p-6 w-full max-w-6xl">
+    <main className="space-y-6 p-6 w-full max-w-6xl">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-2">
           <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">GitHub</p>
@@ -173,7 +261,7 @@ function GithubPullsPage() {
               <Input
                 id="repo"
                 name="repository"
-                value={repository}
+                value={repositoryValue}
                 onChange={(event) => setRepository(event.target.value)}
                 placeholder={repositoriesAllowed[0] ?? 'proompteng/lab'}
                 list="github-repos"
@@ -204,7 +292,7 @@ function GithubPullsPage() {
               <label className="text-xs font-medium" htmlFor="author">
                 Author
               </label>
-              <Input id="author" value={author} onChange={(event) => setAuthor(event.target.value)} />
+              <Input id="author" value={authorValue} onChange={(event) => setAuthor(event.target.value)} />
             </div>
             <div className="space-y-1">
               <label className="text-xs font-medium" htmlFor="label">
@@ -259,6 +347,24 @@ function GithubPullsPage() {
             {error ? <span className="text-xs text-red-500">{error}</span> : null}
           </div>
         </form>
+      </section>
+
+      <section className="flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="text-muted-foreground">Page {currentPage}</div>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={loading || cursorHistory.length === 0}
+            onClick={goToPreviousPage}
+          >
+            Previous
+          </Button>
+          <Button type="button" size="sm" disabled={loading || !nextCursor} onClick={goToNextPage}>
+            Next
+          </Button>
+        </div>
       </section>
 
       <section className="overflow-hidden rounded-none border bg-card">

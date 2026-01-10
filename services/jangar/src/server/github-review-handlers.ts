@@ -27,6 +27,23 @@ const parseLimit = (value: string | null, fallback: number) => {
   return Math.max(1, Math.min(parsed, 100))
 }
 
+const resolveActor = (request: Request) => {
+  const candidates = [
+    'x-jangar-actor',
+    'x-forwarded-user',
+    'x-forwarded-email',
+    'x-auth-request-email',
+    'x-auth-request-user',
+    'x-remote-user',
+    'x-github-user',
+  ]
+  for (const header of candidates) {
+    const value = request.headers.get(header)
+    if (value?.trim()) return value.trim()
+  }
+  return null
+}
+
 const maybeAutoRefreshFiles = async (
   store: ReturnType<typeof createGithubReviewStore>,
   input: {
@@ -70,6 +87,8 @@ export const getPullsHandler = async (request: Request, createStore = createGith
     return jsonResponse({ ok: false, error: 'Repository not allowed' }, 403)
   }
 
+  const authorParam = url.searchParams.get('author')
+  const viewerLogin = resolveActor(request)
   const store = createStore()
 
   try {
@@ -77,7 +96,7 @@ export const getPullsHandler = async (request: Request, createStore = createGith
       repository,
       repositories: repository ? undefined : config.reposAllowed,
       state: url.searchParams.get('state')?.trim() || undefined,
-      author: url.searchParams.get('author')?.trim() || undefined,
+      author: authorParam === null ? (viewerLogin ?? undefined) : authorParam.trim() || undefined,
       label: url.searchParams.get('label')?.trim() || undefined,
       reviewDecision: url.searchParams.get('reviewDecision')?.trim() || undefined,
       ciStatus: url.searchParams.get('ciStatus')?.trim() || undefined,
@@ -94,6 +113,7 @@ export const getPullsHandler = async (request: Request, createStore = createGith
         mergeWriteEnabled: config.mergeWriteEnabled,
       },
       repositoriesAllowed: config.reposAllowed,
+      viewerLogin,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to load pull requests'
