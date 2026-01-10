@@ -213,7 +213,11 @@ RUN set -eux; \
   rm -f /tmp/nvim.tar.gz; \
   ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim; \
   nvim --version | head -n 1; \
-  rm -rf /root/.config/nvim /root/.local/share/nvim /root/.local/state/nvim /root/.cache/nvim; \
+  if [ -d /root/.config/nvim ]; then mv /root/.config/nvim /root/.config/nvim.bak; fi; \
+  if [ -d /root/.local/share/nvim ]; then mv /root/.local/share/nvim /root/.local/share/nvim.bak; fi; \
+  if [ -d /root/.local/state/nvim ]; then mv /root/.local/state/nvim /root/.local/state/nvim.bak; fi; \
+  if [ -d /root/.cache/nvim ]; then mv /root/.cache/nvim /root/.cache/nvim.bak; fi; \
+  mkdir -p /root/.config; \
   git clone --depth 1 https://github.com/AstroNvim/template /root/.config/nvim; \
   rm -rf /root/.config/nvim/.git; \
   nvim --headless +q
