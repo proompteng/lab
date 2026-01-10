@@ -67,18 +67,23 @@ describe('getAgentEvents', () => {
     expect(reader).toBeDefined()
     if (!reader) throw new Error('Missing response body reader')
 
-    const first = await reader.read()
-    expect(first.done).toBe(false)
-    const firstText = decodeChunk(first.value)
-    expect(firstText).toContain('retry: 1000')
-    expect(firstText).toContain(': connected')
+    let bootText = ''
+    for (let attempt = 0; attempt < 3 && !bootText.includes(': connected'); attempt += 1) {
+      const chunk = await reader.read()
+      expect(chunk.done).toBe(false)
+      bootText += decodeChunk(chunk.value)
+    }
+    expect(bootText).toContain('retry: 1000')
+    expect(bootText).toContain(': connected')
 
-    const heartbeatRead = reader.read()
     await vi.advanceTimersByTimeAsync(5000)
-    const heartbeat = await heartbeatRead
-
-    expect(heartbeat.done).toBe(false)
-    expect(decodeChunk(heartbeat.value)).toContain(': keep-alive')
+    let heartbeatText = ''
+    for (let attempt = 0; attempt < 3 && !heartbeatText.includes(': keep-alive'); attempt += 1) {
+      const chunk = await reader.read()
+      expect(chunk.done).toBe(false)
+      heartbeatText += decodeChunk(chunk.value)
+    }
+    expect(heartbeatText).toContain(': keep-alive')
 
     await reader.cancel()
   })
