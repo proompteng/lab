@@ -37,7 +37,7 @@ spec:
                 toFieldPath: metadata.name
                 policy:
                   fromFieldPath: Optional
-              - fromFieldPath: spec.claimRef.name
+              - fromFieldPath: metadata.labels["crossplane.io/claim-name"]
                 toFieldPath: metadata.name
                 policy:
                   fromFieldPath: Optional
