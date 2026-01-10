@@ -231,6 +231,12 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
       containerRef.current.dataset.termCols = String(terminal.cols)
       containerRef.current.dataset.termRows = String(terminal.rows)
     }
+    const container = containerRef.current
+    const focusTerminal = () => terminal.focus()
+    if (container) {
+      container.addEventListener('pointerdown', focusTerminal)
+      container.addEventListener('focus', focusTerminal)
+    }
     terminalRef.current = terminal
 
     terminal.onData((data) => {
@@ -258,6 +264,10 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
     resizeObserverRef.current = resizeObserver
 
     return () => {
+      if (container) {
+        container.removeEventListener('pointerdown', focusTerminal)
+        container.removeEventListener('focus', focusTerminal)
+      }
       resizeObserver.disconnect()
       terminal.dispose()
       terminalRef.current = null
