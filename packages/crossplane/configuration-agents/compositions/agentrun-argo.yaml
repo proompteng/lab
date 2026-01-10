@@ -49,8 +49,6 @@ spec:
                 name: workflowName
             readinessChecks:
               - type: None
-            readinessChecks:
-              - type: None
     - step: parameters-map-to-list
       functionRef:
         name: function-map-to-list
