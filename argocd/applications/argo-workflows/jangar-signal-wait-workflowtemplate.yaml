@@ -15,7 +15,7 @@ spec:
           - name: deliveryId
             default: ''
           - name: namespace
-            default: "{{workflow.labels['crossplane.io/claim-namespace']}}"
+            default: ''
           - name: timeoutSeconds
             default: '86400'
           - name: pollSeconds
@@ -30,6 +30,9 @@ spec:
           signal_ref="{{inputs.parameters.signalRef}}"
           delivery_id="{{inputs.parameters.deliveryId}}"
           namespace="{{inputs.parameters.namespace}}"
+          if [ -z "${namespace}" ]; then
+            namespace="$(kubectl get workflow {{workflow.name}} -n {{workflow.namespace}} -o jsonpath='{.metadata.labels.crossplane\\.io/claim-namespace}' 2>/dev/null || true)"
+          fi
           if [ -z "${namespace}" ]; then
             namespace="{{workflow.namespace}}"
           fi

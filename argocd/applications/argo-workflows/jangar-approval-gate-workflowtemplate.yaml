@@ -13,7 +13,7 @@ spec:
           - name: policyRef
             default: ''
           - name: policyNamespace
-            default: "{{workflow.labels['crossplane.io/claim-namespace']}}"
+            default: ''
       steps:
         - - name: evaluate
             template: evaluate
@@ -40,6 +40,9 @@ spec:
           set -euo pipefail
           policy="{{inputs.parameters.policyRef}}"
           namespace="{{inputs.parameters.policyNamespace}}"
+          if [ -z "${namespace}" ]; then
+            namespace="$(kubectl get workflow {{workflow.name}} -n {{workflow.namespace}} -o jsonpath='{.metadata.labels.crossplane\\.io/claim-namespace}' 2>/dev/null || true)"
+          fi
           if [ -z "${namespace}" ]; then
             namespace="{{workflow.namespace}}"
           fi

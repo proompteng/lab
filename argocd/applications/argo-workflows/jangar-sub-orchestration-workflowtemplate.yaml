@@ -15,7 +15,7 @@ spec:
           - name: parameters
             default: ''
           - name: namespace
-            default: "{{workflow.labels['crossplane.io/claim-namespace']}}"
+            default: ''
           - name: deliveryId
             default: ''
       script:
@@ -29,6 +29,9 @@ spec:
           parameters_raw="{{inputs.parameters.parameters}}"
           namespace="{{inputs.parameters.namespace}}"
           delivery_id="{{inputs.parameters.deliveryId}}"
+          if [ -z "${namespace}" ]; then
+            namespace="$(kubectl get workflow {{workflow.name}} -n {{workflow.namespace}} -o jsonpath='{.metadata.labels.crossplane\\.io/claim-namespace}' 2>/dev/null || true)"
+          fi
           if [ -z "${namespace}" ]; then
             namespace="{{workflow.namespace}}"
           fi

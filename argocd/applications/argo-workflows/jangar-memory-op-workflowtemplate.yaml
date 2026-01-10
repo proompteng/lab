@@ -17,7 +17,7 @@ spec:
           - name: payload
             default: ''
           - name: namespace
-            default: "{{workflow.labels['crossplane.io/claim-namespace']}}"
+            default: ''
       script:
         image: registry.ide-newton.ts.net/lab/jangar:latest
         command:
@@ -29,6 +29,9 @@ spec:
           operation="{{inputs.parameters.operation}}"
           payload="{{inputs.parameters.payload}}"
           namespace="{{inputs.parameters.namespace}}"
+          if [ -z "${namespace}" ]; then
+            namespace="$(kubectl get workflow {{workflow.name}} -n {{workflow.namespace}} -o jsonpath='{.metadata.labels.crossplane\\.io/claim-namespace}' 2>/dev/null || true)"
+          fi
           if [ -z "${namespace}" ]; then
             namespace="{{workflow.namespace}}"
           fi
