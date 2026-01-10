@@ -1,10 +1,15 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, open, rm, stat } from 'node:fs/promises'
+import { mkdir, rm } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-
+import {
+  fetchTerminalBackend,
+  fetchTerminalBackendJson,
+  isTerminalBackendProxyEnabled,
+} from '~/server/terminal-backend'
+import { getTerminalPtyManager } from '~/server/terminal-pty-manager'
 import {
   deleteTerminalSessionRecord,
   getTerminalSessionRecord,
@@ -16,62 +21,24 @@ import {
 
 const SESSION_PREFIX = 'jangar-terminal-'
 const WORKTREE_DIR_NAME = '.worktrees'
-const LOG_DIR = process.env.JANGAR_TERMINAL_LOG_DIR?.trim() || '/tmp/jangar-terminals'
-const DEFAULT_LOG_MAX_BYTES = 8 * 1024 * 1024
-const DEFAULT_LOG_RETAIN_BYTES = 2 * 1024 * 1024
-const MIN_LOG_RETAIN_BYTES = 256 * 1024
 const DEFAULT_BASE_REF = process.env.JANGAR_TERMINAL_BASE_REF?.trim() || 'origin/main'
 const FALLBACK_BASE_REF = 'main'
 const MAX_WORKTREE_ATTEMPTS = 6
 const SESSION_ID_PATTERN = /^jangar-terminal-[a-z0-9-]+$/
-const SESSION_LIST_DELIMITER = '|'
 const MAIN_FETCH_ENABLED = (process.env.JANGAR_TERMINAL_FETCH_MAIN ?? 'true') !== 'false'
-const TMUX_TIMEOUT_MS = 10_000
 const FETCH_TIMEOUT_MS = 30_000
 const WORKTREE_TIMEOUT_MS = 60_000
-const TMUX_UNAVAILABLE_LOG_THROTTLE_MS = 60_000
-const INPUT_FLUSH_MS = 12
-const INPUT_BUFFER_MAX = 2048
-const TMUX_TMPDIR =
-  process.env.JANGAR_TMUX_TMPDIR?.trim() || process.env.TMUX_TMPDIR?.trim() || process.env.TMPDIR?.trim() || '/tmp'
-const TMUX_SOCKET_NAME = process.env.JANGAR_TMUX_SOCKET?.trim() || 'default'
+const DEFAULT_BUFFER_BYTES = 4 * 1024 * 1024
+const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000
 
-type InputQueueState = {
-  buffer: string
-  timer: ReturnType<typeof setTimeout> | null
-  flushing: boolean
+const parseNumber = (value: string | undefined, fallback: number) => {
+  const parsed = Number.parseInt(value ?? '', 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
-const inputQueue = new Map<string, InputQueueState>()
-
-export type TerminalSession = {
-  id: string
-  label: string
-  worktreePath: string | null
-  worktreeName: string | null
-  createdAt: string | null
-  attached: boolean
-  status: TerminalSessionStatus
-  errorMessage: string | null
-  readyAt: string | null
-  closedAt: string | null
-}
-
-type CommandResult = {
-  exitCode: number
-  stdout: string
-  stderr: string
-}
-
-type CommandOptions = {
-  cwd?: string
-  env?: NodeJS.ProcessEnv
-  timeoutMs?: number
-  label?: string
-}
-
-const isErrno = (error: unknown): error is NodeJS.ErrnoException =>
-  typeof error === 'object' && error !== null && 'code' in error
+const bufferBytes = parseNumber(process.env.JANGAR_TERMINAL_BUFFER_BYTES, DEFAULT_BUFFER_BYTES)
+const idleTimeoutMs = parseNumber(process.env.JANGAR_TERMINAL_IDLE_TIMEOUT_MS, DEFAULT_IDLE_TIMEOUT_MS)
+const publicTerminalUrl = process.env.JANGAR_TERMINAL_PUBLIC_URL?.trim() || null
 
 const resolveRepoRoot = () => resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
@@ -86,6 +53,19 @@ const resolveWorktreeRoot = () => join(resolveCodexBaseCwd(), WORKTREE_DIR_NAME)
 const readProcessText = async (stream: ReadableStream | null) => {
   if (!stream) return ''
   return new Response(stream).text()
+}
+
+type CommandResult = {
+  exitCode: number
+  stdout: string
+  stderr: string
+}
+
+type CommandOptions = {
+  cwd?: string
+  env?: NodeJS.ProcessEnv
+  timeoutMs?: number
+  label?: string
 }
 
 const runCommand = async (args: string[], options: CommandOptions = {}): Promise<CommandResult> => {
@@ -166,289 +146,129 @@ const gitEnv = () => ({ ...process.env, GIT_TERMINAL_PROMPT: '0' })
 const runGit = async (args: string[], cwd?: string, options?: CommandOptions) =>
   runCommand(['git', ...args], { cwd, env: gitEnv(), ...options })
 
-const ensureTmuxTmpDir = async () => {
-  await mkdir(TMUX_TMPDIR, { recursive: true })
-}
+const generateSuffix = () => randomUUID().slice(0, 8)
 
-const runTmux = async (args: string[], options: CommandOptions = {}) => {
-  await ensureTmuxTmpDir()
-  const env: NodeJS.ProcessEnv = { ...process.env, TMUX_TMPDIR }
-  delete env.TMUX
-  delete env.TMUX_PANE
-  return runCommand(['tmux', '-L', TMUX_SOCKET_NAME, ...args], {
-    env,
-    timeoutMs: options.timeoutMs ?? TMUX_TIMEOUT_MS,
-    label: options.label ?? 'tmux',
-  })
-}
+const buildWorktreeName = (suffix: string) => `codex-${suffix}`
 
-const ensureLogDir = async () => {
-  await mkdir(LOG_DIR, { recursive: true })
-}
-
-const ensureLogFile = async (path: string) => {
-  await ensureLogDir()
-  const handle = await open(path, 'a')
-  await handle.close()
-}
-
-const resolveTerminalLogLimits = () => {
-  const rawMax = Number.parseInt(process.env.JANGAR_TERMINAL_LOG_MAX_BYTES ?? '', 10)
-  const maxBytes = Number.isFinite(rawMax) && rawMax > 0 ? rawMax : DEFAULT_LOG_MAX_BYTES
-  const rawRetain = Number.parseInt(process.env.JANGAR_TERMINAL_LOG_RETAIN_BYTES ?? '', 10)
-  let retainBytes =
-    Number.isFinite(rawRetain) && rawRetain > 0 ? rawRetain : Math.min(DEFAULT_LOG_RETAIN_BYTES, maxBytes)
-  retainBytes = Math.min(retainBytes, maxBytes)
-  retainBytes = Math.max(retainBytes, Math.min(maxBytes, MIN_LOG_RETAIN_BYTES))
-  return { maxBytes, retainBytes }
-}
-
-export const trimTerminalLogIfNeeded = async (sessionId: string) => {
-  if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
-  const logPath = join(LOG_DIR, `${sessionId}.log`)
-  const stats = await stat(logPath).catch((error) => {
-    if (isErrno(error) && error.code === 'ENOENT') return null
-    throw error
-  })
-  if (!stats) {
-    await ensureLogFile(logPath)
-    return { trimmed: false, size: 0 }
-  }
-
-  const { maxBytes, retainBytes } = resolveTerminalLogLimits()
-  if (stats.size <= maxBytes) return { trimmed: false, size: stats.size }
-
-  const handle = await open(logPath, 'r+')
-  try {
-    const current = await handle.stat()
-    if (current.size <= maxBytes) return { trimmed: false, size: current.size }
-    const keepBytes = Math.min(retainBytes, current.size)
-    const start = Math.max(0, current.size - keepBytes)
-    const buffer = Buffer.alloc(keepBytes)
-    const { bytesRead } = await handle.read(buffer, 0, keepBytes, start)
-    await handle.truncate(0)
-    if (bytesRead > 0) {
-      await handle.write(buffer.subarray(0, bytesRead), 0, bytesRead, 0)
-    }
-    await handle.truncate(bytesRead)
-    return { trimmed: true, size: bytesRead }
-  } finally {
-    await handle.close()
-  }
-}
-
-const clearInputQueue = (sessionId: string) => {
-  const state = inputQueue.get(sessionId)
-  if (state?.timer) clearTimeout(state.timer)
-  inputQueue.delete(sessionId)
-}
-
-const flushInputQueue = async (sessionId: string) => {
-  const state = inputQueue.get(sessionId)
-  if (!state || state.flushing) return
-  if (!state.buffer) {
-    if (state.timer) {
-      clearTimeout(state.timer)
-      state.timer = null
-    }
-    return
-  }
-
-  state.flushing = true
-  const payload = state.buffer
-  state.buffer = ''
-
-  try {
-    await sendInputToTmux(sessionId, payload)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to send input to tmux'
-    console.warn('[terminals] input flush failed', { sessionId, message })
-  } finally {
-    state.flushing = false
-  }
-
-  if (state.buffer) {
-    state.timer = setTimeout(() => {
-      state.timer = null
-      void flushInputQueue(sessionId)
-    }, INPUT_FLUSH_MS)
-  }
-}
-
-const buildSessionId = (suffix: string) => `${SESSION_PREFIX}${suffix}`
-
-const buildWorktreeName = (suffix: string) => `term-${suffix}`
+const buildSessionId = (worktreeName: string) => `${SESSION_PREFIX}${worktreeName}`
 
 const buildWorktreePath = (worktreeName: string) => join(resolveWorktreeRoot(), worktreeName)
 
-const normalizeSuffix = (value: string) => value.toLowerCase().replace(/[^a-z0-9-]/g, '-')
-
-const generateSuffix = () => normalizeSuffix(randomUUID().slice(0, 8))
-
-const isSafeWorktreePath = (worktreePath: string | null, worktreeName: string | null) => {
-  if (!worktreePath || !worktreeName) return false
-  const root = resolveWorktreeRoot()
-  const resolved = resolve(worktreePath)
-  if (!resolved.startsWith(`${root}${sep}`)) return false
-  return resolved.endsWith(`${sep}${worktreeName}`)
-}
-
-const shouldSkipGitWorktree = () => {
-  if (process.env.NODE_ENV === 'test') return true
-  return typeof (globalThis as { Bun?: unknown }).Bun === 'undefined'
-}
-
 const ensureBaseRef = async (repoRoot: string) => {
-  if (MAIN_FETCH_ENABLED) {
-    const fetchResult = await runGit(['fetch', '--no-tags', '--prune', 'origin', 'main'], repoRoot, {
-      timeoutMs: FETCH_TIMEOUT_MS,
-      label: 'git fetch origin main',
-    })
-    if (fetchResult.exitCode !== 0) {
-      console.warn('[terminals] git fetch origin main failed', fetchResult.stderr.trim())
-    }
-  }
-
-  const preferred = await runGit(['rev-parse', '--verify', DEFAULT_BASE_REF], repoRoot, {
-    timeoutMs: FETCH_TIMEOUT_MS,
-    label: 'git rev-parse preferred',
-  })
-  if (preferred.exitCode === 0) return DEFAULT_BASE_REF
-
-  const fallback = await runGit(['rev-parse', '--verify', FALLBACK_BASE_REF], repoRoot, {
-    timeoutMs: FETCH_TIMEOUT_MS,
-    label: 'git rev-parse fallback',
-  })
+  const [primary, fallback] = await Promise.all([
+    runGit(['rev-parse', '--verify', DEFAULT_BASE_REF], repoRoot, { timeoutMs: FETCH_TIMEOUT_MS }),
+    runGit(['rev-parse', '--verify', FALLBACK_BASE_REF], repoRoot, { timeoutMs: FETCH_TIMEOUT_MS }),
+  ])
+  if (primary.exitCode === 0) return DEFAULT_BASE_REF
   if (fallback.exitCode === 0) return FALLBACK_BASE_REF
 
-  throw new Error('Unable to resolve main ref for terminal worktree. Set JANGAR_TERMINAL_BASE_REF.')
+  if (!MAIN_FETCH_ENABLED) {
+    throw new Error(`Unable to resolve base ref: ${DEFAULT_BASE_REF}`)
+  }
+
+  const fetchResult = await runGit(['fetch', '--all', '--prune'], repoRoot, {
+    timeoutMs: FETCH_TIMEOUT_MS,
+    label: 'git fetch',
+  })
+  if (fetchResult.exitCode !== 0) {
+    throw new Error(fetchResult.stderr.trim() || 'Unable to fetch base ref')
+  }
+
+  const afterFetch = await runGit(['rev-parse', '--verify', DEFAULT_BASE_REF], repoRoot, {
+    timeoutMs: FETCH_TIMEOUT_MS,
+  })
+  if (afterFetch.exitCode === 0) return DEFAULT_BASE_REF
+
+  const fallbackAfter = await runGit(['rev-parse', '--verify', FALLBACK_BASE_REF], repoRoot, {
+    timeoutMs: FETCH_TIMEOUT_MS,
+  })
+  if (fallbackAfter.exitCode === 0) return FALLBACK_BASE_REF
+
+  throw new Error(`Unable to resolve base ref: ${DEFAULT_BASE_REF}`)
 }
 
 const createWorktreeAtPath = async (worktreeName: string, worktreePath: string, baseRef: string, repoRoot: string) => {
-  if (existsSync(worktreePath)) {
-    throw new Error(`Worktree path already exists: ${worktreePath}`)
-  }
-
-  const result = await runGit(
-    ['worktree', 'add', '--quiet', '--no-checkout', '--detach', worktreePath, baseRef],
-    repoRoot,
-    { timeoutMs: WORKTREE_TIMEOUT_MS, label: 'git worktree add' },
-  )
+  const result = await runGit(['worktree', 'add', '--detach', '--force', worktreePath, baseRef], repoRoot, {
+    timeoutMs: WORKTREE_TIMEOUT_MS,
+    label: 'git worktree add',
+  })
   if (result.exitCode !== 0) {
     const detail = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n')
-    throw new Error(detail || 'Unable to add worktree')
+    throw new Error(detail || 'Unable to create worktree')
   }
 
-  const checkout = await runGit(['checkout', '--detach', '--force', baseRef], worktreePath, {
-    timeoutMs: WORKTREE_TIMEOUT_MS,
-    label: 'git checkout worktree',
-  })
-  if (checkout.exitCode !== 0) {
-    const detail = [checkout.stdout.trim(), checkout.stderr.trim()].filter(Boolean).join('\n')
-    throw new Error(detail || 'Unable to checkout worktree')
-  }
+  await runGit(['config', 'user.name', 'Jangar Terminal'], worktreePath)
+  await runGit(['config', 'user.email', 'terminal@jangar.local'], worktreePath)
 
-  return { worktreeName, worktreePath, baseRef }
+  return { worktreeName, worktreePath }
 }
 
 const createFreshWorktree = async () => {
   const repoRoot = resolveCodexBaseCwd()
-  const worktreeRoot = resolveWorktreeRoot()
-  await mkdir(worktreeRoot, { recursive: true })
-
   const baseRef = await ensureBaseRef(repoRoot)
-
-  for (let attempt = 0; attempt < MAX_WORKTREE_ATTEMPTS; attempt += 1) {
-    const suffix = generateSuffix()
-    const worktreeName = buildWorktreeName(suffix)
-    const worktreePath = join(worktreeRoot, worktreeName)
-
-    if (existsSync(worktreePath)) continue
-
-    if (shouldSkipGitWorktree()) {
-      await mkdir(worktreePath, { recursive: true })
-      return { worktreeName, worktreePath, baseRef }
-    }
-
-    try {
-      const created = await createWorktreeAtPath(worktreeName, worktreePath, baseRef, repoRoot)
-      return created
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
-      console.warn('[terminals] git worktree add failed', { worktreeName, detail })
-    }
-  }
-
-  throw new Error('Unable to allocate a new terminal worktree.')
+  await mkdir(resolveWorktreeRoot(), { recursive: true })
+  const suffix = generateSuffix()
+  const worktreeName = buildWorktreeName(suffix)
+  const worktreePath = buildWorktreePath(worktreeName)
+  await createWorktreeAtPath(worktreeName, worktreePath, baseRef, repoRoot)
+  return { worktreeName, worktreePath, baseRef }
 }
 
-type TmuxSessionInfo = {
+const isSafeWorktreePath = (worktreePath: string, worktreeName: string | null) => {
+  if (!worktreeName) return false
+  const root = resolveWorktreeRoot()
+  const rel = relative(root, worktreePath)
+  if (!rel || rel.startsWith('..') || rel.includes('..') || rel.includes(`..${sep}`)) return false
+  return rel === worktreeName
+}
+
+const manager = isTerminalBackendProxyEnabled()
+  ? null
+  : getTerminalPtyManager({
+      bufferBytes,
+      idleTimeoutMs,
+      onExit: async (sessionId, detail) => {
+        const record = await getTerminalSessionRecord(sessionId)
+        if (!record) return
+        const message = detail.exitCode === 0 ? null : `Session exited (code ${detail.exitCode ?? 'unknown'})`
+        await updateTerminalSessionRecord(sessionId, {
+          status: 'closed',
+          worktreeName: record.worktreeName,
+          worktreePath: record.worktreePath,
+          tmuxSocket: record.tmuxSocket,
+          errorMessage: message,
+          readyAt: record.readyAt,
+          closedAt: new Date().toISOString(),
+          metadata: record.metadata,
+        })
+      },
+    })
+
+export type TerminalSession = {
   id: string
+  label: string
   worktreePath: string | null
   worktreeName: string | null
   createdAt: string | null
   attached: boolean
+  status: TerminalSessionStatus
+  errorMessage: string | null
+  readyAt: string | null
+  closedAt: string | null
+  terminalUrl: string | null
+  backendId: string | null
 }
 
-const parseSessionLine = (line: string): TmuxSessionInfo | null => {
-  const [name, createdRaw, attachedRaw, sessionPath] = line.split(SESSION_LIST_DELIMITER)
-  if (!name?.startsWith(SESSION_PREFIX)) return null
-
-  const created = Number.parseInt(createdRaw ?? '', 10)
-  const createdAt = Number.isFinite(created) ? new Date(created * 1000).toISOString() : null
-  const attached = attachedRaw === '1'
-  const worktreeRoot = resolveWorktreeRoot()
-  const normalizedPath = sessionPath || null
-  let worktreeName: string | null = null
-
-  if (normalizedPath?.startsWith(worktreeRoot)) {
-    const relativePath = relative(worktreeRoot, normalizedPath)
-    const [segment] = relativePath.split(sep)
-    worktreeName = segment || null
-  }
-
-  return {
-    id: name,
-    worktreePath: normalizedPath,
-    worktreeName,
-    createdAt,
-    attached,
-  }
+type PlannedSession = {
+  sessionId: string
+  worktreeName: string
+  worktreePath: string
 }
 
-let lastTmuxUnavailableLogAt = 0
-
-const listTmuxSessions = async (): Promise<TmuxSessionInfo[]> => {
-  const result = await runTmux([
-    'list-sessions',
-    '-F',
-    `#{session_name}${SESSION_LIST_DELIMITER}#{session_created}${SESSION_LIST_DELIMITER}#{session_attached}${SESSION_LIST_DELIMITER}#{session_path}`,
-  ])
-  if (result.exitCode !== 0) {
-    const stderr = result.stderr.toLowerCase()
-    if (
-      stderr.includes('no server running') ||
-      stderr.includes('no sessions') ||
-      stderr.includes('error connecting') ||
-      stderr.includes('failed to connect') ||
-      stderr.includes('no such file or directory')
-    ) {
-      const now = Date.now()
-      if (now - lastTmuxUnavailableLogAt > TMUX_UNAVAILABLE_LOG_THROTTLE_MS) {
-        lastTmuxUnavailableLogAt = now
-        console.info('[terminals] tmux server unavailable', { stderr: result.stderr.trim(), socket: TMUX_SOCKET_NAME })
-      }
-      return []
-    }
-    throw new Error(result.stderr.trim() || 'Unable to list tmux sessions')
-  }
-
-  return result.stdout
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => parseSessionLine(line))
-    .filter((item): item is TmuxSessionInfo => Boolean(item))
+const getMetadataValue = (metadata: Record<string, unknown> | null | undefined, key: string) => {
+  if (!metadata || typeof metadata !== 'object') return null
+  const value = metadata[key]
+  return typeof value === 'string' ? value : null
 }
 
 const buildTerminalSession = (input: {
@@ -461,6 +281,8 @@ const buildTerminalSession = (input: {
   errorMessage: string | null
   readyAt: string | null
   closedAt: string | null
+  terminalUrl: string | null
+  backendId: string | null
 }): TerminalSession => ({
   id: input.id,
   label: input.worktreeName ?? input.id,
@@ -472,198 +294,9 @@ const buildTerminalSession = (input: {
   errorMessage: input.errorMessage,
   readyAt: input.readyAt,
   closedAt: input.closedAt,
+  terminalUrl: input.terminalUrl,
+  backendId: input.backendId,
 })
-
-const reconcileRecordStatus = async (
-  record: {
-    id: string
-    status: TerminalSessionStatus
-    errorMessage: string | null
-    readyAt: string | null
-    closedAt: string | null
-    worktreeName: string | null
-    worktreePath: string | null
-    createdAt: string
-    updatedAt: string
-    metadata: Record<string, unknown>
-  },
-  tmuxSession: TmuxSessionInfo | null,
-) => {
-  if (tmuxSession && record.status !== 'ready') {
-    const readyAt = record.readyAt ?? new Date().toISOString()
-    const updated = await updateTerminalSessionRecord(record.id, {
-      status: 'ready',
-      worktreeName: record.worktreeName,
-      worktreePath: record.worktreePath,
-      tmuxSocket: TMUX_SOCKET_NAME,
-      errorMessage: null,
-      readyAt,
-      closedAt: null,
-      metadata: record.metadata,
-    })
-    return updated ?? record
-  }
-
-  if (!tmuxSession && record.status === 'ready') {
-    const updated = await updateTerminalSessionRecord(record.id, {
-      status: 'closed',
-      worktreeName: record.worktreeName,
-      worktreePath: record.worktreePath,
-      tmuxSocket: TMUX_SOCKET_NAME,
-      errorMessage: record.errorMessage ?? 'tmux session missing',
-      readyAt: record.readyAt,
-      closedAt: record.closedAt ?? new Date().toISOString(),
-      metadata: record.metadata,
-    })
-    return updated ?? record
-  }
-
-  if (!tmuxSession && record.status === 'error') {
-    const updated = await updateTerminalSessionRecord(record.id, {
-      status: 'closed',
-      worktreeName: record.worktreeName,
-      worktreePath: record.worktreePath,
-      tmuxSocket: TMUX_SOCKET_NAME,
-      errorMessage: record.errorMessage ?? 'tmux session missing',
-      readyAt: record.readyAt,
-      closedAt: record.closedAt ?? new Date().toISOString(),
-      metadata: record.metadata,
-    })
-    return updated ?? record
-  }
-
-  return record
-}
-
-export const listTerminalSessions = async (options: { includeClosed?: boolean } = {}): Promise<TerminalSession[]> => {
-  const [tmuxSessions, records] = await Promise.all([listTmuxSessions(), listTerminalSessionRecords()])
-  const tmuxMap = new Map(tmuxSessions.map((session) => [session.id, session]))
-  const recordIds = new Set(records.map((record) => record.id))
-  const sessions: TerminalSession[] = []
-
-  for (const record of records) {
-    const tmuxSession = tmuxMap.get(record.id) ?? null
-    const reconciled = await reconcileRecordStatus(record, tmuxSession)
-    const attached = tmuxSession?.attached ?? false
-    const createdAt = reconciled.createdAt ?? tmuxSession?.createdAt ?? null
-    sessions.push(
-      buildTerminalSession({
-        id: reconciled.id,
-        worktreeName: reconciled.worktreeName ?? tmuxSession?.worktreeName ?? null,
-        worktreePath: reconciled.worktreePath ?? tmuxSession?.worktreePath ?? null,
-        createdAt,
-        attached,
-        status: reconciled.status,
-        errorMessage: reconciled.errorMessage,
-        readyAt: reconciled.readyAt,
-        closedAt: reconciled.closedAt,
-      }),
-    )
-  }
-
-  for (const tmuxSession of tmuxSessions) {
-    if (recordIds.has(tmuxSession.id)) continue
-    sessions.push(
-      buildTerminalSession({
-        id: tmuxSession.id,
-        worktreeName: tmuxSession.worktreeName,
-        worktreePath: tmuxSession.worktreePath,
-        createdAt: tmuxSession.createdAt,
-        attached: tmuxSession.attached,
-        status: 'ready',
-        errorMessage: null,
-        readyAt: tmuxSession.createdAt,
-        closedAt: null,
-      }),
-    )
-  }
-
-  const ordered = sessions.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
-  if (options.includeClosed) return ordered
-  return ordered.filter((session) => session.status !== 'closed')
-}
-
-export const getTerminalSession = async (sessionId: string): Promise<TerminalSession | null> => {
-  if (!SESSION_ID_PATTERN.test(sessionId)) return null
-  const [tmuxSessions, record] = await Promise.all([listTmuxSessions(), getTerminalSessionRecord(sessionId)])
-  const tmuxSession = tmuxSessions.find((session) => session.id === sessionId) ?? null
-  if (record) {
-    const reconciled = await reconcileRecordStatus(record, tmuxSession)
-    return buildTerminalSession({
-      id: reconciled.id,
-      worktreeName: reconciled.worktreeName ?? tmuxSession?.worktreeName ?? null,
-      worktreePath: reconciled.worktreePath ?? tmuxSession?.worktreePath ?? null,
-      createdAt: reconciled.createdAt ?? tmuxSession?.createdAt ?? null,
-      attached: tmuxSession?.attached ?? false,
-      status: reconciled.status,
-      errorMessage: reconciled.errorMessage,
-      readyAt: reconciled.readyAt,
-      closedAt: reconciled.closedAt,
-    })
-  }
-  if (!tmuxSession) return null
-  return buildTerminalSession({
-    id: tmuxSession.id,
-    worktreeName: tmuxSession.worktreeName,
-    worktreePath: tmuxSession.worktreePath,
-    createdAt: tmuxSession.createdAt,
-    attached: tmuxSession.attached,
-    status: 'ready',
-    errorMessage: null,
-    readyAt: tmuxSession.createdAt,
-    closedAt: null,
-  })
-}
-
-type PlannedSession = {
-  sessionId: string
-  worktreeName: string
-  worktreePath: string
-}
-
-const allocateTerminalSession = async (): Promise<PlannedSession> => {
-  for (let attempt = 0; attempt < MAX_WORKTREE_ATTEMPTS; attempt += 1) {
-    const suffix = generateSuffix()
-    const worktreeName = buildWorktreeName(suffix)
-    const sessionId = buildSessionId(worktreeName)
-    const worktreePath = buildWorktreePath(worktreeName)
-    if (existsSync(worktreePath)) continue
-    const existing = await getTerminalSessionRecord(sessionId)
-    if (existing) continue
-    return { sessionId, worktreeName, worktreePath }
-  }
-  throw new Error('Unable to allocate a new terminal session id.')
-}
-
-const startTmuxSession = async (sessionId: string, worktreeName: string, worktreePath: string, baseRef: string) => {
-  console.info('[terminals] creating tmux session', {
-    sessionId,
-    worktreePath,
-    baseRef,
-    tmuxTmpDir: TMUX_TMPDIR,
-    tmuxSocket: TMUX_SOCKET_NAME,
-  })
-
-  const tmuxCreate = await runTmux(['new-session', '-d', '-s', sessionId, '-c', worktreePath], {
-    label: 'tmux new-session',
-  })
-  if (tmuxCreate.exitCode !== 0) {
-    const detail = [tmuxCreate.stdout.trim(), tmuxCreate.stderr.trim()].filter(Boolean).join('\n')
-    console.warn('[terminals] tmux new-session failed', { sessionId, detail })
-    throw new Error(detail || 'Unable to start tmux session')
-  }
-
-  await runTmux(['set-environment', '-t', sessionId, 'JANGAR_WORKTREE_NAME', worktreeName], {
-    label: 'tmux set-environment worktree name',
-  })
-  await runTmux(['set-environment', '-t', sessionId, 'JANGAR_WORKTREE_PATH', worktreePath], {
-    label: 'tmux set-environment worktree path',
-  })
-
-  await ensureTerminalLogPipe(sessionId)
-
-  console.info('[terminals] tmux session ready', { sessionId, worktreePath })
-}
 
 const recordSessionStatus = async (
   sessionId: string,
@@ -675,14 +308,14 @@ const recordSessionStatus = async (
     readyAt?: string | null
     closedAt?: string | null
     metadata?: Record<string, unknown>
-  } = {},
+  },
 ) => {
   const record = await upsertTerminalSessionRecord({
     id: sessionId,
     status,
     worktreeName: details.worktreeName ?? null,
     worktreePath: details.worktreePath ?? null,
-    tmuxSocket: TMUX_SOCKET_NAME,
+    tmuxSocket: null,
     errorMessage: details.errorMessage ?? null,
     readyAt: details.readyAt ?? null,
     closedAt: details.closedAt ?? null,
@@ -705,7 +338,7 @@ export const markTerminalSessionError = async (sessionId: string, message: strin
     status: 'error',
     worktreeName: record.worktreeName,
     worktreePath: record.worktreePath,
-    tmuxSocket: TMUX_SOCKET_NAME,
+    tmuxSocket: record.tmuxSocket,
     errorMessage: message,
     readyAt: record.readyAt,
     closedAt: record.closedAt,
@@ -713,20 +346,25 @@ export const markTerminalSessionError = async (sessionId: string, message: strin
   })
 }
 
+const resolveBackendMetadata = () => ({
+  backendUrl: publicTerminalUrl,
+  backendId: manager?.getInstanceId() ?? null,
+})
+
 const provisionTerminalSession = async ({ sessionId, worktreeName, worktreePath }: PlannedSession) => {
   try {
     const repoRoot = resolveCodexBaseCwd()
     const baseRef = await ensureBaseRef(repoRoot)
     await mkdir(resolveWorktreeRoot(), { recursive: true })
     await createWorktreeAtPath(worktreeName, worktreePath, baseRef, repoRoot)
-    await startTmuxSession(sessionId, worktreeName, worktreePath, baseRef)
+    manager?.startSession({ sessionId, worktreePath, worktreeName })
     await recordSessionStatus(sessionId, 'ready', {
       worktreeName,
       worktreePath,
       errorMessage: null,
       readyAt: new Date().toISOString(),
       closedAt: null,
-      metadata: { baseRef },
+      metadata: { baseRef, ...resolveBackendMetadata() },
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -742,12 +380,12 @@ const provisionTerminalSession = async ({ sessionId, worktreeName, worktreePath 
 const createTerminalSessionImmediate = async (): Promise<TerminalSession> => {
   const { worktreeName, worktreePath, baseRef } = await createFreshWorktree()
   const sessionId = buildSessionId(worktreeName)
-  await startTmuxSession(sessionId, worktreeName, worktreePath, baseRef)
+  manager?.startSession({ sessionId, worktreePath, worktreeName })
   const record = await recordSessionStatus(sessionId, 'ready', {
     worktreeName,
     worktreePath,
     readyAt: new Date().toISOString(),
-    metadata: { baseRef },
+    metadata: { baseRef, ...resolveBackendMetadata() },
   })
   return buildTerminalSession({
     id: sessionId,
@@ -759,10 +397,36 @@ const createTerminalSessionImmediate = async (): Promise<TerminalSession> => {
     errorMessage: record?.errorMessage ?? null,
     readyAt: record?.readyAt ?? new Date().toISOString(),
     closedAt: record?.closedAt ?? null,
+    terminalUrl: publicTerminalUrl,
+    backendId: manager?.getInstanceId() ?? null,
   })
 }
 
+const allocateTerminalSession = async (): Promise<PlannedSession> => {
+  for (let attempt = 0; attempt < MAX_WORKTREE_ATTEMPTS; attempt += 1) {
+    const suffix = generateSuffix()
+    const worktreeName = buildWorktreeName(suffix)
+    const sessionId = buildSessionId(worktreeName)
+    const worktreePath = buildWorktreePath(worktreeName)
+    if (existsSync(worktreePath)) continue
+    const existing = await getTerminalSessionRecord(sessionId)
+    if (existing) continue
+    return { sessionId, worktreeName, worktreePath }
+  }
+  throw new Error('Unable to allocate a new terminal session id.')
+}
+
 export const createTerminalSession = async (): Promise<TerminalSession> => {
+  if (isTerminalBackendProxyEnabled()) {
+    const payload = await fetchTerminalBackendJson<{ ok: boolean; session: TerminalSession; message?: string }>(
+      'api/terminals?create=1',
+    )
+    if (!payload.ok) {
+      throw new Error(payload.message ?? 'Unable to create terminal session')
+    }
+    return payload.session
+  }
+
   const planned = await allocateTerminalSession()
   const record = await recordSessionStatus(planned.sessionId, 'creating', {
     worktreeName: planned.worktreeName,
@@ -788,110 +452,128 @@ export const createTerminalSession = async (): Promise<TerminalSession> => {
     errorMessage: record.errorMessage,
     readyAt: record.readyAt,
     closedAt: record.closedAt,
+    terminalUrl: getMetadataValue(record.metadata, 'backendUrl') ?? publicTerminalUrl,
+    backendId: getMetadataValue(record.metadata, 'backendId'),
   })
 }
 
-export const ensureTerminalLogPipe = async (sessionId: string): Promise<string> => {
-  if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
-  const logPath = join(LOG_DIR, `${sessionId}.log`)
-  await ensureLogFile(logPath)
-  await trimTerminalLogIfNeeded(sessionId)
-  const pipeCommand = `cat >> ${logPath}`
-  const result = await runTmux(['pipe-pane', '-t', sessionId, pipeCommand], {
-    label: 'tmux pipe-pane',
-  })
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr.trim() || 'Unable to attach tmux log pipe')
-  }
-  return logPath
-}
-
-const fetchTerminalCursor = async (sessionId: string) => {
-  const result = await runTmux(['display-message', '-p', '-t', sessionId, '#{cursor_x} #{cursor_y}'], {
-    label: 'tmux display-message',
-  })
-  if (result.exitCode !== 0) return null
-  const [xRaw, yRaw] = result.stdout.trim().split(/\s+/)
-  const x = Number.parseInt(xRaw ?? '', 10)
-  const y = Number.parseInt(yRaw ?? '', 10)
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return null
-  return { x, y }
-}
-
-const parseTerminalDimensions = (value: string) => {
-  const [colsRaw, rowsRaw] = value.trim().split(/\s+/)
-  const cols = Number.parseInt(colsRaw ?? '', 10)
-  const rows = Number.parseInt(rowsRaw ?? '', 10)
-  if (!Number.isFinite(cols) || !Number.isFinite(rows)) return null
-  return { cols, rows }
-}
-
-export const fetchTerminalDimensions = async (sessionId: string) => {
-  if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
-  const result = await runTmux(['display-message', '-p', '-t', sessionId, '#{pane_width} #{pane_height}'], {
-    label: 'tmux display-message',
-  })
-  if (result.exitCode !== 0) return null
-  return parseTerminalDimensions(result.stdout)
-}
-
-export const waitForTerminalDimensions = async (
-  sessionId: string,
-  cols: number,
-  rows: number,
-  timeoutMs = 700,
-  intervalMs = 60,
-) => {
-  if (!Number.isFinite(cols) || !Number.isFinite(rows)) return null
-  const start = Date.now()
-  let last: { cols: number; rows: number } | null = null
-  while (Date.now() - start < timeoutMs) {
-    const current = await fetchTerminalDimensions(sessionId).catch(() => null)
-    if (current) {
-      last = current
-      if (current.cols === cols && current.rows === rows) return current
+export const listTerminalSessions = async (options: { includeClosed?: boolean } = {}): Promise<TerminalSession[]> => {
+  if (isTerminalBackendProxyEnabled()) {
+    const query = options.includeClosed ? '?includeClosed=1' : ''
+    const payload = await fetchTerminalBackendJson<{
+      ok: boolean
+      sessions: TerminalSession[]
+      message?: string
+    }>(`api/terminals${query}`)
+    if (!payload.ok) {
+      throw new Error(payload.message ?? 'Unable to list terminal sessions')
     }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+    return payload.sessions
   }
-  return last
+
+  const records = await listTerminalSessionRecords()
+  const activeSessions = manager?.listSessions() ?? []
+  const activeMap = new Map(activeSessions.map((session) => [session.id, session]))
+  const sessions: TerminalSession[] = []
+
+  for (const record of records) {
+    const active = activeMap.get(record.id) ?? null
+    let status = record.status
+    if (active && status !== 'ready') {
+      const updated = await updateTerminalSessionRecord(record.id, {
+        status: 'ready',
+        worktreeName: record.worktreeName,
+        worktreePath: record.worktreePath,
+        tmuxSocket: record.tmuxSocket,
+        errorMessage: null,
+        readyAt: record.readyAt ?? new Date().toISOString(),
+        closedAt: null,
+        metadata: record.metadata,
+      })
+      status = updated?.status ?? status
+    }
+    if (!active && status === 'ready' && manager) {
+      const updated = await updateTerminalSessionRecord(record.id, {
+        status: 'closed',
+        worktreeName: record.worktreeName,
+        worktreePath: record.worktreePath,
+        tmuxSocket: record.tmuxSocket,
+        errorMessage: record.errorMessage ?? 'terminal session missing',
+        readyAt: record.readyAt,
+        closedAt: record.closedAt ?? new Date().toISOString(),
+        metadata: record.metadata,
+      })
+      status = updated?.status ?? status
+    }
+
+    sessions.push(
+      buildTerminalSession({
+        id: record.id,
+        worktreeName: record.worktreeName,
+        worktreePath: record.worktreePath,
+        createdAt: record.createdAt,
+        attached: active?.attached ?? false,
+        status,
+        errorMessage: record.errorMessage,
+        readyAt: record.readyAt,
+        closedAt: record.closedAt,
+        terminalUrl: getMetadataValue(record.metadata, 'backendUrl') ?? publicTerminalUrl,
+        backendId: getMetadataValue(record.metadata, 'backendId'),
+      }),
+    )
+  }
+
+  const ordered = sessions.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
+  if (options.includeClosed) return ordered
+  return ordered.filter((session) => session.status !== 'closed')
 }
 
-export const captureTerminalSnapshot = async (sessionId: string, lines = 2000): Promise<string> => {
-  if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
-  const [captureResult, cursor] = await Promise.all([
-    runTmux(['capture-pane', '-ep', '-S', `-${lines}`, '-t', sessionId]),
-    fetchTerminalCursor(sessionId).catch(() => null),
-  ])
-  if (captureResult.exitCode !== 0) {
-    throw new Error(captureResult.stderr.trim() || 'Unable to capture tmux pane')
+export const getTerminalSession = async (sessionId: string): Promise<TerminalSession | null> => {
+  if (!SESSION_ID_PATTERN.test(sessionId)) return null
+  if (isTerminalBackendProxyEnabled()) {
+    const payload = await fetchTerminalBackendJson<{
+      ok: boolean
+      session?: TerminalSession
+      message?: string
+    }>(`api/terminals/${encodeURIComponent(sessionId)}`)
+    if (!payload.ok) {
+      throw new Error(payload.message ?? 'Unable to load terminal session')
+    }
+    return payload.session ?? null
   }
-  let snapshot = captureResult.stdout.replace(/\n+$/g, '')
-  snapshot = snapshot.replace(/\r?\n/g, '\r\n')
-  if (cursor) {
-    const row = Math.max(1, cursor.y + 1)
-    const col = Math.max(1, cursor.x + 1)
-    snapshot += `\u001b[${row};${col}H`
-  }
-  return snapshot
+  const record = await getTerminalSessionRecord(sessionId)
+  if (!record) return null
+  const active = manager?.getSession(sessionId)
+  const attached = active ? active.connections.size > 0 : false
+  return buildTerminalSession({
+    id: record.id,
+    worktreeName: record.worktreeName,
+    worktreePath: record.worktreePath,
+    createdAt: record.createdAt,
+    attached,
+    status: record.status,
+    errorMessage: record.errorMessage,
+    readyAt: record.readyAt,
+    closedAt: record.closedAt,
+    terminalUrl: getMetadataValue(record.metadata, 'backendUrl') ?? publicTerminalUrl,
+    backendId: getMetadataValue(record.metadata, 'backendId'),
+  })
 }
 
 export const ensureTerminalSessionExists = async (sessionId: string): Promise<boolean> => {
   if (!SESSION_ID_PATTERN.test(sessionId)) return false
   const record = await getTerminalSessionRecord(sessionId)
   if (record && record.status === 'creating') return false
-  const result = await runTmux(['has-session', '-t', sessionId], { label: 'tmux has-session' })
-  if (result.exitCode === 0) return true
-  const stderr = result.stderr.toLowerCase()
-  if (stderr.includes('error connecting') || stderr.includes('failed to connect')) {
-    console.warn('[terminals] tmux has-session failed', { sessionId, stderr: result.stderr.trim() })
-  }
+  if (!manager) return false
+  const runtime = manager.getSession(sessionId)
+  if (runtime) return true
   if (record && record.status === 'ready') {
     await updateTerminalSessionRecord(sessionId, {
       status: 'error',
       worktreeName: record.worktreeName,
       worktreePath: record.worktreePath,
-      tmuxSocket: TMUX_SOCKET_NAME,
-      errorMessage: record.errorMessage ?? 'tmux session missing',
+      tmuxSocket: record.tmuxSocket,
+      errorMessage: record.errorMessage ?? 'terminal session missing',
       readyAt: record.readyAt,
       closedAt: record.closedAt ?? new Date().toISOString(),
       metadata: record.metadata,
@@ -902,25 +584,24 @@ export const ensureTerminalSessionExists = async (sessionId: string): Promise<bo
 
 export const terminateTerminalSession = async (sessionId: string) => {
   if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
-  const record = await getTerminalSessionRecord(sessionId)
-  const hasSession = await runTmux(['has-session', '-t', sessionId], { label: 'tmux has-session' })
-
-  if (hasSession.exitCode === 0) {
-    const killResult = await runTmux(['kill-session', '-t', sessionId], { label: 'tmux kill-session' })
-    if (killResult.exitCode !== 0) {
-      const detail = [killResult.stdout.trim(), killResult.stderr.trim()].filter(Boolean).join('\n')
-      throw new Error(detail || 'Unable to terminate tmux session')
+  if (isTerminalBackendProxyEnabled()) {
+    const response = await fetchTerminalBackend(`api/terminals/${encodeURIComponent(sessionId)}/terminate`, {
+      method: 'POST',
+    })
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as { message?: string } | null
+      throw new Error(payload?.message ?? 'Unable to terminate terminal session')
     }
+    return
   }
-
-  clearInputQueue(sessionId)
-
+  const record = await getTerminalSessionRecord(sessionId)
+  manager?.terminate(sessionId)
   await upsertTerminalSessionRecord({
     id: sessionId,
     status: 'closed',
     worktreeName: record?.worktreeName ?? null,
     worktreePath: record?.worktreePath ?? null,
-    tmuxSocket: TMUX_SOCKET_NAME,
+    tmuxSocket: record?.tmuxSocket ?? null,
     errorMessage: null,
     readyAt: record?.readyAt ?? null,
     closedAt: new Date().toISOString(),
@@ -930,10 +611,20 @@ export const terminateTerminalSession = async (sessionId: string) => {
 
 export const deleteTerminalSession = async (sessionId: string) => {
   if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
+  if (isTerminalBackendProxyEnabled()) {
+    const response = await fetchTerminalBackend(`api/terminals/${encodeURIComponent(sessionId)}/delete`, {
+      method: 'POST',
+    })
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as { message?: string } | null
+      throw new Error(payload?.message ?? 'Unable to delete terminal session')
+    }
+    return
+  }
 
   const record = await getTerminalSessionRecord(sessionId)
-  const hasSession = await runTmux(['has-session', '-t', sessionId], { label: 'tmux has-session' })
-  if (hasSession.exitCode === 0) {
+  const runtime = manager?.getSession(sessionId)
+  if (runtime) {
     throw new Error('Session is still running. Terminate it before deleting.')
   }
 
@@ -952,70 +643,51 @@ export const deleteTerminalSession = async (sessionId: string) => {
     }
   }
 
-  await rm(join(LOG_DIR, `${sessionId}.log`), { force: true })
   await deleteTerminalSessionRecord(sessionId)
-  clearInputQueue(sessionId)
-}
-
-const sendInputToTmux = async (sessionId: string, input: string) => {
-  if (!input) return
-  const result = await runTmux(['send-keys', '-t', sessionId, '-l', '--', input], { label: 'tmux send-keys' })
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr.trim() || 'Unable to send input to tmux')
-  }
 }
 
 export const sendTerminalInput = async (sessionId: string, input: string) => {
   if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
-  await sendInputToTmux(sessionId, input)
-}
-
-export const queueTerminalInput = (sessionId: string, input: string) => {
-  if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
-  if (!input) return
-  const state = inputQueue.get(sessionId) ?? { buffer: '', timer: null, flushing: false }
-  state.buffer += input
-  inputQueue.set(sessionId, state)
-
-  if (state.buffer.length >= INPUT_BUFFER_MAX) {
-    if (state.timer) {
-      clearTimeout(state.timer)
-      state.timer = null
+  if (isTerminalBackendProxyEnabled()) {
+    const response = await fetchTerminalBackend(`api/terminals/${encodeURIComponent(sessionId)}/input`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ data: Buffer.from(input, 'utf8').toString('base64') }),
+    })
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as { message?: string } | null
+      throw new Error(payload?.message ?? 'Unable to send terminal input')
     }
-    void flushInputQueue(sessionId)
     return
   }
-
-  if (!state.timer) {
-    state.timer = setTimeout(() => {
-      state.timer = null
-      void flushInputQueue(sessionId)
-    }, INPUT_FLUSH_MS)
-  }
+  const runtime = manager?.getSession(sessionId)
+  if (!runtime) throw new Error('Session not found')
+  manager?.handleInput(sessionId, new TextEncoder().encode(input))
 }
 
 export const resizeTerminalSession = async (sessionId: string, cols: number, rows: number) => {
   if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
-  if (!Number.isFinite(cols) || !Number.isFinite(rows)) return
-  const safeCols = Math.max(20, Math.min(400, Math.round(cols)))
-  const safeRows = Math.max(6, Math.min(200, Math.round(rows)))
-  await runTmux(['resize-window', '-t', sessionId, '-x', `${safeCols}`, '-y', `${safeRows}`], {
-    label: 'tmux resize-window',
-  })
+  if (isTerminalBackendProxyEnabled()) {
+    const response = await fetchTerminalBackend(`api/terminals/${encodeURIComponent(sessionId)}/resize`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cols, rows }),
+    })
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as { message?: string } | null
+      throw new Error(payload?.message ?? 'Unable to resize terminal session')
+    }
+    return
+  }
+  manager?.resize(sessionId, cols, rows)
 }
 
-export const getTerminalLogPath = async (sessionId: string) => {
+export const getTerminalSnapshot = async (sessionId: string) => {
   if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
-  const logPath = join(LOG_DIR, `${sessionId}.log`)
-  const existing = await stat(logPath).catch((error) => {
-    if (isErrno(error) && error.code === 'ENOENT') return null
-    throw error
-  })
-  if (!existing) {
-    await ensureLogFile(logPath)
-  }
-  return logPath
+  return manager?.getSnapshot(sessionId) ?? ''
 }
+
+export const getTerminalRuntime = (sessionId: string) => manager?.getSession(sessionId) ?? null
 
 export const formatSessionId = (raw: string) => raw.trim()
 
