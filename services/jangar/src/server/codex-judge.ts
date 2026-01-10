@@ -52,6 +52,7 @@ const resolveStore = () => {
 const store = new Proxy({} as ReturnType<typeof createCodexJudgeStore>, {
   get: (_target, prop) => resolveStore()[prop as keyof ReturnType<typeof createCodexJudgeStore>],
 })
+const getStore = () => resolveStore()
 const storeReady = () => resolveStore().ready ?? Promise.resolve()
 const ensureStoreReady = async () => {
   await storeReady()
@@ -61,6 +62,7 @@ const resolveConfig = () => globalOverrides.__codexJudgeConfigMock ?? defaultCon
 const config = new Proxy({} as ReturnType<typeof loadCodexJudgeConfig>, {
   get: (_target, prop) => resolveConfig()[prop as keyof ReturnType<typeof loadCodexJudgeConfig>],
 })
+const getConfig = () => resolveConfig()
 const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
 const getEffectiveJudgeMode = () => (resolveConfig().judgeMode === 'local' && isTestEnv ? 'local' : 'argo')
 const requestedJudgeMode = (process.env.JANGAR_CODEX_JUDGE_MODE ?? 'argo').trim().toLowerCase()
@@ -83,6 +85,7 @@ const resolveGithub = () => {
 const github = new Proxy({} as ReturnType<typeof createGitHubClient>, {
   get: (_target, prop) => resolveGithub()[prop as keyof ReturnType<typeof createGitHubClient>],
 })
+const getGithub = () => resolveGithub()
 let cachedArgo: ReturnType<typeof createArgoClient> | null = null
 const resolveArgo = () => {
   if (globalOverrides.__codexJudgeArgoMock !== undefined) return globalOverrides.__codexJudgeArgoMock
@@ -1395,13 +1398,13 @@ const scheduleEvaluationForRun = (runId: string) => scheduleEvaluation(runId, 10
 
 const fetchReviewSummaryForRepository = async (repository: string, prNumber: number) => {
   const { owner, repo } = parseRepositoryParts(repository)
-  const reviewers = config.codexReviewers.map((value) => value.toLowerCase())
-  return github.getReviewSummary(owner, repo, prNumber, reviewers)
+  const reviewers = getConfig().codexReviewers.map((value) => value.toLowerCase())
+  return getGithub().getReviewSummary(owner, repo, prNumber, reviewers)
 }
 
 const fetchCheckRunSummaryForRepository = async (repository: string, commitSha: string) => {
   const { owner, repo } = parseRepositoryParts(repository)
-  return github.getCheckRuns(owner, repo, commitSha)
+  return getGithub().getCheckRuns(owner, repo, commitSha)
 }
 
 const resolveRunsForCommitOrPr = async (
@@ -1410,14 +1413,15 @@ const resolveRunsForCommitOrPr = async (
   prNumbers: number[],
 ): Promise<CodexRunRecord[]> => {
   if (!repository) return []
+  const activeStore = getStore()
   let runs: CodexRunRecord[] = []
   if (commitSha) {
-    runs = await store.listRunsByCommitSha(repository, commitSha)
+    runs = await activeStore.listRunsByCommitSha(repository, commitSha)
   }
   if (runs.length === 0 && prNumbers.length > 0) {
     const collected: CodexRunRecord[] = []
     for (const prNumber of prNumbers) {
-      const prRuns = await store.listRunsByPrNumber(repository, prNumber)
+      const prRuns = await activeStore.listRunsByPrNumber(repository, prNumber)
       collected.push(...prRuns)
     }
     runs = collected
@@ -1431,6 +1435,7 @@ const handleCheckStreamEvent = async (event: GithubWebhookStreamEvent) => {
   const checkPayload = extractCheckPayload(event.payload)
   if (!checkPayload) return { updatedRunIds: [] as string[], status: null as string | null }
 
+  const activeStore = getStore()
   const commitSha = normalizeSha(checkPayload.head_sha ?? checkPayload.headSha)
   const status = normalizeOptionalString(checkPayload.status)
   const conclusion = normalizeOptionalString(checkPayload.conclusion)
@@ -1461,7 +1466,7 @@ const handleCheckStreamEvent = async (event: GithubWebhookStreamEvent) => {
     if (ciStatus === 'pending' && run.ciStatus && run.ciStatus !== 'pending' && !commitChanged) {
       continue
     }
-    const updated = await store.updateCiStatus({
+    const updated = await activeStore.updateCiStatus({
       runId: run.id,
       status: ciStatus,
       url: ciUrl,
@@ -1482,12 +1487,13 @@ const handlePullRequestStreamEvent = async (event: GithubWebhookStreamEvent) => 
   const prInfo = extractPullRequestInfo(event.payload)
   if (!prInfo.number) return { updatedRunIds: [] as string[] }
 
+  const activeStore = getStore()
   let runs: CodexRunRecord[] = []
   if (prInfo.headRef) {
-    runs = await store.listRunsByBranch(repository, prInfo.headRef)
+    runs = await activeStore.listRunsByBranch(repository, prInfo.headRef)
   }
   if (runs.length === 0 && prInfo.headSha) {
-    runs = await store.listRunsByCommitSha(repository, prInfo.headSha)
+    runs = await activeStore.listRunsByCommitSha(repository, prInfo.headSha)
   }
   runs = dedupeRuns(runs)
   if (runs.length === 0) return { updatedRunIds: [] as string[] }
@@ -1496,7 +1502,7 @@ const handlePullRequestStreamEvent = async (event: GithubWebhookStreamEvent) => 
   const updatedRunIds = new Set<string>()
   for (const run of runs) {
     if (!shouldTriggerEvaluation(run)) continue
-    const updated = await store.updateRunPrInfo(run.id, prInfo.number, prUrl, prInfo.headSha)
+    const updated = await activeStore.updateRunPrInfo(run.id, prInfo.number, prUrl, prInfo.headSha)
     if (updated) {
       updatedRunIds.add(updated.id)
       scheduleEvaluationForRun(updated.id)
@@ -1514,7 +1520,7 @@ const handlePullRequestStreamEvent = async (event: GithubWebhookStreamEvent) => 
       }
       for (const run of runs) {
         if (!shouldTriggerEvaluation(run)) continue
-        const updated = await store.updateReviewStatus({
+        const updated = await activeStore.updateReviewStatus({
           runId: run.id,
           status: review.status,
           summary: reviewSummary,
@@ -1558,12 +1564,13 @@ const handleReviewStreamEvent = async (event: GithubWebhookStreamEvent) => {
   const prNumber = prInfo.number ?? extractIssueCommentPrNumber(event.payload)
   if (!prNumber) return { updatedRunIds: [] as string[] }
 
-  let runs = await store.listRunsByPrNumber(repository, prNumber)
+  const activeStore = getStore()
+  let runs = await activeStore.listRunsByPrNumber(repository, prNumber)
   if (runs.length === 0 && prInfo.headRef) {
-    runs = await store.listRunsByBranch(repository, prInfo.headRef)
+    runs = await activeStore.listRunsByBranch(repository, prInfo.headRef)
   }
   if (runs.length === 0 && prInfo.headSha) {
-    runs = await store.listRunsByCommitSha(repository, prInfo.headSha)
+    runs = await activeStore.listRunsByCommitSha(repository, prInfo.headSha)
   }
   runs = dedupeRuns(runs)
   if (runs.length === 0) return { updatedRunIds: [] as string[] }
@@ -1572,7 +1579,7 @@ const handleReviewStreamEvent = async (event: GithubWebhookStreamEvent) => {
   const updatedRunIds = new Set<string>()
   for (const run of runs) {
     if (!shouldTriggerEvaluation(run)) continue
-    const updated = await store.updateRunPrInfo(run.id, prNumber, prUrl, prInfo.headSha)
+    const updated = await activeStore.updateRunPrInfo(run.id, prNumber, prUrl, prInfo.headSha)
     if (updated) {
       updatedRunIds.add(updated.id)
       scheduleEvaluationForRun(updated.id)
@@ -1589,7 +1596,7 @@ const handleReviewStreamEvent = async (event: GithubWebhookStreamEvent) => {
     }
     for (const run of runs) {
       if (!shouldTriggerEvaluation(run)) continue
-      const updated = await store.updateReviewStatus({
+      const updated = await activeStore.updateReviewStatus({
         runId: run.id,
         status: review.status,
         summary: reviewSummary,
@@ -1607,8 +1614,7 @@ const handleReviewStreamEvent = async (event: GithubWebhookStreamEvent) => {
 }
 
 export const handleGithubWebhookEvent = async (payload: Record<string, unknown>) => {
-  const config = resolveConfig()
-  if (!config.ciEventStreamEnabled) {
+  if (!getConfig().ciEventStreamEnabled) {
     return { ok: false, reason: 'event_stream_disabled' }
   }
 

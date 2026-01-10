@@ -213,6 +213,10 @@ const memoriesStore = {
   close: vi.fn(),
 }
 
+beforeAll(async () => {
+  await requireHandleRunComplete()
+}, 20_000)
+
 beforeEach(async () => {
   upsertRunComplete.mockReset()
   upsertArtifacts.mockReset()

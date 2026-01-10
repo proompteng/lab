@@ -232,19 +232,24 @@ const requireHandler = async () => {
 
 describe('codex-judge GitHub webhook stream handling', () => {
   beforeAll(async () => {
-    handleGithubWebhookEvent = null
     await requireHandler()
-  })
+  }, 20_000)
 
   beforeEach(() => {
+    handleGithubWebhookEvent = null
+    globalState.__codexJudgeConfigMock = { ...configMock }
+    globalState.__codexJudgeGithubMock = githubMock
     const storeMock = requireMock(globalState.__codexJudgeStoreMock, 'store')
     Object.values(storeMock).forEach((value) => {
       if (typeof value === 'function') {
         ;(value as ReturnType<typeof vi.fn>).mockReset?.()
       }
     })
-    Object.assign(requireMock(globalState.__codexJudgeGithubMock, 'github'), githubMock)
-    globalState.__codexJudgeConfigMock = { ...configMock }
+    Object.values(githubMock).forEach((value) => {
+      if (typeof value === 'function') {
+        ;(value as ReturnType<typeof vi.fn>).mockReset?.()
+      }
+    })
     Object.values(githubReviewStoreMock).forEach((value) => {
       if (typeof value === 'function') {
         ;(value as ReturnType<typeof vi.fn>).mockClear?.()
