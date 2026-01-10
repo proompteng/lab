@@ -50,6 +50,14 @@ spec:
                 toFieldPath: metadata.labels["jangar.proompteng.ai/delivery-id"]
                 policy:
                   fromFieldPath: Optional
+              - fromFieldPath: metadata.labels["crossplane.io/claim-name"]
+                toFieldPath: metadata.labels["crossplane.io/claim-name"]
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.claimRef.namespace
+                toFieldPath: metadata.labels["crossplane.io/claim-namespace"]
+                policy:
+                  fromFieldPath: Optional
               - fromFieldPath: spec.timeoutSeconds
                 toFieldPath: spec.activeDeadlineSeconds
                 policy:

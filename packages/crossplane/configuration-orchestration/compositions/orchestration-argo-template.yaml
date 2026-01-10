@@ -37,6 +37,8 @@ spec:
             patches:
               - fromFieldPath: spec.entrypoint
                 toFieldPath: spec.entrypoint
+              - fromFieldPath: spec.entrypoint
+                toFieldPath: spec.templates[0].name
               - fromFieldPath: spec.policies.timeouts.totalSeconds
                 toFieldPath: spec.activeDeadlineSeconds
                 policy:
