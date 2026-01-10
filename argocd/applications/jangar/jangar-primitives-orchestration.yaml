@@ -8,8 +8,47 @@ spec:
     name: orchestration-argo-template
   entrypoint: main
   steps:
-    - name: echo
+    - name: agent-run
       kind: AgentRun
-      agentRef: jangar-primitives-echo
+      agentRef: jangar-primitives-agent
       with:
-        message: hello from orchestration
+        repository: proompteng/lab
+        base: main
+        head: codex/issue-2425-6cedebf4
+        stage: implementation
+    - name: tool-run
+      kind: ToolRun
+      dependsOn: [agent-run]
+      toolRef: jangar-primitives-tool
+      with:
+        action: validate
+    - name: memory-op
+      kind: MemoryOp
+      dependsOn: [tool-run]
+      memoryRef: jangar-primitives
+      with:
+        operation: write
+        payload: '{"event":"memory-op"}'
+    - name: approval-gate
+      kind: ApprovalGate
+      dependsOn: [memory-op]
+      policyRef: jangar-primitives-approval
+    - name: signal-wait
+      kind: SignalWait
+      dependsOn: [approval-gate]
+      with:
+        signalRef: jangar-primitives-signal
+        deliveryId: jangar-primitives-delivery
+    - name: checkpoint
+      kind: Checkpoint
+      dependsOn: [signal-wait]
+      memoryRef: jangar-primitives
+      with:
+        checkpointId: cp-001
+        payload: '{"checkpoint":"cp-001"}'
+    - name: sub-orchestration
+      kind: SubOrchestration
+      dependsOn: [checkpoint]
+      with:
+        orchestrationRef: jangar-primitives-sub
+        parameters: '{"message":"hello"}'

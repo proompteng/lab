@@ -16,6 +16,11 @@ resources:
   - codex-research-rbac.yaml
   - codex-cluster-admin.yaml
   - jangar-primitives-echo-workflowtemplate.yaml
+  - jangar-approval-gate-workflowtemplate.yaml
+  - jangar-memory-op-workflowtemplate.yaml
+  - jangar-signal-wait-workflowtemplate.yaml
+  - jangar-checkpoint-workflowtemplate.yaml
+  - jangar-sub-orchestration-workflowtemplate.yaml
 helmCharts:
   - name: argo-workflows
     repo: https://argoproj.github.io/argo-helm

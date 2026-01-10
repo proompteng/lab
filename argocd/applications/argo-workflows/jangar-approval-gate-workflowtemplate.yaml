@@ -1,0 +1,11 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: jangar-approval-gate
+  namespace: argo-workflows
+spec:
+  serviceAccountName: codex-workflow
+  entrypoint: gate
+  templates:
+    - name: gate
+      suspend: {}

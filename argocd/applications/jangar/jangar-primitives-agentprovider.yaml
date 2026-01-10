@@ -1,0 +1,23 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: jangar-primitives-codex
+  namespace: jangar
+spec:
+  binary: /usr/local/bin/codex
+  argsTemplate:
+    - exec
+    - --repo
+    - "{{inputs.repository}}"
+    - --base
+    - "{{inputs.base}}"
+    - --head
+    - "{{inputs.head}}"
+  envTemplate:
+    WORKFLOW_STAGE: "{{inputs.stage}}"
+  inputFiles:
+    - path: /workspace/agent/prompt.json
+      content: "{{payloads.promptJson}}"
+  outputArtifacts:
+    - name: implementation-log
+      path: /workspace/lab/.codex-implementation.log

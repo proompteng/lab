@@ -1,0 +1,9 @@
+apiVersion: workspaces.proompteng.ai/v1alpha1
+kind: Workspace
+metadata:
+  name: jangar-primitives-workspace
+  namespace: jangar
+spec:
+  size: 10Gi
+  accessModes:
+    - ReadWriteOnce

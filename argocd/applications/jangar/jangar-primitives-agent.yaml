@@ -1,0 +1,24 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: Agent
+metadata:
+  name: jangar-primitives-agent
+  namespace: jangar
+spec:
+  providerRef:
+    name: jangar-primitives-codex
+  runtime:
+    type: argo
+    argo:
+      namespace: argo-workflows
+      serviceAccount: codex-workflow
+  inputs:
+    repository: proompteng/lab
+    issueNumber: 2425
+    base: main
+    head: codex/issue-2425-6cedebf4
+    stage: implementation
+  payloads:
+    promptJson: '{"summary":"jangar primitives"}'
+  observability:
+    natsEnabled: true
+    kafkaCompletions: true

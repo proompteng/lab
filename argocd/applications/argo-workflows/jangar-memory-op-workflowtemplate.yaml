@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: jangar-memory-op
+  namespace: argo-workflows
+spec:
+  serviceAccountName: codex-workflow
+  entrypoint: run
+  templates:
+    - name: run
+      inputs:
+        parameters:
+          - name: memoryRef
+            default: ''
+          - name: operation
+            default: ''
+          - name: payload
+            default: ''
+      container:
+        image: alpine:3.20
+        command:
+          - /bin/sh
+          - -c
+        args:
+          - |
+            echo "memoryRef={{inputs.parameters.memoryRef}}"
+            echo "operation={{inputs.parameters.operation}}"
+            echo "payload={{inputs.parameters.payload}}"

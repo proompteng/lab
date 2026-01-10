@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: jangar-sub-orchestration
+  namespace: argo-workflows
+spec:
+  serviceAccountName: codex-workflow
+  entrypoint: run
+  templates:
+    - name: run
+      inputs:
+        parameters:
+          - name: orchestrationRef
+            default: ''
+          - name: parameters
+            default: ''
+      container:
+        image: alpine:3.20
+        command:
+          - /bin/sh
+          - -c
+        args:
+          - |
+            echo "sub-orchestration={{inputs.parameters.orchestrationRef}}"
+            echo "parameters={{inputs.parameters.parameters}}"

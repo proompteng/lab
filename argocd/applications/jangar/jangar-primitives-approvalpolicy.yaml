@@ -1,0 +1,11 @@
+apiVersion: approvals.proompteng.ai/v1alpha1
+kind: ApprovalPolicy
+metadata:
+  name: jangar-primitives-approval
+  namespace: jangar
+spec:
+  mode: manual
+  approvers:
+    - jangar-admin
+  requiredApprovals: 1
+  timeoutSeconds: 86400

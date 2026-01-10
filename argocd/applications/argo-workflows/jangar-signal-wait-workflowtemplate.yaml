@@ -1,0 +1,17 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: jangar-signal-wait
+  namespace: argo-workflows
+spec:
+  serviceAccountName: codex-workflow
+  entrypoint: wait
+  templates:
+    - name: wait
+      inputs:
+        parameters:
+          - name: signalRef
+            default: ''
+          - name: deliveryId
+            default: ''
+      suspend: {}
