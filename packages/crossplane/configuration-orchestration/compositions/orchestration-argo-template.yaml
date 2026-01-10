@@ -26,6 +26,7 @@ spec:
                 namespace: argo-workflows
               spec:
                 entrypoint: ""
+                serviceAccountName: codex-workflow
                 templates:
                   - name: main
                     dag:
