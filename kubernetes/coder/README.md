@@ -26,13 +26,13 @@ cd kubernetes/coder
 2. Push the template into Coder:
 
 ```bash
-coder templates push --directory . --yes
+coder templates push --directory . --name k8s-arm64 --yes
 ```
 
-3. Create a workspace from the `kubernetes/coder` template in the UI, or via CLI:
+3. Create a workspace from the `k8s-arm64` template in the UI, or via CLI:
 
 ```bash
-coder workspaces create sutro --template "kubernetes/coder"
+coder workspaces create sutro --template "k8s-arm64"
 ```
 
 ## Parameters
@@ -54,7 +54,7 @@ coder workspaces create sutro --template "kubernetes/coder"
   - Install Convex CLI, OpenAI Codex CLI, kubectl, Argo CD CLI, and GitHub CLI when missing (Codex via Bun global)
   - Expand the repository path, then run `bun install --frozen-lockfile` or `bun install` based on repo files
   - Persist Bun environment variables in `.profile` and `.zshrc`
-  - Run with a workspace service account bound to `cluster-admin` via a RoleBinding (namespace-scoped) so `kubectl` works inside the pod
+  - Run with a workspace service account bound to `cluster-admin` via a ClusterRoleBinding (cluster-wide) so `kubectl` works inside the pod
 
 If a workspace becomes unhealthy, check logs inside the pod:
 
