@@ -1,0 +1,14 @@
+apiVersion: artifacts.proompteng.ai/v1alpha1
+kind: Artifact
+metadata:
+  name: jangar-primitives-artifact
+  namespace: jangar
+spec:
+  storageRef:
+    name: jangar-artifacts
+    namespace: jangar
+    provider: minio
+  lifecycle:
+    ttlDays: 7
+  metadata:
+    contentType: text/plain

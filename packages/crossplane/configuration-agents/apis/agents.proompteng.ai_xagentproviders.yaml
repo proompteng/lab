@@ -3,6 +3,7 @@ kind: CompositeResourceDefinition
 metadata:
   name: xagentproviders.agents.proompteng.ai
 spec:
+  scope: Cluster
   group: agents.proompteng.ai
   names:
     kind: XAgentProvider
@@ -10,6 +11,8 @@ spec:
   claimNames:
     kind: AgentProvider
     plural: agentproviders
+  defaultCompositionRef:
+    name: agentprovider-argo
   versions:
     - name: v1alpha1
       served: true

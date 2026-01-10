@@ -36,6 +36,18 @@ spec:
                 toFieldPath: spec.arguments.parameters
                 policy:
                   fromFieldPath: Optional
+              - fromFieldPath: spec.deliveryId
+                toFieldPath: metadata.labels["jangar.proompteng.ai/delivery-id"]
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: metadata.labels["crossplane.io/claim-name"]
+                toFieldPath: metadata.labels["crossplane.io/claim-name"]
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.claimRef.namespace
+                toFieldPath: metadata.labels["crossplane.io/claim-namespace"]
+                policy:
+                  fromFieldPath: Optional
             readinessChecks:
               - type: None
     - step: parameters-map-to-list
@@ -82,3 +94,12 @@ spec:
                   fromFieldPath: Optional
             readinessChecks:
               - type: None
+    - step: step-statuses
+      functionRef:
+        name: function-orchestration-status
+      input:
+        apiVersion: fn.proompteng.ai/v1alpha1
+        kind: OrchestrationStatus
+        spec:
+          workflowResource: workflow
+          stepStatusesFieldPath: status.stepStatuses

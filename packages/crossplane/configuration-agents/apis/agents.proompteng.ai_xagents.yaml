@@ -10,6 +10,8 @@ spec:
   claimNames:
     kind: Agent
     plural: agents
+  defaultCompositionRef:
+    name: agent-argo
   versions:
     - name: v1alpha1
       served: true

@@ -10,6 +10,8 @@ spec:
   claimNames:
     kind: AgentRun
     plural: agentruns
+  defaultCompositionRef:
+    name: agentrun-argo
   versions:
     - name: v1alpha1
       served: true

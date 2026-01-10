@@ -1,0 +1,14 @@
+apiVersion: schedules.proompteng.ai/v1alpha1
+kind: Schedule
+metadata:
+  name: jangar-primitives-schedule
+  namespace: jangar
+spec:
+  cron: "0 */6 * * *"
+  timezone: UTC
+  targetRef:
+    apiVersion: argoproj.io/v1alpha1
+    kind: WorkflowTemplate
+    name: jangar-primitives-echo
+  parameters:
+    message: scheduled ping

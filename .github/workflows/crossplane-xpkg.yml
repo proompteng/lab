@@ -34,6 +34,10 @@ jobs:
         working-directory: packages/crossplane/configuration-orchestration
         run: |
           crossplane xpkg build --package-root=. --ignore='**/examples/**'
+      - name: Build supporting package
+        working-directory: packages/crossplane/configuration-supporting
+        run: |
+          crossplane xpkg build --package-root=. --ignore='**/examples/**'
   golangci-functions:
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
@@ -43,8 +47,10 @@ jobs:
         module:
           - packages/crossplane/functions/function-map-to-list
           - packages/crossplane/functions/function-orchestration-dag
+          - packages/crossplane/functions/function-orchestration-status
           - packages/crossplane/functions/function-memory-sql
           - packages/crossplane/functions/function-memory-connection
+          - packages/crossplane/functions/function-agent-provider-json
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go
@@ -66,8 +72,10 @@ jobs:
         module:
           - packages/crossplane/functions/function-map-to-list
           - packages/crossplane/functions/function-orchestration-dag
+          - packages/crossplane/functions/function-orchestration-status
           - packages/crossplane/functions/function-memory-sql
           - packages/crossplane/functions/function-memory-connection
+          - packages/crossplane/functions/function-agent-provider-json
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go
@@ -103,13 +111,17 @@ jobs:
         working-directory: packages/crossplane/configuration-orchestration
         run: |
           crossplane xpkg build --package-root=. --ignore='**/examples/**'
+      - name: Build supporting package
+        working-directory: packages/crossplane/configuration-supporting
+        run: |
+          crossplane xpkg build --package-root=. --ignore='**/examples/**'
       - name: Push packages (main only)
         env:
           TARGET_REGISTRY: registry.ide-newton.ts.net/lab
         run: |
           set -euo pipefail
           TAG_SHA="${GITHUB_SHA::12}"
-          for name in agents memory orchestration; do
+          for name in agents memory orchestration supporting; do
             pkg_dir="packages/crossplane/configuration-${name}"
             pkg_file="$(ls "${pkg_dir}"/*.xpkg)"
             crossplane xpkg push -f "${pkg_file}" "${TARGET_REGISTRY}/configuration-${name}:latest"

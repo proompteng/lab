@@ -153,3 +153,4 @@ spec:
             endpoint: status.endpoint
             database: status.database
             schema: status.schema
+            provider: status.providerType

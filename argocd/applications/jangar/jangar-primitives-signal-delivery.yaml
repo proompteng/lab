@@ -1,0 +1,12 @@
+apiVersion: signals.proompteng.ai/v1alpha1
+kind: SignalDelivery
+metadata:
+  name: jangar-primitives-signal-delivery
+  namespace: jangar
+spec:
+  signalRef:
+    name: jangar-primitives-signal
+    namespace: jangar
+  deliveryId: jangar-primitives-delivery
+  payload:
+    message: signal delivered

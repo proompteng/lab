@@ -1,0 +1,63 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: jangar-sub-orchestration
+  namespace: argo-workflows
+spec:
+  serviceAccountName: codex-workflow
+  entrypoint: run
+  templates:
+    - name: run
+      inputs:
+        parameters:
+          - name: orchestrationRef
+            default: ''
+          - name: parameters
+            default: ''
+          - name: namespace
+            default: ''
+          - name: deliveryId
+            default: ''
+      script:
+        image: registry.ide-newton.ts.net/lab/jangar:latest
+        command:
+          - /bin/bash
+          - -c
+        source: |
+          set -euo pipefail
+          orchestration_ref="{{inputs.parameters.orchestrationRef}}"
+          parameters_raw="{{inputs.parameters.parameters}}"
+          namespace="{{inputs.parameters.namespace}}"
+          delivery_id="{{inputs.parameters.deliveryId}}"
+          if [ -z "${namespace}" ]; then
+            namespace="$(kubectl get workflow {{workflow.name}} -n {{workflow.namespace}} -o jsonpath='{.metadata.labels.crossplane\\.io/claim-namespace}' 2>/dev/null || true)"
+          fi
+          if [ -z "${namespace}" ]; then
+            namespace="{{workflow.namespace}}"
+          fi
+
+          if [ -z "${orchestration_ref}" ]; then
+            echo "orchestrationRef is required" >&2
+            exit 1
+          fi
+
+          params_json="$(printf '%s' "${parameters_raw}" | jq -R -c 'if length == 0 then {} else (try fromjson catch {}) end')"
+
+          jq -n \
+            --arg orchestration_ref "${orchestration_ref}" \
+            --arg namespace "${namespace}" \
+            --arg delivery_id "${delivery_id}" \
+            --argjson params "${params_json}" \
+            '{
+              apiVersion: "orchestration.proompteng.ai/v1alpha1",
+              kind: "OrchestrationRun",
+              metadata: {
+                generateName: ($orchestration_ref + "-run-"),
+                namespace: $namespace
+              },
+              spec: {
+                orchestrationRef: { name: $orchestration_ref },
+                parameters: $params
+              }
+            } | (if $delivery_id != "" then .spec.deliveryId = $delivery_id else . end)' \
+            | kubectl create -f -

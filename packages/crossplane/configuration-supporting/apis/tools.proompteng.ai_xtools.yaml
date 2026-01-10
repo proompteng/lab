@@ -1,0 +1,74 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xtools.tools.proompteng.ai
+spec:
+  group: tools.proompteng.ai
+  names:
+    kind: XTool
+    plural: xtools
+  claimNames:
+    kind: Tool
+    plural: tools
+  defaultCompositionRef:
+    name: tool-argo
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required: [runtime]
+              properties:
+                description: { type: string }
+                runtime:
+                  type: object
+                  required: [type]
+                  properties:
+                    type:
+                      type: string
+                      enum: [argo, job, custom]
+                    argo:
+                      type: object
+                      properties:
+                        image: { type: string }
+                        command:
+                          type: array
+                          items: { type: string }
+                        args:
+                          type: array
+                          items: { type: string }
+                        parameters:
+                          type: object
+                          additionalProperties: { type: string }
+                        env:
+                          type: object
+                          additionalProperties: { type: string }
+                        serviceAccount: { type: string, default: codex-workflow }
+                        namespace: { type: string, default: argo-workflows }
+                inputs:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name: { type: string }
+                      description: { type: string }
+                      required: { type: boolean }
+                outputs:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name: { type: string }
+                      description: { type: string }
+            status:
+              type: object
+              properties:
+                phase: { type: string }
+                workflowTemplate: { type: string }

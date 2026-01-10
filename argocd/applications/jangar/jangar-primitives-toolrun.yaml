@@ -1,0 +1,13 @@
+apiVersion: tools.proompteng.ai/v1alpha1
+kind: ToolRun
+metadata:
+  name: jangar-primitives-toolrun
+  namespace: jangar
+spec:
+  toolRef:
+    name: jangar-primitives-tool
+  parameters:
+    action: toolrun
+  retryPolicy:
+    limit: 1
+  timeoutSeconds: 300

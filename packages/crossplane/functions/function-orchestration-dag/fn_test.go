@@ -42,20 +42,57 @@ func TestRunFunction_BuildsDagTasks(t *testing.T) {
 									"count": 2
 								}
 							},
-							{
-								"name": "step-two",
-								"kind": "ToolRun",
-								"toolRef": "tool-template",
-								"dependsOn": ["step-one"]
-							},
-							{
-								"name": "step-three",
-								"kind": "SignalWait",
-								"dependsOn": ["step-two"]
+						{
+							"name": "step-two",
+							"kind": "ToolRun",
+							"toolRef": "tool-template",
+							"dependsOn": ["step-one"]
+						},
+						{
+							"name": "step-three",
+							"kind": "ApprovalGate",
+							"policyRef": "approval-policy",
+							"dependsOn": ["step-two"]
+						},
+						{
+							"name": "step-four",
+							"kind": "SignalWait",
+							"dependsOn": ["step-three"],
+							"with": {
+								"signalRef": "signal-ref"
 							}
-						]
-					}
-				}`),
+						},
+						{
+							"name": "step-five",
+							"kind": "MemoryOp",
+							"memoryRef": "memory-ref",
+							"dependsOn": ["step-four"],
+							"with": {
+								"operation": "write",
+								"payload": "{\"event\":\"memory\"}"
+							}
+						},
+						{
+							"name": "step-six",
+							"kind": "Checkpoint",
+							"memoryRef": "memory-ref",
+							"dependsOn": ["step-five"],
+							"with": {
+								"checkpointId": "cp-001"
+							}
+						},
+						{
+							"name": "step-seven",
+							"kind": "SubOrchestration",
+							"dependsOn": ["step-six"],
+							"with": {
+								"orchestrationRef": "sub-orch",
+								"parameters": "{\"message\":\"hi\"}"
+							}
+						}
+					]
+				}
+			}`),
 			},
 			Resources: map[string]*fnv1.Resource{
 				"workflow": {
@@ -95,7 +132,7 @@ func TestRunFunction_BuildsDagTasks(t *testing.T) {
 		t.Fatalf("step-one task missing")
 	}
 	templateRef, _ := stepOne["templateRef"].(map[string]any)
-	if diff := cmp.Diff(map[string]any{"name": "agent-template", "template": "step-one"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
+	if diff := cmp.Diff(map[string]any{"name": "agent-template", "template": "agent-run"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
 		t.Fatalf("step-one templateRef mismatch (-want +got):\n%s", diff)
 	}
 	parameters := paramMap(t, stepOne)
@@ -112,16 +149,198 @@ func TestRunFunction_BuildsDagTasks(t *testing.T) {
 		t.Fatalf("step-two dependencies mismatch (-want +got):\n%s", diff)
 	}
 	templateRef, _ = stepTwo["templateRef"].(map[string]any)
-	if diff := cmp.Diff(map[string]any{"name": "tool-template", "template": "step-two"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
+	if diff := cmp.Diff(map[string]any{"name": "tool-template", "template": "run"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
 		t.Fatalf("step-two templateRef mismatch (-want +got):\n%s", diff)
+	}
+	parameters = paramMap(t, stepTwo)
+	if diff := cmp.Diff(map[string]string{}, parameters); diff != "" {
+		t.Fatalf("step-two parameters mismatch (-want +got):\n%s", diff)
 	}
 
 	stepThree := tasks["step-three"]
 	if stepThree == nil {
 		t.Fatalf("step-three task missing")
 	}
-	if templateName, _ := stepThree["template"].(string); templateName != "step-three" {
-		t.Fatalf("step-three template mismatch: got %q", templateName)
+	templateRef, _ = stepThree["templateRef"].(map[string]any)
+	if diff := cmp.Diff(map[string]any{"name": "jangar-approval-gate", "template": "gate"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("step-three templateRef mismatch (-want +got):\n%s", diff)
+	}
+	parameters = paramMap(t, stepThree)
+	if diff := cmp.Diff(map[string]string{"policyRef": "approval-policy"}, parameters); diff != "" {
+		t.Fatalf("step-three parameters mismatch (-want +got):\n%s", diff)
+	}
+
+	stepFour := tasks["step-four"]
+	if stepFour == nil {
+		t.Fatalf("step-four task missing")
+	}
+	templateRef, _ = stepFour["templateRef"].(map[string]any)
+	if diff := cmp.Diff(map[string]any{"name": "jangar-signal-wait", "template": "wait"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("step-four templateRef mismatch (-want +got):\n%s", diff)
+	}
+	parameters = paramMap(t, stepFour)
+	if diff := cmp.Diff(map[string]string{"signalRef": "signal-ref"}, parameters); diff != "" {
+		t.Fatalf("step-four parameters mismatch (-want +got):\n%s", diff)
+	}
+
+	stepFive := tasks["step-five"]
+	if stepFive == nil {
+		t.Fatalf("step-five task missing")
+	}
+	templateRef, _ = stepFive["templateRef"].(map[string]any)
+	if diff := cmp.Diff(map[string]any{"name": "jangar-memory-op", "template": "run"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("step-five templateRef mismatch (-want +got):\n%s", diff)
+	}
+	parameters = paramMap(t, stepFive)
+	if diff := cmp.Diff(map[string]string{"memoryRef": "memory-ref", "operation": "write", "payload": "{\"event\":\"memory\"}"}, parameters); diff != "" {
+		t.Fatalf("step-five parameters mismatch (-want +got):\n%s", diff)
+	}
+
+	stepSix := tasks["step-six"]
+	if stepSix == nil {
+		t.Fatalf("step-six task missing")
+	}
+	templateRef, _ = stepSix["templateRef"].(map[string]any)
+	if diff := cmp.Diff(map[string]any{"name": "jangar-checkpoint", "template": "checkpoint"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("step-six templateRef mismatch (-want +got):\n%s", diff)
+	}
+	parameters = paramMap(t, stepSix)
+	if diff := cmp.Diff(map[string]string{"memoryRef": "memory-ref", "checkpointId": "cp-001"}, parameters); diff != "" {
+		t.Fatalf("step-six parameters mismatch (-want +got):\n%s", diff)
+	}
+
+	stepSeven := tasks["step-seven"]
+	if stepSeven == nil {
+		t.Fatalf("step-seven task missing")
+	}
+	templateRef, _ = stepSeven["templateRef"].(map[string]any)
+	if diff := cmp.Diff(map[string]any{"name": "jangar-sub-orchestration", "template": "run"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("step-seven templateRef mismatch (-want +got):\n%s", diff)
+	}
+	parameters = paramMap(t, stepSeven)
+	if diff := cmp.Diff(map[string]string{"orchestrationRef": "sub-orch", "parameters": "{\"message\":\"hi\"}"}, parameters); diff != "" {
+		t.Fatalf("step-seven parameters mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestRunFunction_ValidatesStepRequirements(t *testing.T) {
+	cases := []struct {
+		name    string
+		steps   string
+		wantErr string
+	}{
+		{
+			name: "missing-agent-ref",
+			steps: `[
+				{
+					"name": "agent",
+					"kind": "AgentRun"
+				}
+			]`,
+			wantErr: "requires agentRef",
+		},
+		{
+			name: "missing-tool-ref",
+			steps: `[
+				{
+					"name": "tool",
+					"kind": "ToolRun"
+				}
+			]`,
+			wantErr: "requires toolRef",
+		},
+		{
+			name: "missing-signal-ref",
+			steps: `[
+				{
+					"name": "signal",
+					"kind": "SignalWait"
+				}
+			]`,
+			wantErr: "requires signalRef or deliveryId",
+		},
+		{
+			name: "missing-sub-orchestration",
+			steps: `[
+				{
+					"name": "sub",
+					"kind": "SubOrchestration",
+					"with": {}
+				}
+			]`,
+			wantErr: "requires orchestrationRef",
+		},
+		{
+			name: "missing-checkpoint-id",
+			steps: `[
+				{
+					"name": "checkpoint",
+					"kind": "Checkpoint",
+					"with": {}
+				}
+			]`,
+			wantErr: "requires checkpointId",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &fnv1.RunFunctionRequest{
+				Meta: &fnv1.RequestMeta{Tag: tc.name},
+				Input: resource.MustStructJSON(`{
+					"apiVersion": "fn.proompteng.ai/v1alpha1",
+					"kind": "OrchestrationDag",
+					"spec": {
+						"stepsFieldPath": "spec.steps",
+						"entrypointFieldPath": "spec.entrypoint",
+						"targetWorkflowTemplate": "workflow"
+					}
+				}`),
+				Desired: &fnv1.State{
+					Composite: &fnv1.Resource{
+						Resource: resource.MustStructJSON(`{
+							"apiVersion": "orchestration.proompteng.ai/v1alpha1",
+							"kind": "Orchestration",
+							"spec": {
+								"entrypoint": "main",
+								"steps": ` + tc.steps + `
+							}
+						}`),
+					},
+					Resources: map[string]*fnv1.Resource{
+						"workflow": {
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "argoproj.io/v1alpha1",
+								"kind": "WorkflowTemplate",
+								"spec": {
+									"templates": [
+										{
+											"name": "main",
+											"dag": {
+												"tasks": []
+											}
+										}
+									]
+								}
+							}`),
+						},
+					},
+				},
+			}
+
+			f := &Function{log: logging.NewNopLogger()}
+			rsp, err := f.RunFunction(t.Context(), req)
+			if err != nil {
+				t.Fatalf("RunFunction returned error: %v", err)
+			}
+
+			if len(rsp.GetResults()) == 0 || rsp.GetResults()[0].GetSeverity() != fnv1.Severity_SEVERITY_FATAL {
+				t.Fatalf("expected fatal result for %s", tc.name)
+			}
+			if msg := rsp.GetResults()[0].GetMessage(); !strings.Contains(msg, tc.wantErr) {
+				t.Fatalf("unexpected fatal message: %q", msg)
+			}
+		})
 	}
 }
 
@@ -174,7 +393,10 @@ func TestRunFunction_ObservedFallback(t *testing.T) {
 						"steps": [
 							{
 								"name": "step-one",
-								"kind": "SignalWait"
+								"kind": "SignalWait",
+								"with": {
+									"signalRef": "signal-ref"
+								}
 							}
 						]
 					}

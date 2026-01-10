@@ -1,0 +1,20 @@
+apiVersion: tools.proompteng.ai/v1alpha1
+kind: Tool
+metadata:
+  name: jangar-primitives-tool
+  namespace: jangar
+spec:
+  description: Echo tool for primitives validation
+  runtime:
+    type: argo
+    argo:
+      image: alpine:3.20
+      command:
+        - /bin/sh
+        - -c
+      args:
+        - echo "tool action={{inputs.parameters.action}}"
+      parameters:
+        action: noop
+      env:
+        WORKFLOW_STAGE: primitives

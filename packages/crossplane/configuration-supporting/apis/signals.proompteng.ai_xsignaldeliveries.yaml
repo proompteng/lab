@@ -1,0 +1,43 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xsignaldeliveries.signals.proompteng.ai
+spec:
+  group: signals.proompteng.ai
+  names:
+    kind: XSignalDelivery
+    plural: xsignaldeliveries
+  claimNames:
+    kind: SignalDelivery
+    plural: signaldeliveries
+  defaultCompositionRef:
+    name: signal-delivery-kubernetes
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required: [signalRef]
+              properties:
+                signalRef:
+                  type: object
+                  required: [name]
+                  properties:
+                    name: { type: string }
+                    namespace: { type: string }
+                payload:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                deliveryId: { type: string }
+            status:
+              type: object
+              properties:
+                phase: { type: string }
+                deliveredAt: { type: string }

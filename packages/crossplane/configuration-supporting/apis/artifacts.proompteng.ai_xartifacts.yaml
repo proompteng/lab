@@ -1,0 +1,52 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xartifacts.artifacts.proompteng.ai
+spec:
+  group: artifacts.proompteng.ai
+  names:
+    kind: XArtifact
+    plural: xartifacts
+  claimNames:
+    kind: Artifact
+    plural: artifacts
+  defaultCompositionRef:
+    name: artifact-kubernetes
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - storageRef
+              properties:
+                storageRef:
+                  type: object
+                  required: [name]
+                  properties:
+                    name: { type: string }
+                    namespace: { type: string }
+                    provider: { type: string }
+                lifecycle:
+                  type: object
+                  properties:
+                    ttlDays: { type: integer, default: 30 }
+                metadata:
+                  type: object
+                  properties:
+                    contentType: { type: string }
+                    sizeBytes: { type: integer }
+            status:
+              type: object
+              properties:
+                uri: { type: string }
+                checksum: { type: string }
+                phase: { type: string }
+                expiresAt: { type: string }

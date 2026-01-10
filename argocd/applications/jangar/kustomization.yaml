@@ -24,11 +24,23 @@ resources:
   - serviceaccount.yaml
   - clusterrolebinding.yaml
   - workflow-completions-rbac.yaml
+  - jangar-primitives-agentprovider.yaml
+  - jangar-primitives-agent.yaml
   - jangar-primitives-memoryprovider.yaml
   - jangar-primitives-memory.yaml
+  - jangar-primitives-tool.yaml
+  - jangar-primitives-toolrun.yaml
+  - jangar-primitives-approvalpolicy.yaml
+  - jangar-primitives-signal.yaml
+  - jangar-primitives-signal-delivery.yaml
+  - jangar-primitives-artifact.yaml
   - jangar-primitives-budget.yaml
+  - jangar-primitives-secretbinding.yaml
+  - jangar-primitives-workspace.yaml
+  - jangar-primitives-schedule.yaml
   - limitrange-defaults.yaml
   - jangar-primitives-orchestration.yaml
+  - jangar-primitives-sub-orchestration.yaml
   - jangar-primitives-orchestrationrun.yaml
   - jangar-primitives-agentrun.yaml
 

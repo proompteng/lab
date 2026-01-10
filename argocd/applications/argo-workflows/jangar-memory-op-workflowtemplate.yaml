@@ -1,0 +1,60 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: jangar-memory-op
+  namespace: argo-workflows
+spec:
+  serviceAccountName: codex-workflow
+  entrypoint: run
+  templates:
+    - name: run
+      inputs:
+        parameters:
+          - name: memoryRef
+            default: ''
+          - name: operation
+            default: ''
+          - name: payload
+            default: ''
+          - name: namespace
+            default: ''
+      script:
+        image: registry.ide-newton.ts.net/lab/jangar:latest
+        command:
+          - /bin/bash
+          - -c
+        source: |
+          set -euo pipefail
+          memory_ref="{{inputs.parameters.memoryRef}}"
+          operation="{{inputs.parameters.operation}}"
+          payload="{{inputs.parameters.payload}}"
+          namespace="{{inputs.parameters.namespace}}"
+          if [ -z "${namespace}" ]; then
+            namespace="$(kubectl get workflow {{workflow.name}} -n {{workflow.namespace}} -o jsonpath='{.metadata.labels.crossplane\\.io/claim-namespace}' 2>/dev/null || true)"
+          fi
+          if [ -z "${namespace}" ]; then
+            namespace="{{workflow.namespace}}"
+          fi
+
+          if [ -z "${memory_ref}" ]; then
+            echo "memoryRef is required" >&2
+            exit 1
+          fi
+
+          payload_b64="$(printf '%s' "${payload}" | base64 -w0)"
+
+          cat <<EOF | kubectl create -f -
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            generateName: memory-op-
+            namespace: ${namespace}
+            labels:
+              jangar.proompteng.ai/memory-ref: "${memory_ref}"
+              jangar.proompteng.ai/operation: "${operation}"
+              jangar.proompteng.ai/workflow: "{{workflow.name}}"
+          data:
+            memoryRef: "${memory_ref}"
+            operation: "${operation}"
+            payloadB64: "${payload_b64}"
+          EOF

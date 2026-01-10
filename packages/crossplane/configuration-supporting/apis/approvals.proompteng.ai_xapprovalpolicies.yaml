@@ -1,0 +1,49 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xapprovalpolicies.approvals.proompteng.ai
+spec:
+  group: approvals.proompteng.ai
+  names:
+    kind: XApprovalPolicy
+    plural: xapprovalpolicies
+  claimNames:
+    kind: ApprovalPolicy
+    plural: approvalpolicies
+  defaultCompositionRef:
+    name: approvalpolicy-argo
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required: [mode]
+              properties:
+                mode:
+                  type: string
+                  enum: [manual, automatic, mixed]
+                approvers:
+                  type: array
+                  items: { type: string }
+                requiredApprovals: { type: integer, default: 1 }
+                timeoutSeconds: { type: integer }
+                signals:
+                  type: array
+                  items: { type: string }
+                metadata:
+                  type: object
+                  additionalProperties: { type: string }
+            status:
+              type: object
+              properties:
+                phase: { type: string }
+                decidedBy: { type: string }
+                decidedAt: { type: string }
+                reason: { type: string }

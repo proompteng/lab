@@ -183,6 +183,16 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 		database = getStringField(providerResource.Object, "spec.postgres.database")
 	}
 	schema := getCompositeString("spec.dataset.schema")
+	providerSchema := getStringField(providerResource.Object, "spec.postgres.schema")
+	if schema == "" && providerSchema != "" {
+		schema = providerSchema
+	}
+	if schema != "" && providerSchema != "" && schema != providerSchema {
+		response.Fatal(rsp, errors.Errorf("memory schema %q does not match provider schema %q", schema, providerSchema))
+		return rsp, nil
+	}
+
+	providerType := getStringField(providerResource.Object, "spec.type")
 
 	if in.Spec.Resources.Job != "" {
 		job := dcds[resource.Name(in.Spec.Resources.Job)]
@@ -215,6 +225,9 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	}
 	if schema != "" && in.Spec.StatusFieldPaths.Schema != "" {
 		_ = fieldpath.Pave(xr.Resource.Object).SetValue(in.Spec.StatusFieldPaths.Schema, schema)
+	}
+	if providerType != "" && in.Spec.StatusFieldPaths.Provider != "" {
+		_ = fieldpath.Pave(xr.Resource.Object).SetValue(in.Spec.StatusFieldPaths.Provider, providerType)
 	}
 
 	if err := response.SetDesiredCompositeResource(rsp, xr); err != nil {

@@ -1,0 +1,60 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: jangar-checkpoint
+  namespace: argo-workflows
+spec:
+  serviceAccountName: codex-workflow
+  entrypoint: checkpoint
+  templates:
+    - name: checkpoint
+      inputs:
+        parameters:
+          - name: memoryRef
+            default: ''
+          - name: checkpointId
+            default: ''
+          - name: payload
+            default: ''
+          - name: namespace
+            default: ''
+      script:
+        image: registry.ide-newton.ts.net/lab/jangar:latest
+        command:
+          - /bin/bash
+          - -c
+        source: |
+          set -euo pipefail
+          memory_ref="{{inputs.parameters.memoryRef}}"
+          checkpoint_id="{{inputs.parameters.checkpointId}}"
+          payload="{{inputs.parameters.payload}}"
+          namespace="{{inputs.parameters.namespace}}"
+          if [ -z "${namespace}" ]; then
+            namespace="$(kubectl get workflow {{workflow.name}} -n {{workflow.namespace}} -o jsonpath='{.metadata.labels.crossplane\\.io/claim-namespace}' 2>/dev/null || true)"
+          fi
+          if [ -z "${namespace}" ]; then
+            namespace="{{workflow.namespace}}"
+          fi
+
+          if [ -z "${checkpoint_id}" ]; then
+            echo "checkpointId is required" >&2
+            exit 1
+          fi
+
+          payload_b64="$(printf '%s' "${payload}" | base64 -w0)"
+
+          cat <<EOF | kubectl create -f -
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            generateName: checkpoint-
+            namespace: ${namespace}
+            labels:
+              jangar.proompteng.ai/checkpoint-id: "${checkpoint_id}"
+              jangar.proompteng.ai/memory-ref: "${memory_ref}"
+              jangar.proompteng.ai/workflow: "{{workflow.name}}"
+          data:
+            checkpointId: "${checkpoint_id}"
+            memoryRef: "${memory_ref}"
+            payloadB64: "${payload_b64}"
+          EOF

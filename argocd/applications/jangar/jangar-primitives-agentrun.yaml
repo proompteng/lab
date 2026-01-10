@@ -7,6 +7,9 @@ spec:
   compositionRef:
     name: agentrun-argo
   agentRef:
-    name: jangar-primitives-echo
+    name: jangar-primitives-agent
   parameters:
-    message: hello from agentrun
+    repository: proompteng/lab
+    base: main
+    head: codex/issue-2425-6cedebf4
+    stage: implementation

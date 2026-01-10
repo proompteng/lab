@@ -63,4 +63,5 @@ type MemoryConnectionStatusFieldPaths struct {
 	Endpoint string `json:"endpoint"`
 	Database string `json:"database"`
 	Schema   string `json:"schema"`
+	Provider string `json:"provider"`
 }

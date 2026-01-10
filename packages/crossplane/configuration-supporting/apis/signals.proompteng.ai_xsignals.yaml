@@ -1,0 +1,36 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xsignals.signals.proompteng.ai
+spec:
+  group: signals.proompteng.ai
+  names:
+    kind: XSignal
+    plural: xsignals
+  claimNames:
+    kind: Signal
+    plural: signals
+  defaultCompositionRef:
+    name: signal-kubernetes
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              properties:
+                description: { type: string }
+                payloadSchema: { type: string }
+                retentionSeconds: { type: integer }
+                externalRef: { type: string }
+            status:
+              type: object
+              properties:
+                lastDeliveryId: { type: string }
+                lastDeliveredAt: { type: string }
