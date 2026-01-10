@@ -7,6 +7,7 @@ rules:
       - argoproj.io
     resources:
       - workflowtemplates
+      - workflows
     verbs:
       - get
       - list
