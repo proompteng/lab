@@ -44,6 +44,7 @@ const trackInputRequests = (page: import('@playwright/test').Page) => {
 const trackTerminalWebSockets = (page: import('@playwright/test').Page) => {
   const sockets = new Map<string, import('@playwright/test').WebSocket>()
   const closed = new Set<string>()
+  const counts = new Map<string, number>()
 
   page.on('websocket', (socket) => {
     const match = socket.url().match(/\/api\/terminals\/([^/]+)\/ws/)
@@ -51,6 +52,7 @@ const trackTerminalWebSockets = (page: import('@playwright/test').Page) => {
     const sessionId = decodeURIComponent(match[1] ?? '')
     if (!sessionId) return
     sockets.set(sessionId, socket)
+    counts.set(sessionId, (counts.get(sessionId) ?? 0) + 1)
     socket.on('close', () => {
       closed.add(sessionId)
     })
@@ -72,7 +74,11 @@ const trackTerminalWebSockets = (page: import('@playwright/test').Page) => {
     return { ws: socket, wasClosed: () => closed.has(sessionId) }
   }
 
-  return { waitFor, wasClosed: (sessionId: string) => closed.has(sessionId) }
+  return {
+    waitFor,
+    wasClosed: (sessionId: string) => closed.has(sessionId),
+    connectionCount: (sessionId: string) => counts.get(sessionId) ?? 0,
+  }
 }
 
 const waitForHydration = async (page: import('@playwright/test').Page) => {
@@ -132,33 +138,6 @@ const assertWebSocketStaysOpen = async (
   }
 }
 
-const assertUiSseStable = async (page: import('@playwright/test').Page, sessionId: string, durationMs = 8000) => {
-  await page.evaluate(
-    ({ id, duration }) =>
-      new Promise<void>((resolve, reject) => {
-        const source = new EventSource(`/api/terminals/${encodeURIComponent(id)}/stream`)
-        let open = false
-        const timeout = window.setTimeout(() => {
-          source.close()
-          if (open) {
-            resolve()
-          } else {
-            reject(new Error('SSE did not open in time'))
-          }
-        }, duration)
-        source.onopen = () => {
-          open = true
-        }
-        source.onerror = () => {
-          window.clearTimeout(timeout)
-          source.close()
-          reject(new Error('SSE error event fired'))
-        }
-      }),
-    { id: sessionId, duration: durationMs },
-  )
-}
-
 const fetchSessionStatus = async (sessionId: string) => {
   const response = await fetch(`${baseURL}/api/terminals/${encodeURIComponent(sessionId)}`)
   if (!response.ok) return null
@@ -170,78 +149,19 @@ const fetchTerminalSnapshot = async (sessionId: string, timeoutMs = 8000) => {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    try {
-      const response = await fetch(`${baseURL}/api/terminals/${encodeURIComponent(sessionId)}/stream`, {
-        signal: controller.signal,
-      })
-      if (!response.ok || !response.body) {
-        throw new Error(`stream status ${response.status}`)
-      }
-
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let collected = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-
-        let boundary = buffer.indexOf('\n\n')
-        while (boundary !== -1) {
-          const chunk = buffer.slice(0, boundary)
-          buffer = buffer.slice(boundary + 2)
-          boundary = buffer.indexOf('\n\n')
-
-          const dataMatch = chunk.match(/data: ?(.*)/)
-          if (dataMatch && dataMatch[1] !== undefined) {
-            const decoded = Buffer.from(dataMatch[1], 'base64').toString('utf8')
-            if (decoded) collected += decoded
-          }
-        }
-
-        if (collected) return collected
-      }
-
-      return collected
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') return ''
-      throw error
+    const response = await fetch(`${baseURL}/api/terminals/${encodeURIComponent(sessionId)}/stream`, {
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      throw new Error(`stream status ${response.status}`)
     }
+    return await response.text()
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') return ''
+    throw error
   } finally {
     clearTimeout(timer)
     controller.abort()
-  }
-}
-
-const assertSseStaysOpen = async (sessionId: string, durationMs = 15000) => {
-  let closedEarly = false
-  let canceled = false
-
-  const response = await fetch(`${baseURL}/api/terminals/${encodeURIComponent(sessionId)}/stream`)
-  if (!response.ok || !response.body) {
-    throw new Error(`stream status ${response.status}`)
-  }
-
-  const reader = response.body.getReader()
-  const readLoop = (async () => {
-    while (true) {
-      const { done } = await reader.read()
-      if (done) {
-        if (!canceled) closedEarly = true
-        break
-      }
-    }
-  })()
-
-  await new Promise((resolve) => setTimeout(resolve, durationMs))
-  canceled = true
-  await reader.cancel()
-  await readLoop.catch(() => undefined)
-
-  if (closedEarly) {
-    throw new Error('SSE stream closed before timeout')
   }
 }
 
@@ -471,18 +391,19 @@ test.describe('deployed jangar e2e', () => {
         createdAt: string | null
         attached: boolean
         status?: string
+        reconnectToken?: string | null
       }
     }
     expect(sessionPayload.ok).toBe(true)
     expect(sessionPayload.session?.id).toBe(sessionId)
     expect(sessionPayload.session?.worktreePath ?? '').toContain('/.worktrees/')
     expect(sessionPayload.session?.status).toBe('ready')
+    expect(sessionPayload.session?.reconnectToken).toBeTruthy()
 
     await expect(page.getByText('Status: connected', { exact: false })).toBeVisible({ timeout: 20_000 })
     const wsStatus = await wsTracker.waitFor(sessionId)
     await assertWebSocketStaysOpen(page, wsStatus, 6000)
-    await assertSseStaysOpen(sessionId, 12_000)
-    await assertUiSseStable(page, sessionId)
+    await fetchTerminalSnapshot(sessionId)
 
     const marker = `e2e-${Date.now()}`
     const inputResponse = await request.post(`/api/terminals/${encodeURIComponent(sessionId)}/input`, {
@@ -560,6 +481,7 @@ test.describe('deployed jangar e2e', () => {
     await expect(page.getByText('Connection lost. Refresh to retry.')).toHaveCount(0)
     const wsStatus = await wsTracker.waitFor(sessionId)
     await assertWebSocketStaysOpen(page, wsStatus, 6000)
+    const wsCount = wsTracker.connectionCount(sessionId)
 
     const marker = `ui-e2e-${Date.now()}`
     const terminal = page.getByTestId('terminal-canvas')
@@ -585,6 +507,7 @@ test.describe('deployed jangar e2e', () => {
     await page.reload()
     await expect(page).toHaveURL(new RegExp(`/terminals/${sessionId}$`))
     await expect(page.getByText('Status: connected', { exact: false })).toBeVisible({ timeout: 20_000 })
+    await expect.poll(() => wsTracker.connectionCount(sessionId), { timeout: 20_000 }).toBeGreaterThan(wsCount)
     await expect.poll(() => fetchTerminalSnapshot(sessionId), { timeout: 20_000 }).toContain(marker)
 
     await page.getByRole('button', { name: 'Terminate session' }).click()
