@@ -81,6 +81,8 @@ const buildImplementationPrompt = ({
     `- Commit in logical units referencing #${issueNumber}; push the branch.`,
     '- Open a ready-to-merge PR using the default template per repo instructions; link the issue.',
     '- Finish only when required CI is green; fix failures and re-run the smallest necessary checks until it is.',
+    '- If total PR changes exceed 1000 lines (additions + deletions), wait for the Codex review request and do not merge until Codex review is posted and all its threads are resolved.',
+    '- You are permitted to merge the PR once CI is green, merge conflicts are resolved, and all review comments (including Codex review if requested) are resolved.',
     '- Do not stop until the PR is opened and in a mergeable state; resolve merge conflicts, address all review comments from anyone, and keep CI checks green.',
     '- Use relevant repo skills in `skills/` when applicable; do not restate their instructions.',
     '',
