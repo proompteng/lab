@@ -5,6 +5,7 @@ metadata:
   namespace: argo-workflows
 spec:
   serviceAccountName: codex-workflow
+  entrypoint: echo
   templates:
     - name: echo
       inputs:
