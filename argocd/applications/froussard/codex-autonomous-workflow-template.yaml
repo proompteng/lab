@@ -195,8 +195,8 @@ spec:
             readOnly: true
         resources:
           requests:
-            cpu: "2"
-            memory: 4Gi
+            cpu: "1"
+            memory: 2Gi
           limits:
             cpu: "4"
             memory: 6Gi
@@ -577,8 +577,8 @@ spec:
             readOnly: true
         resources:
           requests:
-            cpu: "2"
-            memory: 4Gi
+            cpu: "1"
+            memory: 2Gi
           limits:
             cpu: "4"
             memory: 6Gi

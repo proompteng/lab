@@ -7,7 +7,7 @@ spec:
   compositionRef:
     name: budget-kubernetes
   limits:
-    cpu: "12"
+    cpu: "36"
     dollars: 50
     memory: 128Gi
     tokens: 100000
