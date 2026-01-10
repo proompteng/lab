@@ -210,7 +210,7 @@ spec:
             namespace: coder
             annotations:
               argocd.argoproj.io/sync-wave: "3"
-            automation: auto
+            automation: manual
             enabled: "true"
           - name: arc
             path: argocd/applications/arc
