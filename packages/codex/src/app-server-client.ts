@@ -432,6 +432,7 @@ export class CodexAppServerClient {
       model: turnOptions.model ?? this.defaultModel,
       effort: turnOptions.effort ?? this.defaultEffort,
       summary: null,
+      outputSchema: null,
     }
 
     const turnResp = (await this.request<TurnStartResponse>('turn/start', turnParams)) as TurnStartResponse

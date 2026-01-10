@@ -380,7 +380,7 @@
     },
     "packages/temporal-bun-sdk": {
       "name": "@proompteng/temporal-bun-sdk",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "bin": {
         "temporal-bun-worker": "./dist/bin/start-worker.js",
         "temporal-bun": "./dist/bin/temporal-bun.js",
