@@ -1,0 +1,15 @@
+apiVersion: orchestration.proompteng.ai/v1alpha1
+kind: Orchestration
+metadata:
+  name: jangar-primitives
+  namespace: jangar
+spec:
+  compositionRef:
+    name: orchestration-argo-template
+  entrypoint: main
+  steps:
+    - name: echo
+      kind: AgentRun
+      agentRef: jangar-primitives-echo
+      with:
+        message: hello from orchestration

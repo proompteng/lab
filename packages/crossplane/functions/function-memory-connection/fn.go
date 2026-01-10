@@ -5,10 +5,16 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/url"
+	"os"
+	"sort"
 	"strings"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/fieldpath"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
 
 	"github.com/crossplane/function-memory-connection/input/v1alpha1"
 
@@ -34,7 +40,7 @@ type Function struct {
 // RunFunction runs the Function.
 //
 //nolint:gocognit // Connection binding requires multiple guard clauses and branches.
-func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) (*fnv1.RunFunctionResponse, error) {
+func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest) (*fnv1.RunFunctionResponse, error) {
 	rsp := response.To(req, response.DefaultTTL)
 
 	in := &v1alpha1.MemoryConnectionBinding{}
@@ -54,28 +60,77 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
+	observedXR, _ := request.GetObservedCompositeResource(req)
+	getCompositeString := func(path string) string {
+		if path == "" {
+			return ""
+		}
+		if xr != nil {
+			if value := getStringField(xr.Resource.Object, path); value != "" {
+				return value
+			}
+		}
+		if observedXR != nil {
+			return getStringField(observedXR.Resource.Object, path)
+		}
+		return ""
+	}
+	claimNamespace := getCompositeString("spec.claimRef.namespace")
+	if claimNamespace == "" && xr != nil {
+		if labels := xr.Resource.GetLabels(); labels != nil {
+			claimNamespace = labels["crossplane.io/claim-namespace"]
+		}
+	}
+
 	dcds, err := request.GetDesiredComposedResources(req)
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot get desired composed resources"))
 		return rsp, nil
 	}
 
-	providerName := getStringField(xr.Resource.Object, in.Spec.ProviderRefFieldPath)
+	providerName := getCompositeString(in.Spec.ProviderRefFieldPath)
 	if providerName == "" {
+		desiredHasSpec := xr != nil && xr.Resource != nil && xr.Resource.Object["spec"] != nil
+		observedHasSpec := observedXR != nil && observedXR.Resource != nil && observedXR.Resource.Object["spec"] != nil
+		f.log.Info("providerRef name missing", "providerRefFieldPath", in.Spec.ProviderRefFieldPath, "desiredHasSpec", desiredHasSpec, "observedHasSpec", observedHasSpec)
 		response.Fatal(rsp, errors.New("providerRef name is required"))
 		return rsp, nil
+	}
+
+	client := dynamic.Interface(nil)
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		config, err := rest.InClusterConfig()
+		if err != nil {
+			f.log.Info("failed to load in-cluster config", "error", err)
+		} else if dyn, err := dynamic.NewForConfig(config); err != nil {
+			f.log.Info("failed to create dynamic client", "error", err)
+		} else {
+			client = dyn
+		}
 	}
 
 	required, _ := request.GetRequiredResources(req)
 	providerResource := findRequired(required, providerRequirementKey)
 	if providerResource == nil || providerResource.GetName() != providerName {
-		setRequirement(rsp, providerRequirementKey, "memory.proompteng.ai/v1alpha1", "MemoryProvider", providerName, xr.Resource.GetNamespace())
-		return rsp, nil
+		requireNamespace := firstNonEmpty(claimNamespace, xr.Resource.GetNamespace())
+		if client != nil {
+			providerGvr := schema.GroupVersionResource{Group: "memory.proompteng.ai", Version: "v1alpha1", Resource: "memoryproviders"}
+			if fetched, err := fetchResource(ctx, client, providerGvr, requireNamespace, providerName); err != nil {
+				f.log.Info("failed to fetch provider", "providerName", providerName, "providerNamespace", requireNamespace, "error", err)
+			} else if fetched != nil {
+				providerResource = fetched
+			}
+		}
+		if providerResource == nil || providerResource.GetName() != providerName {
+			f.log.Info("provider requirement missing", "providerName", providerName, "providerNamespace", requireNamespace, "requiredKeys", requiredKeys(required))
+			setRequirement(rsp, providerRequirementKey, "memory.proompteng.ai/v1alpha1", "MemoryProvider", providerName, requireNamespace)
+			return rsp, nil
+		}
 	}
 
 	providerNamespace := providerResource.GetNamespace()
 	if providerNamespace == "" {
-		providerNamespace = xr.Resource.GetNamespace()
+		providerNamespace = firstNonEmpty(claimNamespace, xr.Resource.GetNamespace())
 	}
 
 	connSecretName := getStringField(providerResource.Object, "spec.postgres.connectionSecret.name")
@@ -86,7 +141,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		connSecretNamespace = providerNamespace
 	}
 
-	targetNamespace := firstNonEmpty(connSecretNamespace, clusterNamespace, providerNamespace, xr.Resource.GetNamespace())
+	targetNamespace := firstNonEmpty(connSecretNamespace, clusterNamespace, providerNamespace, claimNamespace, xr.Resource.GetNamespace())
 	applyTargetNamespaces(dcds, in.Spec, targetNamespace)
 
 	if connSecretName == "" {
@@ -96,36 +151,48 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	}
 
 	secretResource := findRequired(required, secretRequirementKey)
-	if secretResource == nil || secretResource.GetName() != connSecretName || secretResource.GetNamespace() != connSecretNamespace {
-		setRequirement(rsp, secretRequirementKey, "v1", "Secret", connSecretName, connSecretNamespace)
-		_ = response.SetDesiredComposedResources(rsp, dcds)
-		return rsp, nil
+	if secretResource == nil && client != nil && connSecretNamespace != "" {
+		secretGvr := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "secrets"}
+		if fetched, err := fetchResource(ctx, client, secretGvr, connSecretNamespace, connSecretName); err != nil {
+			f.log.Info("failed to fetch secret", "secretName", connSecretName, "secretNamespace", connSecretNamespace, "error", err)
+		} else if fetched != nil {
+			secretResource = fetched
+		}
 	}
-
-	data, _, _ := unstructured.NestedStringMap(secretResource.Object, "data")
-	dsn := decodeSecretValue(data, "uri")
-	if dsn == "" {
-		host := decodeSecretValue(data, "host")
-		port := decodeSecretValue(data, "port")
-		user := decodeSecretValue(data, "user")
-		password := decodeSecretValue(data, "password")
-		database := decodeSecretValue(data, "dbname")
-		if host != "" && user != "" && database != "" {
-			if port != "" {
-				host = fmt.Sprintf("%s:%s", host, port)
+	dsn := ""
+	if secretResource != nil {
+		data, _, _ := unstructured.NestedStringMap(secretResource.Object, "data")
+		dsn = decodeSecretValue(data, "uri")
+		if dsn == "" {
+			host := decodeSecretValue(data, "host")
+			port := decodeSecretValue(data, "port")
+			user := decodeSecretValue(data, "user")
+			password := decodeSecretValue(data, "password")
+			database := decodeSecretValue(data, "dbname")
+			if host != "" && user != "" && database != "" {
+				if port != "" {
+					host = fmt.Sprintf("%s:%s", host, port)
+				}
+				dsn = fmt.Sprintf("postgresql://%s:%s@%s/%s", url.PathEscape(user), url.PathEscape(password), host, database)
 			}
-			dsn = fmt.Sprintf("postgresql://%s:%s@%s/%s", url.PathEscape(user), url.PathEscape(password), host, database)
 		}
 	}
 
 	endpoint, database := parseEndpointAndDatabase(dsn)
-	schema := getStringField(xr.Resource.Object, "spec.dataset.schema")
+	if database == "" {
+		database = getStringField(providerResource.Object, "spec.postgres.database")
+	}
+	schema := getCompositeString("spec.dataset.schema")
 
 	if in.Spec.Resources.Job != "" {
 		job := dcds[resource.Name(in.Spec.Resources.Job)]
 		if job != nil {
-			if dsn != "" && in.Spec.DsnEnvVar != "" {
-				_ = setJobEnv(job.Resource.Object, in.Spec.DsnEnvVar, dsn)
+			if in.Spec.DsnEnvVar != "" {
+				if dsn != "" {
+					_ = setJobEnv(job.Resource.Object, in.Spec.DsnEnvVar, dsn)
+				} else {
+					_ = setJobEnvFromSecret(job.Resource.Object, in.Spec.DsnEnvVar, connSecretName, "uri")
+				}
 			}
 			if schema != "" && in.Spec.SchemaEnvVar != "" {
 				_ = setJobEnv(job.Resource.Object, in.Spec.SchemaEnvVar, schema)
@@ -169,7 +236,9 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 func setRequirement(rsp *fnv1.RunFunctionResponse, key, apiVersion, kind, name, namespace string) {
 	reqs := rsp.GetRequirements()
 	if reqs == nil {
-		reqs = &fnv1.Requirements{Resources: map[string]*fnv1.ResourceSelector{}}
+		reqs = &fnv1.Requirements{
+			Resources: map[string]*fnv1.ResourceSelector{},
+		}
 		rsp.Requirements = reqs
 	}
 	if reqs.GetResources() == nil {
@@ -249,6 +318,50 @@ func setJobEnv(obj map[string]any, name, value string) error {
 	return unstructured.SetNestedSlice(obj, containers, "spec", "template", "spec", "containers")
 }
 
+func setJobEnvFromSecret(obj map[string]any, name, secretName, key string) error {
+	containers, found, err := unstructured.NestedSlice(obj, "spec", "template", "spec", "containers")
+	if err != nil || !found || len(containers) == 0 {
+		return fmt.Errorf("job containers not found")
+	}
+
+	container, ok := containers[0].(map[string]any)
+	if !ok {
+		return fmt.Errorf("job container is not an object")
+	}
+
+	env, _, _ := unstructured.NestedSlice(container, "env")
+	valueFrom := map[string]any{
+		"secretKeyRef": map[string]any{
+			"name": secretName,
+			"key":  key,
+		},
+	}
+	updated := false
+	for i, entry := range env {
+		item, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if item["name"] == name {
+			delete(item, "value")
+			item["valueFrom"] = valueFrom
+			env[i] = item
+			updated = true
+			break
+		}
+	}
+
+	if !updated {
+		env = append(env, map[string]any{"name": name, "valueFrom": valueFrom})
+	}
+
+	if err := unstructured.SetNestedSlice(container, env, "env"); err != nil {
+		return err
+	}
+	containers[0] = container
+	return unstructured.SetNestedSlice(obj, containers, "spec", "template", "spec", "containers")
+}
+
 func decodeSecretValue(data map[string]string, key string) string {
 	raw, ok := data[key]
 	if !ok || raw == "" {
@@ -301,4 +414,26 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func requiredKeys(required map[string][]resource.Required) []string {
+	keys := make([]string, 0, len(required))
+	for key := range required {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func fetchResource(ctx context.Context, client dynamic.Interface, gvr schema.GroupVersionResource, namespace, name string) (*unstructured.Unstructured, error) {
+	if client == nil {
+		return nil, nil
+	}
+	var resourceClient dynamic.ResourceInterface
+	if namespace != "" {
+		resourceClient = client.Resource(gvr).Namespace(namespace)
+	} else {
+		resourceClient = client.Resource(gvr)
+	}
+	return resourceClient.Get(ctx, name, metav1.GetOptions{})
 }

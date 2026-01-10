@@ -125,6 +125,77 @@ func TestRunFunction_BuildsDagTasks(t *testing.T) {
 	}
 }
 
+func TestRunFunction_ObservedFallback(t *testing.T) {
+	req := &fnv1.RunFunctionRequest{
+		Meta: &fnv1.RequestMeta{Tag: "observed-fallback"},
+		Input: resource.MustStructJSON(`{
+			"apiVersion": "fn.proompteng.ai/v1alpha1",
+			"kind": "OrchestrationDag",
+			"spec": {
+				"stepsFieldPath": "spec.steps",
+				"entrypointFieldPath": "spec.entrypoint",
+				"targetWorkflowTemplate": "workflow"
+			}
+		}`),
+		Desired: &fnv1.State{
+			Composite: &fnv1.Resource{
+				Resource: resource.MustStructJSON(`{
+					"apiVersion": "orchestration.proompteng.ai/v1alpha1",
+					"kind": "Orchestration",
+					"spec": {}
+				}`),
+			},
+			Resources: map[string]*fnv1.Resource{
+				"workflow": {
+					Resource: resource.MustStructJSON(`{
+						"apiVersion": "argoproj.io/v1alpha1",
+						"kind": "WorkflowTemplate",
+						"spec": {
+							"templates": [
+								{
+									"name": "main",
+									"dag": {
+										"tasks": []
+									}
+								}
+							]
+						}
+					}`),
+				},
+			},
+		},
+		Observed: &fnv1.State{
+			Composite: &fnv1.Resource{
+				Resource: resource.MustStructJSON(`{
+					"apiVersion": "orchestration.proompteng.ai/v1alpha1",
+					"kind": "Orchestration",
+					"spec": {
+						"entrypoint": "main",
+						"steps": [
+							{
+								"name": "step-one",
+								"kind": "SignalWait"
+							}
+						]
+					}
+				}`),
+			},
+		},
+	}
+
+	f := &Function{log: logging.NewNopLogger()}
+	rsp, err := f.RunFunction(t.Context(), req)
+	if err != nil {
+		t.Fatalf("RunFunction returned error: %v", err)
+	}
+
+	template := desiredTemplate(t, rsp, "workflow", "main")
+	tasks := taskMap(t, template)
+	if _, ok := tasks["step-one"]; !ok {
+		t.Fatalf("expected step-one task from observed spec")
+	}
+}
+
 func TestRunFunction_MissingEntrypointTemplate(t *testing.T) {
 	req := &fnv1.RunFunctionRequest{
 		Meta: &fnv1.RequestMeta{Tag: "missing-entrypoint"},

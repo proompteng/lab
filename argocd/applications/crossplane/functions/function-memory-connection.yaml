@@ -4,3 +4,4 @@ metadata:
   name: function-memory-connection
 spec:
   package: registry.ide-newton.ts.net/lab/function-memory-connection:latest
+  packagePullPolicy: Always

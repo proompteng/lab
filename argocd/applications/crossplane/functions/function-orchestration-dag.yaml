@@ -4,3 +4,4 @@ metadata:
   name: function-orchestration-dag
 spec:
   package: registry.ide-newton.ts.net/lab/function-orchestration-dag:latest
+  packagePullPolicy: Always

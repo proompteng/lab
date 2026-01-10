@@ -1,0 +1,12 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: jangar-primitives-agentrun
+  namespace: jangar
+spec:
+  compositionRef:
+    name: agentrun-argo
+  agentRef:
+    name: jangar-primitives-echo
+  parameters:
+    message: hello from agentrun

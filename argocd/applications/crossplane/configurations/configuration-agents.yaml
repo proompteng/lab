@@ -4,3 +4,4 @@ metadata:
   name: configuration-agents
 spec:
   package: registry.ide-newton.ts.net/lab/configuration-agents:latest
+  packagePullPolicy: Always

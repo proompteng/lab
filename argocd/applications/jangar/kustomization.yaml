@@ -24,6 +24,11 @@ resources:
   - serviceaccount.yaml
   - clusterrolebinding.yaml
   - workflow-completions-rbac.yaml
+  - jangar-primitives-memoryprovider.yaml
+  - jangar-primitives-memory.yaml
+  - jangar-primitives-orchestration.yaml
+  - jangar-primitives-orchestrationrun.yaml
+  - jangar-primitives-agentrun.yaml
 
 helmCharts:
   - name: open-webui

@@ -1,0 +1,12 @@
+apiVersion: orchestration.proompteng.ai/v1alpha1
+kind: OrchestrationRun
+metadata:
+  name: jangar-primitives-run
+  namespace: jangar
+spec:
+  compositionRef:
+    name: orchestrationrun-argo
+  orchestrationRef:
+    name: jangar-primitives
+  parameters:
+    runId: "jangar-primitives-run"

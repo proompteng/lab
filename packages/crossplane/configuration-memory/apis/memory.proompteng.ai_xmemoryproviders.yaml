@@ -10,6 +10,8 @@ spec:
   claimNames:
     kind: MemoryProvider
     plural: memoryproviders
+  defaultCompositionRef:
+    name: memoryprovider-postgres
   versions:
     - name: v1alpha1
       served: true
