@@ -58,6 +58,34 @@ func TestRunFunction_BuildsDagTasks(t *testing.T) {
 							"name": "step-four",
 							"kind": "SignalWait",
 							"dependsOn": ["step-three"]
+						},
+						{
+							"name": "step-five",
+							"kind": "MemoryOp",
+							"memoryRef": "memory-ref",
+							"dependsOn": ["step-four"],
+							"with": {
+								"operation": "write",
+								"payload": "{\"event\":\"memory\"}"
+							}
+						},
+						{
+							"name": "step-six",
+							"kind": "Checkpoint",
+							"memoryRef": "memory-ref",
+							"dependsOn": ["step-five"],
+							"with": {
+								"checkpointId": "cp-001"
+							}
+						},
+						{
+							"name": "step-seven",
+							"kind": "SubOrchestration",
+							"dependsOn": ["step-six"],
+							"with": {
+								"orchestrationRef": "sub-orch",
+								"parameters": "{\"message\":\"hi\"}"
+							}
 						}
 					]
 				}
@@ -146,6 +174,45 @@ func TestRunFunction_BuildsDagTasks(t *testing.T) {
 	templateRef, _ = stepFour["templateRef"].(map[string]any)
 	if diff := cmp.Diff(map[string]any{"name": "jangar-signal-wait", "template": "wait"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
 		t.Fatalf("step-four templateRef mismatch (-want +got):\n%s", diff)
+	}
+
+	stepFive := tasks["step-five"]
+	if stepFive == nil {
+		t.Fatalf("step-five task missing")
+	}
+	templateRef, _ = stepFive["templateRef"].(map[string]any)
+	if diff := cmp.Diff(map[string]any{"name": "jangar-memory-op", "template": "run"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("step-five templateRef mismatch (-want +got):\n%s", diff)
+	}
+	parameters = paramMap(t, stepFive)
+	if diff := cmp.Diff(map[string]string{"memoryRef": "memory-ref", "operation": "write", "payload": "{\"event\":\"memory\"}"}, parameters); diff != "" {
+		t.Fatalf("step-five parameters mismatch (-want +got):\n%s", diff)
+	}
+
+	stepSix := tasks["step-six"]
+	if stepSix == nil {
+		t.Fatalf("step-six task missing")
+	}
+	templateRef, _ = stepSix["templateRef"].(map[string]any)
+	if diff := cmp.Diff(map[string]any{"name": "jangar-checkpoint", "template": "checkpoint"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("step-six templateRef mismatch (-want +got):\n%s", diff)
+	}
+	parameters = paramMap(t, stepSix)
+	if diff := cmp.Diff(map[string]string{"memoryRef": "memory-ref", "checkpointId": "cp-001"}, parameters); diff != "" {
+		t.Fatalf("step-six parameters mismatch (-want +got):\n%s", diff)
+	}
+
+	stepSeven := tasks["step-seven"]
+	if stepSeven == nil {
+		t.Fatalf("step-seven task missing")
+	}
+	templateRef, _ = stepSeven["templateRef"].(map[string]any)
+	if diff := cmp.Diff(map[string]any{"name": "jangar-sub-orchestration", "template": "run"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("step-seven templateRef mismatch (-want +got):\n%s", diff)
+	}
+	parameters = paramMap(t, stepSeven)
+	if diff := cmp.Diff(map[string]string{"orchestrationRef": "sub-orch", "parameters": "{\"message\":\"hi\"}"}, parameters); diff != "" {
+		t.Fatalf("step-seven parameters mismatch (-want +got):\n%s", diff)
 	}
 }
 
