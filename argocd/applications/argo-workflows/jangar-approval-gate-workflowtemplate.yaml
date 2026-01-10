@@ -8,4 +8,55 @@ spec:
   entrypoint: gate
   templates:
     - name: gate
+      inputs:
+        parameters:
+          - name: policyRef
+            default: ''
+          - name: policyNamespace
+            default: '{{workflow.labels.crossplane.io/claim-namespace}}'
+      steps:
+        - - name: evaluate
+            template: evaluate
+            arguments:
+              parameters:
+                - name: policyRef
+                  value: '{{inputs.parameters.policyRef}}'
+                - name: policyNamespace
+                  value: '{{inputs.parameters.policyNamespace}}'
+        - - name: wait
+            template: wait
+            when: '{{steps.evaluate.outputs.parameters.approvalRequired}} == true'
+    - name: evaluate
+      inputs:
+        parameters:
+          - name: policyRef
+          - name: policyNamespace
+      script:
+        image: registry.ide-newton.ts.net/lab/jangar:latest
+        command:
+          - /bin/bash
+          - -c
+        source: |
+          set -euo pipefail
+          policy="{{inputs.parameters.policyRef}}"
+          namespace="{{inputs.parameters.policyNamespace}}"
+          if [ -z "${namespace}" ]; then
+            namespace="{{workflow.namespace}}"
+          fi
+          if [ -z "${policy}" ]; then
+            echo "false" > /tmp/approval_required
+            exit 0
+          fi
+          mode="$(kubectl get approvalpolicies.approvals.proompteng.ai "${policy}" -n "${namespace}" -o jsonpath='{.spec.mode}' 2>/dev/null || true)"
+          if [ "${mode}" = "automatic" ]; then
+            echo "false" > /tmp/approval_required
+            exit 0
+          fi
+          echo "true" > /tmp/approval_required
+      outputs:
+        parameters:
+          - name: approvalRequired
+            valueFrom:
+              path: /tmp/approval_required
+    - name: wait
       suspend: {}

@@ -16,13 +16,42 @@ spec:
             default: ''
           - name: payload
             default: ''
-      container:
-        image: alpine:3.20
+          - name: namespace
+            default: '{{workflow.labels.crossplane.io/claim-namespace}}'
+      script:
+        image: registry.ide-newton.ts.net/lab/jangar:latest
         command:
-          - /bin/sh
+          - /bin/bash
           - -c
-        args:
-          - |
-            echo "memoryRef={{inputs.parameters.memoryRef}}"
-            echo "operation={{inputs.parameters.operation}}"
-            echo "payload={{inputs.parameters.payload}}"
+        source: |
+          set -euo pipefail
+          memory_ref="{{inputs.parameters.memoryRef}}"
+          operation="{{inputs.parameters.operation}}"
+          payload="{{inputs.parameters.payload}}"
+          namespace="{{inputs.parameters.namespace}}"
+          if [ -z "${namespace}" ]; then
+            namespace="{{workflow.namespace}}"
+          fi
+
+          if [ -z "${memory_ref}" ]; then
+            echo "memoryRef is required" >&2
+            exit 1
+          fi
+
+          payload_b64="$(printf '%s' "${payload}" | base64 -w0)"
+
+          cat <<EOF | kubectl create -f -
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            generateName: memory-op-
+            namespace: ${namespace}
+            labels:
+              jangar.proompteng.ai/memory-ref: "${memory_ref}"
+              jangar.proompteng.ai/operation: "${operation}"
+              jangar.proompteng.ai/workflow: "{{workflow.name}}"
+          data:
+            memoryRef: "${memory_ref}"
+            operation: "${operation}"
+            payloadB64: "${payload_b64}"
+          EOF

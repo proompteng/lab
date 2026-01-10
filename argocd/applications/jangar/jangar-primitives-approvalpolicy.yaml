@@ -4,7 +4,7 @@ metadata:
   name: jangar-primitives-approval
   namespace: jangar
 spec:
-  mode: manual
+  mode: automatic
   approvers:
     - jangar-admin
   requiredApprovals: 1
