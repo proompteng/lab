@@ -607,6 +607,44 @@ test.describe('deployed jangar e2e', () => {
     expect(apiFailures).toEqual([])
   })
 
+  test('terminal fullscreen route fills viewport', async ({ page, request }) => {
+    test.setTimeout(90_000)
+
+    const createResponse = await request.get('/api/terminals?create=1')
+    expect(createResponse.ok()).toBe(true)
+    const createPayload = (await createResponse.json()) as {
+      ok: boolean
+      session?: { id?: string }
+      message?: string
+    }
+    expect(createPayload.ok).toBe(true)
+    const sessionId = createPayload.session?.id
+    if (!sessionId) {
+      throw new Error(`Terminal session creation returned no id: ${createPayload.message ?? 'unknown error'}`)
+    }
+    await expect.poll(() => fetchSessionStatus(sessionId), { timeout: 90_000 }).toBe('ready')
+
+    await page.goto(`/terminals/${sessionId}/fullscreen`)
+    await waitForHydration(page)
+    await expect(page.getByTestId('terminal-canvas')).toBeVisible({ timeout: 20_000 })
+
+    const bounds = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid=\"terminal-canvas\"]') as HTMLElement | null
+      if (!el) return null
+      const rect = el.getBoundingClientRect()
+      return { width: rect.width, height: rect.height, viewportW: window.innerWidth, viewportH: window.innerHeight }
+    })
+
+    expect(bounds).not.toBeNull()
+    if (bounds) {
+      expect(Math.abs(bounds.width - bounds.viewportW)).toBeLessThan(6)
+      expect(Math.abs(bounds.height - bounds.viewportH)).toBeLessThan(6)
+    }
+
+    await request.post(`/api/terminals/${encodeURIComponent(sessionId)}/terminate`)
+    await expect.poll(() => fetchSessionStatus(sessionId), { timeout: 30_000 }).toBe('closed')
+  })
+
   test('terminal stays visually stable across blur/focus', async ({ page, context, request }) => {
     test.setTimeout(120_000)
 

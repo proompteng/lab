@@ -1,515 +1,338 @@
+import '@xterm/xterm/css/xterm.css'
+
+import { CanvasAddon } from '@xterm/addon-canvas'
+import { ClipboardAddon } from '@xterm/addon-clipboard'
+import { FitAddon } from '@xterm/addon-fit'
+import { SearchAddon } from '@xterm/addon-search'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
+import { WebLinksAddon } from '@xterm/addon-web-links'
+import { WebglAddon } from '@xterm/addon-webgl'
+import { Terminal } from '@xterm/xterm'
 import * as React from 'react'
 
-const base64ToBytes = (value: string) => {
-  const binary = atob(value)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i)
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
+
+const OUTPUT_FRAME_TYPE = 1
+const RECONNECT_STORAGE_KEY = 'jangar-terminal-reconnect'
+
+const buildWsUrl = (baseUrl: string, sessionId: string, token: string, since: number, cols?: number, rows?: number) => {
+  const url = new URL(baseUrl)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  if (!url.pathname.endsWith('/')) {
+    url.pathname += '/'
   }
-  return bytes
+  url.pathname += `api/terminals/${encodeURIComponent(sessionId)}/ws`
+  url.searchParams.set('reconnect', token)
+  if (since > 0) url.searchParams.set('since', `${since}`)
+  if (cols) url.searchParams.set('cols', `${cols}`)
+  if (rows) url.searchParams.set('rows', `${rows}`)
+  return url.toString()
 }
 
-const bytesToBase64 = (value: Uint8Array) => {
-  let binary = ''
-  for (let i = 0; i < value.length; i += 1) {
-    binary += String.fromCharCode(value[i])
-  }
-  return btoa(binary)
-}
-
-const encodeInput = (value: string) => {
-  const encoder = new TextEncoder()
-  return bytesToBase64(encoder.encode(value))
+const resolveBaseUrl = (terminalUrl?: string | null) => {
+  if (terminalUrl) return terminalUrl
+  return window.location.origin
 }
 
 type TerminalViewProps = {
   sessionId: string
+  terminalUrl?: string | null
+  variant?: 'default' | 'fullscreen'
 }
 
-export function TerminalView({ sessionId }: TerminalViewProps) {
+export function TerminalView({ sessionId, terminalUrl, variant = 'default' }: TerminalViewProps) {
   const containerRef = React.useRef<HTMLDivElement | null>(null)
-  const terminalRef = React.useRef<import('xterm').Terminal | null>(null)
-  const fitRef = React.useRef<import('xterm-addon-fit').FitAddon | null>(null)
+  const terminalRef = React.useRef<Terminal | null>(null)
+  const fitRef = React.useRef<FitAddon | null>(null)
+  const searchRef = React.useRef<SearchAddon | null>(null)
   const socketRef = React.useRef<WebSocket | null>(null)
   const reconnectTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const reconnectAttemptRef = React.useRef(0)
   const resizeObserverRef = React.useRef<ResizeObserver | null>(null)
-  const inputBufferRef = React.useRef('')
-  const inputFlushTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const snapshotTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const shouldReconnectRef = React.useRef(true)
-  const resizeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const lastSizeRef = React.useRef<{ cols: number; rows: number } | null>(null)
-  const snapshotSeqRef = React.useRef(0)
-  const latestSnapshotSeqRef = React.useRef(0)
-  const outputQueueRef = React.useRef<string[]>([])
-  const snapshotApplyingRef = React.useRef(false)
-  const pendingSnapshotRef = React.useRef<{ delayMs: number; active: boolean }>({ delayMs: 180, active: false })
-  const resyncTimersRef = React.useRef<ReturnType<typeof setTimeout>[]>([])
-  const resyncingRef = React.useRef(false)
-  const resyncTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const resyncPhaseRef = React.useRef<0 | 1 | 2>(0)
+  const lastSeqRef = React.useRef(0)
+  const reconnectTokenRef = React.useRef('')
+  const statusRef = React.useRef<'connecting' | 'connected' | 'error'>('connecting')
+  const decoderRef = React.useRef(new TextDecoder())
 
   const [status, setStatus] = React.useState<'connecting' | 'connected' | 'error'>('connecting')
   const [error, setError] = React.useState<string | null>(null)
+  const [searchOpen, setSearchOpen] = React.useState(false)
+  const [searchValue, setSearchValue] = React.useState('')
 
   React.useEffect(() => {
-    let isDisposed = false
-    const outputDecoder = new TextDecoder()
-    const snapshotDecoder = new TextDecoder()
-    shouldReconnectRef.current = true
-
-    const isPageVisible = () => document.visibilityState === 'visible'
-
-    const buildSocketUrl = () => {
-      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-      const encoded = encodeURIComponent(sessionId)
-      return `${protocol}://${window.location.host}/api/terminals/${encoded}/ws?sessionId=${encoded}`
-    }
-
-    const sendMessage = (payload: unknown) => {
-      const socket = socketRef.current
-      if (!socket || socket.readyState !== WebSocket.OPEN) return
-      socket.send(JSON.stringify(payload))
-    }
-
-    const flushInput = () => {
-      if (!inputBufferRef.current) return
-      if (socketRef.current?.readyState !== WebSocket.OPEN) return
-      const data = inputBufferRef.current
-      inputBufferRef.current = ''
-      sendMessage({ type: 'input', data: encodeInput(data) })
-    }
-
-    const sendResize = (size?: { cols: number; rows: number }) => {
-      const terminal = terminalRef.current
-      if (!terminal) return
-      const cols = size?.cols ?? terminal.cols
-      const rows = size?.rows ?? terminal.rows
-      if (!Number.isFinite(cols) || !Number.isFinite(rows)) return
-      sendMessage({ type: 'resize', cols, rows })
-    }
-
-    const scheduleSnapshot = (delayMs = 180) => {
-      if (snapshotTimerRef.current) clearTimeout(snapshotTimerRef.current)
-      snapshotTimerRef.current = setTimeout(() => {
-        snapshotTimerRef.current = null
-        if (!isPageVisible()) return
-        if (socketRef.current?.readyState !== WebSocket.OPEN) return
-        const terminal = terminalRef.current
-        if (!terminal) return
-        const seq = snapshotSeqRef.current + 1
-        snapshotSeqRef.current = seq
-        latestSnapshotSeqRef.current = seq
-        sendMessage({ type: 'snapshot', seq, cols: terminal.cols, rows: terminal.rows })
-      }, delayMs)
-    }
-
-    const requestSnapshotAfterLayout = (delayMs = 180) => {
-      pendingSnapshotRef.current = { delayMs, active: true }
-    }
-
-    const flushQueuedOutput = () => {
-      if (snapshotApplyingRef.current || resyncingRef.current) return
-      const terminal = terminalRef.current
-      if (!terminal || outputQueueRef.current.length === 0) return
-      const payload = outputQueueRef.current.join('')
-      outputQueueRef.current = []
-      terminal.write(payload)
-    }
-
-    const clearResyncTimers = () => {
-      if (resyncTimersRef.current.length === 0) return
-      for (const timer of resyncTimersRef.current) clearTimeout(timer)
-      resyncTimersRef.current = []
-    }
-
-    const clearResyncTimeout = () => {
-      if (!resyncTimeoutRef.current) return
-      clearTimeout(resyncTimeoutRef.current)
-      resyncTimeoutRef.current = null
-    }
-
-    const bumpResyncTimeout = () => {
-      if (!resyncingRef.current) return
-      clearResyncTimeout()
-      resyncTimeoutRef.current = setTimeout(() => {
-        resyncingRef.current = false
-        resyncPhaseRef.current = 0
-        flushQueuedOutput()
-      }, 2500)
-    }
-
-    const startResyncGuard = () => {
-      resyncingRef.current = true
-      resyncPhaseRef.current = 1
-      clearResyncTimeout()
-      resyncTimeoutRef.current = setTimeout(() => {
-        resyncingRef.current = false
-        resyncPhaseRef.current = 0
-        flushQueuedOutput()
-      }, 2500)
-    }
-
-    const refreshLayout = (force = false) => {
-      if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current)
-      resizeTimerRef.current = setTimeout(() => {
-        resizeTimerRef.current = null
-        if (!isPageVisible()) return
-        const container = containerRef.current
-        if (!container) return
-        const { width, height } = container.getBoundingClientRect()
-        if (width < 2 || height < 2) return
-        const terminal = terminalRef.current
-        const fitAddon = fitRef.current
-        if (!terminal || !fitAddon) return
-        const proposed = fitAddon.proposeDimensions()
-        if (!proposed || proposed.cols < 2 || proposed.rows < 2) return
-        const nextSize = { cols: proposed.cols, rows: proposed.rows }
-        if (terminal.cols !== nextSize.cols || terminal.rows !== nextSize.rows) {
-          terminal.resize(nextSize.cols, nextSize.rows)
-        }
-        container.dataset.termCols = `${nextSize.cols}`
-        container.dataset.termRows = `${nextSize.rows}`
-        const lastSize = lastSizeRef.current
-        if (force || !lastSize || nextSize.cols !== lastSize.cols || nextSize.rows !== lastSize.rows) {
-          lastSizeRef.current = nextSize
-          startResyncGuard()
-          sendResize(nextSize)
-          const delayMs = pendingSnapshotRef.current.active ? pendingSnapshotRef.current.delayMs : 180
-          pendingSnapshotRef.current = { delayMs, active: false }
-          scheduleSnapshot(delayMs)
-        } else if (pendingSnapshotRef.current.active) {
-          const delayMs = pendingSnapshotRef.current.delayMs
-          pendingSnapshotRef.current = { delayMs, active: false }
-          scheduleSnapshot(delayMs)
-        }
-      }, 50)
-    }
-
-    const forceResync = (delayMs = 240) => {
-      lastSizeRef.current = null
-      startResyncGuard()
-      requestSnapshotAfterLayout(delayMs)
-      refreshLayout(true)
-      clearResyncTimers()
-      resyncTimersRef.current = [
-        setTimeout(() => {
-          if (!isPageVisible()) return
-          resyncingRef.current = true
-          requestSnapshotAfterLayout(delayMs)
-          refreshLayout(true)
-        }, 320),
-        setTimeout(() => {
-          if (!isPageVisible()) return
-          resyncingRef.current = true
-          requestSnapshotAfterLayout(delayMs)
-          refreshLayout(true)
-        }, 900),
-      ]
-    }
-
-    const attachSocket = () => {
-      if (socketRef.current) {
-        socketRef.current.close()
+    const saved = window.sessionStorage.getItem(`${RECONNECT_STORAGE_KEY}-${sessionId}`)
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as { token?: string; seq?: number }
+        if (parsed.token) reconnectTokenRef.current = parsed.token
+        if (typeof parsed.seq === 'number') lastSeqRef.current = parsed.seq
+      } catch {
+        // ignore
       }
+    }
 
-      const socket = new WebSocket(buildSocketUrl())
+    if (!reconnectTokenRef.current) {
+      reconnectTokenRef.current = crypto.randomUUID()
+    }
+
+    const persist = () => {
+      window.sessionStorage.setItem(
+        `${RECONNECT_STORAGE_KEY}-${sessionId}`,
+        JSON.stringify({ token: reconnectTokenRef.current, seq: lastSeqRef.current }),
+      )
+    }
+    persist()
+  }, [sessionId])
+
+  React.useEffect(() => {
+    if (!containerRef.current) return
+
+    const terminal = new Terminal({
+      allowProposedApi: true,
+      allowTransparency: true,
+      fontFamily: 'JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+      fontSize: 14,
+      theme: { background: 'rgba(0,0,0,0)' },
+      cursorBlink: true,
+      scrollback: 5000,
+    })
+
+    const fitAddon = new FitAddon()
+    fitRef.current = fitAddon
+    terminal.loadAddon(fitAddon)
+
+    const unicodeAddon = new Unicode11Addon()
+    terminal.loadAddon(unicodeAddon)
+    terminal.unicode.activeVersion = '11'
+
+    terminal.loadAddon(
+      new WebLinksAddon((_event, uri) => {
+        window.open(uri, '_blank', 'noopener,noreferrer')
+      }),
+    )
+
+    const clipboardAddon = new ClipboardAddon()
+    terminal.loadAddon(clipboardAddon)
+
+    const searchAddon = new SearchAddon()
+    terminal.loadAddon(searchAddon)
+    searchRef.current = searchAddon
+
+    const rendererPreference = (() => {
+      const params = new URLSearchParams(window.location.search)
+      const query = params.get('renderer')?.toLowerCase()
+      if (query) return query
+      return window.localStorage.getItem('jangar-terminal-renderer') ?? 'webgl'
+    })()
+
+    if (rendererPreference === 'webgl') {
+      try {
+        terminal.loadAddon(new WebglAddon())
+      } catch {
+        terminal.loadAddon(new CanvasAddon())
+      }
+    } else if (rendererPreference === 'canvas') {
+      terminal.loadAddon(new CanvasAddon())
+    }
+
+    terminal.attachCustomKeyEventHandler((event) => {
+      const isMac = navigator.platform.match('Mac')
+      const ctrlKey = isMac ? event.metaKey : event.ctrlKey
+      if (ctrlKey && event.shiftKey && event.key.toLowerCase() === 'c') {
+        if (event.type === 'keydown') {
+          const selection = terminal.getSelection()
+          if (selection) {
+            navigator.clipboard?.writeText(selection).catch(() => {})
+          }
+        }
+        return false
+      }
+      if (ctrlKey && event.shiftKey && event.key.toLowerCase() === 'v') {
+        if (event.type === 'keydown') {
+          navigator.clipboard
+            ?.readText()
+            .then((text) => {
+              if (text) {
+                terminal.paste(text)
+              }
+            })
+            .catch(() => {})
+        }
+        return false
+      }
+      if (ctrlKey && event.key.toLowerCase() === 'f') {
+        if (event.type === 'keydown') {
+          setSearchOpen(true)
+        }
+        return false
+      }
+      return true
+    })
+
+    terminal.onSelectionChange(() => {
+      const selection = terminal.getSelection()
+      if (selection) {
+        navigator.clipboard?.writeText(selection).catch(() => {})
+      }
+    })
+
+    terminal.open(containerRef.current)
+    fitAddon.fit()
+    fitAddon.fit()
+    terminal.focus()
+    terminalRef.current = terminal
+
+    const resizeObserver = new ResizeObserver(() => {
+      fitAddon.fit()
+      const cols = terminal.cols
+      const rows = terminal.rows
+      if (cols > 0 && rows > 0) {
+        const payload = JSON.stringify({ type: 'resize', cols, rows })
+        socketRef.current?.send(payload)
+      }
+    })
+    resizeObserver.observe(containerRef.current)
+    resizeObserverRef.current = resizeObserver
+
+    return () => {
+      resizeObserver.disconnect()
+      terminal.dispose()
+      terminalRef.current = null
+      fitRef.current = null
+      searchRef.current = null
+    }
+  }, [])
+
+  React.useEffect(() => {
+    let disposed = false
+
+    const connect = () => {
+      if (disposed) return
+      const terminal = terminalRef.current
+      const fitAddon = fitRef.current
+      if (!terminal || !fitAddon) return
+
+      const cols = terminal.cols
+      const rows = terminal.rows
+      const baseUrl = resolveBaseUrl(terminalUrl)
+      const wsUrl = buildWsUrl(baseUrl, sessionId, reconnectTokenRef.current, lastSeqRef.current, cols, rows)
+      const socket = new WebSocket(wsUrl)
       socket.binaryType = 'arraybuffer'
       socketRef.current = socket
+
+      setStatus('connecting')
+      statusRef.current = 'connecting'
 
       socket.onopen = () => {
         reconnectAttemptRef.current = 0
         setStatus('connected')
+        statusRef.current = 'connected'
         setError(null)
-        forceResync(140)
-        if (inputBufferRef.current) {
-          flushInput()
-        }
-      }
-
-      const handleMessage = (raw: string) => {
-        if (!terminalRef.current) return
-        let payload: {
-          type?: string
-          data?: string
-          message?: string
-          fatal?: boolean
-          seq?: number
-          cols?: number
-          rows?: number
-        } | null = null
-        try {
-          payload = JSON.parse(raw)
-        } catch {
-          return
-        }
-        if (!payload) return
-        if (payload.type === 'snapshot' && payload.data) {
-          const seq = typeof payload.seq === 'number' ? payload.seq : null
-          if (seq !== null && seq !== latestSnapshotSeqRef.current) return
-          const expectedCols = typeof payload.cols === 'number' ? payload.cols : null
-          const expectedRows = typeof payload.rows === 'number' ? payload.rows : null
-          const terminal = terminalRef.current
-          if (!terminal) return
-          if (expectedCols && expectedRows && (terminal.cols !== expectedCols || terminal.rows !== expectedRows)) {
-            bumpResyncTimeout()
-            scheduleSnapshot(120)
-            return
-          }
-          const text = snapshotDecoder.decode(base64ToBytes(payload.data))
-          if (text) {
-            snapshotApplyingRef.current = true
-            terminal.reset()
-            terminal.write(text, () => {
-              snapshotApplyingRef.current = false
-              if (resyncingRef.current) {
-                if (resyncPhaseRef.current === 1) {
-                  outputQueueRef.current = []
-                  resyncPhaseRef.current = 2
-                  scheduleSnapshot(120)
-                } else {
-                  resyncingRef.current = false
-                  resyncPhaseRef.current = 0
-                  clearResyncTimeout()
-                  terminal.scrollToBottom()
-                  flushQueuedOutput()
-                }
-              } else {
-                clearResyncTimeout()
-                terminal.scrollToBottom()
-                flushQueuedOutput()
-              }
-            })
-          }
-          return
-        }
-        if (payload.type === 'output' && payload.data) {
-          const text = outputDecoder.decode(base64ToBytes(payload.data))
-          if (!text) return
-          if (snapshotApplyingRef.current || resyncingRef.current) {
-            outputQueueRef.current.push(text)
-            return
-          }
-          terminalRef.current.write(text)
-          return
-        }
-        if (payload.type === 'error') {
-          const message = payload.message ?? 'Terminal connection failed.'
-          setError(message)
-          if (payload.fatal) {
-            setStatus('error')
-            shouldReconnectRef.current = false
-            socket.close()
-          }
-        }
+        decoderRef.current = new TextDecoder()
+        if (fitAddon) fitAddon.fit()
+        const payload = JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows })
+        socket.send(payload)
       }
 
       socket.onmessage = (event) => {
         if (typeof event.data === 'string') {
-          handleMessage(event.data)
+          try {
+            const payload = JSON.parse(event.data) as { type?: string; message?: string; token?: string }
+            if (payload.type === 'error') {
+              setError(payload.message ?? 'Terminal error')
+              setStatus('error')
+              statusRef.current = 'error'
+            }
+            if (payload.type === 'ready' && payload.token) {
+              reconnectTokenRef.current = payload.token
+              window.sessionStorage.setItem(
+                `${RECONNECT_STORAGE_KEY}-${sessionId}`,
+                JSON.stringify({ token: reconnectTokenRef.current, seq: lastSeqRef.current }),
+              )
+            }
+            if (payload.type === 'reset') {
+              terminal.reset()
+              terminal.clear()
+              lastSeqRef.current = 0
+              decoderRef.current = new TextDecoder()
+            }
+            if (payload.type === 'exit') {
+              setStatus('error')
+              statusRef.current = 'error'
+              setError('Terminal session exited.')
+            }
+          } catch {
+            // ignore
+          }
           return
         }
-        if (event.data instanceof ArrayBuffer) {
-          handleMessage(new TextDecoder().decode(new Uint8Array(event.data)))
-          return
-        }
-        if (event.data instanceof Blob) {
-          event.data
-            .text()
-            .then((text) => {
-              handleMessage(text)
-            })
-            .catch(() => {})
-        }
-      }
-
-      socket.onerror = () => {
-        if (!shouldReconnectRef.current) return
-        setStatus('connecting')
-        setError('Reconnecting...')
+        const data = new Uint8Array(event.data)
+        if (data.length < 6 || data[0] !== OUTPUT_FRAME_TYPE) return
+        const seq = ((data[1] << 24) | (data[2] << 16) | (data[3] << 8) | data[4]) >>> 0
+        const payload = data.subarray(5)
+        const text = decoderRef.current.decode(payload, { stream: true })
+        terminal.write(text)
+        lastSeqRef.current = seq
+        window.sessionStorage.setItem(
+          `${RECONNECT_STORAGE_KEY}-${sessionId}`,
+          JSON.stringify({ token: reconnectTokenRef.current, seq: lastSeqRef.current }),
+        )
       }
 
       socket.onclose = () => {
-        if (!shouldReconnectRef.current || isDisposed) return
-        setStatus('connecting')
-        setError('Reconnecting...')
-        if (reconnectTimerRef.current) return
-        const attempt = reconnectAttemptRef.current
-        const delay = Math.min(10_000, 1000 * 2 ** attempt)
-        reconnectAttemptRef.current += 1
-        reconnectTimerRef.current = setTimeout(() => {
-          reconnectTimerRef.current = null
-          if (!isDisposed && shouldReconnectRef.current) {
-            attachSocket()
-          }
-        }, delay)
+        socketRef.current = null
+        if (disposed) return
+        if (statusRef.current !== 'error') {
+          setStatus('connecting')
+          statusRef.current = 'connecting'
+        }
+        const attempt = reconnectAttemptRef.current + 1
+        reconnectAttemptRef.current = attempt
+        const delay = Math.min(8000, 600 + attempt * 500)
+        reconnectTimerRef.current = setTimeout(connect, delay)
+      }
+
+      socket.onerror = () => {
+        setStatus('error')
+        statusRef.current = 'error'
+        setError('WebSocket error')
       }
     }
 
-    const connect = async () => {
-      const [{ Terminal }, { FitAddon }] = await Promise.all([import('xterm'), import('xterm-addon-fit')])
-      if (isDisposed || !containerRef.current) return
-
-      const terminal = new Terminal({
-        cursorBlink: true,
-        fontFamily:
-          '"JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono"',
-        fontSize: 12,
-        scrollback: 2000,
-        theme: {
-          background: '#0b0d0f',
-          foreground: '#e2e8f0',
-          cursor: '#e2e8f0',
-          selectionBackground: '#334155',
-        },
-      })
-
-      const fitAddon = new FitAddon()
-      terminal.loadAddon(fitAddon)
-      terminal.open(containerRef.current)
-
-      terminalRef.current = terminal
-      fitRef.current = fitAddon
-
-      const handleContainerFocus = () => terminal.focus()
-      const handlePointerDown = () => {
-        containerRef.current?.focus({ preventScroll: true })
-        terminal.focus()
-      }
-
-      containerRef.current.addEventListener('focus', handleContainerFocus)
-      containerRef.current.addEventListener('pointerdown', handlePointerDown)
-
-      terminal.onData((data: string) => {
-        inputBufferRef.current += data
-        if (inputBufferRef.current.length > 2048) {
-          if (inputFlushTimerRef.current) {
-            clearTimeout(inputFlushTimerRef.current)
-            inputFlushTimerRef.current = null
-          }
-          if (socketRef.current?.readyState === WebSocket.OPEN) {
-            flushInput()
-          }
-          return
-        }
-        if (socketRef.current?.readyState !== WebSocket.OPEN) return
-        if (inputFlushTimerRef.current) return
-        inputFlushTimerRef.current = setTimeout(() => {
-          inputFlushTimerRef.current = null
-          flushInput()
-        }, 12)
-      })
-
-      resizeObserverRef.current = new ResizeObserver(() => {
-        refreshLayout()
-      })
-      resizeObserverRef.current.observe(containerRef.current)
-      refreshLayout(true)
-
-      const fonts = document.fonts?.ready
-      if (fonts) {
-        fonts.then(() => {
-          refreshLayout(true)
-        })
-      }
-
-      const handleVisibility = () => {
-        if (document.visibilityState === 'visible') {
-          forceResync(260)
-        }
-      }
-
-      const handleWindowFocus = () => {
-        forceResync(260)
-      }
-
-      const handleWindowResize = () => {
-        refreshLayout()
-      }
-
-      const handlePageShow = () => {
-        forceResync(260)
-      }
-
-      document.addEventListener('visibilitychange', handleVisibility)
-      window.addEventListener('focus', handleWindowFocus)
-      window.addEventListener('resize', handleWindowResize)
-      window.addEventListener('pageshow', handlePageShow)
-      window.visualViewport?.addEventListener('resize', handleWindowResize)
-
-      attachSocket()
-
-      return () => {
-        containerRef.current?.removeEventListener('focus', handleContainerFocus)
-        containerRef.current?.removeEventListener('pointerdown', handlePointerDown)
-        document.removeEventListener('visibilitychange', handleVisibility)
-        window.removeEventListener('focus', handleWindowFocus)
-        window.removeEventListener('resize', handleWindowResize)
-        window.removeEventListener('pageshow', handlePageShow)
-        window.visualViewport?.removeEventListener('resize', handleWindowResize)
-      }
-    }
-
-    let cleanupListeners: (() => void) | null = null
-    void connect().then((cleanup) => {
-      if (cleanup) cleanupListeners = cleanup
-    })
+    connect()
 
     return () => {
-      isDisposed = true
-      shouldReconnectRef.current = false
+      disposed = true
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current)
         reconnectTimerRef.current = null
       }
-      if (snapshotTimerRef.current) {
-        clearTimeout(snapshotTimerRef.current)
-        snapshotTimerRef.current = null
-      }
-      if (inputFlushTimerRef.current) {
-        clearTimeout(inputFlushTimerRef.current)
-        inputFlushTimerRef.current = null
-      }
-      if (resizeTimerRef.current) {
-        clearTimeout(resizeTimerRef.current)
-        resizeTimerRef.current = null
-      }
-      clearResyncTimers()
-      clearResyncTimeout()
-      if (socketRef.current) {
-        socketRef.current.close()
-        socketRef.current = null
-      }
-      if (resizeObserverRef.current) {
-        resizeObserverRef.current.disconnect()
-        resizeObserverRef.current = null
-      }
-      if (terminalRef.current) {
-        terminalRef.current.dispose()
-        terminalRef.current = null
-      }
-      fitRef.current = null
-      if (cleanupListeners) {
-        cleanupListeners()
-        cleanupListeners = null
-      }
+      socketRef.current?.close()
+      socketRef.current = null
     }
-  }, [sessionId])
+  }, [sessionId, terminalUrl])
 
   const isConnecting = status === 'connecting'
 
   return (
-    <div className="relative flex flex-col overflow-hidden h-full w-full rounded-none border border-border bg-black">
-      <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs border-b border-border text-muted-foreground">
-        <span className="inline-flex items-center gap-2">
-          Status: {status}
-          {isConnecting ? (
-            <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
-          ) : null}
-        </span>
-        {error ? <span className="text-destructive">{error}</span> : null}
-      </div>
+    <div
+      className={cn(
+        'relative flex flex-col overflow-hidden h-full w-full bg-black',
+        variant === 'default' && 'rounded-none border border-border',
+      )}
+    >
+      {variant === 'default' ? (
+        <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs border-b border-border text-muted-foreground">
+          <span className="inline-flex items-center gap-2">
+            Status: {status}
+            {isConnecting ? (
+              <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
+            ) : null}
+          </span>
+          {error ? <span className="text-destructive">{error}</span> : null}
+        </div>
+      ) : null}
       <div
         ref={containerRef}
         className="flex flex-1 min-h-0 bg-transparent outline-none focus-within:ring-2 focus-within:ring-zinc-500/70 focus-within:ring-inset"
@@ -525,6 +348,33 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
             <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
             Connecting to terminal...
           </div>
+        </div>
+      ) : null}
+      {searchOpen ? (
+        <div className="absolute right-4 top-4 flex items-center gap-2 rounded-none border border-border bg-card px-3 py-2 text-xs shadow-lg">
+          <input
+            className="min-w-[180px] bg-transparent text-xs text-foreground outline-none"
+            placeholder="Search"
+            value={searchValue}
+            onChange={(event) => setSearchValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                searchRef.current?.findNext(searchValue)
+              }
+              if (event.key === 'Escape') {
+                setSearchOpen(false)
+              }
+            }}
+          />
+          <Button size="sm" variant="ghost" onClick={() => searchRef.current?.findPrevious(searchValue)}>
+            Prev
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => searchRef.current?.findNext(searchValue)}>
+            Next
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSearchOpen(false)}>
+            Close
+          </Button>
         </div>
       ) : null}
     </div>

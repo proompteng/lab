@@ -32,6 +32,7 @@ type TerminalSession = {
   errorMessage?: string | null
   readyAt?: string | null
   closedAt?: string | null
+  terminalUrl?: string | null
 }
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -153,6 +154,17 @@ function TerminalSessionPage() {
             All sessions
           </Button>
           <Button
+            variant="secondary"
+            disabled={!session}
+            onClick={() => {
+              if (!session) return
+              const target = `/terminals/${encodeURIComponent(session.id)}/fullscreen`
+              window.open(target, '_blank', 'noopener,noreferrer')
+            }}
+          >
+            Open fullscreen
+          </Button>
+          <Button
             variant="destructive"
             disabled={isTerminating || session?.status !== 'ready'}
             onClick={async () => {
@@ -267,7 +279,7 @@ function TerminalSessionPage() {
             <Skeleton className="h-64 w-full" />
           </div>
         ) : session?.status === 'ready' ? (
-          <TerminalView sessionId={session?.id ?? sessionId} />
+          <TerminalView sessionId={session?.id ?? sessionId} terminalUrl={session?.terminalUrl ?? null} />
         ) : session?.status === 'error' ? (
           <div className="rounded-none border border-destructive/40 bg-destructive/10 p-4 text-xs text-destructive">
             {session.errorMessage ?? 'Terminal session failed to start. Refresh to retry.'}
