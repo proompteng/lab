@@ -162,7 +162,7 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
       const params = new URLSearchParams(window.location.search)
       const query = params.get('renderer')?.toLowerCase()
       if (query) return query
-      return window.localStorage.getItem('jangar-terminal-renderer') ?? 'webgl'
+      return window.localStorage.getItem('jangar-terminal-renderer') ?? 'dom'
     })()
 
     if (rendererPreference === 'webgl') {
@@ -231,7 +231,6 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
       containerRef.current.dataset.termCols = String(terminal.cols)
       containerRef.current.dataset.termRows = String(terminal.rows)
     }
-    terminal.focus()
     terminalRef.current = terminal
 
     terminal.onData((data) => {
