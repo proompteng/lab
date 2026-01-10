@@ -561,6 +561,49 @@ resource "coder_script" "bootstrap_tools" {
       fi
     fi
 
+    if ! command -v nvim >/dev/null 2>&1; then
+      log "Installing Neovim"
+      NVIM_VERSION="stable"
+      NVIM_ARCH="$(uname -m)"
+      case "$NVIM_ARCH" in
+        aarch64|arm64) NVIM_ARCH="linux-arm64" ;;
+        x86_64|amd64)  NVIM_ARCH="linux64" ;;
+        *)             NVIM_ARCH="linux64" ;;
+      esac
+      NVIM_URL="https://github.com/neovim/neovim/releases/download/${NVIM_VERSION}/nvim-${NVIM_ARCH}.tar.gz"
+      NVIM_TMP="$(mktemp -d)"
+      if ! curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o "$NVIM_TMP/nvim.tar.gz" "$NVIM_URL" >"$LOG_DIR/nvim-install.log" 2>&1; then
+        log "Neovim download failed; see $LOG_DIR/nvim-install.log"
+      else
+        mkdir -p "$HOME/.local/nvim"
+        rm -rf "$HOME/.local/nvim/*"
+        if tar -xzf "$NVIM_TMP/nvim.tar.gz" -C "$HOME/.local/nvim" --strip-components=1 >>"$LOG_DIR/nvim-install.log" 2>&1; then
+          ln -sf "$HOME/.local/nvim/bin/nvim" "$HOME/.local/bin/nvim"
+        else
+          log "Neovim extract failed; see $LOG_DIR/nvim-install.log"
+        fi
+      fi
+      rm -rf "$NVIM_TMP"
+    fi
+
+    if command -v nvim >/dev/null 2>&1; then
+      log "Installing AstroNvim"
+      for dir in "$HOME/.config/nvim" "$HOME/.local/share/nvim" "$HOME/.local/state/nvim" "$HOME/.cache/nvim"; do
+        if [ -d "$dir" ]; then
+          mv "$dir" "${dir}.bak"
+        fi
+      done
+      mkdir -p "$HOME/.config"
+      if ! git clone --depth 1 https://github.com/AstroNvim/template "$HOME/.config/nvim" >"$LOG_DIR/astronvim-install.log" 2>&1; then
+        log "AstroNvim clone failed; see $LOG_DIR/astronvim-install.log"
+      else
+        rm -rf "$HOME/.config/nvim/.git"
+        if ! nvim --headless +q >/dev/null 2>&1; then
+          log "AstroNvim init failed; continuing"
+        fi
+      fi
+    fi
+
     if ! command -v kubectl >/dev/null 2>&1; then
       log "Installing kubectl"
       KUBECTL_ARCH="$(uname -m)"
