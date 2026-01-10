@@ -233,7 +233,6 @@ const requireHandler = async () => {
 describe('codex-judge GitHub webhook stream handling', () => {
   beforeAll(async () => {
     handleGithubWebhookEvent = null
-    vi.resetModules()
     await requireHandler()
   })
 
