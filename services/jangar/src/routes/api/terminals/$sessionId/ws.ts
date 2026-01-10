@@ -18,7 +18,14 @@ type PeerState = {
 type WebSocketPeer = {
   send: (data: string | Uint8Array) => void
   close: (code?: number, reason?: string) => void
-  context?: { sessionId?: string; reconnectToken?: string; since?: number; cols?: number; rows?: number }
+  context?: {
+    sessionId?: string
+    reconnectToken?: string
+    sessionToken?: string
+    since?: number
+    cols?: number
+    rows?: number
+  }
   request?: Request | { url?: string } | null
 }
 
@@ -54,6 +61,7 @@ const resolveAttachParams = (url: string) => {
   const sessionCandidate = match ? decodeURIComponent(match[1] ?? '') : (parsed.searchParams.get('sessionId') ?? '')
   const sessionId = formatSessionId(sessionCandidate)
   const reconnectToken = parsed.searchParams.get('reconnect') ?? ''
+  const sessionToken = parsed.searchParams.get('token') ?? ''
   const sinceRaw = parsed.searchParams.get('since')
   const colsRaw = parsed.searchParams.get('cols')
   const rowsRaw = parsed.searchParams.get('rows')
@@ -63,7 +71,7 @@ const resolveAttachParams = (url: string) => {
   const since = Number.isFinite(sinceParsed) && sinceParsed > 0 ? sinceParsed : 0
   const cols = Number.isFinite(colsParsed) && colsParsed > 0 ? colsParsed : undefined
   const rows = Number.isFinite(rowsParsed) && rowsParsed > 0 ? rowsParsed : undefined
-  return { sessionId, reconnectToken, since, cols, rows }
+  return { sessionId, reconnectToken, sessionToken, since, cols, rows }
 }
 
 const websocketHooks = defineWebSocket({
@@ -71,7 +79,7 @@ const websocketHooks = defineWebSocket({
     if (isTerminalBackendProxyEnabled()) {
       return new Response('Terminal backend proxy enabled; connect to the terminal backend URL.', { status: 409 })
     }
-    const { sessionId, reconnectToken, since, cols, rows } = resolveAttachParams(request.url)
+    const { sessionId, reconnectToken, sessionToken, since, cols, rows } = resolveAttachParams(request.url)
     if (!sessionId || !reconnectToken) {
       return new Response('Invalid terminal session id or reconnect token.', { status: 400 })
     }
@@ -79,6 +87,9 @@ const websocketHooks = defineWebSocket({
     const session = await getTerminalSession(sessionId)
     if (!session) return new Response('Session not found.', { status: 404 })
     if (session.status !== 'ready') return new Response(`Session not ready (${session.status}).`, { status: 409 })
+    if (session.reconnectToken && (!sessionToken || sessionToken !== session.reconnectToken)) {
+      return new Response('Invalid terminal reconnect token.', { status: 401 })
+    }
 
     const exists = await ensureTerminalSessionExists(sessionId)
     if (!exists) return new Response('Session not ready.', { status: 409 })
@@ -86,6 +97,7 @@ const websocketHooks = defineWebSocket({
     request.context = request.context ?? {}
     request.context.sessionId = sessionId
     request.context.reconnectToken = reconnectToken
+    request.context.sessionToken = sessionToken
     request.context.since = since
     request.context.cols = cols
     request.context.rows = rows

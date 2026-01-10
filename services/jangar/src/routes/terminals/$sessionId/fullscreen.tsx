@@ -13,6 +13,7 @@ type TerminalSession = {
   id: string
   status: 'creating' | 'ready' | 'error' | 'closed'
   terminalUrl?: string | null
+  reconnectToken?: string | null
 }
 
 function TerminalFullscreenPage() {
@@ -81,7 +82,12 @@ function TerminalFullscreenPage() {
         </div>
       ) : session?.status === 'ready' ? (
         <div className="flex h-full w-full">
-          <TerminalView sessionId={session.id} terminalUrl={session.terminalUrl ?? null} variant="fullscreen" />
+          <TerminalView
+            sessionId={session.id}
+            terminalUrl={session.terminalUrl ?? null}
+            variant="fullscreen"
+            reconnectToken={session.reconnectToken ?? null}
+          />
         </div>
       ) : (
         <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">

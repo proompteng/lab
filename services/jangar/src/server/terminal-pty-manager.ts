@@ -387,3 +387,7 @@ export const getTerminalPtyManager = (options: TerminalManagerOptions = {}) => {
   }
   return manager
 }
+
+export const resetTerminalPtyManager = () => {
+  manager = null
+}

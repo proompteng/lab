@@ -3,7 +3,10 @@ import '@xterm/xterm/css/xterm.css'
 import { CanvasAddon } from '@xterm/addon-canvas'
 import { ClipboardAddon } from '@xterm/addon-clipboard'
 import { FitAddon } from '@xterm/addon-fit'
+import { ImageAddon } from '@xterm/addon-image'
+import { LigaturesAddon } from '@xterm/addon-ligatures'
 import { SearchAddon } from '@xterm/addon-search'
+import { SerializeAddon } from '@xterm/addon-serialize'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
@@ -16,14 +19,23 @@ import { cn } from '@/lib/utils'
 const OUTPUT_FRAME_TYPE = 1
 const RECONNECT_STORAGE_KEY = 'jangar-terminal-reconnect'
 
-const buildWsUrl = (baseUrl: string, sessionId: string, token: string, since: number, cols?: number, rows?: number) => {
+const buildWsUrl = (
+  baseUrl: string,
+  sessionId: string,
+  reconnectToken: string,
+  since: number,
+  cols?: number,
+  rows?: number,
+  sessionToken?: string | null,
+) => {
   const url = new URL(baseUrl)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
   if (!url.pathname.endsWith('/')) {
     url.pathname += '/'
   }
   url.pathname += `api/terminals/${encodeURIComponent(sessionId)}/ws`
-  url.searchParams.set('reconnect', token)
+  url.searchParams.set('reconnect', reconnectToken)
+  if (sessionToken) url.searchParams.set('token', sessionToken)
   if (since > 0) url.searchParams.set('since', `${since}`)
   if (cols) url.searchParams.set('cols', `${cols}`)
   if (rows) url.searchParams.set('rows', `${rows}`)
@@ -39,9 +51,10 @@ type TerminalViewProps = {
   sessionId: string
   terminalUrl?: string | null
   variant?: 'default' | 'fullscreen'
+  reconnectToken?: string | null
 }
 
-export function TerminalView({ sessionId, terminalUrl, variant = 'default' }: TerminalViewProps) {
+export function TerminalView({ sessionId, terminalUrl, variant = 'default', reconnectToken }: TerminalViewProps) {
   const containerRef = React.useRef<HTMLDivElement | null>(null)
   const terminalRef = React.useRef<Terminal | null>(null)
   const fitRef = React.useRef<FitAddon | null>(null)
@@ -52,8 +65,10 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default' }: Te
   const resizeObserverRef = React.useRef<ResizeObserver | null>(null)
   const lastSeqRef = React.useRef(0)
   const reconnectTokenRef = React.useRef('')
+  const sessionTokenRef = React.useRef<string | null>(null)
   const statusRef = React.useRef<'connecting' | 'connected' | 'error'>('connecting')
   const decoderRef = React.useRef(new TextDecoder())
+  const encoderRef = React.useRef(new TextEncoder())
 
   const [status, setStatus] = React.useState<'connecting' | 'connected' | 'error'>('connecting')
   const [error, setError] = React.useState<string | null>(null)
@@ -64,12 +79,17 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default' }: Te
     const saved = window.sessionStorage.getItem(`${RECONNECT_STORAGE_KEY}-${sessionId}`)
     if (saved) {
       try {
-        const parsed = JSON.parse(saved) as { token?: string; seq?: number }
+        const parsed = JSON.parse(saved) as { token?: string; seq?: number; sessionToken?: string | null }
         if (parsed.token) reconnectTokenRef.current = parsed.token
         if (typeof parsed.seq === 'number') lastSeqRef.current = parsed.seq
+        if (parsed.sessionToken) sessionTokenRef.current = parsed.sessionToken
       } catch {
         // ignore
       }
+    }
+
+    if (reconnectToken) {
+      sessionTokenRef.current = reconnectToken
     }
 
     if (!reconnectTokenRef.current) {
@@ -79,11 +99,15 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default' }: Te
     const persist = () => {
       window.sessionStorage.setItem(
         `${RECONNECT_STORAGE_KEY}-${sessionId}`,
-        JSON.stringify({ token: reconnectTokenRef.current, seq: lastSeqRef.current }),
+        JSON.stringify({
+          token: reconnectTokenRef.current,
+          seq: lastSeqRef.current,
+          sessionToken: sessionTokenRef.current,
+        }),
       )
     }
     persist()
-  }, [sessionId])
+  }, [sessionId, reconnectToken])
 
   React.useEffect(() => {
     if (!containerRef.current) return
@@ -119,6 +143,20 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default' }: Te
     terminal.loadAddon(searchAddon)
     searchRef.current = searchAddon
 
+    terminal.loadAddon(new SerializeAddon())
+
+    try {
+      terminal.loadAddon(new LigaturesAddon())
+    } catch {
+      // ignore
+    }
+
+    try {
+      terminal.loadAddon(new ImageAddon())
+    } catch {
+      // ignore
+    }
+
     const rendererPreference = (() => {
       const params = new URLSearchParams(window.location.search)
       const query = params.get('renderer')?.toLowerCase()
@@ -139,6 +177,14 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default' }: Te
     terminal.attachCustomKeyEventHandler((event) => {
       const isMac = navigator.platform.match('Mac')
       const ctrlKey = isMac ? event.metaKey : event.ctrlKey
+      if (event.shiftKey && event.key === 'Enter') {
+        if (event.type === 'keydown') {
+          if (socketRef.current?.readyState === WebSocket.OPEN) {
+            socketRef.current.send(encoderRef.current.encode('\x1b\r'))
+          }
+        }
+        return false
+      }
       if (ctrlKey && event.shiftKey && event.key.toLowerCase() === 'c') {
         if (event.type === 'keydown') {
           const selection = terminal.getSelection()
@@ -180,13 +226,27 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default' }: Te
     terminal.open(containerRef.current)
     fitAddon.fit()
     fitAddon.fit()
+    if (containerRef.current) {
+      containerRef.current.dataset.termCols = String(terminal.cols)
+      containerRef.current.dataset.termRows = String(terminal.rows)
+    }
     terminal.focus()
     terminalRef.current = terminal
+
+    terminal.onData((data) => {
+      if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return
+      const payload = encoderRef.current.encode(data)
+      socketRef.current.send(payload)
+    })
 
     const resizeObserver = new ResizeObserver(() => {
       fitAddon.fit()
       const cols = terminal.cols
       const rows = terminal.rows
+      if (containerRef.current) {
+        containerRef.current.dataset.termCols = String(cols)
+        containerRef.current.dataset.termRows = String(rows)
+      }
       if (cols > 0 && rows > 0) {
         const payload = JSON.stringify({ type: 'resize', cols, rows })
         socketRef.current?.send(payload)
@@ -216,7 +276,16 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default' }: Te
       const cols = terminal.cols
       const rows = terminal.rows
       const baseUrl = resolveBaseUrl(terminalUrl)
-      const wsUrl = buildWsUrl(baseUrl, sessionId, reconnectTokenRef.current, lastSeqRef.current, cols, rows)
+      const sessionToken = reconnectToken ?? sessionTokenRef.current
+      const wsUrl = buildWsUrl(
+        baseUrl,
+        sessionId,
+        reconnectTokenRef.current,
+        lastSeqRef.current,
+        cols,
+        rows,
+        sessionToken,
+      )
       const socket = new WebSocket(wsUrl)
       socket.binaryType = 'arraybuffer'
       socketRef.current = socket
@@ -248,7 +317,11 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default' }: Te
               reconnectTokenRef.current = payload.token
               window.sessionStorage.setItem(
                 `${RECONNECT_STORAGE_KEY}-${sessionId}`,
-                JSON.stringify({ token: reconnectTokenRef.current, seq: lastSeqRef.current }),
+                JSON.stringify({
+                  token: reconnectTokenRef.current,
+                  seq: lastSeqRef.current,
+                  sessionToken: sessionTokenRef.current,
+                }),
               )
             }
             if (payload.type === 'reset') {
@@ -276,7 +349,11 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default' }: Te
         lastSeqRef.current = seq
         window.sessionStorage.setItem(
           `${RECONNECT_STORAGE_KEY}-${sessionId}`,
-          JSON.stringify({ token: reconnectTokenRef.current, seq: lastSeqRef.current }),
+          JSON.stringify({
+            token: reconnectTokenRef.current,
+            seq: lastSeqRef.current,
+            sessionToken: sessionTokenRef.current,
+          }),
         )
       }
 
@@ -311,7 +388,7 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default' }: Te
       socketRef.current?.close()
       socketRef.current = null
     }
-  }, [sessionId, terminalUrl])
+  }, [sessionId, terminalUrl, reconnectToken])
 
   const isConnecting = status === 'connecting'
 

@@ -32,6 +32,7 @@ type TerminalSession = {
   attached: boolean
   status: 'creating' | 'ready' | 'error' | 'closed'
   errorMessage?: string | null
+  reconnectToken?: string | null
 }
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {

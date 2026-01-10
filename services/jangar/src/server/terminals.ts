@@ -222,27 +222,31 @@ const isSafeWorktreePath = (worktreePath: string, worktreeName: string | null) =
   return rel === worktreeName
 }
 
-const manager = isTerminalBackendProxyEnabled()
-  ? null
-  : getTerminalPtyManager({
-      bufferBytes,
-      idleTimeoutMs,
-      onExit: async (sessionId, detail) => {
-        const record = await getTerminalSessionRecord(sessionId)
-        if (!record) return
-        const message = detail.exitCode === 0 ? null : `Session exited (code ${detail.exitCode ?? 'unknown'})`
-        await updateTerminalSessionRecord(sessionId, {
-          status: 'closed',
-          worktreeName: record.worktreeName,
-          worktreePath: record.worktreePath,
-          tmuxSocket: record.tmuxSocket,
-          errorMessage: message,
-          readyAt: record.readyAt,
-          closedAt: new Date().toISOString(),
-          metadata: record.metadata,
-        })
-      },
-    })
+const buildManager = () => {
+  if (isTerminalBackendProxyEnabled()) return null
+  return getTerminalPtyManager({
+    bufferBytes,
+    idleTimeoutMs,
+    instanceId: process.env.JANGAR_TERMINAL_BACKEND_ID ?? undefined,
+    onExit: async (sessionId, detail) => {
+      const record = await getTerminalSessionRecord(sessionId)
+      if (!record) return
+      const message = detail.exitCode === 0 ? null : `Session exited (code ${detail.exitCode ?? 'unknown'})`
+      await updateTerminalSessionRecord(sessionId, {
+        status: 'closed',
+        worktreeName: record.worktreeName,
+        worktreePath: record.worktreePath,
+        tmuxSocket: record.tmuxSocket,
+        errorMessage: message,
+        readyAt: record.readyAt,
+        closedAt: new Date().toISOString(),
+        metadata: record.metadata,
+      })
+    },
+  })
+}
+
+const getManager = () => buildManager()
 
 export type TerminalSession = {
   id: string
@@ -257,6 +261,7 @@ export type TerminalSession = {
   closedAt: string | null
   terminalUrl: string | null
   backendId: string | null
+  reconnectToken: string | null
 }
 
 type PlannedSession = {
@@ -271,6 +276,33 @@ const getMetadataValue = (metadata: Record<string, unknown> | null | undefined, 
   return typeof value === 'string' ? value : null
 }
 
+const ensureReconnectToken = async (record: {
+  id: string
+  status: TerminalSessionStatus
+  worktreeName: string | null
+  worktreePath: string | null
+  tmuxSocket: string | null
+  errorMessage: string | null
+  readyAt: string | null
+  closedAt: string | null
+  metadata: Record<string, unknown>
+}) => {
+  const existing = getMetadataValue(record.metadata, 'reconnectToken')
+  if (existing) return existing
+  const token = randomUUID()
+  const updated = await updateTerminalSessionRecord(record.id, {
+    status: record.status,
+    worktreeName: record.worktreeName,
+    worktreePath: record.worktreePath,
+    tmuxSocket: record.tmuxSocket,
+    errorMessage: record.errorMessage,
+    readyAt: record.readyAt,
+    closedAt: record.closedAt,
+    metadata: { ...record.metadata, reconnectToken: token },
+  })
+  return getMetadataValue(updated?.metadata, 'reconnectToken') ?? token
+}
+
 const buildTerminalSession = (input: {
   id: string
   worktreeName: string | null
@@ -283,6 +315,7 @@ const buildTerminalSession = (input: {
   closedAt: string | null
   terminalUrl: string | null
   backendId: string | null
+  reconnectToken: string | null
 }): TerminalSession => ({
   id: input.id,
   label: input.worktreeName ?? input.id,
@@ -296,6 +329,7 @@ const buildTerminalSession = (input: {
   closedAt: input.closedAt,
   terminalUrl: input.terminalUrl,
   backendId: input.backendId,
+  reconnectToken: input.reconnectToken,
 })
 
 const recordSessionStatus = async (
@@ -310,6 +344,15 @@ const recordSessionStatus = async (
     metadata?: Record<string, unknown>
   },
 ) => {
+  const existing = await getTerminalSessionRecord(sessionId)
+  const existingMetadata = existing?.metadata ?? {}
+  const mergedMetadata = {
+    ...existingMetadata,
+    ...(details.metadata ?? {}),
+  }
+  if (!getMetadataValue(mergedMetadata, 'reconnectToken')) {
+    mergedMetadata.reconnectToken = getMetadataValue(existingMetadata, 'reconnectToken') ?? randomUUID()
+  }
   const record = await upsertTerminalSessionRecord({
     id: sessionId,
     status,
@@ -319,7 +362,7 @@ const recordSessionStatus = async (
     errorMessage: details.errorMessage ?? null,
     readyAt: details.readyAt ?? null,
     closedAt: details.closedAt ?? null,
-    metadata: details.metadata ?? {},
+    metadata: mergedMetadata,
   })
   if (record) {
     console.info('[terminals] session status updated', {
@@ -348,7 +391,7 @@ export const markTerminalSessionError = async (sessionId: string, message: strin
 
 const resolveBackendMetadata = () => ({
   backendUrl: publicTerminalUrl,
-  backendId: manager?.getInstanceId() ?? null,
+  backendId: getManager()?.getInstanceId() ?? null,
 })
 
 const provisionTerminalSession = async ({ sessionId, worktreeName, worktreePath }: PlannedSession) => {
@@ -357,7 +400,7 @@ const provisionTerminalSession = async ({ sessionId, worktreeName, worktreePath 
     const baseRef = await ensureBaseRef(repoRoot)
     await mkdir(resolveWorktreeRoot(), { recursive: true })
     await createWorktreeAtPath(worktreeName, worktreePath, baseRef, repoRoot)
-    manager?.startSession({ sessionId, worktreePath, worktreeName })
+    getManager()?.startSession({ sessionId, worktreePath, worktreeName })
     await recordSessionStatus(sessionId, 'ready', {
       worktreeName,
       worktreePath,
@@ -380,7 +423,7 @@ const provisionTerminalSession = async ({ sessionId, worktreeName, worktreePath 
 const createTerminalSessionImmediate = async (): Promise<TerminalSession> => {
   const { worktreeName, worktreePath, baseRef } = await createFreshWorktree()
   const sessionId = buildSessionId(worktreeName)
-  manager?.startSession({ sessionId, worktreePath, worktreeName })
+  getManager()?.startSession({ sessionId, worktreePath, worktreeName })
   const record = await recordSessionStatus(sessionId, 'ready', {
     worktreeName,
     worktreePath,
@@ -398,7 +441,8 @@ const createTerminalSessionImmediate = async (): Promise<TerminalSession> => {
     readyAt: record?.readyAt ?? new Date().toISOString(),
     closedAt: record?.closedAt ?? null,
     terminalUrl: publicTerminalUrl,
-    backendId: manager?.getInstanceId() ?? null,
+    backendId: getManager()?.getInstanceId() ?? null,
+    reconnectToken: getMetadataValue(record?.metadata, 'reconnectToken'),
   })
 }
 
@@ -454,6 +498,7 @@ export const createTerminalSession = async (): Promise<TerminalSession> => {
     closedAt: record.closedAt,
     terminalUrl: getMetadataValue(record.metadata, 'backendUrl') ?? publicTerminalUrl,
     backendId: getMetadataValue(record.metadata, 'backendId'),
+    reconnectToken: getMetadataValue(record.metadata, 'reconnectToken'),
   })
 }
 
@@ -472,7 +517,7 @@ export const listTerminalSessions = async (options: { includeClosed?: boolean } 
   }
 
   const records = await listTerminalSessionRecords()
-  const activeSessions = manager?.listSessions() ?? []
+  const activeSessions = getManager()?.listSessions() ?? []
   const activeMap = new Map(activeSessions.map((session) => [session.id, session]))
   const sessions: TerminalSession[] = []
 
@@ -492,19 +537,30 @@ export const listTerminalSessions = async (options: { includeClosed?: boolean } 
       })
       status = updated?.status ?? status
     }
-    if (!active && status === 'ready' && manager) {
-      const updated = await updateTerminalSessionRecord(record.id, {
-        status: 'closed',
-        worktreeName: record.worktreeName,
-        worktreePath: record.worktreePath,
-        tmuxSocket: record.tmuxSocket,
-        errorMessage: record.errorMessage ?? 'terminal session missing',
-        readyAt: record.readyAt,
-        closedAt: record.closedAt ?? new Date().toISOString(),
-        metadata: record.metadata,
+    if (!active && status === 'ready' && getManager()) {
+      const rebuilt = getManager()?.startSession({
+        sessionId: record.id,
+        worktreePath: record.worktreePath ?? resolveCodexBaseCwd(),
+        worktreeName: record.worktreeName ?? undefined,
       })
-      status = updated?.status ?? status
+      if (!rebuilt) {
+        const updated = await updateTerminalSessionRecord(record.id, {
+          status: 'closed',
+          worktreeName: record.worktreeName,
+          worktreePath: record.worktreePath,
+          tmuxSocket: record.tmuxSocket,
+          errorMessage: record.errorMessage ?? 'terminal session missing',
+          readyAt: record.readyAt,
+          closedAt: record.closedAt ?? new Date().toISOString(),
+          metadata: record.metadata,
+        })
+        status = updated?.status ?? status
+      } else {
+        status = 'ready'
+      }
     }
+
+    const reconnectToken = await ensureReconnectToken(record)
 
     sessions.push(
       buildTerminalSession({
@@ -519,6 +575,7 @@ export const listTerminalSessions = async (options: { includeClosed?: boolean } 
         closedAt: record.closedAt,
         terminalUrl: getMetadataValue(record.metadata, 'backendUrl') ?? publicTerminalUrl,
         backendId: getMetadataValue(record.metadata, 'backendId'),
+        reconnectToken,
       }),
     )
   }
@@ -543,8 +600,9 @@ export const getTerminalSession = async (sessionId: string): Promise<TerminalSes
   }
   const record = await getTerminalSessionRecord(sessionId)
   if (!record) return null
-  const active = manager?.getSession(sessionId)
+  const active = getManager()?.getSession(sessionId)
   const attached = active ? active.connections.size > 0 : false
+  const reconnectToken = await ensureReconnectToken(record)
   return buildTerminalSession({
     id: record.id,
     worktreeName: record.worktreeName,
@@ -557,6 +615,7 @@ export const getTerminalSession = async (sessionId: string): Promise<TerminalSes
     closedAt: record.closedAt,
     terminalUrl: getMetadataValue(record.metadata, 'backendUrl') ?? publicTerminalUrl,
     backendId: getMetadataValue(record.metadata, 'backendId'),
+    reconnectToken,
   })
 }
 
@@ -564,20 +623,27 @@ export const ensureTerminalSessionExists = async (sessionId: string): Promise<bo
   if (!SESSION_ID_PATTERN.test(sessionId)) return false
   const record = await getTerminalSessionRecord(sessionId)
   if (record && record.status === 'creating') return false
+  const manager = getManager()
   if (!manager) return false
   const runtime = manager.getSession(sessionId)
   if (runtime) return true
   if (record && record.status === 'ready') {
-    await updateTerminalSessionRecord(sessionId, {
-      status: 'error',
-      worktreeName: record.worktreeName,
-      worktreePath: record.worktreePath,
-      tmuxSocket: record.tmuxSocket,
-      errorMessage: record.errorMessage ?? 'terminal session missing',
-      readyAt: record.readyAt,
-      closedAt: record.closedAt ?? new Date().toISOString(),
-      metadata: record.metadata,
-    })
+    const worktreePath = record.worktreePath ?? resolveCodexBaseCwd()
+    try {
+      manager.startSession({ sessionId, worktreePath, worktreeName: record.worktreeName ?? undefined })
+      return true
+    } catch (error) {
+      await updateTerminalSessionRecord(sessionId, {
+        status: 'error',
+        worktreeName: record.worktreeName,
+        worktreePath: record.worktreePath,
+        tmuxSocket: record.tmuxSocket,
+        errorMessage: record.errorMessage ?? (error instanceof Error ? error.message : 'terminal session missing'),
+        readyAt: record.readyAt,
+        closedAt: record.closedAt ?? new Date().toISOString(),
+        metadata: record.metadata,
+      })
+    }
   }
   return false
 }
@@ -595,7 +661,7 @@ export const terminateTerminalSession = async (sessionId: string) => {
     return
   }
   const record = await getTerminalSessionRecord(sessionId)
-  manager?.terminate(sessionId)
+  getManager()?.terminate(sessionId)
   await upsertTerminalSessionRecord({
     id: sessionId,
     status: 'closed',
@@ -623,7 +689,7 @@ export const deleteTerminalSession = async (sessionId: string) => {
   }
 
   const record = await getTerminalSessionRecord(sessionId)
-  const runtime = manager?.getSession(sessionId)
+  const runtime = getManager()?.getSession(sessionId)
   if (runtime) {
     throw new Error('Session is still running. Terminate it before deleting.')
   }
@@ -660,9 +726,9 @@ export const sendTerminalInput = async (sessionId: string, input: string) => {
     }
     return
   }
-  const runtime = manager?.getSession(sessionId)
+  const runtime = getManager()?.getSession(sessionId)
   if (!runtime) throw new Error('Session not found')
-  manager?.handleInput(sessionId, new TextEncoder().encode(input))
+  getManager()?.handleInput(sessionId, new TextEncoder().encode(input))
 }
 
 export const resizeTerminalSession = async (sessionId: string, cols: number, rows: number) => {
@@ -679,15 +745,15 @@ export const resizeTerminalSession = async (sessionId: string, cols: number, row
     }
     return
   }
-  manager?.resize(sessionId, cols, rows)
+  getManager()?.resize(sessionId, cols, rows)
 }
 
 export const getTerminalSnapshot = async (sessionId: string) => {
   if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error('Invalid terminal session id')
-  return manager?.getSnapshot(sessionId) ?? ''
+  return getManager()?.getSnapshot(sessionId) ?? ''
 }
 
-export const getTerminalRuntime = (sessionId: string) => manager?.getSession(sessionId) ?? null
+export const getTerminalRuntime = (sessionId: string) => getManager()?.getSession(sessionId) ?? null
 
 export const formatSessionId = (raw: string) => raw.trim()
 

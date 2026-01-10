@@ -33,6 +33,7 @@ type TerminalSession = {
   readyAt?: string | null
   closedAt?: string | null
   terminalUrl?: string | null
+  reconnectToken?: string | null
 }
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -279,7 +280,11 @@ function TerminalSessionPage() {
             <Skeleton className="h-64 w-full" />
           </div>
         ) : session?.status === 'ready' ? (
-          <TerminalView sessionId={session?.id ?? sessionId} terminalUrl={session?.terminalUrl ?? null} />
+          <TerminalView
+            sessionId={session?.id ?? sessionId}
+            terminalUrl={session?.terminalUrl ?? null}
+            reconnectToken={session?.reconnectToken ?? null}
+          />
         ) : session?.status === 'error' ? (
           <div className="rounded-none border border-destructive/40 bg-destructive/10 p-4 text-xs text-destructive">
             {session.errorMessage ?? 'Terminal session failed to start. Refresh to retry.'}
