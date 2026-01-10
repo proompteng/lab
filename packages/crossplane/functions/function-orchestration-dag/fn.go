@@ -142,8 +142,27 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		if len(step.DependsOn) > 0 {
 			task["dependencies"] = toAnySlice(step.DependsOn)
 		}
-		if len(step.With) > 0 {
-			params := mapToParameters(step.With)
+		paramsMap := map[string]any{}
+		for key, value := range step.With {
+			paramsMap[key] = value
+		}
+		switch step.Kind {
+		case "ToolRun":
+			if step.ToolRef != "" {
+				paramsMap["toolRef"] = step.ToolRef
+			}
+		case "MemoryOp", "Checkpoint":
+			if step.MemoryRef != "" {
+				paramsMap["memoryRef"] = step.MemoryRef
+			}
+		case "ApprovalGate":
+			if step.PolicyRef != "" {
+				paramsMap["policyRef"] = step.PolicyRef
+			}
+		}
+
+		if len(paramsMap) > 0 {
+			params := mapToParameters(paramsMap)
 			if len(params) > 0 {
 				task["arguments"] = map[string]any{
 					"parameters": params,
@@ -151,14 +170,20 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 			}
 		}
 
-		refName := resolveTemplateRefName(step)
+		refName, templateName := resolveTemplateRef(step)
 		if refName != "" {
+			if templateName == "" {
+				templateName = step.Name
+			}
 			task["templateRef"] = map[string]any{
 				"name":     refName,
-				"template": step.Name,
+				"template": templateName,
 			}
 		} else {
-			task["template"] = step.Name
+			if templateName == "" {
+				templateName = step.Name
+			}
+			task["template"] = templateName
 		}
 
 		tasks = append(tasks, task)
@@ -219,20 +244,27 @@ func parseSteps(raw any) ([]orchestrationStep, error) {
 	return steps, nil
 }
 
-func resolveTemplateRefName(step orchestrationStep) string {
+func resolveTemplateRef(step orchestrationStep) (string, string) {
 	switch step.Kind {
 	case "AgentRun":
-		return step.AgentRef
+		return step.AgentRef, step.Name
 	case "ToolRun":
-		return step.ToolRef
+		return step.ToolRef, "run"
 	case "MemoryOp":
-		return step.MemoryRef
+		return "jangar-memory-op", "run"
 	case "ApprovalGate":
-		return step.PolicyRef
-	case "SignalWait", "Checkpoint", "SubOrchestration":
-		return ""
+		if step.PolicyRef != "" {
+			return step.PolicyRef, "gate"
+		}
+		return "jangar-approval-gate", "gate"
+	case "SignalWait":
+		return "jangar-signal-wait", "wait"
+	case "Checkpoint":
+		return "jangar-checkpoint", "checkpoint"
+	case "SubOrchestration":
+		return "jangar-sub-orchestration", "run"
 	default:
-		return ""
+		return "", step.Name
 	}
 }
 

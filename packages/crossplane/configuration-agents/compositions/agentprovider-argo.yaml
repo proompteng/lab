@@ -1,0 +1,45 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: agentprovider-argo
+  labels:
+    runtime: argo
+spec:
+  compositeTypeRef:
+    apiVersion: agents.proompteng.ai/v1alpha1
+    kind: XAgentProvider
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: provider-config
+            base:
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                namespace: argo-workflows
+              data:
+                provider.json: '{}'
+            patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: '%s-agent-provider'
+            readinessChecks:
+              - type: None
+    - step: render-provider-json
+      functionRef:
+        name: function-agent-provider-json
+      input:
+        apiVersion: fn.proompteng.ai/v1alpha1
+        kind: AgentProviderJson
+        spec:
+          targetConfigMap: provider-config

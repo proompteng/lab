@@ -1,0 +1,47 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xschedules.schedules.proompteng.ai
+spec:
+  group: schedules.proompteng.ai
+  names:
+    kind: XSchedule
+    plural: xschedules
+  claimNames:
+    kind: Schedule
+    plural: schedules
+  defaultCompositionRef:
+    name: schedule-argo
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required: [cron, targetRef]
+              properties:
+                cron: { type: string }
+                timezone: { type: string, default: UTC }
+                targetRef:
+                  type: object
+                  required: [name, apiVersion, kind]
+                  properties:
+                    name: { type: string }
+                    apiVersion: { type: string }
+                    kind: { type: string }
+                    namespace: { type: string }
+                parameters:
+                  type: object
+                  additionalProperties: { type: string }
+            status:
+              type: object
+              properties:
+                lastRunAt: { type: string }
+                nextRunAt: { type: string }
+                phase: { type: string }

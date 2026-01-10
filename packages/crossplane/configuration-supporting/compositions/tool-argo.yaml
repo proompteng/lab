@@ -1,0 +1,96 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: tool-argo
+  labels:
+    runtime: argo
+spec:
+  compositeTypeRef:
+    apiVersion: tools.proompteng.ai/v1alpha1
+    kind: XTool
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: workflow-template
+            base:
+              apiVersion: argoproj.io/v1alpha1
+              kind: WorkflowTemplate
+              metadata:
+                namespace: argo-workflows
+              spec:
+                serviceAccountName: codex-workflow
+                entrypoint: run
+                templates:
+                  - name: run
+                    inputs:
+                      parameters: []
+                    container:
+                      image: alpine:3.20
+                      command:
+                        - /bin/sh
+                        - -c
+                      args:
+                        - echo "tool executed"
+                      env: []
+            patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+              - fromFieldPath: spec.runtime.argo.namespace
+                toFieldPath: metadata.namespace
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.runtime.argo.serviceAccount
+                toFieldPath: spec.serviceAccountName
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.runtime.argo.image
+                toFieldPath: spec.templates[0].container.image
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.runtime.argo.command
+                toFieldPath: spec.templates[0].container.command
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.runtime.argo.args
+                toFieldPath: spec.templates[0].container.args
+                policy:
+                  fromFieldPath: Optional
+              - type: ToCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: status.workflowTemplate
+                policy:
+                  fromFieldPath: Optional
+            readinessChecks:
+              - type: None
+    - step: parameters-map-to-list
+      functionRef:
+        name: function-map-to-list
+      input:
+        apiVersion: fn.proompteng.ai/v1alpha1
+        kind: MapToList
+        spec:
+          fromFieldPath: spec.runtime.argo.parameters
+          toResource: workflow-template
+          toFieldPath: spec.templates[0].inputs.parameters
+          listKeys:
+            nameField: name
+            valueField: value
+    - step: env-map-to-list
+      functionRef:
+        name: function-map-to-list
+      input:
+        apiVersion: fn.proompteng.ai/v1alpha1
+        kind: MapToList
+        spec:
+          fromFieldPath: spec.runtime.argo.env
+          toResource: workflow-template
+          toFieldPath: spec.templates[0].container.env
+          listKeys:
+            nameField: name
+            valueField: value

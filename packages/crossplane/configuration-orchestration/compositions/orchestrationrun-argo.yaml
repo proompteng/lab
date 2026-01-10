@@ -36,6 +36,10 @@ spec:
                 toFieldPath: spec.arguments.parameters
                 policy:
                   fromFieldPath: Optional
+              - fromFieldPath: spec.deliveryId
+                toFieldPath: metadata.labels["jangar.proompteng.ai/delivery-id"]
+                policy:
+                  fromFieldPath: Optional
             readinessChecks:
               - type: None
     - step: parameters-map-to-list

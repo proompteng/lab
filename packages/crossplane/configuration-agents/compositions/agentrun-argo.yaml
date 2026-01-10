@@ -26,6 +26,9 @@ spec:
               spec:
                 workflowTemplateRef:
                   name: ""
+                activeDeadlineSeconds: 0
+                retryStrategy:
+                  limit: 0
                 arguments:
                   parameters: []
             patches:
@@ -41,6 +44,18 @@ spec:
                 toFieldPath: spec.workflowTemplateRef.name
               - fromFieldPath: spec.parameters
                 toFieldPath: spec.arguments.parameters
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.deliveryId
+                toFieldPath: metadata.labels["jangar.proompteng.ai/delivery-id"]
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.timeoutSeconds
+                toFieldPath: spec.activeDeadlineSeconds
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.retryPolicy.limit
+                toFieldPath: spec.retryStrategy.limit
                 policy:
                   fromFieldPath: Optional
             connectionDetails:

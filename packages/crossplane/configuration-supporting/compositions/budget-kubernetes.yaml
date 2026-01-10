@@ -1,0 +1,99 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: budget-kubernetes
+  labels:
+    provider: kubernetes
+spec:
+  compositeTypeRef:
+    apiVersion: budgets.proompteng.ai/v1alpha1
+    kind: XBudget
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: resource-quota
+            base:
+              apiVersion: v1
+              kind: ResourceQuota
+              metadata:
+                namespace: jangar
+              spec:
+                hard: {}
+            patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: '%s-budget'
+              - fromFieldPath: spec.claimRef.namespace
+                toFieldPath: metadata.namespace
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.limits.cpu
+                toFieldPath: spec.hard["requests.cpu"]
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.limits.memory
+                toFieldPath: spec.hard["requests.memory"]
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.limits.gpu
+                toFieldPath: spec.hard["requests.nvidia.com/gpu"]
+                policy:
+                  fromFieldPath: Optional
+            readinessChecks:
+              - type: None
+          - name: budget-meta
+            base:
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                namespace: jangar
+              data:
+                tokens: ''
+                dollars: ''
+                window: ''
+            patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: '%s-budget-meta'
+              - fromFieldPath: spec.claimRef.namespace
+                toFieldPath: metadata.namespace
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.limits.tokens
+                toFieldPath: data.tokens
+                policy:
+                  fromFieldPath: Optional
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: '%v'
+              - fromFieldPath: spec.limits.dollars
+                toFieldPath: data.dollars
+                policy:
+                  fromFieldPath: Optional
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: '%v'
+              - fromFieldPath: spec.window.period
+                toFieldPath: data.window
+                policy:
+                  fromFieldPath: Optional
+            readinessChecks:
+              - type: None

@@ -1,0 +1,144 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: agent-argo
+  labels:
+    runtime: argo
+spec:
+  compositeTypeRef:
+    apiVersion: agents.proompteng.ai/v1alpha1
+    kind: XAgent
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: workflow-template
+            base:
+              apiVersion: argoproj.io/v1alpha1
+              kind: WorkflowTemplate
+              metadata:
+                namespace: argo-workflows
+              spec:
+                serviceAccountName: codex-workflow
+                entrypoint: agent-run
+                volumes:
+                  - name: agent-providers
+                    configMap:
+                      name: ""
+                      optional: true
+                templates:
+                  - name: agent-run
+                    inputs:
+                      parameters:
+                        - name: provider
+                          default: ''
+                        - name: repository
+                          default: ''
+                        - name: issueNumber
+                          default: ''
+                        - name: base
+                          default: ''
+                        - name: head
+                          default: ''
+                        - name: stage
+                          default: ''
+                        - name: rawEventB64
+                          default: ''
+                        - name: eventBodyB64
+                          default: ''
+                        - name: promptJson
+                          default: ''
+                    container:
+                      image: registry.ide-newton.ts.net/lab/jangar:latest
+                      command:
+                        - /bin/sh
+                        - -c
+                      args:
+                        - |
+                          set -euo pipefail
+                          AGENT_SPEC="$(mktemp)"
+                          cat > "$AGENT_SPEC" <<'JSON'
+                          {
+                            "provider": "{{inputs.parameters.provider}}",
+                            "inputs": {
+                              "repository": "{{inputs.parameters.repository}}",
+                              "issueNumber": "{{inputs.parameters.issueNumber}}",
+                              "base": "{{inputs.parameters.base}}",
+                              "head": "{{inputs.parameters.head}}",
+                              "stage": "{{inputs.parameters.stage}}"
+                            },
+                            "payloads": {
+                              "rawEventB64": "{{inputs.parameters.rawEventB64}}",
+                              "eventBodyB64": "{{inputs.parameters.eventBodyB64}}",
+                              "promptJson": "{{inputs.parameters.promptJson}}"
+                            }
+                          }
+                          JSON
+                          /usr/local/bin/agent-runner --spec "$AGENT_SPEC"
+                      volumeMounts:
+                        - name: agent-providers
+                          mountPath: /etc/agent-providers
+            patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+              - fromFieldPath: spec.runtime.argo.namespace
+                toFieldPath: metadata.namespace
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.runtime.argo.serviceAccount
+                toFieldPath: spec.serviceAccountName
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.providerRef.name
+                toFieldPath: spec.templates[0].inputs.parameters[0].default
+              - fromFieldPath: spec.providerRef.name
+                toFieldPath: spec.volumes[0].configMap.name
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: '%s-agent-provider'
+              - fromFieldPath: spec.inputs.repository
+                toFieldPath: spec.templates[0].inputs.parameters[1].default
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.inputs.issueNumber
+                toFieldPath: spec.templates[0].inputs.parameters[2].default
+                policy:
+                  fromFieldPath: Optional
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: '%v'
+              - fromFieldPath: spec.inputs.base
+                toFieldPath: spec.templates[0].inputs.parameters[3].default
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.inputs.head
+                toFieldPath: spec.templates[0].inputs.parameters[4].default
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.inputs.stage
+                toFieldPath: spec.templates[0].inputs.parameters[5].default
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.payloads.rawEventB64
+                toFieldPath: spec.templates[0].inputs.parameters[6].default
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.payloads.eventBodyB64
+                toFieldPath: spec.templates[0].inputs.parameters[7].default
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.payloads.promptJson
+                toFieldPath: spec.templates[0].inputs.parameters[8].default
+                policy:
+                  fromFieldPath: Optional
+            readinessChecks:
+              - type: None

@@ -1,0 +1,63 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: schedule-argo
+  labels:
+    runtime: argo
+spec:
+  compositeTypeRef:
+    apiVersion: schedules.proompteng.ai/v1alpha1
+    kind: XSchedule
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: cron-workflow
+            base:
+              apiVersion: argoproj.io/v1alpha1
+              kind: CronWorkflow
+              metadata:
+                namespace: argo-workflows
+              spec:
+                schedule: ''
+                timezone: UTC
+                workflowSpec:
+                  workflowTemplateRef:
+                    name: ''
+                  arguments:
+                    parameters: []
+            patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+              - fromFieldPath: spec.cron
+                toFieldPath: spec.schedule
+              - fromFieldPath: spec.timezone
+                toFieldPath: spec.timezone
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.targetRef.name
+                toFieldPath: spec.workflowSpec.workflowTemplateRef.name
+              - fromFieldPath: spec.targetRef.namespace
+                toFieldPath: metadata.namespace
+                policy:
+                  fromFieldPath: Optional
+            readinessChecks:
+              - type: None
+    - step: parameters-map-to-list
+      functionRef:
+        name: function-map-to-list
+      input:
+        apiVersion: fn.proompteng.ai/v1alpha1
+        kind: MapToList
+        spec:
+          fromFieldPath: spec.parameters
+          toResource: cron-workflow
+          toFieldPath: spec.workflowSpec.arguments.parameters
+          listKeys:
+            nameField: name
+            valueField: value

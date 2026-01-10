@@ -112,16 +112,21 @@ func TestRunFunction_BuildsDagTasks(t *testing.T) {
 		t.Fatalf("step-two dependencies mismatch (-want +got):\n%s", diff)
 	}
 	templateRef, _ = stepTwo["templateRef"].(map[string]any)
-	if diff := cmp.Diff(map[string]any{"name": "tool-template", "template": "step-two"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
+	if diff := cmp.Diff(map[string]any{"name": "tool-template", "template": "run"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
 		t.Fatalf("step-two templateRef mismatch (-want +got):\n%s", diff)
+	}
+	parameters = paramMap(t, stepTwo)
+	if diff := cmp.Diff(map[string]string{"toolRef": "tool-template"}, parameters); diff != "" {
+		t.Fatalf("step-two parameters mismatch (-want +got):\n%s", diff)
 	}
 
 	stepThree := tasks["step-three"]
 	if stepThree == nil {
 		t.Fatalf("step-three task missing")
 	}
-	if templateName, _ := stepThree["template"].(string); templateName != "step-three" {
-		t.Fatalf("step-three template mismatch: got %q", templateName)
+	templateRef, _ = stepThree["templateRef"].(map[string]any)
+	if diff := cmp.Diff(map[string]any{"name": "jangar-signal-wait", "template": "wait"}, templateRef, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("step-three templateRef mismatch (-want +got):\n%s", diff)
 	}
 }
 

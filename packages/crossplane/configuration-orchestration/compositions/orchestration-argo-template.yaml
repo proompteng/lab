@@ -27,13 +27,24 @@ spec:
               spec:
                 entrypoint: ""
                 serviceAccountName: codex-workflow
+                activeDeadlineSeconds: 0
                 templates:
                   - name: main
+                    retryStrategy:
+                      limit: 0
                     dag:
                       tasks: []
             patches:
               - fromFieldPath: spec.entrypoint
                 toFieldPath: spec.entrypoint
+              - fromFieldPath: spec.policies.timeouts.totalSeconds
+                toFieldPath: spec.activeDeadlineSeconds
+                policy:
+                  fromFieldPath: Optional
+              - fromFieldPath: spec.policies.retries.limit
+                toFieldPath: spec.templates[0].retryStrategy.limit
+                policy:
+                  fromFieldPath: Optional
               - fromFieldPath: metadata.name
                 toFieldPath: metadata.name
                 policy:
