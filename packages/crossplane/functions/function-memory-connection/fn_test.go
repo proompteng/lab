@@ -56,6 +56,7 @@ func TestRunFunction_BindsSecretRefWhenSecretMissing(t *testing.T) {
 							"namespace": "providers"
 						},
 						"spec": {
+							"type": "postgres",
 							"postgres": {
 								"database": "memdb",
 								"connectionSecret": {
@@ -106,6 +107,7 @@ func TestRunFunction_BindsConnection(t *testing.T) {
 							"namespace": "providers"
 						},
 						"spec": {
+							"type": "postgres",
 							"postgres": {
 								"connectionSecret": {
 									"name": "mem-conn",
@@ -160,6 +162,9 @@ func TestRunFunction_BindsConnection(t *testing.T) {
 	}
 	if status["schema"] != "mem" {
 		t.Fatalf("unexpected schema: %v", status["schema"])
+	}
+	if status["provider"] != "postgres" {
+		t.Fatalf("unexpected provider: %v", status["provider"])
 	}
 
 	job := desiredResource(t, rsp, "schema-job")
@@ -229,6 +234,7 @@ func TestRunFunction_ObservedFallback(t *testing.T) {
 							"namespace": "providers"
 						},
 						"spec": {
+							"type": "postgres",
 							"postgres": {
 								"connectionSecret": {
 									"name": "mem-conn",
@@ -316,6 +322,7 @@ func TestRunFunction_UsesProviderSchemaWhenMissing(t *testing.T) {
 							"namespace": "providers"
 						},
 						"spec": {
+							"type": "postgres",
 							"postgres": {
 								"schema": "provider_schema",
 								"connectionSecret": {
@@ -386,6 +393,7 @@ func TestRunFunction_SchemaMismatchFatal(t *testing.T) {
 							"namespace": "providers"
 						},
 						"spec": {
+							"type": "postgres",
 							"postgres": {
 								"schema": "provider_schema",
 								"connectionSecret": {
@@ -453,7 +461,8 @@ func baseRequest() *fnv1.RunFunctionRequest {
 				"statusFieldPaths": {
 					"endpoint": "status.connection.endpoint",
 					"database": "status.connection.database",
-					"schema": "status.connection.schema"
+					"schema": "status.connection.schema",
+					"provider": "status.connection.provider"
 				}
 			}
 		}`),

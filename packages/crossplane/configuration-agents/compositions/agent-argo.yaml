@@ -90,6 +90,15 @@ spec:
                             eventBodyB64,
                             promptJson,
                           ] = process.argv;
+                          const natsUrl = process.env.NATS_URL || '';
+                          const grafBaseUrl = process.env.CODEX_GRAF_BASE_URL || '';
+                          const observability = {};
+                          if (natsUrl) {
+                            observability.natsUrl = natsUrl;
+                          }
+                          if (grafBaseUrl) {
+                            observability.grafBaseUrl = grafBaseUrl;
+                          }
                           const spec = {
                             provider,
                             inputs: {
@@ -103,6 +112,11 @@ spec:
                               rawEventB64,
                               eventBodyB64,
                               promptJson,
+                            },
+                            observability,
+                            artifacts: {
+                              statusPath: '/workspace/.agent/status.json',
+                              logPath: '/workspace/.agent/log.txt',
                             },
                           };
                           fs.writeFileSync(process.env.AGENT_SPEC, JSON.stringify(spec));

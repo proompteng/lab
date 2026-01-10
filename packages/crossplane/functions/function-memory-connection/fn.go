@@ -192,6 +192,8 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 		return rsp, nil
 	}
 
+	providerType := getStringField(providerResource.Object, "spec.type")
+
 	if in.Spec.Resources.Job != "" {
 		job := dcds[resource.Name(in.Spec.Resources.Job)]
 		if job != nil {
@@ -223,6 +225,9 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	}
 	if schema != "" && in.Spec.StatusFieldPaths.Schema != "" {
 		_ = fieldpath.Pave(xr.Resource.Object).SetValue(in.Spec.StatusFieldPaths.Schema, schema)
+	}
+	if providerType != "" && in.Spec.StatusFieldPaths.Provider != "" {
+		_ = fieldpath.Pave(xr.Resource.Object).SetValue(in.Spec.StatusFieldPaths.Provider, providerType)
 	}
 
 	if err := response.SetDesiredCompositeResource(rsp, xr); err != nil {
