@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
 
@@ -224,6 +224,10 @@ beforeEach(async () => {
   Object.assign(githubMock, github)
   Object.assign(configMock, config)
   Object.assign(memoryStoreMock, memoriesStore)
+})
+
+beforeAll(async () => {
+  handleRunComplete = null
   await requireHandleRunComplete()
 })
 
