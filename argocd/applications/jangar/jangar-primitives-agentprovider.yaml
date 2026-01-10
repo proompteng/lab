@@ -4,15 +4,13 @@ metadata:
   name: jangar-primitives-codex
   namespace: jangar
 spec:
-  binary: /usr/local/bin/codex
+  binary: /bin/sh
   argsTemplate:
-    - exec
-    - --repo
-    - "{{inputs.repository}}"
-    - --base
-    - "{{inputs.base}}"
-    - --head
-    - "{{inputs.head}}"
+    - -c
+    - >-
+        mkdir -p /workspace/lab &&
+        echo "agent run repo={{inputs.repository}} base={{inputs.base}} head={{inputs.head}} stage={{inputs.stage}}" |
+        tee /workspace/lab/.codex-implementation.log
   envTemplate:
     WORKFLOW_STAGE: "{{inputs.stage}}"
   inputFiles:
