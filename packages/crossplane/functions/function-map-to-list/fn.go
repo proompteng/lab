@@ -52,6 +52,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		response.Fatal(rsp, errors.Wrap(err, "cannot get desired composite resource"))
 		return rsp, nil
 	}
+	observedXR, _ := request.GetObservedCompositeResource(req)
 
 	dcds, err := request.GetDesiredComposedResources(req)
 	if err != nil {
@@ -60,9 +61,12 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	}
 
 	raw, err := fieldpath.Pave(xr.Resource.Object).GetValue(in.Spec.FromFieldPath)
+	if err != nil && observedXR != nil {
+		raw, err = fieldpath.Pave(observedXR.Resource.Object).GetValue(in.Spec.FromFieldPath)
+	}
 	if err != nil {
-		response.Fatal(rsp, errors.Wrap(err, "cannot read fromFieldPath"))
-		return rsp, nil
+		f.log.Info("fromFieldPath missing; defaulting to empty map", "path", in.Spec.FromFieldPath, "error", err)
+		raw = nil
 	}
 
 	asMap, ok := raw.(map[string]any)

@@ -134,6 +134,127 @@ func TestRunFunction_MapToList_CustomKeys(t *testing.T) {
 	}
 }
 
+func TestRunFunction_MapToList_ObservedFallback(t *testing.T) {
+	req := &fnv1.RunFunctionRequest{
+		Meta: &fnv1.RequestMeta{Tag: "map-to-list-observed"},
+		Input: resource.MustStructJSON(`{
+			"apiVersion": "fn.proompteng.ai/v1alpha1",
+			"kind": "MapToList",
+			"spec": {
+				"fromFieldPath": "spec.params",
+				"toResource": "target",
+				"toFieldPath": "spec.items"
+			}
+		}`),
+		Desired: &fnv1.State{
+			Composite: &fnv1.Resource{
+				Resource: resource.MustStructJSON(`{
+					"apiVersion": "example.org/v1",
+					"kind": "XThing",
+					"metadata": {
+						"name": "fallback-test"
+					}
+				}`),
+			},
+			Resources: map[string]*fnv1.Resource{
+				"target": {
+					Resource: resource.MustStructJSON(`{
+						"apiVersion": "example.org/v1",
+						"kind": "XTarget",
+						"spec": {}
+					}`),
+				},
+			},
+		},
+		Observed: &fnv1.State{
+			Composite: &fnv1.Resource{
+				Resource: resource.MustStructJSON(`{
+					"apiVersion": "example.org/v1",
+					"kind": "XThing",
+					"spec": {
+						"params": {
+							"alpha": "one",
+							"beta": "two"
+						}
+					}
+				}`),
+			},
+		},
+	}
+
+	f := &Function{log: logging.NewNopLogger()}
+	rsp, err := f.RunFunction(t.Context(), req)
+	if err != nil {
+		t.Fatalf("RunFunction returned error: %v", err)
+	}
+
+	target := desiredResource(t, rsp, "target")
+	items, _, err := unstructured.NestedSlice(target.Object, "spec", "items")
+	if err != nil {
+		t.Fatalf("reading spec.items: %v", err)
+	}
+
+	want := []any{
+		map[string]any{"name": "alpha", "value": "one"},
+		map[string]any{"name": "beta", "value": "two"},
+	}
+
+	if diff := cmp.Diff(want, items, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("spec.items mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestRunFunction_MapToList_MissingField(t *testing.T) {
+	req := &fnv1.RunFunctionRequest{
+		Meta: &fnv1.RequestMeta{Tag: "map-to-list-missing"},
+		Input: resource.MustStructJSON(`{
+			"apiVersion": "fn.proompteng.ai/v1alpha1",
+			"kind": "MapToList",
+			"spec": {
+				"fromFieldPath": "spec.params",
+				"toResource": "target",
+				"toFieldPath": "spec.items"
+			}
+		}`),
+		Desired: &fnv1.State{
+			Composite: &fnv1.Resource{
+				Resource: resource.MustStructJSON(`{
+					"apiVersion": "example.org/v1",
+					"kind": "XThing",
+					"metadata": {
+						"name": "missing-test"
+					}
+				}`),
+			},
+			Resources: map[string]*fnv1.Resource{
+				"target": {
+					Resource: resource.MustStructJSON(`{
+						"apiVersion": "example.org/v1",
+						"kind": "XTarget",
+						"spec": {}
+					}`),
+				},
+			},
+		},
+	}
+
+	f := &Function{log: logging.NewNopLogger()}
+	rsp, err := f.RunFunction(t.Context(), req)
+	if err != nil {
+		t.Fatalf("RunFunction returned error: %v", err)
+	}
+
+	target := desiredResource(t, rsp, "target")
+	items, _, err := unstructured.NestedSlice(target.Object, "spec", "items")
+	if err != nil {
+		t.Fatalf("reading spec.items: %v", err)
+	}
+
+	if len(items) != 0 {
+		t.Fatalf("expected empty items, got %v", items)
+	}
+}
+
 func desiredResource(t *testing.T, rsp *fnv1.RunFunctionResponse, name string) *unstructured.Unstructured {
 	t.Helper()
 
