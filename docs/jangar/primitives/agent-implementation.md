@@ -209,6 +209,7 @@ kind: CompositeResourceDefinition
 metadata:
   name: xagentproviders.agents.proompteng.ai
 spec:
+  scope: Cluster
   group: agents.proompteng.ai
   names:
     kind: XAgentProvider
@@ -349,6 +350,7 @@ Implementation note: Use a Composition Function to convert `spec.parameters` map
 - `Workflow.status.phase` -> `AgentRun.status.phase`
 - `Workflow.metadata.name` -> `AgentRun.status.workflowName`
 - `Workflow.metadata.uid` -> `AgentRun.status.workflowUID`
+- `Workflow.status.startedAt` -> `AgentRun.status.submittedAt`
 
 ## 4) Jangar API
 
