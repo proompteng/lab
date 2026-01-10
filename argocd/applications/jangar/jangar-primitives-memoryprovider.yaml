@@ -1,0 +1,19 @@
+apiVersion: memory.proompteng.ai/v1alpha1
+kind: MemoryProvider
+metadata:
+  name: postgres-default
+  namespace: jangar
+spec:
+  compositionRef:
+    name: memoryprovider-postgres
+  type: postgres
+  postgres:
+    clusterRef:
+      name: facteur-vector-cluster
+      namespace: facteur
+    connectionSecret:
+      name: facteur-vector-cluster-app
+      namespace: facteur
+    database: facteur_kb
+    schema: jangar_primitives
+    enablePgVector: true

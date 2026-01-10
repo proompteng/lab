@@ -15,6 +15,7 @@ resources:
   - codex-research-workflow.yaml
   - codex-research-rbac.yaml
   - codex-cluster-admin.yaml
+  - jangar-primitives-echo-workflowtemplate.yaml
 helmCharts:
   - name: argo-workflows
     repo: https://argoproj.github.io/argo-helm

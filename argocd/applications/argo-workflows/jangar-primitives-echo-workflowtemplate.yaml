@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: jangar-primitives-echo
+  namespace: argo-workflows
+spec:
+  serviceAccountName: codex-workflow
+  templates:
+    - name: echo
+      inputs:
+        parameters:
+          - name: message
+            default: hello from jangar primitives
+      container:
+        image: alpine:3.20
+        command:
+          - /bin/sh
+          - -c
+        args:
+          - echo "{{inputs.parameters.message}}"
