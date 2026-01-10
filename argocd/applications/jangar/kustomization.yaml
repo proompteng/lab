@@ -27,6 +27,7 @@ resources:
   - jangar-primitives-memoryprovider.yaml
   - jangar-primitives-memory.yaml
   - jangar-primitives-budget.yaml
+  - limitrange-defaults.yaml
   - jangar-primitives-orchestration.yaml
   - jangar-primitives-orchestrationrun.yaml
   - jangar-primitives-agentrun.yaml
