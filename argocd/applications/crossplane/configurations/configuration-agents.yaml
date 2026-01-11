@@ -3,5 +3,5 @@ kind: Configuration
 metadata:
   name: configuration-agents
 spec:
-  package: registry.ide-newton.ts.net/lab/configuration-agents:20260111
+  package: registry.ide-newton.ts.net/lab/configuration-agents:20260111-1
   packagePullPolicy: Always
