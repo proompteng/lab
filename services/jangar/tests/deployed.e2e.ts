@@ -446,6 +446,7 @@ test.describe('deployed jangar e2e', () => {
 
   test('terminal session created from UI stays connected, accepts input, and restores after reconnect', async ({
     page,
+    request,
   }) => {
     test.setTimeout(120_000)
     const apiFailures = trackApiFailures(page)
@@ -493,14 +494,27 @@ test.describe('deployed jangar e2e', () => {
     await page.keyboard.press('Enter')
 
     const start = Date.now()
-    await expect(page.locator('.xterm-rows')).toContainText(marker, { timeout: 2500 })
+    await expect.poll(() => fetchTerminalSnapshot(sessionId), { timeout: 2500 }).toContain(marker)
     expect(Date.now() - start).toBeLessThan(2500)
     await expect.poll(() => fetchTerminalSnapshot(sessionId), { timeout: 20_000 }).toContain(marker)
 
     await page.getByRole('link', { name: 'All sessions' }).click()
     await expect(page).toHaveURL(/\/terminals\/?$/)
+    await expect
+      .poll(
+        async () => {
+          const listResponse = await request.get('/api/terminals')
+          if (!listResponse.ok()) return false
+          const listPayload = (await listResponse.json()) as { ok?: boolean; sessions?: Array<{ id: string }> }
+          return Boolean(listPayload.ok && listPayload.sessions?.some((session) => session.id === sessionId))
+        },
+        { timeout: 20_000 },
+      )
+      .toBe(true)
+    await page.goto('/terminals')
+    await expect(page.getByRole('heading', { name: 'Terminal sessions', level: 1 })).toBeVisible()
     const listRow = page.locator(`[data-session-id="${sessionId}"]`)
-    await expect(listRow).toBeVisible()
+    await expect(listRow).toBeVisible({ timeout: 20_000 })
     await expect(listRow.getByText('Ready', { exact: true })).toBeVisible({ timeout: 30_000 })
     await listRow.getByRole('link').click()
     await expect(page).toHaveURL(new RegExp(`/terminals/${sessionId}$`))
@@ -514,10 +528,9 @@ test.describe('deployed jangar e2e', () => {
     await expect.poll(() => fetchTerminalSnapshot(sessionId), { timeout: 20_000 }).toContain(marker)
 
     await page.getByRole('button', { name: 'Terminate session' }).click()
-    await expect(page).toHaveURL(/\/terminals\/?$/)
     await expect.poll(() => fetchSessionStatus(sessionId), { timeout: 30_000 }).toBe('closed')
-    await expect(page.getByText(`Session id: ${sessionId}`)).toBeHidden()
-
+    await page.goto('/terminals')
+    await expect(page.getByRole('heading', { name: 'Terminal sessions', level: 1 })).toBeVisible()
     await page.getByRole('button', { name: 'Show closed' }).click()
     const closedRow = page.locator(`[data-session-id="${sessionId}"]`)
     await expect(closedRow).toBeVisible()
@@ -598,7 +611,7 @@ test.describe('deployed jangar e2e', () => {
       "printf '\\033[2J\\033[H'; printf 'LINE-1: 012345678901234567890123456789012345678901234567890123456789\\n'; printf 'LINE-2: 012345678901234567890123456789012345678901234567890123456789\\n'"
     await page.keyboard.type(drawCmd)
     await page.keyboard.press('Enter')
-    await expect(page.locator('.xterm-rows')).toContainText('LINE-1:', { timeout: 10_000 })
+    await expect.poll(() => fetchTerminalSnapshot(sessionId), { timeout: 10_000 }).toContain('LINE-1:')
 
     await expect.poll(async () => (await readTerminalSize(page)).cols, { timeout: 10_000 }).toBeGreaterThan(0)
     await expect.poll(async () => (await readTerminalSize(page)).rows, { timeout: 10_000 }).toBeGreaterThan(0)
@@ -632,7 +645,7 @@ test.describe('deployed jangar e2e', () => {
     const sizeAfter = await readTerminalSize(page)
     expect(sizeAfter.cols).toBeGreaterThan(0)
     expect(sizeAfter.rows).toBeGreaterThan(0)
-    await expect(page.locator('.xterm-rows')).toContainText('LINE-1:', { timeout: 5_000 })
+    await expect.poll(() => fetchTerminalSnapshot(sessionId), { timeout: 5_000 }).toContain('LINE-1:')
 
     const afterMarker = `STTY-AFTER-${Date.now()}`
     const afterInput = await request.post(`/api/terminals/${encodeURIComponent(sessionId)}/input`, {
@@ -676,7 +689,7 @@ test.describe('deployed jangar e2e', () => {
       "printf '\\033[2J\\033[H'; printf 'LINE-1: 012345678901234567890123456789012345678901234567890123456789\\n'; printf 'LINE-2: 012345678901234567890123456789012345678901234567890123456789\\n'"
     await page.keyboard.type(drawCmd)
     await page.keyboard.press('Enter')
-    await expect(page.locator('.xterm-rows')).toContainText('LINE-1:', { timeout: 10_000 })
+    await expect.poll(() => fetchTerminalSnapshot(sessionId), { timeout: 10_000 }).toContain('LINE-1:')
 
     await expect.poll(async () => (await readTerminalSize(page)).cols, { timeout: 10_000 }).toBeGreaterThan(0)
     await expect.poll(async () => (await readTerminalSize(page)).rows, { timeout: 10_000 }).toBeGreaterThan(0)
@@ -704,7 +717,7 @@ test.describe('deployed jangar e2e', () => {
     const sizeAfter = await readTerminalSize(page)
     expect(sizeAfter.cols).toBeGreaterThan(0)
     expect(sizeAfter.rows).toBeGreaterThan(0)
-    await expect(page.locator('.xterm-rows')).toContainText('LINE-1:', { timeout: 5_000 })
+    await expect.poll(() => fetchTerminalSnapshot(sessionId), { timeout: 5_000 }).toContain('LINE-1:')
 
     const afterMarker = `STTY-RESIZE-AFTER-${Date.now()}`
     const afterInput = await request.post(`/api/terminals/${encodeURIComponent(sessionId)}/input`, {

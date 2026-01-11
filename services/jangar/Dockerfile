@@ -10,8 +10,8 @@
 # - `tsconfig.base.json` is copied into the context root by the build script
 # - `skills/` is present at the context root for Codex CLI skills
 ARG BUN_VERSION=1.3.5
-ARG OPENVSCODE_VERSION=1.105.1
-ARG GH_VERSION=2.65.0
+ARG OPENVSCODE_VERSION=1.106.3
+ARG GH_VERSION=2.83.2
 ARG ZOXIDE_VERSION=0.9.8
 ARG KUBECTL_VERSION=1.34.3
 ARG KN_VERSION=1.20.0

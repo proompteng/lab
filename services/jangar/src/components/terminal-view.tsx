@@ -165,17 +165,26 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
     const rendererPreference = (() => {
       const params = new URLSearchParams(window.location.search)
       const query = params.get('renderer')?.toLowerCase()
-      if (query) return query
-      return window.localStorage.getItem('jangar-terminal-renderer') ?? 'dom'
+      const stored = window.localStorage.getItem('jangar-terminal-renderer')
+      if (query) return { value: query, fromQuery: true }
+      if (stored) return { value: stored, fromQuery: false }
+      return { value: 'canvas', fromQuery: false }
     })()
 
-    if (rendererPreference === 'webgl') {
+    const needsCanvasRenderer = rendererPreference.value === 'dom'
+    if (needsCanvasRenderer && !rendererPreference.fromQuery) {
+      window.localStorage.setItem('jangar-terminal-renderer', 'canvas')
+    }
+
+    const renderer = needsCanvasRenderer ? 'canvas' : rendererPreference.value
+
+    if (renderer === 'webgl') {
       try {
         terminal.loadAddon(new WebglAddon())
       } catch {
         terminal.loadAddon(new CanvasAddon())
       }
-    } else if (rendererPreference === 'canvas') {
+    } else if (renderer === 'canvas') {
       terminal.loadAddon(new CanvasAddon())
     }
 
