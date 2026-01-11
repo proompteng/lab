@@ -117,7 +117,7 @@ function TerminalSessionPage() {
           : 'bg-muted-foreground'
 
   return (
-    <main className="flex h-full min-h-0 flex-col gap-4 p-6">
+    <main className="flex h-full min-h-0 flex-col gap-4 p-4">
       <header className="flex flex-wrap items-start justify-between gap-3">
         {isInitialLoading ? (
           <div className="space-y-2">
