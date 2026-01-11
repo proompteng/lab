@@ -19,7 +19,7 @@ spec:
           - name: namespace
             default: ''
       script:
-        image: registry.ide-newton.ts.net/lab/jangar:latest
+        image: registry.ide-newton.ts.net/lab/jangar:8e480ce4
         env:
           - name: GITHUB_TOKEN
             valueFrom:
@@ -55,12 +55,37 @@ spec:
             memory_name="${memory_ref}"
           fi
 
-          spec_schema="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.spec.dataset.schema}' 2>/dev/null || true)"
-          dataset="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.spec.dataset.name}' 2>/dev/null || true)"
-          status_schema="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.status.schema}' 2>/dev/null || true)"
-          embedding_dim="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.spec.embeddings.dimension}' 2>/dev/null || true)"
-          secret_name="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.status.connectionSecretRef.name}' 2>/dev/null || true)"
-          secret_namespace="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.status.connectionSecretRef.namespace}' 2>/dev/null || true)"
+          spec_schema=""
+          dataset=""
+          status_schema=""
+          embedding_dim=""
+          read_memory_meta() {
+            spec_schema="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.spec.dataset.schema}' 2>/dev/null || true)"
+            dataset="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.spec.dataset.name}' 2>/dev/null || true)"
+            status_schema="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.status.schema}' 2>/dev/null || true)"
+            embedding_dim="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.spec.embeddings.dimension}' 2>/dev/null || true)"
+          }
+          read_memory_meta
+          if [ -z "${spec_schema}" ] && [ -z "${status_schema}" ] && [ -z "${dataset}" ]; then
+            fallback_namespace="$(
+              kubectl get memories.memory.proompteng.ai -A -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.namespace}{"\n"}{end}' \
+                | awk -v name="${memory_name}" '$1 == name { print $2; exit }'
+            )"
+            if [ -n "${fallback_namespace}" ] && [ "${fallback_namespace}" != "${memory_namespace}" ]; then
+              memory_namespace="${fallback_namespace}"
+              read_memory_meta
+            fi
+          fi
+          secret_name=""
+          secret_namespace=""
+          for attempt in $(seq 1 30); do
+            secret_name="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.status.connectionSecretRef.name}' 2>/dev/null || true)"
+            secret_namespace="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.status.connectionSecretRef.namespace}' 2>/dev/null || true)"
+            if [ -n "${secret_name}" ]; then
+              break
+            fi
+            sleep 2
+          done
           if [ -z "${secret_namespace}" ]; then
             secret_namespace="${memory_namespace}"
           fi
@@ -70,7 +95,23 @@ spec:
             exit 1
           fi
 
-          schema="${spec_schema:-${status_schema:-public}}"
+          schema="${spec_schema:-${status_schema:-${dataset:-public}}}"
+
+          if [ -z "${secret_name}" ]; then
+            fallback_namespace="$(
+              kubectl get memories.memory.proompteng.ai -A -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.namespace}{"\n"}{end}' \
+                | awk -v name="${memory_name}" '$1 == name { print $2; exit }'
+            )"
+            if [ -n "${fallback_namespace}" ] && [ "${fallback_namespace}" != "${memory_namespace}" ]; then
+              memory_namespace="${fallback_namespace}"
+              read_memory_meta
+              secret_name="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.status.connectionSecretRef.name}' 2>/dev/null || true)"
+              secret_namespace="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.status.connectionSecretRef.namespace}' 2>/dev/null || true)"
+              if [ -z "${secret_namespace}" ]; then
+                secret_namespace="${memory_namespace}"
+              fi
+            fi
+          fi
 
           if [ -z "${secret_name}" ]; then
             echo "memory connectionSecretRef is not ready" >&2
@@ -158,6 +199,7 @@ spec:
             return vector
           }
           const vectorToPg = (vector) => `[${vector.join(',')}]`
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
           const pool = new Pool({ connectionString: process.env.DB_URI, ssl: { rejectUnauthorized: false } })
           const key = payload.key || payload.id || `${operation}-${Date.now()}`
           const text = payload.text || payload.content || payload.summary || JSON.stringify(payload)
