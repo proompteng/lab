@@ -29,19 +29,16 @@ const parseLimit = (value: string | null, fallback: number) => {
   return Math.max(1, Math.min(parsed, 100))
 }
 
+const GITHUB_LOGIN_PATTERN = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i
+
 const resolveActor = (request: Request) => {
-  const candidates = [
-    'x-jangar-actor',
-    'x-forwarded-user',
-    'x-forwarded-email',
-    'x-auth-request-email',
-    'x-auth-request-user',
-    'x-remote-user',
-    'x-github-user',
-  ]
+  const candidates = ['x-jangar-actor', 'x-forwarded-user', 'x-auth-request-user', 'x-remote-user', 'x-github-user']
   for (const header of candidates) {
     const value = request.headers.get(header)
-    if (value?.trim()) return value.trim()
+    const raw = value?.split(',')[0]?.trim()
+    if (!raw) continue
+    if (!GITHUB_LOGIN_PATTERN.test(raw)) continue
+    return raw
   }
   return null
 }

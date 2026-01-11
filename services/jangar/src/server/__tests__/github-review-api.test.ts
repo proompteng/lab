@@ -49,6 +49,27 @@ describe('github review api routes', () => {
     )
   })
 
+  it('does not default author from email headers', async () => {
+    const store = {
+      listPulls: vi.fn(async () => ({ items: [], nextCursor: null })),
+      close: vi.fn(async () => {}),
+    }
+
+    const response = await getPullsHandler(
+      new Request('http://localhost/api/github/pulls', {
+        headers: { 'x-forwarded-email': 'someone@example.com' },
+      }),
+      () => store as never,
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      viewerLogin: null,
+    })
+    expect(store.listPulls).toHaveBeenCalledWith(expect.objectContaining({ author: undefined }))
+  })
+
   it('fetches pull request details', async () => {
     const store = {
       getPull: vi.fn(async () => ({
