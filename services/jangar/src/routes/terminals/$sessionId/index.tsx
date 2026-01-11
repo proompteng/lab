@@ -117,7 +117,7 @@ function TerminalSessionPage() {
           : 'bg-muted-foreground'
 
   return (
-    <main className="flex flex-col gap-4 p-6 min-h-svh">
+    <main className="flex h-full min-h-0 flex-col gap-4 p-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         {isInitialLoading ? (
           <div className="space-y-2">
@@ -280,11 +280,14 @@ function TerminalSessionPage() {
             <Skeleton className="h-64 w-full" />
           </div>
         ) : session?.status === 'ready' ? (
-          <TerminalView
-            sessionId={session?.id ?? sessionId}
-            terminalUrl={session?.terminalUrl ?? null}
-            reconnectToken={session?.reconnectToken ?? null}
-          />
+          <div className="flex flex-1 min-h-0">
+            <TerminalView
+              sessionId={session?.id ?? sessionId}
+              terminalUrl={session?.terminalUrl ?? null}
+              reconnectToken={session?.reconnectToken ?? null}
+              className="flex-1 min-h-0"
+            />
+          </div>
         ) : session?.status === 'error' ? (
           <div className="rounded-none border border-destructive/40 bg-destructive/10 p-4 text-xs text-destructive">
             {session.errorMessage ?? 'Terminal session failed to start. Refresh to retry.'}
