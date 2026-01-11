@@ -44,7 +44,12 @@ export const getAgentRunHandler = async (
     if (resource) {
       const phase = extractStatusPhase(resource)
       if (phase && phase !== record.status) {
-        await store.updateAgentRunStatus(record.id, phase, record.externalRunId)
+        await store.updateAgentRunDetails({
+          id: record.id,
+          status: phase,
+          externalRunId: record.externalRunId,
+          payload: { ...record.payload, resource },
+        })
         record.status = phase
       }
     }

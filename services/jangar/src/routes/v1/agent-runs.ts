@@ -203,13 +203,14 @@ export const postAgentRunsHandler = async (
     const externalRunId = asString(metadata.name)
     const provider = extractAgentRuntimeType(agent)
 
+    const statusPhase = asString(asRecord(applied.status)?.phase) ?? 'Pending'
     const record = await store.createAgentRun({
       agentName: parsed.agentRef.name,
       deliveryId,
       provider,
-      status: 'Pending',
+      status: statusPhase,
       externalRunId,
-      payload: { request: payload, resource: applied },
+      payload: { request: payload, resource: applied, status: asRecord(applied.status) ?? {} },
     })
     await store.createAuditEvent({
       entityType: 'AgentRun',

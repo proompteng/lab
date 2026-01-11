@@ -57,6 +57,13 @@ export type CreateAgentRunInput = {
   payload: Record<string, unknown>
 }
 
+export type UpdateRunDetailsInput = {
+  id: string
+  status: string
+  externalRunId?: string | null
+  payload?: Record<string, unknown>
+}
+
 export type CreateOrchestrationRunInput = {
   orchestrationName: string
   deliveryId: string
@@ -85,8 +92,10 @@ export type PrimitivesStore = {
   close: () => Promise<void>
   createAgentRun: (input: CreateAgentRunInput) => Promise<AgentRunRecord>
   updateAgentRunStatus: (id: string, status: string, externalRunId?: string | null) => Promise<AgentRunRecord | null>
+  updateAgentRunDetails: (input: UpdateRunDetailsInput) => Promise<AgentRunRecord | null>
   getAgentRunById: (id: string) => Promise<AgentRunRecord | null>
   getAgentRunByDeliveryId: (deliveryId: string) => Promise<AgentRunRecord | null>
+  getAgentRunByExternalRunId: (externalRunId: string) => Promise<AgentRunRecord | null>
   getAgentRunsByAgent: (agentName: string, limit?: number) => Promise<AgentRunRecord[]>
   createOrchestrationRun: (input: CreateOrchestrationRunInput) => Promise<OrchestrationRunRecord>
   updateOrchestrationRunStatus: (
@@ -94,8 +103,10 @@ export type PrimitivesStore = {
     status: string,
     externalRunId?: string | null,
   ) => Promise<OrchestrationRunRecord | null>
+  updateOrchestrationRunDetails: (input: UpdateRunDetailsInput) => Promise<OrchestrationRunRecord | null>
   getOrchestrationRunById: (id: string) => Promise<OrchestrationRunRecord | null>
   getOrchestrationRunByDeliveryId: (deliveryId: string) => Promise<OrchestrationRunRecord | null>
+  getOrchestrationRunByExternalRunId: (externalRunId: string) => Promise<OrchestrationRunRecord | null>
   getOrchestrationRunsByName: (orchestrationName: string, limit?: number) => Promise<OrchestrationRunRecord[]>
   upsertMemoryResource: (input: UpsertMemoryResourceInput) => Promise<MemoryResourceRecord>
   getMemoryResourceById: (id: string) => Promise<MemoryResourceRecord | null>
@@ -251,6 +262,23 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
     return payload ? toAgentRunRecord(payload) : null
   }
 
+  const updateAgentRunDetails: PrimitivesStore['updateAgentRunDetails'] = async (input) => {
+    await ready
+    const payloadJson = input.payload ? JSON.stringify(input.payload) : null
+    const row = await db
+      .updateTable('agent_runs')
+      .set({
+        status: input.status,
+        external_run_id: input.externalRunId ?? sql.ref('external_run_id'),
+        payload: input.payload ? sql`${payloadJson}::jsonb` : sql.ref('payload'),
+        updated_at: sql`now()`,
+      })
+      .where('id', '=', input.id)
+      .returningAll()
+      .executeTakeFirst()
+    return row ? toAgentRunRecord(row) : null
+  }
+
   const getAgentRunById: PrimitivesStore['getAgentRunById'] = async (id) => {
     await ready
     const row = await db.selectFrom('agent_runs').selectAll().where('id', '=', id).executeTakeFirst()
@@ -260,6 +288,16 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
   const getAgentRunByDeliveryId: PrimitivesStore['getAgentRunByDeliveryId'] = async (deliveryId) => {
     await ready
     const row = await db.selectFrom('agent_runs').selectAll().where('delivery_id', '=', deliveryId).executeTakeFirst()
+    return row ? toAgentRunRecord(row) : null
+  }
+
+  const getAgentRunByExternalRunId: PrimitivesStore['getAgentRunByExternalRunId'] = async (externalRunId) => {
+    await ready
+    const row = await db
+      .selectFrom('agent_runs')
+      .selectAll()
+      .where('external_run_id', '=', externalRunId)
+      .executeTakeFirst()
     return row ? toAgentRunRecord(row) : null
   }
 
@@ -326,6 +364,23 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
     return payload ? toOrchestrationRunRecord(payload) : null
   }
 
+  const updateOrchestrationRunDetails: PrimitivesStore['updateOrchestrationRunDetails'] = async (input) => {
+    await ready
+    const payloadJson = input.payload ? JSON.stringify(input.payload) : null
+    const row = await db
+      .updateTable('orchestration_runs')
+      .set({
+        status: input.status,
+        external_run_id: input.externalRunId ?? sql.ref('external_run_id'),
+        payload: input.payload ? sql`${payloadJson}::jsonb` : sql.ref('payload'),
+        updated_at: sql`now()`,
+      })
+      .where('id', '=', input.id)
+      .returningAll()
+      .executeTakeFirst()
+    return row ? toOrchestrationRunRecord(row) : null
+  }
+
   const getOrchestrationRunById: PrimitivesStore['getOrchestrationRunById'] = async (id) => {
     await ready
     const row = await db.selectFrom('orchestration_runs').selectAll().where('id', '=', id).executeTakeFirst()
@@ -338,6 +393,18 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
       .selectFrom('orchestration_runs')
       .selectAll()
       .where('delivery_id', '=', deliveryId)
+      .executeTakeFirst()
+    return row ? toOrchestrationRunRecord(row) : null
+  }
+
+  const getOrchestrationRunByExternalRunId: PrimitivesStore['getOrchestrationRunByExternalRunId'] = async (
+    externalRunId,
+  ) => {
+    await ready
+    const row = await db
+      .selectFrom('orchestration_runs')
+      .selectAll()
+      .where('external_run_id', '=', externalRunId)
       .executeTakeFirst()
     return row ? toOrchestrationRunRecord(row) : null
   }
@@ -432,13 +499,17 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
     close,
     createAgentRun,
     updateAgentRunStatus,
+    updateAgentRunDetails,
     getAgentRunById,
     getAgentRunByDeliveryId,
+    getAgentRunByExternalRunId,
     getAgentRunsByAgent,
     createOrchestrationRun,
     updateOrchestrationRunStatus,
+    updateOrchestrationRunDetails,
     getOrchestrationRunById,
     getOrchestrationRunByDeliveryId,
+    getOrchestrationRunByExternalRunId,
     getOrchestrationRunsByName,
     upsertMemoryResource,
     getMemoryResourceById,

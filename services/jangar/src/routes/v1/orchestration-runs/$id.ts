@@ -44,7 +44,12 @@ export const getOrchestrationRunHandler = async (
     if (resource) {
       const phase = extractStatusPhase(resource)
       if (phase && phase !== record.status) {
-        await store.updateOrchestrationRunStatus(record.id, phase, record.externalRunId)
+        await store.updateOrchestrationRunDetails({
+          id: record.id,
+          status: phase,
+          externalRunId: record.externalRunId,
+          payload: { ...record.payload, resource },
+        })
         record.status = phase
       }
     }

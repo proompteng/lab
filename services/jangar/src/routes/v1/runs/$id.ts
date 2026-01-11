@@ -46,9 +46,19 @@ export const getRunHandler = async (
         const phase = extractStatusPhase(resource)
         if (phase && phase !== run.record.status) {
           if (run.kind === 'agent') {
-            await store.updateAgentRunStatus(run.record.id, phase, run.record.externalRunId)
+            await store.updateAgentRunDetails({
+              id: run.record.id,
+              status: phase,
+              externalRunId: run.record.externalRunId,
+              payload: { ...run.record.payload, resource },
+            })
           } else {
-            await store.updateOrchestrationRunStatus(run.record.id, phase, run.record.externalRunId)
+            await store.updateOrchestrationRunDetails({
+              id: run.record.id,
+              status: phase,
+              externalRunId: run.record.externalRunId,
+              payload: { ...run.record.payload, resource },
+            })
           }
           run.record.status = phase
         }

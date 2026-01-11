@@ -162,13 +162,14 @@ export const postOrchestrationRunsHandler = async (
     const metadata = (applied.metadata ?? {}) as Record<string, unknown>
     const externalRunId = asString(metadata.name)
 
+    const statusPhase = asString(asRecord(applied.status)?.phase) ?? 'Pending'
     const record = await store.createOrchestrationRun({
       orchestrationName: parsed.orchestrationRef.name,
       deliveryId,
       provider: 'argo',
-      status: 'Pending',
+      status: statusPhase,
       externalRunId,
-      payload: { request: payload, resource: applied },
+      payload: { request: payload, resource: applied, status: asRecord(applied.status) ?? {} },
     })
     await store.createAuditEvent({
       entityType: 'OrchestrationRun',
