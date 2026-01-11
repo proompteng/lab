@@ -48,6 +48,11 @@ spec:
                 name: graf-api
                 key: bearer-tokens
                 optional: true
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
           - name: LGTM_LOKI_ENDPOINT
             value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
         command:
@@ -57,6 +62,10 @@ spec:
           - -lc
           - |
             set -euo pipefail
+
+            if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+              gh auth setup-git >/dev/null 2>&1 || true
+            fi
 
             PAYLOAD_FILE=$(mktemp)
             cat <<'JSON' > "$PAYLOAD_FILE"

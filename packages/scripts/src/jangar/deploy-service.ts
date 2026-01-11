@@ -20,19 +20,6 @@ type DeployOptions = {
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-const ensureGhToken = async (): Promise<string> => {
-  const envToken = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
-  const trimmedEnvToken = envToken?.trim()
-  if (trimmedEnvToken) return trimmedEnvToken
-
-  const token = (await capture(['gh', 'auth', 'token'])).trim()
-  if (!token) {
-    fatal('Missing GitHub token: set GH_TOKEN/GITHUB_TOKEN or run gh auth login (token must include workflow scope)')
-  }
-  process.env.GH_TOKEN = token
-  return token
-}
-
 const capture = async (cmd: string[], env?: Record<string, string | undefined>): Promise<string> => {
   const subprocess = Bun.spawn(cmd, {
     stdin: 'pipe',
@@ -192,8 +179,6 @@ export const main = async (options: DeployOptions = {}) => {
   ensureCli('kubectl')
   ensureCli('curl')
   ensureCli('tar')
-  await ensureGhToken()
-
   const registry = options.registry ?? process.env.JANGAR_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = options.repository ?? process.env.JANGAR_IMAGE_REPOSITORY ?? 'lab/jangar'
   const defaultTag = execGit(['rev-parse', '--short', 'HEAD'])

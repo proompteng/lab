@@ -21,6 +21,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 ENV CODEX_ENV_NODE_VERSION=24.11.1 \
     CODEX_ENV_GO_VERSION=1.25.4 \
+    CODEX_ENV_JAVA_VERSION=21 \
     BUN_VERSION=1.3.5
 
 # Preinstall requested Node version to avoid nvm cache misses during setup.
@@ -108,11 +109,6 @@ RUN --mount=type=secret,id=codex_auth,target=/tmp/codex_auth.json \
 
 COPY apps/froussard/scripts/codex-config-container.toml /root/.codex/config.toml
 COPY skills/ /root/.codex/skills/
-
-# Authenticate gh using provided token and wire git credential helper
-RUN --mount=type=secret,id=github_token,target=/tmp/gh_token \
-    gh auth login --with-token < /tmp/gh_token \
-    && gh auth setup-git
 
 RUN git config --global user.name "gregkonush" \
     && git config --global user.email "12027037+gregkonush@users.noreply.github.com"

@@ -6,8 +6,13 @@ metadata:
   namespace: jangar
 spec:
   encryptedData:
-    token: AgCYu8M+OokLfQ26SwMabarAQxuEBvCJR01WmyCNrdJrTjGbiZ7EZ+C8bKFOuVNQ0SZENd2Ilg1Q3CIT2613i7KkvCcbXSWUaGiEq1tcM1C6YndbfW2nNzvtJnLPFrdGP3hVwvXMTLIbAZhVEpFE+6PgI0KnHoN2lb3DmtTHts2BlDd6ehoSWZbCxzcuynz+L2jLNbsaYmTyMahJHj2sApviaW+S6B7I6QPRFIk8+UOUn62COx42EE/ej3WyKsVpRZZvsSJ5eutBjLcREtgmCAn1xZhWmzt0FPNav6IA9ecjUUKdpEK1OtwiTbKVlrR8000xuLmiazS7umTuGt2TcirLOl8wMDvKLsaGlzzVCPkt+LSYe4ezQITKUwF5QElVGyQRpeSWnLOka6HkjvRs0Z/zsiFwddJTWihwjPebViMQdkwFS6ejUvN4qkgkQCS2QFc6GLiZis6EiiM5pCWFatNOCnJuuEq1q08aavJ3fHO75txo8cq/1hxAsxF0G8vQMHzetjHN1chbL3zrW3YQAfXaUjxQQRFqGEyHiK8F7QL42pEkhQLl/+NfLyoovdfn4y0Ln/PBTDyCUHJD9TEnxadVUIkb1yppxP5T9JdsDOr+kIexrGcq+BqTiLLscpiRrejPinfl64KcNPPywXl4HoMrrrEgJChB52lOIjo2n4Pn5fnjsdkg7o4NGxnWUsLVkrtTTOqg0pnlXIFU0Mpc1O1C9B83uQzrPEP56MMt4/qjTQZSOOyO1sem
+    token: AgB5vpINLOlRLJEtQEuG6lqSUXnJyRCsvjur24/mYcfxnpG6IBJEUZypiIXmafL78zy8i3MLEweEERw1x8lCvNIHJOYHuduBMSr+9Eg9WXUV14N7M+KOKLHaa+n0bZUWNF05T7QoZ5LYJyVugdeNBtDLbNyGHNByXL4ezQ48WInLVbNsTzoCwV7K2kObjKty2DMHYsBRI1shBAbsNDuWvD7HWBM1MFRLcYyRsoLUiFo72MtqF7Kwyo9FBt1OboEsUQq1o/DJxb3p7QmSah0Qg4IdQy0g+USDhB/uILJ7ftx1hFJoRWhKSEh7qQLRQ6KLgQfDsCT9ejbDcDWVnQpVaBUsgrweH0JGthcAtXm0WtwTZ6YdIxQRQWNvIIPi9lkjyMM8lYr12wOjobla9O3j7czT+FN6Cb1tLdL8WSyVopD14LvyB6KaeDTgL07raqoSqSVw5Lyu8U/dxVE0eupZarmT4UK00Z2fyONZNSk/AgceV1/zxwqPSO/+e2bShe98KgLKxSqJTXZCUYlkgk8j89eun9YC8qXaqKuy6M3h7umQtW7Q0aICu9CcjjbVTFDQ4hT9/iuXdFUvW3A+QSkY904IIyeta1h2nPnmb4vMz2zzZuj2Q8S6VsOLQVUaMn5gYwqfFrDJSdChmJ1zFkAzqeXCsCn+sRW+QkqOHUSGy0NPTfuatbkmJyQD8RrCO4LpHYMZK47f3V4Sbz7Oxqyn+pw0LFAhMROU0yGElCgGuAfsuLmMYZnntEpT
   template:
     metadata:
       name: github-token
       namespace: jangar
+      annotations:
+        reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+        reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "argo-workflows,froussard"
+        reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+        reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "argo-workflows,froussard"

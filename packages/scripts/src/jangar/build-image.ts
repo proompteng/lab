@@ -20,34 +20,6 @@ export type BuildImageOptions = {
   cacheRef?: string
 }
 
-const ensureGhToken = (): string | undefined => {
-  const existing = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
-  if (existing) {
-    return existing
-  }
-
-  if (!Bun.which('gh')) {
-    console.warn('GH_TOKEN is not set and gh CLI is unavailable; skipping GitHub auth secret.')
-    return undefined
-  }
-
-  const result = Bun.spawnSync(['gh', 'auth', 'token'], {
-    stdout: 'pipe',
-    stderr: 'pipe',
-  })
-
-  if (result.exitCode === 0) {
-    const token = result.stdout.toString().trim()
-    if (token.length > 0) {
-      process.env.GH_TOKEN = token
-      return token
-    }
-  }
-
-  console.warn('GH_TOKEN is not set and gh auth token could not be resolved; skipping GitHub auth secret.')
-  return undefined
-}
-
 const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void }> => {
   ensureCli('bunx')
 
@@ -87,9 +59,6 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   const codexAuthPath =
     options.codexAuthPath ?? process.env.CODEX_AUTH_PATH ?? resolve(process.env.HOME ?? '', '.codex/auth.json')
   const cacheRef = options.cacheRef ?? process.env.JANGAR_BUILD_CACHE_REF ?? `${registry}/${repository}:buildcache`
-
-  // Populate GH_TOKEN from local gh CLI if the env var is missing so docker --secret succeeds.
-  ensureGhToken()
 
   let context: string
   let pruneCleanup: (() => void) | undefined

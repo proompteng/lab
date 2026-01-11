@@ -50,9 +50,9 @@ const ensureGhAuth = async () => {
   const statusCode = await status.exited
   if (statusCode === 0) return
 
-  const token = process.env.GH_TOKEN
+  const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
   if (!token) {
-    throw new Error('gh is not authenticated. Set GH_TOKEN or run gh auth login.')
+    throw new Error('gh is not authenticated. Set GITHUB_TOKEN or run gh auth login.')
   }
 
   await run(['gh', 'auth', 'login', '--with-token'], { stdin: token })

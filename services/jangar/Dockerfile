@@ -403,12 +403,6 @@ RUN set -eux; \
 # Base tsconfig for workspace packages
 COPY tsconfig.base.json ./
 
-# Authenticate gh during build (requires BuildKit secret github_token with workflow scope)
-RUN --mount=type=secret,id=github_token,target=/tmp/gh_token \
-  set -eux; \
-  gh auth login --with-token < /tmp/gh_token; \
-  gh auth status -t | grep -q "workflow" || (echo "GitHub token is missing workflow scope" >&2; exit 1); \
-  gh auth setup-git
 
 RUN git config --global user.name "gregkonush" \
   && git config --global user.email "12027037+gregkonush@users.noreply.github.com" \

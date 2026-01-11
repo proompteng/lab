@@ -19,11 +19,14 @@ const fatal = (message: string, error?: unknown): never => {
 const repoRoot = resolve(import.meta.dir, '..')
 const defaultOutputPath = resolve(repoRoot, 'argocd/applications/jangar/github-token.yaml')
 
+const defaultOpGithubTokenPath = 'op://infra/pat/token'
+
 const printUsage = (): never => {
   console.log(`Usage: bun run scripts/generate-jangar-github-token-secret.ts [output-path]
 
-Reads the GitHub token from 1Password (override with JANGAR_GITHUB_TOKEN_OP_PATH), seals it with kubeseal,
-and writes the SealedSecret manifest to argocd/applications/jangar/github-token.yaml by default.
+Reads the GitHub token from 1Password (override with JANGAR_GITHUB_TOKEN_OP_PATH),
+seals it with kubeseal, and writes the SealedSecret manifest to argocd/applications/jangar/github-token.yaml
+by default.
 `)
   process.exit(0)
 }
@@ -46,7 +49,6 @@ if (maybeOutput?.startsWith('-')) {
 
 const outputPath = resolve(maybeOutput ?? defaultOutputPath)
 
-const defaultOpGithubTokenPath = 'op://infra/github personal token/token'
 const opGithubTokenPath = process.env.JANGAR_GITHUB_TOKEN_OP_PATH ?? defaultOpGithubTokenPath
 const sealedControllerName = process.env.SEALED_SECRETS_CONTROLLER_NAME ?? 'sealed-secrets'
 const sealedControllerNamespace = process.env.SEALED_SECRETS_CONTROLLER_NAMESPACE ?? 'sealed-secrets'

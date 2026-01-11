@@ -61,6 +61,11 @@ spec:
             value: '{{inputs.parameters.head}}'
           - name: BASE_BRANCH
             value: '{{inputs.parameters.base}}'
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
           - name: DISCORD_BOT_TOKEN
             valueFrom:
               secretKeyRef:
@@ -165,6 +170,10 @@ spec:
           - "-lc"
           - |
             set -euo pipefail
+
+            if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+              gh auth setup-git >/dev/null 2>&1 || true
+            fi
 
             preflight_fail() {
               echo "Preflight failed: $1" >&2
@@ -528,6 +537,11 @@ spec:
             value: '{{inputs.parameters.head}}'
           - name: BASE_BRANCH
             value: '{{inputs.parameters.base}}'
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
           - name: DISCORD_BOT_TOKEN
             valueFrom:
               secretKeyRef:
@@ -630,6 +644,10 @@ spec:
           - "-lc"
           - |
             set -euo pipefail
+
+            if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+              gh auth setup-git >/dev/null 2>&1 || true
+            fi
 
             preflight_fail() {
               echo "Preflight failed: $1" >&2

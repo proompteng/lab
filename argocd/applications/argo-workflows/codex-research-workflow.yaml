@@ -36,6 +36,11 @@ spec:
         image: registry.ide-newton.ts.net/lab/codex-universal:latest
         imagePullPolicy: Always
         env:
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
           - name: CODEX_GRAF_BEARER_TOKEN
             valueFrom:
               secretKeyRef:
@@ -82,6 +87,10 @@ spec:
           - "-lc"
           - |
             set -euo pipefail
+
+            if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+              gh auth setup-git >/dev/null 2>&1 || true
+            fi
 
             PROMPT_FILE=$(mktemp)
             PROMPT_B64='{{inputs.parameters.prompt}}'
