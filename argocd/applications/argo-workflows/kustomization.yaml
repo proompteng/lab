@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - rbac.yaml
   - codex-workflow-serviceaccount.yaml
+  - codex-workflow-rbac.yaml
   - codex-docker-policy.yaml
   - codex-implementation-semaphore.yaml
   - ingressroute.yaml
