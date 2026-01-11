@@ -1,8 +1,7 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { TerminalView } from '@/components/terminal-view'
-import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 
 export const Route = createFileRoute('/terminals/$sessionId/fullscreen')({
@@ -61,12 +60,6 @@ function TerminalFullscreenPage() {
 
   return (
     <main className="relative flex h-svh w-full flex-col bg-black">
-      <div className="absolute left-4 top-4 z-10 flex items-center gap-2">
-        <Button size="sm" variant="secondary" render={<Link to="/terminals" />}>
-          Back to sessions
-        </Button>
-      </div>
-
       {error ? (
         <div className="absolute inset-x-4 top-16 z-10 rounded-none border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
           {error}
