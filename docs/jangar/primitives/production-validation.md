@@ -8,6 +8,7 @@ execution across all step types.
 
 - `kubectl` with cluster context set (k3s `default`).
 - `kubectl cnpg` plugin installed.
+- `python3` or `python` available (used by validation script).
 - Access to `jangar` and `facteur` namespaces.
 
 ## 1) Crossplane package health
@@ -82,4 +83,6 @@ For a quick smoke check, run:
 scripts/jangar/validate-primitives.sh
 ```
 
-Adjust env vars for non-default namespaces or clusters.
+The script asserts pinned Crossplane package tags, non-zero memory tables, and a
+succeeded orchestration run with populated `stepStatuses`. Adjust env vars for
+non-default namespaces or clusters.
