@@ -19,6 +19,8 @@ import { randomUuid } from '@/lib/uuid'
 
 const OUTPUT_FRAME_TYPE = 1
 const RECONNECT_STORAGE_KEY = 'jangar-terminal-reconnect'
+const TERMINAL_FONT_FAMILY =
+  '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
 
 const buildWsUrl = (
   baseUrl: string,
@@ -120,7 +122,7 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
     const terminal = new Terminal({
       allowProposedApi: true,
       allowTransparency: true,
-      fontFamily: 'JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+      fontFamily: TERMINAL_FONT_FAMILY,
       fontSize: 14,
       theme: { background: 'rgba(0,0,0,0)' },
       cursorBlink: true,
@@ -240,6 +242,16 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
     terminal.open(containerRef.current)
     fitAddon.fit()
     fitAddon.fit()
+    if ('fonts' in document) {
+      void document.fonts
+        .load(`14px ${TERMINAL_FONT_FAMILY}`)
+        .then(() => {
+          terminal.options.fontFamily = TERMINAL_FONT_FAMILY
+          fitAddon.fit()
+          terminal.refresh(0, terminal.rows - 1)
+        })
+        .catch(() => {})
+    }
     if (containerRef.current) {
       containerRef.current.dataset.termCols = String(terminal.cols)
       containerRef.current.dataset.termRows = String(terminal.rows)
