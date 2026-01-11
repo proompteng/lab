@@ -7,7 +7,6 @@ resources:
   - codex-implementation-semaphore.yaml
   - ingressroute.yaml
   - argo-workflows-sso-sealedsecret.yaml
-  - github-token.yaml
   - minio-bucket-job.yaml
   - minio-root-secret.yaml
   - alloy-rbac.yaml
