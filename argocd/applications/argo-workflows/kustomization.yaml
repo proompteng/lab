@@ -16,6 +16,7 @@ resources:
   - codex-research-workflow.yaml
   - codex-research-rbac.yaml
   - codex-cluster-admin.yaml
+  - jangar-embeddings-config.yaml
   - jangar-primitives-echo-workflowtemplate.yaml
   - jangar-approval-gate-workflowtemplate.yaml
   - jangar-memory-op-workflowtemplate.yaml
