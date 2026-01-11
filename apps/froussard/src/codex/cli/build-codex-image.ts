@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
-import { $, which } from 'bun'
+import { $ } from 'bun'
 import { runCli } from './lib/cli'
 
 const pathExists = async (path: string) => {
@@ -24,32 +24,6 @@ const ensureFile = async (path: string, description: string) => {
   if (!(await pathExists(path))) {
     throw new Error(`${description} not found: ${path}`)
   }
-}
-
-const loadGitHubToken = async (): Promise<string> => {
-  const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
-  if (token) {
-    return token
-  }
-
-  try {
-    const ghCli = await which('gh')
-    if (!ghCli) {
-      throw new Error('gh CLI not found; please install gh or export GH_TOKEN')
-    }
-    const ghUser = process.env.GH_TOKEN_USER ?? process.env.GH_AUTH_USER ?? 'tuslagch'
-    const output = ghUser ? await $`${ghCli} auth token --user ${ghUser}`.text() : await $`${ghCli} auth token`.text()
-    const trimmed = output.trim()
-    if (trimmed) {
-      return trimmed
-    }
-  } catch (error) {
-    throw new Error(
-      error instanceof Error && error.message ? error.message : 'Set GH_TOKEN environment variable or login with gh',
-    )
-  }
-
-  throw new Error('Set GH_TOKEN environment variable or login with gh')
 }
 
 const computeChecksum = async (path: string) => {
@@ -73,7 +47,10 @@ export const runBuildCodexImage = async () => {
 
   const checksum = await computeChecksum(codexAuthPath)
 
-  const githubToken = await loadGitHubToken()
+  const githubToken = process.env.GITHUB_TOKEN
+  if (!githubToken) {
+    throw new Error('GITHUB_TOKEN is required to build the codex image.')
+  }
   const tempDir = await mkdtemp(join(tmpdir(), 'codex-build-'))
   const ghTokenFile = join(tempDir, 'gh_token')
   await writeFile(ghTokenFile, githubToken, { encoding: 'utf8', mode: 0o600 })
@@ -100,5 +77,3 @@ export const runBuildCodexImage = async () => {
 await runCli(import.meta, async () => {
   await runBuildCodexImage()
 })
-
-export const __private = { loadGitHubToken }

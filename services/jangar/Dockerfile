@@ -403,7 +403,6 @@ RUN set -eux; \
 # Base tsconfig for workspace packages
 COPY tsconfig.base.json ./
 
-# Runtime gh auth happens in entrypoint to avoid baking tokens into the image.
 
 RUN git config --global user.name "gregkonush" \
   && git config --global user.email "12027037+gregkonush@users.noreply.github.com" \

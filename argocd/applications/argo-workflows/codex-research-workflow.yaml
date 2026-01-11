@@ -88,6 +88,10 @@ spec:
           - |
             set -euo pipefail
 
+            if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+              gh auth setup-git >/dev/null 2>&1 || true
+            fi
+
             PROMPT_FILE=$(mktemp)
             PROMPT_B64='{{inputs.parameters.prompt}}'
             if [[ -z "$PROMPT_B64" ]]; then

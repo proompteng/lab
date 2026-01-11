@@ -171,6 +171,10 @@ spec:
           - |
             set -euo pipefail
 
+            if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+              gh auth setup-git >/dev/null 2>&1 || true
+            fi
+
             preflight_fail() {
               echo "Preflight failed: $1" >&2
               exit 1
@@ -640,6 +644,10 @@ spec:
           - "-lc"
           - |
             set -euo pipefail
+
+            if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+              gh auth setup-git >/dev/null 2>&1 || true
+            fi
 
             preflight_fail() {
               echo "Preflight failed: $1" >&2

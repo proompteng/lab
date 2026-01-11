@@ -56,6 +56,10 @@ spec:
           - |
             set -euo pipefail
 
+            if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+              gh auth setup-git >/dev/null 2>&1 || true
+            fi
+
             STATUS_PATH="/workspace/lab/.codex-post-deploy-status.txt"
             LOG_PATH="/workspace/lab/.codex-post-deploy.log"
             touch "$STATUS_PATH" "$LOG_PATH"

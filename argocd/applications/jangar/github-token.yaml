@@ -13,6 +13,6 @@ spec:
       namespace: jangar
       annotations:
         reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
-        reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "argo-workflows"
+        reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "argo-workflows,froussard"
         reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
-        reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "argo-workflows"
+        reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "argo-workflows,froussard"

@@ -63,6 +63,10 @@ spec:
           - |
             set -euo pipefail
 
+            if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+              gh auth setup-git >/dev/null 2>&1 || true
+            fi
+
             PAYLOAD_FILE=$(mktemp)
             cat <<'JSON' > "$PAYLOAD_FILE"
             {{inputs.parameters.payload}}

@@ -6,8 +6,6 @@ import { runBuildCodexImage } from '../build-codex-image'
 
 const bunMocks = vi.hoisted(() => {
   const execMock = vi.fn(async (_command: string) => ({ text: async () => '' }))
-  const whichMock = vi.fn(async () => 'gh')
-
   const isTemplateStringsArray = (value: unknown): value is TemplateStringsArray =>
     Array.isArray(value) && Object.hasOwn(value, 'raw')
 
@@ -30,16 +28,14 @@ const bunMocks = vi.hoisted(() => {
     throw new Error('Invalid $ invocation')
   }
 
-  return { execMock, whichMock, dollar }
+  return { execMock, dollar }
 })
 
 vi.mock('bun', () => ({
   $: bunMocks.dollar,
-  which: bunMocks.whichMock,
 }))
 
 const execMock = bunMocks.execMock
-const whichMock = bunMocks.whichMock
 
 const ORIGINAL_ENV = { ...process.env }
 
@@ -74,10 +70,9 @@ describe('runBuildCodexImage', () => {
     process.env.CONTEXT_DIR = resolve(workspace, '..')
     process.env.CODEX_AUTH = authFile
     process.env.CODEX_CONFIG = configFile
-    process.env.GH_TOKEN = 'token'
+    process.env.GITHUB_TOKEN = 'token'
 
     execMock.mockClear()
-    whichMock.mockClear()
   })
 
   afterEach(async () => {
