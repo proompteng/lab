@@ -20,13 +20,6 @@ type DeployOptions = {
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-const ensureGhTokenEnv = () => {
-  const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
-  if (token && !process.env.GH_TOKEN) {
-    process.env.GH_TOKEN = token
-  }
-}
-
 const capture = async (cmd: string[], env?: Record<string, string | undefined>): Promise<string> => {
   const subprocess = Bun.spawn(cmd, {
     stdin: 'pipe',
@@ -186,8 +179,6 @@ export const main = async (options: DeployOptions = {}) => {
   ensureCli('kubectl')
   ensureCli('curl')
   ensureCli('tar')
-  ensureGhTokenEnv()
-
   const registry = options.registry ?? process.env.JANGAR_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = options.repository ?? process.env.JANGAR_IMAGE_REPOSITORY ?? 'lab/jangar'
   const defaultTag = execGit(['rev-parse', '--short', 'HEAD'])

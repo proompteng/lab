@@ -20,6 +20,12 @@ spec:
             default: ''
       script:
         image: registry.ide-newton.ts.net/lab/jangar:latest
+        env:
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
         command:
           - /bin/bash
           - -c

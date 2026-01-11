@@ -421,17 +421,6 @@ RUN cat <<'ENTRY' > /usr/local/bin/entrypoint.sh \
   && chmod +x /usr/local/bin/entrypoint.sh
 #!/bin/bash
 set -euo pipefail
-if [ -z "${GH_TOKEN:-}" ] && [ -n "${GITHUB_TOKEN:-}" ]; then
-  export GH_TOKEN="${GITHUB_TOKEN}"
-fi
-if [ -n "${GH_TOKEN:-}" ]; then
-  gh auth setup-git >/dev/null 2>&1 || true
-  if ! gh auth status -t 2>/dev/null | grep -q "workflow"; then
-    echo "WARNING: GitHub token is missing workflow scope; pushes to .github/workflows/** will fail." >&2
-  fi
-else
-  echo "WARNING: GITHUB_TOKEN is not set; GitHub operations may fail." >&2
-fi
 mkdir -p "$VSCODE_DATA_DIR" "$VSCODE_DEFAULT_FOLDER"
 # Start OpenVSCode in background; exit container if it dies
 openvscode-server \

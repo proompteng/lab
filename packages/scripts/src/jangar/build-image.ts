@@ -20,13 +20,6 @@ export type BuildImageOptions = {
   cacheRef?: string
 }
 
-const ensureGhTokenEnv = () => {
-  const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
-  if (token && !process.env.GH_TOKEN) {
-    process.env.GH_TOKEN = token
-  }
-}
-
 const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void }> => {
   ensureCli('bunx')
 
@@ -66,9 +59,6 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   const codexAuthPath =
     options.codexAuthPath ?? process.env.CODEX_AUTH_PATH ?? resolve(process.env.HOME ?? '', '.codex/auth.json')
   const cacheRef = options.cacheRef ?? process.env.JANGAR_BUILD_CACHE_REF ?? `${registry}/${repository}:buildcache`
-
-  // Ensure GH_TOKEN is available when GITHUB_TOKEN is set so docker --secret succeeds.
-  ensureGhTokenEnv()
 
   let context: string
   let pruneCleanup: (() => void) | undefined
