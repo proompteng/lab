@@ -55,9 +55,16 @@ type TerminalViewProps = {
   terminalUrl?: string | null
   variant?: 'default' | 'fullscreen'
   reconnectToken?: string | null
+  className?: string
 }
 
-export function TerminalView({ sessionId, terminalUrl, variant = 'default', reconnectToken }: TerminalViewProps) {
+export function TerminalView({
+  sessionId,
+  terminalUrl,
+  variant = 'default',
+  reconnectToken,
+  className,
+}: TerminalViewProps) {
   const containerRef = React.useRef<HTMLDivElement | null>(null)
   const terminalRef = React.useRef<Terminal | null>(null)
   const fitRef = React.useRef<FitAddon | null>(null)
@@ -438,6 +445,7 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
       className={cn(
         'relative flex flex-col overflow-hidden h-full w-full bg-black',
         variant === 'default' && 'rounded-none border border-border',
+        className,
       )}
     >
       {variant === 'default' ? (
