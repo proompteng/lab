@@ -153,18 +153,6 @@ export function TerminalView({
 
     terminal.loadAddon(new SerializeAddon())
 
-    try {
-      terminal.loadAddon(new LigaturesAddon())
-    } catch {
-      // ignore
-    }
-
-    try {
-      terminal.loadAddon(new ImageAddon())
-    } catch {
-      // ignore
-    }
-
     const rendererPreference = (() => {
       const params = new URLSearchParams(window.location.search)
       const query = params.get('renderer')?.toLowerCase()
@@ -241,6 +229,22 @@ export function TerminalView({
     })
 
     terminal.open(containerRef.current)
+
+    try {
+      terminal.loadAddon(
+        new LigaturesAddon({
+          fontFeatureSettings: '"calt" on, "liga" on',
+        }),
+      )
+    } catch {
+      // ignore
+    }
+
+    try {
+      terminal.loadAddon(new ImageAddon())
+    } catch {
+      // ignore
+    }
     containerRef.current.style.fontFamily = TERMINAL_FONT_FAMILY
     fitAddon.fit()
     fitAddon.fit()
