@@ -247,11 +247,11 @@ function TerminalSessionPage() {
             <div className="text-xs text-muted-foreground">
               {session?.worktreePath ? `Worktree: ${session.worktreePath}` : 'Worktree path unavailable'}
             </div>
-            <div className="flex w-full items-center justify-between gap-3 text-xs text-muted-foreground">
+            <div className="flex w-full items-center gap-3 text-xs text-muted-foreground">
               <span>
                 Created {formatDateTime(session?.createdAt ?? null)} - {session?.attached ? 'Attached' : 'Detached'}
               </span>
-              <span className={`inline-flex items-center gap-2 ${statusTone}`}>
+              <span className={`ml-auto inline-flex items-center gap-2 ${statusTone}`}>
                 {statusLabel === 'creating' ? (
                   <>
                     <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
