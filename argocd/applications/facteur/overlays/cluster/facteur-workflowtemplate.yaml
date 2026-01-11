@@ -48,6 +48,11 @@ spec:
                 name: graf-api
                 key: bearer-tokens
                 optional: true
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
           - name: LGTM_LOKI_ENDPOINT
             value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
         command:

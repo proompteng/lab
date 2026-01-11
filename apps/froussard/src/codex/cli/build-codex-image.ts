@@ -26,39 +26,6 @@ const ensureFile = async (path: string, description: string) => {
   }
 }
 
-const parseScopes = (scopesHeader: string | null) =>
-  scopesHeader
-    ?.split(',')
-    .map((scope) => scope.trim())
-    .filter(Boolean) ?? []
-
-const ensureWorkflowScope = async (token: string) => {
-  if (process.env.CODEX_SKIP_GH_SCOPE_CHECK === '1' || process.env.SKIP_GH_SCOPE_CHECK === '1') {
-    return
-  }
-
-  const response = await fetch('https://api.github.com/user', {
-    headers: {
-      Authorization: `token ${token}`,
-      'User-Agent': 'codex-build-codex-image',
-    },
-  })
-
-  if (!response.ok) {
-    throw new Error(
-      `Failed to validate GitHub token scopes (status ${response.status}); supply GH_TOKEN with workflow scope.`,
-    )
-  }
-
-  const scopes = parseScopes(response.headers.get('x-oauth-scopes'))
-  if (!scopes.includes('workflow')) {
-    const scopeList = scopes.length > 0 ? scopes.join(', ') : 'none'
-    throw new Error(
-      `GitHub token is missing required scope "workflow" (current scopes: ${scopeList}). Provide a token with workflow scope or set CODEX_SKIP_GH_SCOPE_CHECK=1 to bypass.`,
-    )
-  }
-}
-
 const loadGitHubToken = async (): Promise<string> => {
   const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
   if (token) {
@@ -107,7 +74,6 @@ export const runBuildCodexImage = async () => {
   const checksum = await computeChecksum(codexAuthPath)
 
   const githubToken = await loadGitHubToken()
-  await ensureWorkflowScope(githubToken)
   const tempDir = await mkdtemp(join(tmpdir(), 'codex-build-'))
   const ghTokenFile = join(tempDir, 'gh_token')
   await writeFile(ghTokenFile, githubToken, { encoding: 'utf8', mode: 0o600 })
@@ -135,4 +101,4 @@ await runCli(import.meta, async () => {
   await runBuildCodexImage()
 })
 
-export const __private = { parseScopes, ensureWorkflowScope, loadGitHubToken }
+export const __private = { loadGitHubToken }

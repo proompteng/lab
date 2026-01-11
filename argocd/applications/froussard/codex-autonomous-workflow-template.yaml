@@ -122,6 +122,11 @@ spec:
             value: 'https://github.com/{{inputs.parameters.repository}}'
           - name: CODEX_REPO_SLUG
             value: '{{inputs.parameters.repository}}'
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
           - name: BASE_BRANCH
             value: '{{inputs.parameters.base}}'
           - name: HEAD_BRANCH
@@ -256,6 +261,11 @@ spec:
             value: '{{inputs.parameters.head}}'
           - name: BASE_BRANCH
             value: '{{inputs.parameters.base}}'
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
           - name: DISCORD_BOT_TOKEN
             valueFrom:
               secretKeyRef:
@@ -669,6 +679,11 @@ spec:
             value: '{{inputs.parameters.head}}'
           - name: BASE_BRANCH
             value: '{{inputs.parameters.base}}'
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
           - name: DISCORD_BOT_TOKEN
             valueFrom:
               secretKeyRef:

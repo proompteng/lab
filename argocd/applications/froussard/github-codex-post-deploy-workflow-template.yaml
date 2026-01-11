@@ -45,6 +45,12 @@ spec:
       container:
         image: registry.ide-newton.ts.net/lab/codex-universal:latest
         imagePullPolicy: Always
+        env:
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
         command: ["/bin/bash", "-lc"]
         args:
           - |
