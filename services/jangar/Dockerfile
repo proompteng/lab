@@ -212,6 +212,7 @@ RUN set -eux; \
   tar -xzf /tmp/nvim.tar.gz -C /opt/nvim --strip-components=1; \
   rm -f /tmp/nvim.tar.gz; \
   ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim; \
+  ln -sf /opt/nvim/bin/nvim /usr/local/bin/vim; \
   nvim --version | head -n 1; \
   if [ -d /root/.config/nvim ]; then mv /root/.config/nvim /root/.config/nvim.bak; fi; \
   if [ -d /root/.local/share/nvim ]; then mv /root/.local/share/nvim /root/.local/share/nvim.bak; fi; \
