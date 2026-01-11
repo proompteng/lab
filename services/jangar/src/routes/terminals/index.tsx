@@ -32,6 +32,7 @@ type TerminalSession = {
   attached: boolean
   status: 'creating' | 'ready' | 'error' | 'closed'
   errorMessage?: string | null
+  reconnectToken?: string | null
 }
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -177,7 +178,7 @@ function TerminalsIndexPage() {
           <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Terminals</p>
           <h1 className="text-lg font-semibold">Terminal sessions</h1>
           <p className="text-xs text-muted-foreground">
-            Create and reconnect to tmux-backed terminal sessions for Codex and repo worktrees.
+            Create and reconnect to durable terminal sessions for Codex and repo worktrees.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -341,7 +342,20 @@ function TerminalsIndexPage() {
                       <span className={cn('h-2 w-2 rounded-full', meta.dot)} />
                       {meta.label}
                     </div>
-                    <div className="flex items-center justify-end">
+                    <div className="flex items-center justify-end gap-2">
+                      {session.status === 'ready' ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            window.open(`/terminals/${encodeURIComponent(session.id)}/fullscreen`, '_blank', 'noopener')
+                          }}
+                        >
+                          Fullscreen
+                        </Button>
+                      ) : null}
                       {(session.status === 'closed' || session.status === 'error') && (
                         <AlertDialog>
                           <AlertDialogTrigger

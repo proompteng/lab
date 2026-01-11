@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { isTerminalBackendProxyEnabled } from '~/server/terminal-backend'
 import { ensureTerminalSessionExists, formatSessionId, getTerminalSession, sendTerminalInput } from '~/server/terminals'
 
 export const Route = createFileRoute('/api/terminals/$sessionId/input')({
@@ -30,10 +31,12 @@ const postInputHandler = async (sessionId: string, request: Request) => {
   if (session.status !== 'ready') {
     return jsonResponse({ ok: false, message: `Session not ready (${session.status}).` }, 409)
   }
-  const exists = await ensureTerminalSessionExists(normalized)
-  if (!exists) {
-    console.warn('[terminals] input session not ready', { sessionId: normalized })
-    return jsonResponse({ ok: false, message: 'Session not ready.' }, 409)
+  if (!isTerminalBackendProxyEnabled()) {
+    const exists = await ensureTerminalSessionExists(normalized)
+    if (!exists) {
+      console.warn('[terminals] input session not ready', { sessionId: normalized })
+      return jsonResponse({ ok: false, message: 'Session not ready.' }, 409)
+    }
   }
 
   const payload: unknown = await request.json().catch(() => null)

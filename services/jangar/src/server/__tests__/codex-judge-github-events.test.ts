@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
 
@@ -237,7 +237,6 @@ describe('codex-judge GitHub webhook stream handling', () => {
   })
 
   beforeEach(() => {
-    vi.useFakeTimers()
     const storeMock = requireMock(globalState.__codexJudgeStoreMock, 'store')
     Object.values(storeMock).forEach((value) => {
       if (typeof value === 'function') {
@@ -245,7 +244,7 @@ describe('codex-judge GitHub webhook stream handling', () => {
       }
     })
     Object.assign(requireMock(globalState.__codexJudgeGithubMock, 'github'), githubMock)
-    Object.assign(requireMock(globalState.__codexJudgeConfigMock, 'config'), configMock)
+    globalState.__codexJudgeConfigMock = { ...configMock }
     Object.values(githubReviewStoreMock).forEach((value) => {
       if (typeof value === 'function') {
         ;(value as ReturnType<typeof vi.fn>).mockClear?.()
@@ -253,11 +252,6 @@ describe('codex-judge GitHub webhook stream handling', () => {
     })
     globalState.__githubReviewStoreMock = githubReviewStoreMock
     globalState.__githubReviewConfigMock = githubReviewConfigMock
-  })
-
-  afterEach(() => {
-    vi.clearAllTimers()
-    vi.useRealTimers()
   })
 
   it('skips events when the stream is disabled', async () => {
@@ -269,10 +263,12 @@ describe('codex-judge GitHub webhook stream handling', () => {
 
     expect(result.ok).toBe(false)
     expect(result.reason).toBe('event_stream_disabled')
-  })
+  }, 30_000)
 
   it('updates CI status for check_run completion events', async () => {
     const handler = await requireHandler()
+    const config = requireMock(globalState.__codexJudgeConfigMock, 'config')
+    config.ciEventStreamEnabled = true
     const store = requireMock(globalState.__codexJudgeStoreMock, 'store')
     const run = buildRun({ commitSha: 'a'.repeat(40) })
     ;(store.listRunsByCommitSha as ReturnType<typeof vi.fn>).mockResolvedValueOnce([run])

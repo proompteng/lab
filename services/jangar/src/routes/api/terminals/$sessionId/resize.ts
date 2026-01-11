@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { isTerminalBackendProxyEnabled } from '~/server/terminal-backend'
 import {
   ensureTerminalSessionExists,
   formatSessionId,
@@ -32,8 +33,10 @@ const postResizeHandler = async (sessionId: string, request: Request) => {
   if (session.status !== 'ready') {
     return jsonResponse({ ok: false, message: `Session not ready (${session.status}).` }, 409)
   }
-  const exists = await ensureTerminalSessionExists(normalized)
-  if (!exists) return jsonResponse({ ok: false, message: 'Session not ready.' }, 409)
+  if (!isTerminalBackendProxyEnabled()) {
+    const exists = await ensureTerminalSessionExists(normalized)
+    if (!exists) return jsonResponse({ ok: false, message: 'Session not ready.' }, 409)
+  }
 
   const payload: unknown = await request.json().catch(() => null)
   if (!payload || typeof payload !== 'object') return jsonResponse({ ok: false, message: 'invalid JSON body' }, 400)

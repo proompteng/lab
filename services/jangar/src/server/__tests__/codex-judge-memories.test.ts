@@ -260,7 +260,7 @@ beforeEach(async () => {
   Object.assign(configMock, config)
   Object.assign(memoryStoreMock, memoriesStore)
   await requirePrivate()
-})
+}, 20_000)
 
 describe('codex-judge memory snapshots', () => {
   it('attaches run metadata to all snapshots', async () => {

@@ -17,6 +17,7 @@ import { Toaster } from '@/components/ui/sonner'
 export function AppShell({ mainId, children }: { mainId: string; children: React.ReactNode }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const breadcrumbs = buildBreadcrumbs(pathname)
+  const isFullscreen = pathname.endsWith('/fullscreen')
 
   React.useEffect(() => {
     document.documentElement.dataset.hydrated = 'true'
@@ -24,6 +25,17 @@ export function AppShell({ mainId, children }: { mainId: string; children: React
       delete document.documentElement.dataset.hydrated
     }
   }, [])
+
+  if (isFullscreen) {
+    return (
+      <SidebarProvider>
+        <div id={mainId} className="h-svh w-full overflow-hidden" tabIndex={-1}>
+          {children}
+        </div>
+        <Toaster richColors position="top-right" />
+      </SidebarProvider>
+    )
+  }
 
   return (
     <SidebarProvider>

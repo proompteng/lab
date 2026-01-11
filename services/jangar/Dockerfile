@@ -212,6 +212,7 @@ RUN set -eux; \
   tar -xzf /tmp/nvim.tar.gz -C /opt/nvim --strip-components=1; \
   rm -f /tmp/nvim.tar.gz; \
   ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim; \
+  ln -sf /opt/nvim/bin/nvim /usr/local/bin/vim; \
   nvim --version | head -n 1; \
   if [ -d /root/.config/nvim ]; then mv /root/.config/nvim /root/.config/nvim.bak; fi; \
   if [ -d /root/.local/share/nvim ]; then mv /root/.local/share/nvim /root/.local/share/nvim.bak; fi; \
@@ -467,6 +468,39 @@ COPY full/ .
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
 RUN bun --cwd=packages/temporal-bun-sdk run build
 
+FROM tools AS tools-pty
+RUN --mount=type=cache,target=/var/cache/apt \
+  --mount=type=cache,target=/var/lib/apt/lists \
+  set -eux; \
+  export DEBIAN_FRONTEND=noninteractive; \
+  apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
+  apt-get install -y --no-install-recommends python3; \
+  rm -rf /var/lib/apt/lists/*
+
+FROM tools-pty AS jangar-pty
+ARG TARGETARCH
+WORKDIR /app
+COPY json/ .
+RUN --mount=type=cache,target=/root/.cache/bun \
+  bun install --no-save --ignore-scripts --filter @proompteng/jangar
+RUN --mount=type=cache,target=/root/.cache/bun \
+  set -eux; \
+  case "${TARGETARCH:-$(uname -m)}" in \
+    amd64|x86_64) NODE_ARCH=x64 ;; \
+    arm64|aarch64) NODE_ARCH=arm64 ;; \
+    *) NODE_ARCH="${TARGETARCH:-$(uname -m)}" ;; \
+  esac; \
+  cd /app/node_modules/node-pty; \
+  export PYTHON=python3; \
+  npm_config_build_from_source=true \
+  npm_config_nodedir=/usr/local \
+  npm_config_arch="$NODE_ARCH" \
+  npm_config_target="$(node -p 'process.versions.node')" \
+  bunx node-gyp rebuild; \
+  mkdir -p /tmp/node-pty/prebuilds; \
+  cp -R /app/node_modules/node-pty/build /tmp/node-pty/build; \
+  if [ -d /app/node_modules/node-pty/prebuilds ]; then cp -R /app/node_modules/node-pty/prebuilds/* /tmp/node-pty/prebuilds/; fi
+
 FROM tools AS jangar-deps-dev
 WORKDIR /app
 COPY json/ .
@@ -502,10 +536,14 @@ COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/pack
 
 WORKDIR /app
 COPY --from=jangar-deps-prod /app/node_modules ./node_modules
+COPY --from=jangar-pty /tmp/node-pty/build /app/node_modules/node-pty/build
+COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/node_modules/node-pty/prebuilds
 
 WORKDIR /app/services/jangar
 COPY --from=jangar-build /app/services/jangar/.output ./.output
 COPY --from=jangar-build /app/services/jangar/package.json ./package.json
+COPY --from=jangar-pty /tmp/node-pty/build /app/services/jangar/.output/server/node_modules/node-pty/build
+COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/server/node_modules/node-pty/prebuilds
 
 RUN mkdir -p /root/.codex
 RUN --mount=type=secret,id=codexauth,target=/tmp/codex_auth.json \

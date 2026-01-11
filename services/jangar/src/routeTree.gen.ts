@@ -33,15 +33,17 @@ import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as ApiEnrichRouteImport } from './routes/api/enrich'
 import { Route as AgentsGeneralRouteImport } from './routes/agents/general'
 import { Route as AgentsRunIdRouteImport } from './routes/agents/$runId'
+import { Route as TerminalsSessionIdIndexRouteImport } from './routes/terminals/$sessionId/index'
 import { Route as GithubPullsIndexRouteImport } from './routes/github/pulls/index'
+import { Route as TerminalsSessionIdFullscreenRouteImport } from './routes/terminals/$sessionId/fullscreen'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
 import { Route as ApiTorghutSymbolsRouteImport } from './routes/api/torghut/symbols'
 import { Route as ApiTerminalsSessionIdRouteImport } from './routes/api/terminals/$sessionId'
 import { Route as ApiGithubPullsRouteImport } from './routes/api/github/pulls'
 import { Route as ApiCodexRunsRouteImport } from './routes/api/codex/runs'
 import { Route as ApiCodexRunCompleteRouteImport } from './routes/api/codex/run-complete'
-import { Route as ApiCodexNotifyRouteImport } from './routes/api/codex/notify'
 import { Route as ApiCodexRerunRouteImport } from './routes/api/codex/rerun'
+import { Route as ApiCodexNotifyRouteImport } from './routes/api/codex/notify'
 import { Route as ApiCodexIssuesRouteImport } from './routes/api/codex/issues'
 import { Route as ApiCodexGithubEventsRouteImport } from './routes/api/codex/github-events'
 import { Route as ApiAtlasPathsRouteImport } from './routes/api/atlas/paths'
@@ -193,11 +195,22 @@ const AgentsRunIdRoute = AgentsRunIdRouteImport.update({
   path: '/agents/$runId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TerminalsSessionIdIndexRoute = TerminalsSessionIdIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => TerminalsSessionIdRoute,
+} as any)
 const GithubPullsIndexRoute = GithubPullsIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => GithubPullsRoute,
 } as any)
+const TerminalsSessionIdFullscreenRoute =
+  TerminalsSessionIdFullscreenRouteImport.update({
+    id: '/fullscreen',
+    path: '/fullscreen',
+    getParentRoute: () => TerminalsSessionIdRoute,
+  } as any)
 const OpenaiV1ModelsRoute = OpenaiV1ModelsRouteImport.update({
   id: '/openai/v1/models',
   path: '/openai/v1/models',
@@ -228,14 +241,14 @@ const ApiCodexRunCompleteRoute = ApiCodexRunCompleteRouteImport.update({
   path: '/api/codex/run-complete',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiCodexNotifyRoute = ApiCodexNotifyRouteImport.update({
-  id: '/api/codex/notify',
-  path: '/api/codex/notify',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiCodexRerunRoute = ApiCodexRerunRouteImport.update({
   id: '/api/codex/rerun',
   path: '/api/codex/rerun',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiCodexNotifyRoute = ApiCodexNotifyRouteImport.update({
+  id: '/api/codex/notify',
+  path: '/api/codex/notify',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiCodexIssuesRoute = ApiCodexIssuesRouteImport.update({
@@ -423,7 +436,7 @@ export interface FileRoutesByFullPath {
   '/codex/runs': typeof CodexRunsRoute
   '/codex/search': typeof CodexSearchRoute
   '/github/pulls': typeof GithubPullsRouteWithChildren
-  '/terminals/$sessionId': typeof TerminalsSessionIdRoute
+  '/terminals/$sessionId': typeof TerminalsSessionIdRouteWithChildren
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
   '/agents': typeof AgentsIndexRoute
@@ -444,7 +457,9 @@ export interface FileRoutesByFullPath {
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
+  '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/github/pulls/': typeof GithubPullsIndexRoute
+  '/terminals/$sessionId/': typeof TerminalsSessionIdIndexRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -487,7 +502,6 @@ export interface FileRoutesByTo {
   '/atlas/search': typeof AtlasSearchRoute
   '/codex/runs': typeof CodexRunsRoute
   '/codex/search': typeof CodexSearchRoute
-  '/terminals/$sessionId': typeof TerminalsSessionIdRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
   '/agents': typeof AgentsIndexRoute
@@ -508,7 +522,9 @@ export interface FileRoutesByTo {
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
+  '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/github/pulls': typeof GithubPullsIndexRoute
+  '/terminals/$sessionId': typeof TerminalsSessionIdIndexRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -553,7 +569,7 @@ export interface FileRoutesById {
   '/codex/runs': typeof CodexRunsRoute
   '/codex/search': typeof CodexSearchRoute
   '/github/pulls': typeof GithubPullsRouteWithChildren
-  '/terminals/$sessionId': typeof TerminalsSessionIdRoute
+  '/terminals/$sessionId': typeof TerminalsSessionIdRouteWithChildren
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
   '/agents/': typeof AgentsIndexRoute
@@ -574,7 +590,9 @@ export interface FileRoutesById {
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
+  '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/github/pulls/': typeof GithubPullsIndexRoute
+  '/terminals/$sessionId/': typeof TerminalsSessionIdIndexRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -641,7 +659,9 @@ export interface FileRouteTypes {
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
+    | '/terminals/$sessionId/fullscreen'
     | '/github/pulls/'
+    | '/terminals/$sessionId/'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -684,7 +704,6 @@ export interface FileRouteTypes {
     | '/atlas/search'
     | '/codex/runs'
     | '/codex/search'
-    | '/terminals/$sessionId'
     | '/torghut/symbols'
     | '/torghut/visuals'
     | '/agents'
@@ -705,7 +724,9 @@ export interface FileRouteTypes {
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
+    | '/terminals/$sessionId/fullscreen'
     | '/github/pulls'
+    | '/terminals/$sessionId'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -770,7 +791,9 @@ export interface FileRouteTypes {
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
+    | '/terminals/$sessionId/fullscreen'
     | '/github/pulls/'
+    | '/terminals/$sessionId/'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -815,7 +838,7 @@ export interface RootRouteChildren {
   CodexRunsRoute: typeof CodexRunsRoute
   CodexSearchRoute: typeof CodexSearchRoute
   GithubPullsRoute: typeof GithubPullsRouteWithChildren
-  TerminalsSessionIdRoute: typeof TerminalsSessionIdRoute
+  TerminalsSessionIdRoute: typeof TerminalsSessionIdRouteWithChildren
   TorghutSymbolsRoute: typeof TorghutSymbolsRoute
   TorghutVisualsRoute: typeof TorghutVisualsRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
@@ -1011,12 +1034,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentsRunIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/terminals/$sessionId/': {
+      id: '/terminals/$sessionId/'
+      path: '/'
+      fullPath: '/terminals/$sessionId/'
+      preLoaderRoute: typeof TerminalsSessionIdIndexRouteImport
+      parentRoute: typeof TerminalsSessionIdRoute
+    }
     '/github/pulls/': {
       id: '/github/pulls/'
       path: '/'
       fullPath: '/github/pulls/'
       preLoaderRoute: typeof GithubPullsIndexRouteImport
       parentRoute: typeof GithubPullsRoute
+    }
+    '/terminals/$sessionId/fullscreen': {
+      id: '/terminals/$sessionId/fullscreen'
+      path: '/fullscreen'
+      fullPath: '/terminals/$sessionId/fullscreen'
+      preLoaderRoute: typeof TerminalsSessionIdFullscreenRouteImport
+      parentRoute: typeof TerminalsSessionIdRoute
     }
     '/openai/v1/models': {
       id: '/openai/v1/models'
@@ -1060,18 +1097,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCodexRunCompleteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/codex/notify': {
-      id: '/api/codex/notify'
-      path: '/api/codex/notify'
-      fullPath: '/api/codex/notify'
-      preLoaderRoute: typeof ApiCodexNotifyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/codex/rerun': {
       id: '/api/codex/rerun'
       path: '/api/codex/rerun'
       fullPath: '/api/codex/rerun'
       preLoaderRoute: typeof ApiCodexRerunRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/codex/notify': {
+      id: '/api/codex/notify'
+      path: '/api/codex/notify'
+      fullPath: '/api/codex/notify'
+      preLoaderRoute: typeof ApiCodexNotifyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/codex/issues': {
@@ -1336,6 +1373,19 @@ const GithubPullsRouteWithChildren = GithubPullsRoute._addFileChildren(
   GithubPullsRouteChildren,
 )
 
+interface TerminalsSessionIdRouteChildren {
+  TerminalsSessionIdFullscreenRoute: typeof TerminalsSessionIdFullscreenRoute
+  TerminalsSessionIdIndexRoute: typeof TerminalsSessionIdIndexRoute
+}
+
+const TerminalsSessionIdRouteChildren: TerminalsSessionIdRouteChildren = {
+  TerminalsSessionIdFullscreenRoute: TerminalsSessionIdFullscreenRoute,
+  TerminalsSessionIdIndexRoute: TerminalsSessionIdIndexRoute,
+}
+
+const TerminalsSessionIdRouteWithChildren =
+  TerminalsSessionIdRoute._addFileChildren(TerminalsSessionIdRouteChildren)
+
 interface ApiCodexRunsRouteChildren {
   ApiCodexRunsListRoute: typeof ApiCodexRunsListRoute
   ApiCodexRunsRecentRoute: typeof ApiCodexRunsRecentRoute
@@ -1441,7 +1491,7 @@ const rootRouteChildren: RootRouteChildren = {
   CodexRunsRoute: CodexRunsRoute,
   CodexSearchRoute: CodexSearchRoute,
   GithubPullsRoute: GithubPullsRouteWithChildren,
-  TerminalsSessionIdRoute: TerminalsSessionIdRoute,
+  TerminalsSessionIdRoute: TerminalsSessionIdRouteWithChildren,
   TorghutSymbolsRoute: TorghutSymbolsRoute,
   TorghutVisualsRoute: TorghutVisualsRoute,
   AgentsIndexRoute: AgentsIndexRoute,
