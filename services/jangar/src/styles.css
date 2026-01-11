@@ -4,6 +4,22 @@
 @import "@fontsource-variable/jetbrains-mono";
 @import "@xterm/xterm/css/xterm.css";
 
+@font-face {
+  font-family: "JetBrains Mono Nerd Font";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url("./assets/fonts/JetBrainsMonoNerdFontMono-Regular.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "JetBrains Mono Nerd Font";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url("./assets/fonts/JetBrainsMonoNerdFontMono-Bold.ttf") format("truetype");
+}
+
 @custom-variant dark (&:is(.dark *));
 
 :root {

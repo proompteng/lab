@@ -20,7 +20,7 @@ import { randomUuid } from '@/lib/uuid'
 const OUTPUT_FRAME_TYPE = 1
 const RECONNECT_STORAGE_KEY = 'jangar-terminal-reconnect'
 const TERMINAL_FONT_FAMILY =
-  '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+  '"JetBrains Mono Nerd Font", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
 
 const buildWsUrl = (
   baseUrl: string,
