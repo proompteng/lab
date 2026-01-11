@@ -77,6 +77,10 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
   const [searchValue, setSearchValue] = React.useState('')
 
   React.useEffect(() => {
+    reconnectTokenRef.current = ''
+    lastSeqRef.current = 0
+    sessionTokenRef.current = null
+
     const saved = window.sessionStorage.getItem(`${RECONNECT_STORAGE_KEY}-${sessionId}`)
     if (saved) {
       try {
