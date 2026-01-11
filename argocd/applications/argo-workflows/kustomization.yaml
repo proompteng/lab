@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - rbac.yaml
   - codex-workflow-serviceaccount.yaml
+  - codex-workflow-rbac.yaml
   - codex-docker-policy.yaml
   - codex-implementation-semaphore.yaml
   - ingressroute.yaml
@@ -15,12 +16,17 @@ resources:
   - codex-research-workflow.yaml
   - codex-research-rbac.yaml
   - codex-cluster-admin.yaml
+  - jangar-embeddings-config.yaml
   - jangar-primitives-echo-workflowtemplate.yaml
   - jangar-approval-gate-workflowtemplate.yaml
   - jangar-memory-op-workflowtemplate.yaml
   - jangar-signal-wait-workflowtemplate.yaml
   - jangar-checkpoint-workflowtemplate.yaml
   - jangar-sub-orchestration-workflowtemplate.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/jangar
+    newTag: "8e480ce4"
+    digest: sha256:103cdef8c8d92e3ac6274c67d18312a683c3e71a7270c2d748ed7bfe3108fbba
 helmCharts:
   - name: argo-workflows
     repo: https://argoproj.github.io/argo-helm

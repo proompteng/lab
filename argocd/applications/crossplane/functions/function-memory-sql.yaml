@@ -3,5 +3,5 @@ kind: Function
 metadata:
   name: function-memory-sql
 spec:
-  package: registry.ide-newton.ts.net/lab/function-memory-sql:latest
+  package: registry.ide-newton.ts.net/lab/function-memory-sql:20260111
   packagePullPolicy: Always

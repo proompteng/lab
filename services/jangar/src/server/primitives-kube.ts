@@ -1,0 +1,96 @@
+import { spawn } from 'node:child_process'
+
+export type KubernetesClient = {
+  apply: (resource: Record<string, unknown>) => Promise<Record<string, unknown>>
+  get: (resource: string, name: string, namespace: string) => Promise<Record<string, unknown> | null>
+  list: (resource: string, namespace: string, labelSelector?: string) => Promise<Record<string, unknown>>
+}
+
+type CommandResult = {
+  stdout: string
+  stderr: string
+  exitCode: number | null
+}
+
+const runCommand = (command: string, args: string[], input?: string): Promise<CommandResult> =>
+  new Promise((resolve) => {
+    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+    child.on('close', (code) => resolve({ stdout, stderr, exitCode: code }))
+    if (input) {
+      child.stdin.write(input)
+    }
+    child.stdin.end()
+  })
+
+const parseJson = (raw: string, context: string) => {
+  try {
+    return JSON.parse(raw) as Record<string, unknown>
+  } catch (error) {
+    throw new Error(`${context} returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+const kubectl = async (args: string[], input?: string, context?: string) => {
+  const result = await runCommand('kubectl', args, input)
+  if (result.exitCode === 0) {
+    return result.stdout.trim()
+  }
+  const details = result.stderr.trim() || result.stdout.trim()
+  throw new Error(`${context ?? 'kubectl'} failed: ${details || `exit ${result.exitCode}`}`)
+}
+
+const notFound = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('NotFound') || message.includes('(NotFound)')
+}
+
+export const createKubernetesClient = (): KubernetesClient => ({
+  apply: async (resource) => {
+    const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+    const generateName = typeof metadata.generateName === 'string' ? metadata.generateName.trim() : ''
+    const name = typeof metadata.name === 'string' ? metadata.name.trim() : ''
+    const useCreate = generateName.length > 0 && name.length === 0
+    const command = useCreate ? 'create' : 'apply'
+    const output = await kubectl([command, '-f', '-', '-o', 'json'], JSON.stringify(resource), `kubectl ${command}`)
+    return parseJson(output, `kubectl ${command}`)
+  },
+  get: async (resource, name, namespace) => {
+    try {
+      const output = await kubectl(['get', resource, name, '-n', namespace, '-o', 'json'], undefined, 'kubectl get')
+      return parseJson(output, 'kubectl get')
+    } catch (error) {
+      if (notFound(error)) return null
+      throw error
+    }
+  },
+  list: async (resource, namespace, labelSelector) => {
+    const args = ['get', resource, '-n', namespace, '-o', 'json']
+    if (labelSelector) {
+      args.push('-l', labelSelector)
+    }
+    const output = await kubectl(args, undefined, 'kubectl list')
+    return parseJson(output, 'kubectl list')
+  },
+})
+
+export const RESOURCE_MAP = {
+  Agent: 'agents.agents.proompteng.ai',
+  AgentRun: 'agentruns.agents.proompteng.ai',
+  Orchestration: 'orchestrations.orchestration.proompteng.ai',
+  OrchestrationRun: 'orchestrationruns.orchestration.proompteng.ai',
+  Memory: 'memories.memory.proompteng.ai',
+  ApprovalPolicy: 'approvalpolicies.approvals.proompteng.ai',
+  Budget: 'budgets.budgets.proompteng.ai',
+  SecretBinding: 'secretbindings.security.proompteng.ai',
+  SignalDelivery: 'signaldeliveries.signals.proompteng.ai',
+} as const

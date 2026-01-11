@@ -32,7 +32,7 @@ spec:
           - name: policyRef
           - name: policyNamespace
       script:
-        image: registry.ide-newton.ts.net/lab/jangar:latest
+        image: registry.ide-newton.ts.net/lab/jangar:8e480ce4
         env:
           - name: GITHUB_TOKEN
             valueFrom:
@@ -57,6 +57,16 @@ spec:
             exit 0
           fi
           mode="$(kubectl get approvalpolicies.approvals.proompteng.ai "${policy}" -n "${namespace}" -o jsonpath='{.spec.mode}' 2>/dev/null || true)"
+          if [ -z "${mode}" ]; then
+            policy_namespace="$(
+              kubectl get approvalpolicies.approvals.proompteng.ai -A -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.namespace}{"\n"}{end}' \
+                | awk -v name="${policy}" '$1 == name { print $2; exit }'
+            )"
+            if [ -n "${policy_namespace}" ] && [ "${policy_namespace}" != "${namespace}" ]; then
+              namespace="${policy_namespace}"
+              mode="$(kubectl get approvalpolicies.approvals.proompteng.ai "${policy}" -n "${namespace}" -o jsonpath='{.spec.mode}' 2>/dev/null || true)"
+            fi
+          fi
           if [ "${mode}" = "automatic" ]; then
             echo "false" > /tmp/approval_required
             exit 0

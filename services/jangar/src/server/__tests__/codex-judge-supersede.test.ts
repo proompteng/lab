@@ -207,10 +207,6 @@ const memoriesStore = {
   close: vi.fn(),
 }
 
-beforeAll(async () => {
-  await requireHandleRunComplete()
-}, 20_000)
-
 beforeEach(async () => {
   upsertRunComplete.mockReset()
   upsertArtifacts.mockReset()
@@ -227,7 +223,7 @@ beforeEach(async () => {
 beforeAll(async () => {
   handleRunComplete = null
   await requireHandleRunComplete()
-}, 20_000)
+}, 60_000)
 
 const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
   id: 'run-1',

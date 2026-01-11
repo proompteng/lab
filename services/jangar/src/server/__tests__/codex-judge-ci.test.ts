@@ -216,7 +216,6 @@ describe('codex-judge CI resolution', () => {
     const configMock = requireMock(globalState.__codexJudgeConfigMock, 'config')
     Object.assign(githubMock, github)
     Object.assign(configMock, config)
-    await requirePrivate()
   }, 20_000)
 
   it('returns pending when commit SHA is missing', async () => {

@@ -3,5 +3,5 @@ kind: Function
 metadata:
   name: function-orchestration-status
 spec:
-  package: registry.ide-newton.ts.net/lab/function-orchestration-status:latest
+  package: registry.ide-newton.ts.net/lab/function-orchestration-status:20260111
   packagePullPolicy: Always

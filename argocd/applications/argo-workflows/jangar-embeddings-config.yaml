@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jangar-embeddings-config
+  namespace: argo-workflows
+data:
+  openaiApiBaseUrl: http://192.168.1.190:11434/v1
+  openaiEmbeddingModel: qwen3-embedding-saigak:0.6b
+  openaiEmbeddingDimension: "1024"
+  openaiEmbeddingTimeoutMs: "15000"

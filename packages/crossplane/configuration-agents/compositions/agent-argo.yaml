@@ -54,7 +54,7 @@ spec:
                         - name: promptJson
                           default: ''
                     container:
-                      image: registry.ide-newton.ts.net/lab/jangar:latest
+                      image: registry.ide-newton.ts.net/lab/jangar:8e480ce4@sha256:103cdef8c8d92e3ac6274c67d18312a683c3e71a7270c2d748ed7bfe3108fbba
                       resources:
                         requests: {}
                         limits: {}

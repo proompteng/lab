@@ -21,7 +21,7 @@ spec:
           - name: pollSeconds
             default: '10'
       script:
-        image: registry.ide-newton.ts.net/lab/jangar:latest
+        image: registry.ide-newton.ts.net/lab/jangar:8e480ce4
         env:
           - name: GITHUB_TOKEN
             valueFrom:
@@ -56,6 +56,19 @@ spec:
               found="$(kubectl get signaldeliveries.signals.proompteng.ai -n "${namespace}" -o jsonpath="{.items[?(@.spec.deliveryId=='${delivery_id}')].metadata.name}" || true)"
             else
               found="$(kubectl get signaldeliveries.signals.proompteng.ai -n "${namespace}" -o jsonpath="{.items[?(@.spec.signalRef.name=='${signal_ref}')].metadata.name}" || true)"
+            fi
+            if [ -z "${found}" ]; then
+              if [ -n "${delivery_id}" ]; then
+                found="$(
+                  kubectl get signaldeliveries.signals.proompteng.ai -A -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.deliveryId}{"\n"}{end}' \
+                    | awk -v id="${delivery_id}" '$2 == id { print $1; exit }'
+                )"
+              else
+                found="$(
+                  kubectl get signaldeliveries.signals.proompteng.ai -A -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.signalRef.name}{"\n"}{end}' \
+                    | awk -v ref="${signal_ref}" '$2 == ref { print $1; exit }'
+                )"
+              fi
             fi
 
             if [ -n "${found}" ]; then

@@ -19,13 +19,39 @@ spec:
           - name: namespace
             default: ''
       script:
-        image: registry.ide-newton.ts.net/lab/jangar:latest
+        image: registry.ide-newton.ts.net/lab/jangar:8e480ce4
         env:
           - name: GITHUB_TOKEN
             valueFrom:
               secretKeyRef:
                 name: github-token
                 key: token
+          - name: OPENAI_API_BASE_URL
+            valueFrom:
+              configMapKeyRef:
+                name: jangar-embeddings-config
+                key: openaiApiBaseUrl
+          - name: OPENAI_EMBEDDING_MODEL
+            valueFrom:
+              configMapKeyRef:
+                name: jangar-embeddings-config
+                key: openaiEmbeddingModel
+          - name: OPENAI_EMBEDDING_DIMENSION
+            valueFrom:
+              configMapKeyRef:
+                name: jangar-embeddings-config
+                key: openaiEmbeddingDimension
+          - name: OPENAI_EMBEDDING_TIMEOUT_MS
+            valueFrom:
+              configMapKeyRef:
+                name: jangar-embeddings-config
+                key: openaiEmbeddingTimeoutMs
+          - name: OPENAI_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: jangar-openai
+                key: api-key
+                optional: true
         command:
           - /bin/bash
           - -c
@@ -47,20 +73,243 @@ spec:
             exit 1
           fi
 
+          if [[ "${memory_ref}" == */* ]]; then
+            memory_namespace="${memory_ref%%/*}"
+            memory_name="${memory_ref##*/}"
+          else
+            memory_namespace="${namespace}"
+            memory_name="${memory_ref}"
+          fi
+
+          spec_schema=""
+          dataset=""
+          status_schema=""
+          embedding_dim=""
+          read_memory_meta() {
+            spec_schema="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.spec.dataset.schema}' 2>/dev/null || true)"
+            dataset="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.spec.dataset.name}' 2>/dev/null || true)"
+            status_schema="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.status.schema}' 2>/dev/null || true)"
+            embedding_dim="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.spec.embeddings.dimension}' 2>/dev/null || true)"
+          }
+          read_memory_meta
+          if [ -z "${spec_schema}" ] && [ -z "${status_schema}" ] && [ -z "${dataset}" ]; then
+            fallback_namespace="$(
+              kubectl get memories.memory.proompteng.ai -A -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.namespace}{"\n"}{end}' \
+                | awk -v name="${memory_name}" '$1 == name { print $2; exit }'
+            )"
+            if [ -n "${fallback_namespace}" ] && [ "${fallback_namespace}" != "${memory_namespace}" ]; then
+              memory_namespace="${fallback_namespace}"
+              read_memory_meta
+            fi
+          fi
+          secret_name=""
+          secret_namespace=""
+          for attempt in $(seq 1 30); do
+            secret_name="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.status.connectionSecretRef.name}' 2>/dev/null || true)"
+            secret_namespace="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.status.connectionSecretRef.namespace}' 2>/dev/null || true)"
+            if [ -n "${secret_name}" ]; then
+              break
+            fi
+            sleep 2
+          done
+          if [ -z "${secret_namespace}" ]; then
+            secret_namespace="${memory_namespace}"
+          fi
+
+          if [ -n "${spec_schema}" ] && [ -n "${status_schema}" ] && [ "${spec_schema}" != "${status_schema}" ]; then
+            echo "memory schema mismatch: spec=${spec_schema} status=${status_schema}" >&2
+            exit 1
+          fi
+
+          schema="${spec_schema:-${status_schema:-${dataset:-public}}}"
+
+          if [ -z "${secret_name}" ]; then
+            fallback_namespace="$(
+              kubectl get memories.memory.proompteng.ai -A -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.namespace}{"\n"}{end}' \
+                | awk -v name="${memory_name}" '$1 == name { print $2; exit }'
+            )"
+            if [ -n "${fallback_namespace}" ] && [ "${fallback_namespace}" != "${memory_namespace}" ]; then
+              memory_namespace="${fallback_namespace}"
+              read_memory_meta
+              secret_name="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.status.connectionSecretRef.name}' 2>/dev/null || true)"
+              secret_namespace="$(kubectl get memories.memory.proompteng.ai "${memory_name}" -n "${memory_namespace}" -o jsonpath='{.status.connectionSecretRef.namespace}' 2>/dev/null || true)"
+              if [ -z "${secret_namespace}" ]; then
+                secret_namespace="${memory_namespace}"
+              fi
+            fi
+          fi
+
+          if [ -z "${secret_name}" ]; then
+            echo "memory connectionSecretRef is not ready" >&2
+            exit 1
+          fi
+
+          get_secret_field() {
+            kubectl get secret "${secret_name}" -n "${secret_namespace}" -o "jsonpath={.data.$1}" 2>/dev/null | base64 -d 2>/dev/null || true
+          }
+
+          db_uri="$(get_secret_field uri)"
+          endpoint="$(get_secret_field endpoint)"
+          if [ -z "${endpoint}" ]; then
+            endpoint="$(get_secret_field host)"
+          fi
+          db_name="$(get_secret_field database)"
+          if [ -z "${db_name}" ]; then
+            db_name="$(get_secret_field dbname)"
+          fi
+          db_user="$(get_secret_field username)"
+          if [ -z "${db_user}" ]; then
+            db_user="$(get_secret_field user)"
+          fi
+          db_pass="$(get_secret_field password)"
+
+          if [ -z "${db_uri}" ]; then
+            if [ -z "${endpoint}" ] || [ -z "${db_name}" ] || [ -z "${db_user}" ] || [ -z "${db_pass}" ]; then
+              echo "connection secret missing database fields" >&2
+              exit 1
+            fi
+            db_user_escaped="$(bun -e 'console.log(encodeURIComponent(process.argv[1] ?? ""))' "${db_user}")"
+            db_pass_escaped="$(bun -e 'console.log(encodeURIComponent(process.argv[1] ?? ""))' "${db_pass}")"
+            db_uri="postgresql://${db_user_escaped}:${db_pass_escaped}@${endpoint}/${db_name}"
+          fi
+
+          if [[ "${db_uri}" != *"sslmode="* ]]; then
+            if [[ "${db_uri}" == *"?"* ]]; then
+              db_uri="${db_uri}&sslmode=require"
+            else
+              db_uri="${db_uri}?sslmode=require"
+            fi
+          fi
+
           payload_b64="$(printf '%s' "${payload}" | base64 -w0)"
 
-          cat <<EOF | kubectl create -f -
-          apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            generateName: memory-op-
-            namespace: ${namespace}
-            labels:
-              jangar.proompteng.ai/memory-ref: "${memory_ref}"
-              jangar.proompteng.ai/operation: "${operation}"
-              jangar.proompteng.ai/workflow: "{{workflow.name}}"
-          data:
-            memoryRef: "${memory_ref}"
-            operation: "${operation}"
-            payloadB64: "${payload_b64}"
-          EOF
+          export NODE_PATH="/app/node_modules"
+          export DB_URI="${db_uri}"
+          export DB_SCHEMA="${schema}"
+          export DATASET="${dataset:-${memory_name}}"
+          export OPERATION="${operation}"
+          export PAYLOAD_B64="${payload_b64}"
+          export EMBEDDING_DIM="${embedding_dim:-1536}"
+
+          cat <<'NODE' > /tmp/jangar-memory-op.mjs
+          import { createHash } from 'node:crypto'
+          import { Pool } from 'pg'
+
+          const schema = process.env.DB_SCHEMA || 'public'
+          if (!/^[a-zA-Z0-9_]+$/.test(schema)) {
+            throw new Error(`invalid schema: ${schema}`)
+          }
+          const dataset = process.env.DATASET || ''
+          if (!dataset) {
+            throw new Error('dataset is required')
+          }
+          const operation = process.env.OPERATION || 'event'
+          const payloadRaw = Buffer.from(process.env.PAYLOAD_B64 || '', 'base64').toString('utf8')
+          let payload = {}
+          if (payloadRaw) {
+            try {
+              payload = JSON.parse(payloadRaw)
+            } catch {
+              payload = { raw: payloadRaw }
+            }
+          }
+
+          const parsedDimension = Number.parseInt(
+            process.env.EMBEDDING_DIM || process.env.OPENAI_EMBEDDING_DIMENSION || '1536',
+            10,
+          )
+          const dimension = Number.isFinite(parsedDimension) && parsedDimension > 0 ? parsedDimension : 1536
+          const apiBaseUrl = (process.env.OPENAI_EMBEDDING_API_BASE_URL ?? process.env.OPENAI_API_BASE_URL ?? '')
+            .trim()
+            .replace(/\/+$/, '')
+          const apiKey = process.env.OPENAI_API_KEY ?? ''
+          const model = process.env.OPENAI_EMBEDDING_MODEL ?? 'text-embedding-3-small'
+          const timeoutMs = Number.parseInt(process.env.OPENAI_EMBEDDING_TIMEOUT_MS ?? '15000', 10)
+          const getFallbackEmbedding = (text) => {
+            const hash = createHash('sha256').update(text).digest()
+            const vector = new Array(dimension)
+            for (let i = 0; i < dimension; i += 1) {
+              const idx = i % hash.length
+              vector[i] = (hash[idx] / 255) * 2 - 1
+            }
+            return vector
+          }
+          const vectorToPg = (vector) => `[${vector.join(',')}]`
+          const fetchEmbedding = async (text) => {
+            if (!apiBaseUrl) return null
+            const controller = new AbortController()
+            const timer = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) ? timeoutMs : 15000)
+            try {
+              const response = await fetch(`${apiBaseUrl}/embeddings`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+                },
+                body: JSON.stringify({ model, input: text }),
+                signal: controller.signal,
+              })
+              if (!response.ok) {
+                const body = await response.text()
+                throw new Error(`embedding request failed (${response.status}): ${body}`)
+              }
+              const json = await response.json()
+              const embedding = json?.data?.[0]?.embedding
+              if (!Array.isArray(embedding)) {
+                throw new Error('embedding response missing data[0].embedding')
+              }
+              return embedding
+            } catch (error) {
+              console.warn('[jangar] embedding request failed, using fallback', error)
+              return null
+            } finally {
+              clearTimeout(timer)
+            }
+          }
+          const resolveEmbedding = async (text) => {
+            if (Array.isArray(payload.embedding)) return payload.embedding
+            const embedding = await fetchEmbedding(text)
+            if (embedding && embedding.length === dimension) return embedding
+            if (embedding && embedding.length) {
+              console.warn('[jangar] embedding dimension mismatch, using fallback', {
+                expected: dimension,
+                actual: embedding.length,
+              })
+            }
+            return getFallbackEmbedding(text)
+          }
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
+          const pool = new Pool({ connectionString: process.env.DB_URI, ssl: { rejectUnauthorized: false } })
+          const key = payload.key || payload.id || `${operation}-${Date.now()}`
+          const text = payload.text || payload.content || payload.summary || JSON.stringify(payload)
+
+          await pool.query(
+            `INSERT INTO ${schema}.memory_events (dataset, event_type, payload) VALUES ($1, $2, $3)`,
+            [dataset, operation, payload],
+          )
+
+          if (operation.toLowerCase().includes('kv') || payload.type === 'kv') {
+            const kvValue = payload.value ?? payload
+            await pool.query(
+              `INSERT INTO ${schema}.memory_kv (dataset, key, value)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (dataset, key)
+               DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+              [dataset, key, kvValue],
+            )
+          }
+
+          if (operation.toLowerCase().includes('embed') || payload.embedding || text) {
+            const embedding = await resolveEmbedding(text)
+            const vector = vectorToPg(embedding)
+            await pool.query(
+              `INSERT INTO ${schema}.memory_embeddings (dataset, key, embedding, metadata)
+               VALUES ($1, $2, $3::vector, $4)`,
+              [dataset, key, vector, payload.metadata ?? {}],
+            )
+          }
+
+          await pool.end()
+          NODE
+
+          bun /tmp/jangar-memory-op.mjs
