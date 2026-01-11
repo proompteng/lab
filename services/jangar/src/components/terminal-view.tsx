@@ -14,8 +14,8 @@ import { Terminal } from '@xterm/xterm'
 import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
-import { randomUuid } from '@/lib/uuid'
 import { cn } from '@/lib/utils'
+import { randomUuid } from '@/lib/uuid'
 
 const OUTPUT_FRAME_TYPE = 1
 const RECONNECT_STORAGE_KEY = 'jangar-terminal-reconnect'

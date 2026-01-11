@@ -2,9 +2,31 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, it } from 'vitest'
+import { describe, it, vi } from 'vitest'
 
-import { getTerminalPtyManager } from './terminal-pty-manager'
+vi.mock('node-pty', () => ({
+  spawn: () => {
+    const dataListeners = new Set<(data: string) => void>()
+    const exitListeners = new Set<(event: { exitCode: number | null; signal: number | null }) => void>()
+    return {
+      write: (data: string) => {
+        for (const listener of dataListeners) listener(data)
+      },
+      resize: () => {},
+      kill: () => {
+        for (const listener of exitListeners) listener({ exitCode: 0, signal: null })
+      },
+      onData: (listener: (data: string) => void) => {
+        dataListeners.add(listener)
+      },
+      onExit: (listener: (event: { exitCode: number | null; signal: number | null }) => void) => {
+        exitListeners.add(listener)
+      },
+    }
+  },
+}))
+
+import { getTerminalPtyManager, resetTerminalPtyManager } from './terminal-pty-manager'
 
 const decodeFrame = (data: Uint8Array) => {
   if (data.length < 6 || data[0] !== 1) return null
@@ -23,6 +45,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 4000) => {
 
 describe('TerminalPtyManager', () => {
   it('replays buffered output on reconnect', async () => {
+    resetTerminalPtyManager()
     const manager = getTerminalPtyManager({ bufferBytes: 256 * 1024, idleTimeoutMs: 0 })
     const worktreePath = await mkdtemp(join(tmpdir(), 'jangar-terminal-test-'))
     const sessionId = `jangar-terminal-test-${Date.now()}`
