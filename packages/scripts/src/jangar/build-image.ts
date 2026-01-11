@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 
 import { ensureCli, repoRoot, run } from '../shared/cli'
 import { buildAndPushDockerImage } from '../shared/docker'
+import { resolveGitHubToken } from '../shared/github'
 import { execGit } from '../shared/git'
 
 export type BuildImageOptions = {
@@ -20,32 +21,18 @@ export type BuildImageOptions = {
   cacheRef?: string
 }
 
-const ensureGhToken = (): string | undefined => {
-  const existing = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
-  if (existing) {
-    return existing
-  }
-
-  if (!Bun.which('gh')) {
-    console.warn('GH_TOKEN is not set and gh CLI is unavailable; skipping GitHub auth secret.')
-    return undefined
-  }
-
-  const result = Bun.spawnSync(['gh', 'auth', 'token'], {
-    stdout: 'pipe',
-    stderr: 'pipe',
+const ensureGhToken = async (): Promise<string> => {
+  const { token, source } = await resolveGitHubToken({
+    requireWorkflow: true,
+    userAgent: 'jangar-build-image',
+    skipScopeCheckEnv: ['JANGAR_SKIP_GH_SCOPE_CHECK', 'SKIP_GH_SCOPE_CHECK'],
   })
 
-  if (result.exitCode === 0) {
-    const token = result.stdout.toString().trim()
-    if (token.length > 0) {
-      process.env.GH_TOKEN = token
-      return token
-    }
+  process.env.GH_TOKEN = token
+  if (source !== 'env') {
+    console.log(`Using GitHub token from ${source}.`)
   }
-
-  console.warn('GH_TOKEN is not set and gh auth token could not be resolved; skipping GitHub auth secret.')
-  return undefined
+  return token
 }
 
 const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void }> => {
@@ -88,8 +75,8 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
     options.codexAuthPath ?? process.env.CODEX_AUTH_PATH ?? resolve(process.env.HOME ?? '', '.codex/auth.json')
   const cacheRef = options.cacheRef ?? process.env.JANGAR_BUILD_CACHE_REF ?? `${registry}/${repository}:buildcache`
 
-  // Populate GH_TOKEN from local gh CLI if the env var is missing so docker --secret succeeds.
-  ensureGhToken()
+  // Ensure GH_TOKEN is available (with workflow scope) so docker --secret succeeds.
+  await ensureGhToken()
 
   let context: string
   let pruneCleanup: (() => void) | undefined
