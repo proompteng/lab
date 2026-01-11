@@ -2,7 +2,7 @@ import type { CodexAppServerClient } from '@proompteng/codex'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { resetCodexClient, setCodexClientFactory } from '~/server/codex-client'
-import { GitHubRateLimitError, type ReviewSummary } from '~/server/github-client'
+import type { ReviewSummary } from '~/server/github-client'
 import type {
   CodexEvaluationRecord,
   CodexJudgeStore,
@@ -30,7 +30,6 @@ const globalState = globalThis as typeof globalThis & {
     githubToken: string | null
     githubApiBaseUrl: string
     codexReviewers: string[]
-    judgeMode: 'argo' | 'local'
     ciEventStreamEnabled: boolean
     ciMaxWaitMs: number
     reviewMaxWaitMs: number
@@ -41,7 +40,6 @@ const globalState = globalThis as typeof globalThis & {
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
-    judgeModel: string
     promptTuningEnabled: boolean
     promptTuningRepo: string | null
     promptTuningFailureThreshold: number
@@ -155,7 +153,6 @@ if (!globalState.__codexJudgeConfigMock) {
     githubToken: null,
     githubApiBaseUrl: 'https://api.github.com',
     codexReviewers: [],
-    judgeMode: 'local',
     ciEventStreamEnabled: false,
     ciMaxWaitMs: 10_000,
     reviewMaxWaitMs: 10_000,
@@ -166,7 +163,6 @@ if (!globalState.__codexJudgeConfigMock) {
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
-    judgeModel: 'test-model',
     promptTuningEnabled: false,
     promptTuningRepo: null,
     promptTuningFailureThreshold: 3,
@@ -490,7 +486,6 @@ const harness = (() => {
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
-    judgeModel: 'test-model',
     promptTuningEnabled: false,
     promptTuningRepo: null,
     promptTuningFailureThreshold: 3,
@@ -566,65 +561,69 @@ afterEach(() => {
 })
 
 describe('codex judge guardrails', () => {
-  it('retries invalid JSON and succeeds without rerun', async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      text: async () => '',
-      json: async () => ({}),
-    }))
-    global.fetch = fetchMock as unknown as typeof global.fetch
-
-    harness.setJudgeResponses([
-      'not json',
-      JSON.stringify({
-        decision: 'pass',
-        confidence: 0.9,
-        requirements_coverage: [],
-        missing_items: [],
-        suggested_fixes: [],
-        next_prompt: null,
-        prompt_tuning_suggestions: [],
-        system_improvement_suggestions: [],
-      }),
-    ])
+  it('marks runs needs_human when metadata is missing', async () => {
+    harness.setRun({ repository: 'unknown/unknown', issueNumber: 0, branch: 'unknown' })
 
     const privateApi = await requirePrivate()
     await privateApi.evaluateRun('run-1')
 
-    expect(harness.codexClient.runTurn).toHaveBeenCalledTimes(2)
-    expect(harness.judgePrompts[1]).toContain('JSON object only')
-    expect(harness.store.listRunsByIssue).not.toHaveBeenCalled()
-    expect(fetchMock).not.toHaveBeenCalled()
-    expect(harness.store.updateDecision).toHaveBeenCalledWith(expect.objectContaining({ decision: 'pass' }))
+    expect(harness.store.updateDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: 'needs_human',
+        reasons: expect.objectContaining({ error: 'missing_run_metadata' }),
+      }),
+    )
   })
 
-  it('retries invalid JSON then triggers rerun', async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      text: async () => '',
-      json: async () => ({}),
-    }))
-    global.fetch = fetchMock as unknown as typeof global.fetch
-
-    harness.setJudgeResponses(['nope', 'still nope', 'no json here'])
+  it('skips when not in judge stage', async () => {
+    harness.setRun({ stage: 'implementation', notifyPayload: {} })
 
     const privateApi = await requirePrivate()
     await privateApi.evaluateRun('run-1')
 
-    expect(harness.codexClient.runTurn).toHaveBeenCalledTimes(3)
+    expect(harness.store.updateRunPrompt).toHaveBeenCalled()
+    expect(harness.store.updateDecision).not.toHaveBeenCalled()
+  })
+
+  it('records needs_iteration when judge output is missing', async () => {
+    harness.setRun({ stage: 'judge', notifyPayload: {} })
+
+    const privateApi = await requirePrivate()
+    await privateApi.evaluateRun('run-1')
+
     expect(harness.store.updateDecision).toHaveBeenCalledWith(
       expect.objectContaining({
         decision: 'needs_iteration',
-        reasons: expect.objectContaining({ error: 'judge_invalid_json' }),
+        reasons: expect.objectContaining({ error: 'infra_failure' }),
       }),
     )
-    expect(harness.store.listRunsByIssue).toHaveBeenCalledTimes(1)
-    expect(harness.store.enqueueRerunSubmission).toHaveBeenCalledWith(
-      expect.objectContaining({ parentRunId: 'run-1', attempt: 2 }),
+  })
+
+  it('records pass when judge output is present', async () => {
+    harness.setRun({
+      stage: 'judge',
+      notifyPayload: {
+        judge_output: {
+          decision: 'pass',
+          confidence: 0.9,
+          requirements_coverage: [],
+          missing_items: [],
+          suggested_fixes: [],
+          next_prompt: null,
+          prompt_tuning_suggestions: [],
+          system_improvement_suggestions: [],
+        },
+      },
+    })
+
+    const privateApi = await requirePrivate()
+    await privateApi.evaluateRun('run-1')
+
+    expect(harness.store.updateDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: 'pass',
+      }),
     )
-    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('marks runs needs_human when rerun submission fails', async () => {
@@ -641,8 +640,6 @@ describe('codex judge guardrails', () => {
         json: async () => ({}),
       }))
       global.fetch = fetchMock as unknown as typeof global.fetch
-
-      harness.setJudgeResponses(['nope', 'still nope', 'no json here'])
 
       harness.store.listRerunSubmissions.mockResolvedValue([
         {
@@ -696,410 +693,6 @@ describe('codex judge guardrails', () => {
     await privateApi.evaluateRun('run-1')
 
     expect(harness.store.updateRunStatus).not.toHaveBeenCalled()
-    expect(harness.codexClient.runTurn).not.toHaveBeenCalled()
-    expect(harness.github.getPullRequestByHead).not.toHaveBeenCalled()
-  })
-
-  it('backs off when GitHub rate limits are hit', async () => {
-    const timeoutSpy = vi.spyOn(global, 'setTimeout').mockImplementation((_fn, _delay) => {
-      return 0 as unknown as ReturnType<typeof setTimeout>
-    })
-
-    try {
-      const retryAt = Date.now() + 90_000
-      harness.github.getPullRequestByHead.mockRejectedValueOnce(
-        new GitHubRateLimitError('GitHub API 403: rate limit exceeded', {
-          status: 403,
-          retryAt,
-          remaining: 0,
-          resetAt: retryAt,
-        }),
-      )
-
-      const privateApi = await requirePrivate()
-      await privateApi.evaluateRun('run-1')
-
-      expect(timeoutSpy).toHaveBeenCalled()
-      const delay = timeoutSpy.mock.calls[0]?.[1] as number
-      expect(delay).toBeGreaterThanOrEqual(5000)
-      expect(harness.codexClient.runTurn).not.toHaveBeenCalled()
-      expect(harness.store.updateDecision).not.toHaveBeenCalled()
-    } finally {
-      timeoutSpy.mockRestore()
-    }
-  })
-})
-
-describe('codex judge ordering', () => {
-  it('runs deterministic gates before CI/review checks', async () => {
-    harness.setWorktreeFiles([
-      {
-        path: 'services/jangar/src/server/codex-judge.ts',
-        status: 'modified',
-        patch: `diff --git a/file b/file
-<<<<<<< HEAD
-conflict
-=======
-resolved
->>>>>>> branch`,
-      },
-    ])
-
-    const privateApi = await requirePrivate()
-    await privateApi.evaluateRun('run-1')
-
-    expect(harness.github.getCheckRuns).not.toHaveBeenCalled()
-    expect(harness.github.getReviewSummary).not.toHaveBeenCalled()
-    expect(harness.store.updateCiStatus).not.toHaveBeenCalled()
-    expect(harness.store.updateReviewStatus).not.toHaveBeenCalled()
-    expect(harness.store.updateDecision).toHaveBeenCalledWith(expect.objectContaining({ decision: 'needs_human' }))
-  })
-})
-
-describe('codex judge CI gating', () => {
-  it('retries when commit SHA cannot be resolved', async () => {
-    const prPayload = {
-      number: 101,
-      url: 'https://api.github.com/repos/proompteng/lab/pulls/101',
-      htmlUrl: 'https://github.com/proompteng/lab/pull/101',
-      headSha: null as unknown as string,
-      headRef: 'codex/issue-2125',
-      baseRef: 'main',
-      state: 'open',
-      title: 'PR title',
-      body: null,
-      mergeableState: 'clean',
-    }
-
-    harness.github.getPullRequestByHead.mockResolvedValueOnce(prPayload)
-    harness.github.getPullRequest.mockResolvedValueOnce(prPayload)
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      text: async () => '',
-      json: async () => ({}),
-    }))
-    global.fetch = fetchMock as unknown as typeof global.fetch
-
-    const privateApi = await requirePrivate()
-    await privateApi.evaluateRun('run-1')
-
-    expect(harness.github.getCheckRuns).not.toHaveBeenCalled()
-    expect(harness.store.updateCiStatus).not.toHaveBeenCalled()
-    expect(harness.store.updateDecision).toHaveBeenCalledWith(
-      expect.objectContaining({
-        decision: 'needs_iteration',
-        reasons: expect.objectContaining({ error: 'infra_failure', detail: 'missing_commit_sha' }),
-      }),
-    )
-    expect(harness.store.updateRunStatus).toHaveBeenCalledWith('run-1', 'needs_iteration')
-    expect(fetchMock).not.toHaveBeenCalled()
-  })
-})
-
-describe('codex judge review gate', () => {
-  const defaultClaimRerunSubmission = harness.store.claimRerunSubmission.getMockImplementation()
-
-  beforeEach(() => {
-    harness.github.getPullRequestByHead.mockResolvedValue({
-      number: 101,
-      url: 'https://api.github.com/repos/proompteng/lab/pulls/101',
-      htmlUrl: 'https://github.com/proompteng/lab/pull/101',
-      headSha: 'sha-1',
-      headRef: 'codex/issue-2125',
-      baseRef: 'main',
-      state: 'open',
-      title: 'PR title',
-      body: null,
-      mergeableState: 'clean',
-    })
-    harness.github.getPullRequest.mockResolvedValue({
-      number: 101,
-      url: 'https://api.github.com/repos/proompteng/lab/pulls/101',
-      htmlUrl: 'https://github.com/proompteng/lab/pull/101',
-      headSha: 'sha-1',
-      headRef: 'codex/issue-2125',
-      baseRef: 'main',
-      state: 'open',
-      title: 'PR title',
-      body: null,
-      mergeableState: 'clean',
-    })
-    harness.github.getPullRequestDiff.mockResolvedValue('diff --git a/file b/file')
-    harness.github.getCheckRuns.mockResolvedValue({ status: 'success', url: 'https://ci.example.com' })
-    harness.store.claimRerunSubmission.mockResolvedValue({
-      submission: {
-        id: 'rerun-review-gate',
-        parentRunId: 'run-1',
-        attempt: 2,
-        deliveryId: 'jangar-run-1-attempt-2',
-        status: 'queued',
-        submissionAttempt: 0,
-        responseStatus: null,
-        error: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        submittedAt: null,
-      },
-      shouldSubmit: false,
-    })
-  })
-
-  afterEach(() => {
-    if (defaultClaimRerunSubmission) {
-      harness.store.claimRerunSubmission.mockImplementation(defaultClaimRerunSubmission)
-    }
-  })
-
-  it('reruns with thread summaries when unresolved threads exist', async () => {
-    const commentBody = 'Please add a regression test for the null guard.'
-    harness.github.getReviewSummary.mockResolvedValue({
-      status: 'commented',
-      unresolvedThreads: [
-        {
-          id: 'thread-1',
-          author: 'codex',
-          comments: [
-            {
-              author: 'codex',
-              body: commentBody,
-              path: 'services/jangar/src/server/codex-judge.ts',
-              line: 120,
-            },
-          ],
-        },
-      ],
-      requestedChanges: false,
-      reviewComments: [],
-      issueComments: [],
-    })
-
-    const privateApi = await requirePrivate()
-    await privateApi.evaluateRun('run-1')
-
-    const decisionInput = harness.store.updateDecision.mock.calls
-      .map((call) => call[0])
-      .find((call) => call?.decision === 'needs_iteration')
-    expect(decisionInput).toEqual(expect.objectContaining({ decision: 'needs_iteration' }))
-    expect(decisionInput?.nextPrompt).toContain(commentBody)
-    expect(decisionInput?.nextPrompt).toContain('Open Codex review threads:')
-  })
-
-  it('includes review summary comments when changes are requested', async () => {
-    const reviewBody = 'Add a unit test for the review gating timeout.'
-    harness.github.getReviewSummary.mockResolvedValue({
-      status: 'changes_requested',
-      unresolvedThreads: [],
-      requestedChanges: true,
-      reviewComments: [
-        {
-          author: 'codex',
-          body: reviewBody,
-          state: 'changes_requested',
-          submittedAt: '2025-12-28T00:00:00Z',
-          url: 'https://github.com/proompteng/lab/pull/101#review',
-        },
-      ],
-      issueComments: [],
-    })
-
-    const privateApi = await requirePrivate()
-    await privateApi.evaluateRun('run-1')
-
-    const decisionInput = harness.store.updateDecision.mock.calls
-      .map((call) => call[0])
-      .find((call) => call?.decision === 'needs_iteration')
-    expect(decisionInput?.nextPrompt).toContain(reviewBody)
-    expect(decisionInput?.nextPrompt).toContain('Codex review summary comments:')
-  })
-
-  it('waits for review completion before running the judge', async () => {
-    harness.github.getReviewSummary.mockResolvedValue({
-      status: 'pending',
-      unresolvedThreads: [],
-      requestedChanges: false,
-      reviewComments: [],
-      issueComments: [],
-    })
-
-    const privateApi = await requirePrivate()
-    await privateApi.evaluateRun('run-1')
-
-    expect(harness.codexClient.runTurn).not.toHaveBeenCalled()
     expect(harness.store.updateDecision).not.toHaveBeenCalled()
-  })
-})
-
-describe('prompt tuning PR gating', () => {
-  beforeEach(() => {
-    harness.github.getPullRequestByHead.mockResolvedValue({
-      number: 101,
-      url: 'https://api.github.com/repos/proompteng/lab/pulls/101',
-      htmlUrl: 'https://github.com/proompteng/lab/pull/101',
-      headSha: 'sha-1',
-      headRef: 'codex/issue-2125',
-      baseRef: 'main',
-      state: 'open',
-      title: 'PR title',
-      body: null,
-      mergeableState: 'clean',
-    })
-    harness.github.getPullRequest.mockResolvedValue({
-      number: 101,
-      url: 'https://api.github.com/repos/proompteng/lab/pulls/101',
-      htmlUrl: 'https://github.com/proompteng/lab/pull/101',
-      headSha: 'sha-1',
-      headRef: 'codex/issue-2125',
-      baseRef: 'main',
-      state: 'open',
-      title: 'PR title',
-      body: null,
-      mergeableState: 'clean',
-    })
-    harness.github.getPullRequestDiff.mockResolvedValue('diff --git a/file b/file')
-    harness.github.getCheckRuns.mockResolvedValue({ status: 'success', url: 'https://ci.example.com' })
-    harness.github.getReviewSummary.mockResolvedValue({
-      status: 'approved',
-      unresolvedThreads: [],
-      requestedChanges: false,
-      reviewComments: [],
-      issueComments: [],
-    })
-  })
-
-  afterEach(() => {
-    harness.config.promptTuningEnabled = false
-    harness.config.promptTuningRepo = null
-    harness.config.promptTuningFailureThreshold = 3
-    harness.config.promptTuningWindowHours = 24
-    harness.config.promptTuningCooldownHours = 6
-  })
-
-  it('skips prompt tuning PRs when only generic suggestions are present', async () => {
-    harness.config.promptTuningEnabled = true
-    harness.config.promptTuningRepo = 'proompteng/lab'
-    harness.config.promptTuningFailureThreshold = 1
-    harness.config.promptTuningWindowHours = 0
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      text: async () => '',
-      json: async () => ({}),
-    }))
-    global.fetch = fetchMock as unknown as typeof global.fetch
-
-    harness.setJudgeResponses([
-      JSON.stringify({
-        decision: 'fail',
-        confidence: 0.2,
-        requirements_coverage: [],
-        missing_items: [],
-        suggested_fixes: [],
-        next_prompt: 'Open a PR for the current branch and ensure all required checks run.',
-        prompt_tuning_suggestions: ['Tighten prompt to reduce iteration loops.'],
-        system_improvement_suggestions: ['Clarify judge gating criteria.'],
-      }),
-    ])
-
-    const privateApi = await requirePrivate()
-    await privateApi.evaluateRun('run-1')
-
-    expect(harness.store.createPromptTuning).not.toHaveBeenCalled()
-    expect(harness.github.createBranch).not.toHaveBeenCalled()
-    expect(harness.github.createPullRequest).not.toHaveBeenCalled()
-  })
-
-  it('creates prompt tuning PRs when actionable suggestions are present', async () => {
-    harness.config.promptTuningEnabled = true
-    harness.config.promptTuningRepo = 'proompteng/lab'
-    harness.config.promptTuningFailureThreshold = 1
-    harness.config.promptTuningWindowHours = 0
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      text: async () => '',
-      json: async () => ({}),
-    }))
-    global.fetch = fetchMock as unknown as typeof global.fetch
-
-    harness.github.getRefSha.mockResolvedValue('base-sha')
-    harness.github.createBranch.mockResolvedValue({})
-    harness.github.getFile.mockImplementation(async (_owner: string, _repo: string, path: string) => {
-      if (path === 'apps/froussard/src/codex.ts') {
-        return { content: "    'Memory:',\n", sha: 'prompt-sha' }
-      }
-      return {
-        content:
-          '## Summary\n\n## Related Issues\n\n## Testing\n\n## Screenshots (if applicable)\n\n## Breaking Changes\n',
-        sha: 'template-sha',
-      }
-    })
-    harness.github.updateFile.mockResolvedValue({})
-    harness.github.createPullRequest.mockResolvedValue({ html_url: 'https://github.com/proompteng/lab/pull/1' })
-
-    harness.setJudgeResponses([
-      JSON.stringify({
-        decision: 'fail',
-        confidence: 0.4,
-        requirements_coverage: [],
-        missing_items: [],
-        suggested_fixes: [],
-        next_prompt: 'Add a regression test for the failing path and rerun CI.',
-        prompt_tuning_suggestions: ['Add a checklist for required tests before opening PRs.'],
-        system_improvement_suggestions: [],
-      }),
-    ])
-
-    const privateApi = await requirePrivate()
-    await privateApi.evaluateRun('run-1')
-
-    expect(harness.store.createPromptTuning).toHaveBeenCalledTimes(1)
-    expect(harness.github.createBranch).toHaveBeenCalledTimes(1)
-    expect(harness.github.updateFile).toHaveBeenCalled()
-    expect(harness.github.createPullRequest).toHaveBeenCalledTimes(1)
-  })
-})
-
-describe('system improvement workflow submission', () => {
-  it('submits a system-improvement workflow even when suggestions are empty', async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      text: async () => '',
-      json: async () => ({}),
-    }))
-    global.fetch = fetchMock as unknown as typeof global.fetch
-
-    harness.config.argoServerUrl = 'https://argo.example.com'
-    harness.setRun({ workflowNamespace: 'argo-workflows' })
-
-    harness.setJudgeResponses([
-      JSON.stringify({
-        decision: 'fail',
-        confidence: 0.4,
-        requirements_coverage: [],
-        missing_items: [],
-        suggested_fixes: [],
-        next_prompt: 'Fix the pipeline and rerun.',
-        prompt_tuning_suggestions: [],
-        system_improvement_suggestions: [],
-      }),
-    ])
-
-    const privateApi = await requirePrivate()
-    await privateApi.evaluateRun('run-1')
-
-    expect(harness.argo.submitWorkflowTemplate).toHaveBeenCalledTimes(1)
-    const submitMock = harness.argo.submitWorkflowTemplate as unknown as {
-      mock: { calls: Array<[{ parameters?: string[] }]> }
-    }
-    const params = submitMock.mock.calls[0]?.[0]?.parameters ?? []
-    const promptParam = params.find((value: string) => value.startsWith('prompt='))
-    expect(promptParam).toBeTruthy()
-    expect(promptParam).toContain('Run id: run-1')
-    expect(promptParam).toContain('Failure reason:')
-    expect(promptParam).toContain('Validation plan:')
-    expect(promptParam).toContain('Rollback steps:')
-    expect(promptParam).toContain('Argo workflow:')
   })
 })

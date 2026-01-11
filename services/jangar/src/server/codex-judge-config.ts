@@ -2,7 +2,6 @@ export type CodexJudgeConfig = {
   githubToken: string | null
   githubApiBaseUrl: string
   codexReviewers: string[]
-  judgeMode: 'argo' | 'local'
   ciEventStreamEnabled: boolean
   ciMaxWaitMs: number
   reviewMaxWaitMs: number
@@ -13,7 +12,6 @@ export type CodexJudgeConfig = {
   discordBotToken: string | null
   discordChannelId: string | null
   discordApiBaseUrl: string
-  judgeModel: string
   promptTuningEnabled: boolean
   promptTuningRepo: string | null
   promptTuningFailureThreshold: number
@@ -53,19 +51,10 @@ const parseNumber = (raw: string | undefined, fallback: number) => {
   return parsed
 }
 
-const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
-
-const parseJudgeMode = (raw: string | undefined) => {
-  const normalized = (raw ?? 'argo').trim().toLowerCase()
-  if (normalized === 'local' && isTestEnv) return 'local'
-  return 'argo'
-}
-
 export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
   const githubToken = (process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? '').trim() || null
   const githubApiBaseUrl = (process.env.GITHUB_API_BASE_URL ?? DEFAULT_GITHUB_API_BASE).trim()
   const codexReviewers = parseList(process.env.JANGAR_CODEX_REVIEWERS ?? process.env.CODEX_REVIEWERS)
-  const judgeMode = parseJudgeMode(process.env.JANGAR_CODEX_JUDGE_MODE)
   const ciEventStreamEnabled =
     (process.env.JANGAR_CI_EVENT_STREAM_ENABLED ?? process.env.JANGAR_GITHUB_EVENT_STREAM_ENABLED ?? 'false')
       .trim()
@@ -84,7 +73,6 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
   const discordBotToken = (process.env.DISCORD_BOT_TOKEN ?? '').trim() || null
   const discordChannelId = (process.env.DISCORD_SUCCESS_CHANNEL_ID ?? '').trim() || null
   const discordApiBaseUrl = (process.env.DISCORD_API_BASE_URL ?? DEFAULT_DISCORD_API_BASE).trim()
-  const judgeModel = (process.env.JANGAR_CODEX_JUDGE_MODEL ?? 'gpt-5.2-codex').trim()
   const promptTuningEnabled = (process.env.JANGAR_PROMPT_TUNING_ENABLED ?? 'true').trim().toLowerCase() === 'true'
   const promptTuningRepo = (process.env.JANGAR_PROMPT_TUNING_REPO ?? '').trim() || null
   const promptTuningFailureThreshold = parseNumber(process.env.JANGAR_PROMPT_TUNING_FAILURE_THRESHOLD, 3)
@@ -106,7 +94,6 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     githubToken,
     githubApiBaseUrl,
     codexReviewers,
-    judgeMode,
     ciEventStreamEnabled,
     ciMaxWaitMs,
     reviewMaxWaitMs,
@@ -117,7 +104,6 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     discordBotToken,
     discordChannelId,
     discordApiBaseUrl,
-    judgeModel,
     promptTuningEnabled,
     promptTuningRepo,
     promptTuningFailureThreshold,

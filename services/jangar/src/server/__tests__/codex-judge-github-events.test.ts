@@ -20,7 +20,6 @@ const globalState = globalThis as typeof globalThis & {
     githubToken: string | null
     githubApiBaseUrl: string
     codexReviewers: string[]
-    judgeMode: 'argo' | 'local'
     ciEventStreamEnabled: boolean
     ciMaxWaitMs: number
     reviewMaxWaitMs: number
@@ -31,7 +30,6 @@ const globalState = globalThis as typeof globalThis & {
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
-    judgeModel: string
     promptTuningEnabled: boolean
     promptTuningRepo: string | null
     promptTuningFailureThreshold: number
@@ -91,7 +89,6 @@ const configMock: NonNullable<typeof globalState.__codexJudgeConfigMock> = {
   githubToken: null,
   githubApiBaseUrl: 'https://api.github.com',
   codexReviewers: [],
-  judgeMode: 'local',
   ciEventStreamEnabled: true,
   ciMaxWaitMs: 10_000,
   reviewMaxWaitMs: 10_000,
@@ -102,7 +99,6 @@ const configMock: NonNullable<typeof globalState.__codexJudgeConfigMock> = {
   discordBotToken: null,
   discordChannelId: null,
   discordApiBaseUrl: 'https://discord.com/api/v10',
-  judgeModel: 'gpt-5.2-codex',
   promptTuningEnabled: false,
   promptTuningRepo: null,
   promptTuningFailureThreshold: 3,
