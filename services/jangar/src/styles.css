@@ -147,13 +147,18 @@
   }
 }
 
+.xterm {
+  width: 100%;
+  height: 100%;
+}
+
 .xterm .xterm-viewport {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in oklch, var(--border) 60%, transparent) transparent;
 }
 
 .xterm .xterm-viewport::-webkit-scrollbar {
-  width: 8px;
+  width: 6px;
   background: transparent;
 }
 
