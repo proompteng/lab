@@ -4,6 +4,22 @@
 @import "@fontsource-variable/jetbrains-mono";
 @import "@xterm/xterm/css/xterm.css";
 
+@font-face {
+  font-family: "JetBrains Mono Nerd Font";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url("./assets/fonts/JetBrainsMonoNerdFontMono-Regular.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "JetBrains Mono Nerd Font";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url("./assets/fonts/JetBrainsMonoNerdFontMono-Bold.ttf") format("truetype");
+}
+
 @custom-variant dark (&:is(.dark *));
 
 :root {
@@ -129,4 +145,37 @@
   html {
     @apply font-sans;
   }
+}
+
+.xterm {
+  width: 100%;
+  height: 100%;
+}
+
+.xterm .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--border) 60%, transparent) transparent;
+  scrollbar-gutter: stable;
+  margin: 0;
+  padding: 0;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar {
+  width: 4px;
+  background: transparent;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 0;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklch, var(--border) 60%, transparent);
+  border-radius: 999px;
+  border: 0;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar-corner {
+  background: transparent;
 }

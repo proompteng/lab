@@ -19,6 +19,8 @@ import { randomUuid } from '@/lib/uuid'
 
 const OUTPUT_FRAME_TYPE = 1
 const RECONNECT_STORAGE_KEY = 'jangar-terminal-reconnect'
+const TERMINAL_FONT_FAMILY =
+  '"JetBrains Mono Nerd Font", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
 
 const buildWsUrl = (
   baseUrl: string,
@@ -53,9 +55,16 @@ type TerminalViewProps = {
   terminalUrl?: string | null
   variant?: 'default' | 'fullscreen'
   reconnectToken?: string | null
+  className?: string
 }
 
-export function TerminalView({ sessionId, terminalUrl, variant = 'default', reconnectToken }: TerminalViewProps) {
+export function TerminalView({
+  sessionId,
+  terminalUrl,
+  variant = 'default',
+  reconnectToken,
+  className,
+}: TerminalViewProps) {
   const containerRef = React.useRef<HTMLDivElement | null>(null)
   const terminalRef = React.useRef<Terminal | null>(null)
   const fitRef = React.useRef<FitAddon | null>(null)
@@ -120,7 +129,7 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
     const terminal = new Terminal({
       allowProposedApi: true,
       allowTransparency: true,
-      fontFamily: 'JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+      fontFamily: TERMINAL_FONT_FAMILY,
       fontSize: 14,
       theme: { background: 'rgba(0,0,0,0)' },
       cursorBlink: true,
@@ -135,12 +144,6 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
     terminal.loadAddon(unicodeAddon)
     terminal.unicode.activeVersion = '11'
 
-    terminal.loadAddon(
-      new WebLinksAddon((_event, uri) => {
-        window.open(uri, '_blank', 'noopener,noreferrer')
-      }),
-    )
-
     const clipboardAddon = new ClipboardAddon()
     terminal.loadAddon(clipboardAddon)
 
@@ -150,32 +153,29 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
 
     terminal.loadAddon(new SerializeAddon())
 
-    try {
-      terminal.loadAddon(new LigaturesAddon())
-    } catch {
-      // ignore
-    }
-
-    try {
-      terminal.loadAddon(new ImageAddon())
-    } catch {
-      // ignore
-    }
-
     const rendererPreference = (() => {
       const params = new URLSearchParams(window.location.search)
       const query = params.get('renderer')?.toLowerCase()
-      if (query) return query
-      return window.localStorage.getItem('jangar-terminal-renderer') ?? 'dom'
+      const stored = window.localStorage.getItem('jangar-terminal-renderer')
+      if (query) return { value: query, fromQuery: true }
+      if (stored) return { value: stored, fromQuery: false }
+      return { value: 'canvas', fromQuery: false }
     })()
 
-    if (rendererPreference === 'webgl') {
+    const needsCanvasRenderer = rendererPreference.value === 'dom'
+    if (needsCanvasRenderer && !rendererPreference.fromQuery) {
+      window.localStorage.setItem('jangar-terminal-renderer', 'canvas')
+    }
+
+    const renderer = needsCanvasRenderer ? 'canvas' : rendererPreference.value
+
+    if (renderer === 'webgl') {
       try {
         terminal.loadAddon(new WebglAddon())
       } catch {
         terminal.loadAddon(new CanvasAddon())
       }
-    } else if (rendererPreference === 'canvas') {
+    } else if (renderer === 'canvas') {
       terminal.loadAddon(new CanvasAddon())
     }
 
@@ -229,8 +229,47 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
     })
 
     terminal.open(containerRef.current)
+
+    try {
+      terminal.loadAddon(
+        new LigaturesAddon({
+          fontFeatureSettings: '"calt" on, "liga" on',
+        }),
+      )
+    } catch {
+      // ignore
+    }
+
+    try {
+      terminal.loadAddon(new ImageAddon())
+    } catch {
+      // ignore
+    }
+    containerRef.current.style.fontFamily = TERMINAL_FONT_FAMILY
     fitAddon.fit()
     fitAddon.fit()
+    try {
+      terminal.loadAddon(
+        new WebLinksAddon((_event, uri) => {
+          window.open(uri, '_blank', 'noopener,noreferrer')
+        }),
+      )
+    } catch (err) {
+      console.warn('[terminal] failed to load WebLinks addon', err)
+    }
+    if ('fonts' in document) {
+      void document.fonts
+        .load(`14px ${TERMINAL_FONT_FAMILY}`)
+        .then(() => {
+          if (containerRef.current) {
+            containerRef.current.style.fontFamily = TERMINAL_FONT_FAMILY
+          }
+          terminal.options.fontFamily = TERMINAL_FONT_FAMILY
+          fitAddon.fit()
+          terminal.refresh(0, terminal.rows - 1)
+        })
+        .catch(() => {})
+    }
     if (containerRef.current) {
       containerRef.current.dataset.termCols = String(terminal.cols)
       containerRef.current.dataset.termRows = String(terminal.rows)
@@ -413,19 +452,9 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
       className={cn(
         'relative flex flex-col overflow-hidden h-full w-full bg-black',
         variant === 'default' && 'rounded-none border border-border',
+        className,
       )}
     >
-      {variant === 'default' ? (
-        <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs border-b border-border text-muted-foreground">
-          <span className="inline-flex items-center gap-2">
-            Status: {status}
-            {isConnecting ? (
-              <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
-            ) : null}
-          </span>
-          {error ? <span className="text-destructive">{error}</span> : null}
-        </div>
-      ) : null}
       <div
         ref={containerRef}
         className="flex flex-1 min-h-0 bg-transparent outline-none focus-within:ring-2 focus-within:ring-zinc-500/70 focus-within:ring-inset"
@@ -435,6 +464,11 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
         // biome-ignore lint/a11y/noNoninteractiveTabindex: xterm mounts its own input; container must be focusable.
         tabIndex={0}
       />
+      {error ? (
+        <div className="absolute inset-x-3 top-3 rounded-none border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {error}
+        </div>
+      ) : null}
       {isConnecting ? (
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-xs text-muted-foreground">
           <div className="flex items-center gap-2">
