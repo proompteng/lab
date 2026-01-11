@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { $ } from 'bun'
@@ -19,19 +19,14 @@ const fatal = (message: string, error?: unknown): never => {
 const repoRoot = resolve(import.meta.dir, '..')
 const defaultOutputPath = resolve(repoRoot, 'argocd/applications/jangar/github-token.yaml')
 
-const defaultEnvPath = resolve(repoRoot, '.env')
-const defaultEnvKey = 'GITHUB_API_TOKEN'
+const defaultOpGithubTokenPath = 'op://infra/pat/token'
 
 const printUsage = (): never => {
   console.log(`Usage: bun run scripts/generate-jangar-github-token-secret.ts [output-path]
 
-Reads the GitHub token from a .env file (defaults to ${defaultEnvPath}, key ${defaultEnvKey}),
+Reads the GitHub token from 1Password (override with JANGAR_GITHUB_TOKEN_OP_PATH),
 seals it with kubeseal, and writes the SealedSecret manifest to argocd/applications/jangar/github-token.yaml
 by default.
-
-Overrides:
-  JANGAR_GITHUB_TOKEN_ENV_FILE  Path to the .env file containing the token
-  JANGAR_GITHUB_TOKEN_ENV_KEY   Environment key to read from the .env file
 `)
   process.exit(0)
 }
@@ -54,8 +49,7 @@ if (maybeOutput?.startsWith('-')) {
 
 const outputPath = resolve(maybeOutput ?? defaultOutputPath)
 
-const envFilePath = process.env.JANGAR_GITHUB_TOKEN_ENV_FILE ?? defaultEnvPath
-const envKey = process.env.JANGAR_GITHUB_TOKEN_ENV_KEY ?? defaultEnvKey
+const opGithubTokenPath = process.env.JANGAR_GITHUB_TOKEN_OP_PATH ?? defaultOpGithubTokenPath
 const sealedControllerName = process.env.SEALED_SECRETS_CONTROLLER_NAME ?? 'sealed-secrets'
 const sealedControllerNamespace = process.env.SEALED_SECRETS_CONTROLLER_NAMESPACE ?? 'sealed-secrets'
 
@@ -72,57 +66,23 @@ const ensureCli = (binary: string) => {
 const shellEscape = (value: string) => value.replaceAll("'", "'\\''")
 const quote = (value: string) => `'${shellEscape(value)}'`
 
+ensureCli('op')
 ensureCli('kubectl')
 ensureCli('kubeseal')
 
-const parseEnvValue = (content: string, key: string): string | null => {
-  const lines = content.split(/\r?\n/)
-  for (const raw of lines) {
-    let line = raw.trim()
-    if (!line || line.startsWith('#')) continue
-    if (line.startsWith('export ')) line = line.slice('export '.length).trim()
-    const eqIndex = line.indexOf('=')
-    if (eqIndex <= 0) continue
-    const name = line.slice(0, eqIndex).trim()
-    if (name !== key) continue
-    let value = line.slice(eqIndex + 1).trim()
-    if (!value) return ''
-    const quoteChar = value[0]
-    if ((quoteChar === '"' || quoteChar === "'") && value.endsWith(quoteChar)) {
-      value = value.slice(1, -1)
-      if (quoteChar === '"') {
-        value = value.replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\"/g, '"').replace(/\\\\/g, '\\')
-      }
-      return value
-    }
-    const hashIndex = value.indexOf('#')
-    if (hashIndex >= 0) {
-      value = value.slice(0, hashIndex).trim()
-    }
-    return value
-  }
-  return null
-}
-
-const readEnvToken = (path: string, key: string): string => {
-  let content: string
+const readSecret = async (path: string): Promise<string> => {
   try {
-    content = readFileSync(path, 'utf8')
+    const result = await $`op read ${path}`.text()
+    return result.replace(/\r?\n/g, '')
   } catch (error) {
-    fatal(`Failed to read .env file at ${path}`, error)
+    fatal(`Failed to read secret from 1Password path: ${path}`, error)
   }
-
-  const value = parseEnvValue(content, key)
-  if (value === null) {
-    fatal(`Missing ${key} in ${path}`)
-  }
-  return value.replace(/\r?\n/g, '')
 }
 
-const githubToken = readEnvToken(envFilePath, envKey)
+const githubToken = await readSecret(opGithubTokenPath)
 
 if (!githubToken) {
-  fatal(`GitHub token is empty. Check ${envKey} in ${envFilePath}`)
+  fatal(`GitHub token is empty. Check 1Password path: ${opGithubTokenPath}`)
 }
 
 const tempDir = mkdtempSync(join(tmpdir(), 'jangar-github-token-'))
