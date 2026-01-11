@@ -421,26 +421,16 @@ RUN cat <<'ENTRY' > /usr/local/bin/entrypoint.sh \
   && chmod +x /usr/local/bin/entrypoint.sh
 #!/bin/bash
 set -euo pipefail
-if [ -z "${GH_CONFIG_DIR:-}" ]; then
-  if [ -n "${GH_HOST_CONFIG_DIR:-}" ] && [ -d "${GH_HOST_CONFIG_DIR}" ]; then
-    export GH_CONFIG_DIR="${GH_HOST_CONFIG_DIR}"
-  elif [ -d "/host/.config/gh" ]; then
-    export GH_CONFIG_DIR="/host/.config/gh"
-  elif [ -d "/workspace/.config/gh" ]; then
-    export GH_CONFIG_DIR="/workspace/.config/gh"
-  fi
+if [ -z "${GH_TOKEN:-}" ] && [ -n "${GITHUB_TOKEN:-}" ]; then
+  export GH_TOKEN="${GITHUB_TOKEN}"
 fi
-if gh auth status -h github.com >/dev/null 2>&1; then
+if [ -n "${GH_TOKEN:-}" ]; then
   gh auth setup-git >/dev/null 2>&1 || true
-  token="$(gh auth token -h github.com 2>/dev/null || true)"
-  if [ -n "${token}" ]; then
-    export GH_TOKEN="${token}"
-  fi
   if ! gh auth status -t 2>/dev/null | grep -q "workflow"; then
     echo "WARNING: GitHub token is missing workflow scope; pushes to .github/workflows/** will fail." >&2
   fi
 else
-  echo "WARNING: gh is not authenticated. Mount host gh config (e.g. /host/.config/gh) for GitHub access." >&2
+  echo "WARNING: GITHUB_TOKEN is not set; GitHub operations may fail." >&2
 fi
 mkdir -p "$VSCODE_DATA_DIR" "$VSCODE_DEFAULT_FOLDER"
 # Start OpenVSCode in background; exit container if it dies

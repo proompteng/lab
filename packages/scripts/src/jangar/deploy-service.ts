@@ -7,7 +7,6 @@ import { join, resolve } from 'node:path'
 
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
 import { inspectImageDigest } from '../shared/docker'
-import { resolveGitHubToken } from '../shared/github'
 import { execGit } from '../shared/git'
 import { buildImage } from './build-image'
 
@@ -21,14 +20,11 @@ type DeployOptions = {
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-const ensureGhToken = async (): Promise<string> => {
-  const { token } = await resolveGitHubToken({
-    requireWorkflow: true,
-    userAgent: 'jangar-deploy-service',
-    skipScopeCheckEnv: ['JANGAR_SKIP_GH_SCOPE_CHECK', 'SKIP_GH_SCOPE_CHECK'],
-  })
-  process.env.GH_TOKEN = token
-  return token
+const ensureGhTokenEnv = () => {
+  const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
+  if (token && !process.env.GH_TOKEN) {
+    process.env.GH_TOKEN = token
+  }
 }
 
 const capture = async (cmd: string[], env?: Record<string, string | undefined>): Promise<string> => {
@@ -190,8 +186,7 @@ export const main = async (options: DeployOptions = {}) => {
   ensureCli('kubectl')
   ensureCli('curl')
   ensureCli('tar')
-  ensureCli('gh')
-  await ensureGhToken()
+  ensureGhTokenEnv()
 
   const registry = options.registry ?? process.env.JANGAR_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = options.repository ?? process.env.JANGAR_IMAGE_REPOSITORY ?? 'lab/jangar'

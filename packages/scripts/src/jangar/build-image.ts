@@ -6,7 +6,6 @@ import { resolve } from 'node:path'
 
 import { ensureCli, repoRoot, run } from '../shared/cli'
 import { buildAndPushDockerImage } from '../shared/docker'
-import { resolveGitHubToken } from '../shared/github'
 import { execGit } from '../shared/git'
 
 export type BuildImageOptions = {
@@ -21,18 +20,11 @@ export type BuildImageOptions = {
   cacheRef?: string
 }
 
-const ensureGhToken = async (): Promise<string> => {
-  const { token, source } = await resolveGitHubToken({
-    requireWorkflow: true,
-    userAgent: 'jangar-build-image',
-    skipScopeCheckEnv: ['JANGAR_SKIP_GH_SCOPE_CHECK', 'SKIP_GH_SCOPE_CHECK'],
-  })
-
-  process.env.GH_TOKEN = token
-  if (source !== 'env') {
-    console.log(`Using GitHub token from ${source}.`)
+const ensureGhTokenEnv = () => {
+  const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
+  if (token && !process.env.GH_TOKEN) {
+    process.env.GH_TOKEN = token
   }
-  return token
 }
 
 const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void }> => {
@@ -75,8 +67,8 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
     options.codexAuthPath ?? process.env.CODEX_AUTH_PATH ?? resolve(process.env.HOME ?? '', '.codex/auth.json')
   const cacheRef = options.cacheRef ?? process.env.JANGAR_BUILD_CACHE_REF ?? `${registry}/${repository}:buildcache`
 
-  // Ensure GH_TOKEN is available (with workflow scope) so docker --secret succeeds.
-  await ensureGhToken()
+  // Ensure GH_TOKEN is available when GITHUB_TOKEN is set so docker --secret succeeds.
+  ensureGhTokenEnv()
 
   let context: string
   let pruneCleanup: (() => void) | undefined
