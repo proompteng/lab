@@ -38,11 +38,11 @@ RUN --mount=target=. \
     --mount=type=cache,target=/root/.cache/go-build \
     GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /function .
 
-# Produce the Function image. We use a very lightweight 'distroless' image that
-# does not include any of the build tools used in previous stages.
-FROM gcr.io/distroless/static-debian12:nonroot AS image
+# Produce the Function image. The binary is static, so we can use scratch to
+# avoid foreign layers in downstream registries.
+FROM scratch AS image
 WORKDIR /
 COPY --from=build /function /function
 EXPOSE 9443
-USER nonroot:nonroot
+USER 65532:65532
 ENTRYPOINT ["/function"]
