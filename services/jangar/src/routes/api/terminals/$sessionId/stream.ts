@@ -23,11 +23,9 @@ const jsonResponse = (payload: unknown, status = 200) => {
 
 const streamHandler = async (sessionId: string, _request: Request) => {
   if (isTerminalBackendProxyEnabled()) {
-    const response = await fetchTerminalBackend(
-      `api/terminals/${encodeURIComponent(sessionId)}/stream`,
-      { method: 'GET' },
-      0,
-    )
+    const response = await fetchTerminalBackend(`api/terminals/${encodeURIComponent(sessionId)}/stream`, {
+      method: 'GET',
+    })
     return response
   }
 
