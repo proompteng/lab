@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFile, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
@@ -47,14 +46,6 @@ export const runBuildCodexImage = async () => {
 
   const checksum = await computeChecksum(codexAuthPath)
 
-  const githubToken = process.env.GITHUB_TOKEN
-  if (!githubToken) {
-    throw new Error('GITHUB_TOKEN is required to build the codex image.')
-  }
-  const tempDir = await mkdtemp(join(tmpdir(), 'codex-build-'))
-  const ghTokenFile = join(tempDir, 'gh_token')
-  await writeFile(ghTokenFile, githubToken, { encoding: 'utf8', mode: 0o600 })
-
   process.env.DOCKER_BUILDKIT = process.env.DOCKER_BUILDKIT ?? '1'
 
   const dockerfilePath = join('apps/froussard', 'Dockerfile.codex')
@@ -62,13 +53,12 @@ export const runBuildCodexImage = async () => {
   try {
     console.log(`Building ${imageTag} from ${dockerfile}`)
     process.chdir(repoDir)
-    await $`docker build -f ${dockerfilePath} --build-arg CODEX_AUTH_CHECKSUM=${checksum} --secret id=codex_auth,src=${codexAuthPath} --secret id=codex_config,src=${codexConfigPath} --secret id=github_token,src=${ghTokenFile} -t ${imageTag} ${contextDir}`
+    await $`docker build -f ${dockerfilePath} --build-arg CODEX_AUTH_CHECKSUM=${checksum} --secret id=codex_auth,src=${codexAuthPath} --secret id=codex_config,src=${codexConfigPath} -t ${imageTag} ${contextDir}`
 
     console.log(`Pushing ${imageTag}`)
     await $`docker push ${imageTag}`
   } finally {
     process.chdir(previousCwd)
-    await rm(tempDir, { recursive: true, force: true })
   }
 
   return { imageTag }

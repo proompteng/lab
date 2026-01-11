@@ -70,7 +70,6 @@ describe('runBuildCodexImage', () => {
     process.env.CONTEXT_DIR = resolve(workspace, '..')
     process.env.CODEX_AUTH = authFile
     process.env.CODEX_CONFIG = configFile
-    process.env.GITHUB_TOKEN = 'token'
 
     execMock.mockClear()
   })
