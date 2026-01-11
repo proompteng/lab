@@ -3,5 +3,5 @@ kind: Function
 metadata:
   name: function-memory-connection
 spec:
-  package: registry.ide-newton.ts.net/lab/function-memory-connection:latest
+  package: registry.ide-newton.ts.net/lab/function-memory-connection:20260111
   packagePullPolicy: Always

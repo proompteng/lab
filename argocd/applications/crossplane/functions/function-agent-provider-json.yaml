@@ -3,5 +3,5 @@ kind: Function
 metadata:
   name: function-agent-provider-json
 spec:
-  package: registry.ide-newton.ts.net/lab/function-agent-provider-json:latest
+  package: registry.ide-newton.ts.net/lab/function-agent-provider-json:20260111
   packagePullPolicy: Always
