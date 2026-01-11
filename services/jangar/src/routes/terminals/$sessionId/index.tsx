@@ -129,8 +129,121 @@ function TerminalSessionPage() {
           </div>
         ) : (
           <div className="flex min-w-0 flex-1 flex-col gap-2">
-            <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Terminal session</p>
-            <h1 className="text-lg font-semibold">{session?.label ?? sessionId}</h1>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h1 className="text-lg font-semibold">{session?.label ?? sessionId}</h1>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="outline" render={<Link to="/terminals" />}>
+                  All sessions
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={!session}
+                  onClick={() => {
+                    if (!session) return
+                    const target = `/terminals/${encodeURIComponent(session.id)}/fullscreen`
+                    window.open(target, '_blank', 'noopener,noreferrer')
+                  }}
+                >
+                  Open fullscreen
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={isTerminating || session?.status !== 'ready'}
+                  onClick={async () => {
+                    if (!session) return
+                    setIsTerminating(true)
+                    setError(null)
+                    try {
+                      const response = await fetch(`/api/terminals/${encodeURIComponent(session.id)}/terminate`, {
+                        method: 'POST',
+                      })
+                      const payload = (await response.json().catch(() => null)) as {
+                        ok?: boolean
+                        message?: string
+                      } | null
+                      if (!response.ok || !payload?.ok) {
+                        throw new Error(payload?.message ?? 'Unable to terminate session.')
+                      }
+                      window.dispatchEvent(new Event('terminals:refresh'))
+                      await navigate({ to: '/terminals' })
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : 'Unable to terminate session.')
+                    } finally {
+                      setIsTerminating(false)
+                    }
+                  }}
+                >
+                  {isTerminating ? 'Terminating...' : 'Terminate session'}
+                </Button>
+                {(session?.status === 'closed' || session?.status === 'error') && (
+                  <AlertDialog>
+                    <AlertDialogTrigger
+                      render={
+                        <Button variant="outline" disabled={isDeleting}>
+                          {isDeleting ? 'Deleting...' : 'Delete session'}
+                        </Button>
+                      }
+                    />
+                    <AlertDialogContent size="sm">
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Delete terminal session?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This permanently removes the session record and deletes its worktree files. This action cannot
+                          be undone.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel size="sm" className="min-w-[96px]">
+                          Cancel
+                        </AlertDialogCancel>
+                        <AlertDialogAction
+                          variant="destructive"
+                          size="sm"
+                          className="min-w-[96px]"
+                          onClick={async () => {
+                            if (!session) return
+                            setIsDeleting(true)
+                            setError(null)
+                            try {
+                              const response = await fetch(`/api/terminals/${encodeURIComponent(session.id)}/delete`, {
+                                method: 'POST',
+                              })
+                              const payload = (await response.json().catch(() => null)) as {
+                                ok?: boolean
+                                message?: string
+                              } | null
+                              if (!response.ok || !payload?.ok) {
+                                throw new Error(payload?.message ?? 'Unable to delete session.')
+                              }
+                              window.dispatchEvent(new Event('terminals:refresh'))
+                              toast.success('Terminal session deleted.')
+                              await navigate({ to: '/terminals' })
+                            } catch (err) {
+                              setError(err instanceof Error ? err.message : 'Unable to delete terminal session.')
+                              toast.error('Failed to delete terminal session.')
+                            } finally {
+                              setIsDeleting(false)
+                            }
+                          }}
+                        >
+                          Delete
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                )}
+                <Button variant="outline" onClick={loadSession} disabled={isLoading}>
+                  {isLoading ? (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
+                      Refreshing...
+                    </span>
+                  ) : (
+                    'Refresh'
+                  )}
+                </Button>
+              </div>
+            </div>
             <div className="text-xs text-muted-foreground">
               {session?.worktreePath ? `Worktree: ${session.worktreePath}` : 'Worktree path unavailable'}
             </div>
@@ -152,115 +265,6 @@ function TerminalSessionPage() {
             </div>
           </div>
         )}
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" render={<Link to="/terminals" />}>
-            All sessions
-          </Button>
-          <Button
-            variant="secondary"
-            disabled={!session}
-            onClick={() => {
-              if (!session) return
-              const target = `/terminals/${encodeURIComponent(session.id)}/fullscreen`
-              window.open(target, '_blank', 'noopener,noreferrer')
-            }}
-          >
-            Open fullscreen
-          </Button>
-          <Button
-            variant="destructive"
-            disabled={isTerminating || session?.status !== 'ready'}
-            onClick={async () => {
-              if (!session) return
-              setIsTerminating(true)
-              setError(null)
-              try {
-                const response = await fetch(`/api/terminals/${encodeURIComponent(session.id)}/terminate`, {
-                  method: 'POST',
-                })
-                const payload = (await response.json().catch(() => null)) as { ok?: boolean; message?: string } | null
-                if (!response.ok || !payload?.ok) {
-                  throw new Error(payload?.message ?? 'Unable to terminate session.')
-                }
-                window.dispatchEvent(new Event('terminals:refresh'))
-                await navigate({ to: '/terminals' })
-              } catch (err) {
-                setError(err instanceof Error ? err.message : 'Unable to terminate session.')
-              } finally {
-                setIsTerminating(false)
-              }
-            }}
-          >
-            {isTerminating ? 'Terminating...' : 'Terminate session'}
-          </Button>
-          {(session?.status === 'closed' || session?.status === 'error') && (
-            <AlertDialog>
-              <AlertDialogTrigger
-                render={
-                  <Button variant="outline" disabled={isDeleting}>
-                    {isDeleting ? 'Deleting...' : 'Delete session'}
-                  </Button>
-                }
-              />
-              <AlertDialogContent size="sm">
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete terminal session?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This permanently removes the session record and deletes its worktree files. This action cannot be
-                    undone.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel size="sm" className="min-w-[96px]">
-                    Cancel
-                  </AlertDialogCancel>
-                  <AlertDialogAction
-                    variant="destructive"
-                    size="sm"
-                    className="min-w-[96px]"
-                    onClick={async () => {
-                      if (!session) return
-                      setIsDeleting(true)
-                      setError(null)
-                      try {
-                        const response = await fetch(`/api/terminals/${encodeURIComponent(session.id)}/delete`, {
-                          method: 'POST',
-                        })
-                        const payload = (await response.json().catch(() => null)) as {
-                          ok?: boolean
-                          message?: string
-                        } | null
-                        if (!response.ok || !payload?.ok) {
-                          throw new Error(payload?.message ?? 'Unable to delete session.')
-                        }
-                        window.dispatchEvent(new Event('terminals:refresh'))
-                        toast.success('Terminal session deleted.')
-                        await navigate({ to: '/terminals' })
-                      } catch (err) {
-                        setError(err instanceof Error ? err.message : 'Unable to delete session.')
-                        toast.error('Failed to delete terminal session.')
-                      } finally {
-                        setIsDeleting(false)
-                      }
-                    }}
-                  >
-                    Delete
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          )}
-          <Button variant="outline" onClick={loadSession} disabled={isLoading}>
-            {isLoading ? (
-              <span className="inline-flex items-center gap-2">
-                <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
-                Refreshing...
-              </span>
-            ) : (
-              'Refresh'
-            )}
-          </Button>
-        </div>
       </header>
 
       {error ? (
