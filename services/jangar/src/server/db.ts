@@ -465,6 +465,49 @@ type WorkflowCommsAgentMessage = {
   created_at: Generated<Timestamp>
 }
 
+type JangarAgentRuns = {
+  id: Generated<string>
+  agent_name: string
+  delivery_id: string
+  provider: string
+  status: string
+  external_run_id: string | null
+  payload: JsonValue
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
+type JangarMemoryResources = {
+  id: Generated<string>
+  memory_name: string
+  provider: string
+  status: string
+  connection_secret: JsonValue | null
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
+type JangarOrchestrationRuns = {
+  id: Generated<string>
+  orchestration_name: string
+  delivery_id: string
+  provider: string
+  status: string
+  external_run_id: string | null
+  payload: JsonValue
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
+type JangarAuditEvents = {
+  id: Generated<string>
+  entity_type: string
+  entity_id: string
+  event_type: string
+  payload: JsonValue
+  created_at: Generated<Timestamp>
+}
+
 export type Database = {
   'atlas.repositories': AtlasRepositories
   'atlas.file_keys': AtlasFileKeys
@@ -493,6 +536,10 @@ export type Database = {
   'jangar_github.pr_files': JangarGithubPrFiles
   'jangar_github.pr_worktrees': JangarGithubPrWorktrees
   'jangar_github.write_actions': JangarGithubWriteActions
+  agent_runs: JangarAgentRuns
+  memory_resources: JangarMemoryResources
+  orchestration_runs: JangarOrchestrationRuns
+  audit_events: JangarAuditEvents
   'codex_judge.runs': CodexJudgeRuns
   'codex_judge.artifacts': CodexJudgeArtifacts
   'codex_judge.evaluations': CodexJudgeEvaluations

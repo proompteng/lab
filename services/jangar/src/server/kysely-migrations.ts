@@ -10,6 +10,7 @@ import * as terminalSessionsMigration from '~/server/migrations/20260102_termina
 import * as jangarGithubPrReviewMigration from '~/server/migrations/20260103_jangar_github_pr_review'
 import * as jangarGithubWorktreesMigration from '~/server/migrations/20260104_jangar_github_worktrees'
 import * as codexJudgeIterationsMigration from '~/server/migrations/20260105_codex_judge_iterations'
+import * as jangarPrimitivesMigration from '~/server/migrations/20260111_jangar_primitives'
 
 type MigrationMap = Record<string, Migration>
 
@@ -33,6 +34,7 @@ const migrations: MigrationMap = {
   '20260103_jangar_github_pr_review': jangarGithubPrReviewMigration,
   '20260104_jangar_github_worktrees': jangarGithubWorktreesMigration,
   '20260105_codex_judge_iterations': codexJudgeIterationsMigration,
+  '20260111_jangar_primitives': jangarPrimitivesMigration,
 }
 
 const migrationProvider = new StaticMigrationProvider(migrations)
