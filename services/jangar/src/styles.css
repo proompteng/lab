@@ -149,18 +149,22 @@
 
 .xterm .xterm-viewport {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in oklch, var(--border) 70%, transparent) transparent;
+  scrollbar-color: color-mix(in oklch, var(--border) 60%, transparent) transparent;
 }
 
 .xterm .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+  background: transparent;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar-track {
   background: transparent;
 }
 
 .xterm .xterm-viewport::-webkit-scrollbar-thumb {
-  background-color: color-mix(in oklch, var(--border) 70%, transparent);
+  background-color: color-mix(in oklch, var(--border) 60%, transparent);
   border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: content-box;
+  border: 0;
 }
 
 .xterm .xterm-viewport::-webkit-scrollbar-corner {
