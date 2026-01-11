@@ -9,7 +9,11 @@ JANGAR_DB_NAME="${JANGAR_DB_NAME:-jangar}"
 FACTEUR_DB_CLUSTER="${FACTEUR_DB_CLUSTER:-facteur-vector-cluster}"
 FACTEUR_DB_NAME="${FACTEUR_DB_NAME:-facteur_kb}"
 MEMORY_SCHEMA="${MEMORY_SCHEMA:-jangar_primitives}"
-CNPG_FLAGS=(${CNPG_FLAGS:-})
+CNPG_FLAGS_RAW="${CNPG_FLAGS:-}"
+CNPG_FLAGS=()
+if [ -n "${CNPG_FLAGS_RAW}" ]; then
+  read -r -a CNPG_FLAGS <<< "${CNPG_FLAGS_RAW}"
+fi
 if [ "${#CNPG_FLAGS[@]}" -eq 0 ]; then
   CNPG_FLAGS=(--tty=false --stdin=false)
 fi
