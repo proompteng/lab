@@ -240,12 +240,16 @@ export function TerminalView({ sessionId, terminalUrl, variant = 'default', reco
     })
 
     terminal.open(containerRef.current)
+    containerRef.current.style.fontFamily = TERMINAL_FONT_FAMILY
     fitAddon.fit()
     fitAddon.fit()
     if ('fonts' in document) {
       void document.fonts
         .load(`14px ${TERMINAL_FONT_FAMILY}`)
         .then(() => {
+          if (containerRef.current) {
+            containerRef.current.style.fontFamily = TERMINAL_FONT_FAMILY
+          }
           terminal.options.fontFamily = TERMINAL_FONT_FAMILY
           fitAddon.fit()
           terminal.refresh(0, terminal.rows - 1)
