@@ -128,7 +128,7 @@ function TerminalSessionPage() {
             <Skeleton className="h-3 w-24" />
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
             <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Terminal session</p>
             <h1 className="text-lg font-semibold">{session?.label ?? sessionId}</h1>
             <div className="text-xs text-muted-foreground">
@@ -137,7 +137,7 @@ function TerminalSessionPage() {
             <div className="text-xs text-muted-foreground">
               Created {formatDateTime(session?.createdAt ?? null)} - {session?.attached ? 'Attached' : 'Detached'}
             </div>
-            <div className={`text-xs flex items-center gap-2 ${statusTone}`}>
+            <div className={`flex w-full items-center gap-2 text-xs ${statusTone}`}>
               {statusLabel === 'creating' ? (
                 <span className="inline-flex items-center gap-2">
                   <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
@@ -146,7 +146,7 @@ function TerminalSessionPage() {
               ) : (
                 statusLabel
               )}
-              <span className={`h-2 w-2 rounded-full ${statusDot}`} />
+              <span className={`ml-auto h-2 w-2 rounded-full ${statusDot}`} />
             </div>
           </div>
         )}
