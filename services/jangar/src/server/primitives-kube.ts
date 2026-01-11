@@ -56,8 +56,13 @@ const notFound = (error: unknown) => {
 
 export const createKubernetesClient = (): KubernetesClient => ({
   apply: async (resource) => {
-    const output = await kubectl(['apply', '-f', '-', '-o', 'json'], JSON.stringify(resource), 'kubectl apply')
-    return parseJson(output, 'kubectl apply')
+    const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+    const generateName = typeof metadata.generateName === 'string' ? metadata.generateName.trim() : ''
+    const name = typeof metadata.name === 'string' ? metadata.name.trim() : ''
+    const useCreate = generateName.length > 0 && name.length === 0
+    const command = useCreate ? 'create' : 'apply'
+    const output = await kubectl([command, '-f', '-', '-o', 'json'], JSON.stringify(resource), `kubectl ${command}`)
+    return parseJson(output, `kubectl ${command}`)
   },
   get: async (resource, name, namespace) => {
     try {
