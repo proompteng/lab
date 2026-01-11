@@ -54,3 +54,4 @@ Relevant live services in the current GitOps manifests include:
 - `ci-and-packaging.md`
 - `jangar-implementation.md`
 - `ci-workflows.md`
+- `production-validation.md`
