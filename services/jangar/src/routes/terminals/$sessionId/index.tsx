@@ -138,7 +138,6 @@ function TerminalSessionPage() {
               Created {formatDateTime(session?.createdAt ?? null)} - {session?.attached ? 'Attached' : 'Detached'}
             </div>
             <div className={`text-xs flex items-center gap-2 ${statusTone}`}>
-              <span className={`h-2 w-2 rounded-full ${statusDot}`} />
               {statusLabel === 'creating' ? (
                 <span className="inline-flex items-center gap-2">
                   <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
@@ -147,6 +146,7 @@ function TerminalSessionPage() {
               ) : (
                 statusLabel
               )}
+              <span className={`h-2 w-2 rounded-full ${statusDot}`} />
             </div>
           </div>
         )}
