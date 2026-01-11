@@ -88,7 +88,7 @@ jobs:
         run: go test ./...
   build-main:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: self-hosted
+    runs-on: arc-arm64
     steps:
       - uses: actions/checkout@v4
       - name: Install Crossplane CLI
