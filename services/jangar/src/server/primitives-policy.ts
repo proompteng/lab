@@ -7,6 +7,55 @@ const asArray = (value: unknown): string[] => {
 
 const asString = (value: unknown) => (typeof value === 'string' && value.trim().length > 0 ? value.trim() : null)
 
+const parseNumber = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const parsed = Number.parseFloat(trimmed)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+const parseQuantity = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const match = trimmed.match(/^(-?\d+(?:\.\d+)?)([a-zA-Z]+)?$/)
+  if (!match) return null
+  const amount = Number.parseFloat(match[1] ?? '')
+  if (!Number.isFinite(amount)) return null
+  const suffix = match[2] ?? ''
+  if (!suffix) return amount
+  if (suffix === 'm') return amount / 1000
+
+  const binary = {
+    Ki: 1024,
+    Mi: 1024 ** 2,
+    Gi: 1024 ** 3,
+    Ti: 1024 ** 4,
+    Pi: 1024 ** 5,
+    Ei: 1024 ** 6,
+  } as const
+  const decimal = {
+    K: 1000,
+    M: 1000 ** 2,
+    G: 1000 ** 3,
+    T: 1000 ** 4,
+    P: 1000 ** 5,
+    E: 1000 ** 6,
+  } as const
+
+  if (suffix in binary) {
+    return amount * binary[suffix as keyof typeof binary]
+  }
+  if (suffix in decimal) {
+    return amount * decimal[suffix as keyof typeof decimal]
+  }
+
+  return amount
+}
+
 const readNested = (obj: Record<string, unknown>, path: string[]) => {
   let cursor: unknown = obj
   for (const key of path) {
@@ -28,7 +77,14 @@ export const validateApprovalPolicies = async (namespace: string, policies: stri
   const missing: string[] = []
   for (const policy of policies) {
     const resource = await kube.get(RESOURCE_MAP.ApprovalPolicy, policy, namespace)
-    if (!resource) missing.push(policy)
+    if (!resource) {
+      missing.push(policy)
+      continue
+    }
+    const phase = asString(readNested(resource, ['status', 'phase']))?.toLowerCase()
+    if (phase && ['denied', 'rejected', 'blocked', 'failed'].includes(phase)) {
+      throw new Error(`approval policy ${policy} is ${phase}`)
+    }
   }
   if (missing.length > 0) {
     throw new Error(`approval policies not found: ${missing.join(', ')}`)
@@ -39,6 +95,44 @@ export const validateBudget = async (namespace: string, budgetRef: string, kube:
   const budget = await kube.get(RESOURCE_MAP.Budget, budgetRef, namespace)
   if (!budget) {
     throw new Error(`budget not found: ${budgetRef}`)
+  }
+
+  const phase = asString(readNested(budget, ['status', 'phase']))?.toLowerCase()
+  if (phase && ['exceeded', 'blocked', 'failed', 'denied'].includes(phase)) {
+    throw new Error(`budget ${budgetRef} is ${phase}`)
+  }
+
+  const limits = (readNested(budget, ['spec', 'limits']) ?? {}) as Record<string, unknown>
+  const used = (readNested(budget, ['status', 'used']) ?? {}) as Record<string, unknown>
+
+  const tokensLimit = parseNumber(limits.tokens)
+  const tokensUsed = parseNumber(used.tokens)
+  if (tokensLimit != null && tokensUsed != null && tokensUsed > tokensLimit) {
+    throw new Error(`budget ${budgetRef} tokens exceeded (${tokensUsed}/${tokensLimit})`)
+  }
+
+  const dollarsLimit = parseNumber(limits.dollars)
+  const dollarsUsed = parseNumber(used.dollars)
+  if (dollarsLimit != null && dollarsUsed != null && dollarsUsed > dollarsLimit) {
+    throw new Error(`budget ${budgetRef} dollars exceeded (${dollarsUsed}/${dollarsLimit})`)
+  }
+
+  const cpuLimit = parseQuantity(limits.cpu)
+  const cpuUsed = parseQuantity(used.cpu)
+  if (cpuLimit != null && cpuUsed != null && cpuUsed > cpuLimit) {
+    throw new Error(`budget ${budgetRef} cpu exceeded (${used.cpu}/${limits.cpu})`)
+  }
+
+  const memoryLimit = parseQuantity(limits.memory)
+  const memoryUsed = parseQuantity(used.memory)
+  if (memoryLimit != null && memoryUsed != null && memoryUsed > memoryLimit) {
+    throw new Error(`budget ${budgetRef} memory exceeded (${used.memory}/${limits.memory})`)
+  }
+
+  const gpuLimit = parseQuantity(limits.gpu)
+  const gpuUsed = parseQuantity(used.gpu)
+  if (gpuLimit != null && gpuUsed != null && gpuUsed > gpuLimit) {
+    throw new Error(`budget ${budgetRef} gpu exceeded (${used.gpu}/${limits.gpu})`)
   }
 }
 

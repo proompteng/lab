@@ -8,6 +8,7 @@ import {
   normalizeNamespace,
   okResponse,
   parseJsonBody,
+  readNested,
   requireIdempotencyKey,
 } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
@@ -106,6 +107,20 @@ export const postAgentRunsHandler = async (
     const payload = await parseJsonBody(request)
     const parsed = parseAgentRunPayload(payload)
 
+    await store.ready
+    const existing = await store.getAgentRunByDeliveryId(deliveryId)
+    if (existing) {
+      const resourceNamespace =
+        asString(readNested(existing.payload, ['resource', 'metadata', 'namespace'])) ??
+        asString(readNested(existing.payload, ['request', 'namespace'])) ??
+        parsed.namespace
+      const kube = deps.kubeClient ?? createKubernetesClient()
+      const resource = existing.externalRunId
+        ? await kube.get(RESOURCE_MAP.AgentRun, existing.externalRunId, resourceNamespace)
+        : null
+      return okResponse({ ok: true, agentRun: existing, resource, idempotent: true })
+    }
+
     const kube = deps.kubeClient ?? createKubernetesClient()
     const agent = await kube.get(RESOURCE_MAP.Agent, parsed.agentRef.name, parsed.namespace)
     if (!agent) {
@@ -141,7 +156,6 @@ export const postAgentRunsHandler = async (
     }
 
     try {
-      await store.ready
       await validatePolicies(parsed.namespace, policyChecks, kube)
       await store.createAuditEvent({
         entityType: 'PolicyDecision',

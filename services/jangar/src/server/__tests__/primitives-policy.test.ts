@@ -22,6 +22,40 @@ describe('primitives policy', () => {
     )
   })
 
+  it('rejects denied approval policy', async () => {
+    const kube = createKubeMock({
+      'approvalpolicies.approvals.proompteng.ai:jangar:policy-1': { status: { phase: 'Denied' } },
+    })
+    await expect(validateApprovalPolicies('jangar', ['policy-1'], kube)).rejects.toThrow('approval policy policy-1 is')
+  })
+
+  it('accepts ready approval policy', async () => {
+    const kube = createKubeMock({
+      'approvalpolicies.approvals.proompteng.ai:jangar:policy-2': { status: { phase: 'Approved' } },
+    })
+    await expect(validateApprovalPolicies('jangar', ['policy-2'], kube)).resolves.toBeUndefined()
+  })
+
+  it('rejects exceeded budget usage', async () => {
+    const kube = createKubeMock({
+      'budgets.budgets.proompteng.ai:jangar:budget-1': {
+        spec: { limits: { tokens: 1000, dollars: 50 } },
+        status: { used: { tokens: 1200, dollars: 60 } },
+      },
+    })
+    await expect(validateBudget('jangar', 'budget-1', kube)).rejects.toThrow('budget budget-1 tokens exceeded')
+  })
+
+  it('accepts budget within limits', async () => {
+    const kube = createKubeMock({
+      'budgets.budgets.proompteng.ai:jangar:budget-2': {
+        spec: { limits: { tokens: 1000, dollars: 50 } },
+        status: { used: { tokens: 800, dollars: 40 } },
+      },
+    })
+    await expect(validateBudget('jangar', 'budget-2', kube)).resolves.toBeUndefined()
+  })
+
   it('validates secret binding subjects and secrets', async () => {
     const binding = {
       spec: {

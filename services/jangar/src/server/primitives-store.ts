@@ -86,6 +86,7 @@ export type PrimitivesStore = {
   createAgentRun: (input: CreateAgentRunInput) => Promise<AgentRunRecord>
   updateAgentRunStatus: (id: string, status: string, externalRunId?: string | null) => Promise<AgentRunRecord | null>
   getAgentRunById: (id: string) => Promise<AgentRunRecord | null>
+  getAgentRunByDeliveryId: (deliveryId: string) => Promise<AgentRunRecord | null>
   getAgentRunsByAgent: (agentName: string, limit?: number) => Promise<AgentRunRecord[]>
   createOrchestrationRun: (input: CreateOrchestrationRunInput) => Promise<OrchestrationRunRecord>
   updateOrchestrationRunStatus: (
@@ -94,6 +95,7 @@ export type PrimitivesStore = {
     externalRunId?: string | null,
   ) => Promise<OrchestrationRunRecord | null>
   getOrchestrationRunById: (id: string) => Promise<OrchestrationRunRecord | null>
+  getOrchestrationRunByDeliveryId: (deliveryId: string) => Promise<OrchestrationRunRecord | null>
   getOrchestrationRunsByName: (orchestrationName: string, limit?: number) => Promise<OrchestrationRunRecord[]>
   upsertMemoryResource: (input: UpsertMemoryResourceInput) => Promise<MemoryResourceRecord>
   getMemoryResourceById: (id: string) => Promise<MemoryResourceRecord | null>
@@ -255,6 +257,12 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
     return row ? toAgentRunRecord(row) : null
   }
 
+  const getAgentRunByDeliveryId: PrimitivesStore['getAgentRunByDeliveryId'] = async (deliveryId) => {
+    await ready
+    const row = await db.selectFrom('agent_runs').selectAll().where('delivery_id', '=', deliveryId).executeTakeFirst()
+    return row ? toAgentRunRecord(row) : null
+  }
+
   const getAgentRunsByAgent: PrimitivesStore['getAgentRunsByAgent'] = async (agentName, limit) => {
     await ready
     const rows = await db
@@ -321,6 +329,16 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
   const getOrchestrationRunById: PrimitivesStore['getOrchestrationRunById'] = async (id) => {
     await ready
     const row = await db.selectFrom('orchestration_runs').selectAll().where('id', '=', id).executeTakeFirst()
+    return row ? toOrchestrationRunRecord(row) : null
+  }
+
+  const getOrchestrationRunByDeliveryId: PrimitivesStore['getOrchestrationRunByDeliveryId'] = async (deliveryId) => {
+    await ready
+    const row = await db
+      .selectFrom('orchestration_runs')
+      .selectAll()
+      .where('delivery_id', '=', deliveryId)
+      .executeTakeFirst()
     return row ? toOrchestrationRunRecord(row) : null
   }
 
@@ -415,10 +433,12 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
     createAgentRun,
     updateAgentRunStatus,
     getAgentRunById,
+    getAgentRunByDeliveryId,
     getAgentRunsByAgent,
     createOrchestrationRun,
     updateOrchestrationRunStatus,
     getOrchestrationRunById,
+    getOrchestrationRunByDeliveryId,
     getOrchestrationRunsByName,
     upsertMemoryResource,
     getMemoryResourceById,
