@@ -611,21 +611,65 @@ export const getTerminalSession = async (sessionId: string): Promise<TerminalSes
   }
   const record = await getTerminalSessionRecord(sessionId)
   if (!record) return null
-  const active = getManager()?.getSession(sessionId)
+  const manager = getManager()
+  let active = manager?.getSession(sessionId) ?? null
+  let reconciled = record
+  let status = record.status
+
+  if (active && status !== 'ready') {
+    const updated = await updateTerminalSessionRecord(record.id, {
+      status: 'ready',
+      worktreeName: record.worktreeName,
+      worktreePath: record.worktreePath,
+      tmuxSocket: record.tmuxSocket,
+      errorMessage: null,
+      readyAt: record.readyAt ?? new Date().toISOString(),
+      closedAt: null,
+      metadata: record.metadata,
+    })
+    reconciled = updated ?? reconciled
+    status = reconciled.status
+  }
+
+  if (!active && status === 'ready' && manager) {
+    const rebuilt = manager.startSession({
+      sessionId: record.id,
+      worktreePath: record.worktreePath ?? resolveCodexBaseCwd(),
+      worktreeName: record.worktreeName ?? undefined,
+    })
+    if (!rebuilt) {
+      const updated = await updateTerminalSessionRecord(record.id, {
+        status: 'closed',
+        worktreeName: record.worktreeName,
+        worktreePath: record.worktreePath,
+        tmuxSocket: record.tmuxSocket,
+        errorMessage: record.errorMessage ?? 'terminal session missing',
+        readyAt: record.readyAt,
+        closedAt: record.closedAt ?? new Date().toISOString(),
+        metadata: record.metadata,
+      })
+      reconciled = updated ?? reconciled
+      status = reconciled.status
+    } else {
+      active = rebuilt
+      status = 'ready'
+    }
+  }
+
   const attached = active ? active.connections.size > 0 : false
-  const reconnectToken = await ensureReconnectToken(record)
+  const reconnectToken = await ensureReconnectToken(reconciled)
   return buildTerminalSession({
-    id: record.id,
-    worktreeName: record.worktreeName,
-    worktreePath: record.worktreePath,
-    createdAt: record.createdAt,
+    id: reconciled.id,
+    worktreeName: reconciled.worktreeName,
+    worktreePath: reconciled.worktreePath,
+    createdAt: reconciled.createdAt,
     attached,
-    status: record.status,
-    errorMessage: record.errorMessage,
-    readyAt: record.readyAt,
-    closedAt: record.closedAt,
-    terminalUrl: getMetadataValue(record.metadata, 'backendUrl') ?? publicTerminalUrl,
-    backendId: getMetadataValue(record.metadata, 'backendId'),
+    status,
+    errorMessage: reconciled.errorMessage,
+    readyAt: reconciled.readyAt,
+    closedAt: reconciled.closedAt,
+    terminalUrl: getMetadataValue(reconciled.metadata, 'backendUrl') ?? publicTerminalUrl,
+    backendId: getMetadataValue(reconciled.metadata, 'backendId'),
     reconnectToken,
   })
 }
