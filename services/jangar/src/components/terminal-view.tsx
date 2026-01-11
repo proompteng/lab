@@ -144,12 +144,6 @@ export function TerminalView({
     terminal.loadAddon(unicodeAddon)
     terminal.unicode.activeVersion = '11'
 
-    terminal.loadAddon(
-      new WebLinksAddon((_event, uri) => {
-        window.open(uri, '_blank', 'noopener,noreferrer')
-      }),
-    )
-
     const clipboardAddon = new ClipboardAddon()
     terminal.loadAddon(clipboardAddon)
 
@@ -250,6 +244,15 @@ export function TerminalView({
     containerRef.current.style.fontFamily = TERMINAL_FONT_FAMILY
     fitAddon.fit()
     fitAddon.fit()
+    try {
+      terminal.loadAddon(
+        new WebLinksAddon((_event, uri) => {
+          window.open(uri, '_blank', 'noopener,noreferrer')
+        }),
+      )
+    } catch (err) {
+      console.warn('[terminal] failed to load WebLinks addon', err)
+    }
     if ('fonts' in document) {
       void document.fonts
         .load(`14px ${TERMINAL_FONT_FAMILY}`)
