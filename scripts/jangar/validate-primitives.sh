@@ -9,6 +9,10 @@ JANGAR_DB_NAME="${JANGAR_DB_NAME:-jangar}"
 FACTEUR_DB_CLUSTER="${FACTEUR_DB_CLUSTER:-facteur-vector-cluster}"
 FACTEUR_DB_NAME="${FACTEUR_DB_NAME:-facteur_kb}"
 MEMORY_SCHEMA="${MEMORY_SCHEMA:-jangar_primitives}"
+CNPG_FLAGS=(${CNPG_FLAGS:-})
+if [ "${#CNPG_FLAGS[@]}" -eq 0 ]; then
+  CNPG_FLAGS=(--tty=false --stdin=false)
+fi
 
 require_kubectl() {
   if ! command -v kubectl >/dev/null 2>&1; then
@@ -70,7 +74,7 @@ check_crossplane_package() {
 }
 
 check_jangar_tables() {
-  kubectl cnpg psql -n "${JANGAR_NAMESPACE}" "${JANGAR_DB_CLUSTER}" -- -d "${JANGAR_DB_NAME}" -c \
+  kubectl cnpg psql -n "${JANGAR_NAMESPACE}" "${JANGAR_DB_CLUSTER}" "${CNPG_FLAGS[@]}" -- -d "${JANGAR_DB_NAME}" -c \
     "select to_regclass('public.agent_runs'), to_regclass('public.orchestration_runs'), to_regclass('public.memory_resources'), to_regclass('public.audit_events');"
 }
 
@@ -79,7 +83,8 @@ fetch_count() {
   local cluster="$2"
   local database="$3"
   local query="$4"
-  kubectl cnpg psql -n "${namespace}" "${cluster}" -- -d "${database}" -tA -c "${query}" | tr -d '[:space:]'
+  kubectl cnpg psql -n "${namespace}" "${cluster}" "${CNPG_FLAGS[@]}" -- -d "${database}" -tA -c "${query}" \
+    | tr -d '[:space:]'
 }
 
 assert_nonzero_count() {
