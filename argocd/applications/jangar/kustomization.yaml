@@ -22,6 +22,7 @@ resources:
   - alloy-service.yaml
   - alloy-deployment.yaml
   - serviceaccount.yaml
+  - codex-workflow-rbac.yaml
   - clusterrolebinding.yaml
   - workflow-completions-rbac.yaml
   - jangar-primitives-agentprovider.yaml
