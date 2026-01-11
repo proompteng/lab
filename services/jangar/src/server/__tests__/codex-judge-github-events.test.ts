@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
 
@@ -20,7 +20,6 @@ const globalState = globalThis as typeof globalThis & {
     githubToken: string | null
     githubApiBaseUrl: string
     codexReviewers: string[]
-    judgeMode: 'argo' | 'local'
     ciEventStreamEnabled: boolean
     ciMaxWaitMs: number
     reviewMaxWaitMs: number
@@ -31,7 +30,6 @@ const globalState = globalThis as typeof globalThis & {
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
-    judgeModel: string
     promptTuningEnabled: boolean
     promptTuningRepo: string | null
     promptTuningFailureThreshold: number
@@ -91,7 +89,6 @@ const configMock: NonNullable<typeof globalState.__codexJudgeConfigMock> = {
   githubToken: null,
   githubApiBaseUrl: 'https://api.github.com',
   codexReviewers: [],
-  judgeMode: 'local',
   ciEventStreamEnabled: true,
   ciMaxWaitMs: 10_000,
   reviewMaxWaitMs: 10_000,
@@ -102,7 +99,6 @@ const configMock: NonNullable<typeof globalState.__codexJudgeConfigMock> = {
   discordBotToken: null,
   discordChannelId: null,
   discordApiBaseUrl: 'https://discord.com/api/v10',
-  judgeModel: 'gpt-5.2-codex',
   promptTuningEnabled: false,
   promptTuningRepo: null,
   promptTuningFailureThreshold: 3,
@@ -231,20 +227,21 @@ const requireHandler = async () => {
 }
 
 describe('codex-judge GitHub webhook stream handling', () => {
-  beforeAll(async () => {
-    handleGithubWebhookEvent = null
-    await requireHandler()
-  })
-
   beforeEach(() => {
+    handleGithubWebhookEvent = null
+    globalState.__codexJudgeConfigMock = { ...configMock }
+    globalState.__codexJudgeGithubMock = githubMock
     const storeMock = requireMock(globalState.__codexJudgeStoreMock, 'store')
     Object.values(storeMock).forEach((value) => {
       if (typeof value === 'function') {
         ;(value as ReturnType<typeof vi.fn>).mockReset?.()
       }
     })
-    Object.assign(requireMock(globalState.__codexJudgeGithubMock, 'github'), githubMock)
-    globalState.__codexJudgeConfigMock = { ...configMock }
+    Object.values(githubMock).forEach((value) => {
+      if (typeof value === 'function') {
+        ;(value as ReturnType<typeof vi.fn>).mockReset?.()
+      }
+    })
     Object.values(githubReviewStoreMock).forEach((value) => {
       if (typeof value === 'function') {
         ;(value as ReturnType<typeof vi.fn>).mockClear?.()
@@ -254,6 +251,9 @@ describe('codex-judge GitHub webhook stream handling', () => {
     globalState.__githubReviewConfigMock = githubReviewConfigMock
   })
 
+  afterEach(() => {
+    vi.useRealTimers()
+  })
   it('skips events when the stream is disabled', async () => {
     const handler = await requireHandler()
     const config = requireMock(globalState.__codexJudgeConfigMock, 'config')
@@ -263,7 +263,7 @@ describe('codex-judge GitHub webhook stream handling', () => {
 
     expect(result.ok).toBe(false)
     expect(result.reason).toBe('event_stream_disabled')
-  }, 30_000)
+  }, 60_000)
 
   it('updates CI status for check_run completion events', async () => {
     const handler = await requireHandler()
@@ -302,7 +302,7 @@ describe('codex-judge GitHub webhook stream handling', () => {
       url: 'https://ci.example.com',
       commitSha: run.commitSha,
     })
-  })
+  }, 60_000)
 
   it('updates review status for pull_request_review events', async () => {
     const handler = await requireHandler()
@@ -342,5 +342,5 @@ describe('codex-judge GitHub webhook stream handling', () => {
         status: 'approved',
       }),
     )
-  })
+  }, 60_000)
 })

@@ -555,7 +555,7 @@ test.describe('deployed jangar e2e', () => {
     await expect(page.getByTestId('terminal-canvas')).toBeVisible({ timeout: 20_000 })
 
     const bounds = await page.evaluate(() => {
-      const el = document.querySelector('[data-testid=\"terminal-canvas\"]') as HTMLElement | null
+      const el = document.querySelector('[data-testid="terminal-canvas"]') as HTMLElement | null
       if (!el) return null
       const rect = el.getBoundingClientRect()
       return { width: rect.width, height: rect.height, viewportW: window.innerWidth, viewportH: window.innerHeight }

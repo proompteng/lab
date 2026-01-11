@@ -16,7 +16,8 @@ import { Toaster } from '@/components/ui/sonner'
 
 export function AppShell({ mainId, children }: { mainId: string; children: React.ReactNode }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const breadcrumbs = buildBreadcrumbs(pathname)
+  const searchStr = useRouterState({ select: (state) => state.location.searchStr })
+  const breadcrumbs = buildBreadcrumbs(pathname, searchStr)
   const isFullscreen = pathname.endsWith('/fullscreen')
 
   React.useEffect(() => {
@@ -81,6 +82,7 @@ const ROOT_LABELS = new Map<string, string>([
   ['/codex', 'Codex'],
   ['/codex/search', 'Search'],
   ['/codex/runs', 'All runs'],
+  ['/github/pulls', 'Pulls'],
   ['/torghut', 'Torghut'],
   ['/torghut/visuals', 'Visuals'],
   ['/torghut/symbols', 'Symbols'],
@@ -90,11 +92,32 @@ const ROOT_LABELS = new Map<string, string>([
 
 const toTitle = (value: string) => value.replace(/[-_]+/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
 
-const buildBreadcrumbs = (rawPath: string) => {
+const DEFAULT_PULLS_LIMIT = 25
+
+const buildBreadcrumbs = (rawPath: string, rawSearch = '') => {
   const normalized = rawPath === '/' ? '/' : rawPath.replace(/\/$/, '')
   if (normalized === '/') return [{ label: ROOT_LABELS.get('/') ?? 'Home', to: '/' }]
 
   const segments = normalized.split('/').filter(Boolean)
+  if (segments[0] === 'github' && segments[1] === 'pulls') {
+    const basePath = '/github/pulls'
+    const baseLabel = ROOT_LABELS.get(basePath) ?? 'Pulls'
+    if (segments.length >= 5) {
+      const [owner, repo, number] = [segments[2], segments[3], segments[4]]
+      const label = `${owner}/${repo} #${number}`
+      const pullsSearch = new URLSearchParams(rawSearch)
+      pullsSearch.set('repository', `${owner}/${repo}`)
+      if (!pullsSearch.get('limit')) {
+        pullsSearch.set('limit', String(DEFAULT_PULLS_LIMIT))
+      }
+      const pullsTo = `${basePath}?${pullsSearch.toString()}`
+      return [
+        { label: baseLabel, to: pullsTo },
+        { label, to: `/${segments.slice(0, 5).join('/')}` },
+      ]
+    }
+    return [{ label: baseLabel, to: basePath }]
+  }
   const crumbs = segments.map((segment, index) => {
     const to = `/${segments.slice(0, index + 1).join('/')}`
     const label = ROOT_LABELS.get(to) ?? toTitle(segment)

@@ -3,6 +3,8 @@ import { isGithubRepoAllowed, loadGithubReviewConfig } from '~/server/github-rev
 import { createGithubReviewStore } from '~/server/github-review-store'
 import { refreshWorktreeSnapshot } from '~/server/github-worktree-snapshot'
 
+const DEFAULT_REPOSITORY = 'proompteng/lab'
+
 const jsonResponse = (payload: unknown, status = 200) => {
   const body = JSON.stringify(payload)
   return new Response(body, {
@@ -25,6 +27,20 @@ const parseLimit = (value: string | null, fallback: number) => {
   const parsed = Number.parseInt(value, 10)
   if (!Number.isFinite(parsed)) return fallback
   return Math.max(1, Math.min(parsed, 100))
+}
+
+const GITHUB_LOGIN_PATTERN = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i
+
+const resolveActor = (request: Request) => {
+  const candidates = ['x-jangar-actor', 'x-forwarded-user', 'x-auth-request-user', 'x-remote-user', 'x-github-user']
+  for (const header of candidates) {
+    const value = request.headers.get(header)
+    const raw = value?.split(',')[0]?.trim()
+    if (!raw) continue
+    if (!GITHUB_LOGIN_PATTERN.test(raw)) continue
+    return raw
+  }
+  return null
 }
 
 const maybeAutoRefreshFiles = async (
@@ -65,19 +81,21 @@ export const getPullsHandler = async (request: Request, createStore = createGith
   }
 
   const url = new URL(request.url)
-  const repository = url.searchParams.get('repository')?.trim() || undefined
+  const repositoryParam = url.searchParams.get('repository')?.trim() ?? ''
+  const repository = repositoryParam || DEFAULT_REPOSITORY
   if (repository && !isGithubRepoAllowed(config, repository)) {
     return jsonResponse({ ok: false, error: 'Repository not allowed' }, 403)
   }
 
+  const viewerLogin = resolveActor(request)
+  const authorParam = url.searchParams.get('author')?.trim() ?? ''
   const store = createStore()
 
   try {
     const result = await store.listPulls({
       repository,
-      repositories: repository ? undefined : config.reposAllowed,
       state: url.searchParams.get('state')?.trim() || undefined,
-      author: url.searchParams.get('author')?.trim() || undefined,
+      author: authorParam || viewerLogin || undefined,
       label: url.searchParams.get('label')?.trim() || undefined,
       reviewDecision: url.searchParams.get('reviewDecision')?.trim() || undefined,
       ciStatus: url.searchParams.get('ciStatus')?.trim() || undefined,
@@ -94,6 +112,7 @@ export const getPullsHandler = async (request: Request, createStore = createGith
         mergeWriteEnabled: config.mergeWriteEnabled,
       },
       repositoriesAllowed: config.reposAllowed,
+      viewerLogin,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to load pull requests'

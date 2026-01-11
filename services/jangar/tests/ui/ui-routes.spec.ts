@@ -94,9 +94,100 @@ const githubPullsResponse = {
       },
     },
   ],
-  nextCursor: null,
-  capabilities: { reviewsWriteEnabled: false, mergeWriteEnabled: false },
+  nextCursor: 'cursor-1',
+  capabilities: { reviewsWriteEnabled: true, mergeWriteEnabled: false },
   repositoriesAllowed: ['proompteng/lab'],
+  viewerLogin: 'octocat',
+}
+const githubPullsPageTwoResponse = {
+  ok: true,
+  items: [
+    {
+      repository: 'proompteng/lab',
+      number: 41,
+      title: 'fix: align breadcrumbs with route tree',
+      body: null,
+      state: 'open',
+      merged: false,
+      mergedAt: null,
+      draft: false,
+      authorLogin: 'octocat',
+      authorAvatarUrl: null,
+      htmlUrl: 'https://github.com/proompteng/lab/pull/41',
+      headRef: 'fix/breadcrumbs',
+      headSha: 'ghi789',
+      baseRef: 'main',
+      baseSha: 'def456',
+      mergeable: true,
+      mergeableState: 'clean',
+      labels: ['ui'],
+      additions: 4,
+      deletions: 1,
+      changedFiles: 1,
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-02T00:00:00.000Z',
+      receivedAt: '2024-01-02T00:00:00.000Z',
+      review: { decision: 'commented', requestedChanges: false, unresolvedThreadsCount: 1, latestReviewedAt: null },
+      checks: {
+        status: 'pending',
+        detailsUrl: null,
+        totalCount: 1,
+        successCount: 0,
+        failureCount: 0,
+        pendingCount: 1,
+        runs: [],
+      },
+    },
+  ],
+  nextCursor: null,
+  capabilities: { reviewsWriteEnabled: true, mergeWriteEnabled: false },
+  repositoriesAllowed: ['proompteng/lab'],
+  viewerLogin: 'octocat',
+}
+const githubPullsSearchResponse = {
+  ok: true,
+  items: [
+    {
+      repository: 'proompteng/lab',
+      number: 7,
+      title: 'chore: update CI docs',
+      body: null,
+      state: 'open',
+      merged: false,
+      mergedAt: null,
+      draft: false,
+      authorLogin: 'reviewer',
+      authorAvatarUrl: null,
+      htmlUrl: 'https://github.com/proompteng/lab/pull/7',
+      headRef: 'chore/ci-docs',
+      headSha: 'xyz123',
+      baseRef: 'main',
+      baseSha: 'def456',
+      mergeable: true,
+      mergeableState: 'clean',
+      labels: ['docs'],
+      additions: 2,
+      deletions: 0,
+      changedFiles: 1,
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-02T00:00:00.000Z',
+      receivedAt: '2024-01-02T00:00:00.000Z',
+      review: { decision: 'approved', requestedChanges: false, unresolvedThreadsCount: 0, latestReviewedAt: null },
+      checks: {
+        status: 'success',
+        detailsUrl: null,
+        totalCount: 1,
+        successCount: 1,
+        failureCount: 0,
+        pendingCount: 0,
+        runs: [],
+      },
+    },
+  ],
+  nextCursor: null,
+  capabilities: { reviewsWriteEnabled: true, mergeWriteEnabled: false },
+  repositoriesAllowed: ['proompteng/lab'],
+  viewerLogin: 'octocat',
 }
 const githubPullDetailResponse = {
   ok: true,
@@ -113,7 +204,7 @@ const githubPullDetailResponse = {
       url: 'https://github.com/proompteng/lab/pull/42#issuecomment-1',
     },
   ],
-  capabilities: { reviewsWriteEnabled: false, mergeWriteEnabled: false },
+  capabilities: { reviewsWriteEnabled: true, mergeWriteEnabled: false },
 }
 const githubPullFilesResponse = {
   ok: true,
@@ -186,6 +277,8 @@ test.beforeEach(async ({ page }) => {
       modelsValue,
       healthValue,
       githubPullsResponseValue,
+      githubPullsPageTwoResponseValue,
+      githubPullsSearchResponseValue,
       githubPullDetailResponseValue,
       githubPullFilesResponseValue,
       githubPullThreadsResponseValue,
@@ -228,7 +321,13 @@ test.beforeEach(async ({ page }) => {
         if (pathname === '/api/enrich') return jsonResponse({ ok: true })
         if (pathname === '/openai/v1/models') return jsonResponse(modelsValue)
         if (pathname === '/health') return jsonResponse(healthValue)
-        if (pathname === '/api/github/pulls') return jsonResponse(githubPullsResponseValue)
+        if (pathname === '/api/github/pulls') {
+          const cursor = resolvedUrl.searchParams.get('cursor')
+          const author = resolvedUrl.searchParams.get('author')
+          if (cursor === 'cursor-1') return jsonResponse(githubPullsPageTwoResponseValue)
+          if (author === 'reviewer') return jsonResponse(githubPullsSearchResponseValue)
+          return jsonResponse(githubPullsResponseValue)
+        }
         if (pathname === '/api/github/pulls/proompteng/lab/42') return jsonResponse(githubPullDetailResponseValue)
         if (pathname === '/api/github/pulls/proompteng/lab/42/files') return jsonResponse(githubPullFilesResponseValue)
         if (pathname === '/api/github/pulls/proompteng/lab/42/threads')
@@ -246,6 +345,8 @@ test.beforeEach(async ({ page }) => {
       modelsValue: modelsResponse,
       healthValue: healthResponse,
       githubPullsResponseValue: githubPullsResponse,
+      githubPullsPageTwoResponseValue: githubPullsPageTwoResponse,
+      githubPullsSearchResponseValue: githubPullsSearchResponse,
       githubPullDetailResponseValue: githubPullDetailResponse,
       githubPullFilesResponseValue: githubPullFilesResponse,
       githubPullThreadsResponseValue: githubPullThreadsResponse,
@@ -316,9 +417,36 @@ test('github pulls route screenshot', async ({ page }) => {
   await expect(page).toHaveScreenshot('github-pulls.png', { fullPage: true, animations: 'disabled' })
 })
 
+test('github pulls search and pagination', async ({ page }) => {
+  await page.goto('/github/pulls')
+  await expect(page.getByLabel('Repository')).toHaveValue('proompteng/lab')
+  await expect(page.getByLabel('Author')).toHaveValue('octocat')
+  await expect(page).toHaveURL(/repository=proompteng%2Flab/)
+  await expect(page).toHaveURL(/author=octocat/)
+  await expect(page).toHaveURL(/limit=25/)
+
+  await page.getByRole('button', { name: 'Next' }).click()
+  await expect(page.getByRole('cell', { name: 'proompteng/lab#41' })).toBeVisible()
+  await expect(page).toHaveURL(/cursor=cursor-1/)
+  await expect(page).toHaveURL(/repository=proompteng%2Flab/)
+  await expect(page).toHaveURL(/author=octocat/)
+  await expect(page).toHaveURL(/limit=25/)
+
+  await page.getByRole('button', { name: 'Previous' }).click()
+  await expect(page.getByRole('cell', { name: 'proompteng/lab#42' })).toBeVisible()
+
+  await page.getByLabel('Author').fill('reviewer')
+  await page.getByRole('button', { name: 'Filter' }).click()
+  await expect(page.getByRole('cell', { name: 'proompteng/lab#7' })).toBeVisible()
+  await expect(page).toHaveURL(/author=reviewer/)
+  await expect(page).toHaveURL(/repository=proompteng%2Flab/)
+  await expect(page).toHaveURL(/limit=25/)
+})
+
 test('github pull detail route screenshot', async ({ page }) => {
   await page.goto('/github/pulls/proompteng/lab/42')
   await expect(page.getByRole('heading', { name: 'feat: add new PR review UI' })).toBeVisible()
   await expect(page.getByText('Merge controls')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Submit review' })).toBeEnabled()
   await expect(page).toHaveScreenshot('github-pull-detail.png', { fullPage: true, animations: 'disabled' })
 })

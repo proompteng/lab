@@ -132,6 +132,7 @@ export type GithubPullsResponse =
       nextCursor: string | null
       capabilities: GithubCapabilities
       repositoriesAllowed: string[]
+      viewerLogin?: string | null
     }
   | { ok: false; error: string }
 
@@ -147,9 +148,9 @@ export type GithubPullDetailResponse =
   | { ok: false; error: string }
 
 export const fetchGithubPulls = async (params: {
-  repository?: string
+  repository?: string | null
   state?: string
-  author?: string
+  author?: string | null
   label?: string
   reviewDecision?: string
   ciStatus?: string
@@ -157,9 +158,9 @@ export const fetchGithubPulls = async (params: {
   cursor?: string | null
 }) => {
   const url = new URL('/api/github/pulls', window.location.origin)
-  if (params.repository) url.searchParams.set('repository', params.repository)
+  if (typeof params.repository === 'string') url.searchParams.set('repository', params.repository)
   if (params.state) url.searchParams.set('state', params.state)
-  if (params.author) url.searchParams.set('author', params.author)
+  if (typeof params.author === 'string') url.searchParams.set('author', params.author)
   if (params.label) url.searchParams.set('label', params.label)
   if (params.reviewDecision) url.searchParams.set('reviewDecision', params.reviewDecision)
   if (params.ciStatus) url.searchParams.set('ciStatus', params.ciStatus)
