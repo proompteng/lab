@@ -448,17 +448,6 @@ export function TerminalView({
         className,
       )}
     >
-      {variant === 'default' ? (
-        <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs border-b border-border text-muted-foreground">
-          <span className="inline-flex items-center gap-2">
-            Status: {status}
-            {isConnecting ? (
-              <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
-            ) : null}
-          </span>
-          {error ? <span className="text-destructive">{error}</span> : null}
-        </div>
-      ) : null}
       <div
         ref={containerRef}
         className="flex flex-1 min-h-0 bg-transparent outline-none focus-within:ring-2 focus-within:ring-zinc-500/70 focus-within:ring-inset"
@@ -468,6 +457,11 @@ export function TerminalView({
         // biome-ignore lint/a11y/noNoninteractiveTabindex: xterm mounts its own input; container must be focusable.
         tabIndex={0}
       />
+      {error ? (
+        <div className="absolute inset-x-3 top-3 rounded-none border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {error}
+        </div>
+      ) : null}
       {isConnecting ? (
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-xs text-muted-foreground">
           <div className="flex items-center gap-2">
