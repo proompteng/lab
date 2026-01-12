@@ -115,8 +115,19 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $host := include "agents.databaseHost" . -}}
 {{- $db := include "agents.databaseName" . -}}
 {{- $port := include "agents.databasePort" . -}}
-{{- $ssl := ternary .Values.externalDatabase.sslMode "disable" .Values.externalDatabase.enabled -}}
+{{- $ssl := "disable" -}}
+{{- if .Values.externalDatabase.enabled -}}
+{{- $ssl = default "require" .Values.externalDatabase.sslMode -}}
+{{- end -}}
 {{- printf "postgresql://%s:%s@%s:%s/%s?sslmode=%s" $user $pass $host $port $db $ssl -}}
+{{- end -}}
+
+{{- define "agents.primitivesNamespaces" -}}
+{{- $namespaces := .Values.primitives.namespaces | default (list) -}}
+{{- if or (not $namespaces) (eq (len $namespaces) 0) -}}
+{{- $namespaces = list (.Values.namespaceOverride | default .Release.Namespace) -}}
+{{- end -}}
+{{- join "," $namespaces -}}
 {{- end -}}
 
 {{- define "agents.postgresPassword" -}}

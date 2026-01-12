@@ -90,6 +90,47 @@ spec:
             - name: {{ $name }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- if .Values.primitives.reconciler.enabled }}
+            - name: JANGAR_PRIMITIVES_RECONCILER
+              value: "1"
+            - name: JANGAR_PRIMITIVES_NAMESPACES
+              value: {{ include "agents.primitivesNamespaces" . | quote }}
+            - name: JANGAR_PRIMITIVES_RECONCILER_INTERVAL_SECONDS
+              value: {{ .Values.primitives.reconciler.intervalSeconds | default 30 | quote }}
+            {{- else }}
+            - name: JANGAR_PRIMITIVES_RECONCILER
+              value: "0"
+            {{- end }}
+            {{- if .Values.agentComms.enabled }}
+            - name: JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED
+              value: "false"
+            - name: NATS_URL
+              value: {{ .Values.agentComms.nats.url | default "nats://nats.nats.svc.cluster.local:4222" | quote }}
+            {{- if .Values.agentComms.nats.userSecret.name }}
+            - name: NATS_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agentComms.nats.userSecret.name }}
+                  key: {{ .Values.agentComms.nats.userSecret.usernameKey | default "username" }}
+            - name: NATS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agentComms.nats.userSecret.name }}
+                  key: {{ .Values.agentComms.nats.userSecret.passwordKey | default "password" }}
+            {{- else }}
+            {{- if .Values.agentComms.nats.user }}
+            - name: NATS_USER
+              value: {{ .Values.agentComms.nats.user | quote }}
+            {{- end }}
+            {{- if .Values.agentComms.nats.password }}
+            - name: NATS_PASSWORD
+              value: {{ .Values.agentComms.nats.password | quote }}
+            {{- end }}
+            {{- end }}
+            {{- else }}
+            - name: JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED
+              value: "true"
+            {{- end }}
             {{- range .Values.env.secrets }}
             - name: {{ .name }}
               valueFrom:

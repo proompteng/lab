@@ -23,3 +23,11 @@ networkPolicy:
   enabled: false
 backups:
   enabled: false
+primitives:
+  namespaces:
+    - agents
+  reconciler:
+    enabled: true
+    intervalSeconds: 30
+agentComms:
+  enabled: false

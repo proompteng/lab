@@ -42,3 +42,13 @@ networkPolicy:
 
 autoscaling:
   enabled: false
+
+primitives:
+  namespaces:
+    - agents
+  reconciler:
+    enabled: true
+    intervalSeconds: 15
+
+agentComms:
+  enabled: false

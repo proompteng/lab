@@ -97,6 +97,23 @@ env:
     PORT: "8080"
     JANGAR_SKIP_MIGRATIONS: "0"
 
+primitives:
+  namespaces: []
+  reconciler:
+    enabled: true
+    intervalSeconds: 30
+
+agentComms:
+  enabled: false
+  nats:
+    url: ""
+    user: ""
+    password: ""
+    userSecret:
+      name: ""
+      usernameKey: username
+      passwordKey: password
+
 postgres:
   enabled: true
   image:

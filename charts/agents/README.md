@@ -7,6 +7,7 @@ Minimal, production-ready bundle for the agent control plane (Jangar) plus Agent
 - Deploys the Jangar control-plane deployment + service.
 - Default single-replica Postgres with pgvector and idempotent migrations job.
 - Optional ingress, HPA, PDB, NetworkPolicy, and pg_dump backup CronJob.
+- Optional NATS-driven agent communications subscriber and primitives reconciler namespace scoping.
 - Dev and production example values.
 - Artifact Hub metadata included (Apache-2.0 license).
 
@@ -55,5 +56,8 @@ helm push agents-0.1.0.tgz oci://ghcr.io/proompteng/charts
 | `podDisruptionBudget.enabled` | Enable PDB | `false` |
 | `networkPolicy.enabled` | Enable NetworkPolicy | `false` |
 | `backups.enabled` | Enable pg_dump CronJob (embedded DB only) | `false` |
+| `primitives.reconciler.enabled` | Run primitives reconciler loop | `true` |
+| `primitives.namespaces` | Namespaces to watch for Agent/AgentRun | `['<release-namespace>']` |
+| `agentComms.enabled` | Enable NATS agent-comms subscriber | `false` |
 
 See `values.yaml`, `values-dev.yaml`, and `values-prod.yaml` for full options.
