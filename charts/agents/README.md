@@ -56,6 +56,7 @@ helm push agents-0.1.0.tgz oci://ghcr.io/proompteng/charts
 | `podDisruptionBudget.enabled` | Enable PDB | `false` |
 | `networkPolicy.enabled` | Enable NetworkPolicy | `false` |
 | `backups.enabled` | Enable pg_dump CronJob (embedded DB only) | `false` |
+| `rbac.create` | Create namespaced RBAC (Role/RoleBinding) for the control plane | `true` |
 | `primitives.reconciler.enabled` | Run primitives reconciler loop | `true` |
 | `primitives.namespaces` | Namespaces to watch for Agent/AgentRun | `['<release-namespace>']` |
 | `agentComms.enabled` | Enable NATS agent-comms subscriber | `false` |

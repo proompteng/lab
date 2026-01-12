@@ -17,6 +17,10 @@ serviceAccount:
   name: ""
   annotations: {}
 
+rbac:
+  create: true
+  extraRules: []
+
 authSecret:
   create: true
   name: ""
