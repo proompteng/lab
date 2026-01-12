@@ -8,5 +8,5 @@ metadata:
     {{- include "agents.labels" . | nindent 4 }}
 data:
   bootstrap.sql: |
-{{ (.Files.Get "sql/migrations.sql") | indent 4 }}
+{{ (.Files.Get "files/sql/migrations.sql") | indent 4 }}
 {{- end -}}

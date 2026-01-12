@@ -7,7 +7,15 @@ metadata:
   labels:
     {{- include "agents.labels" . | nindent 4 }}
   annotations:
-    "helm.sh/hook": pre-install,pre-upgrade
+    {{- $hooks := list "pre-upgrade" }}
+    {{- if .Values.externalDatabase.enabled }}
+    {{- $hooks = append $hooks "pre-install" }}
+    {{- else }}
+    {{- /* when we manage Postgres ourselves, wait for it to come up */ -}}
+    {{- $hooks = append $hooks "post-install" }}
+    {{- $hooks = append $hooks "post-upgrade" }}
+    {{- end }}
+    "helm.sh/hook": {{ join "," $hooks }}
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
     "helm.sh/hook-weight": {{ .Values.migrations.hookWeight | default "-5" | quote }}
     {{- with .Values.migrations.annotations }}
@@ -60,10 +68,20 @@ spec:
               value: disable
             {{- end }}
           command:
-            - /bin/sh
+            - /bin/bash
             - -c
             - |
               set -euo pipefail
+              : "${DB_CONNECT_RETRIES:=30}"
+              echo "Waiting for database to become ready..."
+              for i in $(seq 1 "${DB_CONNECT_RETRIES}"); do
+                if pg_isready -d "${DATABASE_URL}" >/dev/null 2>&1; then
+                  break
+                fi
+                echo "Database not ready (attempt ${i}/${DB_CONNECT_RETRIES}), sleeping 2s..."
+                sleep 2
+              done
+              pg_isready -d "${DATABASE_URL}"
               echo "Running migrations against ${DATABASE_URL}"
               psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/bootstrap.sql
           volumeMounts:
