@@ -9,17 +9,27 @@
           "devices": {
             "disks": [
               {
+                "name": "root",
+                "disk": { "bus": "virtio" }
+              },
+              {
                 "name": "osd-a",
-                "lun": { "bus": "virtio" }
+                "disk": { "bus": "virtio" }
               },
               {
                 "name": "osd-b",
-                "lun": { "bus": "virtio" }
+                "disk": { "bus": "virtio" }
               }
             ]
           }
         },
         "volumes": [
+          {
+            "name": "root",
+            "persistentVolumeClaim": {
+              "claimName": "kube-worker-11-root-l6hdk"
+            }
+          },
           {
             "name": "osd-a",
             "persistentVolumeClaim": {
