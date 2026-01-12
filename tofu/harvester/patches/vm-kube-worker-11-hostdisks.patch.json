@@ -1,0 +1,39 @@
+{
+  "spec": {
+    "template": {
+      "spec": {
+        "nodeSelector": {
+          "kubernetes.io/hostname": "altra"
+        },
+        "domain": {
+          "devices": {
+            "disks": [
+              {
+                "name": "osd-a",
+                "lun": { "bus": "virtio" }
+              },
+              {
+                "name": "osd-b",
+                "lun": { "bus": "virtio" }
+              }
+            ]
+          }
+        },
+        "volumes": [
+          {
+            "name": "osd-a",
+            "persistentVolumeClaim": {
+              "claimName": "pvc-osd-11-a"
+            }
+          },
+          {
+            "name": "osd-b",
+            "persistentVolumeClaim": {
+              "claimName": "pvc-osd-11-b"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,9 @@
+apiVersion: devices.harvesterhci.io/v1beta1
+kind: PCIDeviceClaim
+metadata:
+  name: altra-000d01000
+spec:
+  # SAS3008 HBA at 000d:01:00.0 on host 'altra'
+  address: 000d:01:00.0
+  nodeName: altra
+  userName: admin

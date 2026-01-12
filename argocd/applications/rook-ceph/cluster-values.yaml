@@ -50,9 +50,14 @@ cephClusterSpec:
     mgr: system-cluster-critical
 
   storage:
-    useAllNodes: true
+    # Scope OSDs to dedicated storage nodes
+    useAllNodes: false
     useAllDevices: true
     deviceFilter: "^(sd[b-z]|vd[b-z]|nvme[0-9]n[0-9])"
+    nodes:
+      - name: kube-worker-10
+      - name: kube-worker-11
+      - name: kube-worker-12
     config:
       databaseSizeMB: "2048"
 
