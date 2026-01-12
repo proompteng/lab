@@ -763,7 +763,6 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "pyyaml" },
     { name = "sqlalchemy" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -785,7 +784,6 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.9.0,<3.0" },
     { name = "pydantic-settings", specifier = ">=2.6.0,<3.0" },
     { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.389,<2.0" },
-    { name = "pyyaml", specifier = ">=6.0.2,<7.0" },
     { name = "sqlalchemy", specifier = ">=2.0.36,<3.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0,<1.0" },
 ]
