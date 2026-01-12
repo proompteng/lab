@@ -1,0 +1,17 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: sample-provider
+  namespace: agents
+spec:
+  binary: /usr/local/bin/agent-runner
+  argsTemplate:
+    - "{{payloads.promptJson}}"
+  envTemplate:
+    SAMPLE_ENV: "{{inputs.repository}}"
+  inputFiles:
+    - path: /workspace/prompt.json
+      content: "{{payloads.promptJson}}"
+  outputArtifacts:
+    - name: agent-log
+      path: /workspace/agent.log

@@ -1,0 +1,12 @@
+{{- if .Values.migrations.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agents.fullname" . }}-migrations
+  namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+data:
+  bootstrap.sql: |
+{{ (.Files.Get "sql/migrations.sql") | indent 4 }}
+{{- end -}}
