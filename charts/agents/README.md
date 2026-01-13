@@ -24,6 +24,7 @@ Apply the sample CRDs:
 ```bash
 kubectl apply -n agents -f charts/agents/examples/agentprovider-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/agent-sample.yaml
+kubectl apply -n agents -f charts/agents/examples/memory-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/implementationspec-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/agentrun-sample.yaml
 ```
@@ -33,11 +34,15 @@ Optional: submit runs with `agentctl`:
 agentctl run submit --agent codex-agent --impl codex-impl-sample --runtime job --workload-image ghcr.io/proompteng/codex-agent:latest
 ```
 
+Optional: configure GitHub/Linear ingestion with `ImplementationSource` manifests (see `charts/agents/examples/implementationsource-github.yaml`).
+
 ## Database configuration
 Jangar requires a database connection string. Supply one of:
 - `database.url` (inline), or
 - `database.secretRef` (existing Secret), or
 - `database.createSecret.enabled=true` with `database.url`.
+
+Agent memory backends are configured separately via the `Memory` CRD and its referenced Secret.
 
 ## Production notes
 - Use a dedicated Postgres/managed DB and set `database.secretRef`.

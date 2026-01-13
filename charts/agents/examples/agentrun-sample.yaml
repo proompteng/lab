@@ -7,11 +7,13 @@ spec:
     name: codex-agent
   implementationSpecRef:
     name: codex-impl-sample
+  memoryRef:
+    name: default-memory
   runtime:
     type: job
     config:
-      namespace: agents
       serviceAccount: codex-runner
+      ttlSecondsAfterFinished: 600
   workload:
     image: ghcr.io/proompteng/codex-agent:latest
     resources:

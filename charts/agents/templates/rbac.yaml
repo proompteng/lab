@@ -63,10 +63,16 @@ rules:
       - delete
   - apiGroups: [""]
     resources:
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups: [""]
+    resources:
       - pods
       - pods/log
       - configmaps
-      - secrets
       - events
     verbs:
       - get

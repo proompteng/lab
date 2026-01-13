@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHART_DIR="${ROOT_DIR}/charts/agents"
 
+go generate "${ROOT_DIR}/services/jangar/api/agents"
+
+git -C "${ROOT_DIR}" diff --exit-code -- "${CHART_DIR}/crds" \
+  "${ROOT_DIR}/services/jangar/api/agents/v1alpha1/zz_generated.deepcopy.go"
+
 helm lint "${CHART_DIR}"
 
 render_and_check() {
@@ -21,12 +26,12 @@ render_and_check() {
 render_and_check "${CHART_DIR}/values-dev.yaml"
 render_and_check "${CHART_DIR}/values-prod.yaml"
 
-python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agent.yaml" agents.proompteng.ai v1alpha1 Agent
-python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agentrun.yaml" agents.proompteng.ai v1alpha1 AgentRun
-python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agentprovider.yaml" agents.proompteng.ai v1alpha1 AgentProvider
-python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/implementationspec.yaml" agents.proompteng.ai v1alpha1 ImplementationSpec
-python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/implementationsource.yaml" agents.proompteng.ai v1alpha1 ImplementationSource
-python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/memory.yaml" agents.proompteng.ai v1alpha1 Memory
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_agents.yaml" agents.proompteng.ai v1alpha1 Agent
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_agentruns.yaml" agents.proompteng.ai v1alpha1 AgentRun
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_agentproviders.yaml" agents.proompteng.ai v1alpha1 AgentProvider
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_implementationspecs.yaml" agents.proompteng.ai v1alpha1 ImplementationSpec
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_implementationsources.yaml" agents.proompteng.ai v1alpha1 ImplementationSource
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_memories.yaml" agents.proompteng.ai v1alpha1 Memory
 
 schema_dir="${ROOT_DIR}/schemas/custom"
 if ! command -v kubeconform >/dev/null 2>&1; then

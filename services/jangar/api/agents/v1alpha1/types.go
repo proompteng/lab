@@ -1,7 +1,9 @@
+// +kubebuilder:object:generate=true
+
 package v1alpha1
 
 import (
-	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -18,12 +20,18 @@ type Agent struct {
 }
 
 type AgentSpec struct {
-	ProviderRef LocalRef          `json:"providerRef"`
-	Config      map[string]any    `json:"config,omitempty"`
-	Env         []corev1.EnvVar   `json:"env,omitempty"`
-	Security    *AgentSecurity    `json:"security,omitempty"`
-	MemoryRef   *LocalRef         `json:"memoryRef,omitempty"`
-	Defaults    *AgentRunDefaults `json:"defaults,omitempty"`
+	ProviderRef LocalRef `json:"providerRef"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Config    map[string]apiextensionsv1.JSON `json:"config,omitempty"`
+	Env       []AgentEnvVar                   `json:"env,omitempty"`
+	Security  *AgentSecurity                  `json:"security,omitempty"`
+	MemoryRef *LocalRef                       `json:"memoryRef,omitempty"`
+	Defaults  *AgentRunDefaults               `json:"defaults,omitempty"`
+}
+
+type AgentEnvVar struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 type AgentSecurity struct {
@@ -32,8 +40,10 @@ type AgentSecurity struct {
 }
 
 type AgentRunDefaults struct {
+	// +kubebuilder:validation:Minimum=0
 	TimeoutSeconds int32 `json:"timeoutSeconds,omitempty"`
-	RetryLimit     int32 `json:"retryLimit,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	RetryLimit int32 `json:"retryLimit,omitempty"`
 }
 
 type AgentStatus struct {
@@ -63,6 +73,7 @@ type AgentRun struct {
 	Status AgentRunStatus `json:"status,omitempty"`
 }
 
+// +kubebuilder:validation:XValidation:rule="has(self.implementationSpecRef) || has(self.implementation)",message="spec.implementationSpecRef or spec.implementation is required"
 type AgentRunSpec struct {
 	AgentRef              LocalRef              `json:"agentRef"`
 	ImplementationSpecRef *LocalRef             `json:"implementationSpecRef,omitempty"`
@@ -80,17 +91,25 @@ type InlineImplementation struct {
 }
 
 type RuntimeSpec struct {
-	Type   string         `json:"type"`
-	Config map[string]any `json:"config,omitempty"`
+	// +kubebuilder:validation:Enum=argo;temporal;job;custom
+	Type string `json:"type"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Config map[string]apiextensionsv1.JSON `json:"config,omitempty"`
 }
 
 type WorkloadSpec struct {
-	Image     string                      `json:"image,omitempty"`
-	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
-	Volumes   []WorkloadVolume            `json:"volumes,omitempty"`
+	Image     string             `json:"image,omitempty"`
+	Resources *WorkloadResources `json:"resources,omitempty"`
+	Volumes   []WorkloadVolume   `json:"volumes,omitempty"`
+}
+
+type WorkloadResources struct {
+	Requests map[string]string `json:"requests,omitempty"`
+	Limits   map[string]string `json:"limits,omitempty"`
 }
 
 type WorkloadVolume struct {
+	// +kubebuilder:validation:Enum=emptyDir;pvc;secret
 	Type       string `json:"type"`
 	Name       string `json:"name"`
 	MountPath  string `json:"mountPath"`
@@ -102,13 +121,14 @@ type WorkloadVolume struct {
 }
 
 type AgentRunStatus struct {
-	Phase              string             `json:"phase,omitempty"`
-	RuntimeRef         map[string]any     `json:"runtimeRef,omitempty"`
-	StartedAt          *metav1.Time       `json:"startedAt,omitempty"`
-	FinishedAt         *metav1.Time       `json:"finishedAt,omitempty"`
-	Artifacts          []Artifact         `json:"artifacts,omitempty"`
-	Conditions         []metav1.Condition `json:"conditions,omitempty"`
-	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
+	Phase string `json:"phase,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	RuntimeRef         map[string]apiextensionsv1.JSON `json:"runtimeRef,omitempty"`
+	StartedAt          *metav1.Time                    `json:"startedAt,omitempty"`
+	FinishedAt         *metav1.Time                    `json:"finishedAt,omitempty"`
+	Artifacts          []Artifact                      `json:"artifacts,omitempty"`
+	Conditions         []metav1.Condition              `json:"conditions,omitempty"`
+	ObservedGeneration int64                           `json:"observedGeneration,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -175,15 +195,19 @@ type ImplementationSpec struct {
 }
 
 type ImplementationSpecFields struct {
-	Source             *ImplementationSourceRef `json:"source,omitempty"`
-	Text               string                   `json:"text"`
-	Summary            string                   `json:"summary,omitempty"`
-	Description        string                   `json:"description,omitempty"`
-	AcceptanceCriteria []string                 `json:"acceptanceCriteria,omitempty"`
-	Labels             []string                 `json:"labels,omitempty"`
+	Source *ImplementationSourceRef `json:"source,omitempty"`
+	// +kubebuilder:validation:MaxLength=131072
+	Text string `json:"text"`
+	// +kubebuilder:validation:MaxLength=256
+	Summary     string `json:"summary,omitempty"`
+	Description string `json:"description,omitempty"`
+	// +kubebuilder:validation:MaxItems=50
+	AcceptanceCriteria []string `json:"acceptanceCriteria,omitempty"`
+	Labels             []string `json:"labels,omitempty"`
 }
 
 type ImplementationSourceRef struct {
+	// +kubebuilder:validation:Enum=github;linear;manual;custom
 	Provider   string `json:"provider"`
 	ExternalId string `json:"externalId,omitempty"`
 	URL        string `json:"url,omitempty"`
@@ -217,6 +241,7 @@ type ImplementationSource struct {
 }
 
 type ImplementationSourceSpec struct {
+	// +kubebuilder:validation:Enum=github;linear
 	Provider string                       `json:"provider"`
 	Auth     ImplementationSourceAuth     `json:"auth"`
 	Webhook  *ImplementationSourceWebhook `json:"webhook,omitempty"`
@@ -226,14 +251,17 @@ type ImplementationSourceSpec struct {
 }
 
 type ImplementationSourceAuth struct {
-	SecretRef LocalRef `json:"secretRef"`
+	SecretRef SecretRef `json:"secretRef"`
 }
 
 type ImplementationSourceWebhook struct {
+	// +kubebuilder:default=false
 	Enabled bool `json:"enabled,omitempty"`
 }
 
 type ImplementationSourcePoll struct {
+	// +kubebuilder:validation:Minimum=30
+	// +kubebuilder:default=60
 	IntervalSeconds int32 `json:"intervalSeconds,omitempty"`
 }
 
@@ -274,14 +302,17 @@ type Memory struct {
 }
 
 type MemorySpec struct {
-	Type         string           `json:"type"`
-	Connection   MemoryConnection `json:"connection"`
-	Capabilities []string         `json:"capabilities,omitempty"`
-	Default      bool             `json:"default,omitempty"`
+	// +kubebuilder:validation:Enum=postgres;redis;weaviate;pinecone;custom
+	Type       string           `json:"type"`
+	Connection MemoryConnection `json:"connection"`
+	// +kubebuilder:validation:Items:Enum=vector;kv;blob
+	Capabilities []string `json:"capabilities,omitempty"`
+	// +kubebuilder:default=false
+	Default bool `json:"default,omitempty"`
 }
 
 type MemoryConnection struct {
-	SecretRef LocalRef `json:"secretRef"`
+	SecretRef SecretRef `json:"secretRef"`
 }
 
 type MemoryStatus struct {
@@ -295,6 +326,11 @@ type MemoryList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Memory `json:"items"`
+}
+
+type SecretRef struct {
+	Name string `json:"name"`
+	Key  string `json:"key,omitempty"`
 }
 
 type LocalRef struct {

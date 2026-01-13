@@ -4,15 +4,12 @@ metadata:
   name: codex-runner
 spec:
   binary: /usr/local/bin/agent-runner
-  argsTemplate:
-    - run
-    - --agent
-    - '{{agentRun.name}}'
+  argsTemplate: []
   envTemplate:
     CODEX_LOG_LEVEL: info
   inputFiles:
-    - path: /workspace/agent-config.json
-      content: '{"mode":"autonomous"}'
+    - path: /workspace/implementation.txt
+      content: '{{implementation.text}}'
   outputArtifacts:
     - name: agent-log
       path: /workspace/agent.log

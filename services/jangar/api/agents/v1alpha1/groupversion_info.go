@@ -1,3 +1,5 @@
+// +groupName=agents.proompteng.ai
+
 package v1alpha1
 
 import (

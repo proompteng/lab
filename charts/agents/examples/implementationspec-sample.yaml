@@ -6,6 +6,7 @@ spec:
   source:
     provider: manual
     externalId: manual:sample
+    url: https://example.com/agents/specs/manual-sample
   summary: "Implement issue #2450"
   text: |
     Implement the Agents control plane per design docs.
