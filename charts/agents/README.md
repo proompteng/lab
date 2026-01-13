@@ -34,7 +34,9 @@ Optional: submit runs with `agentctl`:
 agentctl run submit --agent codex-agent --impl codex-impl-sample --runtime job --workload-image ghcr.io/proompteng/codex-agent:latest
 ```
 
-Optional: configure GitHub/Linear ingestion with `ImplementationSource` manifests (see `charts/agents/examples/implementationsource-github.yaml`).
+Optional: configure GitHub/Linear ingestion with `ImplementationSource` manifests:
+- `charts/agents/examples/implementationsource-github.yaml`
+- `charts/agents/examples/implementationsource-linear.yaml`
 
 ## Database configuration
 Jangar requires a database connection string. Supply one of:

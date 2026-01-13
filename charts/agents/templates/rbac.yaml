@@ -23,7 +23,6 @@ rules:
       - create
       - update
       - patch
-      - delete
   - apiGroups:
       - agents.proompteng.ai
     resources:
