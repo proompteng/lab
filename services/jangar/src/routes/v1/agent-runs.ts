@@ -37,18 +37,18 @@ type AgentRunPayload = {
   runtime: { type: string; config?: Record<string, unknown> }
   workload?: Record<string, unknown>
   memoryRef?: { name: string }
-  parameters?: Record<string, string>
+  parameters?: Record<string, unknown>
   secrets?: string[]
   policy?: Record<string, unknown>
 }
 
-const normalizeStringMap = (value: Record<string, unknown> | null): Record<string, string> | undefined => {
+const normalizeParameterMap = (value: Record<string, unknown> | null): Record<string, unknown> | undefined => {
   if (!value) return undefined
   const entries = Object.entries(value)
-  const output: Record<string, string> = {}
+  const output: Record<string, unknown> = {}
   for (const [key, raw] of entries) {
     if (raw == null) continue
-    output[key] = typeof raw === 'string' ? raw : JSON.stringify(raw)
+    output[key] = raw
   }
   return output
 }
@@ -68,7 +68,7 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
   const runtimeType = asString(runtime.type)
   if (!runtimeType) throw new Error('runtime.type is required')
 
-  const parameters = normalizeStringMap(asRecord(payload.parameters))
+  const parameters = normalizeParameterMap(asRecord(payload.parameters))
   const policy = asRecord(payload.policy) ?? undefined
   const secrets = Array.isArray(payload.secrets)
     ? payload.secrets.filter((item) => typeof item === 'string')

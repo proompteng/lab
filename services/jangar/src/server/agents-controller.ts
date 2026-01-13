@@ -18,6 +18,8 @@ const DEFAULT_TEMPORAL_PORT = 7233
 const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
 const IMPLEMENTATION_SUMMARY_LIMIT = 256
+const PARAMETERS_MAX_ENTRIES = 100
+const PARAMETERS_MAX_VALUE_BYTES = 2048
 
 const REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -342,6 +344,28 @@ const resolveParameters = (agentRun: Record<string, unknown>) => {
     output[key] = typeof value === 'string' ? value : JSON.stringify(value)
   }
   return output
+}
+
+const validateParameters = (params: Record<string, unknown>) => {
+  const entries = Object.entries(params)
+  if (entries.length > PARAMETERS_MAX_ENTRIES) {
+    return {
+      ok: false,
+      reason: 'ParametersTooLarge',
+      message: `spec.parameters exceeds ${PARAMETERS_MAX_ENTRIES} entries`,
+    }
+  }
+  for (const [key, value] of entries) {
+    const rendered = typeof value === 'string' ? value : JSON.stringify(value)
+    if (Buffer.byteLength(rendered, 'utf8') > PARAMETERS_MAX_VALUE_BYTES) {
+      return {
+        ok: false,
+        reason: 'ParameterValueTooLarge',
+        message: `spec.parameters.${key} exceeds ${PARAMETERS_MAX_VALUE_BYTES} bytes`,
+      }
+    }
+  }
+  return { ok: true as const }
 }
 
 const listItems = (resource: Record<string, unknown>) => {
@@ -1389,6 +1413,19 @@ const reconcileAgentRun = async (
       await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
       return
     }
+
+    const parameterCheck = validateParameters(asRecord(spec.parameters) ?? {})
+    if (!parameterCheck.ok) {
+      const updated = upsertCondition(conditions, {
+        type: 'InvalidSpec',
+        status: 'True',
+        reason: parameterCheck.reason,
+        message: parameterCheck.message,
+      })
+      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      return
+    }
+
     const agent = agentName ? await kube.get(RESOURCE_MAP.Agent, agentName, namespace) : null
     if (!agent) {
       const updated = upsertCondition(conditions, {
