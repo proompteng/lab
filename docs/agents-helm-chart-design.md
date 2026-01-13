@@ -31,7 +31,7 @@ We want a minimal, provider-agnostic control plane chart that installs cleanly o
 - No outdated features like ingress in the chart.
 - CRDs declared in the existing `charts/agents` chart.
 - SQL scripts must not be packaged in the chart; Jangar owns migrations.
-- AgentRun specifies execution coordinates; Agent defines only agent-level defaults.
+- AgentRun specifies what to execute and the workload required; Agent defines only agent-level defaults.
 - Implementation spec abstracts GitHub/Linear specifics away from Agent/AgentRun.
 - Memory provider must be abstracted via a Memory CRD.
 - Remove unnecessary chart resources.
@@ -88,7 +88,7 @@ It provides:
 #### Reconciliation loops (high-level)
 - `AgentRun` reconciler:
   - Resolve `spec.agentRef` and `spec.implementationSpecRef` (or inline).
-  - Validate `spec.runtime` + `spec.execution.coordinates` + `spec.workload`.
+  - Validate `spec.runtime` + `spec.workload`.
   - Resolve provider templates and render an execution spec for `agent-runner`.
   - Select runtime adapter from `spec.runtime` and submit workload.
   - Update `status.phase`, `status.conditions`, timestamps, and runtime identifiers.
@@ -154,18 +154,11 @@ Removed from Agent:
 - Resource sizing (resources belong on AgentRun).
 
 ### AgentRun (v1alpha1)
-Purpose: A single execution of an ImplementationSpec, including the exact coordinates of what to run.
+Purpose: A single execution of an ImplementationSpec with workload + runtime details.
 Required fields:
 - `spec.agentRef`: reference to Agent.
 - `spec.implementationSpecRef` or `spec.implementation.inline`: what to implement (required).
 - `spec.runtime`: runtime type + configuration for this run.
-- `spec.execution.coordinates`: where the run happens.
-
-Proposed `execution.coordinates`:
-- `git.url`: repository URL (ssh or https).
-- `git.ref`: branch/tag/commit SHA.
-- `git.path`: optional subdirectory.
-- `workspace`: optional workspace overrides (image, volume, etc).
 
 Implementation spec linkage:
 - `spec.implementationSpecRef`: reference to ImplementationSpec (preferred).
@@ -345,12 +338,6 @@ spec:
     name: impl-1234
   runtime:
     type: custom
-  execution:
-    coordinates:
-      git:
-        url: https://github.com/proompteng/lab.git
-        ref: main
-        path: .
   workload:
     image: ghcr.io/proompteng/codex-agent:latest
     resources:
