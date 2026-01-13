@@ -313,9 +313,7 @@ spec:
     type: custom
   memoryRef:
     name: default-memory
-  config:
-    stage: implementation
-    repoPolicy: readonly
+  config: {}
 ```
 
 ImplementationSpec:
