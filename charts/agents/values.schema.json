@@ -129,6 +129,8 @@
       },
       "additionalProperties": false
     },
+    "envFromSecretRefs": { "type": "array", "items": { "type": "string" } },
+    "envFromConfigMapRefs": { "type": "array", "items": { "type": "string" } },
     "controller": {
       "type": "object",
       "properties": {

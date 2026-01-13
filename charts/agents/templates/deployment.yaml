@@ -137,6 +137,17 @@ spec:
             - name: {{ .name }}
               value: {{ .value | quote }}
             {{- end }}
+          {{- if or (gt (len .Values.envFromSecretRefs) 0) (gt (len .Values.envFromConfigMapRefs) 0) }}
+          envFrom:
+            {{- range .Values.envFromSecretRefs }}
+            - secretRef:
+                name: {{ . }}
+            {{- end }}
+            {{- range .Values.envFromConfigMapRefs }}
+            - configMapRef:
+                name: {{ . }}
+            {{- end }}
+          {{- end }}
           ports:
             - name: http
               containerPort: 8080

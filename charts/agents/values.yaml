@@ -68,6 +68,9 @@ env:
     PORT: "8080"
     JANGAR_MIGRATIONS: "auto"
 
+envFromSecretRefs: []
+envFromConfigMapRefs: []
+
 controller:
   enabled: true
   namespaces: []

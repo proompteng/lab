@@ -66,6 +66,8 @@ helm push agents-0.3.0.tgz oci://ghcr.io/proompteng/charts
 | `image.tag` | Jangar image tag | `latest` |
 | `database.url` | Database URL for Jangar | `""` |
 | `database.secretRef.name` | Secret containing database URL | `""` |
+| `envFromSecretRefs` | Secret names to load as envFrom | `[]` |
+| `envFromConfigMapRefs` | ConfigMap names to load as envFrom | `[]` |
 | `controller.enabled` | Enable Agents controller loop | `true` |
 | `controller.namespaces` | Namespaces to watch | `['<release-namespace>']` |
 | `controller.intervalSeconds` | Controller poll interval | `15` |
