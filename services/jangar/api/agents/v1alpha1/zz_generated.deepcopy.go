@@ -298,9 +298,9 @@ func (in *AgentRunSpec) DeepCopyInto(out *AgentRunSpec) {
 	}
 	if in.Parameters != nil {
 		in, out := &in.Parameters, &out.Parameters
-		*out = make(map[string]v1.JSON, len(*in))
+		*out = make(map[string]string, len(*in))
 		for key, val := range *in {
-			(*out)[key] = *val.DeepCopy()
+			(*out)[key] = val
 		}
 	}
 	if in.Secrets != nil {

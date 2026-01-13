@@ -37,17 +37,20 @@ type AgentRunPayload = {
   runtime: { type: string; config?: Record<string, unknown> }
   workload?: Record<string, unknown>
   memoryRef?: { name: string }
-  parameters?: Record<string, unknown>
+  parameters?: Record<string, string>
   secrets?: string[]
   policy?: Record<string, unknown>
 }
 
-const normalizeParameterMap = (value: Record<string, unknown> | null): Record<string, unknown> | undefined => {
+const normalizeParameterMap = (value: Record<string, unknown> | null): Record<string, string> | undefined => {
   if (!value) return undefined
   const entries = Object.entries(value)
-  const output: Record<string, unknown> = {}
+  const output: Record<string, string> = {}
   for (const [key, raw] of entries) {
     if (raw == null) continue
+    if (typeof raw !== 'string') {
+      throw new Error(`parameters.${key} must be a string`)
+    }
     output[key] = raw
   }
   return output

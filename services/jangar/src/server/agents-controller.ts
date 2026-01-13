@@ -340,8 +340,8 @@ const resolveParameters = (agentRun: Record<string, unknown>) => {
   const params = asRecord(spec.parameters) ?? {}
   const output: Record<string, string> = {}
   for (const [key, value] of Object.entries(params)) {
-    if (value == null) continue
-    output[key] = typeof value === 'string' ? value : JSON.stringify(value)
+    if (typeof value !== 'string') continue
+    output[key] = value
   }
   return output
 }
@@ -359,8 +359,14 @@ const validateParameters = (params: Record<string, unknown>) => {
     }
   }
   for (const [key, value] of entries) {
-    const rendered = typeof value === 'string' ? value : JSON.stringify(value)
-    if (Buffer.byteLength(rendered, 'utf8') > PARAMETERS_MAX_VALUE_BYTES) {
+    if (typeof value !== 'string') {
+      return {
+        ok: false,
+        reason: 'ParameterNotString',
+        message: `spec.parameters.${key} must be a string`,
+      }
+    }
+    if (Buffer.byteLength(value, 'utf8') > PARAMETERS_MAX_VALUE_BYTES) {
       return {
         ok: false,
         reason: 'ParameterValueTooLarge',

@@ -123,10 +123,9 @@ spec:
                 type: object
               parameters:
                 additionalProperties:
-                  x-kubernetes-preserve-unknown-fields: true
+                  type: string
                 maxProperties: 100
                 type: object
-                x-kubernetes-preserve-unknown-fields: true
               runtime:
                 properties:
                   config:

@@ -81,11 +81,10 @@ type AgentRunSpec struct {
 	Runtime               RuntimeSpec           `json:"runtime"`
 	Workload              *WorkloadSpec         `json:"workload,omitempty"`
 	// +kubebuilder:validation:MaxProperties=100
-	// +kubebuilder:pruning:PreserveUnknownFields
-	Parameters     map[string]apiextensionsv1.JSON `json:"parameters,omitempty"`
-	Secrets        []string                        `json:"secrets,omitempty"`
-	MemoryRef      *LocalRef                       `json:"memoryRef,omitempty"`
-	IdempotencyKey string                          `json:"idempotencyKey,omitempty"`
+	Parameters     map[string]string `json:"parameters,omitempty"`
+	Secrets        []string          `json:"secrets,omitempty"`
+	MemoryRef      *LocalRef         `json:"memoryRef,omitempty"`
+	IdempotencyKey string            `json:"idempotencyKey,omitempty"`
 }
 
 type InlineImplementation struct {
