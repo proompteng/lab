@@ -29,6 +29,7 @@ Inputs:
 - `spec.implementationSpecRef` or `spec.implementation.inline`
 - `spec.runtime`
 - `spec.workload`
+- `spec.memoryRef` (optional override)
 - `spec.parameters`, `spec.secrets`
 
 Steps:
@@ -134,7 +135,7 @@ AgentProvider defines how to invoke `/usr/local/bin/agent-runner`:
 - Integration errors -> ImplementationSource Error with retry backoff.
 - Memory connection failure -> Memory Unreachable and reconcile backoff.
 
-## Open Questions
-- Exact schema for `spec.runtime` for each adapter.
-- Size limits for ImplementationSpec text.
-- Whether AgentRun should be able to override memory selection.
+## Decisions
+- Runtime schema: `spec.runtime.type` (enum: `argo|temporal|job|custom`) plus `spec.runtime.config` (schemaless map for adapter-specific settings).
+- ImplementationSpec text limit: 128KB max; larger payloads must be stored externally and referenced via `spec.source.url`.
+- Memory override: AgentRun may override via `spec.memoryRef`, otherwise it inherits Agent → default Memory.

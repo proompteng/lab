@@ -89,6 +89,7 @@ It provides:
 - `AgentRun` reconciler:
   - Resolve `spec.agentRef` and `spec.implementationSpecRef` (or inline).
   - Validate `spec.runtime` + `spec.workload`.
+  - Resolve Memory (AgentRun `memoryRef` -> Agent `memoryRef` -> default Memory).
   - Resolve provider templates and render an execution spec for `agent-runner`.
   - Select runtime adapter from `spec.runtime` and submit workload.
   - Update `status.phase`, `status.conditions`, timestamps, and runtime identifiers.
@@ -159,6 +160,8 @@ Required fields:
 - `spec.agentRef`: reference to Agent.
 - `spec.implementationSpecRef` or `spec.implementation.inline`: what to implement (required).
 - `spec.runtime`: runtime type + configuration for this run.
+Optional fields:
+- `spec.memoryRef`: override Memory selection for this run.
 
 Implementation spec linkage:
 - `spec.implementationSpecRef`: reference to ImplementationSpec (preferred).
@@ -249,7 +252,10 @@ Key fields:
 - `spec.capabilities`: `vector`, `kv`, `blob` (for routing features).
 - `spec.default`: boolean (optional, if multiple memory backends exist).
 
-Agent and AgentRun reference Memory by name, not by provider-specific fields.
+Agent and AgentRun reference Memory by name, not by provider-specific fields. Resolution order:
+1) `AgentRun.spec.memoryRef` (if set)
+2) `Agent.spec.memoryRef` (if set)
+3) Memory with `spec.default=true` (if present)
 
 ## Values & Configuration (Helm)
 The chart should include:
@@ -287,10 +293,10 @@ Follow Helm and Artifact Hub guidance:
 - Use Chart.yaml annotations for Artifact Hub metadata (`artifacthub.io/*`), including CRDs and examples.
 - Provide `artifacthub-repo.yml` at the repository index level when publishing (or OCI metadata layer for OCI).
 
-## Open Questions
-- What is the minimum supported Kubernetes version for Jangar? (needed for `kubeVersion` in Chart.yaml)
-- Do we want a separate chart for optional "extras" (HPA/PDB/NetworkPolicy) or manage these outside Helm?
-- Should ImplementationSpec be namespaced or cluster-scoped? (default to namespaced for multi-tenant clusters)
+## Decisions
+- Minimum supported Kubernetes version: 1.25+ (CRD v1, no PSP, aligns with modern clusters).
+- Optional extras: keep out of the core chart; manage via a separate `agents-extras` chart or external policy tooling.
+- ImplementationSpec is namespaced for multi-tenant safety.
 
 ## Appendix: Example CRD Usage (Conceptual)
 Agent:
