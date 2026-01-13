@@ -90,7 +90,7 @@ graph LR
   ImplementationSource -.->|creates/updates| ImplementationSpec
 ```
 
-### Agent (v1alpha2)
+### Agent (v1alpha1)
 Purpose: Default configuration and policy for an agent.
 Key fields (conceptual):
 - `spec.providerRef`: reference to AgentProvider.
@@ -105,7 +105,7 @@ Removed from Agent:
 - Repo/issue/implementation inputs.
 - Payloads tied to GitHub events.
 
-### AgentRun (v1alpha2)
+### AgentRun (v1alpha1)
 Purpose: A single execution, including the exact coordinates of what to run.
 Required fields:
 - `spec.agentRef`: reference to Agent.
@@ -143,7 +143,7 @@ sequenceDiagram
   J-->>AR: Update status/conditions
 ```
 
-### AgentProvider (v1alpha2)
+### AgentProvider (v1alpha1)
 Purpose: Define how to invoke the agent binary or runtime adapter.
 Keep as-is with minimal cleanup:
 - `spec.binary`
@@ -154,7 +154,7 @@ Keep as-is with minimal cleanup:
 
 No GitHub-specific templates in examples.
 
-### ImplementationSpec (new CRD)
+### ImplementationSpec (new CRD, v1alpha1)
 Purpose: Provider-agnostic description of "what to implement".
 Key fields:
 - `spec.source`: optional origin info (provider + external ID + URL).
@@ -188,7 +188,7 @@ sequenceDiagram
   IM-->>J: Status/conditions
 ```
 
-### Memory (new CRD)
+### Memory (new CRD, v1alpha1)
 Purpose: Abstract memory/storage backend away from Postgres.
 Key fields:
 - `spec.type`: `postgres` | `redis` | `weaviate` | `pinecone` | `custom`.
@@ -221,12 +221,11 @@ No values for embedded database, migrations jobs, backups, or ingress.
 - CRDs installed from `crds/` folder (not templated).
 
 ## Migration Plan (from current chart)
-1. Add new CRDs (v1alpha2) alongside v1alpha1.
-2. Update Jangar to read both versions and prefer v1alpha2.
-3. Update examples to use v1alpha2.
-4. Deprecate v1alpha1 fields and remove in a future release.
-5. Remove SQL configmap and migrations job from the chart; move SQL into Jangar image.
-6. Remove embedded Postgres and backup resources; document external database requirement via Memory CRD.
+1. Replace existing CRDs in-place (v1alpha1) since current version is unused.
+2. Update Jangar to expect the new v1alpha1 schema.
+3. Update examples to match the new schema.
+4. Remove SQL configmap and migrations job from the chart; move SQL into Jangar image.
+5. Remove embedded Postgres and backup resources; document external database requirement via Memory CRD.
 
 ## Artifact Hub Readiness
 Follow Helm and Artifact Hub guidance:
@@ -243,7 +242,7 @@ Follow Helm and Artifact Hub guidance:
 ## Appendix: Example CRD Usage (Conceptual)
 Agent:
 ```
-apiVersion: agents.proompteng.ai/v1alpha2
+apiVersion: agents.proompteng.ai/v1alpha1
 kind: Agent
 metadata:
   name: codex-agent
@@ -263,7 +262,7 @@ spec:
 
 ImplementationSpec:
 ```
-apiVersion: agents.proompteng.ai/v1alpha2
+apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
 metadata:
   name: impl-1234
@@ -281,7 +280,7 @@ spec:
 
 AgentRun:
 ```
-apiVersion: agents.proompteng.ai/v1alpha2
+apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
   generateName: codex-run-
