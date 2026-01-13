@@ -66,7 +66,7 @@ env:
   vars:
     NODE_ENV: production
     PORT: "8080"
-    JANGAR_SKIP_MIGRATIONS: "0"
+    JANGAR_MIGRATIONS: "auto"
 
 controller:
   enabled: true

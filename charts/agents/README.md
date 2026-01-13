@@ -43,6 +43,7 @@ Jangar requires a database connection string. Supply one of:
 - `database.createSecret.enabled=true` with `database.url`.
 
 Agent memory backends are configured separately via the `Memory` CRD and its referenced Secret.
+Use `env.vars.JANGAR_MIGRATIONS=skip` to disable automatic migrations if needed.
 
 ## Production notes
 - Use a dedicated Postgres/managed DB and set `database.secretRef`.
@@ -52,7 +53,7 @@ Agent memory backends are configured separately via the `Memory` CRD and its ref
 ## Publishing (OCI)
 ```bash
 helm package charts/agents
-helm push agents-0.2.0.tgz oci://ghcr.io/proompteng/charts
+helm push agents-0.3.0.tgz oci://ghcr.io/proompteng/charts
 ```
 
 ## Values

@@ -19,4 +19,4 @@ spec:
     allowedServiceAccounts:
       - codex-runner
     allowedSecrets:
-      - codex-github-token
+      - codex-provider-token

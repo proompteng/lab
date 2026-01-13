@@ -51,8 +51,8 @@ annotations:
       metadata:
         name: codex-impl-sample
       spec:
-        summary: "Implement issue #2450"
-        text: "Implement the Agents control plane per design docs."
+        summary: "Implement onboarding flow"
+        text: "Implement the agent onboarding flow described in the spec."
     - apiVersion: agents.proompteng.ai/v1alpha1
       kind: Memory
       metadata:

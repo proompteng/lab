@@ -7,12 +7,12 @@ spec:
     provider: manual
     externalId: manual:sample
     url: https://example.com/agents/specs/manual-sample
-  summary: "Implement issue #2450"
+  summary: "Implement onboarding flow"
   text: |
-    Implement the Agents control plane per design docs.
+    Implement the onboarding flow described in the spec document.
   acceptanceCriteria:
-    - CRDs updated to v1alpha1 schema
-    - Jangar reconciler updates statuses
+    - Flow implemented end-to-end
+    - Status updates reflect completion
   labels:
     - agents
     - control-plane

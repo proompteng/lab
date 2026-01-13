@@ -21,7 +21,7 @@ spec:
         cpu: 250m
         memory: 512Mi
   parameters:
-    repo: proompteng/lab
-    issue: "2450"
+    task: "Update onboarding flow"
+    priority: "medium"
   secrets:
-    - codex-github-token
+    - codex-provider-token
