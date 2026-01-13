@@ -87,7 +87,7 @@ It provides:
 
 #### Reconciliation loops (high-level)
 - `AgentRun` reconciler:
-  - Resolve `spec.agentRef` and `spec.implementationRef` (or inline).
+  - Resolve `spec.agentRef` and `spec.implementationSpecRef` (or inline).
   - Validate `spec.runtime` + `spec.execution.coordinates` + `spec.workload`.
   - Resolve provider templates and render an execution spec for `agent-runner`.
   - Select runtime adapter from `spec.runtime` and submit workload.
@@ -157,7 +157,7 @@ Removed from Agent:
 Purpose: A single execution of an ImplementationSpec, including the exact coordinates of what to run.
 Required fields:
 - `spec.agentRef`: reference to Agent.
-- `spec.implementationRef` or `spec.implementation.inline`: what to implement (required).
+- `spec.implementationSpecRef` or `spec.implementation.inline`: what to implement (required).
 - `spec.runtime`: runtime type + configuration for this run.
 - `spec.execution.coordinates`: where the run happens.
 
@@ -168,7 +168,7 @@ Proposed `execution.coordinates`:
 - `workspace`: optional workspace overrides (image, volume, etc).
 
 Implementation spec linkage:
-- `spec.implementationRef`: reference to ImplementationSpec (preferred).
+- `spec.implementationSpecRef`: reference to ImplementationSpec (preferred).
 - `spec.implementation.inline`: inline ImplementationSpec for ad-hoc runs.
 
 Workload requirements:
@@ -341,7 +341,7 @@ metadata:
 spec:
   agentRef:
     name: codex-agent
-  implementationRef:
+  implementationSpecRef:
     name: impl-1234
   runtime:
     type: custom
