@@ -303,6 +303,9 @@ Follow Helm and Artifact Hub guidance:
 - Use Chart.yaml annotations for Artifact Hub metadata (`artifacthub.io/*`), including CRDs and examples.
 - Provide `artifacthub-repo.yml` at the repository index level when publishing (or OCI metadata layer for OCI).
 
+## CLI
+See `docs/agents/agentctl-cli-design.md` for the `agentctl` CLI design.
+
 ## Decisions
 - Minimum supported Kubernetes version: 1.25+ (CRD v1, no PSP, aligns with modern clusters).
 - Optional extras: keep out of the core chart; manage via a separate `agents-extras` chart or external policy tooling.
