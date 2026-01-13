@@ -1,0 +1,33 @@
+# RBAC Matrix (Agents)
+
+Status: Draft (2026-01-13)
+
+## Components
+- Jangar controller (namespaced)
+- agentctl (user client)
+- Runtime adapters (Argo/Temporal/Job/Custom)
+
+## Jangar Controller (namespaced Role)
+Required verbs (namespaced):
+- `get`, `list`, `watch`, `create`, `update`, `patch` on:
+  - `agents`, `agentruns`, `agentproviders`, `implementationspecs`, `implementationsources`, `memories`
+- `update` on `*/status` for all CRDs
+- `create`, `get`, `list`, `watch`, `update`, `patch`, `delete` on runtime resources:
+  - `jobs.batch` (for job runtime)
+  - `workflows.argoproj.io` (if Argo adapter enabled)
+- `get` on `secrets` referenced in AgentRun allowlist
+
+Optional (if enabled):
+- `events` for publishing Kubernetes events
+
+## agentctl (user)
+Uses the user's kubeconfig; permissions are whatever the user has in the cluster.
+
+## Runtime Adapter Service Accounts
+If adapters run outside Jangar:
+- Minimal rights to create their runtime resources.
+- No access to CRDs beyond their scope.
+
+## Security Notes
+- Secrets must be allowlisted by Agent or AgentRun.
+- No wildcard access to secrets.

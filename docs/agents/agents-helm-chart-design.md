@@ -370,6 +370,14 @@ See `docs/agents/market-readiness-and-distribution.md` for Artifact Hub publisha
 ## Production Readiness
 See `docs/agents/production-readiness-design.md` for the production‑grade requirements checklist.
 
+## Ops & Security
+See:
+- `docs/agents/rbac-matrix.md`
+- `docs/agents/threat-model.md`
+- `docs/agents/runbooks.md`
+- `docs/agents/ci-validation-plan.md`
+- `docs/agents/crd-yaml-spec.md`
+
 ## Decisions
 - Minimum supported Kubernetes version: 1.25+ (CRD v1, no PSP, aligns with modern clusters).
 - Optional extras: keep out of the core chart; manage via a separate `agents-extras` chart or external policy tooling.
