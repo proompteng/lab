@@ -66,12 +66,8 @@ rules:
       - secrets
     verbs:
       - get
-      - list
-      - watch
   - apiGroups: [""]
     resources:
-      - pods
-      - pods/log
       - configmaps
       - events
     verbs:
