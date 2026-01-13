@@ -129,6 +129,16 @@ It provides:
 ## CRD Redesign
 All CRDs remain under `charts/agents/crds` and are cluster-scoped definitions.
 
+### CRD Best Practices Adopted (from Argo, Tekton, Flyte)
+- Generate CRDs from Go types with `controller-gen`, then publish static YAML under `charts/agents/crds` (Argo, Tekton).
+- Keep CRD JSON size below 256KB (Tekton) and provide a fallback minimal variant or trimmed descriptions when needed (Argo).
+- Use structural schemas with `preserveUnknownFields: false`, and only mark specific subtrees as schemaless (Argo/Tekton).
+- Enable `subresources.status` for all CRDs and use conditions + `observedGeneration` for reconciliation state (Tekton).
+- Add `additionalPrinterColumns` for run status and timestamps to improve `kubectl get` UX (Tekton).
+- Use CEL validations sparingly for user-facing invariants; avoid heavy CEL on controller-managed specs (Argo).
+- Validate examples against CRDs in CI (Argo).
+- Prefer CRDs installed from Helm `crds/` (static, versioned); Jangar should only verify presence, not create CRDs at runtime (Flyte uses runtime creation, but we prefer Helm for Artifact Hub compatibility).
+
 Mermaid: CRD relationships
 ```mermaid
 graph LR
