@@ -52,7 +52,7 @@ Status: Draft (2026-01-13)
 - `agentctl memory delete <name>`
 
 ### AgentRun
-- `agentctl run submit --agent <name> --impl <name> --runtime <type> [--workload-image ...] [--cpu ...] [--memory ...]`
+- `agentctl run submit --agent <name> --impl <name> --runtime <type> [--workload-image ...] [--cpu ...] [--memory ...] [--idempotency-key ...]`
 - `agentctl run apply -f <file>`
 - `agentctl run get <name>`
 - `agentctl run list`
@@ -63,12 +63,13 @@ Status: Draft (2026-01-13)
 - `--context`, `--kubeconfig`, `--namespace` (default from kubeconfig).
 - `--output` (`yaml|json|table`).
 - `--wait` for `run submit` to block until completion.
+- `--idempotency-key` to avoid duplicate run submissions.
 
 ## Spec Rendering
 `agentctl run submit` builds an AgentRun manifest from flags:
 - Required: `--agent`, `--impl` (ImplementationSpec), `--runtime`.
 - Optional: `--workload-image`, `--cpu`, `--memory`, `--memory-ref`, `--param key=value`.
-- Produces `spec.implementationSpecRef`, `spec.runtime`, `spec.workload`, `spec.parameters`.
+- Produces `spec.implementationSpecRef`, `spec.runtime`, `spec.workload`, `spec.parameters`, `spec.idempotencyKey`.
 
 ## Runtime Handling
 - `--runtime` maps to `spec.runtime.type`.
@@ -82,11 +83,17 @@ Status: Draft (2026-01-13)
 - Validate required fields before submitting.
 - Detect schema errors from the API server and print actionable hints.
 - Surface CRD missing errors with guidance to install the chart.
+- Exit codes:
+  - `0` success
+  - `2` validation error
+  - `3` Kubernetes API error
+  - `4` runtime adapter error (submit/cancel)
+  - `5` unknown/unhandled
 
 ## Security
 - Uses kubeconfig auth (no credentials stored).
 - Secrets referenced by name only; values never printed.
 
-## Open Questions (if needed)
-- Whether to bundle `agentctl` in the Jangar image or distribute separately.
-- How to standardize artifact retrieval across runtime adapters.
+## Decisions
+- Distribute `agentctl` as a standalone binary (GitHub releases) and optional container image.
+- Artifact retrieval: `agentctl` uses Jangar API when available; otherwise only logs are supported.

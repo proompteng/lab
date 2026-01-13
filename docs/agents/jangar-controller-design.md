@@ -97,11 +97,69 @@ Runtime adapters implement a common contract:
 
 Adapters should be idempotent and tolerate retries.
 
+Runtime adapter responsibilities:
+- Map `spec.runtime` to adapter-specific request payloads.
+- Surface adapter errors as normalized reasons (e.g., `SubmitFailed`, `NotFound`, `Timeout`).
+- Provide stable `runtimeRef` values for reconciliation.
+
+Adapter config keys (minimum):
+- `argo`: `workflowTemplate` (required), `namespace`, `serviceAccount`, `arguments`
+- `temporal`: `taskQueue` (required), `workflowType` (required), `namespace`, `workflowId`, `timeouts`
+- `job`: `namespace`, `serviceAccount`, `ttlSecondsAfterFinished`
+- `custom`: `endpoint`, `payload`
+
 ## Agent Provider Rendering
 AgentProvider defines how to invoke `/usr/local/bin/agent-runner`:
 - Render `argsTemplate` and `envTemplate` against resolved AgentRun + ImplementationSpec data.
 - Materialize `inputFiles` into the runtime workspace.
 - Collect `outputArtifacts` paths.
+
+Agent-runner spec (contract):
+```json
+{
+  "agentRun": {
+    "name": "codex-run-abc",
+    "uid": "uuid",
+    "namespace": "agents"
+  },
+  "implementation": {
+    "text": "...",
+    "summary": "...",
+    "acceptanceCriteria": ["..."]
+  },
+  "parameters": {
+    "key": "value"
+  },
+  "memory": {
+    "type": "postgres",
+    "connectionRef": "secret/name"
+  },
+  "artifacts": [
+    {"name": "agent-log", "path": "/workspace/agent.log"}
+  ]
+}
+```
+
+## Integration Mapping Rules
+### GitHub Issues -> ImplementationSpec
+- `title` -> `spec.summary`
+- `body` -> `spec.text` (truncate to 128KB)
+- `labels` -> `spec.labels`
+- `html_url` -> `spec.source.url`
+- `number` -> `spec.source.externalId` (format: `owner/repo#number`)
+- `updated_at` -> `status.sourceVersion`
+
+### Linear Issues -> ImplementationSpec
+- `title` -> `spec.summary`
+- `description` -> `spec.text` (truncate to 128KB)
+- `labels` -> `spec.labels`
+- `url` -> `spec.source.url`
+- `identifier` -> `spec.source.externalId` (format: `LIN-123`)
+- `updatedAt` -> `status.sourceVersion`
+
+Rate limits and backoff:
+- Respect provider rate-limit headers when present.
+- Exponential backoff: base 5s, max 5m, jitter 20%.
 
 ## Validation and Schema Constraints
 - Use OpenAPI schema for required fields and types.
@@ -112,7 +170,11 @@ AgentProvider defines how to invoke `/usr/local/bin/agent-runner`:
 - Leader election to prevent duplicate reconciliation.
 - Finalizers on AgentRun to ensure runtime cleanup.
 - Reconcile is idempotent; retries do not duplicate runs.
-- Use per-run de-duplication keys (e.g., `metadata.uid`).
+- Use per-run de-duplication keys (`spec.idempotencyKey` if set, else `metadata.uid`).
+- Default concurrency limits (configurable):
+  - 10 in-flight AgentRuns per namespace.
+  - 5 in-flight AgentRuns per Agent.
+  - 100 in-flight AgentRuns cluster-wide.
 
 ## Observability
 - Structured logs with `agentRun.uid` and `implementationSpec.uid`.
@@ -134,6 +196,10 @@ AgentProvider defines how to invoke `/usr/local/bin/agent-runner`:
 - Runtime submission failure -> AgentRun Failed with reason.
 - Integration errors -> ImplementationSource Error with retry backoff.
 - Memory connection failure -> Memory Unreachable and reconcile backoff.
+
+## Retention Defaults
+- AgentRun records retained for 30 days (controller garbage collection).
+- Artifacts/logs retention defaults to 7 days (configurable per runtime).
 
 ## Decisions
 - Runtime schema: `spec.runtime.type` (enum: `argo|temporal|job|custom`) plus `spec.runtime.config` (schemaless map for adapter-specific settings).

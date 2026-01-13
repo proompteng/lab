@@ -154,10 +154,16 @@ Purpose: Default configuration and policy for an agent.
 Key fields (conceptual):
 - `spec.providerRef`: reference to AgentProvider.
 - `spec.config`: flexible dictionary for agent-level configuration.
-- `spec.env`: default env vars (optional).
-- `spec.security`: allowlist of service accounts/secrets.
+- `spec.env`: default env vars (array of `name`/`value`) (optional).
+- `spec.security`: allowlist for `serviceAccounts` and `secrets`.
 - `spec.memoryRef`: optional reference to Memory (default memory backend).
 - `spec.defaults`: timeout/retry defaults for runs (non-resource).
+  - `timeoutSeconds`
+  - `retryLimit`
+
+Status fields (required):
+- `status.conditions`: Ready | InvalidSpec
+- `status.observedGeneration`
 
 Removed from Agent:
 - Repo/issue/implementation inputs.
@@ -172,6 +178,7 @@ Required fields:
 - `spec.runtime`: runtime type + configuration for this run.
 Optional fields:
 - `spec.memoryRef`: override Memory selection for this run.
+- `spec.idempotencyKey`: optional key to de-duplicate run submissions.
 
 Implementation spec linkage:
 - `spec.implementationSpecRef`: reference to ImplementationSpec (preferred).
@@ -179,13 +186,34 @@ Implementation spec linkage:
 
 Workload requirements:
 - `spec.workload.image`: optional custom image for the agent execution environment.
-- `spec.workload.resources`: CPU/memory/ephemeral overrides for this run.
-- `spec.workload.volumes`: optional runtime volumes/scratch (runtime-agnostic).
+- `spec.workload.resources`: resource requirements for this run.
+  - `requests`: map of `cpu|memory|ephemeral-storage` to quantity strings.
+  - `limits`: map of `cpu|memory|ephemeral-storage` to quantity strings.
+- `spec.workload.volumes`: optional runtime volumes/scratch.
+  - `type`: `emptyDir` | `pvc` | `secret`
+  - `name`, `mountPath`, and type-specific fields (`claimName`, `secretName`, `sizeLimit`).
 
 Overrides:
 - `spec.runtime`: runtime-specific configuration for this run (runtime-agnostic schema; examples may include Argo or Temporal).
-- `spec.parameters`: arbitrary key-value parameters for the provider.
+- `spec.parameters`: map of string -> string parameters for the provider.
 - `spec.secrets`: named secret refs allowed for this run.
+
+Status fields (required):
+- `status.phase`: Pending | Running | Succeeded | Failed | Cancelled
+- `status.conditions`: Accepted | InvalidSpec | InProgress | Succeeded | Failed
+- `status.runtimeRef`: opaque runtime identifier(s)
+- `status.startedAt`, `status.finishedAt`
+- `status.observedGeneration`
+
+Runtime schema (spec.runtime):
+- `type`: `argo` | `temporal` | `job` | `custom`
+- `config`: schemaless map for adapter-specific keys
+  - `argo` required: `workflowTemplate`
+  - `argo` optional: `namespace`, `serviceAccount`, `arguments`
+  - `temporal` required: `taskQueue`, `workflowType`
+  - `temporal` optional: `namespace`, `workflowId`, `timeouts`
+  - `job` optional: `namespace`, `serviceAccount`, `ttlSecondsAfterFinished`
+  - `custom` optional: `endpoint`, `payload`
 
 Mermaid: execution flow
 ```mermaid
@@ -213,6 +241,10 @@ Keep as-is with minimal cleanup:
 - `spec.inputFiles`
 - `spec.outputArtifacts`
 
+Status fields (required):
+- `status.conditions`: Ready | InvalidSpec
+- `status.observedGeneration`
+
 No GitHub-specific templates in examples.
 
 Custom agent images:
@@ -232,11 +264,33 @@ Key fields:
 - `spec.acceptanceCriteria`: list of criteria.
 - `spec.labels`: optional labels/tags.
 
+Size limits:
+- `spec.text`: 128KB max
+- `spec.summary`: 256 chars max
+- `spec.acceptanceCriteria`: 50 items max
+
+Status fields (required):
+- `status.conditions`: Ready | InvalidSpec | Stale
+- `status.syncedAt`, `status.sourceVersion`
+- `status.observedGeneration`
+
 ### Integration (GitHub + Linear)
 Add an `ImplementationSource` CRD that configures sync from GitHub Issues and Linear into ImplementationSpec objects. GitHub + Linear are the first integrations to ship. This keeps Agent and AgentRun generic while still enabling provider integrations. Jangar (or a lightweight integrations sidecar) is responsible for:
 - Polling or webhook-driven ingestion from GitHub and Linear.
 - Normalizing external issues into ImplementationSpec fields.
 - Updating status/conditions on ImplementationSpec when upstream changes.
+
+ImplementationSource schema (summary):
+- `spec.provider`: `github` | `linear`
+- `spec.auth.secretRef`: reference to credentials secret
+- `spec.webhook.enabled`: bool
+- `spec.poll.intervalSeconds`: integer (default 60)
+- `spec.scope`: selector for org/project/repo
+- `spec.mapping`: optional overrides for field mapping
+
+Status fields:
+- `status.conditions`: Ready | Syncing | Error
+- `status.cursor`, `status.lastSyncedAt`, `status.observedGeneration`
 
 Mermaid: integration flow
 ```mermaid
@@ -266,6 +320,10 @@ Agent and AgentRun reference Memory by name, not by provider-specific fields. Re
 1) `AgentRun.spec.memoryRef` (if set)
 2) `Agent.spec.memoryRef` (if set)
 3) Memory with `spec.default=true` (if present)
+
+Status fields:
+- `status.conditions`: Ready | InvalidSpec | Unreachable
+- `status.lastCheckedAt`, `status.observedGeneration`
 
 ## Values & Configuration (Helm)
 The chart should include:
