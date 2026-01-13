@@ -818,26 +818,35 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
     labels?: string[]
     since?: string
   }): Promise<IssueSummary[]> => {
-    const params = new URLSearchParams({ state: 'all', per_page: '100' })
-    if (since) params.set('since', since)
-    if (labels && labels.length > 0) params.set('labels', labels.join(','))
-    const data = (await rest(`/repos/${owner}/${repo}/issues?${params.toString()}`)) as Array<Record<string, unknown>>
-    return data
-      .filter((item) => !item.pull_request)
-      .map((item) => {
-        const labelNodes = Array.isArray(item.labels) ? item.labels : []
-        const labelNames = labelNodes
-          .map((label) => (label as Record<string, unknown>).name)
-          .filter((value): value is string => typeof value === 'string')
-        return {
-          number: Number(item.number),
-          title: String(item.title ?? ''),
-          body: typeof item.body === 'string' ? item.body : null,
-          htmlUrl: typeof item.html_url === 'string' ? item.html_url : null,
-          labels: labelNames,
-          updatedAt: typeof item.updated_at === 'string' ? item.updated_at : null,
-        }
-      })
+    const issues: IssueSummary[] = []
+    let page = 1
+    while (true) {
+      const params = new URLSearchParams({ state: 'all', per_page: '100', page: String(page) })
+      if (since) params.set('since', since)
+      if (labels && labels.length > 0) params.set('labels', labels.join(','))
+      const data = (await rest(`/repos/${owner}/${repo}/issues?${params.toString()}`)) as Array<Record<string, unknown>>
+      if (!Array.isArray(data) || data.length === 0) break
+      const pageIssues = data
+        .filter((item) => !item.pull_request)
+        .map((item) => {
+          const labelNodes = Array.isArray(item.labels) ? item.labels : []
+          const labelNames = labelNodes
+            .map((label) => (label as Record<string, unknown>).name)
+            .filter((value): value is string => typeof value === 'string')
+          return {
+            number: Number(item.number),
+            title: String(item.title ?? ''),
+            body: typeof item.body === 'string' ? item.body : null,
+            htmlUrl: typeof item.html_url === 'string' ? item.html_url : null,
+            labels: labelNames,
+            updatedAt: typeof item.updated_at === 'string' ? item.updated_at : null,
+          }
+        })
+      issues.push(...pageIssues)
+      if (data.length < 100) break
+      page += 1
+    }
+    return issues
   }
 
   return {

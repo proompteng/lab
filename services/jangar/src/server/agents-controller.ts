@@ -1704,7 +1704,7 @@ const reconcileNamespace = async (
   }
   for (const run of runs) {
     const phase = asString(readNested(run, ['status', 'phase'])) ?? 'Pending'
-    if (phase === 'Pending' || phase === 'Running') {
+    if (phase === 'Running') {
       inFlight.total += 1
       const agent = asString(readNested(run, ['spec', 'agentRef', 'name'])) ?? 'unknown'
       inFlight.perAgent.set(agent, (inFlight.perAgent.get(agent) ?? 0) + 1)
@@ -1730,7 +1730,7 @@ const reconcileOnce = async () => {
       runsByNamespace.set(namespace, runs)
       for (const run of runs) {
         const phase = asString(readNested(run, ['status', 'phase'])) ?? 'Pending'
-        if (phase === 'Pending' || phase === 'Running') {
+        if (phase === 'Running') {
           globalInFlight += 1
         }
       }
