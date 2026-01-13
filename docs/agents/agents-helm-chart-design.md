@@ -306,6 +306,9 @@ Follow Helm and Artifact Hub guidance:
 ## CLI
 See `docs/agents/agentctl-cli-design.md` for the `agentctl` CLI design.
 
+## Market Readiness
+See `docs/agents/market-readiness-and-distribution.md` for Artifact Hub publishability, mainstream readiness, and growth strategy.
+
 ## Decisions
 - Minimum supported Kubernetes version: 1.25+ (CRD v1, no PSP, aligns with modern clusters).
 - Optional extras: keep out of the core chart; manage via a separate `agents-extras` chart or external policy tooling.
