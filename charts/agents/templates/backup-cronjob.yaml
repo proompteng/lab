@@ -1,0 +1,54 @@
+{{- if and .Values.backups.enabled .Values.postgres.enabled (not .Values.externalDatabase.enabled) -}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "agents.fullname" . }}-backup
+  namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.backups.schedule | quote }}
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            {{- include "agents.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: {{ include "agents.serviceAccountName" . }}
+          containers:
+            - name: pgdump
+              image: "{{ .Values.backups.image.repository }}:{{ .Values.backups.image.tag }}{{- if .Values.backups.image.digest }}@{{ .Values.backups.image.digest }}{{ end }}"
+              imagePullPolicy: {{ .Values.backups.image.pullPolicy }}
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "agents.databaseSecretName" . }}
+                      key: uri
+                - name: RETENTION_DAYS
+                  value: {{ .Values.backups.retentionDays | quote }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -euo pipefail
+                  ts=$(date +%F-%H%M%S)
+                  target=/backup/agents-$ts.dump
+                  echo "Writing backup to ${target}"
+                  pg_dump --format=custom --file="${target}" "$DATABASE_URL"
+                  if [ -n "$RETENTION_DAYS" ]; then
+                    find /backup -type f -mtime +${RETENTION_DAYS} -print -delete
+                  fi
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+              resources:
+                {{- toYaml .Values.backups.resources | nindent 16 }}
+          volumes:
+            - name: backup
+              persistentVolumeClaim:
+                claimName: {{ default (printf "%s-backup" (include "agents.fullname" .)) .Values.backups.storage.existingClaim }}
+{{- end -}}

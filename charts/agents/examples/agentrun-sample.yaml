@@ -1,0 +1,13 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  generateName: sample-agent-run-
+  namespace: agents
+spec:
+  agentRef:
+    name: sample-agent
+  parameters:
+    payload: e30=
+  deliveryId: "demo-1234"
+  retryPolicy:
+    limit: 1

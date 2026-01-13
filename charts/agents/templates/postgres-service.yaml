@@ -1,0 +1,27 @@
+{{- if and .Values.postgres.enabled (not .Values.externalDatabase.enabled) -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agents.postgres.fullname" . }}
+  namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ include "agents.postgres.fullname" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: postgres
+    helm.sh/chart: {{ include "agents.chart" . }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+  {{- with .Values.postgres.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: postgres
+      port: {{ .Values.postgres.service.port }}
+      targetPort: postgres
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: {{ include "agents.postgres.fullname" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}

@@ -1,0 +1,33 @@
+replicaCount: 1
+image:
+  repository: ghcr.io/proompteng/jangar
+  tag: latest
+  pullPolicy: IfNotPresent
+postgres:
+  enabled: true
+  storage:
+    size: 5Gi
+  credentials:
+    username: agents
+    database: agents
+    password: ""
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+migrations:
+  enabled: true
+ingress:
+  enabled: false
+networkPolicy:
+  enabled: false
+backups:
+  enabled: false
+primitives:
+  namespaces:
+    - agents
+  reconciler:
+    enabled: true
+    intervalSeconds: 30
+agentComms:
+  enabled: false

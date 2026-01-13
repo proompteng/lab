@@ -1,0 +1,110 @@
+replicaCount: 2
+
+image:
+  repository: registry.ide-newton.ts.net/lab/jangar
+  tag: "8e480ce4"
+  digest: sha256:103cdef8c8d92e3ac6274c67d18312a683c3e71a7270c2d748ed7bfe3108fbba
+  pullPolicy: IfNotPresent
+  pullSecrets:
+    - registry-cred
+
+service:
+  type: ClusterIP
+  port: 80
+
+externalDatabase:
+  enabled: true
+  host: agents-db.example.com
+  port: 5432
+  database: agents
+  user: agents
+  passwordSecret:
+    name: agents-db-app
+    key: password
+  sslMode: require
+  caSecret:
+    name: agents-db-ca
+    key: ca.crt
+
+postgres:
+  enabled: false
+
+migrations:
+  image:
+    repository: docker.io/pgvector/pgvector
+    tag: pg16
+    digest: sha256:0a07c4114ba6d1d04effcce3385e9f5ce305eb02e56a3d35948a415a52f193ec
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  backoffLimit: 5
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+  hosts:
+    - host: agents.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: agents-tls
+      hosts:
+        - agents.example.com
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 60
+  targetMemoryUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 80
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 5432
+
+resources:
+  requests:
+    cpu: 300m
+    memory: 1Gi
+  limits:
+    cpu: 1
+    memory: 2Gi
+
+backups:
+  enabled: false
+
+primitives:
+  namespaces:
+    - agents
+  reconciler:
+    enabled: true
+    intervalSeconds: 30
+
+agentComms:
+  enabled: true
+  nats:
+    url: nats://nats.nats.svc.cluster.local:4222
+    userSecret:
+      name: nats-agents-credentials
+      usernameKey: username
+      passwordKey: password

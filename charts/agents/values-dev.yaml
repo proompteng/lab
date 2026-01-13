@@ -1,0 +1,54 @@
+# Kind/minikube friendly defaults
+replicaCount: 1
+
+image:
+  repository: ghcr.io/proompteng/jangar
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+postgres:
+  enabled: true
+  storage:
+    size: 2Gi
+  credentials:
+    username: agents
+    database: agents
+    password: devpassword
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+
+migrations:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+
+resources:
+  requests:
+    cpu: 150m
+    memory: 512Mi
+
+ingress:
+  enabled: false
+
+networkPolicy:
+  enabled: false
+
+autoscaling:
+  enabled: false
+
+primitives:
+  namespaces:
+    - agents
+  reconciler:
+    enabled: true
+    intervalSeconds: 15
+
+agentComms:
+  enabled: false

@@ -1,0 +1,67 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agents.fullname" . }}
+  namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - agents.proompteng.ai
+    resources:
+      - agents
+      - agentruns
+      - agentproviders
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - agents.proompteng.ai
+    resources:
+      - agents/status
+      - agentruns/status
+      - agentproviders/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - configmaps
+      - secrets
+      - events
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+{{- with .Values.rbac.extraRules }}
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "agents.fullname" . }}
+  namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "agents.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agents.serviceAccountName" . }}
+    namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+{{- end }}
