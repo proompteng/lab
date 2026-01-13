@@ -26,10 +26,9 @@ export const hydrateMemoryRecord = async (
   const status = asRecord(memory.status) ?? {}
   const connRef = asRecord(readNested(memory, ['spec', 'connection', 'secretRef'])) ?? {}
   const secretName = asString(connRef.name)
-  const secretNamespace = asString(connRef.namespace) ?? namespace
   let connectionSecret: Record<string, unknown> | undefined
   if (secretName) {
-    const secret = await kube.get('secret', secretName, secretNamespace)
+    const secret = await kube.get('secret', secretName, namespace)
     if (secret) {
       connectionSecret = decodeSecretData(secret)
     }

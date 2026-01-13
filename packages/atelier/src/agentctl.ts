@@ -4,6 +4,17 @@ import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 
 const VERSION = '0.1.0'
+const EXIT_VALIDATION = 2
+const EXIT_KUBE = 3
+const EXIT_RUNTIME = 4
+const EXIT_UNKNOWN = 5
+
+class ValidationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ValidationError'
+  }
+}
 
 type GlobalFlags = {
   kubeconfig?: string
@@ -119,6 +130,16 @@ Global flags:
   --context <name>
   --namespace <ns>
   --output <yaml|json|table>
+
+Run submit flags:
+  --workload-image <image>
+  --cpu <value>
+  --memory <value>
+  --memory-ref <name>
+  --param key=value
+  --runtime-config key=value
+  --idempotency-key <value>
+  --wait
 `.trim()
 
 const ensureOutput = (flags: GlobalFlags) => flags.output ?? 'table'
@@ -127,7 +148,10 @@ const handleKubectl = async (args: string[], flags: GlobalFlags, input?: string)
   const result = await runKubectl(args, flags, input)
   if (result.stdout) process.stdout.write(result.stdout)
   if (result.stderr) process.stderr.write(result.stderr)
-  return result.code ?? 1
+  if (result.code !== 0) {
+    reportMissingCrds(result.stderr || result.stdout)
+  }
+  return result.code === 0 ? 0 : EXIT_KUBE
 }
 
 const parseKeyValueList = (values: string[]) => {
@@ -151,6 +175,14 @@ const parseSource = (raw?: string) => {
   }
   if (!source.provider) return undefined
   return source
+}
+
+const isMissingCrdsMessage = (message: string) =>
+  message.includes("the server doesn't have a resource type") || message.includes('no matches for kind')
+
+const reportMissingCrds = (stderr: string) => {
+  if (!isMissingCrdsMessage(stderr)) return
+  console.error('Agents CRDs not found. Install the agents chart or apply CRDs before retrying.')
 }
 
 const handleRunSubmit = async (args: string[], flags: GlobalFlags) => {
@@ -182,7 +214,7 @@ const handleRunSubmit = async (args: string[], flags: GlobalFlags) => {
   }
 
   if (!options.agent || !options.impl || !options.runtime) {
-    throw new Error('--agent, --impl, and --runtime are required')
+    throw new ValidationError('--agent, --impl, and --runtime are required')
   }
 
   const runSpec: Record<string, unknown> = {
@@ -222,10 +254,16 @@ const handleRunSubmit = async (args: string[], flags: GlobalFlags) => {
   }
 
   const result = await runKubectl(['create', '-f', '-', '-o', 'json'], flags, JSON.stringify(runSpec))
+  if (result.code !== 0) {
+    reportMissingCrds(result.stderr || result.stdout)
+    if (result.stdout) process.stdout.write(result.stdout)
+    if (result.stderr) process.stderr.write(result.stderr)
+    return EXIT_KUBE
+  }
   if (result.stdout) process.stdout.write(result.stdout)
   if (result.stderr) process.stderr.write(result.stderr)
   const code = result.code ?? 1
-  if (code !== 0 || options.wait !== 'true') return code
+  if (code !== 0 || options.wait !== 'true') return code === 0 ? 0 : EXIT_KUBE
 
   const created = JSON.parse(result.stdout)
   const name = created.metadata?.name
@@ -237,7 +275,7 @@ const handleRunWait = async (name: string, flags: GlobalFlags) => {
   const deadline = Date.now() + 60 * 60 * 1000
   while (Date.now() < deadline) {
     const result = await runKubectl(['get', 'agentruns.agents.proompteng.ai', name, '-o', 'json'], flags)
-    if (result.code !== 0) return result.code ?? 1
+    if (result.code !== 0) return EXIT_KUBE
     const resource = JSON.parse(result.stdout)
     const phase = resource.status?.phase
     if (phase && ['Succeeded', 'Failed', 'Cancelled'].includes(phase)) {
@@ -247,7 +285,7 @@ const handleRunWait = async (name: string, flags: GlobalFlags) => {
     await new Promise((resolve) => setTimeout(resolve, 2000))
   }
   console.error('Timed out waiting for AgentRun completion')
-  return 4
+  return EXIT_RUNTIME
 }
 
 const handleRunLogs = async (name: string, flags: GlobalFlags, follow: boolean) => {
@@ -280,7 +318,7 @@ const handleRunCancel = async (name: string, flags: GlobalFlags) => {
     return handleKubectl(['delete', 'workflow', runtimeName], flags)
   }
   console.error('No cancellable runtime found for this AgentRun')
-  return 4
+  return EXIT_RUNTIME
 }
 
 const handleCompletion = (shell: string) => {
@@ -301,129 +339,135 @@ complete -F _agentctl_complete agentctl
     return 0
   }
   console.error(`Unsupported shell: ${shell}`)
-  return 2
+  return EXIT_VALIDATION
 }
 
 const main = async () => {
-  const { flags, rest } = parseGlobalFlags(process.argv.slice(2))
-  const [command, subcommand, ...args] = rest
+  try {
+    const { flags, rest } = parseGlobalFlags(process.argv.slice(2))
+    const [command, subcommand, ...args] = rest
 
-  if (!command || command === 'help' || command === '--help' || command === '-h') {
+    if (!command || command === 'help' || command === '--help' || command === '-h') {
+      console.log(usage())
+      return 0
+    }
+
+    if (command === 'version') {
+      console.log(`agentctl ${VERSION}`)
+      return 0
+    }
+
+    if (command === 'config') {
+      if (subcommand === 'view') {
+        return handleKubectl(['config', 'view', '--minify'], flags)
+      }
+      if (subcommand === 'set') {
+        const nsIndex = args.findIndex((arg) => arg === '--namespace' || arg === '-n')
+        const namespace = nsIndex >= 0 ? args[nsIndex + 1] : flags.namespace
+        if (!namespace) {
+          throw new ValidationError('namespace is required')
+        }
+        return handleKubectl(['config', 'set-context', '--current', `--namespace=${namespace}`], flags)
+      }
+    }
+
+    if (command === 'completion') {
+      const shell = subcommand ?? ''
+      return handleCompletion(shell)
+    }
+
+    const resourceMap: Record<string, string> = {
+      agent: 'agents.agents.proompteng.ai',
+      impl: 'implementationspecs.agents.proompteng.ai',
+      source: 'implementationsources.agents.proompteng.ai',
+      memory: 'memories.agents.proompteng.ai',
+      run: 'agentruns.agents.proompteng.ai',
+    }
+
+    if (command === 'agent' || command === 'impl' || command === 'source' || command === 'memory') {
+      const resource = resourceMap[command]
+      if (subcommand === 'get') {
+        return handleKubectl(['get', resource, args[0], '-o', ensureOutput(flags)], flags)
+      }
+      if (subcommand === 'list') {
+        return handleKubectl(['get', resource, '-o', ensureOutput(flags)], flags)
+      }
+      if (subcommand === 'apply') {
+        const fileIndex = args.indexOf('-f')
+        const file = fileIndex >= 0 ? args[fileIndex + 1] : undefined
+        if (!file) {
+          throw new ValidationError('apply requires -f <file>')
+        }
+        return handleKubectl(['apply', '-f', file], flags)
+      }
+      if (subcommand === 'delete') {
+        return handleKubectl(['delete', resource, args[0]], flags)
+      }
+      if (command === 'impl' && subcommand === 'create') {
+        let text = ''
+        let summary: string | undefined
+        let source: Record<string, string> | undefined
+        for (let i = 0; i < args.length; i += 1) {
+          if (args[i] === '--text') text = args[++i]
+          if (args[i] === '--summary') summary = args[++i]
+          if (args[i] === '--source') source = parseSource(args[++i])
+        }
+        if (!text) {
+          throw new ValidationError('--text is required')
+        }
+        const manifest = {
+          apiVersion: 'agents.proompteng.ai/v1alpha1',
+          kind: 'ImplementationSpec',
+          metadata: { generateName: 'impl-' },
+          spec: {
+            text,
+            summary,
+            source,
+          },
+        }
+        return handleKubectl(['create', '-f', '-', '-o', 'json'], flags, JSON.stringify(manifest))
+      }
+    }
+
+    if (command === 'run') {
+      if (subcommand === 'submit') {
+        return handleRunSubmit(args, flags)
+      }
+      if (subcommand === 'apply') {
+        const fileIndex = args.indexOf('-f')
+        const file = fileIndex >= 0 ? args[fileIndex + 1] : undefined
+        if (!file) {
+          throw new ValidationError('apply requires -f <file>')
+        }
+        return handleKubectl(['apply', '-f', file], flags)
+      }
+      if (subcommand === 'get') {
+        return handleKubectl(['get', resourceMap.run, args[0], '-o', ensureOutput(flags)], flags)
+      }
+      if (subcommand === 'list') {
+        return handleKubectl(['get', resourceMap.run, '-o', ensureOutput(flags)], flags)
+      }
+      if (subcommand === 'logs') {
+        const follow = args.includes('--follow')
+        return handleRunLogs(args[0], flags, follow)
+      }
+      if (subcommand === 'cancel') {
+        return handleRunCancel(args[0], flags)
+      }
+    }
+
+    console.error('Unknown command')
     console.log(usage())
-    return 0
+    return EXIT_VALIDATION
+  } catch (error) {
+    if (error instanceof ValidationError) {
+      console.error(error.message)
+      return EXIT_VALIDATION
+    }
+    const message = error instanceof Error ? error.message : String(error)
+    console.error(message)
+    return EXIT_UNKNOWN
   }
-
-  if (command === 'version') {
-    console.log(`agentctl ${VERSION}`)
-    return 0
-  }
-
-  if (command === 'config') {
-    if (subcommand === 'view') {
-      return handleKubectl(['config', 'view', '--minify'], flags)
-    }
-    if (subcommand === 'set') {
-      const nsIndex = args.findIndex((arg) => arg === '--namespace' || arg === '-n')
-      const namespace = nsIndex >= 0 ? args[nsIndex + 1] : flags.namespace
-      if (!namespace) {
-        console.error('namespace is required')
-        return 2
-      }
-      return handleKubectl(['config', 'set-context', '--current', `--namespace=${namespace}`], flags)
-    }
-  }
-
-  if (command === 'completion') {
-    const shell = subcommand ?? ''
-    return handleCompletion(shell)
-  }
-
-  const resourceMap: Record<string, string> = {
-    agent: 'agents.agents.proompteng.ai',
-    impl: 'implementationspecs.agents.proompteng.ai',
-    source: 'implementationsources.agents.proompteng.ai',
-    memory: 'memories.agents.proompteng.ai',
-    run: 'agentruns.agents.proompteng.ai',
-  }
-
-  if (command === 'agent' || command === 'impl' || command === 'source' || command === 'memory') {
-    const resource = resourceMap[command]
-    if (subcommand === 'get') {
-      return handleKubectl(['get', resource, args[0], '-o', ensureOutput(flags)], flags)
-    }
-    if (subcommand === 'list') {
-      return handleKubectl(['get', resource, '-o', ensureOutput(flags)], flags)
-    }
-    if (subcommand === 'apply') {
-      const fileIndex = args.indexOf('-f')
-      const file = fileIndex >= 0 ? args[fileIndex + 1] : undefined
-      if (!file) {
-        console.error('apply requires -f <file>')
-        return 2
-      }
-      return handleKubectl(['apply', '-f', file], flags)
-    }
-    if (subcommand === 'delete') {
-      return handleKubectl(['delete', resource, args[0]], flags)
-    }
-    if (command === 'impl' && subcommand === 'create') {
-      let text = ''
-      let summary: string | undefined
-      let source: Record<string, string> | undefined
-      for (let i = 0; i < args.length; i += 1) {
-        if (args[i] === '--text') text = args[++i]
-        if (args[i] === '--summary') summary = args[++i]
-        if (args[i] === '--source') source = parseSource(args[++i])
-      }
-      if (!text) {
-        console.error('--text is required')
-        return 2
-      }
-      const manifest = {
-        apiVersion: 'agents.proompteng.ai/v1alpha1',
-        kind: 'ImplementationSpec',
-        metadata: { generateName: 'impl-' },
-        spec: {
-          text,
-          summary,
-          source,
-        },
-      }
-      return handleKubectl(['create', '-f', '-', '-o', 'json'], flags, JSON.stringify(manifest))
-    }
-  }
-
-  if (command === 'run') {
-    if (subcommand === 'submit') {
-      return handleRunSubmit(args, flags)
-    }
-    if (subcommand === 'apply') {
-      const fileIndex = args.indexOf('-f')
-      const file = fileIndex >= 0 ? args[fileIndex + 1] : undefined
-      if (!file) {
-        console.error('apply requires -f <file>')
-        return 2
-      }
-      return handleKubectl(['apply', '-f', file], flags)
-    }
-    if (subcommand === 'get') {
-      return handleKubectl(['get', resourceMap.run, args[0], '-o', ensureOutput(flags)], flags)
-    }
-    if (subcommand === 'list') {
-      return handleKubectl(['get', resourceMap.run, '-o', ensureOutput(flags)], flags)
-    }
-    if (subcommand === 'logs') {
-      const follow = args.includes('--follow')
-      return handleRunLogs(args[0], flags, follow)
-    }
-    if (subcommand === 'cancel') {
-      return handleRunCancel(args[0], flags)
-    }
-  }
-
-  console.error('Unknown command')
-  console.log(usage())
-  return 2
 }
 
 if (import.meta.main) {

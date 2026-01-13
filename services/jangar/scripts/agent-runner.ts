@@ -27,6 +27,14 @@ type ProviderSpec = {
   outputArtifacts?: Array<{ name: string; path: string }>
 }
 
+type RunSpec = {
+  agentRun?: Record<string, unknown>
+  implementation?: Record<string, unknown>
+  parameters?: Record<string, unknown>
+  memory?: Record<string, unknown>
+  artifacts?: Array<{ name?: string; path?: string; key?: string; url?: string }>
+}
+
 const AGENT_STATUS_DEFAULT = '/workspace/.agent/status.json'
 const AGENT_LOG_DEFAULT = '/workspace/.agent/runner.log'
 
@@ -96,19 +104,78 @@ const parseArgs = () => {
   return result
 }
 
+const isRunSpec = (value: unknown): value is RunSpec => {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return Boolean(record.agentRun || record.implementation || record.parameters)
+}
+
+const buildSpecFromRunSpec = (runSpec: RunSpec): AgentSpec => {
+  const provider = process.env.AGENT_PROVIDER?.trim() || process.env.AGENT_PROVIDER_NAME?.trim()
+  if (!provider) {
+    throw new Error('Missing AGENT_PROVIDER for agent-run spec execution')
+  }
+
+  const implementation = (runSpec.implementation ?? {}) as Record<string, unknown>
+  const text = typeof implementation.text === 'string' ? implementation.text : ''
+  const summary = typeof implementation.summary === 'string' ? implementation.summary : ''
+  const acceptanceCriteria = Array.isArray(implementation.acceptanceCriteria) ? implementation.acceptanceCriteria : []
+
+  const payloadJson = JSON.stringify(runSpec, null, 2)
+  const metadataJson = JSON.stringify(
+    {
+      summary,
+      acceptanceCriteria,
+      source: implementation.source ?? null,
+      labels: implementation.labels ?? [],
+    },
+    null,
+    2,
+  )
+
+  const providerSpec = (() => {
+    const raw = process.env.AGENT_PROVIDER_SPEC
+    if (!raw) return undefined
+    try {
+      return JSON.parse(raw) as ProviderSpec
+    } catch (error) {
+      throw new Error(`Invalid AGENT_PROVIDER_SPEC JSON: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  })()
+
+  return {
+    provider,
+    inputs: typeof runSpec.parameters === 'object' && runSpec.parameters ? runSpec.parameters : {},
+    payloads: {
+      eventBodyB64: Buffer.from(payloadJson, 'utf8').toString('base64'),
+      promptB64: Buffer.from(text || summary, 'utf8').toString('base64'),
+      metadataB64: Buffer.from(metadataJson, 'utf8').toString('base64'),
+    },
+    providerSpec,
+  }
+}
+
 const loadSpec = async () => {
   const { specPath, specEnv } = parseArgs()
-  const resolvedPath = specPath || process.env.AGENT_SPEC_PATH || undefined
+  const resolvedPath = specPath || process.env.AGENT_RUN_SPEC || process.env.AGENT_SPEC_PATH || undefined
   if (resolvedPath) {
     const raw = await readFile(resolvedPath, 'utf8')
-    return JSON.parse(raw) as AgentSpec
+    const parsed = JSON.parse(raw) as AgentSpec | RunSpec
+    if (isRunSpec(parsed)) {
+      return buildSpecFromRunSpec(parsed)
+    }
+    return parsed as AgentSpec
   }
   const envKey = specEnv || process.env.AGENT_SPEC_ENV || 'AGENT_SPEC'
   const raw = process.env[envKey]
   if (!raw) {
     throw new Error('Missing agent spec. Provide --spec <path> or set AGENT_SPEC.')
   }
-  return JSON.parse(raw) as AgentSpec
+  const parsed = JSON.parse(raw) as AgentSpec | RunSpec
+  if (isRunSpec(parsed)) {
+    return buildSpecFromRunSpec(parsed)
+  }
+  return parsed as AgentSpec
 }
 
 const loadProviderSpec = async (provider: string, override?: ProviderSpec) => {

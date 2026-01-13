@@ -12,6 +12,8 @@ const DEFAULT_CONCURRENCY = {
   perAgent: 5,
   cluster: 100,
 }
+const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
+const IMPLEMENTATION_SUMMARY_LIMIT = 256
 
 const REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -210,6 +212,27 @@ const makeName = (base: string, suffix: string) => {
   return `${trimmed}-${hash}`
 }
 
+const clampUtf8 = (value: string, maxBytes: number) => {
+  const buffer = Buffer.from(value, 'utf8')
+  if (buffer.length <= maxBytes) return value
+  return buffer.subarray(0, maxBytes).toString('utf8')
+}
+
+const normalizeSummary = (value: string | null) => {
+  if (!value) return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  return trimmed.slice(0, IMPLEMENTATION_SUMMARY_LIMIT)
+}
+
+const normalizeText = (value: string | null, fallback?: string | null) => {
+  const trimmed = value?.trim() ?? ''
+  if (!trimmed && fallback) {
+    return clampUtf8(fallback.trim(), IMPLEMENTATION_TEXT_LIMIT)
+  }
+  return clampUtf8(trimmed, IMPLEMENTATION_TEXT_LIMIT)
+}
+
 const buildRunSpecContext = (
   agentRun: Record<string, unknown>,
   agent: Record<string, unknown> | null,
@@ -218,6 +241,7 @@ const buildRunSpecContext = (
   memory: Record<string, unknown> | null,
 ) => {
   const metadata = asRecord(agentRun.metadata) ?? {}
+  const agentSpec = asRecord(agent?.spec) ?? {}
   return {
     agentRun: {
       name: asString(metadata.name) ?? '',
@@ -226,6 +250,8 @@ const buildRunSpecContext = (
     },
     agent: {
       name: asString(readNested(agent, ['metadata', 'name'])) ?? '',
+      config: asRecord(agentSpec.config) ?? {},
+      env: Array.isArray(agentSpec.env) ? agentSpec.env : [],
     },
     implementation,
     parameters,
@@ -393,9 +419,17 @@ const reconcileMemory = async (
   namespace: string,
 ) => {
   const conditions = buildConditions(memory)
+  const memoryType = asString(readNested(memory, ['spec', 'type']))
   const secretName = asString(readNested(memory, ['spec', 'connection', 'secretRef', 'name']))
   let updated = conditions
-  if (!secretName) {
+  if (!memoryType) {
+    updated = upsertCondition(updated, {
+      type: 'InvalidSpec',
+      status: 'True',
+      reason: 'MissingType',
+      message: 'spec.type is required',
+    })
+  } else if (!secretName) {
     updated = upsertCondition(updated, {
       type: 'InvalidSpec',
       status: 'True',
@@ -488,7 +522,8 @@ const syncGitHubIssues = async (
   for (const issue of issues) {
     const externalId = `${owner}/${name}#${issue.number}`
     const shortName = makeName(`${owner}-${name}-${issue.number}`, 'impl')
-    const text = issue.body ?? ''
+    const summary = normalizeSummary(issue.title)
+    const text = normalizeText(issue.body ?? '', summary)
     const sourceRef = {
       provider: 'github',
       externalId,
@@ -497,7 +532,7 @@ const syncGitHubIssues = async (
     await syncImplementationSpec(kube, namespace, {
       name: shortName,
       source: sourceRef,
-      summary: issue.title,
+      summary,
       text,
       labels: issue.labels,
       sourceVersion: issue.updatedAt ?? undefined,
@@ -538,11 +573,13 @@ const syncLinearIssues = async (
   for (const issue of issues) {
     const externalId = issue.identifier
     const shortName = makeName(`linear-${issue.identifier}`, 'impl')
+    const summary = normalizeSummary(issue.title)
+    const text = normalizeText(issue.description ?? '', summary)
     await syncImplementationSpec(kube, namespace, {
       name: shortName,
       source: { provider: 'linear', externalId, url: issue.url ?? undefined },
-      summary: issue.title,
-      text: issue.description ?? '',
+      summary,
+      text,
       labels: issue.labels,
       sourceVersion: issue.updatedAt ?? undefined,
     })
@@ -609,6 +646,16 @@ const reconcileImplementationSource = async (
   }
 
   try {
+    await setStatus(kube, source, {
+      observedGeneration: asRecord(metadata)?.generation ?? 0,
+      cursor: asString(readNested(source, ['status', 'cursor'])) ?? undefined,
+      lastSyncedAt: lastSyncedAt ?? undefined,
+      conditions: upsertCondition(buildConditions(source), {
+        type: 'Syncing',
+        status: 'True',
+        reason: 'InProgress',
+      }),
+    })
     const provider = asString(readNested(source, ['spec', 'provider'])) ?? 'github'
     const result =
       provider === 'linear'
@@ -626,7 +673,7 @@ const reconcileImplementationSource = async (
       observedGeneration: asRecord(metadata)?.generation ?? 0,
       cursor: result.cursor,
       lastSyncedAt: nowIso(),
-      conditions,
+      conditions: upsertCondition(conditions, { type: 'Syncing', status: 'False', reason: 'Complete' }),
     })
   } catch (error) {
     const failureCount = (backoff?.failures ?? 0) + 1
@@ -806,6 +853,7 @@ const submitJobRun = async (
   const inputFiles = Array.isArray(providerSpec.inputFiles) ? providerSpec.inputFiles : []
   const outputArtifacts = Array.isArray(providerSpec.outputArtifacts) ? providerSpec.outputArtifacts : []
   const binary = asString(providerSpec.binary) ?? '/usr/local/bin/agent-runner'
+  const providerName = asString(readNested(provider, ['metadata', 'name'])) ?? ''
 
   const parameters = resolveParameters(agentRun)
   const context = buildRunSpecContext(agentRun, agent, implementation, parameters, memory)
@@ -818,6 +866,9 @@ const submitJobRun = async (
     name: key,
     value: renderTemplate(String(value), context),
   }))
+  if (providerName) {
+    env.push({ name: 'AGENT_PROVIDER', value: providerName })
+  }
 
   const runSpec = {
     agentRun: context.agentRun,
@@ -1024,6 +1075,7 @@ const reconcileAgentRun = async (
 
   const conditions = buildConditions(agentRun)
   const observedGeneration = asRecord(agentRun.metadata)?.generation ?? 0
+  const runtimeType = asString(readNested(spec, ['runtime', 'type']))
 
   if (deleting) {
     if (hasFinalizer) {
@@ -1086,6 +1138,16 @@ const reconcileAgentRun = async (
   }
 
   if (shouldSubmit) {
+    if (!runtimeType) {
+      const updated = upsertCondition(conditions, {
+        type: 'InvalidSpec',
+        status: 'True',
+        reason: 'MissingRuntime',
+        message: 'spec.runtime.type is required',
+      })
+      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      return
+    }
     const agent = agentName ? await kube.get(RESOURCE_MAP.Agent, agentName, namespace) : null
     if (!agent) {
       const updated = upsertCondition(conditions, {
@@ -1133,8 +1195,6 @@ const reconcileAgentRun = async (
     }
 
     const memory = resolveMemory(agentRun, agent, memories)
-    const runtime = asRecord(spec.runtime) ?? {}
-    const runtimeType = asString(runtime.type) ?? ''
 
     let newRuntimeRef: RuntimeRef | null = null
     try {
