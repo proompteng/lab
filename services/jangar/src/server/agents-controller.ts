@@ -525,6 +525,7 @@ const reconcileImplementationSpec = async (
   const conditions = buildConditions(impl)
   const text = asString(spec.text) ?? ''
   const summary = asString(spec.summary) ?? ''
+  const description = asString(spec.description) ?? ''
   const acceptanceCriteria = Array.isArray(spec.acceptanceCriteria) ? spec.acceptanceCriteria : []
   let updated = conditions
   if (!text) {
@@ -547,6 +548,13 @@ const reconcileImplementationSpec = async (
       status: 'True',
       reason: 'SummaryTooLong',
       message: 'spec.summary exceeds 256 characters',
+    })
+  } else if (description && description.length > IMPLEMENTATION_TEXT_LIMIT) {
+    updated = upsertCondition(updated, {
+      type: 'InvalidSpec',
+      status: 'True',
+      reason: 'DescriptionTooLarge',
+      message: 'spec.description exceeds 128KB',
     })
   } else if (acceptanceCriteria.length > 50) {
     updated = upsertCondition(updated, {
