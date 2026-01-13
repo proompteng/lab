@@ -77,6 +77,54 @@ Local cluster usage (minikube/kind):
 - Database migrations run inside Jangar (or a Jangar-owned init path) using SQL shipped in the image.
 - Chart only passes database connection configuration and migration toggles (e.g., `JANGAR_MIGRATIONS=auto`).
 
+### Jangar as Controller + Control Plane
+Jangar is the reconciler for all Agents CRDs. No separate operator is required as long as Jangar runs.
+It provides:
+- Controller manager (leader-elected) that owns reconciliation loops.
+- Runtime adapter layer (Argo/Temporal/Job/Custom) for execution.
+- Integration layer for GitHub + Linear ingestion into ImplementationSpec.
+- Status/condition management and event emission.
+
+#### Reconciliation loops (high-level)
+- `AgentRun` reconciler:
+  - Resolve `spec.agentRef` and `spec.implementationRef` (or inline).
+  - Validate `spec.execution.coordinates` + `spec.workload`.
+  - Resolve provider templates and render an execution spec for `agent-runner`.
+  - Select runtime adapter and submit workload.
+  - Update `status.phase`, `status.conditions`, timestamps, and runtime identifiers.
+- `ImplementationSpec` reconciler:
+  - Validate schema, normalize plaintext `spec.text`.
+  - Track provenance (`spec.source`) and update conditions when upstream changes.
+- `ImplementationSource` reconciler:
+  - Connect to GitHub/Linear (webhook or poll).
+  - Normalize external issues to ImplementationSpec objects (create/update/delete).
+  - Maintain sync cursor and emit reconciliation events.
+- `Memory` reconciler:
+  - Validate connection secrets and publish capability metadata.
+  - Optionally run health checks for memory backends.
+
+#### Status model (suggested)
+- Common conditions: `Ready`, `Accepted`, `InvalidSpec`, `InProgress`, `Succeeded`, `Failed`, `Blocked`.
+- `AgentRun.status` includes:
+  - `phase`: `Pending|Running|Succeeded|Failed|Cancelled`
+  - `startedAt`, `finishedAt`
+  - `runtimeRef`: opaque identifiers (workflow name/UID, job name, run ID)
+  - `artifacts`: list of produced outputs (keys/paths)
+- `ImplementationSpec.status` includes:
+  - `syncedAt`, `sourceVersion`
+  - `conditions` for provider sync
+
+#### Lifecycle & safety
+- Use finalizers on `AgentRun` to ensure runtime teardown on delete.
+- Use ownerReferences when Jangar creates derived resources (if applicable).
+- Leader election prevents duplicate runs in multi-replica deployments.
+- Emit Kubernetes Events for submit/start/finish/failure.
+
+#### Observability & operations
+- Structured logs with run correlation (`agentRun.uid`, `implementationSpec.uid`).
+- Metrics: reconcile duration, run latency, success/failure counts by runtime/provider.
+- Configurable resync intervals and backoff for transient provider failures.
+
 ## CRD Redesign
 All CRDs remain under `charts/agents/crds` and are cluster-scoped definitions.
 
