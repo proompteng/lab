@@ -202,6 +202,8 @@ type ImplementationSpecFields struct {
 	Text string `json:"text"`
 	// +kubebuilder:validation:MaxLength=256
 	Summary string `json:"summary,omitempty"`
+	// +kubebuilder:validation:MaxLength=131072
+	Description string `json:"description,omitempty"`
 	// +kubebuilder:validation:MaxItems=50
 	AcceptanceCriteria []string `json:"acceptanceCriteria,omitempty"`
 	Labels             []string `json:"labels,omitempty"`

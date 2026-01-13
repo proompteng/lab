@@ -33,6 +33,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
+        x-kubernetes-preserve-unknown-fields: false
         properties:
           apiVersion:
             description: |-
@@ -71,6 +72,9 @@ spec:
                           type: string
                         maxItems: 50
                         type: array
+                      description:
+                        maxLength: 131072
+                        type: string
                       labels:
                         items:
                           type: string
