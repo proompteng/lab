@@ -143,15 +143,16 @@ Purpose: Default configuration and policy for an agent.
 Key fields (conceptual):
 - `spec.providerRef`: reference to AgentProvider.
 - `spec.runtime`: runtime type + default settings (Argo/Temporal/Job/Custom).
-- `spec.resources`: default CPU/memory/ephemeral.
-- `spec.env`: default env vars.
+- `spec.config`: flexible dictionary for agent-level configuration.
+- `spec.env`: default env vars (optional).
 - `spec.security`: allowlist of service accounts/secrets.
 - `spec.memoryRef`: optional reference to Memory (default memory backend).
-- `spec.defaults`: timeout/retry defaults for runs.
+- `spec.defaults`: timeout/retry defaults for runs (non-resource).
 
 Removed from Agent:
 - Repo/issue/implementation inputs.
 - Payloads tied to GitHub events.
+- Resource sizing (resources belong on AgentRun).
 
 ### AgentRun (v1alpha1)
 Purpose: A single execution of an ImplementationSpec, including the exact coordinates of what to run.
@@ -312,9 +313,9 @@ spec:
     type: custom
   memoryRef:
     name: default-memory
-  resources:
-    cpu: 1
-    memory: 2Gi
+  config:
+    stage: implementation
+    repoPolicy: readonly
 ```
 
 ImplementationSpec:
