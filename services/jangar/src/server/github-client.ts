@@ -62,6 +62,15 @@ export type ReviewSummary = {
   issueComments: Array<{ author: string | null; body: string | null; createdAt: string | null; url: string | null }>
 }
 
+export type IssueSummary = {
+  number: number
+  title: string
+  body: string | null
+  htmlUrl: string | null
+  labels: string[]
+  updatedAt: string | null
+}
+
 export type FileContent = {
   content: string
   sha: string
@@ -798,6 +807,39 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
     })
   }
 
+  const listIssues = async ({
+    owner,
+    repo,
+    labels,
+    since,
+  }: {
+    owner: string
+    repo: string
+    labels?: string[]
+    since?: string
+  }): Promise<IssueSummary[]> => {
+    const params = new URLSearchParams({ state: 'all', per_page: '100' })
+    if (since) params.set('since', since)
+    if (labels && labels.length > 0) params.set('labels', labels.join(','))
+    const data = (await rest(`/repos/${owner}/${repo}/issues?${params.toString()}`)) as Array<Record<string, unknown>>
+    return data
+      .filter((item) => !item.pull_request)
+      .map((item) => {
+        const labelNodes = Array.isArray(item.labels) ? item.labels : []
+        const labelNames = labelNodes
+          .map((label) => (label as Record<string, unknown>).name)
+          .filter((value): value is string => typeof value === 'string')
+        return {
+          number: Number(item.number),
+          title: String(item.title ?? ''),
+          body: typeof item.body === 'string' ? item.body : null,
+          htmlUrl: typeof item.html_url === 'string' ? item.html_url : null,
+          labels: labelNames,
+          updatedAt: typeof item.updated_at === 'string' ? item.updated_at : null,
+        }
+      })
+  }
+
   return {
     getPullRequestByHead,
     getPullRequest,
@@ -815,5 +857,6 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
     updateFile,
     createBranch,
     createPullRequest,
+    listIssues,
   }
 }

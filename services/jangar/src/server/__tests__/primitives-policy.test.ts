@@ -5,6 +5,8 @@ import { validateApprovalPolicies, validateBudget, validateSecretBinding } from 
 
 const createKubeMock = (resources: Record<string, Record<string, unknown> | null>): KubernetesClient => ({
   apply: vi.fn(async (resource) => resource),
+  applyStatus: vi.fn(async (resource) => resource),
+  patch: vi.fn(async (_resource, _name, _namespace, patch) => patch as Record<string, unknown>),
   get: vi.fn(async (resource, name, namespace) => resources[`${resource}:${namespace}:${name}`] ?? null),
   list: vi.fn(async () => ({ items: [] })),
 })

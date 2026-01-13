@@ -214,6 +214,6 @@ export const extractAllowedServiceAccounts = (spec: Record<string, unknown>) => 
 
 export const extractRuntimeServiceAccount = (spec: Record<string, unknown>) => {
   const runtime = (spec.runtime ?? {}) as Record<string, unknown>
-  const argo = (runtime.argo ?? {}) as Record<string, unknown>
-  return asString(argo.serviceAccount)
+  const config = (runtime.config ?? {}) as Record<string, unknown>
+  return asString(config.serviceAccount)
 }
