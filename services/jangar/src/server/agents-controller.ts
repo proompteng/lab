@@ -415,6 +415,57 @@ const cancelRuntime = async (runtimeRef: RuntimeRef, namespace: string) => {
 const buildConditions = (resource: Record<string, unknown>) =>
   normalizeConditions(readNested(resource, ['status', 'conditions']))
 
+const reconcileAgent = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  agent: Record<string, unknown>,
+  namespace: string,
+  providers: Record<string, unknown>[],
+  memories: Record<string, unknown>[],
+) => {
+  const conditions = buildConditions(agent)
+  const providerName = asString(readNested(agent, ['spec', 'providerRef', 'name']))
+  let updated = conditions
+
+  if (!providerName) {
+    updated = upsertCondition(updated, {
+      type: 'InvalidSpec',
+      status: 'True',
+      reason: 'MissingProviderRef',
+      message: 'spec.providerRef.name is required',
+    })
+  } else {
+    const provider = providers.find((item) => asString(readNested(item, ['metadata', 'name'])) === providerName)
+    if (!provider) {
+      updated = upsertCondition(updated, {
+        type: 'InvalidSpec',
+        status: 'True',
+        reason: 'MissingProvider',
+        message: `agent provider ${providerName} not found`,
+      })
+    } else {
+      updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'ValidSpec' })
+    }
+  }
+
+  const memoryRef = asString(readNested(agent, ['spec', 'memoryRef', 'name']))
+  if (memoryRef) {
+    const memory = memories.find((item) => asString(readNested(item, ['metadata', 'name'])) === memoryRef)
+    if (!memory) {
+      updated = upsertCondition(updated, {
+        type: 'InvalidSpec',
+        status: 'True',
+        reason: 'MissingMemory',
+        message: `memory ${memoryRef} not found in ${namespace}`,
+      })
+    }
+  }
+
+  await setStatus(kube, agent, {
+    observedGeneration: asRecord(agent.metadata)?.generation ?? 0,
+    conditions: updated,
+  })
+}
+
 const reconcileAgentProvider = async (
   kube: ReturnType<typeof createKubernetesClient>,
   provider: Record<string, unknown>,
@@ -1503,12 +1554,17 @@ const reconcileNamespace = async (
   concurrency: ReturnType<typeof parseConcurrency>,
 ) => {
   const memories = listItems(await kube.list(RESOURCE_MAP.Memory, namespace))
+  const agents = listItems(await kube.list(RESOURCE_MAP.Agent, namespace))
   const sources = listItems(await kube.list(RESOURCE_MAP.ImplementationSource, namespace))
   const specs = listItems(await kube.list(RESOURCE_MAP.ImplementationSpec, namespace))
   const providers = listItems(await kube.list(RESOURCE_MAP.AgentProvider, namespace))
 
   for (const memory of memories) {
     await reconcileMemory(kube, memory, namespace)
+  }
+
+  for (const agent of agents) {
+    await reconcileAgent(kube, agent, namespace, providers, memories)
   }
 
   for (const provider of providers) {

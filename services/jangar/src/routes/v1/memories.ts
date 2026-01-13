@@ -9,6 +9,7 @@ import {
   requireIdempotencyKey,
 } from '~/server/primitives-http'
 import { createKubernetesClient } from '~/server/primitives-kube'
+import { hydrateMemoryRecord } from '~/server/primitives-memory'
 import { createPrimitivesStore } from '~/server/primitives-store'
 
 export const Route = createFileRoute('/v1/memories')({
@@ -48,7 +49,7 @@ export const postMemoriesHandler = async (
 
     const kube = deps.kubeClient ?? createKubernetesClient()
     const resource = {
-      apiVersion: 'memory.proompteng.ai/v1alpha1',
+      apiVersion: 'agents.proompteng.ai/v1alpha1',
       kind: 'Memory',
       metadata: {
         name: parsed.name,
@@ -67,11 +68,7 @@ export const postMemoriesHandler = async (
     const store = (deps.storeFactory ?? createPrimitivesStore)()
     try {
       await store.ready
-      const record = await store.upsertMemoryResource({
-        memoryName: parsed.name,
-        provider: asString(asRecord(parsed.spec.providerRef)?.name) ?? 'unknown',
-        status: asString(asRecord(applied.status)?.phase) ?? 'Pending',
-      })
+      const record = await hydrateMemoryRecord(applied, parsed.namespace, kube, store)
       if (uid) {
         await store.createAuditEvent({
           entityType: 'Memory',
