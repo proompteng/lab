@@ -86,7 +86,7 @@ graph LR
   AgentRun -->|references| Agent
   Agent -->|references| AgentProvider
   Agent -->|optional| Memory
-  AgentRun -->|optional| ImplementationSpec
+  AgentRun -->|executes| ImplementationSpec
   ImplementationSource -.->|creates/updates| ImplementationSpec
 ```
 
@@ -106,9 +106,10 @@ Removed from Agent:
 - Payloads tied to GitHub events.
 
 ### AgentRun (v1alpha1)
-Purpose: A single execution, including the exact coordinates of what to run.
+Purpose: A single execution of an ImplementationSpec, including the exact coordinates of what to run.
 Required fields:
 - `spec.agentRef`: reference to Agent.
+- `spec.implementationRef` or `spec.implementation.inline`: what to implement (required).
 - `spec.execution.coordinates`: where the run happens.
 
 Proposed `execution.coordinates`:
@@ -118,11 +119,16 @@ Proposed `execution.coordinates`:
 - `workspace`: optional workspace overrides (image, volume, etc).
 
 Implementation spec linkage:
-- `spec.implementationRef`: optional reference to ImplementationSpec (abstracted requirements).
-- `spec.implementation.inline`: optional inline requirements for ad-hoc runs.
+- `spec.implementationRef`: reference to ImplementationSpec (preferred).
+- `spec.implementation.inline`: inline ImplementationSpec for ad-hoc runs.
+
+Workload requirements:
+- `spec.workload.image`: optional custom image for the agent execution environment.
+- `spec.workload.resources`: CPU/memory/ephemeral overrides for this run.
+- `spec.workload.volumes`: optional runtime volumes/scratch (runtime-agnostic).
 
 Overrides:
-- `spec.runtimeOverrides`: runtime-specific overrides (namespace/serviceAccount for Argo, taskQueue for Temporal, etc).
+- `spec.runtimeOverrides`: runtime-specific overrides (runtime-agnostic schema; examples may include Argo or Temporal).
 - `spec.parameters`: arbitrary key-value parameters for the provider.
 - `spec.secrets`: named secret refs allowed for this run.
 
@@ -134,7 +140,7 @@ sequenceDiagram
   participant AG as Agent
   participant PR as AgentProvider
   participant J as Jangar
-  participant RT as Runtime (Argo/Temporal/Job)
+  participant RT as Runtime Adapter
   AR->>J: Submit run
   J->>AG: Resolve defaults
   J->>PR: Resolve provider template
@@ -154,6 +160,10 @@ Keep as-is with minimal cleanup:
 
 No GitHub-specific templates in examples.
 
+Custom agent images:
+- AgentRun can supply `spec.workload.image` for the container image that hosts `/usr/local/bin/agent-runner`.
+- Provide a Codex agent Dockerfile for reference at `apps/froussard/Dockerfile.codex`.
+
 ### ImplementationSpec (new CRD, v1alpha1)
 Purpose: Provider-agnostic description of "what to implement".
 Key fields:
@@ -161,13 +171,14 @@ Key fields:
   - `provider`: `github` | `linear` | `manual` | `custom`
   - `externalId`: string (e.g., `owner/repo#123`, `LIN-123`)
   - `url`: canonical URL (optional)
+- `spec.text`: plaintext requirements (initial format).
 - `spec.summary`: short statement of intent.
-- `spec.description`: long-form markdown.
+- `spec.description`: long-form markdown (optional, future).
 - `spec.acceptanceCriteria`: list of criteria.
 - `spec.labels`: optional labels/tags.
 
 ### Integration (GitHub + Linear)
-Add an `ImplementationSource` CRD that configures sync from GitHub Issues and Linear into ImplementationSpec objects. This keeps Agent and AgentRun generic while still enabling provider integrations. Jangar (or a lightweight integrations sidecar) is responsible for:
+Add an `ImplementationSource` CRD that configures sync from GitHub Issues and Linear into ImplementationSpec objects. GitHub + Linear are the first integrations to ship. This keeps Agent and AgentRun generic while still enabling provider integrations. Jangar (or a lightweight integrations sidecar) is responsible for:
 - Polling or webhook-driven ingestion from GitHub and Linear.
 - Normalizing external issues into ImplementationSpec fields.
 - Updating status/conditions on ImplementationSpec when upstream changes.
@@ -250,9 +261,7 @@ spec:
   providerRef:
     name: codex-runner
   runtime:
-    type: argo
-    argo:
-      workflowTemplate: codex-template
+    type: custom
   memoryRef:
     name: default-memory
   resources:
@@ -271,8 +280,8 @@ spec:
     provider: github
     externalId: proompteng/lab#1234
     url: https://github.com/proompteng/lab/issues/1234
+  text: "Implement agent helm chart redesign."
   summary: "Implement agent helm chart redesign"
-  description: "Full markdown description here..."
   acceptanceCriteria:
     - "Chart installs on minikube and kind"
     - "No ingress in base chart"
@@ -295,4 +304,9 @@ spec:
         url: https://github.com/proompteng/lab.git
         ref: main
         path: .
+  workload:
+    image: ghcr.io/proompteng/codex-agent:latest
+    resources:
+      cpu: 2
+      memory: 4Gi
 ```
