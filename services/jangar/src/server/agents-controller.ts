@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { createTemporalClient, loadTemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
 import { createGitHubClient, GitHubRateLimitError } from '~/server/github-client'
 import { createLinearClient } from '~/server/linear-client'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
@@ -12,6 +13,9 @@ const DEFAULT_CONCURRENCY = {
   perAgent: 5,
   cluster: 100,
 }
+const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
+const DEFAULT_TEMPORAL_PORT = 7233
+const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
 const IMPLEMENTATION_SUMMARY_LIMIT = 256
 
@@ -44,6 +48,7 @@ const backoffBySource = new Map<string, BackoffState>()
 let started = false
 let intervalRef: NodeJS.Timeout | null = null
 let reconciling = false
+let temporalClientPromise: ReturnType<typeof createTemporalClient> | null = null
 
 const nowIso = () => new Date().toISOString()
 
@@ -203,6 +208,68 @@ const resolvePath = (value: Record<string, unknown>, path: string) => {
   return cursor ?? null
 }
 
+const getTemporalClient = async () => {
+  if (!temporalClientPromise) {
+    temporalClientPromise = (async () => {
+      const config = await loadTemporalConfig({
+        defaults: {
+          host: DEFAULT_TEMPORAL_HOST,
+          port: DEFAULT_TEMPORAL_PORT,
+          address: DEFAULT_TEMPORAL_ADDRESS,
+        },
+      })
+      return createTemporalClient({ config })
+    })()
+  }
+  const { client } = await temporalClientPromise
+  return client
+}
+
+const parseOptionalNumber = (value: unknown): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number.parseFloat(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
+}
+
+const isTemporalPollPending = (error: unknown) => {
+  if (error instanceof Error) {
+    if (error.name === 'AbortError') return true
+    const message = error.message.toLowerCase()
+    if (message.includes('deadline') || message.includes('timeout')) return true
+  }
+  const code = (error as { code?: unknown } | null)?.code
+  if (typeof code === 'number' && code === 4) return true
+  if (typeof code === 'string' && code.toLowerCase().includes('deadline')) return true
+  return false
+}
+
+const classifyTemporalResult = (error: unknown) => {
+  if (isTemporalPollPending(error)) {
+    return { kind: 'pending' as const }
+  }
+  const message = error instanceof Error ? error.message : String(error)
+  const lower = message.toLowerCase()
+  if (lower.includes('workflow canceled')) {
+    return { kind: 'cancelled' as const, reason: 'Cancelled', message }
+  }
+  if (lower.includes('workflow terminated')) {
+    return { kind: 'failed' as const, reason: 'Terminated', message }
+  }
+  if (lower.includes('workflow timed out')) {
+    return { kind: 'failed' as const, reason: 'TimedOut', message }
+  }
+  if (lower.includes('workflow failed')) {
+    return { kind: 'failed' as const, reason: 'Failed', message }
+  }
+  if (lower.includes('connect') || lower.includes('unavailable') || lower.includes('handshake')) {
+    return { kind: 'pending' as const }
+  }
+  return { kind: 'failed' as const, reason: 'TemporalError', message }
+}
+
 const makeName = (base: string, suffix: string) => {
   const normalized = base.toLowerCase().replace(/[^a-z0-9-]+/g, '-')
   const combined = `${normalized}-${suffix}`.replace(/^-+|-+$/g, '')
@@ -333,6 +400,15 @@ const cancelRuntime = async (runtimeRef: RuntimeRef, namespace: string) => {
   if (type === 'argo') {
     await deleteRuntimeResource('workflow', name, runtimeNamespace)
     return
+  }
+  if (type === 'temporal') {
+    const client = await getTemporalClient()
+    const handle = {
+      workflowId: asString(runtimeRef.workflowId) ?? name,
+      runId: asString(runtimeRef.runId) ?? undefined,
+      namespace: asString(runtimeRef.namespace) ?? undefined,
+    }
+    await client.workflow.cancel(handle)
   }
 }
 
@@ -713,6 +789,30 @@ const buildJobResources = (workload: Record<string, unknown>) => {
   }
 }
 
+const buildRunSpec = (
+  agentRun: Record<string, unknown>,
+  agent: Record<string, unknown> | null,
+  implementation: Record<string, unknown>,
+  parameters: Record<string, string>,
+  memory: Record<string, unknown> | null,
+  artifacts?: Array<Record<string, unknown>>,
+) => {
+  const context = buildRunSpecContext(agentRun, agent, implementation, parameters, memory)
+  return {
+    agentRun: context.agentRun,
+    implementation,
+    parameters,
+    memory:
+      memory == null
+        ? null
+        : {
+            type: asString(readNested(memory, ['spec', 'type'])) ?? 'custom',
+            connectionRef: asString(readNested(memory, ['spec', 'connection', 'secretRef', 'name'])) ?? '',
+          },
+    artifacts: artifacts ?? [],
+  }
+}
+
 const buildVolumeSpecs = (workload: Record<string, unknown>) => {
   const volumes = Array.isArray(workload.volumes) ? (workload.volumes as Record<string, unknown>[]) : []
   const volumeSpecs: Array<{ name: string; spec: Record<string, unknown> }> = []
@@ -870,19 +970,14 @@ const submitJobRun = async (
     env.push({ name: 'AGENT_PROVIDER', value: providerName })
   }
 
-  const runSpec = {
-    agentRun: context.agentRun,
+  const runSpec = buildRunSpec(
+    agentRun,
+    agent,
     implementation,
     parameters,
-    memory:
-      memory == null
-        ? null
-        : {
-            type: asString(readNested(memory, ['spec', 'type'])) ?? 'custom',
-            connectionRef: asString(readNested(memory, ['spec', 'connection', 'secretRef', 'name'])) ?? '',
-          },
-    artifacts: Array.isArray(outputArtifacts) ? outputArtifacts : [],
-  }
+    memory,
+    Array.isArray(outputArtifacts) ? outputArtifacts : [],
+  )
 
   const inputEntries = inputFiles
     .map((file: Record<string, unknown>) => ({
@@ -1051,6 +1146,101 @@ const submitCustomRun = async (
   return buildRuntimeRef('custom', endpoint, 'external', { response: data ?? {} })
 }
 
+const submitTemporalRun = async (
+  agentRun: Record<string, unknown>,
+  agent: Record<string, unknown>,
+  provider: Record<string, unknown>,
+  implementation: Record<string, unknown>,
+  memory: Record<string, unknown> | null,
+) => {
+  const runtimeConfig = asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
+  const workflowType = asString(runtimeConfig.workflowType)
+  const taskQueue = asString(runtimeConfig.taskQueue)
+  if (!workflowType) {
+    throw new Error('spec.runtime.config.workflowType is required for temporal runtime')
+  }
+  if (!taskQueue) {
+    throw new Error('spec.runtime.config.taskQueue is required for temporal runtime')
+  }
+
+  const namespace = asString(runtimeConfig.namespace) ?? undefined
+  const workflowId =
+    asString(runtimeConfig.workflowId) ??
+    asString(readNested(agentRun, ['spec', 'idempotencyKey'])) ??
+    makeName(asString(readNested(agentRun, ['metadata', 'name'])) ?? 'agentrun', 'temporal')
+
+  const timeouts = asRecord(runtimeConfig.timeouts) ?? {}
+
+  const parameters = resolveParameters(agentRun)
+  const providerSpec = asRecord(provider.spec) ?? {}
+  const outputArtifacts = Array.isArray(providerSpec.outputArtifacts) ? providerSpec.outputArtifacts : []
+  const payload = buildRunSpec(agentRun, agent, implementation, parameters, memory, outputArtifacts)
+
+  const client = await getTemporalClient()
+  const result = await client.workflow.start({
+    workflowId,
+    workflowType,
+    taskQueue,
+    namespace,
+    args: [payload],
+    workflowExecutionTimeoutMs: parseOptionalNumber(timeouts.workflowExecutionTimeoutMs),
+    workflowRunTimeoutMs: parseOptionalNumber(timeouts.workflowRunTimeoutMs),
+    workflowTaskTimeoutMs: parseOptionalNumber(timeouts.workflowTaskTimeoutMs),
+  })
+
+  return buildRuntimeRef('temporal', result.workflowId, result.namespace, {
+    workflowId: result.workflowId,
+    runId: result.runId,
+    taskQueue,
+  })
+}
+
+const reconcileTemporalRun = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  agentRun: Record<string, unknown>,
+  runtimeRef: RuntimeRef,
+) => {
+  const workflowId = asString(runtimeRef.workflowId) ?? asString(runtimeRef.name)
+  if (!workflowId) return
+  const client = await getTemporalClient()
+  const handle = {
+    workflowId,
+    runId: asString(runtimeRef.runId) ?? undefined,
+    namespace: asString(runtimeRef.namespace) ?? undefined,
+  }
+  try {
+    await client.workflow.result(handle, temporalCallOptions({ timeoutMs: 500 }))
+    const conditions = buildConditions(agentRun)
+    const updated = upsertCondition(conditions, { type: 'Succeeded', status: 'True', reason: 'Completed' })
+    await setStatus(kube, agentRun, {
+      observedGeneration: asRecord(agentRun.metadata)?.generation ?? 0,
+      phase: 'Succeeded',
+      finishedAt: nowIso(),
+      runtimeRef,
+      conditions: updated,
+    })
+  } catch (error) {
+    const outcome = classifyTemporalResult(error)
+    if (outcome.kind === 'pending') {
+      return
+    }
+    const conditions = buildConditions(agentRun)
+    const updated = upsertCondition(conditions, {
+      type: 'Failed',
+      status: 'True',
+      reason: outcome.reason,
+      message: outcome.message,
+    })
+    await setStatus(kube, agentRun, {
+      observedGeneration: asRecord(agentRun.metadata)?.generation ?? 0,
+      phase: outcome.kind === 'cancelled' ? 'Cancelled' : 'Failed',
+      finishedAt: nowIso(),
+      runtimeRef,
+      conditions: updated,
+    })
+  }
+}
+
 const reconcileAgentRun = async (
   kube: ReturnType<typeof createKubernetesClient>,
   agentRun: Record<string, unknown>,
@@ -1205,7 +1395,7 @@ const reconcileAgentRun = async (
       } else if (runtimeType === 'custom') {
         newRuntimeRef = await submitCustomRun(agentRun, implResource, memory)
       } else if (runtimeType === 'temporal') {
-        throw new Error('temporal runtime adapter not configured')
+        newRuntimeRef = await submitTemporalRun(agentRun, agent, provider, implResource, memory)
       } else {
         throw new Error(`unknown runtime type: ${runtimeType}`)
       }
@@ -1298,6 +1488,10 @@ const reconcileAgentRun = async (
         conditions: updated,
       })
     }
+  }
+
+  if (runtimeRef.type === 'temporal') {
+    await reconcileTemporalRun(kube, agentRun, runtimeRef)
   }
 }
 
