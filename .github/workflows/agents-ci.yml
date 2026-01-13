@@ -1,0 +1,57 @@
+name: agents-ci
+
+on:
+  pull_request:
+    paths:
+      - 'charts/agents/**'
+      - 'docs/agents/**'
+      - 'services/jangar/**'
+      - 'scripts/agents/**'
+      - 'scripts/download_crd_schema.py'
+      - '.github/workflows/agents-ci.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'charts/agents/**'
+      - 'docs/agents/**'
+      - 'services/jangar/**'
+      - 'scripts/agents/**'
+      - 'scripts/download_crd_schema.py'
+      - '.github/workflows/agents-ci.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Install kubeconform
+        run: |
+          KUBECONFORM_VERSION="v0.7.0"
+          OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          ARCH="$(uname -m)"
+          case "${ARCH}" in
+            x86_64|amd64) ARCH="amd64" ;;
+            aarch64|arm64) ARCH="arm64" ;;
+            *)
+              echo "Unsupported architecture: ${ARCH}" >&2
+              exit 1
+              ;;
+          esac
+          TARBALL="kubeconform-${OS}-${ARCH}.tar.gz"
+          URL="https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/${TARBALL}"
+          curl -fsSL -o kubeconform.tar.gz "${URL}"
+          tar -xzf kubeconform.tar.gz kubeconform
+          chmod +x kubeconform
+          sudo mv kubeconform /usr/local/bin/
+          kubeconform -v
+
+      - name: Validate Agents chart and CRDs
+        run: scripts/agents/validate-agents.sh
