@@ -1,0 +1,17 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: codex-impl-sample
+spec:
+  source:
+    provider: manual
+    externalId: manual:sample
+  summary: "Implement issue #2450"
+  text: |
+    Implement the Agents control plane per design docs.
+  acceptanceCriteria:
+    - CRDs updated to v1alpha1 schema
+    - Jangar reconciler updates statuses
+  labels:
+    - agents
+    - control-plane

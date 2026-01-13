@@ -21,11 +21,6 @@ rbac:
   create: true
   extraRules: []
 
-authSecret:
-  create: true
-  name: ""
-  annotations: {}
-
 service:
   type: ClusterIP
   port: 80
@@ -64,34 +59,6 @@ readinessProbe:
   timeoutSeconds: 2
   failureThreshold: 6
 
-ingress:
-  enabled: false
-  className: ""
-  annotations: {}
-  hosts:
-    - host: agents.local
-      paths:
-        - path: /
-          pathType: Prefix
-  tls: []
-
-autoscaling:
-  enabled: false
-  minReplicas: 2
-  maxReplicas: 5
-  targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 75
-
-podDisruptionBudget:
-  enabled: false
-  minAvailable: 1
-
-networkPolicy:
-  enabled: false
-  egress: []
-  ingress: []
-  labels: {}
-
 env:
   extra: []
   secrets: []
@@ -101,11 +68,14 @@ env:
     PORT: "8080"
     JANGAR_SKIP_MIGRATIONS: "0"
 
-primitives:
+controller:
+  enabled: true
   namespaces: []
-  reconciler:
-    enabled: true
-    intervalSeconds: 30
+  intervalSeconds: 15
+  concurrency:
+    perNamespace: 10
+    perAgent: 5
+    cluster: 100
 
 agentComms:
   enabled: false
@@ -118,98 +88,21 @@ agentComms:
       usernameKey: username
       passwordKey: password
 
-postgres:
-  enabled: true
-  image:
-    repository: docker.io/pgvector/pgvector
-    tag: pg16
-    digest: ""
-    pullPolicy: IfNotPresent
-  storage:
-    size: 10Gi
-    storageClass: ""
-    accessModes:
-      - ReadWriteOnce
-  service:
-    port: 5432
-    annotations: {}
-  credentials:
-    username: agents
-    password: ""
-    database: agents
-    existingSecret: ""
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits: {}
-  nodeSelector: {}
-  affinity: {}
-  tolerations: []
-  securityContext:
-    fsGroup: 999
-    runAsUser: 999
-    runAsGroup: 999
-  annotations: {}
-
-externalDatabase:
-  enabled: false
-  host: ""
-  port: 5432
-  database: ""
-  user: ""
-  password: ""
-  passwordSecret:
+database:
+  url: ""
+  secretRef:
     name: ""
-    key: password
-  sslMode: disable
+    key: url
+  createSecret:
+    enabled: false
+    name: ""
+    annotations: {}
   caSecret:
     name: ""
     key: ca.crt
-
-migrations:
-  enabled: true
-  image:
-    repository: docker.io/pgvector/pgvector
-    tag: pg16
-    digest: ""
-    pullPolicy: IfNotPresent
-  annotations: {}
-  backoffLimit: 3
-  resources:
-    requests:
-      cpu: 50m
-      memory: 128Mi
-    limits: {}
-
-backups:
-  enabled: false
-  schedule: "0 3 * * *"
-  retentionDays: 7
-  image:
-    repository: docker.io/pgvector/pgvector
-    tag: pg16
-    digest: ""
-    pullPolicy: IfNotPresent
-  storage:
-    existingClaim: ""
-    size: 5Gi
-    storageClass: ""
-  resources:
-    requests:
-      cpu: 50m
-      memory: 128Mi
-    limits: {}
-
-persistence:
-  annotations: {}
-  labels: {}
 
 extraVolumes: []
 extraVolumeMounts: []
 
 logging:
   level: info
-
-dashboard:
-  enabled: false

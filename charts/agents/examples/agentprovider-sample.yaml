@@ -1,17 +1,18 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentProvider
 metadata:
-  name: sample-provider
-  namespace: agents
+  name: codex-runner
 spec:
   binary: /usr/local/bin/agent-runner
   argsTemplate:
-    - "{{payloads.promptJson}}"
+    - run
+    - --agent
+    - '{{agentRun.name}}'
   envTemplate:
-    SAMPLE_ENV: "{{inputs.repository}}"
+    CODEX_LOG_LEVEL: info
   inputFiles:
-    - path: /workspace/prompt.json
-      content: "{{payloads.promptJson}}"
+    - path: /workspace/agent-config.json
+      content: '{"mode":"autonomous"}'
   outputArtifacts:
     - name: agent-log
       path: /workspace/agent.log

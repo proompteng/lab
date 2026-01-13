@@ -54,51 +54,39 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           env:
-            {{- if .Values.externalDatabase.enabled }}
-            - name: DATABASE_HOST
-              value: {{ required "externalDatabase.host is required when externalDatabase.enabled" .Values.externalDatabase.host | quote }}
-            - name: DATABASE_PORT
-              value: {{ default 5432 .Values.externalDatabase.port | quote }}
-            - name: DATABASE_NAME
-              value: {{ include "agents.databaseName" . | quote }}
-            - name: DATABASE_USER
-              value: {{ include "agents.databaseUser" . | quote }}
-            - name: DATABASE_PASSWORD
-              {{- if .Values.externalDatabase.passwordSecret.name }}
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.externalDatabase.passwordSecret.name }}
-                  key: {{ .Values.externalDatabase.passwordSecret.key | default "password" }}
-              {{- else }}
-              value: {{ required "externalDatabase.password or passwordSecret.name must be set" (.Values.externalDatabase.password | default "") | quote }}
-              {{- end }}
-            - name: PGSSLMODE
-              value: {{ default "require" .Values.externalDatabase.sslMode | quote }}
+            {{- if .Values.database.url }}
             - name: DATABASE_URL
-              value: >-
-                postgresql://$(DATABASE_USER):$(DATABASE_PASSWORD)@$(DATABASE_HOST):$(DATABASE_PORT)/$(DATABASE_NAME)?sslmode=$(PGSSLMODE)
-            {{- else }}
+              value: {{ .Values.database.url | quote }}
+            {{- else if or .Values.database.secretRef.name .Values.database.createSecret.enabled }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "agents.databaseSecretName" . }}
-                  key: uri
-            - name: PGSSLMODE
-              value: disable
+                  key: {{ include "agents.databaseSecretKey" . }}
+            {{- end }}
+            {{- if .Values.database.caSecret.name }}
+            - name: PGSSLROOTCERT
+              value: "/etc/jangar/ca/{{ .Values.database.caSecret.key | default "ca.crt" }}"
             {{- end }}
             {{- range $name, $value := .Values.env.vars }}
             - name: {{ $name }}
               value: {{ $value | quote }}
             {{- end }}
-            {{- if .Values.primitives.reconciler.enabled }}
-            - name: JANGAR_PRIMITIVES_RECONCILER
+            {{- if .Values.controller.enabled }}
+            - name: JANGAR_AGENTS_CONTROLLER_ENABLED
               value: "1"
-            - name: JANGAR_PRIMITIVES_NAMESPACES
-              value: {{ include "agents.primitivesNamespaces" . | quote }}
-            - name: JANGAR_PRIMITIVES_RECONCILER_INTERVAL_SECONDS
-              value: {{ .Values.primitives.reconciler.intervalSeconds | default 30 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_NAMESPACES
+              value: {{ include "agents.controllerNamespaces" . | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_INTERVAL_SECONDS
+              value: {{ .Values.controller.intervalSeconds | default 15 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE
+              value: {{ .Values.controller.concurrency.perNamespace | default 10 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_CONCURRENCY_AGENT
+              value: {{ .Values.controller.concurrency.perAgent | default 5 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER
+              value: {{ .Values.controller.concurrency.cluster | default 100 | quote }}
             {{- else }}
-            - name: JANGAR_PRIMITIVES_RECONCILER
+            - name: JANGAR_AGENTS_CONTROLLER_ENABLED
               value: "0"
             {{- end }}
             {{- if .Values.agentComms.enabled }}
@@ -176,6 +164,11 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
+            {{- if .Values.database.caSecret.name }}
+            - name: db-ca-cert
+              mountPath: /etc/jangar/ca
+              readOnly: true
+            {{- end }}
             {{- range .Values.extraVolumeMounts }}
             - name: {{ .name }}
               mountPath: {{ .mountPath }}
@@ -184,6 +177,14 @@ spec:
               {{- end }}
             {{- end }}
       volumes:
+        {{- if .Values.database.caSecret.name }}
+        - name: db-ca-cert
+          secret:
+            secretName: {{ .Values.database.caSecret.name }}
+            items:
+              - key: {{ .Values.database.caSecret.key | default "ca.crt" }}
+                path: {{ .Values.database.caSecret.key | default "ca.crt" }}
+        {{- end }}
         {{- range .Values.extraVolumes }}
         - name: {{ .name }}
           {{- toYaml .volume | nindent 10 }}

@@ -1,13 +1,25 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  generateName: sample-agent-run-
-  namespace: agents
+  name: codex-run-sample
 spec:
   agentRef:
-    name: sample-agent
+    name: codex-agent
+  implementationSpecRef:
+    name: codex-impl-sample
+  runtime:
+    type: job
+    config:
+      namespace: agents
+      serviceAccount: codex-runner
+  workload:
+    image: ghcr.io/proompteng/codex-agent:latest
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
   parameters:
-    payload: e30=
-  deliveryId: "demo-1234"
-  retryPolicy:
-    limit: 1
+    repo: proompteng/lab
+    issue: "2450"
+  secrets:
+    - codex-github-token

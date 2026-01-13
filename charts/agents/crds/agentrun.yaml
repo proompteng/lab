@@ -17,74 +17,197 @@ spec:
       storage: true
       subresources:
         status: {}
+      additionalPrinterColumns:
+        - name: Succeeded
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Succeeded")].status
+        - name: Reason
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Succeeded")].reason
+        - name: StartTime
+          type: date
+          jsonPath: .status.startedAt
+        - name: CompletionTime
+          type: date
+          jsonPath: .status.finishedAt
+        - name: Runtime
+          type: string
+          jsonPath: .spec.runtime.type
       schema:
         openAPIV3Schema:
           type: object
-          required: [spec]
+          x-kubernetes-preserve-unknown-fields: false
+          required:
+            - spec
           properties:
             spec:
               type: object
-              required: [agentRef]
+              required:
+                - agentRef
+                - runtime
+              anyOf:
+                - required:
+                    - implementationSpecRef
+                - required:
+                    - implementation
               properties:
                 agentRef:
                   type: object
-                  required: [name]
+                  required:
+                    - name
                   properties:
                     name:
                       type: string
+                implementationSpecRef:
+                  type: object
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                implementation:
+                  type: object
+                  required:
+                    - inline
+                  properties:
+                    inline:
+                      type: object
+                      required:
+                        - text
+                      properties:
+                        source:
+                          type: object
+                          properties:
+                            provider:
+                              type: string
+                              enum: [github, linear, manual, custom]
+                            externalId:
+                              type: string
+                            url:
+                              type: string
+                        text:
+                          type: string
+                          maxLength: 131072
+                        summary:
+                          type: string
+                          maxLength: 256
+                        description:
+                          type: string
+                        acceptanceCriteria:
+                          type: array
+                          maxItems: 50
+                          items:
+                            type: string
+                        labels:
+                          type: array
+                          items:
+                            type: string
+                runtime:
+                  type: object
+                  required:
+                    - type
+                  properties:
+                    type:
+                      type: string
+                      enum: [argo, temporal, job, custom]
+                    config:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                workload:
+                  type: object
+                  properties:
+                    image:
+                      type: string
+                    resources:
+                      type: object
+                      properties:
+                        requests:
+                          type: object
+                          additionalProperties:
+                            type: string
+                        limits:
+                          type: object
+                          additionalProperties:
+                            type: string
+                    volumes:
+                      type: array
+                      items:
+                        type: object
+                        required:
+                          - type
+                          - name
+                          - mountPath
+                        properties:
+                          type:
+                            type: string
+                            enum: [emptyDir, pvc, secret]
+                          name:
+                            type: string
+                          mountPath:
+                            type: string
+                          readOnly:
+                            type: boolean
+                          claimName:
+                            type: string
+                          secretName:
+                            type: string
+                          sizeLimit:
+                            type: string
+                          medium:
+                            type: string
                 parameters:
                   type: object
                   additionalProperties:
                     type: string
-                deliveryId:
-                  type: string
-                runtimeOverrides:
-                  type: object
-                  properties:
-                    argo:
-                      type: object
-                      properties:
-                        namespace:
-                          type: string
-                        serviceAccount:
-                          type: string
-                retryPolicy:
-                  type: object
-                  properties:
-                    limit:
-                      type: integer
-                      default: 0
-                timeoutSeconds:
-                  type: integer
                 secrets:
                   type: array
                   items:
                     type: string
+                memoryRef:
+                  type: object
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                idempotencyKey:
+                  type: string
             status:
               type: object
               properties:
                 phase:
                   type: string
                   enum: [Pending, Running, Succeeded, Failed, Cancelled]
-                workflowName:
-                  type: string
-                workflowUID:
-                  type: string
-                submittedAt:
+                runtimeRef:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                startedAt:
                   type: string
                   format: date-time
                 finishedAt:
                   type: string
                   format: date-time
-                artifactKeys:
+                artifacts:
                   type: array
                   items:
-                    type: string
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      key:
+                        type: string
+                      path:
+                        type: string
+                      url:
+                        type: string
                 conditions:
                   type: array
                   items:
                     type: object
-                    required: [type, status]
+                    required:
+                      - type
+                      - status
+                      - lastTransitionTime
                     properties:
                       type:
                         type: string
@@ -94,3 +217,8 @@ spec:
                         type: string
                       message:
                         type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                observedGeneration:
+                  type: integer

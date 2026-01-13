@@ -1,15 +1,15 @@
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: agents.agents.proompteng.ai
+  name: implementationspecs.agents.proompteng.ai
 spec:
   group: agents.proompteng.ai
   names:
-    kind: Agent
-    plural: agents
-    singular: agent
+    kind: ImplementationSpec
+    plural: implementationspecs
+    singular: implementationspec
     shortNames:
-      - agt
+      - impl
   scope: Namespaced
   versions:
     - name: v1alpha1
@@ -21,9 +21,12 @@ spec:
         - name: Ready
           type: string
           jsonPath: .status.conditions[?(@.type=="Ready")].status
-        - name: Provider
+        - name: Source
           type: string
-          jsonPath: .spec.providerRef.name
+          jsonPath: .spec.source.provider
+        - name: Updated
+          type: date
+          jsonPath: .status.syncedAt
       schema:
         openAPIV3Schema:
           type: object
@@ -34,60 +37,43 @@ spec:
             spec:
               type: object
               required:
-                - providerRef
+                - text
               properties:
-                providerRef:
+                source:
                   type: object
-                  required:
-                    - name
                   properties:
-                    name:
+                    provider:
                       type: string
-                config:
-                  type: object
-                  x-kubernetes-preserve-unknown-fields: true
-                env:
+                      enum: [github, linear, manual, custom]
+                    externalId:
+                      type: string
+                    url:
+                      type: string
+                text:
+                  type: string
+                  maxLength: 131072
+                summary:
+                  type: string
+                  maxLength: 256
+                description:
+                  type: string
+                acceptanceCriteria:
+                  type: array
+                  maxItems: 50
+                  items:
+                    type: string
+                labels:
                   type: array
                   items:
-                    type: object
-                    required:
-                      - name
-                      - value
-                    properties:
-                      name:
-                        type: string
-                      value:
-                        type: string
-                security:
-                  type: object
-                  properties:
-                    allowedServiceAccounts:
-                      type: array
-                      items:
-                        type: string
-                    allowedSecrets:
-                      type: array
-                      items:
-                        type: string
-                memoryRef:
-                  type: object
-                  required:
-                    - name
-                  properties:
-                    name:
-                      type: string
-                defaults:
-                  type: object
-                  properties:
-                    timeoutSeconds:
-                      type: integer
-                      minimum: 0
-                    retryLimit:
-                      type: integer
-                      minimum: 0
+                    type: string
             status:
               type: object
               properties:
+                syncedAt:
+                  type: string
+                  format: date-time
+                sourceVersion:
+                  type: string
                 conditions:
                   type: array
                   items:

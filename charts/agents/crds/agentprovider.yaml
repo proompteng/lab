@@ -17,14 +17,21 @@ spec:
       storage: true
       subresources:
         status: {}
+      additionalPrinterColumns:
+        - name: Ready
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Ready")].status
       schema:
         openAPIV3Schema:
           type: object
-          required: [spec]
+          x-kubernetes-preserve-unknown-fields: false
+          required:
+            - spec
           properties:
             spec:
               type: object
-              required: [binary]
+              required:
+                - binary
               properties:
                 binary:
                   type: string
@@ -40,7 +47,9 @@ spec:
                   type: array
                   items:
                     type: object
-                    required: [path, content]
+                    required:
+                      - path
+                      - content
                     properties:
                       path:
                         type: string
@@ -50,7 +59,9 @@ spec:
                   type: array
                   items:
                     type: object
-                    required: [name, path]
+                    required:
+                      - name
+                      - path
                     properties:
                       name:
                         type: string
@@ -59,15 +70,14 @@ spec:
             status:
               type: object
               properties:
-                phase:
-                  type: string
-                observedGeneration:
-                  type: integer
                 conditions:
                   type: array
                   items:
                     type: object
-                    required: [type, status]
+                    required:
+                      - type
+                      - status
+                      - lastTransitionTime
                     properties:
                       type:
                         type: string
@@ -77,3 +87,8 @@ spec:
                         type: string
                       message:
                         type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                observedGeneration:
+                  type: integer
