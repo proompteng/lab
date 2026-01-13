@@ -1,25 +1,22 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: Agent
 metadata:
-  name: sample-agent
-  namespace: agents
+  name: codex-agent
 spec:
   providerRef:
-    name: sample-provider
-  runtime:
-    type: argo
-    argo:
-      workflowTemplate: sample-agent-template
-      namespace: argo-workflows
-      serviceAccount: codex-workflow
-  inputs:
-    repository: proompteng/lab
-    issueNumber: 1234
-    base: main
-    head: feature/example
-    stage: implementation
-  payloads:
-    promptJson: '{"summary":"hello agents"}'
-  observability:
-    natsEnabled: true
-    kafkaCompletions: false
+    name: codex-runner
+  memoryRef:
+    name: default-memory
+  config:
+    model: gpt-5
+  env:
+    - name: CODEX_MODE
+      value: autonomous
+  defaults:
+    timeoutSeconds: 3600
+    retryLimit: 1
+  security:
+    allowedServiceAccounts:
+      - codex-runner
+    allowedSecrets:
+      - codex-provider-token

@@ -32,21 +32,26 @@ export const Route = createFileRoute('/v1/agent-runs')({
 type AgentRunPayload = {
   agentRef: { name: string }
   namespace: string
+  implementationSpecRef?: { name: string }
+  implementation?: Record<string, unknown>
+  runtime: { type: string; config?: Record<string, unknown> }
+  workload?: Record<string, unknown>
+  memoryRef?: { name: string }
   parameters?: Record<string, string>
-  runtimeOverrides?: Record<string, unknown>
-  retryPolicy?: Record<string, unknown>
-  timeoutSeconds?: number
-  policy?: Record<string, unknown>
   secrets?: string[]
+  policy?: Record<string, unknown>
 }
 
-const normalizeStringMap = (value: Record<string, unknown> | null): Record<string, string> | undefined => {
+const normalizeParameterMap = (value: Record<string, unknown> | null): Record<string, string> | undefined => {
   if (!value) return undefined
   const entries = Object.entries(value)
   const output: Record<string, string> = {}
   for (const [key, raw] of entries) {
     if (raw == null) continue
-    output[key] = typeof raw === 'string' ? raw : JSON.stringify(raw)
+    if (typeof raw !== 'string') {
+      throw new Error(`parameters.${key} must be a string`)
+    }
+    output[key] = raw
   }
   return output
 }
@@ -56,21 +61,42 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
   const name = asString(agentRef?.name)
   if (!name) throw new Error('agentRef.name is required')
   const namespace = normalizeNamespace(asString(payload.namespace))
-  const parameters = normalizeStringMap(asRecord(payload.parameters))
-  const runtimeOverrides = asRecord(payload.runtimeOverrides) ?? undefined
-  const retryPolicy = asRecord(payload.retryPolicy) ?? undefined
-  const timeoutSeconds = typeof payload.timeoutSeconds === 'number' ? payload.timeoutSeconds : undefined
+
+  const implementationSpecRef = asRecord(payload.implementationSpecRef)
+  const implementationSpecName = asString(implementationSpecRef?.name)
+
+  const inline = asRecord(payload.implementation)
+  const runtime = asRecord(payload.runtime)
+  if (!runtime) throw new Error('runtime is required')
+  const runtimeType = asString(runtime.type)
+  if (!runtimeType) throw new Error('runtime.type is required')
+
+  const parameters = normalizeParameterMap(asRecord(payload.parameters))
   const policy = asRecord(payload.policy) ?? undefined
   const secrets = Array.isArray(payload.secrets)
     ? payload.secrets.filter((item) => typeof item === 'string')
     : undefined
-  return { agentRef: { name }, namespace, parameters, runtimeOverrides, retryPolicy, timeoutSeconds, policy, secrets }
-}
 
-const extractAgentRuntimeType = (agent: Record<string, unknown>) => {
-  const spec = (agent.spec ?? {}) as Record<string, unknown>
-  const runtime = (spec.runtime ?? {}) as Record<string, unknown>
-  return asString(runtime.type) ?? 'argo'
+  const memoryRef = asRecord(payload.memoryRef)
+  const memoryRefName = asString(memoryRef?.name)
+  const workload = asRecord(payload.workload) ?? undefined
+
+  if (!implementationSpecName && !inline) {
+    throw new Error('implementationSpecRef or implementation is required')
+  }
+
+  return {
+    agentRef: { name },
+    namespace,
+    implementationSpecRef: implementationSpecName ? { name: implementationSpecName } : undefined,
+    implementation: inline ?? undefined,
+    runtime: { type: runtimeType, config: asRecord(runtime.config) ?? undefined },
+    workload,
+    memoryRef: memoryRefName ? { name: memoryRefName } : undefined,
+    parameters,
+    secrets,
+    policy,
+  }
 }
 
 export const getAgentRunsHandler = async (
@@ -129,10 +155,8 @@ export const postAgentRunsHandler = async (
 
     const agentSpec = (agent.spec ?? {}) as Record<string, unknown>
     const allowedServiceAccounts = extractAllowedServiceAccounts(agentSpec)
-    const runtimeServiceAccount = asString(
-      (parsed.runtimeOverrides?.argo as Record<string, unknown> | undefined)?.serviceAccount,
-    )
-    const effectiveServiceAccount = runtimeServiceAccount ?? extractRuntimeServiceAccount(agentSpec)
+    const runtimeServiceAccount = extractRuntimeServiceAccount({ runtime: parsed.runtime })
+    const effectiveServiceAccount = runtimeServiceAccount
 
     if (
       effectiveServiceAccount &&
@@ -190,18 +214,21 @@ export const postAgentRunsHandler = async (
       },
       spec: {
         agentRef: parsed.agentRef,
+        implementationSpecRef: parsed.implementationSpecRef ?? undefined,
+        implementation: parsed.implementation ? { inline: parsed.implementation } : undefined,
+        runtime: parsed.runtime,
+        workload: parsed.workload ?? undefined,
         parameters: parsed.parameters ?? {},
-        deliveryId,
-        runtimeOverrides: parsed.runtimeOverrides ?? undefined,
-        retryPolicy: parsed.retryPolicy ?? undefined,
-        timeoutSeconds: parsed.timeoutSeconds ?? undefined,
+        secrets: parsed.secrets ?? undefined,
+        memoryRef: parsed.memoryRef ?? undefined,
+        idempotencyKey: deliveryId,
       },
     }
 
     const applied = await kube.apply(resource)
     const metadata = (applied.metadata ?? {}) as Record<string, unknown>
     const externalRunId = asString(metadata.name)
-    const provider = extractAgentRuntimeType(agent)
+    const provider = asString(readNested(applied, ['spec', 'runtime', 'type'])) ?? 'unknown'
 
     const statusPhase = asString(asRecord(applied.status)?.phase) ?? 'Pending'
     const record = await store.createAgentRun({

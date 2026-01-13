@@ -5,11 +5,10 @@ import { createPrimitivesStore } from '~/server/primitives-store'
 
 type AgentRunStatus = {
   phase: string
-  workflowName?: string
-  workflowUID?: string
-  submittedAt?: string
+  runtimeRef?: Record<string, unknown>
+  startedAt?: string
   finishedAt?: string
-  artifactKeys?: string[]
+  artifacts?: Array<Record<string, unknown>>
 }
 
 type OrchestrationRunStatus = {
@@ -55,16 +54,15 @@ const normalizePayload = (payload: Record<string, unknown> | null | undefined) =
 
 const extractAgentRunStatus = (resource: Record<string, unknown>): AgentRunStatus => {
   const status = asRecord(resource.status) ?? {}
-  const artifactKeys = Array.isArray(status.artifactKeys)
-    ? status.artifactKeys.filter((item): item is string => typeof item === 'string')
+  const artifacts = Array.isArray(status.artifacts)
+    ? status.artifacts.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
     : undefined
   return {
     phase: asString(status.phase) ?? 'Pending',
-    workflowName: asString(status.workflowName) ?? undefined,
-    workflowUID: asString(status.workflowUID) ?? undefined,
-    submittedAt: asString(status.submittedAt) ?? undefined,
+    runtimeRef: asRecord(status.runtimeRef) ?? undefined,
+    startedAt: asString(status.startedAt) ?? undefined,
     finishedAt: asString(status.finishedAt) ?? undefined,
-    artifactKeys,
+    artifacts,
   }
 }
 
@@ -86,7 +84,7 @@ const resolveDeliveryId = (resource: Record<string, unknown>) => {
   const labels = asRecord(readNested(resource, ['metadata', 'labels']))
   return (
     asString(labels?.['jangar.proompteng.ai/delivery-id']) ??
-    asString(readNested(resource, ['spec', 'deliveryId'])) ??
+    asString(readNested(resource, ['spec', 'idempotencyKey'])) ??
     null
   )
 }

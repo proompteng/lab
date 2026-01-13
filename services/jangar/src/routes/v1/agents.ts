@@ -10,12 +10,7 @@ import {
   requireIdempotencyKey,
 } from '~/server/primitives-http'
 import { createKubernetesClient } from '~/server/primitives-kube'
-import {
-  extractAllowedServiceAccounts,
-  extractRequiredSecrets,
-  extractRuntimeServiceAccount,
-  validatePolicies,
-} from '~/server/primitives-policy'
+import { extractRequiredSecrets, validatePolicies } from '~/server/primitives-policy'
 import { createPrimitivesStore } from '~/server/primitives-store'
 
 export const Route = createFileRoute('/v1/agents')({
@@ -52,15 +47,6 @@ export const postAgentsHandler = async (
     const deliveryId = requireIdempotencyKey(request)
     const payload = await parseJsonBody(request)
     const parsed = parseAgentPayload(payload)
-    const runtimeServiceAccount = extractRuntimeServiceAccount(parsed.spec)
-    const allowedServiceAccounts = extractAllowedServiceAccounts(parsed.spec)
-    if (
-      runtimeServiceAccount &&
-      allowedServiceAccounts.length > 0 &&
-      !allowedServiceAccounts.includes(runtimeServiceAccount)
-    ) {
-      return errorResponse(`service account ${runtimeServiceAccount} is not allowed`, 403)
-    }
 
     const requiredSecrets = extractRequiredSecrets(parsed.spec)
     const policy = parsed.policy ?? {}

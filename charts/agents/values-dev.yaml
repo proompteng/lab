@@ -10,45 +10,18 @@ service:
   type: ClusterIP
   port: 80
 
-postgres:
-  enabled: true
-  storage:
-    size: 2Gi
-  credentials:
-    username: agents
-    database: agents
-    password: devpassword
-  resources:
-    requests:
-      cpu: 50m
-      memory: 256Mi
-
-migrations:
-  resources:
-    requests:
-      cpu: 25m
-      memory: 64Mi
+database:
+  url: postgresql://agents:devpassword@host.minikube.internal:5432/agents?sslmode=disable
 
 resources:
   requests:
     cpu: 150m
     memory: 512Mi
 
-ingress:
-  enabled: false
-
-networkPolicy:
-  enabled: false
-
-autoscaling:
-  enabled: false
-
-primitives:
+controller:
   namespaces:
     - agents
-  reconciler:
-    enabled: true
-    intervalSeconds: 15
+  intervalSeconds: 15
 
 agentComms:
   enabled: false

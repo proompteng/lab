@@ -42,6 +42,13 @@ const migrations: MigrationMap = {
 const migrationProvider = new StaticMigrationProvider(migrations)
 const migrationPromises = new WeakMap<Db, Promise<void>>()
 
+const resolveMigrationsMode = () => {
+  const raw = process.env.JANGAR_MIGRATIONS?.trim().toLowerCase()
+  if (!raw) return 'auto'
+  if (['skip', 'disabled', 'false', '0', 'off'].includes(raw)) return 'skip'
+  return 'auto'
+}
+
 const ensureExtensions = async (db: Db) => {
   const { rows: extensionRows } = await sql<{ extname: string }>`
     SELECT extname FROM pg_extension WHERE extname IN ('vector', 'pgcrypto')
@@ -80,7 +87,7 @@ const runMigrations = async (db: Db) => {
 }
 
 export const ensureMigrations = async (db: Db) => {
-  if (process.env.JANGAR_SKIP_MIGRATIONS === '1') {
+  if (process.env.JANGAR_SKIP_MIGRATIONS === '1' || resolveMigrationsMode() === 'skip') {
     return
   }
   let ready = migrationPromises.get(db)

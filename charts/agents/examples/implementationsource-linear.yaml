@@ -1,0 +1,16 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSource
+metadata:
+  name: linear-issues
+spec:
+  provider: linear
+  auth:
+    secretRef:
+      name: linear-token
+      key: token
+  poll:
+    intervalSeconds: 60
+  scope:
+    team: ENG
+    labels:
+      - agents

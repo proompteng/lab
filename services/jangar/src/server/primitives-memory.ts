@@ -1,4 +1,4 @@
-import { asRecord, asString } from '~/server/primitives-http'
+import { asRecord, asString, readNested } from '~/server/primitives-http'
 import type { createKubernetesClient } from '~/server/primitives-kube'
 import type { createPrimitivesStore } from '~/server/primitives-store'
 
@@ -24,20 +24,25 @@ export const hydrateMemoryRecord = async (
   store: ReturnType<typeof createPrimitivesStore>,
 ) => {
   const status = asRecord(memory.status) ?? {}
-  const connRef = asRecord(status.connectionSecretRef)
-  const secretName = asString(connRef?.name)
-  const secretNamespace = asString(connRef?.namespace) ?? namespace
+  const connRef = asRecord(readNested(memory, ['spec', 'connection', 'secretRef'])) ?? {}
+  const secretName = asString(connRef.name)
   let connectionSecret: Record<string, unknown> | undefined
   if (secretName) {
-    const secret = await kube.get('secret', secretName, secretNamespace)
+    const secret = await kube.get('secret', secretName, namespace)
     if (secret) {
       connectionSecret = decodeSecretData(secret)
     }
   }
 
   const spec = asRecord(memory.spec) ?? {}
-  const providerName = asString(asRecord(spec.providerRef)?.name) ?? 'unknown'
-  const statusPhase = asString(status.phase) ?? 'Pending'
+  const providerName = asString(spec.type) ?? 'unknown'
+  const statusPhase =
+    asString(
+      (Array.isArray(status.conditions)
+        ? status.conditions.find((condition: Record<string, unknown>) => condition.type === 'Ready')
+        : null
+      )?.status,
+    ) ?? 'Unknown'
 
   return store.upsertMemoryResource({
     memoryName: asString(asRecord(memory.metadata)?.name) ?? '',

@@ -1,0 +1,13 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: Memory
+metadata:
+  name: default-memory
+spec:
+  type: postgres
+  connection:
+    secretRef:
+      name: memory-postgres
+      key: url
+  capabilities:
+    - vector
+  default: true

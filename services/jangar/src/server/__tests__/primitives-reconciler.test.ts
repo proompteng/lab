@@ -23,9 +23,18 @@ vi.mock('~/server/primitives-store', () => {
 vi.mock('~/server/primitives-kube', () => {
   return {
     RESOURCE_MAP: {
-      AgentRun: 'agent-runs',
-      OrchestrationRun: 'orchestration-runs',
-      Memory: 'memories',
+      Agent: 'agents.agents.proompteng.ai',
+      AgentRun: 'agentruns.agents.proompteng.ai',
+      AgentProvider: 'agentproviders.agents.proompteng.ai',
+      ImplementationSpec: 'implementationspecs.agents.proompteng.ai',
+      ImplementationSource: 'implementationsources.agents.proompteng.ai',
+      Memory: 'memories.agents.proompteng.ai',
+      Orchestration: 'orchestrations.orchestration.proompteng.ai',
+      OrchestrationRun: 'orchestrationruns.orchestration.proompteng.ai',
+      ApprovalPolicy: 'approvalpolicies.approvals.proompteng.ai',
+      Budget: 'budgets.budgets.proompteng.ai',
+      SecretBinding: 'secretbindings.security.proompteng.ai',
+      SignalDelivery: 'signaldeliveries.signals.proompteng.ai',
     },
     createKubernetesClient: () => ({
       list: vi.fn(async () => ({ items: [] })),

@@ -39,29 +39,25 @@ const decodeBase64 = (value: string | null) => {
   }
 }
 
-const normalizeSchema = (value: string | null) => (value && value.trim().length > 0 ? value.trim() : null)
-
-const buildConnectionString = (secret: Record<string, unknown>) => {
-  const uri = asString(secret.uri)
-  if (uri) return uri
+const buildConnectionString = (secret: Record<string, unknown>, preferredKey?: string | null) => {
+  if (preferredKey) {
+    const preferred = asString(secret[preferredKey])
+    if (preferred) return preferred
+  }
+  const url = asString(secret.url) ?? asString(secret.uri) ?? asString(secret.connectionString)
+  if (url) return url
   const endpoint = asString(secret.endpoint) ?? asString(secret.host)
   const database = asString(secret.database) ?? asString(secret.dbname)
   const username = asString(secret.username) ?? asString(secret.user)
   const password = asString(secret.password)
 
   if (!endpoint || !database || !username || !password) {
-    throw new Error('connection secret missing endpoint/database/username/password')
+    throw new Error('connection secret missing url/endpoint/database/username/password')
   }
 
   const encodedUser = encodeURIComponent(username)
   const encodedPassword = encodeURIComponent(password)
   return `postgresql://${encodedUser}:${encodedPassword}@${endpoint}/${database}?sslmode=require`
-}
-
-const resolveEmbeddingDimension = (memorySpec: Record<string, unknown>) => {
-  const embeddings = (memorySpec.embeddings ?? {}) as Record<string, unknown>
-  const dimension = Number.parseInt(String(embeddings.dimension ?? DEFAULT_EMBEDDING_DIMENSION), 10)
-  return Number.isFinite(dimension) && dimension > 0 ? dimension : DEFAULT_EMBEDDING_DIMENSION
 }
 
 const generateFallbackEmbedding = (text: string, dimension: number) => {
@@ -122,26 +118,24 @@ export const resolveMemoryConnection = async (
   }
 
   const spec = (readNested(memory, ['spec']) ?? {}) as Record<string, unknown>
-  const status = (readNested(memory, ['status']) ?? {}) as Record<string, unknown>
-  const dataset = asString(readNested(spec, ['dataset', 'name'])) ?? memoryName
-  const specSchema = normalizeSchema(asString(readNested(spec, ['dataset', 'schema'])))
-  const statusSchema = normalizeSchema(asString(readNested(status, ['schema'])))
-  const schema = specSchema ?? statusSchema ?? 'public'
-
-  if (specSchema && statusSchema && specSchema !== statusSchema) {
-    throw new Error(`memory schema mismatch: spec=${specSchema} status=${statusSchema}`)
+  const memoryType = asString(readNested(spec, ['type'])) ?? 'custom'
+  if (memoryType !== 'postgres') {
+    throw new Error(`memory ${memoryName} uses unsupported type ${memoryType}`)
   }
 
-  const connRef = readNested(status, ['connectionSecretRef']) as Record<string, unknown> | null
+  const dataset = memoryName
+  const schema = 'public'
+
+  const connRef = readNested(spec, ['connection', 'secretRef']) as Record<string, unknown> | null
   const secretName = asString(connRef?.name)
-  const secretNamespace = asString(connRef?.namespace) ?? namespace
+  const secretKey = asString(connRef?.key)
   if (!secretName) {
-    throw new Error(`memory ${memoryName} missing status.connectionSecretRef`)
+    throw new Error(`memory ${memoryName} missing spec.connection.secretRef.name`)
   }
 
-  const secret = await kube.get('secret', secretName, secretNamespace)
+  const secret = await kube.get('secret', secretName, namespace)
   if (!secret) {
-    throw new Error(`secret ${secretNamespace}/${secretName} not found`)
+    throw new Error(`secret ${namespace}/${secretName} not found`)
   }
 
   const data = (readNested(secret, ['data']) ?? {}) as Record<string, unknown>
@@ -151,8 +145,8 @@ export const resolveMemoryConnection = async (
     if (decoded != null) decodedSecret[key] = decoded
   }
 
-  const connectionString = buildConnectionString(decodedSecret)
-  const embeddingDimension = resolveEmbeddingDimension(spec)
+  const connectionString = buildConnectionString(decodedSecret, secretKey)
+  const embeddingDimension = DEFAULT_EMBEDDING_DIMENSION
 
   return { dataset, schema, embeddingDimension, connectionString }
 }

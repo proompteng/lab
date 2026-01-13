@@ -1,18 +1,17 @@
 apiVersion: v2
 name: agents
-description: Minimal agent control-plane stack (Jangar) with CRDs and pgvector-backed storage
+description: Minimal Agents control plane (Jangar) with CRDs
 home: https://github.com/proompteng/lab
-kubeVersion: ">=1.26.0-0"
+kubeVersion: ">=1.25.0-0"
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.3.0
+appVersion: "0.3.0"
 icon: https://avatars.githubusercontent.com/u/165504663?s=200&v=4
 keywords:
   - agents
   - jangar
+  - control-plane
   - codex
-  - pgvector
-  - postgres
 maintainers:
   - name: ProomptEng
     email: eng@proompt.com
@@ -22,10 +21,57 @@ annotations:
     - name: Source
       url: https://github.com/proompteng/lab
     - name: Documentation
-      url: https://github.com/proompteng/lab/tree/main/docs/jangar
-  artifacthub.io/keywords: agents,jangar,codex,pgvector,postgres
+      url: https://github.com/proompteng/lab/tree/main/docs/agents
+  artifacthub.io/keywords: agents,jangar,codex,control-plane
   artifacthub.io/images: |
     - name: jangar
       image: ghcr.io/proompteng/jangar:latest
-    - name: postgres
-      image: docker.io/pgvector/pgvector:pg16
+  artifacthub.io/crds: |
+    - kind: Agent
+      version: v1alpha1
+      name: agents.agents.proompteng.ai
+    - kind: AgentRun
+      version: v1alpha1
+      name: agentruns.agents.proompteng.ai
+    - kind: AgentProvider
+      version: v1alpha1
+      name: agentproviders.agents.proompteng.ai
+    - kind: ImplementationSpec
+      version: v1alpha1
+      name: implementationspecs.agents.proompteng.ai
+    - kind: ImplementationSource
+      version: v1alpha1
+      name: implementationsources.agents.proompteng.ai
+    - kind: Memory
+      version: v1alpha1
+      name: memories.agents.proompteng.ai
+  artifacthub.io/crdsExamples: |
+    - apiVersion: agents.proompteng.ai/v1alpha1
+      kind: ImplementationSpec
+      metadata:
+        name: codex-impl-sample
+      spec:
+        summary: "Implement onboarding flow"
+        text: "Implement the agent onboarding flow described in the spec."
+    - apiVersion: agents.proompteng.ai/v1alpha1
+      kind: Memory
+      metadata:
+        name: default-memory
+      spec:
+        type: postgres
+        connection:
+          secretRef:
+            name: memory-postgres
+    - apiVersion: agents.proompteng.ai/v1alpha1
+      kind: Agent
+      metadata:
+        name: codex-agent
+      spec:
+        providerRef:
+          name: codex-runner
+  artifacthub.io/changes: |
+    - kind: added
+      description: "Align Agents CRDs with the v1alpha1 implementation/source/memory schema."
+    - kind: changed
+      description: "Update controller + chart metadata for the minimal control-plane release."
+  artifacthub.io/operator: "true"

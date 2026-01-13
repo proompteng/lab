@@ -2,6 +2,13 @@ import { spawn } from 'node:child_process'
 
 export type KubernetesClient = {
   apply: (resource: Record<string, unknown>) => Promise<Record<string, unknown>>
+  applyStatus: (resource: Record<string, unknown>) => Promise<Record<string, unknown>>
+  patch: (
+    resource: string,
+    name: string,
+    namespace: string,
+    patch: Record<string, unknown>,
+  ) => Promise<Record<string, unknown>>
   get: (resource: string, name: string, namespace: string) => Promise<Record<string, unknown> | null>
   list: (resource: string, namespace: string, labelSelector?: string) => Promise<Record<string, unknown>>
 }
@@ -64,6 +71,22 @@ export const createKubernetesClient = (): KubernetesClient => ({
     const output = await kubectl([command, '-f', '-', '-o', 'json'], JSON.stringify(resource), `kubectl ${command}`)
     return parseJson(output, `kubectl ${command}`)
   },
+  applyStatus: async (resource) => {
+    const output = await kubectl(
+      ['apply', '--subresource=status', '-f', '-', '-o', 'json'],
+      JSON.stringify(resource),
+      'kubectl apply status',
+    )
+    return parseJson(output, 'kubectl apply status')
+  },
+  patch: async (resource, name, namespace, patch) => {
+    const output = await kubectl(
+      ['patch', resource, name, '-n', namespace, '--type=merge', '-p', JSON.stringify(patch), '-o', 'json'],
+      undefined,
+      'kubectl patch',
+    )
+    return parseJson(output, 'kubectl patch')
+  },
   get: async (resource, name, namespace) => {
     try {
       const output = await kubectl(['get', resource, name, '-n', namespace, '-o', 'json'], undefined, 'kubectl get')
@@ -86,9 +109,12 @@ export const createKubernetesClient = (): KubernetesClient => ({
 export const RESOURCE_MAP = {
   Agent: 'agents.agents.proompteng.ai',
   AgentRun: 'agentruns.agents.proompteng.ai',
+  AgentProvider: 'agentproviders.agents.proompteng.ai',
+  ImplementationSpec: 'implementationspecs.agents.proompteng.ai',
+  ImplementationSource: 'implementationsources.agents.proompteng.ai',
+  Memory: 'memories.agents.proompteng.ai',
   Orchestration: 'orchestrations.orchestration.proompteng.ai',
   OrchestrationRun: 'orchestrationruns.orchestration.proompteng.ai',
-  Memory: 'memories.memory.proompteng.ai',
   ApprovalPolicy: 'approvalpolicies.approvals.proompteng.ai',
   Budget: 'budgets.budgets.proompteng.ai',
   SecretBinding: 'secretbindings.security.proompteng.ai',

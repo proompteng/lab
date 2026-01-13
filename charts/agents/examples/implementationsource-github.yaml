@@ -1,0 +1,16 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSource
+metadata:
+  name: github-issues
+spec:
+  provider: github
+  auth:
+    secretRef:
+      name: github-token
+      key: token
+  poll:
+    intervalSeconds: 60
+  scope:
+    repository: proompteng/lab
+    labels:
+      - agents

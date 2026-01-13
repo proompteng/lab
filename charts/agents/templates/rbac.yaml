@@ -13,6 +13,33 @@ rules:
       - agents
       - agentruns
       - agentproviders
+      - implementationspecs
+      - implementationsources
+      - memories
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - agents.proompteng.ai
+    resources:
+      - agents/status
+      - agentruns/status
+      - agentproviders/status
+      - implementationspecs/status
+      - implementationsources/status
+      - memories/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
     verbs:
       - get
       - list
@@ -22,21 +49,25 @@ rules:
       - patch
       - delete
   - apiGroups:
-      - agents.proompteng.ai
+      - argoproj.io
     resources:
-      - agents/status
-      - agentruns/status
-      - agentproviders/status
+      - workflows
     verbs:
       - get
+      - list
+      - watch
+      - create
       - update
       - patch
+      - delete
   - apiGroups: [""]
     resources:
-      - pods
-      - pods/log
-      - configmaps
       - secrets
+    verbs:
+      - get
+  - apiGroups: [""]
+    resources:
+      - configmaps
       - events
     verbs:
       - get

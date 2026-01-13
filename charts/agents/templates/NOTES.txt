@@ -1,5 +1,13 @@
-1. Control plane: {{ include "agents.fullname" . }}
-2. Service: kubectl -n {{ .Values.namespaceOverride | default .Release.Namespace }} get svc {{ include "agents.fullname" . }}
-3. Health: kubectl -n {{ .Values.namespaceOverride | default .Release.Namespace }} port-forward svc/{{ include "agents.fullname" . }} 8080:80 &
-   curl -sf http://127.0.0.1:8080/health
-4. CRDs: Agent, AgentRun, AgentProvider (group agents.proompteng.ai)
+Thank you for installing agents (Jangar control plane).
+
+Next steps:
+1. Verify deployment:
+   kubectl -n {{ .Release.Namespace }} get deploy,svc
+2. Apply CRDs examples:
+   kubectl -n {{ .Release.Namespace }} apply -f charts/agents/examples/agentprovider-sample.yaml
+   kubectl -n {{ .Release.Namespace }} apply -f charts/agents/examples/agent-sample.yaml
+   kubectl -n {{ .Release.Namespace }} apply -f charts/agents/examples/memory-sample.yaml
+   kubectl -n {{ .Release.Namespace }} apply -f charts/agents/examples/implementationspec-sample.yaml
+   kubectl -n {{ .Release.Namespace }} apply -f charts/agents/examples/agentrun-sample.yaml
+3. Port-forward to access Jangar:
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "agents.fullname" . }} 8080:{{ .Values.service.port }}
