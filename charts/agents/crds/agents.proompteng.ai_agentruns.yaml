@@ -71,8 +71,6 @@ spec:
                           type: string
                         maxItems: 50
                         type: array
-                      description:
-                        type: string
                       labels:
                         items:
                           type: string

@@ -346,6 +346,9 @@ const resolveParameters = (agentRun: Record<string, unknown>) => {
   return output
 }
 
+const parseStringList = (value: unknown) =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+
 const validateParameters = (params: Record<string, unknown>) => {
   const entries = Object.entries(params)
   if (entries.length > PARAMETERS_MAX_ENTRIES) {
@@ -1451,6 +1454,41 @@ const reconcileAgentRun = async (
       return
     }
 
+    const security = asRecord(readNested(agent, ['spec', 'security'])) ?? {}
+    const allowedSecrets = parseStringList(security.allowedSecrets)
+    const allowedServiceAccounts = parseStringList(security.allowedServiceAccounts)
+    const runSecrets = parseStringList(spec.secrets)
+
+    if (allowedSecrets.length > 0) {
+      const forbidden = runSecrets.filter((secret) => !allowedSecrets.includes(secret))
+      if (forbidden.length > 0) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: 'SecretNotAllowed',
+          message: `spec.secrets contains disallowed entries: ${forbidden.join(', ')}`,
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+    }
+
+    if (allowedServiceAccounts.length > 0 && (runtimeType === 'job' || runtimeType === 'argo')) {
+      const runtimeConfig = asRecord(readNested(spec, ['runtime', 'config'])) ?? {}
+      const rawServiceAccount = asString(runtimeConfig.serviceAccount)
+      const effectiveServiceAccount = rawServiceAccount || 'default'
+      if (!allowedServiceAccounts.includes(effectiveServiceAccount)) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: 'ServiceAccountNotAllowed',
+          message: `serviceAccount ${effectiveServiceAccount} is not allowlisted`,
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+    }
+
     const implementation = resolveImplementation(agentRun)
     let implResource = implementation
     if (!implementation) {
@@ -1473,6 +1511,42 @@ const reconcileAgentRun = async (
     }
 
     const memory = resolveMemory(agentRun, agent, memories)
+    const runMemoryRef = asString(readNested(spec, ['memoryRef', 'name']))
+    const agentMemoryRef = asString(readNested(agent, ['spec', 'memoryRef', 'name']))
+    if ((runMemoryRef || agentMemoryRef) && !memory) {
+      const missingName = runMemoryRef || agentMemoryRef || 'unknown'
+      const updated = upsertCondition(conditions, {
+        type: 'InvalidSpec',
+        status: 'True',
+        reason: 'MissingMemory',
+        message: `memory ${missingName} not found`,
+      })
+      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      return
+    }
+    const memorySecretName = asString(readNested(memory, ['spec', 'connection', 'secretRef', 'name']))
+    if (memorySecretName) {
+      if (allowedSecrets.length > 0 && !allowedSecrets.includes(memorySecretName)) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: 'SecretNotAllowed',
+          message: `memory secret ${memorySecretName} is not allowlisted by the Agent`,
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+      if (runSecrets.length > 0 && !runSecrets.includes(memorySecretName)) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: 'SecretNotAllowed',
+          message: `memory secret ${memorySecretName} is not included in spec.secrets`,
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+    }
 
     let newRuntimeRef: RuntimeRef | null = null
     try {
