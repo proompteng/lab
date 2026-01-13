@@ -88,9 +88,9 @@ It provides:
 #### Reconciliation loops (high-level)
 - `AgentRun` reconciler:
   - Resolve `spec.agentRef` and `spec.implementationRef` (or inline).
-  - Validate `spec.execution.coordinates` + `spec.workload`.
+  - Validate `spec.runtime` + `spec.execution.coordinates` + `spec.workload`.
   - Resolve provider templates and render an execution spec for `agent-runner`.
-  - Select runtime adapter and submit workload.
+  - Select runtime adapter from `spec.runtime` and submit workload.
   - Update `status.phase`, `status.conditions`, timestamps, and runtime identifiers.
 - `ImplementationSpec` reconciler:
   - Validate schema, normalize plaintext `spec.text`.
@@ -142,7 +142,6 @@ graph LR
 Purpose: Default configuration and policy for an agent.
 Key fields (conceptual):
 - `spec.providerRef`: reference to AgentProvider.
-- `spec.runtime`: runtime type + default settings (Argo/Temporal/Job/Custom).
 - `spec.config`: flexible dictionary for agent-level configuration.
 - `spec.env`: default env vars (optional).
 - `spec.security`: allowlist of service accounts/secrets.
@@ -159,6 +158,7 @@ Purpose: A single execution of an ImplementationSpec, including the exact coordi
 Required fields:
 - `spec.agentRef`: reference to Agent.
 - `spec.implementationRef` or `spec.implementation.inline`: what to implement (required).
+- `spec.runtime`: runtime type + configuration for this run.
 - `spec.execution.coordinates`: where the run happens.
 
 Proposed `execution.coordinates`:
@@ -177,7 +177,7 @@ Workload requirements:
 - `spec.workload.volumes`: optional runtime volumes/scratch (runtime-agnostic).
 
 Overrides:
-- `spec.runtimeOverrides`: runtime-specific overrides (runtime-agnostic schema; examples may include Argo or Temporal).
+- `spec.runtime`: runtime-specific configuration for this run (runtime-agnostic schema; examples may include Argo or Temporal).
 - `spec.parameters`: arbitrary key-value parameters for the provider.
 - `spec.secrets`: named secret refs allowed for this run.
 
@@ -309,8 +309,6 @@ metadata:
 spec:
   providerRef:
     name: codex-runner
-  runtime:
-    type: custom
   memoryRef:
     name: default-memory
   config: {}
@@ -345,6 +343,8 @@ spec:
     name: codex-agent
   implementationRef:
     name: impl-1234
+  runtime:
+    type: custom
   execution:
     coordinates:
       git:
