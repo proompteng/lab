@@ -1,0 +1,48 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: talos
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: https://github.com/proompteng/lab.git
+        revision: main
+        directories:
+          - path: argocd/applications/talos/*
+  template:
+    metadata:
+      name: "talos-{{ .path | splitList "/" | last }}"
+    spec:
+      project: default
+      destination:
+        server: https://api.talos-{{ .path | splitList "/" | last }}.proompteng.ai:6443
+        namespace: "{{ .path | splitList \"/\" | last }}"
+      source:
+        repoURL: https://github.com/proompteng/lab.git
+        targetRevision: main
+        path: "{{ .path }}"
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - RespectIgnoreDifferences=true
+      ignoreDifferences: []
+  templatePatch: |
+    {{- if .annotations }}
+    metadata:
+      annotations:
+    {{- range $key, $value := .annotations }}
+        {{ $key }}: {{ $value | quote }}
+    {{- end }}
+    {{- end }}
+    {{- $auto := eq .automation "auto" }}
+    {{- if $auto }}
+    spec:
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+    {{- end }}

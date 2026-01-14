@@ -1,0 +1,7 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ray
+resources:
+  - ray-operator.yaml
+  - ray-cluster.yaml
+# Add any additional Ray manifests as needed
