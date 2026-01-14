@@ -18,7 +18,7 @@ spec:
     spec:
       project: default
       destination:
-        server: https://api.talos-{{ .path | splitList "/" | last }}.proompteng.ai:6443
+        name: ryzen
         namespace: "{{ .path | splitList \"/\" | last }}"
       source:
         repoURL: https://github.com/proompteng/lab.git

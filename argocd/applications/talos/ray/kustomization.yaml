@@ -2,6 +2,11 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: ray
 resources:
-  - ray-operator.yaml
   - ray-cluster.yaml
+helmCharts:
+  - name: kuberay-operator
+    repo: https://ray-project.github.io/kuberay-helm/
+    releaseName: kuberay-operator
+    version: 1.5.1
+    valuesFile: ray-operator-values.yaml
 # Add any additional Ray manifests as needed
