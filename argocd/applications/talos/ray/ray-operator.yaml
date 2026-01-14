@@ -15,7 +15,7 @@ spec:
         # Include values from ray-operator-values.yaml
         # Customize as needed
   destination:
-    server: https://kubernetes.default.svc
+    server: https://192.168.1.194:6443
     namespace: ray
   syncPolicy:
     automated:
