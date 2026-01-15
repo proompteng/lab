@@ -7,6 +7,5 @@ helmCharts:
   - name: agents
     releaseName: agents
     namespace: agents
-    includeCRDs: true
     valuesFile: values.yaml
     version: 0.1.0
