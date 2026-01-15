@@ -4,3 +4,15 @@ namespace: kubevirt
 resources:
   - https://github.com/kubevirt/kubevirt/releases/download/v1.7.0/kubevirt-operator.yaml
   - https://github.com/kubevirt/kubevirt/releases/download/v1.7.0/kubevirt-cr.yaml
+patches:
+  - target:
+      kind: KubeVirt
+      name: kubevirt
+    patch: |-
+      apiVersion: kubevirt.io/v1
+      kind: KubeVirt
+      metadata:
+        name: kubevirt
+        annotations:
+          argocd.argoproj.io/sync-wave: "1"
+          argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
