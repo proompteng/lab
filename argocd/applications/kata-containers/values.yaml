@@ -1,5 +1,8 @@
 k8sDistribution: "k8s"
 
+nodeSelector:
+  kata-deploy: "enabled"
+
 shims:
   clh:
     enabled: false
