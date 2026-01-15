@@ -13,6 +13,7 @@ COPY package.json bun.lock .npmrc* tsconfig.base.json ./
 COPY scripts/run-husky-install.mjs ./scripts/run-husky-install.mjs
 COPY --parents apps/*/package.json ./
 COPY --parents packages/*/package.json ./
+COPY --parents services/*/package.json ./
 RUN bun install --frozen-lockfile --ignore-scripts
 
 FROM deps AS builder
