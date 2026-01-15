@@ -51,6 +51,14 @@ spec:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: manual
                 enabled: "true"
+              - name: kubevirt
+                path: argocd/applications/kubevirt
+                namespace: kubevirt
+                annotations:
+                  argocd.argoproj.io/sync-wave: "1"
+                automation: manual
+                enabled: "true"
+                clusters: ryzen
               - name: external-dns
                 path: argocd/applications/external-dns
                 namespace: external-dns
