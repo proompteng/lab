@@ -19,6 +19,10 @@ spec:
             enabled: true
             annotations:
               argocd.argoproj.io/sync-wave: "6"
+        template:
+          spec:
+            destination:
+              server: https://kubernetes.default.svc
       selector:
         matchExpressions:
           - key: enabled
@@ -29,12 +33,12 @@ spec:
               - "0"
           - key: clusters
             operator: DoesNotExist
-      template:
-        spec:
-          destination:
-            server: https://kubernetes.default.svc
     - list:
         elements: *cdk8s_elements
+        template:
+          spec:
+            destination:
+              server: https://kubernetes.default.svc
       selector:
         matchExpressions:
           - key: enabled
@@ -48,12 +52,14 @@ spec:
             values:
               - "in-cluster"
               - "all"
-      template:
-        spec:
-          destination:
-            server: https://kubernetes.default.svc
     - list:
         elements: *cdk8s_elements
+        template:
+          metadata:
+            name: "{{ .name }}-ryzen"
+          spec:
+            destination:
+              name: ryzen
       selector:
         matchExpressions:
           - key: enabled
@@ -67,12 +73,6 @@ spec:
             values:
               - "ryzen"
               - "all"
-      template:
-        metadata:
-          name: "{{ .name }}-ryzen"
-        spec:
-          destination:
-            name: ryzen
   template:
     metadata:
       name: "{{ .name }}"

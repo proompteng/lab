@@ -79,6 +79,10 @@ spec:
               argocd.argoproj.io/sync-wave: "1"
             automation: manual
             enabled: true
+        template:
+          spec:
+            destination:
+              server: https://kubernetes.default.svc
       selector:
         matchExpressions:
           - key: enabled
@@ -86,12 +90,12 @@ spec:
             values: ["false", "False", "0"]
           - key: clusters
             operator: DoesNotExist
-      template:
-        spec:
-          destination:
-            server: https://kubernetes.default.svc
     - list:
         elements: *bootstrap_elements
+        template:
+          spec:
+            destination:
+              server: https://kubernetes.default.svc
       selector:
         matchExpressions:
           - key: enabled
@@ -100,12 +104,14 @@ spec:
           - key: clusters
             operator: In
             values: ["in-cluster", "all"]
-      template:
-        spec:
-          destination:
-            server: https://kubernetes.default.svc
     - list:
         elements: *bootstrap_elements
+        template:
+          metadata:
+            name: '{{ .name }}-ryzen'
+          spec:
+            destination:
+              name: ryzen
       selector:
         matchExpressions:
           - key: enabled
@@ -114,12 +120,6 @@ spec:
           - key: clusters
             operator: In
             values: ["ryzen", "all"]
-      template:
-        metadata:
-          name: '{{ .name }}-ryzen'
-        spec:
-          destination:
-            name: ryzen
   template:
     metadata:
       name: '{{ .name }}'
