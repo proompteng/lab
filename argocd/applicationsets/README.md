@@ -85,6 +85,16 @@ Need only the core bootstrap stack? Stop after the first command—leave the oth
 
 All generated Applications default to manual sync. Promote a workload by running `argocd app sync <name>`. Once stable, flip its `automation` value to `auto` inside the relevant stage file to enable automatic reconcilation.
 
+### Cluster targeting
+
+Each ApplicationSet element can optionally define a `clusters` value:
+
+- `in-cluster` (default when omitted)
+- `ryzen`
+- `all` (installs to both)
+
+When targeting `ryzen`, the Application destination uses the Argo CD cluster name `ryzen`.
+
 ## Crossplane (platform stage)
 
 Crossplane is installed via the `platform.yaml` ApplicationSet. Keep automation set to `manual` until the install is validated.

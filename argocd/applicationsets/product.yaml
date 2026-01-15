@@ -8,7 +8,7 @@ spec:
   goTemplateOptions: ["missingkey=error"]
   generators:
     - list:
-        elements:
+        elements: &product_elements
           - name: proompteng
             path: argocd/applications/proompteng
             namespace: proompteng
@@ -222,13 +222,48 @@ spec:
           - key: enabled
             operator: NotIn
             values: ["false", "False", "0"]
+          - key: clusters
+            operator: DoesNotExist
+      template:
+        spec:
+          destination:
+            server: https://kubernetes.default.svc
+    - list:
+        elements: *product_elements
+      selector:
+        matchExpressions:
+          - key: enabled
+            operator: NotIn
+            values: ["false", "False", "0"]
+          - key: clusters
+            operator: In
+            values: ["in-cluster", "all"]
+      template:
+        spec:
+          destination:
+            server: https://kubernetes.default.svc
+    - list:
+        elements: *product_elements
+      selector:
+        matchExpressions:
+          - key: enabled
+            operator: NotIn
+            values: ["false", "False", "0"]
+          - key: clusters
+            operator: In
+            values: ["ryzen", "all"]
+      template:
+        metadata:
+          name: "{{ .name }}-ryzen"
+        spec:
+          destination:
+            name: ryzen
   template:
     metadata:
       name: "{{ .name }}"
     spec:
       project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
       destination:
-        server: https://kubernetes.default.svc
         namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
       source:
         repoURL: https://github.com/proompteng/lab.git

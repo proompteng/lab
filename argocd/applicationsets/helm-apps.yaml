@@ -9,7 +9,39 @@ spec:
   goTemplateOptions: ["missingkey=error"]
   generators:
     - list:
-        elements: []
+        elements: &helm_elements []
+      selector:
+        matchExpressions:
+          - key: clusters
+            operator: DoesNotExist
+      template:
+        spec:
+          destination:
+            server: https://kubernetes.default.svc
+    - list:
+        elements: *helm_elements
+      selector:
+        matchExpressions:
+          - key: clusters
+            operator: In
+            values: ["in-cluster", "all"]
+      template:
+        spec:
+          destination:
+            server: https://kubernetes.default.svc
+    - list:
+        elements: *helm_elements
+      selector:
+        matchExpressions:
+          - key: clusters
+            operator: In
+            values: ["ryzen", "all"]
+      template:
+        metadata:
+          name: "{{.name}}-ryzen"
+        spec:
+          destination:
+            name: ryzen
   template:
     metadata:
       name: "{{.name}}"
@@ -17,7 +49,6 @@ spec:
     spec:
       project: default
       destination:
-        server: https://kubernetes.default.svc
         namespace: "{{.namespace}}"
       syncPolicy:
         automated:
