@@ -8,8 +8,6 @@ spec:
     name: agentrun-argo
   agentRef:
     name: jangar-primitives-agent
-  runtime:
-    type: argo
   parameters:
     repository: proompteng/lab
     base: main
