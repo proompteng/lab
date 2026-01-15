@@ -1,6 +1,6 @@
 replicaCount: 1
 image:
-  repository: ghcr.io/proompteng/jangar
+  repository: registry.ide-newton.ts.net/lab/jangar
   tag: latest
   pullPolicy: IfNotPresent
 resources:
