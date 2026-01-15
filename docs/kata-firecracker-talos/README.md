@@ -198,6 +198,67 @@ spec:
           type: RuntimeDefault
 ```
 
+## 7) Example manifests (Firecracker workloads)
+
+### Minimal Pod (Firecracker / kata-fc)
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kata-fc-demo
+  namespace: default
+spec:
+  runtimeClassName: kata-fc
+  restartPolicy: Never
+  containers:
+    - name: busybox
+      image: busybox:1.36
+      command: ["sh", "-c", "echo kata-fc-demo-ok && sleep 3600"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+```
+
+### Deployment (Firecracker / kata-fc)
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kata-fc-web
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kata-fc-web
+  template:
+    metadata:
+      labels:
+        app: kata-fc-web
+    spec:
+      runtimeClassName: kata-fc
+      containers:
+        - name: web
+          image: nginx:1.27
+          ports:
+            - containerPort: 80
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 101
+            seccompProfile:
+              type: RuntimeDefault
+```
+
 ## Troubleshooting
 
 ### blockfile snapshotter missing
