@@ -8,74 +8,54 @@ spec:
   goTemplateOptions:
     - missingkey=error
   generators:
-    - list:
-        elements: &cdk8s_elements
-          - name: bonjour
-            path: services/bonjour
-            namespace: bonjour
-            image: registry.ide-newton.ts.net/lab/bonjour@sha256:8b1ebac20afc95edaf794f52648fb33eff4ef85e6b4e0250cde2ff98af1a298b
-            replicas: 1
-            automation: manual
-            enabled: true
-            annotations:
-              argocd.argoproj.io/sync-wave: "6"
-        template:
-          spec:
-            destination:
-              server: https://kubernetes.default.svc
-      selector:
-        matchExpressions:
-          - key: enabled
-            operator: NotIn
-            values:
-              - "false"
-              - "False"
-              - "0"
-          - key: clusters
-            operator: DoesNotExist
-    - list:
-        elements: *cdk8s_elements
-        template:
-          spec:
-            destination:
-              server: https://kubernetes.default.svc
-      selector:
-        matchExpressions:
-          - key: enabled
-            operator: NotIn
-            values:
-              - "false"
-              - "False"
-              - "0"
-          - key: clusters
-            operator: In
-            values:
-              - "in-cluster"
-              - "all"
-    - list:
-        elements: *cdk8s_elements
-        template:
-          metadata:
-            name: "{{ .name }}-ryzen"
-          spec:
-            destination:
-              name: ryzen
-      selector:
-        matchExpressions:
-          - key: enabled
-            operator: NotIn
-            values:
-              - "false"
-              - "False"
-              - "0"
-          - key: clusters
-            operator: In
-            values:
-              - "ryzen"
-              - "all"
+    - matrix:
+        generators:
+          - list:
+              elements: &clusters_default
+                - cluster: in-cluster
+                  suffix: ""
+                  destinationServer: https://kubernetes.default.svc
+          - list:
+              elements: &cdk8s_elements
+                - name: bonjour
+                  path: services/bonjour
+                  namespace: bonjour
+                  image: registry.ide-newton.ts.net/lab/bonjour@sha256:8b1ebac20afc95edaf794f52648fb33eff4ef85e6b4e0250cde2ff98af1a298b
+                  replicas: 1
+                  automation: manual
+                  enabled: true
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "6"
+            selector:
+              matchExpressions:
+                - key: enabled
+                  operator: NotIn
+                  values: ["false", "False", "0"]
+                - key: clusters
+                  operator: DoesNotExist
+    - matrix:
+        generators:
+          - list:
+              elements: &clusters
+                - cluster: in-cluster
+                  suffix: ""
+                  destinationServer: https://kubernetes.default.svc
+                - cluster: ryzen
+                  suffix: "-ryzen"
+                  destinationName: ryzen
+          - list:
+              elements: *cdk8s_elements
+            selector:
+              matchExpressions:
+                - key: enabled
+                  operator: NotIn
+                  values: ["false", "False", "0"]
+                - key: clusters
+                  operator: In
+                  values: ["{{ .cluster }}", "all"]
   template:
     metadata:
-      name: "{{ .name }}"
+      name: "{{ .name }}{{ .suffix }}"
     spec:
       project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
       destination:
@@ -105,11 +85,25 @@ spec:
         {{ $key }}: {{ $value | quote }}
     {{- end }}
     {{- end }}
+    {{- $hasDestServer := hasKey . "destinationServer" -}}
+    {{- $hasDestName := hasKey . "destinationName" -}}
     {{- $auto := eq .automation "auto" -}}
-    {{- if $auto }}
+    {{- $needsSpec := or $hasDestServer $hasDestName $auto -}}
+    {{- if $needsSpec }}
     spec:
+      {{- if or $hasDestServer $hasDestName }}
+      destination:
+        {{- if $hasDestServer }}
+        server: '{{ .destinationServer }}'
+        {{- end }}
+        {{- if $hasDestName }}
+        name: '{{ .destinationName }}'
+        {{- end }}
+      {{- end }}
+      {{- if $auto }}
       syncPolicy:
         automated:
           prune: true
           selfHeal: true
+      {{- end }}
     {{- end }}

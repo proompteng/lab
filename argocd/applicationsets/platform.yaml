@@ -7,305 +7,298 @@ spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
-    - list:
-        elements: &platform_elements
-          - name: cloudnative-pg
-            path: argocd/applications/cloudnative-pg
-            namespace: cloudnative-pg
-            annotations:
-              argocd.argoproj.io/sync-wave: "-1"
-            automation: auto
-            enabled: "true"
-          - name: clickhouse-operator
-            path: argocd/applications/clickhouse-operator
-            namespace: clickhouse-operator
-            annotations:
-              argocd.argoproj.io/sync-wave: "-1"
-            automation: manual
-            enabled: "true"
-          - name: redis-operator
-            path: argocd/applications/redis-operator
-            namespace: redis-operator
-            annotations:
-              argocd.argoproj.io/sync-wave: "-1"
-            automation: auto
-            enabled: "true"
-          - name: crossplane
-            path: argocd/applications/crossplane
-            namespace: crossplane
-            annotations:
-              argocd.argoproj.io/sync-wave: "-1"
-            automation: manual
-            enabled: "true"
-          - name: rook-ceph
-            path: argocd/applications/rook-ceph
-            namespace: rook-ceph
-            annotations:
-              argocd.argoproj.io/sync-wave: "-1"
-            automation: manual
-            enabled: "true"
-          - name: external-dns
-            path: argocd/applications/external-dns
-            namespace: external-dns
-            annotations:
-              argocd.argoproj.io/sync-wave: "0"
-            automation: auto
-            enabled: "false"
-          - name: cloudflare
-            path: argocd/applications/cloudflare
-            namespace: cloudflare
-            annotations:
-              argocd.argoproj.io/sync-wave: "0"
-            automation: auto
-            enabled: "false"
-          - name: istio-system
-            path: argocd/applications/istio-system
-            namespace: istio-system
-            annotations:
-              argocd.argoproj.io/sync-wave: "0"
-            automation: auto
-            enabled: "true"
-          - name: istio-ingress
-            path: argocd/applications/istio-ingress
-            namespace: istio-ingress
-            annotations:
-              argocd.argoproj.io/sync-wave: "1"
-            automation: auto
-            enabled: "true"
-          - name: knative
-            path: argocd/applications/knative
-            namespace: knative
-            annotations:
-              argocd.argoproj.io/sync-wave: "1"
-            automation: auto
-            enabled: "true"
-          - name: knative-serving
-            path: argocd/applications/knative-serving
-            namespace: knative-serving
-            annotations:
-              argocd.argoproj.io/sync-wave: "2"
-            automation: auto
-            enabled: "true"
-          - name: knative-eventing
-            path: argocd/applications/knative-eventing
-            namespace: knative-eventing
-            annotations:
-              argocd.argoproj.io/sync-wave: "2"
-            automation: auto
-            enabled: "true"
-          - name: fission
-            path: argocd/applications/fission
-            namespace: fission
-            annotations:
-              argocd.argoproj.io/sync-wave: "2"
-            automation: auto
-            enabled: "false"
-          - name: kafka
-            path: argocd/applications/kafka
-            namespace: kafka
-            annotations:
-              argocd.argoproj.io/sync-wave: "2"
-            automation: auto
-            enabled: "true"
-          - name: nats
-            path: argocd/applications/nats
-            namespace: nats
-            annotations:
-              argocd.argoproj.io/sync-wave: "3"
-            automation: manual
-            enabled: "true"
-          - name: nack
-            path: argocd/applications/nack
-            namespace: nack
-            annotations:
-              argocd.argoproj.io/sync-wave: "4"
-            automation: manual
-            enabled: "true"
-          - name: kubernetes-reflector
-            path: argocd/applications/kubernetes-reflector
-            namespace: kubernetes-reflector
-            annotations:
-              argocd.argoproj.io/sync-wave: "2"
-            automation: auto
-            enabled: "true"
-          - name: argo-workflows
-            path: argocd/applications/argo-workflows
-            namespace: argo-workflows
-            annotations:
-              argocd.argoproj.io/sync-wave: "3"
-            automation: manual
-            enabled: "true"
-          - name: observability
-            path: argocd/applications/observability
-            namespace: observability
-            annotations:
-              argocd.argoproj.io/sync-wave: "3"
-            automation: auto
-            enabled: "true"
-          - name: minio
-            path: argocd/applications/minio
-            namespace: minio
-            annotations:
-              argocd.argoproj.io/sync-wave: "3"
-            automation: manual
-            enabled: "true"
-          - name: flink
-            path: argocd/applications/flink
-            namespace: flink
-            annotations:
-              argocd.argoproj.io/sync-wave: "3"
-            automation: manual
-            enabled: "true"
-          - name: milvus
-            path: argocd/applications/milvus
-            namespace: milvus
-            annotations:
-              argocd.argoproj.io/sync-wave: "4"
-            automation: auto
-            enabled: "false"
-          - name: tigresse
-            path: argocd/applications/tigresse
-            namespace: tigresse-system
-            annotations:
-              argocd.argoproj.io/sync-wave: "3"
-            automation: auto
-            enabled: "false"
-          - name: temporal
-            path: argocd/applications/temporal
-            namespace: temporal
-            annotations:
-              argocd.argoproj.io/sync-wave: "4"
-            automation: manual
-            enabled: "true"
-          - name: airbyte
-            path: argocd/applications/airbyte
-            namespace: airbyte
-            annotations:
-              argocd.argoproj.io/sync-wave: "4"
-            automation: auto
-            enabled: "false"
-          - name: dagster
-            path: argocd/applications/dagster
-            namespace: dagster
-            annotations:
-              argocd.argoproj.io/sync-wave: "4"
-            automation: auto
-            enabled: "false"
-          - name: verdaccio
-            path: argocd/applications/verdaccio
-            namespace: verdaccio
-            annotations:
-              argocd.argoproj.io/sync-wave: "3"
-            automation: auto
-            enabled: "false"
-          - name: spark
-            path: argocd/applications/spark
-            namespace: spark
-            annotations:
-              argocd.argoproj.io/sync-wave: "3"
-            automation: auto
-            enabled: "false"
-          - name: coder
-            path: argocd/applications/coder
-            namespace: coder
-            annotations:
-              argocd.argoproj.io/sync-wave: "3"
-            automation: manual
-            enabled: "true"
-          - name: arc
-            path: argocd/applications/arc
-            namespace: arc
-            annotations:
-              argocd.argoproj.io/sync-wave: "4"
-            automation: auto
-            enabled: "true"
-          - name: backstage
-            path: argocd/applications/backstage
-            namespace: backstage
-            annotations:
-              argocd.argoproj.io/sync-wave: "4"
-            automation: auto
-            enabled: "false"
-          - name: keycloak
-            path: argocd/applications/keycloak
-            namespace: keycloak
-            annotations:
-              argocd.argoproj.io/sync-wave: "4"
-            automation: auto
-            enabled: "true"
-          - name: headlamp
-            path: argocd/applications/headlamp
-            namespace: headlamp
-            annotations:
-              argocd.argoproj.io/sync-wave: "4"
-            automation: auto
-            enabled: "true"
-          - name: pgadmin
-            path: argocd/applications/pgadmin
-            namespace: pgadmin
-            annotations:
-              argocd.argoproj.io/sync-wave: "4"
-            automation: manual
-            enabled: "true"
-          - name: graf
-            path: argocd/applications/graf
-            namespace: graf
-            annotations:
-              argocd.argoproj.io/sync-wave: "4"
-              argocd.argoproj.io/compare-options: IgnoreExtraneous
-            automation: manual
-            enabled: "true"
-          - name: convex
-            path: argocd/applications/convex
-            namespace: convex
-            annotations:
-              argocd.argoproj.io/sync-wave: "4"
-            automation: auto
-            enabled: "true"
-        template:
-          spec:
-            destination:
-              server: https://kubernetes.default.svc
-      selector:
-        matchExpressions:
-          - key: enabled
-            operator: NotIn
-            values: ["false", "False", "0"]
-          - key: clusters
-            operator: DoesNotExist
-    - list:
-        elements: *platform_elements
-        template:
-          spec:
-            destination:
-              server: https://kubernetes.default.svc
-      selector:
-        matchExpressions:
-          - key: enabled
-            operator: NotIn
-            values: ["false", "False", "0"]
-          - key: clusters
-            operator: In
-            values: ["in-cluster", "all"]
-    - list:
-        elements: *platform_elements
-        template:
-          metadata:
-            name: '{{ .name }}-ryzen'
-          spec:
-            destination:
-              name: ryzen
-      selector:
-        matchExpressions:
-          - key: enabled
-            operator: NotIn
-            values: ["false", "False", "0"]
-          - key: clusters
-            operator: In
-            values: ["ryzen", "all"]
+    - matrix:
+        generators:
+          - list:
+              elements: &clusters_default
+                - cluster: in-cluster
+                  suffix: ""
+                  destinationServer: https://kubernetes.default.svc
+          - list:
+              elements: &platform_elements
+              - name: cloudnative-pg
+                path: argocd/applications/cloudnative-pg
+                namespace: cloudnative-pg
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
+              - name: clickhouse-operator
+                path: argocd/applications/clickhouse-operator
+                namespace: clickhouse-operator
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: manual
+                enabled: "true"
+              - name: redis-operator
+                path: argocd/applications/redis-operator
+                namespace: redis-operator
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
+              - name: crossplane
+                path: argocd/applications/crossplane
+                namespace: crossplane
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: manual
+                enabled: "true"
+              - name: rook-ceph
+                path: argocd/applications/rook-ceph
+                namespace: rook-ceph
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: manual
+                enabled: "true"
+              - name: external-dns
+                path: argocd/applications/external-dns
+                namespace: external-dns
+                annotations:
+                  argocd.argoproj.io/sync-wave: "0"
+                automation: auto
+                enabled: "false"
+              - name: cloudflare
+                path: argocd/applications/cloudflare
+                namespace: cloudflare
+                annotations:
+                  argocd.argoproj.io/sync-wave: "0"
+                automation: auto
+                enabled: "false"
+              - name: istio-system
+                path: argocd/applications/istio-system
+                namespace: istio-system
+                annotations:
+                  argocd.argoproj.io/sync-wave: "0"
+                automation: auto
+                enabled: "true"
+              - name: istio-ingress
+                path: argocd/applications/istio-ingress
+                namespace: istio-ingress
+                annotations:
+                  argocd.argoproj.io/sync-wave: "1"
+                automation: auto
+                enabled: "true"
+              - name: knative
+                path: argocd/applications/knative
+                namespace: knative
+                annotations:
+                  argocd.argoproj.io/sync-wave: "1"
+                automation: auto
+                enabled: "true"
+              - name: knative-serving
+                path: argocd/applications/knative-serving
+                namespace: knative-serving
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+              - name: knative-eventing
+                path: argocd/applications/knative-eventing
+                namespace: knative-eventing
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+              - name: fission
+                path: argocd/applications/fission
+                namespace: fission
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "false"
+              - name: kafka
+                path: argocd/applications/kafka
+                namespace: kafka
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+              - name: nats
+                path: argocd/applications/nats
+                namespace: nats
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                automation: manual
+                enabled: "true"
+              - name: nack
+                path: argocd/applications/nack
+                namespace: nack
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: manual
+                enabled: "true"
+              - name: kubernetes-reflector
+                path: argocd/applications/kubernetes-reflector
+                namespace: kubernetes-reflector
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+              - name: argo-workflows
+                path: argocd/applications/argo-workflows
+                namespace: argo-workflows
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                automation: manual
+                enabled: "true"
+              - name: observability
+                path: argocd/applications/observability
+                namespace: observability
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                automation: auto
+                enabled: "true"
+              - name: minio
+                path: argocd/applications/minio
+                namespace: minio
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                automation: manual
+                enabled: "true"
+              - name: flink
+                path: argocd/applications/flink
+                namespace: flink
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                automation: manual
+                enabled: "true"
+              - name: milvus
+                path: argocd/applications/milvus
+                namespace: milvus
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "false"
+              - name: tigresse
+                path: argocd/applications/tigresse
+                namespace: tigresse-system
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                automation: auto
+                enabled: "false"
+              - name: temporal
+                path: argocd/applications/temporal
+                namespace: temporal
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: manual
+                enabled: "true"
+              - name: airbyte
+                path: argocd/applications/airbyte
+                namespace: airbyte
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "false"
+              - name: dagster
+                path: argocd/applications/dagster
+                namespace: dagster
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "false"
+              - name: verdaccio
+                path: argocd/applications/verdaccio
+                namespace: verdaccio
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                automation: auto
+                enabled: "false"
+              - name: spark
+                path: argocd/applications/spark
+                namespace: spark
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                automation: auto
+                enabled: "false"
+              - name: coder
+                path: argocd/applications/coder
+                namespace: coder
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                automation: manual
+                enabled: "true"
+              - name: arc
+                path: argocd/applications/arc
+                namespace: arc
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "true"
+              - name: backstage
+                path: argocd/applications/backstage
+                namespace: backstage
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "false"
+              - name: keycloak
+                path: argocd/applications/keycloak
+                namespace: keycloak
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "true"
+              - name: headlamp
+                path: argocd/applications/headlamp
+                namespace: headlamp
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "true"
+              - name: pgadmin
+                path: argocd/applications/pgadmin
+                namespace: pgadmin
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: manual
+                enabled: "true"
+              - name: graf
+                path: argocd/applications/graf
+                namespace: graf
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                  argocd.argoproj.io/compare-options: IgnoreExtraneous
+                automation: manual
+                enabled: "true"
+              - name: convex
+                path: argocd/applications/convex
+                namespace: convex
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "true"
+            selector:
+              matchExpressions:
+                - key: enabled
+                  operator: NotIn
+                  values: ["false", "False", "0"]
+                - key: clusters
+                  operator: DoesNotExist
+    - matrix:
+        generators:
+          - list:
+              elements: &clusters
+                - cluster: in-cluster
+                  suffix: ""
+                  destinationServer: https://kubernetes.default.svc
+                - cluster: ryzen
+                  suffix: "-ryzen"
+                  destinationName: ryzen
+          - list:
+              elements: *platform_elements
+            selector:
+              matchExpressions:
+                - key: enabled
+                  operator: NotIn
+                  values: ["false", "False", "0"]
+                - key: clusters
+                  operator: In
+                  values: ["{{ .cluster }}", "all"]
   template:
     metadata:
-      name: "{{ .name }}"
+      name: "{{ .name }}{{ .suffix }}"
     spec:
       project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
       destination:
@@ -434,15 +427,28 @@ spec:
         {{ $key }}: {{ $value | quote }}
     {{- end }}
     {{ end }}
+    {{- $hasDestServer := hasKey . "destinationServer" -}}
+    {{- $hasDestName := hasKey . "destinationName" -}}
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
-    {{- if or $useLovely (eq .automation "auto") }}
+    {{- $auto := eq .automation "auto" -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto -}}
+    {{- if $needsSpec }}
     spec:
+      {{- if or $hasDestServer $hasDestName }}
+      destination:
+        {{- if $hasDestServer }}
+        server: '{{ .destinationServer }}'
+        {{- end }}
+        {{- if $hasDestName }}
+        name: '{{ .destinationName }}'
+        {{- end }}
+      {{- end }}
       {{- if $useLovely }}
       source:
         plugin:
           name: lovely
       {{- end }}
-      {{- if eq .automation "auto" }}
+      {{- if $auto }}
       syncPolicy:
         automated:
           prune: true

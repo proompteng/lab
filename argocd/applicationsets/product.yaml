@@ -7,260 +7,253 @@ spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
-    - list:
-        elements: &product_elements
-          - name: proompteng
-            path: argocd/applications/proompteng
-            namespace: proompteng
-            renderWithLovely: false
-            annotations:
-              argocd.argoproj.io/sync-wave: "5"
-              argocd-image-updater.argoproj.io/image-list: proompteng=registry.ide-newton.ts.net/lab/proompteng
-              argocd-image-updater.argoproj.io/proompteng: semver
-              argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
-              argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
-              argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
-              argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/proompteng
-            automation: auto
-            enabled: true
-          - name: docs
-            path: argocd/applications/docs
-            namespace: docs
-            renderWithLovely: false
-            annotations:
-              argocd.argoproj.io/sync-wave: "5"
-              argocd-image-updater.argoproj.io/image-list: docs=registry.ide-newton.ts.net/lab/docs
-              argocd-image-updater.argoproj.io/docs: semver
-              argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
-              argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
-              argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
-              argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/docs
-            automation: auto
-            enabled: true
-          - name: discourse
-            path: argocd/applications/discourse
-            namespace: discourse
-            renderWithLovely: false
-            annotations:
-              argocd.argoproj.io/sync-wave: "6"
-            automation: manual
-            enabled: true
-          - name: kitty-krew
-            path: argocd/applications/kitty-krew
-            namespace: kitty-krew
-            renderWithLovely: false
-            annotations:
-              argocd.argoproj.io/sync-wave: "5"
-              argocd-image-updater.argoproj.io/image-list: kitty-krew=registry.ide-newton.ts.net/lab/kitty-krew
-              argocd-image-updater.argoproj.io/kitty-krew: semver
-              argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
-              argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
-              argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
-              argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/kitty-krew
-            automation: auto
-            enabled: false
-          - name: reviseur
-            path: argocd/applications/reviseur
-            namespace: reviseur
-            renderWithLovely: false
-            annotations:
-              argocd.argoproj.io/sync-wave: "5"
-              argocd-image-updater.argoproj.io/image-list: reviseur=registry.ide-newton.ts.net/lab/reviseur
-              argocd-image-updater.argoproj.io/reviseur: semver
-              argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
-              argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
-              argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
-              argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/reviseur
-            automation: auto
-            enabled: false
-          - name: prt
-            path: argocd/applications/prt
-            namespace: prt
-            renderWithLovely: false
-            annotations:
-              argocd.argoproj.io/sync-wave: "5"
-            automation: auto
-            enabled: false
-          - name: ecran
-            path: argocd/applications/ecran
-            namespace: ecran
-            annotations:
-              argocd.argoproj.io/sync-wave: "6"
-            automation: auto
-            enabled: false
-          - name: eclair
-            path: argocd/applications/eclair
-            namespace: eclair
-            annotations:
-              argocd.argoproj.io/sync-wave: "6"
-            automation: auto
-            enabled: false
-          - name: jangar
-            path: argocd/applications/jangar
-            namespace: jangar
-            annotations:
-              argocd.argoproj.io/sync-wave: "6"
-            automation: manual
-            enabled: true
-          - name: agents
-            path: argocd/applications/agents
-            namespace: agents
-            annotations:
-              argocd.argoproj.io/sync-wave: "6"
-            automation: manual
-            enabled: true
-          - name: bumba
-            path: argocd/applications/bumba
-            namespace: jangar
-            annotations:
-              argocd.argoproj.io/sync-wave: "6"
-            automation: manual
-            enabled: true
-          - name: oirat
-            path: argocd/applications/oirat
-            namespace: oirat
-            annotations:
-              argocd.argoproj.io/sync-wave: "6"
-            automation: manual
-            enabled: true
-          - name: galette
-            path: argocd/applications/galette
-            namespace: galette
-            annotations:
-              argocd.argoproj.io/sync-wave: "6"
-            automation: auto
-            enabled: false
-          - name: facteur
-            path: argocd/applications/facteur
-            namespace: facteur
-            annotations:
-              argocd.argoproj.io/sync-wave: "6"
-            automation: manual
-            enabled: true
-          - name: golink
-            path: argocd/applications/golink
-            namespace: golink
-            annotations:
-              argocd.argoproj.io/sync-wave: "6"
-            ignoreDifferences:
-              - group: serving.knative.dev
-                kind: Service
-                jsonPointers:
-                  - /metadata/annotations
-                  - /metadata/labels
-                  - /spec/traffic
-                  - /spec/template/metadata/annotations
-                  - /spec/template/metadata/creationTimestamp
-                  - /spec/template/metadata/labels
-                  - /spec/template/spec/containers/0/ports/0/protocol
-                  - /spec/template/spec/containers/0/readinessProbe
-                  - /spec/template/spec/enableServiceLinks
-            automation: manual
-            enabled: true
-          - name: torghut
-            path: argocd/applications/torghut
-            namespace: torghut
-            annotations:
-              argocd.argoproj.io/sync-wave: "6"
-            ignoreDifferences:
-              - group: serving.knative.dev
-                kind: Service
-                jsonPointers:
-                  - /metadata/annotations
-                  - /metadata/labels
-                  - /spec/traffic
-                  - /spec/template/metadata/annotations
-                  - /spec/template/metadata/creationTimestamp
-                  - /spec/template/metadata/labels
-                  - /spec/template/spec/containers/0/ports/0/protocol
-                  - /spec/template/spec/containers/0/readinessProbe
-                  - /spec/template/spec/enableServiceLinks
-            automation: manual
-            enabled: true
-          - name: miel
-            path: argocd/applications/miel
-            namespace: miel
-            annotations:
-              argocd.argoproj.io/sync-wave: "6"
-            automation: auto
-            enabled: false
-          - name: dernier
-            path: argocd/applications/dernier
-            namespace: dernier
-            renderWithLovely: false
-            annotations:
-              argocd.argoproj.io/sync-wave: "6"
-              argocd-image-updater.argoproj.io/image-list: dernier=registry.ide-newton.ts.net/lab/dernier
-              argocd-image-updater.argoproj.io/dernier: semver
-              argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
-              argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
-              argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
-              argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/dernier
-            automation: manual
-            enabled: true
-          - name: froussard
-            path: argocd/applications/froussard
-            namespace: froussard
-            annotations:
-              argocd.argoproj.io/sync-wave: "6"
-            ignoreDifferences:
-              - group: serving.knative.dev
-                kind: Service
-                jsonPointers:
-                  - /metadata/annotations
-                  - /metadata/labels
-                  - /spec/traffic
-                  - /spec/template/metadata/annotations
-                  - /spec/template/metadata/creationTimestamp
-                  - /spec/template/metadata/labels
-                  - /spec/template/spec/containers/0/ports/0/protocol
-                  - /spec/template/spec/containers/0/resources
-            automation: manual
-            enabled: true
-        template:
-          spec:
-            destination:
-              server: https://kubernetes.default.svc
-      selector:
-        matchExpressions:
-          - key: enabled
-            operator: NotIn
-            values: ["false", "False", "0"]
-          - key: clusters
-            operator: DoesNotExist
-    - list:
-        elements: *product_elements
-        template:
-          spec:
-            destination:
-              server: https://kubernetes.default.svc
-      selector:
-        matchExpressions:
-          - key: enabled
-            operator: NotIn
-            values: ["false", "False", "0"]
-          - key: clusters
-            operator: In
-            values: ["in-cluster", "all"]
-    - list:
-        elements: *product_elements
-        template:
-          metadata:
-            name: "{{ .name }}-ryzen"
-          spec:
-            destination:
-              name: ryzen
-      selector:
-        matchExpressions:
-          - key: enabled
-            operator: NotIn
-            values: ["false", "False", "0"]
-          - key: clusters
-            operator: In
-            values: ["ryzen", "all"]
+    - matrix:
+        generators:
+          - list:
+              elements: &clusters_default
+                - cluster: in-cluster
+                  suffix: ""
+                  destinationServer: https://kubernetes.default.svc
+          - list:
+              elements: &product_elements
+              - name: proompteng
+                path: argocd/applications/proompteng
+                namespace: proompteng
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "5"
+                  argocd-image-updater.argoproj.io/image-list: proompteng=registry.ide-newton.ts.net/lab/proompteng
+                  argocd-image-updater.argoproj.io/proompteng: semver
+                  argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
+                  argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
+                  argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
+                  argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/proompteng
+                automation: auto
+                enabled: true
+              - name: docs
+                path: argocd/applications/docs
+                namespace: docs
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "5"
+                  argocd-image-updater.argoproj.io/image-list: docs=registry.ide-newton.ts.net/lab/docs
+                  argocd-image-updater.argoproj.io/docs: semver
+                  argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
+                  argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
+                  argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
+                  argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/docs
+                automation: auto
+                enabled: true
+              - name: discourse
+                path: argocd/applications/discourse
+                namespace: discourse
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: manual
+                enabled: true
+              - name: kitty-krew
+                path: argocd/applications/kitty-krew
+                namespace: kitty-krew
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "5"
+                  argocd-image-updater.argoproj.io/image-list: kitty-krew=registry.ide-newton.ts.net/lab/kitty-krew
+                  argocd-image-updater.argoproj.io/kitty-krew: semver
+                  argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
+                  argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
+                  argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
+                  argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/kitty-krew
+                automation: auto
+                enabled: false
+              - name: reviseur
+                path: argocd/applications/reviseur
+                namespace: reviseur
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "5"
+                  argocd-image-updater.argoproj.io/image-list: reviseur=registry.ide-newton.ts.net/lab/reviseur
+                  argocd-image-updater.argoproj.io/reviseur: semver
+                  argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
+                  argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
+                  argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
+                  argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/reviseur
+                automation: auto
+                enabled: false
+              - name: prt
+                path: argocd/applications/prt
+                namespace: prt
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "5"
+                automation: auto
+                enabled: false
+              - name: ecran
+                path: argocd/applications/ecran
+                namespace: ecran
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: auto
+                enabled: false
+              - name: eclair
+                path: argocd/applications/eclair
+                namespace: eclair
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: auto
+                enabled: false
+              - name: jangar
+                path: argocd/applications/jangar
+                namespace: jangar
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: manual
+                enabled: true
+              - name: agents
+                path: argocd/applications/agents
+                namespace: agents
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: manual
+                enabled: true
+              - name: bumba
+                path: argocd/applications/bumba
+                namespace: jangar
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: manual
+                enabled: true
+              - name: oirat
+                path: argocd/applications/oirat
+                namespace: oirat
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: manual
+                enabled: true
+              - name: galette
+                path: argocd/applications/galette
+                namespace: galette
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: auto
+                enabled: false
+              - name: facteur
+                path: argocd/applications/facteur
+                namespace: facteur
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: manual
+                enabled: true
+              - name: golink
+                path: argocd/applications/golink
+                namespace: golink
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                ignoreDifferences:
+                  - group: serving.knative.dev
+                    kind: Service
+                    jsonPointers:
+                      - /metadata/annotations
+                      - /metadata/labels
+                      - /spec/traffic
+                      - /spec/template/metadata/annotations
+                      - /spec/template/metadata/creationTimestamp
+                      - /spec/template/metadata/labels
+                      - /spec/template/spec/containers/0/ports/0/protocol
+                      - /spec/template/spec/containers/0/readinessProbe
+                      - /spec/template/spec/enableServiceLinks
+                automation: manual
+                enabled: true
+              - name: torghut
+                path: argocd/applications/torghut
+                namespace: torghut
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                ignoreDifferences:
+                  - group: serving.knative.dev
+                    kind: Service
+                    jsonPointers:
+                      - /metadata/annotations
+                      - /metadata/labels
+                      - /spec/traffic
+                      - /spec/template/metadata/annotations
+                      - /spec/template/metadata/creationTimestamp
+                      - /spec/template/metadata/labels
+                      - /spec/template/spec/containers/0/ports/0/protocol
+                      - /spec/template/spec/containers/0/readinessProbe
+                      - /spec/template/spec/enableServiceLinks
+                automation: manual
+                enabled: true
+              - name: miel
+                path: argocd/applications/miel
+                namespace: miel
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: auto
+                enabled: false
+              - name: dernier
+                path: argocd/applications/dernier
+                namespace: dernier
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                  argocd-image-updater.argoproj.io/image-list: dernier=registry.ide-newton.ts.net/lab/dernier
+                  argocd-image-updater.argoproj.io/dernier: semver
+                  argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
+                  argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
+                  argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
+                  argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/dernier
+                automation: manual
+                enabled: true
+              - name: froussard
+                path: argocd/applications/froussard
+                namespace: froussard
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                ignoreDifferences:
+                  - group: serving.knative.dev
+                    kind: Service
+                    jsonPointers:
+                      - /metadata/annotations
+                      - /metadata/labels
+                      - /spec/traffic
+                      - /spec/template/metadata/annotations
+                      - /spec/template/metadata/creationTimestamp
+                      - /spec/template/metadata/labels
+                      - /spec/template/spec/containers/0/ports/0/protocol
+                      - /spec/template/spec/containers/0/resources
+                automation: manual
+                enabled: true
+            selector:
+              matchExpressions:
+                - key: enabled
+                  operator: NotIn
+                  values: ["false", "False", "0"]
+                - key: clusters
+                  operator: DoesNotExist
+    - matrix:
+        generators:
+          - list:
+              elements: &clusters
+                - cluster: in-cluster
+                  suffix: ""
+                  destinationServer: https://kubernetes.default.svc
+                - cluster: ryzen
+                  suffix: "-ryzen"
+                  destinationName: ryzen
+          - list:
+              elements: *product_elements
+            selector:
+              matchExpressions:
+                - key: enabled
+                  operator: NotIn
+                  values: ["false", "False", "0"]
+                - key: clusters
+                  operator: In
+                  values: ["{{ .cluster }}", "all"]
   template:
     metadata:
-      name: "{{ .name }}"
+      name: "{{ .name }}{{ .suffix }}"
     spec:
       project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
       destination:
@@ -282,11 +275,22 @@ spec:
         {{ $key }}: {{ $value | quote }}
     {{- end }}
     {{- end }}
+    {{- $hasDestServer := hasKey . "destinationServer" -}}
+    {{- $hasDestName := hasKey . "destinationName" -}}
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
     {{- $auto := eq .automation "auto" -}}
-    {{- $needsSpec := or $useLovely (or $auto (hasKey . "ignoreDifferences")) -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto (hasKey . "ignoreDifferences") -}}
     {{- if $needsSpec }}
     spec:
+      {{- if or $hasDestServer $hasDestName }}
+      destination:
+        {{- if $hasDestServer }}
+        server: '{{ .destinationServer }}'
+        {{- end }}
+        {{- if $hasDestName }}
+        name: '{{ .destinationName }}'
+        {{- end }}
+      {{- end }}
       {{- if $useLovely }}
       source:
         plugin:

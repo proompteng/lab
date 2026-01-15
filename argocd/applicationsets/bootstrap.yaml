@@ -7,122 +7,115 @@ spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
-    - list:
-        elements: &bootstrap_elements
-          - name: argocd
-            path: argocd/applications/argocd
-            namespace: argocd
-            annotations:
-              argocd.argoproj.io/sync-wave: "-2"
-            automation: manual
-            enabled: true
-          - name: sealed-secrets
-            path: argocd/applications/sealed-secrets
-            namespace: sealed-secrets
-            annotations:
-              argocd.argoproj.io/sync-wave: "-2"
-            automation: auto
-            enabled: true
-          - name: cert-manager
-            path: argocd/applications/cert-manager
-            namespace: cert-manager
-            annotations:
-              argocd.argoproj.io/sync-wave: "-1"
-            automation: auto
-            enabled: true
-            ignoreDifferences:
-              - group: admissionregistration.k8s.io
-                kind: MutatingWebhookConfiguration
-                name: cert-manager-webhook
-                jqPathExpressions:
-                  - .webhooks[]?.clientConfig.caBundle
-              - group: admissionregistration.k8s.io
-                kind: ValidatingWebhookConfiguration
-                name: cert-manager-webhook
-                jqPathExpressions:
-                  - .webhooks[]?.clientConfig.caBundle
-              - group: apiextensions.k8s.io
-                kind: CustomResourceDefinition
-                nameRegex: '.*cert-manager.io'
-                jqPathExpressions:
-                  - .spec.conversion.webhook.clientConfig.caBundle
-              - group: apiregistration.k8s.io
-                kind: APIService
-                nameRegex: '.*cert-manager.io'
-                jqPathExpressions:
-                  - .spec.caBundle
-          - name: longhorn
-            path: argocd/applications/longhorn
-            namespace: longhorn-system
-            annotations:
-              argocd.argoproj.io/sync-wave: "-1"
-            automation: auto
-            enabled: true
-          - name: metallb-system
-            path: argocd/applications/metallb-system
-            namespace: metallb-system
-            annotations:
-              argocd.argoproj.io/sync-wave: "0"
-            automation: auto
-            enabled: true
-          - name: tailscale
-            path: argocd/applications/tailscale
-            namespace: tailscale
-            annotations:
-              argocd.argoproj.io/sync-wave: "0"
-            automation: auto
-            enabled: true
-          - name: registry
-            path: argocd/applications/registry
-            namespace: registry
-            annotations:
-              argocd.argoproj.io/sync-wave: "1"
-            automation: manual
-            enabled: true
-        template:
-          spec:
-            destination:
-              server: https://kubernetes.default.svc
-      selector:
-        matchExpressions:
-          - key: enabled
-            operator: NotIn
-            values: ["false", "False", "0"]
-          - key: clusters
-            operator: DoesNotExist
-    - list:
-        elements: *bootstrap_elements
-        template:
-          spec:
-            destination:
-              server: https://kubernetes.default.svc
-      selector:
-        matchExpressions:
-          - key: enabled
-            operator: NotIn
-            values: ["false", "False", "0"]
-          - key: clusters
-            operator: In
-            values: ["in-cluster", "all"]
-    - list:
-        elements: *bootstrap_elements
-        template:
-          metadata:
-            name: '{{ .name }}-ryzen'
-          spec:
-            destination:
-              name: ryzen
-      selector:
-        matchExpressions:
-          - key: enabled
-            operator: NotIn
-            values: ["false", "False", "0"]
-          - key: clusters
-            operator: In
-            values: ["ryzen", "all"]
+    - matrix:
+        generators:
+          - list:
+              elements: &bootstrap_clusters_default
+                - cluster: in-cluster
+                  suffix: ""
+                  destinationServer: https://kubernetes.default.svc
+          - list:
+              elements: &bootstrap_elements
+                - name: argocd
+                  path: argocd/applications/argocd
+                  namespace: argocd
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "-2"
+                  automation: manual
+                  enabled: true
+                - name: sealed-secrets
+                  path: argocd/applications/sealed-secrets
+                  namespace: sealed-secrets
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "-2"
+                  automation: auto
+                  enabled: true
+                - name: cert-manager
+                  path: argocd/applications/cert-manager
+                  namespace: cert-manager
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "-1"
+                  automation: auto
+                  enabled: true
+                  ignoreDifferences:
+                    - group: admissionregistration.k8s.io
+                      kind: MutatingWebhookConfiguration
+                      name: cert-manager-webhook
+                      jqPathExpressions:
+                        - .webhooks[]?.clientConfig.caBundle
+                    - group: admissionregistration.k8s.io
+                      kind: ValidatingWebhookConfiguration
+                      name: cert-manager-webhook
+                      jqPathExpressions:
+                        - .webhooks[]?.clientConfig.caBundle
+                    - group: apiextensions.k8s.io
+                      kind: CustomResourceDefinition
+                      nameRegex: '.*cert-manager.io'
+                      jqPathExpressions:
+                        - .spec.conversion.webhook.clientConfig.caBundle
+                    - group: apiregistration.k8s.io
+                      kind: APIService
+                      nameRegex: '.*cert-manager.io'
+                      jqPathExpressions:
+                        - .spec.caBundle
+                - name: longhorn
+                  path: argocd/applications/longhorn
+                  namespace: longhorn-system
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "-1"
+                  automation: auto
+                  enabled: true
+                - name: metallb-system
+                  path: argocd/applications/metallb-system
+                  namespace: metallb-system
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "0"
+                  automation: auto
+                  enabled: true
+                - name: tailscale
+                  path: argocd/applications/tailscale
+                  namespace: tailscale
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "0"
+                  automation: auto
+                  enabled: true
+                - name: registry
+                  path: argocd/applications/registry
+                  namespace: registry
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "1"
+                  automation: manual
+                  enabled: true
+            selector:
+              matchExpressions:
+                - key: enabled
+                  operator: NotIn
+                  values: ["false", "False", "0"]
+                - key: clusters
+                  operator: DoesNotExist
+    - matrix:
+        generators:
+          - list:
+              elements: &bootstrap_clusters
+                - cluster: in-cluster
+                  suffix: ""
+                  destinationServer: https://kubernetes.default.svc
+                - cluster: ryzen
+                  suffix: "-ryzen"
+                  destinationName: ryzen
+          - list:
+              elements: *bootstrap_elements
+            selector:
+              matchExpressions:
+                - key: enabled
+                  operator: NotIn
+                  values: ["false", "False", "0"]
+                - key: clusters
+                  operator: In
+                  values: ["{{ .cluster }}", "all"]
   template:
     metadata:
-      name: '{{ .name }}'
+      name: '{{ .name }}{{ .suffix }}'
     spec:
       project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
       destination:
@@ -145,11 +138,22 @@ spec:
         {{ $key }}: {{ $value | quote }}
     {{- end }}
     {{- end }}
+    {{- $hasDestServer := hasKey . "destinationServer" -}}
+    {{- $hasDestName := hasKey . "destinationName" -}}
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
     {{- $auto := eq .automation "auto" -}}
-    {{- $needsSpec := or $useLovely (or $auto (hasKey . "ignoreDifferences")) -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto (hasKey . "ignoreDifferences") -}}
     {{- if $needsSpec }}
     spec:
+      {{- if or $hasDestServer $hasDestName }}
+      destination:
+        {{- if $hasDestServer }}
+        server: '{{ .destinationServer }}'
+        {{- end }}
+        {{- if $hasDestName }}
+        name: '{{ .destinationName }}'
+        {{- end }}
+      {{- end }}
       {{- if $useLovely }}
       source:
         plugin:
