@@ -26,9 +26,6 @@ export default function Navbar() {
         ))}
       </div>
       <div className="flex items-center gap-3">
-        <Button asChild size="sm" variant="outline">
-          <Link href="/app">login</Link>
-        </Button>
         <Link
           className="text-sm text-muted-foreground transition hover:text-foreground"
           href="https://docs.proompteng.ai"

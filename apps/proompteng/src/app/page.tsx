@@ -22,7 +22,6 @@ export default function Home() {
         { label: 'platform', href: '#platform' },
         { label: 'governance', href: '#governance' },
         { label: 'playbook', href: '#playbook' },
-        { label: 'login', href: '/app' },
       ],
     },
     {
