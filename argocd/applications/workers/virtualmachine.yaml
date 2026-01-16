@@ -1,0 +1,66 @@
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: workers
+  labels:
+    app.kubernetes.io/name: workers
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  running: true
+  template:
+    metadata:
+      labels:
+        kubevirt.io/domain: workers
+        app.kubernetes.io/name: workers
+    spec:
+      domain:
+        cpu:
+          cores: 2
+        resources:
+          requests:
+            memory: 4Gi
+        devices:
+          disks:
+            - name: rootdisk
+              disk:
+                bus: virtio
+            - name: cloudinitdisk
+              disk:
+                bus: virtio
+          interfaces:
+            - name: default
+              masquerade: {}
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: rootdisk
+          containerDisk:
+            image: quay.io/containerdisks/ubuntu:24.04
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            userData: |-
+              #cloud-config
+              preserve_hostname: false
+              hostname: workers
+              manage_etc_hosts: true
+              users:
+                - name: ubuntu
+                  groups: [sudo]
+                  shell: /bin/bash
+                  sudo: ALL=(ALL) NOPASSWD:ALL
+                  ssh_authorized_keys:
+                    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOE//lpGZI2015yMUjHwhWJjgarTLIsqQBIFXlAanPvS
+                    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDVYPSSdt6tjSWRooRm7nUDS73CebsP92G6GjFa9X+zy
+                    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAzVze3nx4QPa6t9Wvp5FLrcAlM7BDLUmxf049N4HC6d
+                    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDW2gOD2bqZxDwKEsfZM+ggSBV+DlTrUxMQY8JxDMVgG
+                    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAlmf/vteEu7gLBfxyEUjVtQiZ2LCqU6zo+6+G5gmaaa
+                    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEht47QYSXM1n78ww4Aw9jHS50FR9IpQlQGU8emLg1ed
+                    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB9gANXCk/KnE27qvzZk9pGSc1wIzSUewHhqZQXwFJs+
+                    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINXAA7B1vTdTvaMTUcDJTD96v1oiNZx6XI+amVwPXPzy
+                    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOco184B4eZEOoLP5ehTK9cgsJgbelKWUxXuO3+S38U/
+                    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII0/89LwFLAM6tu2gtbwVDrQwFhPiW55RciZo0RUVMrF
+                    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH77X+Ekaz8sSLPImUYO8VYhgDDcb+DXkqU26UZ2PaAP
+              ssh_pwauth: false
+              disable_root: true
