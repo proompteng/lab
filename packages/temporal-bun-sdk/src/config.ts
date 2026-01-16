@@ -573,13 +573,17 @@ const ensurePrivateKeyBuffer = (buffer: Buffer, context: string): void => {
   }
 }
 
+const coerceToBuffer = (value: string | Buffer): Buffer => {
+  return Buffer.isBuffer(value) ? value : Buffer.from(value)
+}
+
 const ensureMatchingCertificateAndKey = (certificate: Buffer, key: Buffer): void => {
   try {
     const parsed = new X509Certificate(certificate)
     const keyObject = createPrivateKey({ key })
     const certPublicKey = parsed.publicKey.export({ type: 'spki', format: 'pem' })
     const keyPublic = createPublicKey(keyObject).export({ type: 'spki', format: 'pem' })
-    if (!Buffer.from(certPublicKey).equals(Buffer.from(keyPublic))) {
+    if (!coerceToBuffer(certPublicKey).equals(coerceToBuffer(keyPublic))) {
       throw new TemporalTlsConfigurationError('TLS certificate and key do not match')
     }
   } catch (error) {
