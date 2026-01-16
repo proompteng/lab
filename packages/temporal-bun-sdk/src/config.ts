@@ -535,7 +535,14 @@ export class TemporalTlsConfigurationError extends Error {
 const readTlsFile = async (path: string, context: string, reader: typeof readFile): Promise<Buffer> => {
   try {
     const contents = await reader(path)
-    const buffer = Buffer.isBuffer(contents) ? contents : Buffer.from(contents)
+    let buffer: Buffer
+    if (typeof contents === 'string') {
+      buffer = Buffer.from(contents)
+    } else if (Buffer.isBuffer(contents)) {
+      buffer = contents
+    } else {
+      buffer = Buffer.from(contents as ArrayBufferLike)
+    }
     if (buffer.byteLength === 0) {
       throw new TemporalTlsConfigurationError(`${context} at ${path} is empty`)
     }
@@ -566,13 +573,17 @@ const ensurePrivateKeyBuffer = (buffer: Buffer, context: string): void => {
   }
 }
 
+const coerceToBuffer = (value: string | Buffer): Buffer => {
+  return Buffer.isBuffer(value) ? value : Buffer.from(value)
+}
+
 const ensureMatchingCertificateAndKey = (certificate: Buffer, key: Buffer): void => {
   try {
     const parsed = new X509Certificate(certificate)
     const keyObject = createPrivateKey({ key })
     const certPublicKey = parsed.publicKey.export({ type: 'spki', format: 'pem' })
     const keyPublic = createPublicKey(keyObject).export({ type: 'spki', format: 'pem' })
-    if (!Buffer.from(certPublicKey).equals(Buffer.from(keyPublic))) {
+    if (!coerceToBuffer(certPublicKey).equals(coerceToBuffer(keyPublic))) {
       throw new TemporalTlsConfigurationError('TLS certificate and key do not match')
     }
   } catch (error) {

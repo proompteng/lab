@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev:proompteng": "bun run --filter proompteng --filter @proompteng/backend dev",
-    "build:proompteng": "bun run --filter proompteng build",
+    "build:proompteng": "turbo run build --filter=proompteng",
     "build:reviseur": "bun run --filter reviseur build",
     "start:proompteng": "bun run --filter proompteng start",
     "lint:proompteng": "bun run --filter proompteng lint",
@@ -65,7 +65,8 @@
     "bun-types": "1.3.5",
     "husky": "9.1.7",
     "lint-staged": "16.2.7",
-    "turbo": "^2.6.3",
+    "node-gyp": "12.1.0",
+    "turbo": "2.7.4",
     "typescript": "5.9.3"
   },
   "lint-staged": {
