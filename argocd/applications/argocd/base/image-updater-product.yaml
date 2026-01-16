@@ -1,0 +1,54 @@
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: product-image-updater
+  namespace: argocd
+spec:
+  namespace: argocd
+  commonUpdateSettings:
+    updateStrategy: semver
+  writeBackConfig:
+    method: git:secret:argocd/image-updater-git-ssh
+    gitConfig:
+      repository: git@github.com:proompteng/lab.git
+      branch: main:release/{{.SHA256}}
+  applicationRefs:
+    - namePattern: proompteng
+      writeBackConfig:
+        method: git:secret:argocd/image-updater-git-ssh
+        gitConfig:
+          repository: git@github.com:proompteng/lab.git
+          branch: main:release/{{.SHA256}}
+          writeBackTarget: kustomization:/argocd/applications/proompteng
+      images:
+        - alias: proompteng
+          imageName: registry.ide-newton.ts.net/lab/proompteng:0.x
+          manifestTargets:
+            kustomize:
+              name: registry.ide-newton.ts.net/lab/proompteng
+    - namePattern: docs
+      writeBackConfig:
+        method: git:secret:argocd/image-updater-git-ssh
+        gitConfig:
+          repository: git@github.com:proompteng/lab.git
+          branch: main:release/{{.SHA256}}
+          writeBackTarget: kustomization:/argocd/applications/docs
+      images:
+        - alias: docs
+          imageName: registry.ide-newton.ts.net/lab/docs:0.x
+          manifestTargets:
+            kustomize:
+              name: registry.ide-newton.ts.net/lab/docs
+    - namePattern: dernier
+      writeBackConfig:
+        method: git:secret:argocd/image-updater-git-ssh
+        gitConfig:
+          repository: git@github.com:proompteng/lab.git
+          branch: main:release/{{.SHA256}}
+          writeBackTarget: kustomization:/argocd/applications/dernier
+      images:
+        - alias: dernier
+          imageName: registry.ide-newton.ts.net/lab/dernier:latest
+          manifestTargets:
+            kustomize:
+              name: registry.ide-newton.ts.net/lab/dernier

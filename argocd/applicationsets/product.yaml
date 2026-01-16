@@ -22,12 +22,6 @@ spec:
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
-                  argocd-image-updater.argoproj.io/image-list: proompteng=registry.ide-newton.ts.net/lab/proompteng
-                  argocd-image-updater.argoproj.io/proompteng: semver
-                  argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
-                  argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
-                  argocd-image-updater.argoproj.io/git-branch: 'main:release/{{"{{.SHA256}}"}}'
-                  argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/proompteng
                 automation: auto
                 enabled: true
               - name: docs
@@ -36,12 +30,6 @@ spec:
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
-                  argocd-image-updater.argoproj.io/image-list: docs=registry.ide-newton.ts.net/lab/docs
-                  argocd-image-updater.argoproj.io/docs: semver
-                  argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
-                  argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
-                  argocd-image-updater.argoproj.io/git-branch: 'main:release/{{"{{.SHA256}}"}}'
-                  argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/docs
                 automation: auto
                 enabled: true
               - name: discourse
@@ -58,12 +46,6 @@ spec:
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
-                  argocd-image-updater.argoproj.io/image-list: kitty-krew=registry.ide-newton.ts.net/lab/kitty-krew
-                  argocd-image-updater.argoproj.io/kitty-krew: semver
-                  argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
-                  argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
-                  argocd-image-updater.argoproj.io/git-branch: 'main:release/{{"{{.SHA256}}"}}'
-                  argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/kitty-krew
                 automation: auto
                 enabled: false
               - name: reviseur
@@ -72,12 +54,6 @@ spec:
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
-                  argocd-image-updater.argoproj.io/image-list: reviseur=registry.ide-newton.ts.net/lab/reviseur
-                  argocd-image-updater.argoproj.io/reviseur: semver
-                  argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
-                  argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
-                  argocd-image-updater.argoproj.io/git-branch: 'main:release/{{"{{.SHA256}}"}}'
-                  argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/reviseur
                 automation: auto
                 enabled: false
               - name: prt
@@ -197,12 +173,6 @@ spec:
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
-                  argocd-image-updater.argoproj.io/image-list: dernier=registry.ide-newton.ts.net/lab/dernier
-                  argocd-image-updater.argoproj.io/dernier: semver
-                  argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
-                  argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
-                  argocd-image-updater.argoproj.io/git-branch: 'main:release/{{"{{.SHA256}}"}}'
-                  argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/dernier
                 automation: manual
                 enabled: true
               - name: froussard
