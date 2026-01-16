@@ -1,0 +1,159 @@
+# Ryzen (Talos) Node-Level Dependencies
+
+This document captures the current research and source-of-truth links for installing **node-level** dependencies on the Talos-based Ryzen cluster. It is intentionally detailed so it can be used as a repeatable runbook. All URLs below point to authoritative vendor or upstream sources.
+
+## Why node-level dependencies are different on Talos
+
+Talos is an immutable OS. You do **not** install packages at runtime; instead, you add **system extensions** and re-install or upgrade the node image. System extensions are only activated during install/upgrade, and Talos keeps the root filesystem read-only. Because of this, node-level dependencies (GPU drivers, Tailscale, etc.) must be delivered via **system extensions** and **extension services** rather than by Argo CD or Kubernetes DaemonSets. See Talos system extensions docs for the model and lifecycle. https://www.talos.dev/latest/talos-guides/configuration/system-extensions/
+
+## Source-of-truth references (keep current)
+
+### Talos platform (extensions + image factory)
+- System extensions overview and lifecycle: https://www.talos.dev/latest/talos-guides/configuration/system-extensions/
+- Image Factory (build custom Talos images with extensions): https://www.talos.dev/v1.10/learn-more/image-factory/
+- ExtensionServiceConfig schema (for configuring extension services): https://www.talos.dev/v1.10/reference/configuration/extensions/extensionserviceconfig/
+- Extension services (how extension services run as privileged containers): https://www.talos.dev/latest/advanced/extension-services/
+- Official extensions catalog (includes `siderolabs/tailscale` image): https://github.com/siderolabs/extensions
+
+### Tailscale
+- Tailscale extension exists in the official extensions catalog (see Network section): https://github.com/siderolabs/extensions
+- Tailscale extension configuration variables (TS_AUTHKEY, TS_HOSTNAME, TS_ROUTES): https://deepwiki.com/siderolabs/extensions/3.4-networking-extensions
+- Auth keys (types, tags, pre-approved, expiry): https://tailscale.com/kb/1085/auth-keys
+- Key prefixes (distinguish `tskey-auth` vs `tskey-api`): https://tailscale.com/kb/1277/key-prefixes
+
+### AMD GPU (ROCm) on Talos
+- Talos AMD GPU support guide (extensions, OS-level enablement, ROCm operator): https://docs.siderolabs.com/talos/v1.11/configure-your-talos-cluster/hardware-and-drivers/amd-gpu
+- AMD GPU device plugin for Kubernetes (resource name, deployment model): https://instinct.docs.amd.com/projects/k8s-device-plugin/en/latest/
+- ROCm k8s device plugin upstream (manifest examples): https://github.com/ROCm/k8s-device-plugin
+
+---
+
+## System extensions: how to install node-level components
+
+### 1) Identify required extensions
+Use the official extensions catalog to confirm the extension name and image registry. The catalog lists `tailscale` under the Network section as `ghcr.io/siderolabs/tailscale`, and AMD GPU support is documented in the Talos AMD GPU guide (requires `siderolabs/amdgpu` and `siderolabs/amd-ucode`).
+- https://github.com/siderolabs/extensions
+- https://docs.siderolabs.com/talos/v1.11/configure-your-talos-cluster/hardware-and-drivers/amd-gpu
+
+### 2) Build/upgrade Talos image with extensions
+Talos system extensions are only activated during **install or upgrade**. The recommended workflow is to generate a Talos image using the **Image Factory** and include the required system extensions. The Image Factory UI provides a schematic that results in a custom installer image you can set as `machine.install.image` in your Talos machine config. See:
+- https://www.talos.dev/v1.10/learn-more/image-factory/
+- https://www.talos.dev/latest/talos-guides/configuration/system-extensions/
+
+### 3) Apply and upgrade
+Update the Talos machine config to reference the new installer image and (if needed) specify `.machine.install.extensions`. Then perform a Talos upgrade using the updated machine config. Re-using the same Talos version is valid if only extensions changed.
+- https://www.talos.dev/latest/talos-guides/configuration/system-extensions/
+
+### 4) Verify extensions are active
+Use `talosctl get extensions` to verify the extension list on each node. This is the canonical way to confirm the OS picked up the extension at boot.
+- https://www.talos.dev/latest/talos-guides/configuration/system-extensions/
+
+---
+
+## Tailscale node-level install (Talos extension)
+
+### Overview
+Tailscale is delivered on Talos as a **system extension** with a corresponding **extension service**. You must:
+1. Include the `siderolabs/tailscale` extension in the Talos image.
+2. Provide an `ExtensionServiceConfig` so the Tailscale daemon can authenticate and optionally advertise routes.
+
+### Required extension
+The official extensions catalog lists the Tailscale extension under Network as `ghcr.io/siderolabs/tailscale`.
+- https://github.com/siderolabs/extensions
+
+### Tailscale configuration (ExtensionServiceConfig)
+Talos uses `ExtensionServiceConfig` to provide environment variables and config files to extension services. The Tailscale extension is configured using environment variables such as `TS_AUTHKEY`, `TS_HOSTNAME`, and `TS_ROUTES`.
+- ExtensionServiceConfig schema: https://www.talos.dev/v1.10/reference/configuration/extensions/extensionserviceconfig/
+- Tailscale extension env vars: https://deepwiki.com/siderolabs/extensions/3.4-networking-extensions
+
+Example `ExtensionServiceConfig`:
+
+```yaml
+apiVersion: v1alpha1
+kind: ExtensionServiceConfig
+name: tailscale
+environment:
+  - TS_AUTHKEY=tskey-auth-REDACTED
+  - TS_HOSTNAME=ryzen
+  - TS_ROUTES=10.96.0.0/12,10.244.0.0/16
+```
+
+> The routes above are examples; match your cluster CIDRs.
+
+### Auth key guidance
+Use a **tagged, pre-approved** auth key for servers to avoid interactive approvals and to scope permissions via ACLs. Tailscale’s auth key docs explain key types, tags, and expiry behavior. The key prefix doc clarifies the `tskey-auth` prefix for auth keys.
+- https://tailscale.com/kb/1085/auth-keys
+- https://tailscale.com/kb/1277/key-prefixes
+
+### Apply config to Talos
+ExtensionServiceConfig documents are applied to Talos machine config (for example via `talosctl patch mc`). DeepWiki’s extension overview shows applying the config via patch and verifying it with `talosctl`.
+- https://deepwiki.com/siderolabs/extensions/3.4-networking-extensions
+
+### Validate
+- Confirm Tailscale extension is installed: `talosctl get extensions`
+- Confirm the extension service is running and logs are visible via `talosctl service` / `talosctl logs` for the extension service name (extension services are documented by Talos).
+  - https://www.talos.dev/latest/advanced/extension-services/
+
+---
+
+## AMD GPU (ROCm) node-level install
+
+### Overview
+Talos AMD GPU support requires **OS-level enablement** plus a **Kubernetes operator or device plugin** to expose GPUs to pods. Talos supports AMD GPUs by loading the Linux `amdgpu` driver at boot, but you must enable system extensions for firmware/driver support and then install ROCm components in-cluster.
+- https://docs.siderolabs.com/talos/v1.11/configure-your-talos-cluster/hardware-and-drivers/amd-gpu
+
+### OS-level enablement (Talos extensions)
+The Talos AMD GPU guide instructs you to enable AMD GPU support by installing the `siderolabs/amdgpu` and `siderolabs/amd-ucode` system extensions.
+- https://docs.siderolabs.com/talos/v1.11/configure-your-talos-cluster/hardware-and-drivers/amd-gpu
+
+Example extension list (add alongside existing extensions):
+
+```yaml
+machine:
+  install:
+    extensions:
+      - image: ghcr.io/siderolabs/amdgpu:<version-or-digest>
+      - image: ghcr.io/siderolabs/amd-ucode:<version-or-digest>
+```
+
+Use the extensions catalog or image-digest lookup approach from the extensions repo to pin an exact digest for your Talos version.
+- https://github.com/siderolabs/extensions
+
+### Kubernetes layer: ROCm GPU Operator
+The Talos AMD GPU guide recommends deploying the ROCm GPU Operator to surface GPU resources to workloads. It includes Helm install steps and verification commands.
+- https://docs.siderolabs.com/talos/v1.11/configure-your-talos-cluster/hardware-and-drivers/amd-gpu
+
+### Kubernetes layer: device plugin
+If you’re not using the full operator or want explicit control, the AMD GPU device plugin can be deployed as a DaemonSet. The official docs and upstream repo describe installation and the resource type (`amd.com/gpu`).
+- https://instinct.docs.amd.com/projects/k8s-device-plugin/en/latest/
+- https://github.com/ROCm/k8s-device-plugin
+
+### Validate GPU visibility
+From the Talos guide and AMD docs:
+- Verify extensions are active: `talosctl get extensions`
+- Verify GPU detection in Talos: `talosctl get devices.pci` and `talosctl logs -k` (Talos guide)
+- Verify Kubernetes resources: `kubectl describe node <node-name> | grep -i gpu` or list `amd.com/gpu` capacity via `kubectl get nodes -o custom-columns=...`
+- https://docs.siderolabs.com/talos/v1.11/configure-your-talos-cluster/hardware-and-drivers/amd-gpu
+- https://instinct.docs.amd.com/projects/k8s-device-plugin/en/latest/
+
+---
+
+## Operational checklist (quick reference)
+
+### Tailscale
+1. Pick `siderolabs/tailscale` in Image Factory or add extension image to `machine.install.extensions`.
+2. Upgrade Talos so extensions activate.
+3. Apply `ExtensionServiceConfig` with `TS_AUTHKEY`, `TS_HOSTNAME`, `TS_ROUTES`.
+4. Validate with `talosctl get extensions` and extension service status/logs.
+
+### AMD GPU
+1. Add `siderolabs/amdgpu` + `siderolabs/amd-ucode` to system extensions.
+2. Upgrade Talos to activate drivers/firmware.
+3. Install ROCm GPU Operator (or AMD GPU device plugin) in Kubernetes.
+4. Verify GPU resources (`amd.com/gpu`) and run a test workload.
+
+---
+
+## Notes on storage of secrets
+
+Tailscale auth keys are sensitive and should be stored in a secrets manager rather than in Git. Tailscale’s key management docs stress secure handling of keys and recommend using a secrets manager. https://tailscale.com/kb/1252/key-secret-management
