@@ -866,7 +866,7 @@ export class WorkerRuntime {
             void runtime.#applyTunerUpdate(next)
           })
           runtime.#tunerUnsubscribe = unsubscribe
-          yield* Effect.addFinalizer(
+          yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
               unsubscribe()
               runtime.#tunerUnsubscribe = null

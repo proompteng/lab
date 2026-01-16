@@ -16,13 +16,13 @@ export interface WorkerPluginContext {
 
 export interface WorkerPlugin {
   readonly name: string
-  readonly onWorkerStart?: (context: WorkerPluginContext) => Effect.Effect<void, never, never>
-  readonly onWorkerStop?: (context: WorkerPluginContext) => Effect.Effect<void, never, never>
+  readonly onWorkerStart?: (context: WorkerPluginContext) => Effect.Effect<void, unknown, never>
+  readonly onWorkerStop?: (context: WorkerPluginContext) => Effect.Effect<void, unknown, never>
   readonly schedulerHooks?: WorkerSchedulerHooks
-  readonly onWorkflowTaskStart?: (task: WorkflowTaskEnvelope) => Effect.Effect<void, never, never>
-  readonly onWorkflowTaskComplete?: (task: WorkflowTaskEnvelope) => Effect.Effect<void, never, never>
-  readonly onActivityTaskStart?: (task: ActivityTaskEnvelope) => Effect.Effect<void, never, never>
-  readonly onActivityTaskComplete?: (task: ActivityTaskEnvelope) => Effect.Effect<void, never, never>
+  readonly onWorkflowTaskStart?: (task: WorkflowTaskEnvelope) => Effect.Effect<void, unknown, never>
+  readonly onWorkflowTaskComplete?: (task: WorkflowTaskEnvelope) => Effect.Effect<void, unknown, never>
+  readonly onActivityTaskStart?: (task: ActivityTaskEnvelope) => Effect.Effect<void, unknown, never>
+  readonly onActivityTaskComplete?: (task: ActivityTaskEnvelope) => Effect.Effect<void, unknown, never>
 }
 
 export const mergeWorkerSchedulerHooks = (plugins: readonly WorkerPlugin[]): WorkerSchedulerHooks | undefined => {

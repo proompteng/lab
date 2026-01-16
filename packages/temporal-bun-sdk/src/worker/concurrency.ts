@@ -13,10 +13,10 @@ export interface WorkerSchedulerOptions {
 }
 
 export interface WorkerSchedulerHooks {
-  readonly onWorkflowStart?: (task: WorkflowTaskEnvelope) => Effect.Effect<void, never, never>
-  readonly onWorkflowComplete?: (task: WorkflowTaskEnvelope) => Effect.Effect<void, never, never>
-  readonly onActivityStart?: (task: ActivityTaskEnvelope) => Effect.Effect<void, never, never>
-  readonly onActivityComplete?: (task: ActivityTaskEnvelope) => Effect.Effect<void, never, never>
+  readonly onWorkflowStart?: (task: WorkflowTaskEnvelope) => Effect.Effect<void, unknown, never>
+  readonly onWorkflowComplete?: (task: WorkflowTaskEnvelope) => Effect.Effect<void, unknown, never>
+  readonly onActivityStart?: (task: ActivityTaskEnvelope) => Effect.Effect<void, unknown, never>
+  readonly onActivityComplete?: (task: ActivityTaskEnvelope) => Effect.Effect<void, unknown, never>
 }
 
 export interface WorkflowTaskEnvelope {
@@ -84,8 +84,18 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
     const workflowFiberRef = yield* Ref.make<ReadonlyArray<Fiber.RuntimeFiber<void, unknown>>>([])
     const activityFiberRef = yield* Ref.make<ReadonlyArray<Fiber.RuntimeFiber<void, unknown>>>([])
 
+    const logHookFailure = (hook: string, error: unknown) =>
+      options.logger
+        ? options.logger.log('warn', 'worker scheduler hook failed', {
+            hook,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        : Effect.void
+
     const runWorkflowTask = (task: WorkflowTaskEnvelope): Effect.Effect<void, unknown, never> => {
-      const finalizer = hooks.onWorkflowComplete ? hooks.onWorkflowComplete(task) : Effect.void
+      const finalizer = hooks.onWorkflowComplete
+        ? hooks.onWorkflowComplete(task).pipe(Effect.catchAll((error) => logHookFailure('workflowComplete', error)))
+        : Effect.void
       return Effect.ensuring(
         Effect.gen(function* () {
           if (hooks.onWorkflowStart) {
@@ -100,7 +110,9 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
     }
 
     const runActivityTask = (task: ActivityTaskEnvelope): Effect.Effect<void, unknown, never> => {
-      const finalizer = hooks.onActivityComplete ? hooks.onActivityComplete(task) : Effect.void
+      const finalizer = hooks.onActivityComplete
+        ? hooks.onActivityComplete(task).pipe(Effect.catchAll((error) => logHookFailure('activityComplete', error)))
+        : Effect.void
       return Effect.ensuring(
         Effect.gen(function* () {
           if (hooks.onActivityStart) {

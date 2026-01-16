@@ -2578,22 +2578,22 @@ class TemporalClientImpl implements TemporalClient {
     )
   }
 
-  async callWorkflowService<T extends WorkflowServiceMethodName>(
+  callWorkflowService<T extends WorkflowServiceMethodName>(
     method: T,
     request: WorkflowServiceRequest<T>,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<WorkflowServiceResponse<T>> {
-    return this.#instrumentOperation(
+    return this.#instrumentOperation<WorkflowServiceResponse<T>>(
       'rpc',
-      async () => {
+      () => {
         this.ensureOpen()
         const rpc = this.workflowService[method] as (
           input: WorkflowServiceRequest<T>,
           options: CallOptions,
-        ) => Promise<WorkflowServiceResponse<T>>
-        return await this.executeRpc(
+        ) => ReturnType<WorkflowServiceClient[T]>
+        return this.executeRpc<WorkflowServiceResponse<T>>(
           `workflowService.${String(method)}`,
-          (rpcOptions) => rpc(request, rpcOptions),
+          (rpcOptions) => rpc(request, rpcOptions) as Promise<WorkflowServiceResponse<T>>,
           callOptions,
         )
       },
@@ -2601,23 +2601,23 @@ class TemporalClientImpl implements TemporalClient {
     )
   }
 
-  async callOperatorService<T extends OperatorServiceMethodName>(
+  callOperatorService<T extends OperatorServiceMethodName>(
     method: T,
     request: OperatorServiceRequest<T>,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<OperatorServiceResponse<T>> {
-    return this.#instrumentOperation(
+    return this.#instrumentOperation<OperatorServiceResponse<T>>(
       'rpc',
-      async () => {
+      () => {
         this.ensureOpen()
         const operator = this.#requireOperatorService()
         const rpc = operator[method] as (
           input: OperatorServiceRequest<T>,
           options: CallOptions,
-        ) => Promise<OperatorServiceResponse<T>>
-        return await this.executeRpc(
+        ) => ReturnType<OperatorServiceClient[T]>
+        return this.executeRpc<OperatorServiceResponse<T>>(
           `operatorService.${String(method)}`,
-          (rpcOptions) => rpc(request, rpcOptions),
+          (rpcOptions) => rpc(request, rpcOptions) as Promise<OperatorServiceResponse<T>>,
           callOptions,
         )
       },
@@ -2625,23 +2625,23 @@ class TemporalClientImpl implements TemporalClient {
     )
   }
 
-  async callCloudService<T extends CloudServiceMethodName>(
+  callCloudService<T extends CloudServiceMethodName>(
     method: T,
     request: CloudServiceRequest<T>,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<CloudServiceResponse<T>> {
-    return this.#instrumentOperation(
+    return this.#instrumentOperation<CloudServiceResponse<T>>(
       'rpc',
-      async () => {
+      () => {
         this.ensureOpen()
         const cloud = this.#requireCloudService()
         const rpc = cloud[method] as (
           input: CloudServiceRequest<T>,
           options: CallOptions,
-        ) => Promise<CloudServiceResponse<T>>
-        return await this.executeCloudRpc(
+        ) => ReturnType<CloudServiceClient[T]>
+        return this.executeCloudRpc<CloudServiceResponse<T>>(
           `cloud.${String(method)}`,
-          (rpcOptions) => rpc(request, rpcOptions),
+          (rpcOptions) => rpc(request, rpcOptions) as Promise<CloudServiceResponse<T>>,
           callOptions,
         )
       },
