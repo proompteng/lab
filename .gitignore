@@ -37,6 +37,10 @@ node_modules/
 .DS_Store
 kubernetes/kubeconfig
 kubeconfig
+
+devices/ryzen/controlplane.yaml
+devices/ryzen/worker.yaml
+devices/ryzen/talosconfig
 **/charts/*.tgz
 **/generated/*
 **/_generated/
