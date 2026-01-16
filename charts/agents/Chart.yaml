@@ -47,12 +47,33 @@ annotations:
       name: memories.agents.proompteng.ai
   artifacthub.io/crdsExamples: |
     - apiVersion: agents.proompteng.ai/v1alpha1
+      kind: AgentProvider
+      metadata:
+        name: codex-runner
+      spec:
+        binary: /usr/local/bin/agent-runner
+        argsTemplate: []
+    - apiVersion: agents.proompteng.ai/v1alpha1
       kind: ImplementationSpec
       metadata:
         name: codex-impl-sample
       spec:
         summary: "Implement onboarding flow"
         text: "Implement the agent onboarding flow described in the spec."
+    - apiVersion: agents.proompteng.ai/v1alpha1
+      kind: ImplementationSource
+      metadata:
+        name: github-issues
+      spec:
+        provider: github
+        auth:
+          secretRef:
+            name: github-token
+            key: token
+        poll:
+          intervalSeconds: 60
+        scope:
+          repository: proompteng/lab
     - apiVersion: agents.proompteng.ai/v1alpha1
       kind: Memory
       metadata:
@@ -69,6 +90,17 @@ annotations:
       spec:
         providerRef:
           name: codex-runner
+    - apiVersion: agents.proompteng.ai/v1alpha1
+      kind: AgentRun
+      metadata:
+        name: codex-run-sample
+      spec:
+        agentRef:
+          name: codex-agent
+        implementationSpecRef:
+          name: codex-impl-sample
+        runtime:
+          type: job
   artifacthub.io/changes: |
     - kind: added
       description: "Webhook-ready ImplementationSource handling with explicit status updates."

@@ -80,8 +80,19 @@ helm push agents-0.5.0.tgz oci://ghcr.io/proompteng/charts
 | `replicaCount` | Control-plane replicas | `1` |
 | `image.repository` | Jangar image repo | `ghcr.io/proompteng/jangar` |
 | `image.tag` | Jangar image tag | `latest` |
+| `image.digest` | Optional image digest pin | `""` |
+| `image.pullSecrets` | Image pull secret names | `[]` |
+| `service.type` | Service type | `ClusterIP` |
+| `service.port` | Service port | `80` |
+| `service.annotations` | Service annotations | `{}` |
+| `service.labels` | Extra Service labels | `{}` |
+| `serviceAccount.create` | Create service account | `true` |
+| `serviceAccount.name` | Service account name override | `""` |
+| `rbac.create` | Create RBAC | `true` |
+| `rbac.clusterScoped` | Use ClusterRole/ClusterRoleBinding for multi-namespace reconciliation | `false` |
 | `database.url` | Database URL for Jangar | `""` |
 | `database.secretRef.name` | Secret containing database URL | `""` |
+| `database.caSecret.name` | Secret containing DB CA cert | `""` |
 | `envFromSecretRefs` | Secret names to load as envFrom | `[]` |
 | `envFromConfigMapRefs` | ConfigMap names to load as envFrom | `[]` |
 | `controller.enabled` | Enable Agents controller loop | `true` |
@@ -90,8 +101,10 @@ helm push agents-0.5.0.tgz oci://ghcr.io/proompteng/charts
 | `controller.concurrency.perNamespace` | Max running AgentRuns per namespace | `10` |
 | `controller.concurrency.perAgent` | Max running AgentRuns per Agent | `5` |
 | `controller.concurrency.cluster` | Max running AgentRuns cluster-wide | `100` |
-| `rbac.create` | Create RBAC | `true` |
-| `rbac.clusterScoped` | Use ClusterRole/ClusterRoleBinding for multi-namespace reconciliation | `false` |
 | `agentComms.enabled` | Enable NATS agent-comms subscriber | `false` |
+| `agentComms.nats.url` | NATS URL | `""` |
+| `livenessProbe.enabled` | Enable liveness probe | `true` |
+| `readinessProbe.enabled` | Enable readiness probe | `true` |
+| `logging.level` | Log level for Jangar | `info` |
 
 See `values.yaml`, `values-local.yaml`, `values-dev.yaml`, and `values-prod.yaml` for full options.
