@@ -23,7 +23,7 @@ This document is implementation‑grade: it describes *what* needs to exist in t
 ## Current State Summary
 - CRDs live under `charts/agents/crds/` and are referenced in `charts/agents/Chart.yaml` annotations.
 - Jangar implements the native v1alpha1 types in `services/jangar/api/agents/v1alpha1` and a controller in `services/jangar/src/server/agents-controller.ts`.
-- Crossplane XRDs have been retired to `packages/crossplane/deprecated/…` and are not used by Jangar.
+- Crossplane XRDs have been retired to `packages/crossplane/deprecated/archived/…` and are not used by Jangar.
 - The chart is “minimal” but lacks a documented, end‑to‑end implementation plan for completeness, validation, and migration.
 
 ## Design Principles

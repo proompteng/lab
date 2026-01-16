@@ -6,7 +6,7 @@ integrating with the existing Argo workflow runtime in this repository.
 
 **Note:** Agents primitives now ship as native CRDs installed by `charts/agents`. The Crossplane-based
 `configuration-agents` package is deprecated and retained only for reference under
-`packages/crossplane/deprecated/configuration-agents`.
+`packages/crossplane/deprecated/archived/configuration-agents`.
 
 ## Scope
 

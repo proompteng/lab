@@ -6,6 +6,10 @@ Crossplane-based Agents XRDs (`XAgent`, `XAgentRun`, `XAgentProvider`) conflict 
 `agents.proompteng.ai/v1alpha1` CRDs installed by `charts/agents`. This guide describes how to
 retire the Crossplane package safely and move existing claims to the native CRDs.
 
+The retired Crossplane package lives at
+`packages/crossplane/deprecated/archived/configuration-agents` for reference only and should not
+be installed alongside native Agents CRDs.
+
 ## Order of operations (required)
 1. **Export existing Crossplane claims**
    ```bash
@@ -16,7 +20,7 @@ retire the Crossplane package safely and move existing claims to the native CRDs
 2. **Convert manifests to native CRDs** using the mapping tables below.
 3. **Remove Crossplane Agents package, compositions, and XRDs** (stop reconcile to avoid conflicts):
    ```bash
-   # Remove GitOps references to packages/crossplane/deprecated/configuration-agents first.
+   # Remove GitOps references to packages/crossplane/deprecated/archived/configuration-agents first.
    kubectl delete configurations.pkg.crossplane.io configuration-agents
    kubectl delete compositions.apiextensions.crossplane.io -l crossplane.io/xrd=agents.agents.proompteng.ai
    kubectl delete compositions.apiextensions.crossplane.io -l crossplane.io/xrd=agentruns.agents.proompteng.ai
