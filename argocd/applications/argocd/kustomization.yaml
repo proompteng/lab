@@ -32,7 +32,6 @@ patches:
       kind: Deployment
       name: argocd-repo-server
   - path: overlays/argocd-image-updater-config.yaml
-  - path: overlays/argocd-image-updater-namespace-delete.yaml
   - path: overlays/argocd-server-deployment.yaml
     target:
       kind: Deployment
