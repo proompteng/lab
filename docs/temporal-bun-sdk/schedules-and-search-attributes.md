@@ -22,7 +22,7 @@ await client.schedules.create({
   namespace: 'default',
   scheduleId: 'daily-report',
   schedule: {
-    spec: { intervals: [{ interval: { seconds: 86_400 } }] },
+    spec: { interval: [{ interval: { seconds: 86_400 } }] },
     action: {
       action: {
         case: 'startWorkflow',
