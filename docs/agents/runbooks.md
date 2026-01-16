@@ -1,6 +1,6 @@
 # Runbooks (Agents)
 
-Status: Draft (2026-01-13)
+Status: Draft (2026-01-16)
 
 ## Install
 1. `helm install agents charts/agents -n agents --create-namespace`
@@ -14,6 +14,39 @@ Status: Draft (2026-01-13)
 ## Rollback
 1. `helm rollback agents <REV> -n agents`
 2. Verify status and re-run smoke test.
+
+## Argo CD Application (GitOps)
+Use the sample Application manifest in `argocd/applications/agents/application.yaml`:
+
+```bash
+kubectl apply -n argocd -f argocd/applications/agents/application.yaml
+kubectl -n argocd get applications.argoproj.io agents
+```
+
+The Application renders `argocd/applications/agents` (Helm + kustomize) and installs CRDs + Jangar
+into the `agents` namespace using `argocd/applications/agents/values.yaml`.
+Update the values file with your Jangar image tag, database secret, and (optional) agent runner image.
+If `controller.namespaces` spans multiple namespaces or `"*"`, set `rbac.clusterScoped=true`.
+
+Argo CD smoke test:
+```bash
+kubectl -n argocd get applications.argoproj.io agents -o yaml
+kubectl -n agents get deploy,svc
+kubectl get crd | rg agents.proompteng.ai
+kubectl -n agents apply -f charts/agents/examples/agentrun-sample.yaml
+kubectl -n agents wait --for=condition=complete job \
+  -l agents.proompteng.ai/agent-run=codex-run-sample --timeout=5m
+```
+
+## Smoke test (kind/minikube)
+```bash
+scripts/agents/smoke-agents.sh
+```
+
+This installs the chart, applies sample CRDs, submits a job runtime AgentRun, and waits for the Job
+to complete. Override `AGENTS_NAMESPACE`, `AGENTS_RELEASE_NAME`, or `AGENTS_VALUES_FILE` if needed.
+Ensure the `agentrun-sample.yaml` workload image includes `agent-runner` or set
+`env.vars.JANGAR_AGENT_RUNNER_IMAGE` in your values.
 
 ## Stuck AgentRun
 - Check status/conditions: `kubectl -n agents get agentrun <name> -o yaml`

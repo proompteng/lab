@@ -24,6 +24,7 @@ render_and_check() {
 }
 
 render_and_check "${CHART_DIR}/values-dev.yaml"
+render_and_check "${CHART_DIR}/values-local.yaml"
 render_and_check "${CHART_DIR}/values-prod.yaml"
 
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_agents.yaml" agents.proompteng.ai v1alpha1 Agent
@@ -43,6 +44,11 @@ kubeconform --strict --summary \
   --schema-location default \
   --schema-location "${schema_dir}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json" \
   "${CHART_DIR}/examples"/*.yaml
+
+kubeconform --strict --summary \
+  --schema-location default \
+  --schema-location "${schema_dir}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json" \
+  "${ROOT_DIR}/argocd/applications/agents/application.yaml"
 
 CRD_DIR="${CHART_DIR}/crds" python3 - <<'PY'
 import json

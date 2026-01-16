@@ -11,14 +11,15 @@ execution across all step types.
 - `python3` or `python` available (used by validation script).
 - Access to `jangar` and `facteur` namespaces.
 
-## 1) Crossplane package health
+## 1) Crossplane package health (optional)
 
 ```bash
 kubectl get configurations.pkg.crossplane.io
 kubectl get functions.pkg.crossplane.io
 ```
 
-Expect `configuration-agents` and `function-map-to-list` to show `Installed=True` and `Healthy=True`.
+Expect `function-map-to-list` to show `Installed=True` and `Healthy=True`. The deprecated
+`configuration-agents` package should not be installed once native Agents CRDs are in use.
 
 ## 2) Control-plane schema and API
 
@@ -83,6 +84,6 @@ For a quick smoke check, run:
 scripts/jangar/validate-primitives.sh
 ```
 
-The script asserts pinned Crossplane package tags, non-zero memory tables, and a
+The script asserts pinned Crossplane function tags, non-zero memory tables, and a
 succeeded orchestration run with populated `stepStatuses`. Adjust env vars for
 non-default namespaces or clusters.

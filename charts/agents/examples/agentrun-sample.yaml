@@ -12,7 +12,6 @@ spec:
   runtime:
     type: job
     config:
-      serviceAccount: codex-runner
       ttlSecondsAfterFinished: 600
   workload:
     image: ghcr.io/proompteng/codex-agent:latest
@@ -23,5 +22,3 @@ spec:
   parameters:
     task: "Update onboarding flow"
     priority: "medium"
-  secrets:
-    - codex-provider-token

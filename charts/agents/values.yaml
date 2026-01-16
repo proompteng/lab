@@ -19,6 +19,7 @@ serviceAccount:
 
 rbac:
   create: true
+  clusterScoped: false
   extraRules: []
 
 service:

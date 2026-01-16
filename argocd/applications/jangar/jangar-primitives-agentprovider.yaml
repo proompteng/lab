@@ -9,13 +9,13 @@ spec:
     - -c
     - >-
         mkdir -p /workspace/lab &&
-        echo "agent run repo={{inputs.repository}} base={{inputs.base}} head={{inputs.head}} stage={{inputs.stage}}" |
+        echo "agent run repo={{parameters.repository}} base={{parameters.base}} head={{parameters.head}} stage={{parameters.stage}}" |
         tee /workspace/lab/.codex-implementation.log
   envTemplate:
-    WORKFLOW_STAGE: "{{inputs.stage}}"
+    WORKFLOW_STAGE: "{{parameters.stage}}"
   inputFiles:
     - path: /workspace/agent/prompt.json
-      content: "{{payloads.promptJson}}"
+      content: "{{agent.config.payloads.promptJson}}"
   outputArtifacts:
     - name: implementation-log
       path: /workspace/lab/.codex-implementation.log

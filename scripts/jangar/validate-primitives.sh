@@ -123,9 +123,7 @@ check_memory_tables() {
 
 check_crossplane_resources() {
   echo "== Crossplane configurations/functions =="
-  check_crossplane_package configuration configuration-agents
   check_crossplane_package function function-map-to-list
-  check_package_pin configuration configuration-agents
   check_package_pin function function-map-to-list
 }
 

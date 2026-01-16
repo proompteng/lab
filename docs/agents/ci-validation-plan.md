@@ -8,6 +8,7 @@ Status: Draft (2026-01-13)
   - JSON size <= 256KB
   - `subresources.status` present
 - Validate CRD examples against schemas.
+  - Use `scripts/agents/validate-agents.sh` (also runs `helm lint` and render checks).
 
 ## Helm Validation
 - `helm lint charts/agents`
@@ -19,6 +20,7 @@ Status: Draft (2026-01-13)
   - Install chart
   - Apply Agent/ImplementationSpec/AgentRun
   - Verify AgentRun completion and status
+  - Use `scripts/agents/smoke-agents.sh` for a repeatable local flow.
 - GitHub + Linear mock sync tests (webhook or poll).
 
 ## Performance

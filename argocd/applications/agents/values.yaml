@@ -7,5 +7,14 @@ resources:
   requests:
     cpu: 200m
     memory: 512Mi
+controller:
+  namespaces:
+    - agents
+rbac:
+  clusterScoped: false
+database:
+  secretRef:
+    name: jangar-db-app
+    key: url
 agentComms:
   enabled: false

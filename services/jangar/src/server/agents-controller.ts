@@ -30,6 +30,14 @@ const REQUIRED_CRDS = [
   'memories.agents.proompteng.ai',
 ]
 
+type CrdCheckState = {
+  ok: boolean
+  missing: string[]
+  checkedAt: string
+}
+
+let crdCheckState: CrdCheckState | null = null
+
 type Condition = {
   type: string
   status: 'True' | 'False' | 'Unknown'
@@ -70,6 +78,36 @@ const parseNamespaces = () => {
   return list.length > 0 ? list : DEFAULT_NAMESPACES
 }
 
+const resolveCrdCheckNamespace = () => {
+  const namespaces = parseNamespaces()
+  if (namespaces.includes('*')) return 'default'
+  return namespaces[0] ?? 'default'
+}
+
+const resolveNamespaces = async () => {
+  const namespaces = parseNamespaces()
+  if (!namespaces.includes('*')) {
+    return namespaces
+  }
+  const result = await runKubectl(['get', 'namespace', '-o', 'json'])
+  if (result.code !== 0) {
+    throw new Error(result.stderr || result.stdout || 'failed to list namespaces')
+  }
+  const payload = JSON.parse(result.stdout) as Record<string, unknown>
+  const items = Array.isArray(payload.items) ? payload.items : []
+  const resolved = items
+    .map((item) => {
+      const metadata = item && typeof item === 'object' ? (item as Record<string, unknown>).metadata : null
+      const name = metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>).name : null
+      return typeof name === 'string' ? name : null
+    })
+    .filter((value): value is string => Boolean(value))
+  if (resolved.length === 0) {
+    throw new Error('no namespaces returned by kubectl')
+  }
+  return resolved
+}
+
 const parseIntervalSeconds = () => {
   const raw = process.env.JANGAR_AGENTS_CONTROLLER_INTERVAL_SECONDS
   const parsed = raw ? Number.parseInt(raw, 10) : NaN
@@ -92,6 +130,12 @@ const runKubectl = (args: string[]) =>
     const child = spawn('kubectl', args, { stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
+    let settled = false
+    const finish = (payload: { stdout: string; stderr: string; code: number | null }) => {
+      if (settled) return
+      settled = true
+      resolve(payload)
+    }
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     child.stdout.on('data', (chunk) => {
@@ -100,23 +144,60 @@ const runKubectl = (args: string[]) =>
     child.stderr.on('data', (chunk) => {
       stderr += chunk
     })
-    child.on('close', (code) => resolve({ stdout, stderr, code }))
+    child.on('error', (error) => {
+      finish({
+        stdout,
+        stderr: stderr || (error instanceof Error ? error.message : String(error)),
+        code: 1,
+      })
+    })
+    child.on('close', (code) => finish({ stdout, stderr, code }))
   })
 
-const checkCrds = async () => {
+const checkCrds = async (): Promise<CrdCheckState> => {
+  const namespace = resolveCrdCheckNamespace()
   const missing: string[] = []
+  const forbidden: string[] = []
   for (const name of REQUIRED_CRDS) {
-    const result = await runKubectl(['get', 'crd', name, '-o', 'json'])
+    const resource = name.split('.')[0] ?? name
+    const result = await runKubectl(['get', resource, '-n', namespace, '-o', 'json'])
     if (result.code !== 0) {
-      missing.push(name)
+      const details = (result.stderr || result.stdout || '').toLowerCase()
+      if (details.includes('forbidden') || details.includes('unauthorized')) {
+        forbidden.push(name)
+      } else {
+        missing.push(name)
+      }
     }
   }
-  if (missing.length > 0) {
-    console.error('[jangar] missing required Agents CRDs:', missing.join(', '))
-    return false
+  const state = {
+    ok: missing.length === 0 && forbidden.length === 0,
+    missing: [...missing, ...forbidden],
+    checkedAt: nowIso(),
   }
-  return true
+  crdCheckState = state
+  if (!state.ok) {
+    if (missing.length > 0) {
+      console.error('[jangar] missing required Agents CRDs:', missing.join(', '))
+    }
+    if (forbidden.length > 0) {
+      console.error(`[jangar] insufficient RBAC to read Agents CRDs in namespace ${namespace}: ${forbidden.join(', ')}`)
+      console.error('[jangar] ensure the Jangar service account can list Agents CRDs in this namespace')
+    }
+    console.error(
+      '[jangar] install the Agents Helm chart (charts/agents) or apply charts/agents/crds/*.yaml before starting the controller',
+    )
+  }
+  return state
 }
+
+export const getAgentsControllerHealth = () => ({
+  enabled: shouldStart(),
+  started,
+  crdsReady: crdCheckState?.ok ?? null,
+  missingCrds: crdCheckState?.missing ?? [],
+  lastCheckedAt: crdCheckState?.checkedAt ?? null,
+})
 
 const normalizeConditions = (raw: unknown): Condition[] => {
   if (!Array.isArray(raw)) return []
@@ -189,6 +270,9 @@ const getSecretData = async (kube: ReturnType<typeof createKubernetesClient>, na
 }
 
 const parseRuntimeRef = (raw: unknown): RuntimeRef | null => asRecord(raw) ?? null
+
+const resolveJobImage = (workload: Record<string, unknown>) =>
+  asString(workload.image) ?? process.env.JANGAR_AGENT_RUNNER_IMAGE ?? process.env.JANGAR_AGENT_IMAGE ?? null
 
 const renderTemplate = (template: string, context: Record<string, unknown>) =>
   template.replace(/\{\{\s*([^}]+)\s*\}\}/g, (_match, path) => {
@@ -279,6 +363,13 @@ const makeName = (base: string, suffix: string) => {
   const hash = createHash('sha1').update(combined).digest('hex').slice(0, 8)
   const trimmed = combined.slice(0, 63 - hash.length - 1)
   return `${trimmed}-${hash}`
+}
+
+const normalizeLabelValue = (value: string) => {
+  const normalized = value.toLowerCase().replace(/[^a-z0-9_.-]+/g, '-')
+  const trimmed = normalized.replace(/^[^a-z0-9]+/, '').replace(/[^a-z0-9]+$/, '')
+  if (!trimmed) return 'unknown'
+  return trimmed.length <= 63 ? trimmed : trimmed.slice(0, 63)
 }
 
 const clampUtf8 = (value: string, maxBytes: number) => {
@@ -589,6 +680,7 @@ const reconcileMemory = async (
   const conditions = buildConditions(memory)
   const memoryType = asString(readNested(memory, ['spec', 'type']))
   const secretName = asString(readNested(memory, ['spec', 'connection', 'secretRef', 'name']))
+  const secretKey = asString(readNested(memory, ['spec', 'connection', 'secretRef', 'key']))
   let updated = conditions
   if (!memoryType) {
     updated = upsertCondition(updated, {
@@ -613,6 +705,19 @@ const reconcileMemory = async (
         reason: 'SecretNotFound',
         message: `secret ${secretName} not found`,
       })
+    } else if (secretKey) {
+      const data = asRecord(secret.data) ?? {}
+      const stringData = asRecord(secret.stringData) ?? {}
+      if (!(secretKey in data) && !(secretKey in stringData)) {
+        updated = upsertCondition(updated, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: 'SecretKeyMissing',
+          message: `secret ${secretName} missing key ${secretKey}`,
+        })
+      } else {
+        updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'SecretResolved' })
+      }
     } else {
       updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'SecretResolved' })
     }
@@ -772,9 +877,16 @@ const reconcileImplementationSource = async (
     return
   }
 
-  const pollInterval = Number.parseInt(String(readNested(source, ['spec', 'poll', 'intervalSeconds']) ?? ''), 10) || 60
+  const pollSpec = asRecord(readNested(source, ['spec', 'poll']))
+  const webhookEnabled = readNested(source, ['spec', 'webhook', 'enabled']) === true
+  let pollInterval: number | null = null
+  if (pollSpec) {
+    pollInterval = Number.parseInt(String(readNested(source, ['spec', 'poll', 'intervalSeconds']) ?? ''), 10) || 60
+  } else if (!webhookEnabled) {
+    pollInterval = 60
+  }
   const lastSyncedAt = asString(readNested(source, ['status', 'lastSyncedAt']))
-  if (lastSyncedAt) {
+  if (pollInterval != null && lastSyncedAt) {
     const nextAllowed = new Date(lastSyncedAt).getTime() + pollInterval * 1000
     if (Date.now() < nextAllowed) return
   }
@@ -809,6 +921,22 @@ const reconcileImplementationSource = async (
       observedGeneration: asRecord(metadata)?.generation ?? 0,
       conditions,
       lastSyncedAt: lastSyncedAt ?? undefined,
+    })
+    return
+  }
+
+  if (pollInterval == null && webhookEnabled) {
+    const conditions = upsertCondition(buildConditions(source), {
+      type: 'Ready',
+      status: 'True',
+      reason: 'WebhookEnabled',
+      message: 'Webhook enabled; waiting for events',
+    })
+    await setStatus(kube, source, {
+      observedGeneration: asRecord(metadata)?.generation ?? 0,
+      cursor: asString(readNested(source, ['status', 'cursor'])) ?? undefined,
+      lastSyncedAt: lastSyncedAt ?? undefined,
+      conditions,
     })
     return
   }
@@ -951,6 +1079,7 @@ const createInputFilesConfigMap = async (
   namespace: string,
   agentRun: Record<string, unknown>,
   inputFiles: Array<{ path: string; content: string }>,
+  labels: Record<string, string>,
 ) => {
   if (inputFiles.length === 0) return null
   const metadata = asRecord(agentRun.metadata) ?? {}
@@ -967,7 +1096,7 @@ const createInputFilesConfigMap = async (
     metadata: {
       name: configName,
       namespace,
-      labels: { 'agents.proompteng.ai/agent-run': runName },
+      labels: { ...labels },
       ...(uid
         ? {
             ownerReferences: [
@@ -992,6 +1121,7 @@ const createRunSpecConfigMap = async (
   namespace: string,
   agentRun: Record<string, unknown>,
   runSpec: Record<string, unknown>,
+  labels: Record<string, string>,
 ) => {
   const metadata = asRecord(agentRun.metadata) ?? {}
   const uid = asString(metadata.uid)
@@ -1003,7 +1133,7 @@ const createRunSpecConfigMap = async (
     metadata: {
       name: configName,
       namespace,
-      labels: { 'agents.proompteng.ai/agent-run': runName },
+      labels: { ...labels },
       ...(uid
         ? {
             ownerReferences: [
@@ -1033,12 +1163,11 @@ const submitJobRun = async (
   implementation: Record<string, unknown>,
   memory: Record<string, unknown> | null,
   namespace: string,
+  workloadImage: string,
 ) => {
   const workload = asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
-  const workloadImage =
-    asString(workload.image) ?? process.env.JANGAR_AGENT_RUNNER_IMAGE ?? process.env.JANGAR_AGENT_IMAGE ?? null
   if (!workloadImage) {
-    throw new Error('spec.workload.image or JANGAR_AGENT_RUNNER_IMAGE is required for job runtime')
+    throw new Error('spec.workload.image, JANGAR_AGENT_RUNNER_IMAGE, or JANGAR_AGENT_IMAGE is required for job runtime')
   }
 
   const providerSpec = asRecord(provider.spec) ?? {}
@@ -1078,8 +1207,31 @@ const submitJobRun = async (
     }))
     .filter((file) => file.path && file.content)
 
-  const inputsConfig = await createInputFilesConfigMap(kube, namespace, agentRun, inputEntries)
-  const specConfigName = await createRunSpecConfigMap(kube, namespace, agentRun, runSpec)
+  const runtimeConfig = asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
+  const serviceAccount = asString(runtimeConfig.serviceAccount)
+  const ttlSeconds = runtimeConfig.ttlSecondsAfterFinished
+
+  const metadata = asRecord(agentRun.metadata) ?? {}
+  const runName = asString(metadata.name) ?? 'agentrun'
+  const runUid = asString(metadata.uid)
+  const jobName = makeName(runName, 'job')
+  const agentName = asString(readNested(agent, ['metadata', 'name']))
+  const implName = asString(readNested(agentRun, ['spec', 'implementationSpecRef', 'name']))
+  const labels: Record<string, string> = {
+    'agents.proompteng.ai/agent-run': runName,
+  }
+  if (agentName) {
+    labels['agents.proompteng.ai/agent'] = normalizeLabelValue(agentName)
+  }
+  if (providerName) {
+    labels['agents.proompteng.ai/provider'] = normalizeLabelValue(providerName)
+  }
+  if (implName) {
+    labels['agents.proompteng.ai/implementation'] = normalizeLabelValue(implName)
+  }
+
+  const inputsConfig = await createInputFilesConfigMap(kube, namespace, agentRun, inputEntries, labels)
+  const specConfigName = await createRunSpecConfigMap(kube, namespace, agentRun, runSpec, labels)
 
   const { volumeSpecs, volumeMounts } = buildVolumeSpecs(workload)
 
@@ -1102,31 +1254,31 @@ const submitJobRun = async (
   volumes.push({ name: specVolumeName, spec: { configMap: { name: specConfigName } } })
   configVolumeMounts.push({ name: specVolumeName, mountPath: '/workspace/run.json', subPath: 'run.json' })
 
-  const runtimeConfig = asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
-  const serviceAccount = asString(runtimeConfig.serviceAccount)
-  const ttlSeconds = runtimeConfig.ttlSecondsAfterFinished
-
-  const metadata = asRecord(agentRun.metadata) ?? {}
-  const runName = asString(metadata.name) ?? 'agentrun'
-  const jobName = makeName(runName, 'job')
-
   const jobResource = {
     apiVersion: 'batch/v1',
     kind: 'Job',
     metadata: {
       name: jobName,
       namespace,
-      labels: {
-        'agents.proompteng.ai/agent-run': runName,
-      },
+      labels,
+      ...(runUid
+        ? {
+            ownerReferences: [
+              {
+                apiVersion: 'agents.proompteng.ai/v1alpha1',
+                kind: 'AgentRun',
+                name: runName,
+                uid: runUid,
+              },
+            ],
+          }
+        : {}),
     },
     spec: {
       ttlSecondsAfterFinished: typeof ttlSeconds === 'number' ? ttlSeconds : undefined,
       template: {
         metadata: {
-          labels: {
-            'agents.proompteng.ai/agent-run': runName,
-          },
+          labels,
         },
         spec: {
           serviceAccountName: serviceAccount ?? undefined,
@@ -1358,6 +1510,9 @@ const reconcileAgentRun = async (
   const conditions = buildConditions(agentRun)
   const observedGeneration = asRecord(agentRun.metadata)?.generation ?? 0
   const runtimeType = asString(readNested(spec, ['runtime', 'type']))
+  const runtimeConfig = asRecord(readNested(spec, ['runtime', 'config'])) ?? {}
+  const workload = asRecord(readNested(spec, ['workload'])) ?? {}
+  let workloadImage: string | null = null
 
   if (deleting) {
     if (hasFinalizer) {
@@ -1443,6 +1598,64 @@ const reconcileAgentRun = async (
       return
     }
 
+    if (runtimeType === 'job') {
+      workloadImage = resolveJobImage(workload)
+      if (!workloadImage) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: 'MissingWorkloadImage',
+          message: 'spec.workload.image, JANGAR_AGENT_RUNNER_IMAGE, or JANGAR_AGENT_IMAGE is required for job runtime',
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+    }
+
+    if (runtimeType === 'argo') {
+      const workflowTemplate = asString(runtimeConfig.workflowTemplate)
+      if (!workflowTemplate) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: 'MissingWorkflowTemplate',
+          message: 'spec.runtime.config.workflowTemplate is required for argo runtime',
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+    }
+
+    if (runtimeType === 'custom') {
+      const endpoint = asString(runtimeConfig.endpoint)
+      if (!endpoint) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: 'MissingEndpoint',
+          message: 'spec.runtime.config.endpoint is required for custom runtime',
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+    }
+
+    if (runtimeType === 'temporal') {
+      const workflowType = asString(runtimeConfig.workflowType)
+      const taskQueue = asString(runtimeConfig.taskQueue)
+      if (!workflowType || !taskQueue) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: 'MissingTemporalConfig',
+          message:
+            'spec.runtime.config.workflowType and spec.runtime.config.taskQueue are required for temporal runtime',
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+    }
+
     const agent = agentName ? await kube.get(RESOURCE_MAP.Agent, agentName, namespace) : null
     if (!agent) {
       const updated = upsertCondition(conditions, {
@@ -1488,7 +1701,6 @@ const reconcileAgentRun = async (
     }
 
     if (allowedServiceAccounts.length > 0 && (runtimeType === 'job' || runtimeType === 'argo')) {
-      const runtimeConfig = asRecord(readNested(spec, ['runtime', 'config'])) ?? {}
       const rawServiceAccount = asString(runtimeConfig.serviceAccount)
       const effectiveServiceAccount = rawServiceAccount || 'default'
       if (!allowedServiceAccounts.includes(effectiveServiceAccount)) {
@@ -1565,7 +1777,16 @@ const reconcileAgentRun = async (
     let newRuntimeRef: RuntimeRef | null = null
     try {
       if (runtimeType === 'job') {
-        newRuntimeRef = await submitJobRun(kube, agentRun, agent, provider, implResource, memory, namespace)
+        newRuntimeRef = await submitJobRun(
+          kube,
+          agentRun,
+          agent,
+          provider,
+          implResource,
+          memory,
+          namespace,
+          workloadImage ?? '',
+        )
       } else if (runtimeType === 'argo') {
         newRuntimeRef = await submitArgoRun(kube, agentRun, namespace)
       } else if (runtimeType === 'custom') {
@@ -1726,7 +1947,7 @@ const reconcileOnce = async () => {
   if (reconciling) return
   reconciling = true
   try {
-    const namespaces = parseNamespaces()
+    const namespaces = await resolveNamespaces()
     const kube = createKubernetesClient()
     const concurrency = parseConcurrency()
     const runsByNamespace = new Map<string, Record<string, unknown>[]>()
@@ -1754,7 +1975,7 @@ const reconcileOnce = async () => {
 export const startAgentsController = async () => {
   if (started || !shouldStart()) return
   const crdsReady = await checkCrds()
-  if (!crdsReady) {
+  if (!crdsReady.ok) {
     console.error('[jangar] agents controller will not start without CRDs')
     return
   }
@@ -1772,4 +1993,11 @@ export const stopAgentsController = () => {
     intervalRef = null
   }
   started = false
+}
+
+export const __test = {
+  checkCrds,
+  reconcileAgentRun,
+  reconcileMemory,
+  resolveJobImage,
 }

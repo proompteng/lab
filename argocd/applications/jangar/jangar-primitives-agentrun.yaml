@@ -4,10 +4,18 @@ metadata:
   name: jangar-primitives-agentrun
   namespace: jangar
 spec:
-  compositionRef:
-    name: agentrun-argo
   agentRef:
     name: jangar-primitives-agent
+  implementation:
+    inline:
+      summary: "Run the jangar primitives smoke implementation"
+      text: "Execute the sample implementation for the jangar primitives workflow."
+  runtime:
+    type: argo
+    config:
+      workflowTemplate: codex-implementation
+      namespace: argo-workflows
+      serviceAccount: codex-workflow
   parameters:
     repository: proompteng/lab
     base: main
