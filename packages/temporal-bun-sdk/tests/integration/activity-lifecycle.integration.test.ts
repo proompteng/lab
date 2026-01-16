@@ -13,6 +13,7 @@ import { heartbeatWorkflow, heartbeatTimeoutWorkflow, integrationActivities, int
 const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
 const describeIntegration = shouldRunIntegration ? describe : describe.skip
 const scenarioTimeoutMs = 60_000
+const hookTimeoutMs = 60_000
 
 const CLI_CONFIG = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
@@ -56,7 +57,7 @@ describeIntegration('Activity lifecycle integration', () => {
       stickyScheduling: true,
     })
     runtimePromise = runtime.run()
-  })
+  }, { timeout: hookTimeoutMs })
 
   afterAll(async () => {
     if (runtime) {
@@ -68,7 +69,7 @@ describeIntegration('Activity lifecycle integration', () => {
     if (harness && !cliUnavailable) {
       await Effect.runPromise(harness.teardown)
     }
-  })
+  }, { timeout: hookTimeoutMs })
 
   const runOrSkip = async <A>(name: string, scenario: () => Promise<A>): Promise<A | undefined> => {
     if (cliUnavailable) {

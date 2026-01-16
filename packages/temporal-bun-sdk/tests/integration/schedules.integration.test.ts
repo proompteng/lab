@@ -13,14 +13,15 @@ import { NewWorkflowExecutionInfoSchema } from '../../src/proto/temporal/api/wor
 import { acquireIntegrationTestEnv, releaseIntegrationTestEnv, type IntegrationTestEnv } from './test-env'
 
 let env: IntegrationTestEnv | null = null
+const hookTimeoutMs = 60_000
 
 beforeAll(async () => {
   env = await acquireIntegrationTestEnv()
-})
+}, { timeout: hookTimeoutMs })
 
 afterAll(async () => {
   await releaseIntegrationTestEnv()
-})
+}, { timeout: hookTimeoutMs })
 
 test('schedule client can create and manage schedules', { timeout: 30_000 }, async () => {
   if (!env) {

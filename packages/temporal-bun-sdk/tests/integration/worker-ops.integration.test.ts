@@ -6,14 +6,15 @@ import { loadTemporalConfig } from '../../src/config'
 import { acquireIntegrationTestEnv, releaseIntegrationTestEnv, type IntegrationTestEnv } from './test-env'
 
 let env: IntegrationTestEnv | null = null
+const hookTimeoutMs = 60_000
 
 beforeAll(async () => {
   env = await acquireIntegrationTestEnv()
-})
+}, { timeout: hookTimeoutMs })
 
 afterAll(async () => {
   await releaseIntegrationTestEnv()
-})
+}, { timeout: hookTimeoutMs })
 
 test('worker ops and versioning RPCs are reachable', async () => {
   if (!env) {

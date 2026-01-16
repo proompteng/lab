@@ -19,6 +19,7 @@ import {
 } from './workflows'
 
 const replayTimeoutMs = 60_000
+const hookTimeoutMs = 60_000
 
 let harness: IntegrationHarness | null = null
 let stickyCacheSizeEffect: Effect.Effect<number, never, never> | null = null
@@ -34,11 +35,11 @@ beforeAll(async () => {
   stickyCacheSizeEffect = integrationEnv.stickyCacheSizeEffect
   stickyCacheClearEffect = integrationEnv.stickyCacheClearEffect
   runOrSkip = integrationEnv.runOrSkip
-})
+}, { timeout: hookTimeoutMs })
 
 afterAll(async () => {
   await releaseIntegrationTestEnv()
-})
+}, { timeout: hookTimeoutMs })
 
 const execScenario = async <A>(name: string, scenario: () => Promise<A>): Promise<A | undefined> => {
   if (!runOrSkip) {

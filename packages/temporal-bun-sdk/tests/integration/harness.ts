@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { fromJson } from '@bufbuild/protobuf'
@@ -124,6 +124,9 @@ export const createIntegrationHarness = (
       config.cliLogPath ?? process.env.TEMPORAL_CLI_LOG_PATH ?? join(projectRoot, '.temporal-cli.log')
     const startScript = join(projectRoot, 'scripts', 'start-temporal-cli.ts')
     const stopScript = join(projectRoot, 'scripts', 'stop-temporal-cli.ts')
+    const lockDir = join(projectRoot, '.temporal-cli')
+    const testLockFile = join(lockDir, 'test.lock')
+    const testRefcountFile = join(lockDir, 'test.refcount')
 
     if (!existsSync(startScript) || !existsSync(stopScript)) {
       throw new TemporalCliUnavailableError('Temporal CLI management scripts are missing', [])
@@ -205,39 +208,39 @@ export const createIntegrationHarness = (
       if (started) {
         return
       }
-      if (reuseExistingServer) {
-        console.info('[temporal-bun-sdk] reusing existing Temporal dev server')
-        started = true
-        return
-      }
-      const child = Bun.spawn(['bun', startScript], {
-        cwd: projectRoot,
-        stdout: 'pipe',
-        stderr: 'pipe',
-        env: {
-          ...process.env,
-          TEMPORAL_NAMESPACE: config.namespace,
-          TEMPORAL_CLI_PATH: cliExecutable,
-          TEMPORAL_PORT: String(cliPort),
-          TEMPORAL_UI_PORT: String(cliUiPort),
-          TEMPORAL_ARTIFACTS_DIR: artifactsRoot,
-          TEMPORAL_WORKER_LOAD_ARTIFACTS_DIR: workerLoadArtifacts.root,
-          TEMPORAL_CLI_LOG_PATH: temporalCliLogPath,
-        },
-      })
-      const exitCode = await child.exited
-      const stdout = child.stdout ? await readStream(child.stdout) : ''
-      const stderr = child.stderr ? await readStream(child.stderr) : ''
-      if (exitCode !== 0) {
-        if (stderr.includes('Temporal CLI already running')) {
-          return
+      await withTestLock(lockDir, testLockFile, async () => {
+        const currentRef = readRefcount(testRefcountFile)
+        if (currentRef === 0 && !reuseExistingServer) {
+          const child = Bun.spawn(['bun', startScript], {
+            cwd: projectRoot,
+            stdout: 'pipe',
+            stderr: 'pipe',
+            env: {
+              ...process.env,
+              TEMPORAL_NAMESPACE: config.namespace,
+              TEMPORAL_CLI_PATH: cliExecutable,
+              TEMPORAL_PORT: String(cliPort),
+              TEMPORAL_UI_PORT: String(cliUiPort),
+              TEMPORAL_ARTIFACTS_DIR: artifactsRoot,
+              TEMPORAL_WORKER_LOAD_ARTIFACTS_DIR: workerLoadArtifacts.root,
+              TEMPORAL_CLI_LOG_PATH: temporalCliLogPath,
+            },
+          })
+          const exitCode = await child.exited
+          const stdout = child.stdout ? await readStream(child.stdout) : ''
+          const stderr = child.stderr ? await readStream(child.stderr) : ''
+          if (exitCode !== 0 && !stderr.includes('Temporal CLI already running')) {
+            throw new TemporalCliCommandError(['bun', startScript], exitCode, stdout, stderr)
+          }
+          console.info(
+            `[temporal-bun-sdk] Temporal CLI dev server running at ${hostname}:${cliPort} (ui:${cliUiPort})`,
+          )
+        } else if (reuseExistingServer) {
+          console.info('[temporal-bun-sdk] reusing existing Temporal dev server')
         }
-        throw new TemporalCliCommandError(['bun', startScript], exitCode, stdout, stderr)
-      }
+        writeRefcount(testRefcountFile, currentRef + 1)
+      })
       started = true
-      console.info(
-        `[temporal-bun-sdk] Temporal CLI dev server running at ${hostname}:${cliPort} (ui:${cliUiPort})`,
-      )
       await waitForNamespaceReady()
     })
 
@@ -245,21 +248,30 @@ export const createIntegrationHarness = (
       if (!started) {
         return
       }
-      if (reuseExistingServer) {
-        console.info('[temporal-bun-sdk] leaving Temporal dev server running (reuse enabled)')
-        return
-      }
-      const child = Bun.spawn(['bun', stopScript], {
-        cwd: projectRoot,
-        stdout: 'pipe',
-        stderr: 'pipe',
+      await withTestLock(lockDir, testLockFile, async () => {
+        const currentRef = readRefcount(testRefcountFile)
+        const nextRef = Math.max(0, currentRef - 1)
+        if (nextRef === 0) {
+          if (reuseExistingServer) {
+            console.info('[temporal-bun-sdk] leaving Temporal dev server running (reuse enabled)')
+          } else {
+            const child = Bun.spawn(['bun', stopScript], {
+              cwd: projectRoot,
+              stdout: 'pipe',
+              stderr: 'pipe',
+            })
+            const exitCode = await child.exited
+            const stdout = child.stdout ? await readStream(child.stdout) : ''
+            const stderr = child.stderr ? await readStream(child.stderr) : ''
+            if (exitCode !== 0) {
+              throw new TemporalCliCommandError(['bun', stopScript], exitCode, stdout, stderr)
+            }
+          }
+          rmSync(testRefcountFile, { force: true })
+        } else {
+          writeRefcount(testRefcountFile, nextRef)
+        }
       })
-      const exitCode = await child.exited
-      const stdout = child.stdout ? await readStream(child.stdout) : ''
-      const stderr = child.stderr ? await readStream(child.stderr) : ''
-      if (exitCode !== 0) {
-        throw new TemporalCliCommandError(['bun', stopScript], exitCode, stdout, stderr)
-      }
       started = false
     })
 
@@ -360,6 +372,50 @@ export const createIntegrationHarness = (
       temporalCliLogPath,
     }
   })
+
+const readRefcount = (path: string): number => {
+  if (!existsSync(path)) {
+    return 0
+  }
+  try {
+    const value = readFileSync(path, 'utf8').trim()
+    const parsed = Number(value)
+    return Number.isNaN(parsed) ? 0 : parsed
+  } catch {
+    return 0
+  }
+}
+
+const writeRefcount = (path: string, next: number) => {
+  writeFileSync(path, String(next), 'utf8')
+}
+
+const withTestLock = async <T>(lockDir: string, lockFile: string, fn: () => Promise<T>): Promise<T> => {
+  mkdirSync(lockDir, { recursive: true })
+  const start = Date.now()
+  const timeoutMs = 30_000
+  while (true) {
+    try {
+      const fd = openSync(lockFile, 'wx')
+      closeSync(fd)
+      break
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== 'EEXIST') {
+        throw error
+      }
+      if (Date.now() - start > timeoutMs) {
+        throw new Error(`Timed out waiting for integration lock at ${lockFile}`)
+      }
+      await Bun.sleep(200)
+    }
+  }
+  try {
+    return await fn()
+  } finally {
+    rmSync(lockFile, { force: true })
+  }
+}
 
 const readStream = async (stream: ReadableStream<Uint8Array> | null): Promise<string> => {
   if (!stream) {

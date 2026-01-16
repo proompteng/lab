@@ -6,14 +6,15 @@ import { integrationActivities, integrationWorkflows } from './workflows'
 import { acquireIntegrationTestEnv, releaseIntegrationTestEnv, type IntegrationTestEnv } from './test-env'
 
 let env: IntegrationTestEnv | null = null
+const hookTimeoutMs = 60_000
 
 beforeAll(async () => {
   env = await acquireIntegrationTestEnv()
-})
+}, { timeout: hookTimeoutMs })
 
 afterAll(async () => {
   await releaseIntegrationTestEnv()
-})
+}, { timeout: hookTimeoutMs })
 
 test('TestWorkflowEnvironment runs a worker end-to-end', { timeout: 30_000 }, async () => {
   if (!env) {
