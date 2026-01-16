@@ -535,7 +535,14 @@ export class TemporalTlsConfigurationError extends Error {
 const readTlsFile = async (path: string, context: string, reader: typeof readFile): Promise<Buffer> => {
   try {
     const contents = await reader(path)
-    const buffer = Buffer.isBuffer(contents) ? contents : Buffer.from(contents)
+    let buffer: Buffer
+    if (typeof contents === 'string') {
+      buffer = Buffer.from(contents)
+    } else if (Buffer.isBuffer(contents)) {
+      buffer = contents
+    } else {
+      buffer = Buffer.from(contents as ArrayBufferLike)
+    }
     if (buffer.byteLength === 0) {
       throw new TemporalTlsConfigurationError(`${context} at ${path} is empty`)
     }
