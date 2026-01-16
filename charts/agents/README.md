@@ -7,6 +7,7 @@ Minimal, production‑ready bundle for the Agents control plane (Jangar) plus Ag
 - Deploys the Jangar control-plane deployment + service.
 - Minimal chart footprint (no ingress, no embedded database, no backups, no migrations job).
 - Controller runs in‑cluster and reconciles AgentRun, ImplementationSpec, ImplementationSource, AgentProvider, Memory.
+- Job runtime creates input/run spec ConfigMaps and labels Jobs for traceability.
 - Artifact Hub metadata included (Apache‑2.0 license).
 
 ## Quickstart (kind/minikube)
@@ -71,7 +72,7 @@ native CRDs in the correct order.
 ## Publishing (OCI)
 ```bash
 helm package charts/agents
-helm push agents-0.5.0.tgz oci://ghcr.io/proompteng/charts
+helm push agents-0.6.0.tgz oci://ghcr.io/proompteng/charts
 ```
 
 ## Values

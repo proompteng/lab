@@ -38,6 +38,11 @@ kubectl -n "${NAMESPACE}" wait --for=condition=complete job \
   -l agents.proompteng.ai/agent-run=codex-run-sample \
   --timeout="${TIMEOUT}"
 
-kubectl -n "${NAMESPACE}" get agentrun codex-run-sample -o yaml
+phase="$(kubectl -n "${NAMESPACE}" get agentrun codex-run-sample -o jsonpath='{.status.phase}')"
+if [ "${phase}" != "Succeeded" ]; then
+  echo "AgentRun did not succeed (phase=${phase})" >&2
+  kubectl -n "${NAMESPACE}" get agentrun codex-run-sample -o yaml
+  exit 1
+fi
 
 echo "Agents smoke test completed."

@@ -14,10 +14,13 @@ retire the Crossplane package safely and move existing claims to the native CRDs
    kubectl get agentproviders.agents.proompteng.ai -A -o yaml > /tmp/xplane-agentproviders.yaml
    ```
 2. **Convert manifests to native CRDs** using the mapping tables below.
-3. **Remove Crossplane Agents package and XRDs** (stop reconcile to avoid conflicts):
+3. **Remove Crossplane Agents package, compositions, and XRDs** (stop reconcile to avoid conflicts):
    ```bash
    # Remove GitOps references to packages/crossplane/deprecated/configuration-agents first.
    kubectl delete configurations.pkg.crossplane.io configuration-agents
+   kubectl delete compositions.apiextensions.crossplane.io -l crossplane.io/xrd=agents.agents.proompteng.ai
+   kubectl delete compositions.apiextensions.crossplane.io -l crossplane.io/xrd=agentruns.agents.proompteng.ai
+   kubectl delete compositions.apiextensions.crossplane.io -l crossplane.io/xrd=agentproviders.agents.proompteng.ai
    kubectl delete xrd xagents.agents.proompteng.ai xagentruns.agents.proompteng.ai xagentproviders.agents.proompteng.ai
    ```
 4. **Install the native chart**:

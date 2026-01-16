@@ -304,6 +304,13 @@ const makeName = (base: string, suffix: string) => {
   return `${trimmed}-${hash}`
 }
 
+const normalizeLabelValue = (value: string) => {
+  const normalized = value.toLowerCase().replace(/[^a-z0-9_.-]+/g, '-')
+  const trimmed = normalized.replace(/^[^a-z0-9]+/, '').replace(/[^a-z0-9]+$/, '')
+  if (!trimmed) return 'unknown'
+  return trimmed.length <= 63 ? trimmed : trimmed.slice(0, 63)
+}
+
 const clampUtf8 = (value: string, maxBytes: number) => {
   const buffer = Buffer.from(value, 'utf8')
   if (buffer.length <= maxBytes) return value
@@ -1011,6 +1018,7 @@ const createInputFilesConfigMap = async (
   namespace: string,
   agentRun: Record<string, unknown>,
   inputFiles: Array<{ path: string; content: string }>,
+  labels: Record<string, string>,
 ) => {
   if (inputFiles.length === 0) return null
   const metadata = asRecord(agentRun.metadata) ?? {}
@@ -1027,7 +1035,7 @@ const createInputFilesConfigMap = async (
     metadata: {
       name: configName,
       namespace,
-      labels: { 'agents.proompteng.ai/agent-run': runName },
+      labels: { ...labels },
       ...(uid
         ? {
             ownerReferences: [
@@ -1052,6 +1060,7 @@ const createRunSpecConfigMap = async (
   namespace: string,
   agentRun: Record<string, unknown>,
   runSpec: Record<string, unknown>,
+  labels: Record<string, string>,
 ) => {
   const metadata = asRecord(agentRun.metadata) ?? {}
   const uid = asString(metadata.uid)
@@ -1063,7 +1072,7 @@ const createRunSpecConfigMap = async (
     metadata: {
       name: configName,
       namespace,
-      labels: { 'agents.proompteng.ai/agent-run': runName },
+      labels: { ...labels },
       ...(uid
         ? {
             ownerReferences: [
@@ -1137,8 +1146,31 @@ const submitJobRun = async (
     }))
     .filter((file) => file.path && file.content)
 
-  const inputsConfig = await createInputFilesConfigMap(kube, namespace, agentRun, inputEntries)
-  const specConfigName = await createRunSpecConfigMap(kube, namespace, agentRun, runSpec)
+  const runtimeConfig = asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
+  const serviceAccount = asString(runtimeConfig.serviceAccount)
+  const ttlSeconds = runtimeConfig.ttlSecondsAfterFinished
+
+  const metadata = asRecord(agentRun.metadata) ?? {}
+  const runName = asString(metadata.name) ?? 'agentrun'
+  const runUid = asString(metadata.uid)
+  const jobName = makeName(runName, 'job')
+  const agentName = asString(readNested(agent, ['metadata', 'name']))
+  const implName = asString(readNested(agentRun, ['spec', 'implementationSpecRef', 'name']))
+  const labels: Record<string, string> = {
+    'agents.proompteng.ai/agent-run': runName,
+  }
+  if (agentName) {
+    labels['agents.proompteng.ai/agent'] = normalizeLabelValue(agentName)
+  }
+  if (providerName) {
+    labels['agents.proompteng.ai/provider'] = normalizeLabelValue(providerName)
+  }
+  if (implName) {
+    labels['agents.proompteng.ai/implementation'] = normalizeLabelValue(implName)
+  }
+
+  const inputsConfig = await createInputFilesConfigMap(kube, namespace, agentRun, inputEntries, labels)
+  const specConfigName = await createRunSpecConfigMap(kube, namespace, agentRun, runSpec, labels)
 
   const { volumeSpecs, volumeMounts } = buildVolumeSpecs(workload)
 
@@ -1161,24 +1193,13 @@ const submitJobRun = async (
   volumes.push({ name: specVolumeName, spec: { configMap: { name: specConfigName } } })
   configVolumeMounts.push({ name: specVolumeName, mountPath: '/workspace/run.json', subPath: 'run.json' })
 
-  const runtimeConfig = asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
-  const serviceAccount = asString(runtimeConfig.serviceAccount)
-  const ttlSeconds = runtimeConfig.ttlSecondsAfterFinished
-
-  const metadata = asRecord(agentRun.metadata) ?? {}
-  const runName = asString(metadata.name) ?? 'agentrun'
-  const runUid = asString(metadata.uid)
-  const jobName = makeName(runName, 'job')
-
   const jobResource = {
     apiVersion: 'batch/v1',
     kind: 'Job',
     metadata: {
       name: jobName,
       namespace,
-      labels: {
-        'agents.proompteng.ai/agent-run': runName,
-      },
+      labels,
       ...(runUid
         ? {
             ownerReferences: [
@@ -1196,9 +1217,7 @@ const submitJobRun = async (
       ttlSecondsAfterFinished: typeof ttlSeconds === 'number' ? ttlSeconds : undefined,
       template: {
         metadata: {
-          labels: {
-            'agents.proompteng.ai/agent-run': runName,
-          },
+          labels,
         },
         spec: {
           serviceAccountName: serviceAccount ?? undefined,

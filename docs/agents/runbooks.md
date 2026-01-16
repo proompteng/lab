@@ -26,6 +26,7 @@ kubectl -n argocd get applications.argoproj.io agents
 The Application renders `argocd/applications/agents` (Helm + kustomize) and installs CRDs + Jangar
 into the `agents` namespace using `argocd/applications/agents/values.yaml`.
 Update the values file with your Jangar image tag, database secret, and (optional) agent runner image.
+If `controller.namespaces` spans multiple namespaces or `"*"`, set `rbac.clusterScoped=true`.
 
 Argo CD smoke test:
 ```bash

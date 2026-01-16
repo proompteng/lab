@@ -15,6 +15,12 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.agentRef.name
+      name: Agent
+      type: string
     - jsonPath: .status.conditions[?(@.type=="Succeeded")].status
       name: Succeeded
       type: string
