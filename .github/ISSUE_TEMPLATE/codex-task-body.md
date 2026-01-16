@@ -1,16 +1,3 @@
----
-name: Codex Task
-about: Request a Codex implementation run for lab
-title: ''
-labels: ['codex']
-assignees: ''
----
-
-<!--
-CLI users: use .github/ISSUE_TEMPLATE/codex-task-body.md with gh issue create --body-file
-to avoid rendering this YAML frontmatter in the issue body.
--->
-
 ## Summary
 <!-- One paragraph: what needs to change and why now. Include key links. -->
 
