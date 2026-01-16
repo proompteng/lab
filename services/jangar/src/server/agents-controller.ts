@@ -78,6 +78,12 @@ const parseNamespaces = () => {
   return list.length > 0 ? list : DEFAULT_NAMESPACES
 }
 
+const resolveCrdCheckNamespace = () => {
+  const namespaces = parseNamespaces()
+  if (namespaces.includes('*')) return 'default'
+  return namespaces[0] ?? 'default'
+}
+
 const resolveNamespaces = async () => {
   const namespaces = parseNamespaces()
   if (!namespaces.includes('*')) {
@@ -149,34 +155,35 @@ const runKubectl = (args: string[]) =>
   })
 
 const checkCrds = async (): Promise<CrdCheckState> => {
+  const namespace = resolveCrdCheckNamespace()
   const missing: string[] = []
-  const result = await runKubectl(['get', '--raw', '/apis/agents.proompteng.ai/v1alpha1'])
-  if (result.code !== 0) {
-    missing.push(...REQUIRED_CRDS)
-  } else {
-    let payload: Record<string, unknown> = {}
-    try {
-      payload = JSON.parse(result.stdout) as Record<string, unknown>
-    } catch {
-      missing.push(...REQUIRED_CRDS)
-    }
-    const resources = Array.isArray(payload.resources) ? payload.resources : []
-    const names = new Set(
-      resources
-        .map((item) => (item && typeof item === 'object' ? (item as Record<string, unknown>).name : null))
-        .filter((value): value is string => typeof value === 'string' && !value.includes('/')),
-    )
-    for (const name of REQUIRED_CRDS) {
-      const resource = name.split('.')[0] ?? ''
-      if (!names.has(resource)) {
+  const forbidden: string[] = []
+  for (const name of REQUIRED_CRDS) {
+    const resource = name.split('.')[0] ?? name
+    const result = await runKubectl(['get', resource, '-n', namespace, '-o', 'json'])
+    if (result.code !== 0) {
+      const details = (result.stderr || result.stdout || '').toLowerCase()
+      if (details.includes('forbidden') || details.includes('unauthorized')) {
+        forbidden.push(name)
+      } else {
         missing.push(name)
       }
     }
   }
-  const state = { ok: missing.length === 0, missing, checkedAt: nowIso() }
+  const state = {
+    ok: missing.length === 0 && forbidden.length === 0,
+    missing: [...missing, ...forbidden],
+    checkedAt: nowIso(),
+  }
   crdCheckState = state
   if (!state.ok) {
-    console.error('[jangar] missing required Agents CRDs:', missing.join(', '))
+    if (missing.length > 0) {
+      console.error('[jangar] missing required Agents CRDs:', missing.join(', '))
+    }
+    if (forbidden.length > 0) {
+      console.error(`[jangar] insufficient RBAC to read Agents CRDs in namespace ${namespace}: ${forbidden.join(', ')}`)
+      console.error('[jangar] ensure the Jangar service account can list Agents CRDs in this namespace')
+    }
     console.error(
       '[jangar] install the Agents Helm chart (charts/agents) or apply charts/agents/crds/*.yaml before starting the controller',
     )
