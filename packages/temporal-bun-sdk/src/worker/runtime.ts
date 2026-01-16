@@ -61,10 +61,10 @@ import type {
   ChildWorkflowExecutionTerminatedEventAttributes,
   ChildWorkflowExecutionTimedOutEventAttributes,
   HistoryEvent,
-  NexusOperationScheduledEventAttributes,
+  NexusOperationCanceledEventAttributes,
   NexusOperationCompletedEventAttributes,
   NexusOperationFailedEventAttributes,
-  NexusOperationCanceledEventAttributes,
+  NexusOperationScheduledEventAttributes,
   NexusOperationTimedOutEventAttributes,
   WorkflowExecutionSignaledEventAttributes,
 } from '../proto/temporal/api/history/v1/message_pb'

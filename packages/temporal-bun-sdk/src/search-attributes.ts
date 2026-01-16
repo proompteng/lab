@@ -1,11 +1,10 @@
 import { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
-
+import { decodeSearchAttributes, encodeSearchAttributes } from './client/serialization'
 import type { DataConverter } from './common/payloads'
 import type { SearchAttributes } from './proto/temporal/api/common/v1/message_pb'
-import { decodeSearchAttributes, encodeSearchAttributes } from './client/serialization'
 
-export type SearchAttributeSchema = Schema.Schema<any>
+export type SearchAttributeSchema = Schema.Schema<unknown>
 
 export type SearchAttributeSchemaMap = Record<string, SearchAttributeSchema>
 

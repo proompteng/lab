@@ -1,9 +1,9 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { createTemporalClient, type CreateTemporalClientOptions, type TemporalClient } from '../client'
+import { type CreateTemporalClientOptions, createTemporalClient, type TemporalClient } from '../client'
 import { loadTemporalConfig, type TemporalConfig } from '../config'
-import { createWorker, type BunWorkerHandle, type CreateWorkerOptions } from '../worker'
+import { type BunWorkerHandle, type CreateWorkerOptions, createWorker } from '../worker'
 
 export interface TestWorkflowEnvironmentOptions {
   readonly address?: string

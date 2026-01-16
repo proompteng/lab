@@ -1,8 +1,8 @@
 export type {
   BrandedTemporalClientCallOptions,
-  TemporalCloudClient,
   TemporalClient,
   TemporalClientCallOptions,
+  TemporalCloudClient,
   TemporalDeploymentClient,
   TemporalMemoHelpers,
   TemporalOperatorClient,
@@ -11,9 +11,9 @@ export type {
   TemporalScheduleClient,
   TemporalSearchAttributeHelpers,
   TemporalWorkerOperationsClient,
-  TemporalWorkflowServiceClient,
   TemporalWorkflowClient,
   TemporalWorkflowOperationsClient,
+  TemporalWorkflowServiceClient,
 } from './client'
 export {
   createTemporalClient,
@@ -54,6 +54,16 @@ export {
   TemporalCliLayer,
 } from './runtime/cli-layer'
 export { createWorkerAppLayer, runWorkerApp, WorkerAppLayer } from './runtime/worker-app'
+export type { SearchAttributeSchemaMap, TypedSearchAttributes } from './search-attributes'
+export { createTypedSearchAttributes, defineSearchAttributes } from './search-attributes'
+export type { TestWorkflowEnvironmentOptions, TimeSkippingTestWorkflowEnvironmentOptions } from './testing'
+export {
+  createExistingWorkflowEnvironment,
+  createTestWorkflowEnvironment,
+  createTimeSkippingWorkflowEnvironment,
+  TemporalTestServerUnavailableError,
+  TestWorkflowEnvironment,
+} from './testing'
 export {
   createWorkerRuntimeLayer,
   makeWorkerRuntimeEffect,
@@ -62,15 +72,5 @@ export {
   WorkerRuntimeService,
 } from './worker/layer'
 export type { WorkerPlugin, WorkerPluginContext } from './worker/plugins'
-export { createStaticWorkerTuner } from './worker/tuner'
 export type { WorkerTuner } from './worker/tuner'
-export {
-  createExistingWorkflowEnvironment,
-  createTestWorkflowEnvironment,
-  createTimeSkippingWorkflowEnvironment,
-  TestWorkflowEnvironment,
-  TemporalTestServerUnavailableError,
-} from './testing'
-export type { TestWorkflowEnvironmentOptions, TimeSkippingTestWorkflowEnvironmentOptions } from './testing'
-export type { SearchAttributeSchemaMap, TypedSearchAttributes } from './search-attributes'
-export { createTypedSearchAttributes, defineSearchAttributes } from './search-attributes'
+export { createStaticWorkerTuner } from './worker/tuner'

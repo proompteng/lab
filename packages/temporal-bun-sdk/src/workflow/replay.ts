@@ -45,8 +45,8 @@ import type {
   ModifyWorkflowPropertiesCommandIntent,
   RecordMarkerCommandIntent,
   RequestCancelActivityCommandIntent,
-  RequestCancelNexusOperationCommandIntent,
   RequestCancelExternalWorkflowCommandIntent,
+  RequestCancelNexusOperationCommandIntent,
   ScheduleActivityCommandIntent,
   ScheduleNexusOperationCommandIntent,
   SignalExternalWorkflowCommandIntent,
@@ -1104,20 +1104,6 @@ const collectCommandKinds = (events: readonly HistoryEvent[]): WorkflowCommandKi
           break
         }
         kinds.push('upsert-search-attributes')
-        break
-      }
-      case EventType.NEXUS_OPERATION_SCHEDULED: {
-        if (event.attributes?.case !== 'nexusOperationScheduledEventAttributes') {
-          break
-        }
-        kinds.push('schedule-nexus-operation')
-        break
-      }
-      case EventType.NEXUS_OPERATION_CANCEL_REQUESTED: {
-        if (event.attributes?.case !== 'nexusOperationCancelRequestedEventAttributes') {
-          break
-        }
-        kinds.push('request-cancel-nexus-operation')
         break
       }
       case EventType.WORKFLOW_PROPERTIES_MODIFIED: {

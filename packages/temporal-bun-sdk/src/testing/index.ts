@@ -1,8 +1,8 @@
+export type { TestWorkflowEnvironmentOptions, TimeSkippingTestWorkflowEnvironmentOptions } from './test-environment'
 export {
   createExistingWorkflowEnvironment,
   createTestWorkflowEnvironment,
   createTimeSkippingWorkflowEnvironment,
-  TestWorkflowEnvironment,
   TemporalTestServerUnavailableError,
+  TestWorkflowEnvironment,
 } from './test-environment'
-export type { TestWorkflowEnvironmentOptions, TimeSkippingTestWorkflowEnvironmentOptions } from './test-environment'

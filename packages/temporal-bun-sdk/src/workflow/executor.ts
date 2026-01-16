@@ -21,8 +21,8 @@ import { type WorkflowQueryResult, WorkflowQueryResultSchema } from '../proto/te
 import { materializeCommands, type StartChildWorkflowCommandIntent, type WorkflowCommandIntent } from './commands'
 import {
   type ActivityResolution,
-  type NexusOperationResolution,
   createWorkflowContext,
+  type NexusOperationResolution,
   type WorkflowCommandContext,
   type WorkflowContext,
   type WorkflowInfo,

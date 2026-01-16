@@ -3,8 +3,8 @@ import { create, toBinary } from '@bufbuild/protobuf'
 import { type CallOptions, Code, ConnectError, createClient } from '@connectrpc/connect'
 import { createGrpcTransport } from '@connectrpc/connect-node'
 import { Context, Effect } from 'effect'
-import * as Schema from 'effect/Schema'
 import * as Option from 'effect/Option'
+import type * as Schema from 'effect/Schema'
 
 import { createDefaultHeaders, mergeHeaders, normalizeMetadataHeaders } from './client/headers'
 import { type InterceptorBuilder, makeDefaultInterceptorBuilder, type TemporalInterceptor } from './client/interceptors'
@@ -27,7 +27,6 @@ import {
   encodeMemoAttributes,
   encodeSearchAttributes,
 } from './client/serialization'
-import { createTypedSearchAttributes, type TypedSearchAttributes } from './search-attributes'
 import { buildTransportOptions, type ClosableTransport, normalizeTemporalAddress } from './client/transport'
 import {
   createWorkflowHandle,
@@ -60,6 +59,7 @@ import type { TemporalInterceptor as ClientMiddleware, InterceptorContext, Inter
 import { createObservabilityServices } from './observability'
 import type { LogFields, Logger, LogLevel } from './observability/logger'
 import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from './observability/metrics'
+import { CloudService } from './proto/temporal/api/cloud/cloudservice/v1/service_pb'
 import {
   type Memo,
   type Payload,
@@ -67,6 +67,37 @@ import {
   type WorkflowExecution,
   WorkflowExecutionSchema,
 } from './proto/temporal/api/common/v1/message_pb'
+import type { QueryRejectCondition } from './proto/temporal/api/enums/v1/query_pb'
+import { UpdateWorkflowExecutionLifecycleStage } from './proto/temporal/api/enums/v1/update_pb'
+import { HistoryEventFilterType } from './proto/temporal/api/enums/v1/workflow_pb'
+import type { HistoryEvent } from './proto/temporal/api/history/v1/message_pb'
+import {
+  type AddSearchAttributesRequest,
+  AddSearchAttributesRequestSchema,
+  type AddSearchAttributesResponse,
+  type CreateNexusEndpointRequest,
+  CreateNexusEndpointRequestSchema,
+  type CreateNexusEndpointResponse,
+  type DeleteNexusEndpointRequest,
+  DeleteNexusEndpointRequestSchema,
+  type DeleteNexusEndpointResponse,
+  type GetNexusEndpointRequest,
+  GetNexusEndpointRequestSchema,
+  type GetNexusEndpointResponse,
+  type ListNexusEndpointsRequest,
+  ListNexusEndpointsRequestSchema,
+  type ListNexusEndpointsResponse,
+  type ListSearchAttributesRequest,
+  ListSearchAttributesRequestSchema,
+  type ListSearchAttributesResponse,
+  type RemoveSearchAttributesRequest,
+  RemoveSearchAttributesRequestSchema,
+  type RemoveSearchAttributesResponse,
+  type UpdateNexusEndpointRequest,
+  UpdateNexusEndpointRequestSchema,
+  type UpdateNexusEndpointResponse,
+} from './proto/temporal/api/operatorservice/v1/request_response_pb'
+import { OperatorService } from './proto/temporal/api/operatorservice/v1/service_pb'
 import {
   type BackfillRequest,
   BackfillRequestSchema,
@@ -74,32 +105,34 @@ import {
   type TriggerImmediatelyRequest,
   TriggerImmediatelyRequestSchema,
 } from './proto/temporal/api/schedule/v1/message_pb'
-import type { QueryRejectCondition } from './proto/temporal/api/enums/v1/query_pb'
-import { UpdateWorkflowExecutionLifecycleStage } from './proto/temporal/api/enums/v1/update_pb'
-import { HistoryEventFilterType } from './proto/temporal/api/enums/v1/workflow_pb'
-import type { HistoryEvent } from './proto/temporal/api/history/v1/message_pb'
 import {
-  type DescribeNamespaceRequest,
-  DescribeNamespaceRequestSchema,
-  DescribeNamespaceResponseSchema,
   type CreateScheduleRequest,
   CreateScheduleRequestSchema,
   type CreateScheduleResponse,
   type DeleteScheduleRequest,
   DeleteScheduleRequestSchema,
   type DeleteScheduleResponse,
-  type DescribeScheduleRequest,
-  DescribeScheduleRequestSchema,
-  type DescribeScheduleResponse,
-  type DescribeWorkerRequest,
-  DescribeWorkerRequestSchema,
-  type DescribeWorkerResponse,
-  type DescribeWorkerDeploymentRequest,
-  DescribeWorkerDeploymentRequestSchema,
-  type DescribeWorkerDeploymentResponse,
+  type DeleteWorkerDeploymentRequest,
+  DeleteWorkerDeploymentRequestSchema,
+  type DeleteWorkerDeploymentResponse,
+  type DeleteWorkerDeploymentVersionRequest,
+  DeleteWorkerDeploymentVersionRequestSchema,
+  type DeleteWorkerDeploymentVersionResponse,
   type DescribeDeploymentRequest,
   DescribeDeploymentRequestSchema,
   type DescribeDeploymentResponse,
+  type DescribeNamespaceRequest,
+  DescribeNamespaceRequestSchema,
+  DescribeNamespaceResponseSchema,
+  type DescribeScheduleRequest,
+  DescribeScheduleRequestSchema,
+  type DescribeScheduleResponse,
+  type DescribeWorkerDeploymentRequest,
+  DescribeWorkerDeploymentRequestSchema,
+  type DescribeWorkerDeploymentResponse,
+  type DescribeWorkerRequest,
+  DescribeWorkerRequestSchema,
+  type DescribeWorkerResponse,
   type FetchWorkerConfigRequest,
   FetchWorkerConfigRequestSchema,
   type FetchWorkerConfigResponse,
@@ -114,30 +147,27 @@ import {
   type GetWorkerVersioningRulesResponse,
   GetWorkflowExecutionHistoryRequestSchema,
   type GetWorkflowExecutionHistoryResponse,
-  type ListSchedulesRequest,
-  ListSchedulesRequestSchema,
-  type ListSchedulesResponse,
-  type ListScheduleMatchingTimesRequest,
-  ListScheduleMatchingTimesRequestSchema,
-  type ListScheduleMatchingTimesResponse,
-  type ListWorkersRequest,
-  ListWorkersRequestSchema,
-  type ListWorkersResponse,
-  type ListWorkerDeploymentsRequest,
-  ListWorkerDeploymentsRequestSchema,
-  type ListWorkerDeploymentsResponse,
   type ListDeploymentsRequest,
   ListDeploymentsRequestSchema,
   type ListDeploymentsResponse,
+  type ListScheduleMatchingTimesRequest,
+  ListScheduleMatchingTimesRequestSchema,
+  type ListScheduleMatchingTimesResponse,
+  type ListSchedulesRequest,
+  ListSchedulesRequestSchema,
+  type ListSchedulesResponse,
+  type ListWorkerDeploymentsRequest,
+  ListWorkerDeploymentsRequestSchema,
+  type ListWorkerDeploymentsResponse,
+  type ListWorkersRequest,
+  ListWorkersRequestSchema,
+  type ListWorkersResponse,
   type PatchScheduleRequest,
   PatchScheduleRequestSchema,
   type PatchScheduleResponse,
   type PauseWorkflowExecutionRequest,
   PauseWorkflowExecutionRequestSchema,
   type PauseWorkflowExecutionResponse,
-  type UnpauseWorkflowExecutionRequest,
-  UnpauseWorkflowExecutionRequestSchema,
-  type UnpauseWorkflowExecutionResponse,
   type QueryWorkflowResponse,
   type ResetStickyTaskQueueRequest,
   ResetStickyTaskQueueRequestSchema,
@@ -148,14 +178,17 @@ import {
   type SetWorkerDeploymentCurrentVersionRequest,
   SetWorkerDeploymentCurrentVersionRequestSchema,
   type SetWorkerDeploymentCurrentVersionResponse,
-  type SetWorkerDeploymentRampingVersionRequest,
-  SetWorkerDeploymentRampingVersionRequestSchema,
-  type SetWorkerDeploymentRampingVersionResponse,
   type SetWorkerDeploymentManagerRequest,
   SetWorkerDeploymentManagerRequestSchema,
   type SetWorkerDeploymentManagerResponse,
+  type SetWorkerDeploymentRampingVersionRequest,
+  SetWorkerDeploymentRampingVersionRequestSchema,
+  type SetWorkerDeploymentRampingVersionResponse,
   type SignalWithStartWorkflowExecutionResponse,
   type StartWorkflowExecutionResponse,
+  type UnpauseWorkflowExecutionRequest,
+  UnpauseWorkflowExecutionRequestSchema,
+  type UnpauseWorkflowExecutionResponse,
   type UpdateScheduleRequest,
   UpdateScheduleRequestSchema,
   type UpdateScheduleResponse,
@@ -168,48 +201,14 @@ import {
   type UpdateWorkerDeploymentVersionMetadataRequest,
   UpdateWorkerDeploymentVersionMetadataRequestSchema,
   type UpdateWorkerDeploymentVersionMetadataResponse,
-  type DeleteWorkerDeploymentVersionRequest,
-  DeleteWorkerDeploymentVersionRequestSchema,
-  type DeleteWorkerDeploymentVersionResponse,
-  type DeleteWorkerDeploymentRequest,
-  DeleteWorkerDeploymentRequestSchema,
-  type DeleteWorkerDeploymentResponse,
-  type UpdateWorkflowExecutionOptionsRequest,
-  UpdateWorkflowExecutionOptionsRequestSchema,
-  type UpdateWorkflowExecutionOptionsResponse,
   type UpdateWorkerVersioningRulesRequest,
   UpdateWorkerVersioningRulesRequestSchema,
   type UpdateWorkerVersioningRulesResponse,
+  type UpdateWorkflowExecutionOptionsRequest,
+  UpdateWorkflowExecutionOptionsRequestSchema,
+  type UpdateWorkflowExecutionOptionsResponse,
 } from './proto/temporal/api/workflowservice/v1/request_response_pb'
 import { WorkflowService } from './proto/temporal/api/workflowservice/v1/service_pb'
-import {
-  type AddSearchAttributesRequest,
-  AddSearchAttributesRequestSchema,
-  type AddSearchAttributesResponse,
-  type RemoveSearchAttributesRequest,
-  RemoveSearchAttributesRequestSchema,
-  type RemoveSearchAttributesResponse,
-  type ListSearchAttributesRequest,
-  ListSearchAttributesRequestSchema,
-  type ListSearchAttributesResponse,
-  type CreateNexusEndpointRequest,
-  CreateNexusEndpointRequestSchema,
-  type CreateNexusEndpointResponse,
-  type UpdateNexusEndpointRequest,
-  UpdateNexusEndpointRequestSchema,
-  type UpdateNexusEndpointResponse,
-  type DeleteNexusEndpointRequest,
-  DeleteNexusEndpointRequestSchema,
-  type DeleteNexusEndpointResponse,
-  type GetNexusEndpointRequest,
-  GetNexusEndpointRequestSchema,
-  type GetNexusEndpointResponse,
-  type ListNexusEndpointsRequest,
-  ListNexusEndpointsRequestSchema,
-  type ListNexusEndpointsResponse,
-} from './proto/temporal/api/operatorservice/v1/request_response_pb'
-import { OperatorService } from './proto/temporal/api/operatorservice/v1/service_pb'
-import { CloudService } from './proto/temporal/api/cloud/cloudservice/v1/service_pb'
 import {
   DataConverterService,
   LoggerService,
@@ -218,6 +217,7 @@ import {
   TemporalConfigService,
   WorkflowServiceClientService,
 } from './runtime/effect-layers'
+import { createTypedSearchAttributes, type TypedSearchAttributes } from './search-attributes'
 
 type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
 type OperatorServiceClient = ReturnType<typeof createClient<typeof OperatorService>>

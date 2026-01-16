@@ -149,6 +149,7 @@ const executeReplayInternal = (
     const workflowService = yield* WorkflowServiceClientService
     if (options.debug) {
       yield* Effect.sync(() => {
+        // biome-ignore lint/suspicious/noDebugger: intentional breakpoint for --debug replay mode
         debugger
       })
     }
