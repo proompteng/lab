@@ -27,6 +27,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
+        x-kubernetes-preserve-unknown-fields: false
         properties:
           apiVersion:
             description: |-
