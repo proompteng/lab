@@ -20,7 +20,6 @@ export default function Home() {
       heading: 'product',
       links: [
         { label: 'platform', href: '#platform' },
-        { label: 'governance', href: '#governance' },
         { label: 'playbook', href: '#playbook' },
       ],
     },
