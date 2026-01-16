@@ -84,6 +84,15 @@ rules:
       - create
       - update
       - patch
+{{- if .Values.rbac.clusterScoped }}
+  - apiGroups: [""]
+    resources:
+      - namespaces
+    verbs:
+      - get
+      - list
+      - watch
+{{- end }}
 {{- with .Values.rbac.extraRules }}
   {{- toYaml . | nindent 2 }}
 {{- end }}
