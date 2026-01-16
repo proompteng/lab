@@ -12,10 +12,11 @@ resources:
   - https://raw.githubusercontent.com/argoproj/argo-cd/v3.2.2/manifests/ha/install.yaml
   - base/namespace.yaml
   - base/ingressroute.yaml
-  - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/v1.0.1/config/install.yaml
+  - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/v1.0.2/config/install.yaml
   - base/secrets.yaml
   - base/argo-workflows-sso-sealedsecret.yaml
   - base/image-updater-git-ssh.yaml
+  - base/image-updater-product.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
