@@ -78,6 +78,30 @@ const parseNamespaces = () => {
   return list.length > 0 ? list : DEFAULT_NAMESPACES
 }
 
+const resolveNamespaces = async () => {
+  const namespaces = parseNamespaces()
+  if (!namespaces.includes('*')) {
+    return namespaces
+  }
+  const result = await runKubectl(['get', 'namespace', '-o', 'json'])
+  if (result.code !== 0) {
+    throw new Error(result.stderr || result.stdout || 'failed to list namespaces')
+  }
+  const payload = JSON.parse(result.stdout) as Record<string, unknown>
+  const items = Array.isArray(payload.items) ? payload.items : []
+  const resolved = items
+    .map((item) => {
+      const metadata = item && typeof item === 'object' ? (item as Record<string, unknown>).metadata : null
+      const name = metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>).name : null
+      return typeof name === 'string' ? name : null
+    })
+    .filter((value): value is string => Boolean(value))
+  if (resolved.length === 0) {
+    throw new Error('no namespaces returned by kubectl')
+  }
+  return resolved
+}
+
 const parseIntervalSeconds = () => {
   const raw = process.env.JANGAR_AGENTS_CONTROLLER_INTERVAL_SECONDS
   const parsed = raw ? Number.parseInt(raw, 10) : NaN
@@ -126,10 +150,27 @@ const runKubectl = (args: string[]) =>
 
 const checkCrds = async (): Promise<CrdCheckState> => {
   const missing: string[] = []
-  for (const name of REQUIRED_CRDS) {
-    const result = await runKubectl(['get', 'crd', name, '-o', 'json'])
-    if (result.code !== 0) {
-      missing.push(name)
+  const result = await runKubectl(['get', '--raw', '/apis/agents.proompteng.ai/v1alpha1'])
+  if (result.code !== 0) {
+    missing.push(...REQUIRED_CRDS)
+  } else {
+    let payload: Record<string, unknown> = {}
+    try {
+      payload = JSON.parse(result.stdout) as Record<string, unknown>
+    } catch {
+      missing.push(...REQUIRED_CRDS)
+    }
+    const resources = Array.isArray(payload.resources) ? payload.resources : []
+    const names = new Set(
+      resources
+        .map((item) => (item && typeof item === 'object' ? (item as Record<string, unknown>).name : null))
+        .filter((value): value is string => typeof value === 'string' && !value.includes('/')),
+    )
+    for (const name of REQUIRED_CRDS) {
+      const resource = name.split('.')[0] ?? ''
+      if (!names.has(resource)) {
+        missing.push(name)
+      }
     }
   }
   const state = { ok: missing.length === 0, missing, checkedAt: nowIso() }
@@ -1899,7 +1940,7 @@ const reconcileOnce = async () => {
   if (reconciling) return
   reconciling = true
   try {
-    const namespaces = parseNamespaces()
+    const namespaces = await resolveNamespaces()
     const kube = createKubernetesClient()
     const concurrency = parseConcurrency()
     const runsByNamespace = new Map<string, Record<string, unknown>[]>()
