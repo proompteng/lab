@@ -72,5 +72,5 @@ high-level namespaces (`client.schedules`, `client.workerOps`, `client.operator`
 
 ## Upstream alignment (reviewed 2026-01-16)
 
-- `temporalio/sdk-core` @ `148774c04cdfec54cea8ddd5673ecb508e05bdd9` (2025-08-15)
-- `temporalio/sdk-typescript` @ `2fbcbe75599ebc3780520e0d73c0a8d496c2ae88` (2025-12-17)
+- `temporalio/sdk-core` @ `5c9bcd104ce234bd475b49f45d577204de3b7553` (2026-01-15)
+- `temporalio/sdk-typescript` @ `158601963c662b4d9f331d3a2779153cdac4c009` (2026-01-14)
