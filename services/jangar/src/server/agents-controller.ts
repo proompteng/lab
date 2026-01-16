@@ -30,6 +30,14 @@ const REQUIRED_CRDS = [
   'memories.agents.proompteng.ai',
 ]
 
+type CrdCheckState = {
+  ok: boolean
+  missing: string[]
+  checkedAt: string
+}
+
+let crdCheckState: CrdCheckState | null = null
+
 type Condition = {
   type: string
   status: 'True' | 'False' | 'Unknown'
@@ -103,7 +111,7 @@ const runKubectl = (args: string[]) =>
     child.on('close', (code) => resolve({ stdout, stderr, code }))
   })
 
-const checkCrds = async () => {
+const checkCrds = async (): Promise<CrdCheckState> => {
   const missing: string[] = []
   for (const name of REQUIRED_CRDS) {
     const result = await runKubectl(['get', 'crd', name, '-o', 'json'])
@@ -111,12 +119,24 @@ const checkCrds = async () => {
       missing.push(name)
     }
   }
-  if (missing.length > 0) {
+  const state = { ok: missing.length === 0, missing, checkedAt: nowIso() }
+  crdCheckState = state
+  if (!state.ok) {
     console.error('[jangar] missing required Agents CRDs:', missing.join(', '))
-    return false
+    console.error(
+      '[jangar] install the Agents Helm chart (charts/agents) or apply charts/agents/crds/*.yaml before starting the controller',
+    )
   }
-  return true
+  return state
 }
+
+export const getAgentsControllerHealth = () => ({
+  enabled: shouldStart(),
+  started,
+  crdsReady: crdCheckState?.ok ?? null,
+  missingCrds: crdCheckState?.missing ?? [],
+  lastCheckedAt: crdCheckState?.checkedAt ?? null,
+})
 
 const normalizeConditions = (raw: unknown): Condition[] => {
   if (!Array.isArray(raw)) return []
@@ -189,6 +209,9 @@ const getSecretData = async (kube: ReturnType<typeof createKubernetesClient>, na
 }
 
 const parseRuntimeRef = (raw: unknown): RuntimeRef | null => asRecord(raw) ?? null
+
+const resolveJobImage = (workload: Record<string, unknown>) =>
+  asString(workload.image) ?? process.env.JANGAR_AGENT_RUNNER_IMAGE ?? process.env.JANGAR_AGENT_IMAGE ?? null
 
 const renderTemplate = (template: string, context: Record<string, unknown>) =>
   template.replace(/\{\{\s*([^}]+)\s*\}\}/g, (_match, path) => {
@@ -589,6 +612,7 @@ const reconcileMemory = async (
   const conditions = buildConditions(memory)
   const memoryType = asString(readNested(memory, ['spec', 'type']))
   const secretName = asString(readNested(memory, ['spec', 'connection', 'secretRef', 'name']))
+  const secretKey = asString(readNested(memory, ['spec', 'connection', 'secretRef', 'key']))
   let updated = conditions
   if (!memoryType) {
     updated = upsertCondition(updated, {
@@ -613,6 +637,19 @@ const reconcileMemory = async (
         reason: 'SecretNotFound',
         message: `secret ${secretName} not found`,
       })
+    } else if (secretKey) {
+      const data = asRecord(secret.data) ?? {}
+      const stringData = asRecord(secret.stringData) ?? {}
+      if (!(secretKey in data) && !(secretKey in stringData)) {
+        updated = upsertCondition(updated, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: 'SecretKeyMissing',
+          message: `secret ${secretName} missing key ${secretKey}`,
+        })
+      } else {
+        updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'SecretResolved' })
+      }
     } else {
       updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'SecretResolved' })
     }
@@ -1033,10 +1070,9 @@ const submitJobRun = async (
   implementation: Record<string, unknown>,
   memory: Record<string, unknown> | null,
   namespace: string,
+  workloadImage: string,
 ) => {
   const workload = asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
-  const workloadImage =
-    asString(workload.image) ?? process.env.JANGAR_AGENT_RUNNER_IMAGE ?? process.env.JANGAR_AGENT_IMAGE ?? null
   if (!workloadImage) {
     throw new Error('spec.workload.image or JANGAR_AGENT_RUNNER_IMAGE is required for job runtime')
   }
@@ -1358,6 +1394,9 @@ const reconcileAgentRun = async (
   const conditions = buildConditions(agentRun)
   const observedGeneration = asRecord(agentRun.metadata)?.generation ?? 0
   const runtimeType = asString(readNested(spec, ['runtime', 'type']))
+  const runtimeConfig = asRecord(readNested(spec, ['runtime', 'config'])) ?? {}
+  const workload = asRecord(readNested(spec, ['workload'])) ?? {}
+  let workloadImage: string | null = null
 
   if (deleting) {
     if (hasFinalizer) {
@@ -1443,6 +1482,64 @@ const reconcileAgentRun = async (
       return
     }
 
+    if (runtimeType === 'job') {
+      workloadImage = resolveJobImage(workload)
+      if (!workloadImage) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: 'MissingWorkloadImage',
+          message: 'spec.workload.image or JANGAR_AGENT_RUNNER_IMAGE is required for job runtime',
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+    }
+
+    if (runtimeType === 'argo') {
+      const workflowTemplate = asString(runtimeConfig.workflowTemplate)
+      if (!workflowTemplate) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: 'MissingWorkflowTemplate',
+          message: 'spec.runtime.config.workflowTemplate is required for argo runtime',
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+    }
+
+    if (runtimeType === 'custom') {
+      const endpoint = asString(runtimeConfig.endpoint)
+      if (!endpoint) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: 'MissingEndpoint',
+          message: 'spec.runtime.config.endpoint is required for custom runtime',
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+    }
+
+    if (runtimeType === 'temporal') {
+      const workflowType = asString(runtimeConfig.workflowType)
+      const taskQueue = asString(runtimeConfig.taskQueue)
+      if (!workflowType || !taskQueue) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: 'MissingTemporalConfig',
+          message:
+            'spec.runtime.config.workflowType and spec.runtime.config.taskQueue are required for temporal runtime',
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+    }
+
     const agent = agentName ? await kube.get(RESOURCE_MAP.Agent, agentName, namespace) : null
     if (!agent) {
       const updated = upsertCondition(conditions, {
@@ -1488,7 +1585,6 @@ const reconcileAgentRun = async (
     }
 
     if (allowedServiceAccounts.length > 0 && (runtimeType === 'job' || runtimeType === 'argo')) {
-      const runtimeConfig = asRecord(readNested(spec, ['runtime', 'config'])) ?? {}
       const rawServiceAccount = asString(runtimeConfig.serviceAccount)
       const effectiveServiceAccount = rawServiceAccount || 'default'
       if (!allowedServiceAccounts.includes(effectiveServiceAccount)) {
@@ -1565,7 +1661,16 @@ const reconcileAgentRun = async (
     let newRuntimeRef: RuntimeRef | null = null
     try {
       if (runtimeType === 'job') {
-        newRuntimeRef = await submitJobRun(kube, agentRun, agent, provider, implResource, memory, namespace)
+        newRuntimeRef = await submitJobRun(
+          kube,
+          agentRun,
+          agent,
+          provider,
+          implResource,
+          memory,
+          namespace,
+          workloadImage ?? '',
+        )
       } else if (runtimeType === 'argo') {
         newRuntimeRef = await submitArgoRun(kube, agentRun, namespace)
       } else if (runtimeType === 'custom') {
@@ -1754,7 +1859,7 @@ const reconcileOnce = async () => {
 export const startAgentsController = async () => {
   if (started || !shouldStart()) return
   const crdsReady = await checkCrds()
-  if (!crdsReady) {
+  if (!crdsReady.ok) {
     console.error('[jangar] agents controller will not start without CRDs')
     return
   }
@@ -1772,4 +1877,11 @@ export const stopAgentsController = () => {
     intervalRef = null
   }
   started = false
+}
+
+export const __test = {
+  checkCrds,
+  reconcileAgentRun,
+  reconcileMemory,
+  resolveJobImage,
 }
