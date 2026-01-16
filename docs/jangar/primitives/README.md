@@ -4,6 +4,10 @@ This directory documents the domain primitives used by the Jangar control plane 
 primitives are designed to be provider-decoupled and compatible with Crossplane configuration packages, while
 integrating with the existing Argo workflow runtime in this repository.
 
+**Note:** Agents primitives now ship as native CRDs installed by `charts/agents`. The Crossplane-based
+`configuration-agents` package is deprecated and retained only for reference under
+`packages/crossplane/deprecated/configuration-agents`.
+
 ## Scope
 
 These documents describe:
@@ -17,7 +21,8 @@ These documents describe:
 
 ## Repository locations
 
-- Crossplane configuration packages: `packages/crossplane/`
+- Native Agents CRDs + chart: `charts/agents/`
+- Crossplane configuration packages: `packages/crossplane/` (Agents package deprecated)
 - GitOps delivery (Argo CD apps): `argocd/applications/`
 - Argo workflow templates: `argocd/applications/argo-workflows/`, `argocd/applications/froussard/`
 - Facteur orchestration runtime: `services/facteur/internal/argo/`, `services/facteur/internal/orchestrator/`

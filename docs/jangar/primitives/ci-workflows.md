@@ -24,9 +24,6 @@ jobs:
         run: |
           curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
           sudo mv crp /usr/local/bin/crossplane
-      - name: Build agents package
-        run: |
-          crossplane xpkg build --package-root=packages/crossplane/configuration-agents --ignore='**/examples/**'
       - name: Build memory package
         run: |
           crossplane xpkg build --package-root=packages/crossplane/configuration-memory --ignore='**/examples/**'
@@ -40,6 +37,9 @@ jobs:
 - Must run on PR and main
 - Must fail if `crossplane.yaml` is missing or malformed
 - Must fail if non-XRD/Composition YAML is included
+
+**Note:** The `configuration-agents` package is deprecated in favor of the native Agents CRDs installed
+via `charts/agents`.
 
 ## 3) Optional release step (main)
 

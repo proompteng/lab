@@ -22,10 +22,6 @@ jobs:
           else
             sudo mv crossplane /usr/local/bin/crossplane
           fi
-      - name: Build agents package
-        working-directory: packages/crossplane/configuration-agents
-        run: |
-          crossplane xpkg build --package-root=. --ignore='**/examples/**'
       - name: Build memory package
         working-directory: packages/crossplane/configuration-memory
         run: |
@@ -99,10 +95,6 @@ jobs:
           else
             sudo mv crossplane /usr/local/bin/crossplane
           fi
-      - name: Build agents package
-        working-directory: packages/crossplane/configuration-agents
-        run: |
-          crossplane xpkg build --package-root=. --ignore='**/examples/**'
       - name: Build memory package
         working-directory: packages/crossplane/configuration-memory
         run: |
@@ -121,7 +113,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG_SHA="${GITHUB_SHA::12}"
-          for name in agents memory orchestration supporting; do
+          for name in memory orchestration supporting; do
             pkg_dir="packages/crossplane/configuration-${name}"
             pkg_file="$(ls "${pkg_dir}"/*.xpkg)"
             crossplane xpkg push -f "${pkg_file}" "${TARGET_REGISTRY}/configuration-${name}:latest"

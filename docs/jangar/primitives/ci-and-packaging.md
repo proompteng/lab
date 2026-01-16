@@ -10,10 +10,6 @@ Example:
 ```
 packages/
   crossplane/
-    configuration-agents/
-      crossplane.yaml
-      apis/
-      compositions/
     configuration-memory/
       crossplane.yaml
       apis/
@@ -41,9 +37,12 @@ Example validation command:
 
 ```
 crossplane xpkg build \
-  --package-root=packages/crossplane/configuration-agents \
+  --package-root=packages/crossplane/configuration-memory \
   --ignore="**/examples/**"
 ```
+
+**Note:** The `configuration-agents` package is deprecated in favor of the native Agents CRDs installed
+via `charts/agents`.
 
 ## GitOps delivery
 

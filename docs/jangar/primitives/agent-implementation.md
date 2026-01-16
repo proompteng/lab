@@ -1,5 +1,9 @@
 # Agent Primitive (Implementation-Grade Spec)
 
+**Deprecated notice (2026-01-16):** This document describes the Crossplane-based Agents XRDs. The
+native Agents CRDs installed by `charts/agents` are now the supported implementation. Use the
+native CRDs for new deployments and consult `docs/agents/crossplane-migration.md` for migration.
+
 This document is implementation-grade. It defines the exact CRD schema, runtime contract, and Crossplane
 composition needed to deploy the Agent primitive in production.
 

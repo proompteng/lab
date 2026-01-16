@@ -7,7 +7,6 @@ resources:
   - rbac/crossplane-function-access.yaml
   - rbac/crossplane-workflowtemplate-access.yaml
   - rbac/crossplane-supporting-primitives-access.yaml
-  - configurations/configuration-agents.yaml
   - configurations/configuration-memory.yaml
   - configurations/configuration-orchestration.yaml
   - configurations/configuration-supporting.yaml
