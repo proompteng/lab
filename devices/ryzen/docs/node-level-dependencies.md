@@ -89,6 +89,78 @@ Use a **tagged, pre-approved** auth key for servers to avoid interactive approva
 ExtensionServiceConfig documents are applied to Talos machine config (for example via `talosctl patch mc`). DeepWiki’s extension overview shows applying the config via patch and verifying it with `talosctl`.
 - https://deepwiki.com/siderolabs/extensions/3.4-networking-extensions
 
+### Ryzen reproducible setup (Talos v1.12.1)
+This is the exact workflow used to enable node-level Tailscale on the Ryzen Talos node.
+
+#### 1) Build a new Image Factory schematic (add tailscale)
+Keep existing extensions and add `siderolabs/tailscale`:
+
+```yaml
+customization:
+  systemExtensions:
+    officialExtensions:
+      - siderolabs/kata-containers
+      - siderolabs/glibc
+      - siderolabs/tailscale
+```
+
+Create the schematic and capture its ID:
+
+```bash
+curl -sS -X POST --data-binary @/tmp/ryzen-tailscale-schematic.yaml https://factory.talos.dev/schematics | jq -r .id
+```
+
+#### 2) Patch machine config (image + ExtensionServiceConfig)
+Use a tagged, pre-approved auth key in `TAILSCALE_AUTHKEY` and apply the patch:
+
+```bash
+export TALOSCONFIG=~/.talos/config
+export TAILSCALE_AUTHKEY=tskey-auth-REDACTED
+
+cat > /tmp/ryzen-tailscale.patch.yaml <<'EOF'
+machine:
+  install:
+    image: factory.talos.dev/metal-installer/<schematic-id>:v1.12.1
+---
+apiVersion: v1alpha1
+kind: ExtensionServiceConfig
+name: tailscale
+environment:
+  - TS_AUTHKEY=${TAILSCALE_AUTHKEY}
+  - TS_HOSTNAME=ryzen
+  - TS_ROUTES=10.96.0.0/12,10.244.0.0/16
+EOF
+
+talosctl patch machineconfig --patch @/tmp/ryzen-tailscale.patch.yaml
+```
+
+#### 3) Upgrade Talos to activate the extension
+Extensions activate only on install/upgrade.
+
+```bash
+talosctl upgrade --image factory.talos.dev/metal-installer/<schematic-id>:v1.12.1
+```
+
+#### 4) Validate
+
+```bash
+talosctl get extensions
+talosctl get extensionserviceconfig
+talosctl service
+talosctl logs ext-tailscale --tail 200
+```
+
+Expected: `tailscale` extension installed, `ext-tailscale` service running, and logs show active login with `ryzen` hostname.
+
+#### 5) Drain guardrail (kubevirt PDB)
+If the upgrade drain hangs, check for blocking PDBs. The Ryzen node had:
+
+```bash
+kubectl -n kubevirt get pdb
+```
+
+Deleting `virt-controller-pdb` unblocked the drain during the upgrade. Recreate it after the node returns Ready if needed.
+
 ### Validate
 - Confirm Tailscale extension is installed: `talosctl get extensions`
 - Confirm the extension service is running and logs are visible via `talosctl service` / `talosctl logs` for the extension service name (extension services are documented by Talos).
