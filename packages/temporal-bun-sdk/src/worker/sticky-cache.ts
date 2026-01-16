@@ -1,7 +1,7 @@
 import { Effect, Ref } from 'effect'
 
 import type { Counter } from '../observability/metrics'
-import type { ActivityResolution } from '../workflow/context'
+import type { ActivityResolution, NexusOperationResolution } from '../workflow/context'
 import type { WorkflowDeterminismState } from '../workflow/determinism'
 
 export interface StickyCacheKey {
@@ -18,6 +18,8 @@ export interface StickyCacheEntry {
   readonly workflowArguments?: unknown[]
   readonly activityResults?: Map<string, ActivityResolution>
   readonly activityScheduleEventIds?: Map<string, string>
+  readonly nexusResults?: Map<string, NexusOperationResolution>
+  readonly nexusScheduleEventIds?: Map<string, string>
   readonly timerResults?: ReadonlySet<string>
   readonly workflowType?: string
   readonly workflowTaskCount?: number

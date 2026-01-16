@@ -29,6 +29,8 @@ const DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS = 5_000
 const DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS = 5_000
 const DEFAULT_LOG_LEVEL: LogLevel = 'info'
 const DEFAULT_LOG_FORMAT: LogFormat = 'pretty'
+const DEFAULT_CLOUD_ADDRESS = 'saas-api.tmprl.cloud:443'
+const DEFAULT_CLOUD_API_VERSION = '2025-05-31'
 const DEFAULT_TRACING_INTERCEPTORS_ENABLED = true
 const DEFAULT_DETERMINISM_MARKER_MODE: DeterminismMarkerMode = 'delta'
 const DEFAULT_DETERMINISM_MARKER_INTERVAL_TASKS = 10
@@ -109,6 +111,9 @@ const TemporalConfigSchema = Schema.Struct({
   namespace: Schema.String,
   taskQueue: Schema.String,
   apiKey: Schema.optional(Schema.String),
+  cloudAddress: Schema.optional(Schema.String),
+  cloudApiKey: Schema.optional(Schema.String),
+  cloudApiVersion: Schema.optional(Schema.String),
   tls: Schema.optional(TLSConfigSchema),
   allowInsecureTls: Schema.Boolean,
   workerIdentity: Schema.String,
@@ -152,6 +157,9 @@ export interface TemporalEnvironment {
   TEMPORAL_NAMESPACE?: string
   TEMPORAL_TASK_QUEUE?: string
   TEMPORAL_API_KEY?: string
+  TEMPORAL_CLOUD_ADDRESS?: string
+  TEMPORAL_CLOUD_API_KEY?: string
+  TEMPORAL_CLOUD_API_VERSION?: string
   TEMPORAL_TLS_CA_PATH?: string
   TEMPORAL_TLS_CERT_PATH?: string
   TEMPORAL_TLS_KEY_PATH?: string
@@ -467,6 +475,9 @@ export interface TemporalConfig {
   namespace: string
   taskQueue: string
   apiKey?: string
+  cloudAddress?: string
+  cloudApiKey?: string
+  cloudApiVersion?: string
   tls?: TLSConfig
   allowInsecureTls: boolean
   workerIdentity: string
@@ -800,6 +811,14 @@ export const loadTemporalConfigEffect = (
     )
     const rpcRetryPolicy = resolveClientRetryPolicy(env, defaults.rpcRetryPolicy)
     const payloadCodecs = parsePayloadCodecs(env, defaults.payloadCodecs)
+    const configuredCloudAddress = env.TEMPORAL_CLOUD_ADDRESS ?? defaults.cloudAddress
+    const cloudApiKey = env.TEMPORAL_CLOUD_API_KEY ?? defaults.cloudApiKey
+    const resolvedCloudAddress =
+      configuredCloudAddress ?? (cloudApiKey || env.TEMPORAL_CLOUD_API_VERSION ? DEFAULT_CLOUD_ADDRESS : undefined)
+    const cloudApiVersion =
+      env.TEMPORAL_CLOUD_API_VERSION ??
+      defaults.cloudApiVersion ??
+      (resolvedCloudAddress ? DEFAULT_CLOUD_API_VERSION : undefined)
 
     const config: TemporalConfig = {
       host,
@@ -808,6 +827,9 @@ export const loadTemporalConfigEffect = (
       namespace,
       taskQueue,
       apiKey: env.TEMPORAL_API_KEY ?? defaults.apiKey,
+      cloudAddress: resolvedCloudAddress,
+      cloudApiKey,
+      cloudApiVersion,
       tls,
       allowInsecureTls,
       workerIdentity,
@@ -860,6 +882,9 @@ export const temporalDefaults = {
   port: DEFAULT_PORT,
   namespace: DEFAULT_NAMESPACE,
   taskQueue: DEFAULT_TASK_QUEUE,
+  cloudAddress: undefined,
+  cloudApiKey: undefined,
+  cloudApiVersion: undefined,
   workerIdentityPrefix: DEFAULT_IDENTITY_PREFIX,
   workerWorkflowConcurrency: DEFAULT_WORKFLOW_CONCURRENCY,
   workerActivityConcurrency: DEFAULT_ACTIVITY_CONCURRENCY,
@@ -887,6 +912,9 @@ export const temporalDefaults = {
   | 'port'
   | 'namespace'
   | 'taskQueue'
+  | 'cloudAddress'
+  | 'cloudApiKey'
+  | 'cloudApiVersion'
   | 'workerIdentityPrefix'
   | 'workerWorkflowConcurrency'
   | 'workerActivityConcurrency'

@@ -22,6 +22,7 @@ import { materializeCommands, type StartChildWorkflowCommandIntent, type Workflo
 import {
   type ActivityResolution,
   createWorkflowContext,
+  type NexusOperationResolution,
   type WorkflowCommandContext,
   type WorkflowContext,
   type WorkflowInfo,
@@ -101,6 +102,8 @@ export interface ExecuteWorkflowInput {
   readonly determinismState?: WorkflowDeterminismState
   readonly activityResults?: Map<string, ActivityResolution>
   readonly activityScheduleEventIds?: Map<string, string>
+  readonly nexusResults?: Map<string, NexusOperationResolution>
+  readonly nexusScheduleEventIds?: Map<string, string>
   readonly pendingChildWorkflows?: ReadonlySet<string>
   readonly signalDeliveries?: readonly WorkflowSignalDeliveryInput[]
   readonly timerResults?: ReadonlySet<string>
@@ -178,6 +181,8 @@ export class WorkflowExecutor {
         determinismGuard: guard,
         activityResults: input.activityResults,
         activityScheduleEventIds: input.activityScheduleEventIds,
+        nexusResults: input.nexusResults,
+        nexusScheduleEventIds: input.nexusScheduleEventIds,
         signalDeliveries: input.signalDeliveries,
         timerResults: input.timerResults,
         updates: definition.updates,

@@ -48,6 +48,7 @@ interface ReplayCommandOptions {
   readonly temporalCliPath?: string
   readonly source: ReplayHistorySourcePreference
   readonly jsonOutput: boolean
+  readonly debug: boolean
 }
 
 const isReplayOptions = (value: unknown): value is ReplayCommandOptions =>
@@ -146,6 +147,12 @@ const executeReplayInternal = (
     const config = yield* TemporalConfigService
     const { logger, metricsRegistry, metricsExporter } = yield* ObservabilityService
     const workflowService = yield* WorkflowServiceClientService
+    if (options.debug) {
+      yield* Effect.sync(() => {
+        // biome-ignore lint/suspicious/noDebugger: intentional breakpoint for --debug replay mode
+        debugger
+      })
+    }
     const historyOutcome = yield* Effect.tryPromise({
       try: () => loadReplayHistory(options, config, workflowService),
       catch: (error) =>
@@ -291,6 +298,7 @@ export const parseReplayOptions = (flags: Record<string, string | boolean>): Rep
   const temporalCliPath = readStringFlag(flags['temporal-cli']) ?? process.env.TEMPORAL_CLI_PATH
   const sourceValue = readStringFlag(flags.source)?.toLowerCase() as ReplayHistorySourcePreference | undefined
   const jsonOutput = readBooleanFlag(flags.json)
+  const debug = readBooleanFlag(flags.debug)
 
   if ((historyFile ? 1 : 0) + (executionFlag ? 1 : 0) !== 1) {
     throw new ReplayCommandError('Provide exactly one of --history-file or --execution <workflowId/runId>')
@@ -312,6 +320,7 @@ export const parseReplayOptions = (flags: Record<string, string | boolean>): Rep
     temporalCliPath,
     source,
     jsonOutput,
+    debug,
   }
 }
 

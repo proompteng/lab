@@ -9,7 +9,7 @@ import { enumDesc, fileDesc } from "@bufbuild/protobuf/codegenv2";
  * Describes the file temporal/api/enums/v1/workflow.proto.
  */
 export const file_temporal_api_enums_v1_workflow: GenFile = /*@__PURE__*/
-  fileDesc("CiR0ZW1wb3JhbC9hcGkvZW51bXMvdjEvd29ya2Zsb3cucHJvdG8SFXRlbXBvcmFsLmFwaS5lbnVtcy52MSqLAgoVV29ya2Zsb3dJZFJldXNlUG9saWN5EigKJFdPUktGTE9XX0lEX1JFVVNFX1BPTElDWV9VTlNQRUNJRklFRBAAEiwKKFdPUktGTE9XX0lEX1JFVVNFX1BPTElDWV9BTExPV19EVVBMSUNBVEUQARI4CjRXT1JLRkxPV19JRF9SRVVTRV9QT0xJQ1lfQUxMT1dfRFVQTElDQVRFX0ZBSUxFRF9PTkxZEAISLQopV09SS0ZMT1dfSURfUkVVU0VfUE9MSUNZX1JFSkVDVF9EVVBMSUNBVEUQAxIxCi1XT1JLRkxPV19JRF9SRVVTRV9QT0xJQ1lfVEVSTUlOQVRFX0lGX1JVTk5JTkcQBCrPAQoYV29ya2Zsb3dJZENvbmZsaWN0UG9saWN5EisKJ1dPUktGTE9XX0lEX0NPTkZMSUNUX1BPTElDWV9VTlNQRUNJRklFRBAAEiQKIFdPUktGTE9XX0lEX0NPTkZMSUNUX1BPTElDWV9GQUlMEAESLAooV09SS0ZMT1dfSURfQ09ORkxJQ1RfUE9MSUNZX1VTRV9FWElTVElORxACEjIKLldPUktGTE9XX0lEX0NPTkZMSUNUX1BPTElDWV9URVJNSU5BVEVfRVhJU1RJTkcQAyqkAQoRUGFyZW50Q2xvc2VQb2xpY3kSIwofUEFSRU5UX0NMT1NFX1BPTElDWV9VTlNQRUNJRklFRBAAEiEKHVBBUkVOVF9DTE9TRV9QT0xJQ1lfVEVSTUlOQVRFEAESHwobUEFSRU5UX0NMT1NFX1BPTElDWV9BQkFORE9OEAISJgoiUEFSRU5UX0NMT1NFX1BPTElDWV9SRVFVRVNUX0NBTkNFTBADKr0BChZDb250aW51ZUFzTmV3SW5pdGlhdG9yEikKJUNPTlRJTlVFX0FTX05FV19JTklUSUFUT1JfVU5TUEVDSUZJRUQQABImCiJDT05USU5VRV9BU19ORVdfSU5JVElBVE9SX1dPUktGTE9XEAESIwofQ09OVElOVUVfQVNfTkVXX0lOSVRJQVRPUl9SRVRSWRACEisKJ0NPTlRJTlVFX0FTX05FV19JTklUSUFUT1JfQ1JPTl9TQ0hFRFVMRRADKuUCChdXb3JrZmxvd0V4ZWN1dGlvblN0YXR1cxIpCiVXT1JLRkxPV19FWEVDVVRJT05fU1RBVFVTX1VOU1BFQ0lGSUVEEAASJQohV09SS0ZMT1dfRVhFQ1VUSU9OX1NUQVRVU19SVU5OSU5HEAESJwojV09SS0ZMT1dfRVhFQ1VUSU9OX1NUQVRVU19DT01QTEVURUQQAhIkCiBXT1JLRkxPV19FWEVDVVRJT05fU1RBVFVTX0ZBSUxFRBADEiYKIldPUktGTE9XX0VYRUNVVElPTl9TVEFUVVNfQ0FOQ0VMRUQQBBIoCiRXT1JLRkxPV19FWEVDVVRJT05fU1RBVFVTX1RFUk1JTkFURUQQBRIuCipXT1JLRkxPV19FWEVDVVRJT05fU1RBVFVTX0NPTlRJTlVFRF9BU19ORVcQBhInCiNXT1JLRkxPV19FWEVDVVRJT05fU1RBVFVTX1RJTUVEX09VVBAHKoQCChRQZW5kaW5nQWN0aXZpdHlTdGF0ZRImCiJQRU5ESU5HX0FDVElWSVRZX1NUQVRFX1VOU1BFQ0lGSUVEEAASJAogUEVORElOR19BQ1RJVklUWV9TVEFURV9TQ0hFRFVMRUQQARIiCh5QRU5ESU5HX0FDVElWSVRZX1NUQVRFX1NUQVJURUQQAhIrCidQRU5ESU5HX0FDVElWSVRZX1NUQVRFX0NBTkNFTF9SRVFVRVNURUQQAxIhCh1QRU5ESU5HX0FDVElWSVRZX1NUQVRFX1BBVVNFRBAEEioKJlBFTkRJTkdfQUNUSVZJVFlfU1RBVEVfUEFVU0VfUkVRVUVTVEVEEAUqmwEKGFBlbmRpbmdXb3JrZmxvd1Rhc2tTdGF0ZRIrCidQRU5ESU5HX1dPUktGTE9XX1RBU0tfU1RBVEVfVU5TUEVDSUZJRUQQABIpCiVQRU5ESU5HX1dPUktGTE9XX1RBU0tfU1RBVEVfU0NIRURVTEVEEAESJwojUEVORElOR19XT1JLRkxPV19UQVNLX1NUQVRFX1NUQVJURUQQAiqXAQoWSGlzdG9yeUV2ZW50RmlsdGVyVHlwZRIpCiVISVNUT1JZX0VWRU5UX0ZJTFRFUl9UWVBFX1VOU1BFQ0lGSUVEEAASJwojSElTVE9SWV9FVkVOVF9GSUxURVJfVFlQRV9BTExfRVZFTlQQARIpCiVISVNUT1JZX0VWRU5UX0ZJTFRFUl9UWVBFX0NMT1NFX0VWRU5UEAIqnwIKClJldHJ5U3RhdGUSGwoXUkVUUllfU1RBVEVfVU5TUEVDSUZJRUQQABIbChdSRVRSWV9TVEFURV9JTl9QUk9HUkVTUxABEiUKIVJFVFJZX1NUQVRFX05PTl9SRVRSWUFCTEVfRkFJTFVSRRACEhcKE1JFVFJZX1NUQVRFX1RJTUVPVVQQAxIoCiRSRVRSWV9TVEFURV9NQVhJTVVNX0FUVEVNUFRTX1JFQUNIRUQQBBIkCiBSRVRSWV9TVEFURV9SRVRSWV9QT0xJQ1lfTk9UX1NFVBAFEiUKIVJFVFJZX1NUQVRFX0lOVEVSTkFMX1NFUlZFUl9FUlJPUhAGEiAKHFJFVFJZX1NUQVRFX0NBTkNFTF9SRVFVRVNURUQQByqwAQoLVGltZW91dFR5cGUSHAoYVElNRU9VVF9UWVBFX1VOU1BFQ0lGSUVEEAASHwobVElNRU9VVF9UWVBFX1NUQVJUX1RPX0NMT1NFEAESIgoeVElNRU9VVF9UWVBFX1NDSEVEVUxFX1RPX1NUQVJUEAISIgoeVElNRU9VVF9UWVBFX1NDSEVEVUxFX1RPX0NMT1NFEAMSGgoWVElNRU9VVF9UWVBFX0hFQVJUQkVBVBAEKn8KElZlcnNpb25pbmdCZWhhdmlvchIjCh9WRVJTSU9OSU5HX0JFSEFWSU9SX1VOU1BFQ0lGSUVEEAASHgoaVkVSU0lPTklOR19CRUhBVklPUl9QSU5ORUQQARIkCiBWRVJTSU9OSU5HX0JFSEFWSU9SX0FVVE9fVVBHUkFERRACQoUBChhpby50ZW1wb3JhbC5hcGkuZW51bXMudjFCDVdvcmtmbG93UHJvdG9QAVohZ28udGVtcG9yYWwuaW8vYXBpL2VudW1zL3YxO2VudW1zqgIXVGVtcG9yYWxpby5BcGkuRW51bXMuVjHqAhpUZW1wb3JhbGlvOjpBcGk6OkVudW1zOjpWMWIGcHJvdG8z");
+  fileDesc("CiR0ZW1wb3JhbC9hcGkvZW51bXMvdjEvd29ya2Zsb3cucHJvdG8SFXRlbXBvcmFsLmFwaS5lbnVtcy52MSqPAgoVV29ya2Zsb3dJZFJldXNlUG9saWN5EigKJFdPUktGTE9XX0lEX1JFVVNFX1BPTElDWV9VTlNQRUNJRklFRBAAEiwKKFdPUktGTE9XX0lEX1JFVVNFX1BPTElDWV9BTExPV19EVVBMSUNBVEUQARI4CjRXT1JLRkxPV19JRF9SRVVTRV9QT0xJQ1lfQUxMT1dfRFVQTElDQVRFX0ZBSUxFRF9PTkxZEAISLQopV09SS0ZMT1dfSURfUkVVU0VfUE9MSUNZX1JFSkVDVF9EVVBMSUNBVEUQAxI1Ci1XT1JLRkxPV19JRF9SRVVTRV9QT0xJQ1lfVEVSTUlOQVRFX0lGX1JVTk5JTkcQBBoCCAEqzwEKGFdvcmtmbG93SWRDb25mbGljdFBvbGljeRIrCidXT1JLRkxPV19JRF9DT05GTElDVF9QT0xJQ1lfVU5TUEVDSUZJRUQQABIkCiBXT1JLRkxPV19JRF9DT05GTElDVF9QT0xJQ1lfRkFJTBABEiwKKFdPUktGTE9XX0lEX0NPTkZMSUNUX1BPTElDWV9VU0VfRVhJU1RJTkcQAhIyCi5XT1JLRkxPV19JRF9DT05GTElDVF9QT0xJQ1lfVEVSTUlOQVRFX0VYSVNUSU5HEAMqpAEKEVBhcmVudENsb3NlUG9saWN5EiMKH1BBUkVOVF9DTE9TRV9QT0xJQ1lfVU5TUEVDSUZJRUQQABIhCh1QQVJFTlRfQ0xPU0VfUE9MSUNZX1RFUk1JTkFURRABEh8KG1BBUkVOVF9DTE9TRV9QT0xJQ1lfQUJBTkRPThACEiYKIlBBUkVOVF9DTE9TRV9QT0xJQ1lfUkVRVUVTVF9DQU5DRUwQAyq9AQoWQ29udGludWVBc05ld0luaXRpYXRvchIpCiVDT05USU5VRV9BU19ORVdfSU5JVElBVE9SX1VOU1BFQ0lGSUVEEAASJgoiQ09OVElOVUVfQVNfTkVXX0lOSVRJQVRPUl9XT1JLRkxPVxABEiMKH0NPTlRJTlVFX0FTX05FV19JTklUSUFUT1JfUkVUUlkQAhIrCidDT05USU5VRV9BU19ORVdfSU5JVElBVE9SX0NST05fU0NIRURVTEUQAyqLAwoXV29ya2Zsb3dFeGVjdXRpb25TdGF0dXMSKQolV09SS0ZMT1dfRVhFQ1VUSU9OX1NUQVRVU19VTlNQRUNJRklFRBAAEiUKIVdPUktGTE9XX0VYRUNVVElPTl9TVEFUVVNfUlVOTklORxABEicKI1dPUktGTE9XX0VYRUNVVElPTl9TVEFUVVNfQ09NUExFVEVEEAISJAogV09SS0ZMT1dfRVhFQ1VUSU9OX1NUQVRVU19GQUlMRUQQAxImCiJXT1JLRkxPV19FWEVDVVRJT05fU1RBVFVTX0NBTkNFTEVEEAQSKAokV09SS0ZMT1dfRVhFQ1VUSU9OX1NUQVRVU19URVJNSU5BVEVEEAUSLgoqV09SS0ZMT1dfRVhFQ1VUSU9OX1NUQVRVU19DT05USU5VRURfQVNfTkVXEAYSJwojV09SS0ZMT1dfRVhFQ1VUSU9OX1NUQVRVU19USU1FRF9PVVQQBxIkCiBXT1JLRkxPV19FWEVDVVRJT05fU1RBVFVTX1BBVVNFRBAIKoQCChRQZW5kaW5nQWN0aXZpdHlTdGF0ZRImCiJQRU5ESU5HX0FDVElWSVRZX1NUQVRFX1VOU1BFQ0lGSUVEEAASJAogUEVORElOR19BQ1RJVklUWV9TVEFURV9TQ0hFRFVMRUQQARIiCh5QRU5ESU5HX0FDVElWSVRZX1NUQVRFX1NUQVJURUQQAhIrCidQRU5ESU5HX0FDVElWSVRZX1NUQVRFX0NBTkNFTF9SRVFVRVNURUQQAxIhCh1QRU5ESU5HX0FDVElWSVRZX1NUQVRFX1BBVVNFRBAEEioKJlBFTkRJTkdfQUNUSVZJVFlfU1RBVEVfUEFVU0VfUkVRVUVTVEVEEAUqmwEKGFBlbmRpbmdXb3JrZmxvd1Rhc2tTdGF0ZRIrCidQRU5ESU5HX1dPUktGTE9XX1RBU0tfU1RBVEVfVU5TUEVDSUZJRUQQABIpCiVQRU5ESU5HX1dPUktGTE9XX1RBU0tfU1RBVEVfU0NIRURVTEVEEAESJwojUEVORElOR19XT1JLRkxPV19UQVNLX1NUQVRFX1NUQVJURUQQAiqXAQoWSGlzdG9yeUV2ZW50RmlsdGVyVHlwZRIpCiVISVNUT1JZX0VWRU5UX0ZJTFRFUl9UWVBFX1VOU1BFQ0lGSUVEEAASJwojSElTVE9SWV9FVkVOVF9GSUxURVJfVFlQRV9BTExfRVZFTlQQARIpCiVISVNUT1JZX0VWRU5UX0ZJTFRFUl9UWVBFX0NMT1NFX0VWRU5UEAIqnwIKClJldHJ5U3RhdGUSGwoXUkVUUllfU1RBVEVfVU5TUEVDSUZJRUQQABIbChdSRVRSWV9TVEFURV9JTl9QUk9HUkVTUxABEiUKIVJFVFJZX1NUQVRFX05PTl9SRVRSWUFCTEVfRkFJTFVSRRACEhcKE1JFVFJZX1NUQVRFX1RJTUVPVVQQAxIoCiRSRVRSWV9TVEFURV9NQVhJTVVNX0FUVEVNUFRTX1JFQUNIRUQQBBIkCiBSRVRSWV9TVEFURV9SRVRSWV9QT0xJQ1lfTk9UX1NFVBAFEiUKIVJFVFJZX1NUQVRFX0lOVEVSTkFMX1NFUlZFUl9FUlJPUhAGEiAKHFJFVFJZX1NUQVRFX0NBTkNFTF9SRVFVRVNURUQQByqwAQoLVGltZW91dFR5cGUSHAoYVElNRU9VVF9UWVBFX1VOU1BFQ0lGSUVEEAASHwobVElNRU9VVF9UWVBFX1NUQVJUX1RPX0NMT1NFEAESIgoeVElNRU9VVF9UWVBFX1NDSEVEVUxFX1RPX1NUQVJUEAISIgoeVElNRU9VVF9UWVBFX1NDSEVEVUxFX1RPX0NMT1NFEAMSGgoWVElNRU9VVF9UWVBFX0hFQVJUQkVBVBAEKn8KElZlcnNpb25pbmdCZWhhdmlvchIjCh9WRVJTSU9OSU5HX0JFSEFWSU9SX1VOU1BFQ0lGSUVEEAASHgoaVkVSU0lPTklOR19CRUhBVklPUl9QSU5ORUQQARIkCiBWRVJTSU9OSU5HX0JFSEFWSU9SX0FVVE9fVVBHUkFERRACKowBCh9Db250aW51ZUFzTmV3VmVyc2lvbmluZ0JlaGF2aW9yEjMKL0NPTlRJTlVFX0FTX05FV19WRVJTSU9OSU5HX0JFSEFWSU9SX1VOU1BFQ0lGSUVEEAASNAowQ09OVElOVUVfQVNfTkVXX1ZFUlNJT05JTkdfQkVIQVZJT1JfQVVUT19VUEdSQURFEAEqxQIKGlN1Z2dlc3RDb250aW51ZUFzTmV3UmVhc29uEi4KKlNVR0dFU1RfQ09OVElOVUVfQVNfTkVXX1JFQVNPTl9VTlNQRUNJRklFRBAAEjkKNVNVR0dFU1RfQ09OVElOVUVfQVNfTkVXX1JFQVNPTl9ISVNUT1JZX1NJWkVfVE9PX0xBUkdFEAESOgo2U1VHR0VTVF9DT05USU5VRV9BU19ORVdfUkVBU09OX1RPT19NQU5ZX0hJU1RPUllfRVZFTlRTEAISMwovU1VHR0VTVF9DT05USU5VRV9BU19ORVdfUkVBU09OX1RPT19NQU5ZX1VQREFURVMQAxJLCkdTVUdHRVNUX0NPTlRJTlVFX0FTX05FV19SRUFTT05fVEFSR0VUX1dPUktFUl9ERVBMT1lNRU5UX1ZFUlNJT05fQ0hBTkdFRBAEQoUBChhpby50ZW1wb3JhbC5hcGkuZW51bXMudjFCDVdvcmtmbG93UHJvdG9QAVohZ28udGVtcG9yYWwuaW8vYXBpL2VudW1zL3YxO2VudW1zqgIXVGVtcG9yYWxpby5BcGkuRW51bXMuVjHqAhpUZW1wb3JhbGlvOjpBcGk6OkVudW1zOjpWMWIGcHJvdG8z");
 
 /**
  * Defines whether to allow re-using a workflow id from a previously *closed* workflow.
@@ -49,12 +49,15 @@ export enum WorkflowIdReusePolicy {
   REJECT_DUPLICATE = 3,
 
   /**
-   * This option belongs in WorkflowIdConflictPolicy but is here for backwards compatibility.
-   * If specified, it acts like ALLOW_DUPLICATE, but also the WorkflowId*Conflict*Policy on
-   * the request is treated as WORKFLOW_ID_CONFLICT_POLICY_TERMINATE_EXISTING.
-   * If no running workflow, then the behavior is the same as ALLOW_DUPLICATE.
+   * Terminate the current Workflow if one is already running; otherwise allow reusing the
+   * Workflow ID. When using this option, `WorkflowIdConflictPolicy` must be left unspecified.
    *
-   * @generated from enum value: WORKFLOW_ID_REUSE_POLICY_TERMINATE_IF_RUNNING = 4;
+   * Deprecated. Instead, set `WorkflowIdReusePolicy` to `ALLOW_DUPLICATE` and
+   * `WorkflowIdConflictPolicy` to `TERMINATE_EXISTING`. Note that `WorkflowIdConflictPolicy`
+   * requires Temporal Server v1.24.0 or later.
+   *
+   * @generated from enum value: WORKFLOW_ID_REUSE_POLICY_TERMINATE_IF_RUNNING = 4 [deprecated = true];
+   * @deprecated
    */
   TERMINATE_IF_RUNNING = 4,
 }
@@ -231,6 +234,11 @@ export enum WorkflowExecutionStatus {
    * @generated from enum value: WORKFLOW_EXECUTION_STATUS_TIMED_OUT = 7;
    */
   TIMED_OUT = 7,
+
+  /**
+   * @generated from enum value: WORKFLOW_EXECUTION_STATUS_PAUSED = 8;
+   */
+  PAUSED = 8,
 }
 
 /**
@@ -445,9 +453,15 @@ export enum VersioningBehavior {
   UNSPECIFIED = 0,
 
   /**
-   * Workflow will start on the Current Deployment Version of its Task Queue, and then
-   * will be pinned to that same Deployment Version until completion (the Version that
-   * this Workflow is pinned to is specified in `versioning_info.version`).
+   * Workflow will start on its Target Version and then will be pinned to that same Deployment
+   * Version until completion (the Version that this Workflow is pinned to is specified in
+   * `versioning_info.version` and is the Pinned Version of the Workflow).
+   *
+   * The workflow's Target Version is the Current Version of its Task Queue, or, if the
+   * Task Queue has a Ramping Version with non-zero Ramp Percentage `P`, the workflow's Target
+   * Version has a P% chance of being the Ramping Version. Whether a workflow falls into the
+   * Ramping group depends on its Workflow ID and and the Ramp Percentage.
+   *
    * This behavior eliminates most of compatibility concerns users face when changing their code.
    * Patching is not needed when pinned workflows code change.
    * Can be overridden explicitly via `UpdateWorkflowExecutionOptions` API to move the
@@ -462,8 +476,13 @@ export enum VersioningBehavior {
   PINNED = 1,
 
   /**
-   * Workflow will automatically move to the Current Deployment Version of its Task Queue when the
-   * next workflow task is dispatched.
+   * Workflow will automatically move to its Target Version when the next workflow task is dispatched.
+   *
+   * The workflow's Target Version is the Current Version of its Task Queue, or, if the
+   * Task Queue has a Ramping Version with non-zero Ramp Percentage `P`, the workflow's Target
+   * Version has a P% chance of being the Ramping Version. Whether a workflow falls into the
+   * Ramping group depends on its Workflow ID and and the Ramp Percentage.
+   *
    * AutoUpgrade behavior is suitable for long-running workflows as it allows them to move to the
    * latest Deployment Version, but the user still needs to use Patching to keep the new code
    * compatible with prior versions for changed workflow types.
@@ -471,11 +490,10 @@ export enum VersioningBehavior {
    * execution (as specified in versioning_info.version based on the last completed
    * workflow task). Exception to this would be when the activity Task Queue workers are not
    * present in the workflow's Deployment Version, in which case, the activity will be sent to a
-   * different Deployment Version according to the Current Deployment Version of its own task
-   * queue.
-   * Workflows stuck on a backlogged activity will still auto-upgrade if the Current Deployment
-   * Version of their Task Queue changes, without having to wait for the backlogged activity to
-   * complete on the old Version.
+   * different Deployment Version according to the Current or Ramping Deployment Version of its own
+   * Task Queue.
+   * Workflows stuck on a backlogged activity will still auto-upgrade if their Target Version
+   * changes, without having to wait for the backlogged activity to complete on the old Version.
    *
    * @generated from enum value: VERSIONING_BEHAVIOR_AUTO_UPGRADE = 2;
    */
@@ -487,4 +505,84 @@ export enum VersioningBehavior {
  */
 export const VersioningBehaviorSchema: GenEnum<VersioningBehavior> = /*@__PURE__*/
   enumDesc(file_temporal_api_enums_v1_workflow, 10);
+
+/**
+ * Experimental. Defines the versioning behavior to be used by the first task of a new workflow run in a continue-as-new chain.
+ *
+ * @generated from enum temporal.api.enums.v1.ContinueAsNewVersioningBehavior
+ */
+export enum ContinueAsNewVersioningBehavior {
+  /**
+   * @generated from enum value: CONTINUE_AS_NEW_VERSIONING_BEHAVIOR_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * Start the new run with AutoUpgrade behavior. Use the Target Version of the workflow's task queue at
+   * start-time, as AutoUpgrade workflows do. After the first workflow task completes, use whatever
+   * Versioning Behavior the workflow is annotated with in the workflow code.
+   *
+   * Note that if the previous workflow had a Pinned override, that override will be inherited by the
+   * new workflow run regardless of the ContinueAsNewVersioningBehavior specified in the continue-as-new
+   * command. If a Pinned override is inherited by the new run, and the new run starts with AutoUpgrade
+   * behavior, the base version of the new run will be the Target Version as described above, but the
+   * effective version will be whatever is specified by the Versioning Override until the override is removed.
+   *
+   * @generated from enum value: CONTINUE_AS_NEW_VERSIONING_BEHAVIOR_AUTO_UPGRADE = 1;
+   */
+  AUTO_UPGRADE = 1,
+}
+
+/**
+ * Describes the enum temporal.api.enums.v1.ContinueAsNewVersioningBehavior.
+ */
+export const ContinueAsNewVersioningBehaviorSchema: GenEnum<ContinueAsNewVersioningBehavior> = /*@__PURE__*/
+  enumDesc(file_temporal_api_enums_v1_workflow, 11);
+
+/**
+ * SuggestContinueAsNewReason specifies why SuggestContinueAsNew is true.
+ *
+ * @generated from enum temporal.api.enums.v1.SuggestContinueAsNewReason
+ */
+export enum SuggestContinueAsNewReason {
+  /**
+   * @generated from enum value: SUGGEST_CONTINUE_AS_NEW_REASON_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * Workflow History size is getting too large.
+   *
+   * @generated from enum value: SUGGEST_CONTINUE_AS_NEW_REASON_HISTORY_SIZE_TOO_LARGE = 1;
+   */
+  HISTORY_SIZE_TOO_LARGE = 1,
+
+  /**
+   * Workflow History event count is getting too large.
+   *
+   * @generated from enum value: SUGGEST_CONTINUE_AS_NEW_REASON_TOO_MANY_HISTORY_EVENTS = 2;
+   */
+  TOO_MANY_HISTORY_EVENTS = 2,
+
+  /**
+   * Workflow's count of completed plus in-flight updates is too large.
+   *
+   * @generated from enum value: SUGGEST_CONTINUE_AS_NEW_REASON_TOO_MANY_UPDATES = 3;
+   */
+  TOO_MANY_UPDATES = 3,
+
+  /**
+   * Workflow's Target Worker Deployment Version is different from its
+   * Current Version and the workflow is versioned.
+   *
+   * @generated from enum value: SUGGEST_CONTINUE_AS_NEW_REASON_TARGET_WORKER_DEPLOYMENT_VERSION_CHANGED = 4;
+   */
+  TARGET_WORKER_DEPLOYMENT_VERSION_CHANGED = 4,
+}
+
+/**
+ * Describes the enum temporal.api.enums.v1.SuggestContinueAsNewReason.
+ */
+export const SuggestContinueAsNewReasonSchema: GenEnum<SuggestContinueAsNewReason> = /*@__PURE__*/
+  enumDesc(file_temporal_api_enums_v1_workflow, 12);
 

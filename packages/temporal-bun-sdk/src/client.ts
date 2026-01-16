@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto'
 import { create, toBinary } from '@bufbuild/protobuf'
 import { type CallOptions, Code, ConnectError, createClient } from '@connectrpc/connect'
 import { createGrpcTransport } from '@connectrpc/connect-node'
 import { Context, Effect } from 'effect'
 import * as Option from 'effect/Option'
+import type * as Schema from 'effect/Schema'
 
 import { createDefaultHeaders, mergeHeaders, normalizeMetadataHeaders } from './client/headers'
 import { type InterceptorBuilder, makeDefaultInterceptorBuilder, type TemporalInterceptor } from './client/interceptors'
@@ -57,6 +59,7 @@ import type { TemporalInterceptor as ClientMiddleware, InterceptorContext, Inter
 import { createObservabilityServices } from './observability'
 import type { LogFields, Logger, LogLevel } from './observability/logger'
 import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from './observability/metrics'
+import { CloudService } from './proto/temporal/api/cloud/cloudservice/v1/service_pb'
 import {
   type Memo,
   type Payload,
@@ -69,14 +72,141 @@ import { UpdateWorkflowExecutionLifecycleStage } from './proto/temporal/api/enum
 import { HistoryEventFilterType } from './proto/temporal/api/enums/v1/workflow_pb'
 import type { HistoryEvent } from './proto/temporal/api/history/v1/message_pb'
 import {
+  type AddSearchAttributesRequest,
+  AddSearchAttributesRequestSchema,
+  type AddSearchAttributesResponse,
+  type CreateNexusEndpointRequest,
+  CreateNexusEndpointRequestSchema,
+  type CreateNexusEndpointResponse,
+  type DeleteNexusEndpointRequest,
+  DeleteNexusEndpointRequestSchema,
+  type DeleteNexusEndpointResponse,
+  type GetNexusEndpointRequest,
+  GetNexusEndpointRequestSchema,
+  type GetNexusEndpointResponse,
+  type ListNexusEndpointsRequest,
+  ListNexusEndpointsRequestSchema,
+  type ListNexusEndpointsResponse,
+  type ListSearchAttributesRequest,
+  ListSearchAttributesRequestSchema,
+  type ListSearchAttributesResponse,
+  type RemoveSearchAttributesRequest,
+  RemoveSearchAttributesRequestSchema,
+  type RemoveSearchAttributesResponse,
+  type UpdateNexusEndpointRequest,
+  UpdateNexusEndpointRequestSchema,
+  type UpdateNexusEndpointResponse,
+} from './proto/temporal/api/operatorservice/v1/request_response_pb'
+import { OperatorService } from './proto/temporal/api/operatorservice/v1/service_pb'
+import {
+  type BackfillRequest,
+  BackfillRequestSchema,
+  SchedulePatchSchema,
+  type TriggerImmediatelyRequest,
+  TriggerImmediatelyRequestSchema,
+} from './proto/temporal/api/schedule/v1/message_pb'
+import {
+  type CreateScheduleRequest,
+  CreateScheduleRequestSchema,
+  type CreateScheduleResponse,
+  type DeleteScheduleRequest,
+  DeleteScheduleRequestSchema,
+  type DeleteScheduleResponse,
+  type DeleteWorkerDeploymentRequest,
+  DeleteWorkerDeploymentRequestSchema,
+  type DeleteWorkerDeploymentResponse,
+  type DeleteWorkerDeploymentVersionRequest,
+  DeleteWorkerDeploymentVersionRequestSchema,
+  type DeleteWorkerDeploymentVersionResponse,
+  type DescribeDeploymentRequest,
+  DescribeDeploymentRequestSchema,
+  type DescribeDeploymentResponse,
   type DescribeNamespaceRequest,
   DescribeNamespaceRequestSchema,
   DescribeNamespaceResponseSchema,
+  type DescribeScheduleRequest,
+  DescribeScheduleRequestSchema,
+  type DescribeScheduleResponse,
+  type DescribeWorkerDeploymentRequest,
+  DescribeWorkerDeploymentRequestSchema,
+  type DescribeWorkerDeploymentResponse,
+  type DescribeWorkerRequest,
+  DescribeWorkerRequestSchema,
+  type DescribeWorkerResponse,
+  type FetchWorkerConfigRequest,
+  FetchWorkerConfigRequestSchema,
+  type FetchWorkerConfigResponse,
+  type GetCurrentDeploymentRequest,
+  GetCurrentDeploymentRequestSchema,
+  type GetCurrentDeploymentResponse,
+  type GetDeploymentReachabilityRequest,
+  GetDeploymentReachabilityRequestSchema,
+  type GetDeploymentReachabilityResponse,
+  type GetWorkerVersioningRulesRequest,
+  GetWorkerVersioningRulesRequestSchema,
+  type GetWorkerVersioningRulesResponse,
   GetWorkflowExecutionHistoryRequestSchema,
   type GetWorkflowExecutionHistoryResponse,
+  type ListDeploymentsRequest,
+  ListDeploymentsRequestSchema,
+  type ListDeploymentsResponse,
+  type ListScheduleMatchingTimesRequest,
+  ListScheduleMatchingTimesRequestSchema,
+  type ListScheduleMatchingTimesResponse,
+  type ListSchedulesRequest,
+  ListSchedulesRequestSchema,
+  type ListSchedulesResponse,
+  type ListWorkerDeploymentsRequest,
+  ListWorkerDeploymentsRequestSchema,
+  type ListWorkerDeploymentsResponse,
+  type ListWorkersRequest,
+  ListWorkersRequestSchema,
+  type ListWorkersResponse,
+  type PatchScheduleRequest,
+  PatchScheduleRequestSchema,
+  type PatchScheduleResponse,
+  type PauseWorkflowExecutionRequest,
+  PauseWorkflowExecutionRequestSchema,
+  type PauseWorkflowExecutionResponse,
   type QueryWorkflowResponse,
+  type ResetStickyTaskQueueRequest,
+  ResetStickyTaskQueueRequestSchema,
+  type ResetStickyTaskQueueResponse,
+  type SetCurrentDeploymentRequest,
+  SetCurrentDeploymentRequestSchema,
+  type SetCurrentDeploymentResponse,
+  type SetWorkerDeploymentCurrentVersionRequest,
+  SetWorkerDeploymentCurrentVersionRequestSchema,
+  type SetWorkerDeploymentCurrentVersionResponse,
+  type SetWorkerDeploymentManagerRequest,
+  SetWorkerDeploymentManagerRequestSchema,
+  type SetWorkerDeploymentManagerResponse,
+  type SetWorkerDeploymentRampingVersionRequest,
+  SetWorkerDeploymentRampingVersionRequestSchema,
+  type SetWorkerDeploymentRampingVersionResponse,
   type SignalWithStartWorkflowExecutionResponse,
   type StartWorkflowExecutionResponse,
+  type UnpauseWorkflowExecutionRequest,
+  UnpauseWorkflowExecutionRequestSchema,
+  type UnpauseWorkflowExecutionResponse,
+  type UpdateScheduleRequest,
+  UpdateScheduleRequestSchema,
+  type UpdateScheduleResponse,
+  type UpdateTaskQueueConfigRequest,
+  UpdateTaskQueueConfigRequestSchema,
+  type UpdateTaskQueueConfigResponse,
+  type UpdateWorkerConfigRequest,
+  UpdateWorkerConfigRequestSchema,
+  type UpdateWorkerConfigResponse,
+  type UpdateWorkerDeploymentVersionMetadataRequest,
+  UpdateWorkerDeploymentVersionMetadataRequestSchema,
+  type UpdateWorkerDeploymentVersionMetadataResponse,
+  type UpdateWorkerVersioningRulesRequest,
+  UpdateWorkerVersioningRulesRequestSchema,
+  type UpdateWorkerVersioningRulesResponse,
+  type UpdateWorkflowExecutionOptionsRequest,
+  UpdateWorkflowExecutionOptionsRequestSchema,
+  type UpdateWorkflowExecutionOptionsResponse,
 } from './proto/temporal/api/workflowservice/v1/request_response_pb'
 import { WorkflowService } from './proto/temporal/api/workflowservice/v1/service_pb'
 import {
@@ -87,8 +217,23 @@ import {
   TemporalConfigService,
   WorkflowServiceClientService,
 } from './runtime/effect-layers'
+import { createTypedSearchAttributes, type TypedSearchAttributes } from './search-attributes'
 
 type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
+type OperatorServiceClient = ReturnType<typeof createClient<typeof OperatorService>>
+type CloudServiceClient = ReturnType<typeof createClient<typeof CloudService>>
+
+type WorkflowServiceMethodName = keyof WorkflowServiceClient
+type WorkflowServiceRequest<T extends WorkflowServiceMethodName> = Parameters<WorkflowServiceClient[T]>[0]
+type WorkflowServiceResponse<T extends WorkflowServiceMethodName> = Awaited<ReturnType<WorkflowServiceClient[T]>>
+
+type OperatorServiceMethodName = keyof OperatorServiceClient
+type OperatorServiceRequest<T extends OperatorServiceMethodName> = Parameters<OperatorServiceClient[T]>[0]
+type OperatorServiceResponse<T extends OperatorServiceMethodName> = Awaited<ReturnType<OperatorServiceClient[T]>>
+
+type CloudServiceMethodName = keyof CloudServiceClient
+type CloudServiceRequest<T extends CloudServiceMethodName> = Parameters<CloudServiceClient[T]>[0]
+type CloudServiceResponse<T extends CloudServiceMethodName> = Awaited<ReturnType<CloudServiceClient[T]>>
 
 export interface TemporalClientCallOptions {
   readonly headers?: Record<string, string | ArrayBuffer | ArrayBufferView>
@@ -123,6 +268,73 @@ export interface TemporalMemoHelpers {
 export interface TemporalSearchAttributeHelpers {
   encode(input?: Record<string, unknown>): Promise<SearchAttributes | undefined>
   decode(attributes?: SearchAttributes | null): Promise<Record<string, unknown> | undefined>
+  typed<T>(schema: Schema.Schema<T>): TypedSearchAttributes<T>
+}
+
+export interface PauseScheduleInput {
+  readonly namespace?: string
+  readonly scheduleId: string
+  readonly reason?: string
+  readonly identity?: string
+  readonly requestId?: string
+}
+
+export interface TriggerScheduleInput {
+  readonly namespace?: string
+  readonly scheduleId: string
+  readonly trigger?: TriggerImmediatelyRequest
+  readonly identity?: string
+  readonly requestId?: string
+}
+
+export interface BackfillScheduleInput {
+  readonly namespace?: string
+  readonly scheduleId: string
+  readonly backfillRequest: ReadonlyArray<BackfillRequest>
+  readonly identity?: string
+  readonly requestId?: string
+}
+
+export interface UnpauseScheduleInput {
+  readonly namespace?: string
+  readonly scheduleId: string
+  readonly reason?: string
+  readonly identity?: string
+  readonly requestId?: string
+}
+
+export interface TemporalCloudClient {
+  call<T extends CloudServiceMethodName>(
+    method: T,
+    request: CloudServiceRequest<T>,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<CloudServiceResponse<T>>
+  getService(): CloudServiceClient
+  updateHeaders(headers: Record<string, string | ArrayBuffer | ArrayBufferView>): Promise<void>
+}
+
+export interface TemporalWorkflowServiceClient {
+  call<T extends WorkflowServiceMethodName>(
+    method: T,
+    request: WorkflowServiceRequest<T>,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<WorkflowServiceResponse<T>>
+  getService(): WorkflowServiceClient
+}
+
+export interface TemporalOperatorServiceClient {
+  call<T extends OperatorServiceMethodName>(
+    method: T,
+    request: OperatorServiceRequest<T>,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<OperatorServiceResponse<T>>
+  getService(): OperatorServiceClient
+}
+
+export interface TemporalRpcClients {
+  readonly workflow: TemporalWorkflowServiceClient
+  readonly operator: TemporalOperatorServiceClient
+  readonly cloud: TemporalCloudClient
 }
 
 const DEFAULT_TLS_SUGGESTIONS = [
@@ -130,6 +342,22 @@ const DEFAULT_TLS_SUGGESTIONS = [
   'Ensure TEMPORAL_TLS_SERVER_NAME matches the certificate Subject Alternative Name',
   'Set TEMPORAL_ALLOW_INSECURE=1 only for trusted development clusters',
 ] as const
+
+const buildCloudHeaders = (options: {
+  apiKey?: string
+  apiVersion?: string
+  headers?: Record<string, string | ArrayBuffer | ArrayBufferView>
+}): Record<string, string> => {
+  const base = { ...createDefaultHeaders(options.apiKey) }
+  if (options.apiVersion) {
+    base['temporal-cloud-api-version'] = options.apiVersion
+  }
+  if (!options.headers) {
+    return base
+  }
+  const normalized = normalizeMetadataHeaders(options.headers)
+  return mergeHeaders(base, normalized)
+}
 
 export class TemporalTlsHandshakeError extends Error {
   override readonly cause?: unknown
@@ -180,11 +408,196 @@ export interface TemporalWorkflowClient {
   result<T = unknown>(handle: WorkflowHandle, callOptions?: BrandedTemporalClientCallOptions): Promise<T>
 }
 
+export interface TemporalScheduleClient {
+  create(
+    request: Omit<CreateScheduleRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<CreateScheduleResponse>
+  describe(
+    request: Omit<DescribeScheduleRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<DescribeScheduleResponse>
+  update(
+    request: Omit<UpdateScheduleRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<UpdateScheduleResponse>
+  patch(
+    request: Omit<PatchScheduleRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<PatchScheduleResponse>
+  list(
+    request?: Omit<ListSchedulesRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<ListSchedulesResponse>
+  listMatchingTimes(
+    request: Omit<ListScheduleMatchingTimesRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<ListScheduleMatchingTimesResponse>
+  delete(
+    request: Omit<DeleteScheduleRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<DeleteScheduleResponse>
+  trigger(request: TriggerScheduleInput, callOptions?: BrandedTemporalClientCallOptions): Promise<PatchScheduleResponse>
+  backfill(
+    request: BackfillScheduleInput,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<PatchScheduleResponse>
+  pause(request: PauseScheduleInput, callOptions?: BrandedTemporalClientCallOptions): Promise<PatchScheduleResponse>
+  unpause(request: UnpauseScheduleInput, callOptions?: BrandedTemporalClientCallOptions): Promise<PatchScheduleResponse>
+}
+
+export interface TemporalWorkflowOperationsClient {
+  updateExecutionOptions(
+    request: Omit<UpdateWorkflowExecutionOptionsRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<UpdateWorkflowExecutionOptionsResponse>
+  pauseExecution(
+    request: Omit<PauseWorkflowExecutionRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<PauseWorkflowExecutionResponse>
+  unpauseExecution(
+    request: Omit<UnpauseWorkflowExecutionRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<UnpauseWorkflowExecutionResponse>
+  resetStickyTaskQueue(
+    request: Omit<ResetStickyTaskQueueRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<ResetStickyTaskQueueResponse>
+}
+
+export interface TemporalWorkerOperationsClient {
+  list(
+    request?: Omit<ListWorkersRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<ListWorkersResponse>
+  describe(
+    request: Omit<DescribeWorkerRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<DescribeWorkerResponse>
+  fetchConfig(
+    request: Omit<FetchWorkerConfigRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<FetchWorkerConfigResponse>
+  updateConfig(
+    request: Omit<UpdateWorkerConfigRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<UpdateWorkerConfigResponse>
+  updateTaskQueueConfig(
+    request: Omit<UpdateTaskQueueConfigRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<UpdateTaskQueueConfigResponse>
+  getVersioningRules(
+    request: Omit<GetWorkerVersioningRulesRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<GetWorkerVersioningRulesResponse>
+  updateVersioningRules(
+    request: Omit<UpdateWorkerVersioningRulesRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<UpdateWorkerVersioningRulesResponse>
+}
+
+export interface TemporalDeploymentClient {
+  listWorkerDeployments(
+    request?: Omit<ListWorkerDeploymentsRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<ListWorkerDeploymentsResponse>
+  describeWorkerDeployment(
+    request: Omit<DescribeWorkerDeploymentRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<DescribeWorkerDeploymentResponse>
+  listDeployments(
+    request?: Omit<ListDeploymentsRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<ListDeploymentsResponse>
+  describeDeployment(
+    request: Omit<DescribeDeploymentRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<DescribeDeploymentResponse>
+  getCurrentDeployment(
+    request: Omit<GetCurrentDeploymentRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<GetCurrentDeploymentResponse>
+  setCurrentDeployment(
+    request: Omit<SetCurrentDeploymentRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<SetCurrentDeploymentResponse>
+  getDeploymentReachability(
+    request: Omit<GetDeploymentReachabilityRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<GetDeploymentReachabilityResponse>
+  setWorkerDeploymentCurrentVersion(
+    request: Omit<SetWorkerDeploymentCurrentVersionRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<SetWorkerDeploymentCurrentVersionResponse>
+  setWorkerDeploymentRampingVersion(
+    request: Omit<SetWorkerDeploymentRampingVersionRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<SetWorkerDeploymentRampingVersionResponse>
+  updateWorkerDeploymentVersionMetadata(
+    request: Omit<UpdateWorkerDeploymentVersionMetadataRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<UpdateWorkerDeploymentVersionMetadataResponse>
+  deleteWorkerDeploymentVersion(
+    request: Omit<DeleteWorkerDeploymentVersionRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<DeleteWorkerDeploymentVersionResponse>
+  deleteWorkerDeployment(
+    request: Omit<DeleteWorkerDeploymentRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<DeleteWorkerDeploymentResponse>
+  setWorkerDeploymentManager(
+    request: Omit<SetWorkerDeploymentManagerRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<SetWorkerDeploymentManagerResponse>
+}
+
+export interface TemporalOperatorClient {
+  addSearchAttributes(
+    request: Omit<AddSearchAttributesRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<AddSearchAttributesResponse>
+  removeSearchAttributes(
+    request: Omit<RemoveSearchAttributesRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<RemoveSearchAttributesResponse>
+  listSearchAttributes(
+    request: Omit<ListSearchAttributesRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<ListSearchAttributesResponse>
+  createNexusEndpoint(
+    request: CreateNexusEndpointRequest,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<CreateNexusEndpointResponse>
+  updateNexusEndpoint(
+    request: UpdateNexusEndpointRequest,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<UpdateNexusEndpointResponse>
+  deleteNexusEndpoint(
+    request: DeleteNexusEndpointRequest,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<DeleteNexusEndpointResponse>
+  getNexusEndpoint(
+    request: GetNexusEndpointRequest,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<GetNexusEndpointResponse>
+  listNexusEndpoints(
+    request?: ListNexusEndpointsRequest,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<ListNexusEndpointsResponse>
+}
+
 export interface TemporalClient {
   readonly namespace: string
   readonly config: TemporalConfig
   readonly dataConverter: DataConverter
   readonly workflow: TemporalWorkflowClient
+  readonly schedules: TemporalScheduleClient
+  readonly workflowOps: TemporalWorkflowOperationsClient
+  readonly workerOps: TemporalWorkerOperationsClient
+  readonly deployments: TemporalDeploymentClient
+  readonly operator: TemporalOperatorClient
+  readonly cloud: TemporalCloudClient
+  readonly rpc: TemporalRpcClients
   readonly memo: TemporalMemoHelpers
   readonly searchAttributes: TemporalSearchAttributeHelpers
   startWorkflow(
@@ -348,7 +761,14 @@ export interface CreateTemporalClientOptions {
   clientInterceptorBuilder?: ClientInterceptorBuilder
   tracingEnabled?: boolean
   workflowService?: WorkflowServiceClient
+  operatorService?: OperatorServiceClient
+  cloudService?: CloudServiceClient
   transport?: ClosableTransport
+  cloudTransport?: ClosableTransport
+  cloudAddress?: string
+  cloudApiKey?: string
+  cloudApiVersion?: string
+  cloudHeaders?: Record<string, string | ArrayBuffer | ArrayBufferView>
 }
 
 export const createTemporalClient = async (
@@ -372,7 +792,12 @@ export const createTemporalClient = async (
   const { logger, metricsRegistry, metricsExporter } = observability
   let transport = options.transport
   let workflowService = options.workflowService
+  let operatorService = options.operatorService
+  let cloudTransport = options.cloudTransport
+  let cloudService = options.cloudService
   let createdTransport: ClosableTransport | undefined
+  let createdCloudTransport: ClosableTransport | undefined
+  const cloudAddress = options.cloudAddress ?? config.cloudAddress
 
   if (!workflowService) {
     if (!transport) {
@@ -405,6 +830,22 @@ export const createTemporalClient = async (
     throw new Error('Temporal workflow service is not available')
   }
 
+  if (!operatorService && transport) {
+    operatorService = createClient(OperatorService, transport)
+  }
+
+  if (!cloudService) {
+    if (!cloudTransport && cloudAddress) {
+      const baseUrl = normalizeTemporalAddress(cloudAddress, true)
+      const transportOptions = buildTransportOptions(baseUrl, config, [])
+      cloudTransport = createGrpcTransport(transportOptions) as ClosableTransport
+      createdCloudTransport = cloudTransport
+    }
+    if (cloudTransport) {
+      cloudService = createClient(CloudService, cloudTransport)
+    }
+  }
+
   const dataConverter =
     options.dataConverter ??
     createDefaultDataConverter({
@@ -420,8 +861,12 @@ export const createTemporalClient = async (
     metrics: metricsRegistry,
     metricsExporter,
     workflowService,
+    operatorService,
+    cloudService,
     transport,
+    cloudTransport,
     dataConverter,
+    cloudHeaders: options.cloudHeaders,
   })
 
   try {
@@ -437,6 +882,7 @@ export const createTemporalClient = async (
     )
   } catch (error) {
     await createdTransport?.close?.()
+    await createdCloudTransport?.close?.()
     throw error
   }
 }
@@ -473,6 +919,14 @@ export const makeTemporalClientEffect = (
         metricsRegistry,
       })
     const initialHeaders = createDefaultHeaders(config.apiKey)
+    const cloudAddress = options.cloudAddress ?? config.cloudAddress
+    const cloudApiKey = options.cloudApiKey ?? config.cloudApiKey
+    const cloudApiVersion = options.cloudApiVersion ?? config.cloudApiVersion
+    const initialCloudHeaders = buildCloudHeaders({
+      apiKey: cloudApiKey,
+      apiVersion: cloudApiVersion,
+      headers: options.cloudHeaders,
+    })
     const tracingEnabled = options.tracingEnabled ?? config.tracingInterceptorsEnabled ?? false
     const clientInterceptorBuilder: ClientInterceptorBuilder = options.clientInterceptorBuilder ?? {
       build: (input) => makeDefaultClientInterceptors(input),
@@ -492,7 +946,10 @@ export const makeTemporalClientEffect = (
       Context.getOption(context, WorkflowServiceClientService),
     )
     let workflowService = options.workflowService ?? Option.getOrUndefined(workflowServiceFromContext)
+    let operatorService = options.operatorService
+    let cloudService = options.cloudService
     let transport: ClosableTransport | undefined = options.transport
+    let cloudTransport: ClosableTransport | undefined = options.cloudTransport
 
     if (!workflowService) {
       if (!transport) {
@@ -520,16 +977,34 @@ export const makeTemporalClientEffect = (
     if (!workflowService) {
       throw new Error('Temporal workflow service is not available')
     }
+    if (!operatorService && transport) {
+      operatorService = createClient(OperatorService, transport)
+    }
+
+    if (!cloudService) {
+      if (!cloudTransport && cloudAddress) {
+        const baseUrl = normalizeTemporalAddress(cloudAddress, true)
+        const transportOptions = buildTransportOptions(baseUrl, config, [])
+        cloudTransport = createGrpcTransport(transportOptions) as ClosableTransport
+      }
+      if (cloudTransport) {
+        cloudService = createClient(CloudService, cloudTransport)
+      }
+    }
 
     const client = new TemporalClientImpl({
       transport,
+      cloudTransport,
       workflowService,
+      operatorService,
+      cloudService,
       config,
       namespace,
       identity,
       taskQueue,
       dataConverter,
       headers: initialHeaders,
+      cloudHeaders: initialCloudHeaders,
       logger,
       metrics: clientMetrics,
       metricsExporter,
@@ -548,11 +1023,21 @@ class TemporalClientImpl implements TemporalClient {
   readonly config: TemporalConfig
   readonly dataConverter: DataConverter
   readonly workflow: TemporalWorkflowClient
+  readonly schedules: TemporalScheduleClient
+  readonly workflowOps: TemporalWorkflowOperationsClient
+  readonly workerOps: TemporalWorkerOperationsClient
+  readonly deployments: TemporalDeploymentClient
+  readonly operator: TemporalOperatorClient
+  readonly cloud: TemporalCloudClient
+  readonly rpc: TemporalRpcClients
   readonly memo: TemporalMemoHelpers
   readonly searchAttributes: TemporalSearchAttributeHelpers
 
   private readonly transport?: ClosableTransport
+  private readonly cloudTransport?: ClosableTransport
   private readonly workflowService: WorkflowServiceClient
+  private readonly operatorService?: OperatorServiceClient
+  private readonly cloudService?: CloudServiceClient
   private readonly defaultIdentity: string
   private readonly defaultTaskQueue: string
   #logger: Logger
@@ -563,6 +1048,7 @@ class TemporalClientImpl implements TemporalClient {
   #abortedUpdates = new Set<string>()
   private closed = false
   private headers: Record<string, string>
+  private cloudHeaders: Record<string, string>
 
   static async initMetrics(registry: MetricsRegistry): Promise<TemporalClientMetrics> {
     const makeCounter = (name: string, description: string) => Effect.runPromise(registry.counter(name, description))
@@ -580,26 +1066,34 @@ class TemporalClientImpl implements TemporalClient {
 
   constructor(handles: {
     transport?: ClosableTransport
+    cloudTransport?: ClosableTransport
     workflowService: WorkflowServiceClient
+    operatorService?: OperatorServiceClient
+    cloudService?: CloudServiceClient
     config: TemporalConfig
     namespace: string
     identity: string
     taskQueue: string
     dataConverter: DataConverter
     headers: Record<string, string>
+    cloudHeaders: Record<string, string>
     logger: Logger
     metrics: TemporalClientMetrics
     metricsExporter: MetricsExporter
     clientInterceptors: ClientMiddleware[]
   }) {
     this.transport = handles.transport
+    this.cloudTransport = handles.cloudTransport
     this.workflowService = handles.workflowService
+    this.operatorService = handles.operatorService
+    this.cloudService = handles.cloudService
     this.config = handles.config
     this.namespace = handles.namespace
     this.defaultIdentity = handles.identity
     this.defaultTaskQueue = handles.taskQueue
     this.dataConverter = handles.dataConverter
     this.headers = { ...handles.headers }
+    this.cloudHeaders = { ...handles.cloudHeaders }
     this.#logger = handles.logger
     this.#clientMetrics = handles.metrics
     this.#metricsExporter = handles.metricsExporter
@@ -611,6 +1105,7 @@ class TemporalClientImpl implements TemporalClient {
     this.searchAttributes = {
       encode: (input) => encodeSearchAttributes(this.dataConverter, input),
       decode: (attributes) => decodeSearchAttributes(this.dataConverter, attributes),
+      typed: (schema) => createTypedSearchAttributes(schema, this.dataConverter),
     }
 
     this.workflow = {
@@ -627,6 +1122,85 @@ class TemporalClientImpl implements TemporalClient {
       getUpdateHandle: (workflowHandle, updateId, firstExecutionRunId) =>
         this.getWorkflowUpdateHandle(workflowHandle, updateId, firstExecutionRunId),
       result: (handle, callOptions) => this.getWorkflowResult(handle, callOptions),
+    }
+
+    this.schedules = {
+      create: (request, callOptions) => this.createSchedule(request, callOptions),
+      describe: (request, callOptions) => this.describeSchedule(request, callOptions),
+      update: (request, callOptions) => this.updateSchedule(request, callOptions),
+      patch: (request, callOptions) => this.patchSchedule(request, callOptions),
+      list: (request, callOptions) => this.listSchedules(request, callOptions),
+      listMatchingTimes: (request, callOptions) => this.listScheduleMatchingTimes(request, callOptions),
+      delete: (request, callOptions) => this.deleteSchedule(request, callOptions),
+      trigger: (request, callOptions) => this.triggerSchedule(request, callOptions),
+      backfill: (request, callOptions) => this.backfillSchedule(request, callOptions),
+      pause: (request, callOptions) => this.pauseSchedule(request, callOptions),
+      unpause: (request, callOptions) => this.unpauseSchedule(request, callOptions),
+    }
+
+    this.workflowOps = {
+      updateExecutionOptions: (request, callOptions) => this.updateWorkflowExecutionOptions(request, callOptions),
+      pauseExecution: (request, callOptions) => this.pauseWorkflowExecution(request, callOptions),
+      unpauseExecution: (request, callOptions) => this.unpauseWorkflowExecution(request, callOptions),
+      resetStickyTaskQueue: (request, callOptions) => this.resetStickyTaskQueue(request, callOptions),
+    }
+
+    this.workerOps = {
+      list: (request, callOptions) => this.listWorkers(request, callOptions),
+      describe: (request, callOptions) => this.describeWorker(request, callOptions),
+      fetchConfig: (request, callOptions) => this.fetchWorkerConfig(request, callOptions),
+      updateConfig: (request, callOptions) => this.updateWorkerConfig(request, callOptions),
+      updateTaskQueueConfig: (request, callOptions) => this.updateTaskQueueConfig(request, callOptions),
+      getVersioningRules: (request, callOptions) => this.getWorkerVersioningRules(request, callOptions),
+      updateVersioningRules: (request, callOptions) => this.updateWorkerVersioningRules(request, callOptions),
+    }
+
+    this.deployments = {
+      listWorkerDeployments: (request, callOptions) => this.listWorkerDeployments(request, callOptions),
+      describeWorkerDeployment: (request, callOptions) => this.describeWorkerDeployment(request, callOptions),
+      listDeployments: (request, callOptions) => this.listDeployments(request, callOptions),
+      describeDeployment: (request, callOptions) => this.describeDeployment(request, callOptions),
+      getCurrentDeployment: (request, callOptions) => this.getCurrentDeployment(request, callOptions),
+      setCurrentDeployment: (request, callOptions) => this.setCurrentDeployment(request, callOptions),
+      getDeploymentReachability: (request, callOptions) => this.getDeploymentReachability(request, callOptions),
+      setWorkerDeploymentCurrentVersion: (request, callOptions) =>
+        this.setWorkerDeploymentCurrentVersion(request, callOptions),
+      setWorkerDeploymentRampingVersion: (request, callOptions) =>
+        this.setWorkerDeploymentRampingVersion(request, callOptions),
+      updateWorkerDeploymentVersionMetadata: (request, callOptions) =>
+        this.updateWorkerDeploymentVersionMetadata(request, callOptions),
+      deleteWorkerDeploymentVersion: (request, callOptions) => this.deleteWorkerDeploymentVersion(request, callOptions),
+      deleteWorkerDeployment: (request, callOptions) => this.deleteWorkerDeployment(request, callOptions),
+      setWorkerDeploymentManager: (request, callOptions) => this.setWorkerDeploymentManager(request, callOptions),
+    }
+
+    this.operator = {
+      addSearchAttributes: (request, callOptions) => this.addSearchAttributes(request, callOptions),
+      removeSearchAttributes: (request, callOptions) => this.removeSearchAttributes(request, callOptions),
+      listSearchAttributes: (request, callOptions) => this.listSearchAttributes(request, callOptions),
+      createNexusEndpoint: (request, callOptions) => this.createNexusEndpoint(request, callOptions),
+      updateNexusEndpoint: (request, callOptions) => this.updateNexusEndpoint(request, callOptions),
+      deleteNexusEndpoint: (request, callOptions) => this.deleteNexusEndpoint(request, callOptions),
+      getNexusEndpoint: (request, callOptions) => this.getNexusEndpoint(request, callOptions),
+      listNexusEndpoints: (request, callOptions) => this.listNexusEndpoints(request, callOptions),
+    }
+
+    this.cloud = {
+      call: (method, request, callOptions) => this.callCloudService(method, request, callOptions),
+      getService: () => this.#requireCloudService(),
+      updateHeaders: (headers) => this.updateCloudHeaders(headers),
+    }
+
+    this.rpc = {
+      workflow: {
+        call: (method, request, callOptions) => this.callWorkflowService(method, request, callOptions),
+        getService: () => this.workflowService,
+      },
+      operator: {
+        call: (method, request, callOptions) => this.callOperatorService(method, request, callOptions),
+        getService: () => this.#requireOperatorService(),
+      },
+      cloud: this.cloud,
     }
   }
 
@@ -1094,6 +1668,987 @@ class TemporalClientImpl implements TemporalClient {
     )
   }
 
+  async createSchedule(
+    request: Omit<CreateScheduleRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<CreateScheduleResponse> {
+    return this.#instrumentOperation(
+      'schedule.create',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const scheduleId = ensureNonEmptyString(request.scheduleId, 'scheduleId')
+        const requestId = ensureRequestId(request.requestId)
+        const payload = create(CreateScheduleRequestSchema, { ...request, namespace, scheduleId, requestId })
+        return await this.executeRpc(
+          'createSchedule',
+          (rpcOptions) => this.workflowService.createSchedule(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async describeSchedule(
+    request: Omit<DescribeScheduleRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<DescribeScheduleResponse> {
+    return this.#instrumentOperation(
+      'schedule.describe',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const scheduleId = ensureNonEmptyString(request.scheduleId, 'scheduleId')
+        const payload = create(DescribeScheduleRequestSchema, { ...request, namespace, scheduleId })
+        return await this.executeRpc(
+          'describeSchedule',
+          (rpcOptions) => this.workflowService.describeSchedule(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async updateSchedule(
+    request: Omit<UpdateScheduleRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<UpdateScheduleResponse> {
+    return this.#instrumentOperation(
+      'schedule.update',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const scheduleId = ensureNonEmptyString(request.scheduleId, 'scheduleId')
+        const requestId = ensureRequestId(request.requestId)
+        const payload = create(UpdateScheduleRequestSchema, { ...request, namespace, scheduleId, requestId })
+        return await this.executeRpc(
+          'updateSchedule',
+          (rpcOptions) => this.workflowService.updateSchedule(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async patchSchedule(
+    request: Omit<PatchScheduleRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<PatchScheduleResponse> {
+    return this.#instrumentOperation(
+      'schedule.patch',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const scheduleId = ensureNonEmptyString(request.scheduleId, 'scheduleId')
+        const requestId = ensureRequestId(request.requestId)
+        const payload = create(PatchScheduleRequestSchema, { ...request, namespace, scheduleId, requestId })
+        return await this.executeRpc(
+          'patchSchedule',
+          (rpcOptions) => this.workflowService.patchSchedule(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async listSchedules(
+    request: (Omit<ListSchedulesRequest, 'namespace'> & { namespace?: string }) | undefined,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<ListSchedulesResponse> {
+    return this.#instrumentOperation(
+      'schedule.list',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request?.namespace ?? this.namespace, 'namespace')
+        const payload = create(ListSchedulesRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'listSchedules',
+          (rpcOptions) => this.workflowService.listSchedules(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request?.namespace ?? this.namespace },
+    )
+  }
+
+  async listScheduleMatchingTimes(
+    request: Omit<ListScheduleMatchingTimesRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<ListScheduleMatchingTimesResponse> {
+    return this.#instrumentOperation(
+      'schedule.listMatchingTimes',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const scheduleId = ensureNonEmptyString(request.scheduleId, 'scheduleId')
+        const payload = create(ListScheduleMatchingTimesRequestSchema, { ...request, namespace, scheduleId })
+        return await this.executeRpc(
+          'listScheduleMatchingTimes',
+          (rpcOptions) => this.workflowService.listScheduleMatchingTimes(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async deleteSchedule(
+    request: Omit<DeleteScheduleRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<DeleteScheduleResponse> {
+    return this.#instrumentOperation(
+      'schedule.delete',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const scheduleId = ensureNonEmptyString(request.scheduleId, 'scheduleId')
+        const payload = create(DeleteScheduleRequestSchema, { ...request, namespace, scheduleId })
+        return await this.executeRpc(
+          'deleteSchedule',
+          (rpcOptions) => this.workflowService.deleteSchedule(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async triggerSchedule(
+    request: TriggerScheduleInput,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<PatchScheduleResponse> {
+    return this.#instrumentOperation(
+      'schedule.trigger',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const scheduleId = ensureNonEmptyString(request.scheduleId, 'scheduleId')
+        const trigger = create(TriggerImmediatelyRequestSchema, request.trigger ?? {})
+        const patch = create(SchedulePatchSchema, { triggerImmediately: trigger })
+        const requestId = ensureRequestId(request.requestId)
+        const payload = create(PatchScheduleRequestSchema, {
+          namespace,
+          scheduleId,
+          patch,
+          identity: request.identity,
+          requestId,
+        })
+        return await this.executeRpc(
+          'triggerSchedule',
+          (rpcOptions) => this.workflowService.patchSchedule(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async backfillSchedule(
+    request: BackfillScheduleInput,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<PatchScheduleResponse> {
+    return this.#instrumentOperation(
+      'schedule.backfill',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const scheduleId = ensureNonEmptyString(request.scheduleId, 'scheduleId')
+        const backfillRequest = request.backfillRequest.map((entry) => create(BackfillRequestSchema, entry))
+        const patch = create(SchedulePatchSchema, { backfillRequest })
+        const requestId = ensureRequestId(request.requestId)
+        const payload = create(PatchScheduleRequestSchema, {
+          namespace,
+          scheduleId,
+          patch,
+          identity: request.identity,
+          requestId,
+        })
+        return await this.executeRpc(
+          'backfillSchedule',
+          (rpcOptions) => this.workflowService.patchSchedule(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async pauseSchedule(
+    request: PauseScheduleInput,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<PatchScheduleResponse> {
+    return this.#instrumentOperation(
+      'schedule.pause',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const scheduleId = ensureNonEmptyString(request.scheduleId, 'scheduleId')
+        const patch = create(SchedulePatchSchema, { pause: request.reason ?? 'paused' })
+        const requestId = ensureRequestId(request.requestId)
+        const payload = create(PatchScheduleRequestSchema, {
+          namespace,
+          scheduleId,
+          patch,
+          identity: request.identity,
+          requestId,
+        })
+        return await this.executeRpc(
+          'pauseSchedule',
+          (rpcOptions) => this.workflowService.patchSchedule(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async unpauseSchedule(
+    request: UnpauseScheduleInput,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<PatchScheduleResponse> {
+    return this.#instrumentOperation(
+      'schedule.unpause',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const scheduleId = ensureNonEmptyString(request.scheduleId, 'scheduleId')
+        const patch = create(SchedulePatchSchema, { unpause: request.reason ?? 'unpaused' })
+        const requestId = ensureRequestId(request.requestId)
+        const payload = create(PatchScheduleRequestSchema, {
+          namespace,
+          scheduleId,
+          patch,
+          identity: request.identity,
+          requestId,
+        })
+        return await this.executeRpc(
+          'unpauseSchedule',
+          (rpcOptions) => this.workflowService.patchSchedule(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async updateWorkflowExecutionOptions(
+    request: Omit<UpdateWorkflowExecutionOptionsRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<UpdateWorkflowExecutionOptionsResponse> {
+    return this.#instrumentOperation(
+      'workflow.updateOptions',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(UpdateWorkflowExecutionOptionsRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'updateWorkflowExecutionOptions',
+          (rpcOptions) => this.workflowService.updateWorkflowExecutionOptions(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async pauseWorkflowExecution(
+    request: Omit<PauseWorkflowExecutionRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<PauseWorkflowExecutionResponse> {
+    return this.#instrumentOperation(
+      'workflow.pause',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(PauseWorkflowExecutionRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'pauseWorkflowExecution',
+          (rpcOptions) => this.workflowService.pauseWorkflowExecution(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async unpauseWorkflowExecution(
+    request: Omit<UnpauseWorkflowExecutionRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<UnpauseWorkflowExecutionResponse> {
+    return this.#instrumentOperation(
+      'workflow.unpause',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(UnpauseWorkflowExecutionRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'unpauseWorkflowExecution',
+          (rpcOptions) => this.workflowService.unpauseWorkflowExecution(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async resetStickyTaskQueue(
+    request: Omit<ResetStickyTaskQueueRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<ResetStickyTaskQueueResponse> {
+    return this.#instrumentOperation(
+      'workflow.resetStickyTaskQueue',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(ResetStickyTaskQueueRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'resetStickyTaskQueue',
+          (rpcOptions) => this.workflowService.resetStickyTaskQueue(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async listWorkers(
+    request: (Omit<ListWorkersRequest, 'namespace'> & { namespace?: string }) | undefined,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<ListWorkersResponse> {
+    return this.#instrumentOperation(
+      'worker.list',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request?.namespace ?? this.namespace, 'namespace')
+        const payload = create(ListWorkersRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'listWorkers',
+          (rpcOptions) => this.workflowService.listWorkers(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request?.namespace ?? this.namespace },
+    )
+  }
+
+  async describeWorker(
+    request: Omit<DescribeWorkerRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<DescribeWorkerResponse> {
+    return this.#instrumentOperation(
+      'worker.describe',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(DescribeWorkerRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'describeWorker',
+          (rpcOptions) => this.workflowService.describeWorker(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async fetchWorkerConfig(
+    request: Omit<FetchWorkerConfigRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<FetchWorkerConfigResponse> {
+    return this.#instrumentOperation(
+      'worker.fetchConfig',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(FetchWorkerConfigRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'fetchWorkerConfig',
+          (rpcOptions) => this.workflowService.fetchWorkerConfig(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async updateWorkerConfig(
+    request: Omit<UpdateWorkerConfigRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<UpdateWorkerConfigResponse> {
+    return this.#instrumentOperation(
+      'worker.updateConfig',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(UpdateWorkerConfigRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'updateWorkerConfig',
+          (rpcOptions) => this.workflowService.updateWorkerConfig(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async updateTaskQueueConfig(
+    request: Omit<UpdateTaskQueueConfigRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<UpdateTaskQueueConfigResponse> {
+    return this.#instrumentOperation(
+      'worker.updateTaskQueueConfig',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(UpdateTaskQueueConfigRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'updateTaskQueueConfig',
+          (rpcOptions) => this.workflowService.updateTaskQueueConfig(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async getWorkerVersioningRules(
+    request: Omit<GetWorkerVersioningRulesRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<GetWorkerVersioningRulesResponse> {
+    return this.#instrumentOperation(
+      'worker.getVersioningRules',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(GetWorkerVersioningRulesRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'getWorkerVersioningRules',
+          (rpcOptions) => this.workflowService.getWorkerVersioningRules(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async updateWorkerVersioningRules(
+    request: Omit<UpdateWorkerVersioningRulesRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<UpdateWorkerVersioningRulesResponse> {
+    return this.#instrumentOperation(
+      'worker.updateVersioningRules',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(UpdateWorkerVersioningRulesRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'updateWorkerVersioningRules',
+          (rpcOptions) => this.workflowService.updateWorkerVersioningRules(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async listWorkerDeployments(
+    request: (Omit<ListWorkerDeploymentsRequest, 'namespace'> & { namespace?: string }) | undefined,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<ListWorkerDeploymentsResponse> {
+    return this.#instrumentOperation(
+      'deployment.listWorkerDeployments',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request?.namespace ?? this.namespace, 'namespace')
+        const payload = create(ListWorkerDeploymentsRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'listWorkerDeployments',
+          (rpcOptions) => this.workflowService.listWorkerDeployments(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request?.namespace ?? this.namespace },
+    )
+  }
+
+  async describeWorkerDeployment(
+    request: Omit<DescribeWorkerDeploymentRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<DescribeWorkerDeploymentResponse> {
+    return this.#instrumentOperation(
+      'deployment.describeWorkerDeployment',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(DescribeWorkerDeploymentRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'describeWorkerDeployment',
+          (rpcOptions) => this.workflowService.describeWorkerDeployment(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async listDeployments(
+    request: (Omit<ListDeploymentsRequest, 'namespace'> & { namespace?: string }) | undefined,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<ListDeploymentsResponse> {
+    return this.#instrumentOperation(
+      'deployment.list',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request?.namespace ?? this.namespace, 'namespace')
+        const payload = create(ListDeploymentsRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'listDeployments',
+          (rpcOptions) => this.workflowService.listDeployments(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request?.namespace ?? this.namespace },
+    )
+  }
+
+  async describeDeployment(
+    request: Omit<DescribeDeploymentRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<DescribeDeploymentResponse> {
+    return this.#instrumentOperation(
+      'deployment.describe',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(DescribeDeploymentRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'describeDeployment',
+          (rpcOptions) => this.workflowService.describeDeployment(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async getCurrentDeployment(
+    request: Omit<GetCurrentDeploymentRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<GetCurrentDeploymentResponse> {
+    return this.#instrumentOperation(
+      'deployment.getCurrent',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(GetCurrentDeploymentRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'getCurrentDeployment',
+          (rpcOptions) => this.workflowService.getCurrentDeployment(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async setCurrentDeployment(
+    request: Omit<SetCurrentDeploymentRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<SetCurrentDeploymentResponse> {
+    return this.#instrumentOperation(
+      'deployment.setCurrent',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(SetCurrentDeploymentRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'setCurrentDeployment',
+          (rpcOptions) => this.workflowService.setCurrentDeployment(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async getDeploymentReachability(
+    request: Omit<GetDeploymentReachabilityRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<GetDeploymentReachabilityResponse> {
+    return this.#instrumentOperation(
+      'deployment.reachability',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(GetDeploymentReachabilityRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'getDeploymentReachability',
+          (rpcOptions) => this.workflowService.getDeploymentReachability(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async setWorkerDeploymentCurrentVersion(
+    request: Omit<SetWorkerDeploymentCurrentVersionRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<SetWorkerDeploymentCurrentVersionResponse> {
+    return this.#instrumentOperation(
+      'deployment.setCurrentVersion',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(SetWorkerDeploymentCurrentVersionRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'setWorkerDeploymentCurrentVersion',
+          (rpcOptions) => this.workflowService.setWorkerDeploymentCurrentVersion(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async setWorkerDeploymentRampingVersion(
+    request: Omit<SetWorkerDeploymentRampingVersionRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<SetWorkerDeploymentRampingVersionResponse> {
+    return this.#instrumentOperation(
+      'deployment.setRampingVersion',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(SetWorkerDeploymentRampingVersionRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'setWorkerDeploymentRampingVersion',
+          (rpcOptions) => this.workflowService.setWorkerDeploymentRampingVersion(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async updateWorkerDeploymentVersionMetadata(
+    request: Omit<UpdateWorkerDeploymentVersionMetadataRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<UpdateWorkerDeploymentVersionMetadataResponse> {
+    return this.#instrumentOperation(
+      'deployment.updateVersionMetadata',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(UpdateWorkerDeploymentVersionMetadataRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'updateWorkerDeploymentVersionMetadata',
+          (rpcOptions) => this.workflowService.updateWorkerDeploymentVersionMetadata(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async deleteWorkerDeploymentVersion(
+    request: Omit<DeleteWorkerDeploymentVersionRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<DeleteWorkerDeploymentVersionResponse> {
+    return this.#instrumentOperation(
+      'deployment.deleteVersion',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(DeleteWorkerDeploymentVersionRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'deleteWorkerDeploymentVersion',
+          (rpcOptions) => this.workflowService.deleteWorkerDeploymentVersion(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async deleteWorkerDeployment(
+    request: Omit<DeleteWorkerDeploymentRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<DeleteWorkerDeploymentResponse> {
+    return this.#instrumentOperation(
+      'deployment.delete',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(DeleteWorkerDeploymentRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'deleteWorkerDeployment',
+          (rpcOptions) => this.workflowService.deleteWorkerDeployment(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async setWorkerDeploymentManager(
+    request: Omit<SetWorkerDeploymentManagerRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<SetWorkerDeploymentManagerResponse> {
+    return this.#instrumentOperation(
+      'deployment.setManager',
+      async () => {
+        this.ensureOpen()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(SetWorkerDeploymentManagerRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'setWorkerDeploymentManager',
+          (rpcOptions) => this.workflowService.setWorkerDeploymentManager(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async addSearchAttributes(
+    request: Omit<AddSearchAttributesRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<AddSearchAttributesResponse> {
+    return this.#instrumentOperation(
+      'operator.addSearchAttributes',
+      async () => {
+        this.ensureOpen()
+        const operator = this.#requireOperatorService()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(AddSearchAttributesRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'addSearchAttributes',
+          (rpcOptions) => operator.addSearchAttributes(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async removeSearchAttributes(
+    request: Omit<RemoveSearchAttributesRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<RemoveSearchAttributesResponse> {
+    return this.#instrumentOperation(
+      'operator.removeSearchAttributes',
+      async () => {
+        this.ensureOpen()
+        const operator = this.#requireOperatorService()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(RemoveSearchAttributesRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'removeSearchAttributes',
+          (rpcOptions) => operator.removeSearchAttributes(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async listSearchAttributes(
+    request: Omit<ListSearchAttributesRequest, 'namespace'> & { namespace?: string },
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<ListSearchAttributesResponse> {
+    return this.#instrumentOperation(
+      'operator.listSearchAttributes',
+      async () => {
+        this.ensureOpen()
+        const operator = this.#requireOperatorService()
+        const namespace = ensureNonEmptyString(request.namespace ?? this.namespace, 'namespace')
+        const payload = create(ListSearchAttributesRequestSchema, { ...request, namespace })
+        return await this.executeRpc(
+          'listSearchAttributes',
+          (rpcOptions) => operator.listSearchAttributes(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      { namespace: request.namespace ?? this.namespace },
+    )
+  }
+
+  async createNexusEndpoint(
+    request: CreateNexusEndpointRequest,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<CreateNexusEndpointResponse> {
+    return this.#instrumentOperation(
+      'operator.createNexusEndpoint',
+      async () => {
+        this.ensureOpen()
+        const operator = this.#requireOperatorService()
+        const payload = create(CreateNexusEndpointRequestSchema, request)
+        return await this.executeRpc(
+          'createNexusEndpoint',
+          (rpcOptions) => operator.createNexusEndpoint(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      {},
+    )
+  }
+
+  async updateNexusEndpoint(
+    request: UpdateNexusEndpointRequest,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<UpdateNexusEndpointResponse> {
+    return this.#instrumentOperation(
+      'operator.updateNexusEndpoint',
+      async () => {
+        this.ensureOpen()
+        const operator = this.#requireOperatorService()
+        const payload = create(UpdateNexusEndpointRequestSchema, request)
+        return await this.executeRpc(
+          'updateNexusEndpoint',
+          (rpcOptions) => operator.updateNexusEndpoint(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      {},
+    )
+  }
+
+  async deleteNexusEndpoint(
+    request: DeleteNexusEndpointRequest,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<DeleteNexusEndpointResponse> {
+    return this.#instrumentOperation(
+      'operator.deleteNexusEndpoint',
+      async () => {
+        this.ensureOpen()
+        const operator = this.#requireOperatorService()
+        const payload = create(DeleteNexusEndpointRequestSchema, request)
+        return await this.executeRpc(
+          'deleteNexusEndpoint',
+          (rpcOptions) => operator.deleteNexusEndpoint(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      {},
+    )
+  }
+
+  async getNexusEndpoint(
+    request: GetNexusEndpointRequest,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<GetNexusEndpointResponse> {
+    return this.#instrumentOperation(
+      'operator.getNexusEndpoint',
+      async () => {
+        this.ensureOpen()
+        const operator = this.#requireOperatorService()
+        const payload = create(GetNexusEndpointRequestSchema, request)
+        return await this.executeRpc(
+          'getNexusEndpoint',
+          (rpcOptions) => operator.getNexusEndpoint(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      {},
+    )
+  }
+
+  async listNexusEndpoints(
+    request?: ListNexusEndpointsRequest,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<ListNexusEndpointsResponse> {
+    return this.#instrumentOperation(
+      'operator.listNexusEndpoints',
+      async () => {
+        this.ensureOpen()
+        const operator = this.#requireOperatorService()
+        const payload = create(ListNexusEndpointsRequestSchema, request ?? {})
+        return await this.executeRpc(
+          'listNexusEndpoints',
+          (rpcOptions) => operator.listNexusEndpoints(payload, rpcOptions),
+          callOptions,
+        )
+      },
+      {},
+    )
+  }
+
+  callWorkflowService<T extends WorkflowServiceMethodName>(
+    method: T,
+    request: WorkflowServiceRequest<T>,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<WorkflowServiceResponse<T>> {
+    return this.#instrumentOperation<WorkflowServiceResponse<T>>(
+      'rpc',
+      () => {
+        this.ensureOpen()
+        const rpc = this.workflowService[method] as (
+          input: WorkflowServiceRequest<T>,
+          options: CallOptions,
+        ) => ReturnType<WorkflowServiceClient[T]>
+        return this.executeRpc<WorkflowServiceResponse<T>>(
+          `workflowService.${String(method)}`,
+          (rpcOptions) => rpc(request, rpcOptions) as Promise<WorkflowServiceResponse<T>>,
+          callOptions,
+        )
+      },
+      { workflowServiceMethod: String(method) },
+    )
+  }
+
+  callOperatorService<T extends OperatorServiceMethodName>(
+    method: T,
+    request: OperatorServiceRequest<T>,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<OperatorServiceResponse<T>> {
+    return this.#instrumentOperation<OperatorServiceResponse<T>>(
+      'rpc',
+      () => {
+        this.ensureOpen()
+        const operator = this.#requireOperatorService()
+        const rpc = operator[method] as (
+          input: OperatorServiceRequest<T>,
+          options: CallOptions,
+        ) => ReturnType<OperatorServiceClient[T]>
+        return this.executeRpc<OperatorServiceResponse<T>>(
+          `operatorService.${String(method)}`,
+          (rpcOptions) => rpc(request, rpcOptions) as Promise<OperatorServiceResponse<T>>,
+          callOptions,
+        )
+      },
+      { operatorServiceMethod: String(method) },
+    )
+  }
+
+  callCloudService<T extends CloudServiceMethodName>(
+    method: T,
+    request: CloudServiceRequest<T>,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<CloudServiceResponse<T>> {
+    return this.#instrumentOperation<CloudServiceResponse<T>>(
+      'rpc',
+      () => {
+        this.ensureOpen()
+        const cloud = this.#requireCloudService()
+        const rpc = cloud[method] as (
+          input: CloudServiceRequest<T>,
+          options: CallOptions,
+        ) => ReturnType<CloudServiceClient[T]>
+        return this.executeCloudRpc<CloudServiceResponse<T>>(
+          `cloud.${String(method)}`,
+          (rpcOptions) => rpc(request, rpcOptions) as Promise<CloudServiceResponse<T>>,
+          callOptions,
+        )
+      },
+      { cloudMethod: String(method) },
+    )
+  }
+
   async describeNamespace(
     targetNamespace?: string,
     callOptions?: BrandedTemporalClientCallOptions,
@@ -1125,6 +2680,14 @@ class TemporalClientImpl implements TemporalClient {
     this.headers = mergeHeaders(this.headers, normalized)
   }
 
+  async updateCloudHeaders(headers: Record<string, string | ArrayBuffer | ArrayBufferView>): Promise<void> {
+    if (this.closed) {
+      throw new Error('Temporal client has already been shut down')
+    }
+    const normalized = normalizeMetadataHeaders(headers)
+    this.cloudHeaders = mergeHeaders(this.cloudHeaders, normalized)
+  }
+
   async shutdown(): Promise<void> {
     if (this.closed) return
     this.closed = true
@@ -1133,6 +2696,12 @@ class TemporalClientImpl implements TemporalClient {
       const maybeClose = this.transport.close
       if (typeof maybeClose === 'function') {
         await maybeClose.call(this.transport)
+      }
+    }
+    if (this.cloudTransport) {
+      const maybeClose = this.cloudTransport.close
+      if (typeof maybeClose === 'function') {
+        await maybeClose.call(this.cloudTransport)
       }
     }
     await this.#flushMetrics()
@@ -1407,13 +2976,17 @@ class TemporalClientImpl implements TemporalClient {
     return events[events.length - 1]
   }
 
-  #buildCallContext(overrides?: TemporalClientCallOptions): {
+  #buildCallContext(
+    overrides?: TemporalClientCallOptions,
+    baseHeaders?: Record<string, string>,
+  ): {
     create: () => CallOptions
     retryPolicy: TemporalRpcRetryPolicy
     headers: Record<string, string>
   } {
+    const base = baseHeaders ?? this.headers
     const userHeaders = overrides?.headers ? normalizeMetadataHeaders(overrides.headers) : undefined
-    const mergedHeaders = userHeaders ? mergeHeaders(this.headers, userHeaders) : { ...this.headers }
+    const mergedHeaders = userHeaders ? mergeHeaders(base, userHeaders) : { ...base }
     const timeout = overrides?.timeoutMs
     const signal = overrides?.signal
     return {
@@ -1425,6 +2998,20 @@ class TemporalClientImpl implements TemporalClient {
       retryPolicy: this.#mergeRetryPolicy(overrides?.retryPolicy),
       headers: mergedHeaders,
     }
+  }
+
+  #requireOperatorService(): OperatorServiceClient {
+    if (!this.operatorService) {
+      throw new Error('Temporal operator service is not available')
+    }
+    return this.operatorService
+  }
+
+  #requireCloudService(): CloudServiceClient {
+    if (!this.cloudService) {
+      throw new Error('Temporal cloud service is not available')
+    }
+    return this.cloudService
   }
 
   private async executeRpc<T>(
@@ -1466,6 +3053,52 @@ class TemporalClientImpl implements TemporalClient {
     )
     if ((interceptorContext.attempt ?? 1) > 1) {
       this.#log('info', `temporal rpc ${operation} succeeded after ${interceptorContext.attempt} attempts`, {
+        operation,
+        attempts: interceptorContext.attempt,
+      })
+    }
+    return result
+  }
+
+  private async executeCloudRpc<T>(
+    operation: string,
+    rpc: (options: CallOptions) => Promise<T>,
+    overrides?: TemporalClientCallOptions,
+  ): Promise<T> {
+    const { create, retryPolicy, headers } = this.#buildCallContext(overrides, this.cloudHeaders)
+    const interceptorContext: Omit<InterceptorContext, 'direction'> = {
+      kind: 'rpc' as InterceptorKind,
+      namespace: this.namespace,
+      taskQueue: this.defaultTaskQueue,
+      identity: this.defaultIdentity,
+      headers,
+      metadata: { retryPolicy },
+    }
+
+    const baseEffect = () =>
+      Effect.tryPromise({
+        try: () => {
+          interceptorContext.attempt = (interceptorContext.attempt ?? 0) + 1
+          return rpc(create())
+        },
+        catch: (error) => wrapRpcError(error),
+      }).pipe(
+        Effect.tapError((error) =>
+          Effect.sync(() => {
+            this.#log('warn', `temporal cloud rpc ${operation} attempt failed`, {
+              operation,
+              attempt: interceptorContext.attempt,
+              error: describeError(error),
+            })
+          }),
+        ),
+      )
+
+    const result = await Effect.runPromise(
+      runClientInterceptors<T>(this.#clientInterceptors, interceptorContext, baseEffect),
+    )
+    if ((interceptorContext.attempt ?? 1) > 1) {
+      this.#log('info', `temporal cloud rpc ${operation} succeeded after ${interceptorContext.attempt} attempts`, {
         operation,
         attempts: interceptorContext.attempt,
       })
@@ -1535,6 +3168,11 @@ const ensureNonEmptyString = (value: string | undefined, field: string): string 
     throw new Error(`${field} must be a non-empty string`)
   }
   return trimmed
+}
+
+const ensureRequestId = (value?: string): string => {
+  const trimmed = value?.trim()
+  return trimmed && trimmed.length > 0 ? trimmed : randomUUID()
 }
 
 const ensureOptionalPositiveInteger = (value: number | undefined, field: string): number | undefined => {

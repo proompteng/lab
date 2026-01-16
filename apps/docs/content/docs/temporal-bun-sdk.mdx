@@ -86,6 +86,9 @@ Environment variables supported by the config loader:
 | `TEMPORAL_NAMESPACE` | `default` | Namespace passed to the worker and client. |
 | `TEMPORAL_TASK_QUEUE` | `replay-fixtures` | Worker task queue. |
 | `TEMPORAL_API_KEY` | _unset_ | Injected into connection metadata for Cloud/API auth. |
+| `TEMPORAL_CLOUD_ADDRESS` | _unset_ | Temporal Cloud Ops endpoint (defaults to `saas-api.tmprl.cloud:443` when Cloud API is enabled). |
+| `TEMPORAL_CLOUD_API_KEY` | _unset_ | API key for Temporal Cloud Ops API (Bearer token). |
+| `TEMPORAL_CLOUD_API_VERSION` | _unset_ | Cloud API version header (defaults to `2025-05-31` when Cloud API is enabled). |
 | `TEMPORAL_TLS_CA_PATH` | _unset_ | Path to trusted CA bundle. |
 | `TEMPORAL_TLS_CERT_PATH` / `TEMPORAL_TLS_KEY_PATH` | _unset_ | mTLS client certificate and key (require both). |
 | `TEMPORAL_TLS_SERVER_NAME` | _unset_ | Overrides TLS server name verification. |
@@ -175,6 +178,17 @@ helper and telemetry interceptors:
 - **Default interceptors** - inbound/outbound hooks wrap every workflow RPC and operation: namespace/identity headers are injected, retries use jittered backoff, and latency/error metrics flow through the configured registry/exporter. Tracing spans are opt in via `TEMPORAL_TRACING_INTERCEPTORS_ENABLED` (or `tracingEnabled` in code). Append custom middleware with `clientInterceptors` (client) or `interceptors` (transport) to add auth headers, audit logs, or bespoke telemetry.
 - **Memo/search helpers** - `client.memo` and `client.searchAttributes` expose `encode`/`decode` helpers that reuse the client's `DataConverter`, making it easy to prepare payloads for raw WorkflowService requests.
 - **TLS validation** - TLS buffers are checked up front (missing files, invalid PEMs, and mismatched cert/key pairs throw `TemporalTlsConfigurationError`) and transport failures surface as `TemporalTlsHandshakeError` with remediation hints.
+
+## RPC coverage (Workflow, Operator, Cloud)
+
+The SDK exposes both high-level helpers and low-level RPC access:
+
+- `client.rpc.workflow.call(...)` for any WorkflowService RPC.
+- `client.operator.*` for OperatorService convenience methods, plus `client.rpc.operator.call(...)` for full coverage.
+- `client.cloud.call(...)` for Temporal Cloud Ops API (configure via `TEMPORAL_CLOUD_*`).
+
+All RPC entrypoints accept `TemporalClientCallOptions` for headers, timeouts,
+retry overrides, and abort signals.
 
 ## Payload codecs and failure conversion
 

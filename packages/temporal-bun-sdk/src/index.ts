@@ -2,9 +2,18 @@ export type {
   BrandedTemporalClientCallOptions,
   TemporalClient,
   TemporalClientCallOptions,
+  TemporalCloudClient,
+  TemporalDeploymentClient,
   TemporalMemoHelpers,
+  TemporalOperatorClient,
+  TemporalOperatorServiceClient,
+  TemporalRpcClients,
+  TemporalScheduleClient,
   TemporalSearchAttributeHelpers,
+  TemporalWorkerOperationsClient,
   TemporalWorkflowClient,
+  TemporalWorkflowOperationsClient,
+  TemporalWorkflowServiceClient,
 } from './client'
 export {
   createTemporalClient,
@@ -45,6 +54,16 @@ export {
   TemporalCliLayer,
 } from './runtime/cli-layer'
 export { createWorkerAppLayer, runWorkerApp, WorkerAppLayer } from './runtime/worker-app'
+export type { SearchAttributeSchemaMap, TypedSearchAttributes } from './search-attributes'
+export { createTypedSearchAttributes, defineSearchAttributes } from './search-attributes'
+export type { TestWorkflowEnvironmentOptions, TimeSkippingTestWorkflowEnvironmentOptions } from './testing'
+export {
+  createExistingWorkflowEnvironment,
+  createTestWorkflowEnvironment,
+  createTimeSkippingWorkflowEnvironment,
+  TemporalTestServerUnavailableError,
+  TestWorkflowEnvironment,
+} from './testing'
 export {
   createWorkerRuntimeLayer,
   makeWorkerRuntimeEffect,
@@ -52,3 +71,6 @@ export {
   WorkerRuntimeLayer,
   WorkerRuntimeService,
 } from './worker/layer'
+export type { WorkerPlugin, WorkerPluginContext } from './worker/plugins'
+export type { WorkerTuner } from './worker/tuner'
+export { createStaticWorkerTuner } from './worker/tuner'

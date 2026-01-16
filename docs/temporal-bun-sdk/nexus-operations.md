@@ -1,55 +1,51 @@
-# Temporal Bun SDK - Nexus Operations
+# Nexus operations
 
-## Goal
-Implement Nexus operations end-to-end in the Bun SDK (poll, execute, cancel,
-respond), with ergonomics that exceed the TypeScript SDK.
+The Bun SDK supports Nexus operations inside workflows and surfaces the
+associated control-plane APIs via the Operator and Cloud clients.
 
-## Non-Goals
-- Building a Nexus gateway or endpoint registry UI.
-- Supporting Nexus on servers that do not enable the feature.
+## Workflow Nexus API
 
-## Requirements
-1. Before implementation, check out `https://github.com/temporalio/sdk-core` and
-   `https://github.com/temporalio/sdk-typescript` to confirm upstream behavior.
-2. Worker polls `PollNexusTaskQueue` when Nexus services are registered.
-3. Handler runtime with cancellation and structured errors.
-4. Client helper to call Nexus operations from workflows and services.
-5. Propagate links, request IDs, and headers in a deterministic way.
-6. Observability hooks: metrics, logs, and tracing per operation.
+Workflows can schedule and cancel Nexus operations through the workflow context:
 
-## API Sketch
 ```ts
-import { createNexusClient } from '@proompteng/temporal-bun-sdk/nexus'
-
-const nexus = createNexusClient({ endpoint: 'endpoint-1' })
-const result = await nexus.execute('summarize', { text: 'hello' })
-```
-
-Worker registration:
-```ts
-await createWorker({
-  workflowsPath,
-  activities,
-  nexus: {
-    services: {
-      summarize: async ({ input }) => ({ output: input.text })
-    },
+const result = yield* ctx.nexus.schedule(
+  'endpoint',
+  'service',
+  'operation',
+  { payload: 'value' },
+  {
+    scheduleToCloseTimeoutMs: 60_000,
+    operationId: 'op-123',
   },
-})
+)
+
+// Cancel by operation id (or by scheduled event id when available)
+yield* ctx.nexus.cancel('op-123')
 ```
 
-## Error Semantics
-- Map Nexus handler errors to Temporal failure fields with retry behavior.
-- Support explicit `retryBehavior` mapping to server enums.
+### Behavior
 
-## Implementation Notes
-- Use the workflowservice RPCs:
-  - `PollNexusTaskQueue`
-  - `RespondNexusTaskCompleted`
-  - `RespondNexusTaskFailed`
-- Add effectful interceptor hooks for inbound/outbound Nexus calls.
+- The SDK injects an operation id header (`x-temporal-bun-operation-id`) for
+  deterministic mapping between schedule/cancel events.
+- Results and failures are resolved deterministically during replay.
+- Failed, canceled, and timed-out operations are converted into structured
+  `Error` instances with decoded failure payloads.
 
-## Acceptance Criteria
-- Nexus handler cancellation works and reports the proper failure info.
-- Operations can be called from workflow code without breaking determinism.
-- Metrics include latency and failure causes.
+## Observability hooks
+
+Nexus operations integrate with the worker runtime’s scheduling and plugin
+hooks:
+
+- Scheduler hooks fire on workflow task start/complete, so Nexus commands are
+  captured alongside workflow tasks.
+- Worker plugins can emit additional telemetry around Nexus usage by observing
+  workflow task envelopes.
+
+## Operator + Cloud Nexus APIs
+
+Nexus endpoints are managed via:
+
+- `client.operator.createNexusEndpoint`, `updateNexusEndpoint`, `deleteNexusEndpoint`,
+  `getNexusEndpoint`, `listNexusEndpoints` (OperatorService)
+- `client.cloud.call('getNexusEndpoints', ...)` and related CloudService RPCs
+  when Temporal Cloud Ops API is configured.

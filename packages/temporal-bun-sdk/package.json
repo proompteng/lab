@@ -45,6 +45,10 @@
       "types": "./dist/src/worker.d.ts",
       "default": "./dist/src/worker.js"
     },
+    "./testing": {
+      "types": "./dist/src/testing/index.d.ts",
+      "default": "./dist/src/testing/index.js"
+    },
     "./bin/start-worker": "./dist/bin/start-worker.js",
     "./bin/cli": "./dist/bin/temporal-bun.js"
   },

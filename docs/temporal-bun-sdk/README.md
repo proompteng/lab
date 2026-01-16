@@ -18,3 +18,5 @@ acceptance criteria.
 - `observability-and-plugins.md` - Observability pipeline, workflow sinks, and
   plugin/tuner architecture.
 - `rpc-coverage.md` - Requirements checklist for all new RPCs to expose.
+- `release-summary.md` - Release-ready summary, migration notes, feature flags,
+  and operational guidance.

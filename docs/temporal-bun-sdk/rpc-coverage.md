@@ -1,107 +1,65 @@
-# Temporal Bun SDK - RPC Coverage Requirements
+# RPC coverage
 
-## Goal
-Document all WorkflowService/Operator/Cloud RPCs that the Bun SDK should expose
-beyond the current client surface. This is a requirements checklist, not an
-implementation plan.
+The Bun SDK exposes WorkflowService, OperatorService, and CloudService RPCs via
+stable client namespaces. All RPCs accept `TemporalClientCallOptions` (timeout,
+retry overrides, headers, abort signals).
 
-## Scope
-- WorkflowService RPCs already present in proto stubs but not surfaced in the
-  Bun SDK client.
-- OperatorService RPCs needed for admin workflows.
-- CloudService RPCs needed for Temporal Cloud operations.
+## WorkflowService
 
-## Requirements - WorkflowService
+### High-level convenience
 
-### Worker and Task Queue Operations
-1. `ListWorkers` - list active workers in a namespace with optional query.
-2. `DescribeWorker` - detailed worker info for diagnostics.
-3. `RecordWorkerHeartbeat` - explicit worker heartbeat submission.
-4. `FetchWorkerConfig` - fetch server-side worker config defaults.
-5. `UpdateWorkerConfig` - update server-side worker config.
-6. `UpdateTaskQueueConfig` - update task queue rate limits and fairness settings.
-7. `DescribeTaskQueue` and `ListTaskQueuePartitions` - enhanced diagnostics.
+- `client.workflow.*` (start, signal, query, update, cancel, terminate, result)
+- `client.schedules.*` (create/describe/update/patch/list/delete/trigger/backfill/pause/unpause/listMatchingTimes)
+- `client.workflowOps.*` (updateExecutionOptions/pause/unpause/resetStickyTaskQueue)
+- `client.workerOps.*` (list/describe/fetchConfig/updateConfig/updateTaskQueueConfig/versioning)
+- `client.deployments.*` (list/describe/get/set current, reachability, version metadata)
 
-### Worker Versioning and Deployments
-1. `GetWorkerBuildIdCompatibility` - capability probe and build ID info.
-2. `UpdateWorkerBuildIdCompatibility` - build ID registration.
-3. `GetWorkerVersioningRules` - read worker versioning rules per task queue.
-4. `UpdateWorkerVersioningRules` - update worker versioning rules.
-5. `DescribeDeployment` / `ListDeployments`.
-6. `GetCurrentDeployment` / `SetCurrentDeployment`.
-7. `GetDeploymentReachability`.
-8. Worker deployment CRUD + versions:
-   - `DescribeWorkerDeployment`
-   - `ListWorkerDeployments`
-   - `DeleteWorkerDeployment`
-   - `DescribeWorkerDeploymentVersion`
-   - `ListWorkerDeploymentVersions`
-   - `DeleteWorkerDeploymentVersion`
-   - `SetWorkerDeploymentCurrentVersion`
-   - `SetWorkerDeploymentRampingVersion`
-   - `UpdateWorkerDeploymentVersionMetadata`
-   - `SetWorkerDeploymentManager`
+### Full RPC surface
 
-### Workflow Execution Admin
-1. `UpdateWorkflowExecutionOptions` - update execution options with masks.
-2. `PauseWorkflowExecution` / `UnpauseWorkflowExecution`.
-3. `ResetStickyTaskQueue` - explicit sticky reset.
+For any additional WorkflowService RPCs, use the low-level RPC helper:
 
-### Activity Admin
-1. `UpdateActivityOptions`.
-2. `PauseActivity` / `UnpauseActivity`.
-3. `ResetActivity`.
-4. `StartActivityExecution`.
+```ts
+await client.rpc.workflow.call('listOpenWorkflowExecutions', {
+  namespace: 'default',
+  maximumPageSize: 100,
+})
+```
 
-### Schedules
-1. `CreateSchedule`.
-2. `DescribeSchedule`.
-3. `UpdateSchedule`.
-4. `PatchSchedule`.
-5. `ListScheduleMatchingTimes`.
-6. `DeleteSchedule`.
-7. `ListSchedules`.
+`client.rpc.workflow.call()` is a typed wrapper over the generated
+WorkflowService client, and it honors `TemporalClientCallOptions`.
 
-### Nexus Operations
-1. `PollNexusTaskQueue`.
-2. `RespondNexusTaskCompleted`.
-3. `RespondNexusTaskFailed`.
+## OperatorService
 
-## Requirements - OperatorService
-1. Search attributes admin:
-   - `AddSearchAttributes`
-   - `RemoveSearchAttributes`
-   - `ListSearchAttributes`
-2. Namespace admin:
-   - `RegisterNamespace`
-   - `UpdateNamespace`
-   - `DeprecateNamespace`
-   - `DeleteNamespace`
-   - `DescribeNamespace`
-   - `ListNamespaces`
-3. Nexus endpoint admin:
-   - `GetNexusEndpoint`
-   - `CreateNexusEndpoint`
-   - `UpdateNexusEndpoint`
-   - `DeleteNexusEndpoint`
-   - `ListNexusEndpoints`
+### High-level convenience
 
-## Requirements - CloudService (Temporal Cloud)
-1. Nexus endpoint admin (cloud variants):
-   - `GetNexusEndpoints`
-   - `GetNexusEndpoint`
-   - `CreateNexusEndpoint`
-   - `UpdateNexusEndpoint`
-   - `DeleteNexusEndpoint`
-2. Any other CloudService RPCs required for deployment workflows
-   (to be added as product requirements evolve).
+- `client.operator.*` for search attribute and Nexus endpoint operations
 
-## Common Requirements
-- All RPCs must accept standard call options (timeout, retry policy, headers,
-  abort signal).
-- RPCs must be exposed through stable client namespaces (e.g. `client.workerOps`,
-  `client.schedules`, `client.admin`, `client.nexus`).
-- Errors must preserve gRPC codes and messages, with `Unimplemented` and
-  `FailedPrecondition` clearly surfaced.
-- Each RPC must have test coverage (unit mocks + at least one integration test
-  per functional area).
+### Full RPC surface
+
+Use `client.rpc.operator.call()` for any OperatorService RPCs:
+
+```ts
+await client.rpc.operator.call('listSearchAttributes', { namespace: 'default' })
+```
+
+## CloudService
+
+Temporal Cloud Ops API is exposed via `client.cloud.call()` (and mirrored under
+`client.rpc.cloud`). It supports all CloudService RPCs from
+`temporal/api/cloud/cloudservice/v1/service.proto`:
+
+```ts
+await client.cloud.call('getNamespaces', {})
+```
+
+### Cloud configuration
+
+Enable Cloud Ops by setting:
+
+- `TEMPORAL_CLOUD_ADDRESS` (defaults to `saas-api.tmprl.cloud:443` when Cloud is enabled)
+- `TEMPORAL_CLOUD_API_KEY` (Bearer token)
+- `TEMPORAL_CLOUD_API_VERSION` (default `2025-05-31`)
+
+The SDK injects the required `authorization` and `temporal-cloud-api-version`
+headers automatically; per-call overrides are supported via
+`TemporalClientCallOptions`.

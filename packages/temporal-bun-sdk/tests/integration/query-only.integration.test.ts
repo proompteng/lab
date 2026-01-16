@@ -19,6 +19,7 @@ import { integrationActivities, integrationWorkflows, queryOnlyWorkflow } from '
 const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
 const describeIntegration = shouldRunIntegration ? describe : describe.skip
 const scenarioTimeoutMs = 60_000
+const hookTimeoutMs = 60_000
 
 const CLI_CONFIG: TemporalDevServerConfig = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
@@ -65,7 +66,7 @@ describeIntegration('Query-only workflow tasks', () => {
       console.error('[temporal-bun-sdk] integration worker runtime exited', error)
       throw error
     })
-  })
+  }, { timeout: hookTimeoutMs })
 
   afterAll(async () => {
     if (runtime) {
@@ -79,7 +80,7 @@ describeIntegration('Query-only workflow tasks', () => {
     if (harness) {
       await Effect.runPromise(harness.teardown)
     }
-  })
+  }, { timeout: hookTimeoutMs })
 
   const runTemporalCli = async (...args: string[]): Promise<string> => {
     const child = Bun.spawn(['temporal', '--address', CLI_CONFIG.address, ...args], {

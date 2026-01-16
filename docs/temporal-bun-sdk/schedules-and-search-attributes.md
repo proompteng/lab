@@ -1,59 +1,57 @@
-# Temporal Bun SDK - Schedules and Typed Search Attributes
+# Schedules and search attributes
 
-## Goal
-Expose a Schedule client and typed search-attribute helpers that are safer and
-more ergonomic than the TypeScript SDK while remaining fully compatible with
-Temporal server behavior.
+The Bun SDK exposes full Temporal Schedule support plus typed search attributes
+backed by Effect Schema validation.
 
-## Non-Goals
-- Building a GUI for schedule management.
-- Replacing Temporal CLI schedule commands.
+## Schedule client
 
-## Requirements
-1. Before implementation, check out `https://github.com/temporalio/sdk-core` and
-   `https://github.com/temporalio/sdk-typescript` to confirm upstream behavior.
-2. Full Schedule API: create, describe, update, patch, list, delete, trigger,
-   backfill, pause, unpause, list-matching-times.
-3. Typed Search Attributes for workflows and schedules.
-4. Schema validation at runtime (Effect Schema) and compile-time typings.
-5. Preserve compatibility with raw `SearchAttributes` payloads.
-6. Support SearchAttribute updates inside workflow execution options.
+`TemporalClient.schedules` maps to WorkflowService schedule RPCs:
 
-## API Sketch
+- `create`, `describe`, `update`, `patch`, `list`
+- `delete`, `trigger`, `backfill`
+- `pause`, `unpause`
+- `listMatchingTimes`
+
+Every method accepts optional `TemporalClientCallOptions` for headers, timeouts,
+abort signals, and retry overrides.
+
 ```ts
-import { ScheduleClient, defineSearchAttributes } from '@proompteng/temporal-bun-sdk/schedule'
+const { client } = await createTemporalClient()
 
-const sa = defineSearchAttributes({
-  Team: 'keyword',
-  Commit: 'text',
-  BuildIds: 'keyword_list',
-})
-
-const schedule = await ScheduleClient.create({
-  scheduleId: 'nightly',
-  spec: { intervals: [{ everyMs: 24 * 60 * 60 * 1000 }] },
-  action: {
-    workflowType: 'indexRepo',
-    taskQueue: 'bumba',
-    args: ['repo://acme/project'],
-    typedSearchAttributes: sa.encode({ Team: 'ai', BuildIds: ['v1'] }),
+await client.schedules.create({
+  namespace: 'default',
+  scheduleId: 'daily-report',
+  schedule: {
+    spec: { interval: [{ interval: { seconds: 86_400 } }] },
+    action: {
+      action: {
+        case: 'startWorkflow',
+        value: { workflowType: { name: 'reportWorkflow' }, taskQueue: { name: 'reports' } },
+      },
+    },
   },
 })
-
-await schedule.trigger({ overlap: 'ALLOW_ALL' })
 ```
 
-## Data Model
-- Typed SA definitions are a small DSL mapping keys to Temporal SA types.
-- `encode` and `decode` run through the configured DataConverter to avoid
-  divergence from workflow payload behavior.
+## Typed search attributes
 
-## Implementation Notes
-- Leverage the generated schedule protos in `workflowservice/v1`.
-- Provide a `ScheduleHandle` with methods mirroring the server RPCs.
-- Add `client.searchAttributes` convenience helpers for non-schedule APIs.
+Use `defineSearchAttributes()` or `client.searchAttributes.typed()` to create a
+schema-backed helper. The helper encodes/decodes search attributes with the
+client's `DataConverter`.
 
-## Acceptance Criteria
-- Can round-trip typed SAs without losing type info.
-- Schedule update preserves conflict tokens and supports optimistic concurrency.
-- Compatibility with raw `SearchAttributes` request fields.
+```ts
+import { Schema } from 'effect'
+import { defineSearchAttributes } from '@proompteng/temporal-bun-sdk'
+
+const CustomerSearch = defineSearchAttributes({
+  CustomerId: Schema.String,
+  Tier: Schema.Literal('gold', 'silver', 'bronze'),
+})
+
+const typed = client.searchAttributes.typed(CustomerSearch)
+const encoded = await typed.encode({ CustomerId: 'c-123', Tier: 'gold' })
+const decoded = await typed.decode(encoded)
+```
+
+Validation errors surface via Effect Schema decoding, preventing invalid
+search-attribute writes.

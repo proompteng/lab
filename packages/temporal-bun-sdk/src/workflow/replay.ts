@@ -18,6 +18,8 @@ import type {
   ActivityTaskScheduledEventAttributes,
   HistoryEvent,
   MarkerRecordedEventAttributes,
+  NexusOperationCancelRequestedEventAttributes,
+  NexusOperationScheduledEventAttributes,
   RequestCancelExternalWorkflowExecutionInitiatedEventAttributes,
   SignalExternalWorkflowExecutionInitiatedEventAttributes,
   StartChildWorkflowExecutionInitiatedEventAttributes,
@@ -44,7 +46,9 @@ import type {
   RecordMarkerCommandIntent,
   RequestCancelActivityCommandIntent,
   RequestCancelExternalWorkflowCommandIntent,
+  RequestCancelNexusOperationCommandIntent,
   ScheduleActivityCommandIntent,
+  ScheduleNexusOperationCommandIntent,
   SignalExternalWorkflowCommandIntent,
   StartChildWorkflowCommandIntent,
   StartTimerCommandIntent,
@@ -751,15 +755,23 @@ type DeterminismReconstructionOptions = {
   readonly seedHistoryEvents?: readonly HistoryEvent[]
 }
 
+const NEXUS_OPERATION_ID_HEADER = 'x-temporal-bun-operation-id'
+
 const seedDeterminismEventMaps = (state?: WorkflowDeterminismState, seedEvents?: readonly HistoryEvent[]) => {
   const scheduledActivities = new Map<string, string>()
+  const scheduledNexusOperations = new Map<string, string>()
   const timersByStartEventId = new Map<string, string>()
 
   if (!state) {
     if (seedEvents) {
-      seedDeterminismEventMapsFromHistory(scheduledActivities, timersByStartEventId, seedEvents)
+      seedDeterminismEventMapsFromHistory(
+        scheduledActivities,
+        scheduledNexusOperations,
+        timersByStartEventId,
+        seedEvents,
+      )
     }
-    return { scheduledActivities, timersByStartEventId }
+    return { scheduledActivities, scheduledNexusOperations, timersByStartEventId }
   }
 
   for (const entry of state.commandHistory) {
@@ -771,20 +783,25 @@ const seedDeterminismEventMaps = (state?: WorkflowDeterminismState, seedEvents?:
       scheduledActivities.set(eventId, entry.intent.activityId)
       continue
     }
+    if (entry.intent.kind === 'schedule-nexus-operation') {
+      scheduledNexusOperations.set(eventId, entry.intent.operationId)
+      continue
+    }
     if (entry.intent.kind === 'start-timer') {
       timersByStartEventId.set(eventId, entry.intent.timerId)
     }
   }
 
   if (seedEvents) {
-    seedDeterminismEventMapsFromHistory(scheduledActivities, timersByStartEventId, seedEvents)
+    seedDeterminismEventMapsFromHistory(scheduledActivities, scheduledNexusOperations, timersByStartEventId, seedEvents)
   }
 
-  return { scheduledActivities, timersByStartEventId }
+  return { scheduledActivities, scheduledNexusOperations, timersByStartEventId }
 }
 
 const seedDeterminismEventMapsFromHistory = (
   scheduledActivities: Map<string, string>,
+  scheduledNexusOperations: Map<string, string>,
   timersByStartEventId: Map<string, string>,
   events: readonly HistoryEvent[],
 ) => {
@@ -812,6 +829,19 @@ const seedDeterminismEventMapsFromHistory = (
         }
         break
       }
+      case EventType.NEXUS_OPERATION_SCHEDULED: {
+        if (event.attributes?.case !== 'nexusOperationScheduledEventAttributes') {
+          break
+        }
+        const eventId = normalizeEventId(event.eventId)
+        if (!eventId || scheduledNexusOperations.has(eventId)) {
+          break
+        }
+        const header = event.attributes.value.nexusHeader ?? {}
+        const operationId = header[NEXUS_OPERATION_ID_HEADER] ?? `nexus-${eventId}`
+        scheduledNexusOperations.set(eventId, operationId)
+        break
+      }
       default:
         break
     }
@@ -819,7 +849,10 @@ const seedDeterminismEventMapsFromHistory = (
 }
 
 const countHistoryCommandEvents = (events: readonly HistoryEvent[]): number => {
-  const { scheduledActivities, timersByStartEventId } = seedDeterminismEventMaps(undefined, events)
+  const { scheduledActivities, scheduledNexusOperations, timersByStartEventId } = seedDeterminismEventMaps(
+    undefined,
+    events,
+  )
   let count = 0
 
   for (const event of events) {
@@ -857,6 +890,25 @@ const countHistoryCommandEvents = (events: readonly HistoryEvent[]): number => {
         }
         const scheduledEventId = normalizeBigintIdentifier(event.attributes.value.scheduledEventId)
         if (scheduledEventId && scheduledActivities.has(scheduledEventId)) {
+          count += 1
+        }
+        break
+      }
+      case EventType.NEXUS_OPERATION_SCHEDULED: {
+        if (event.attributes?.case !== 'nexusOperationScheduledEventAttributes') {
+          break
+        }
+        if (event.attributes.value.endpoint && event.attributes.value.operation) {
+          count += 1
+        }
+        break
+      }
+      case EventType.NEXUS_OPERATION_CANCEL_REQUESTED: {
+        if (event.attributes?.case !== 'nexusOperationCancelRequestedEventAttributes') {
+          break
+        }
+        const scheduledEventId = normalizeBigintIdentifier(event.attributes.value.scheduledEventId)
+        if (scheduledEventId && scheduledNexusOperations.has(scheduledEventId)) {
           count += 1
         }
         break
@@ -941,7 +993,10 @@ const commandKindsMatch = (
 }
 
 const collectCommandKinds = (events: readonly HistoryEvent[]): WorkflowCommandKind[] => {
-  const { scheduledActivities, timersByStartEventId } = seedDeterminismEventMaps(undefined, events)
+  const { scheduledActivities, scheduledNexusOperations, timersByStartEventId } = seedDeterminismEventMaps(
+    undefined,
+    events,
+  )
   const kinds: WorkflowCommandKind[] = []
 
   for (const event of events) {
@@ -980,6 +1035,23 @@ const collectCommandKinds = (events: readonly HistoryEvent[]): WorkflowCommandKi
         const scheduledKey = normalizeEventId(event.attributes.value.scheduledEventId)
         if (scheduledKey && scheduledActivities.has(scheduledKey)) {
           kinds.push('request-cancel-activity')
+        }
+        break
+      }
+      case EventType.NEXUS_OPERATION_SCHEDULED: {
+        if (event.attributes?.case !== 'nexusOperationScheduledEventAttributes') {
+          break
+        }
+        kinds.push('schedule-nexus-operation')
+        break
+      }
+      case EventType.NEXUS_OPERATION_CANCEL_REQUESTED: {
+        if (event.attributes?.case !== 'nexusOperationCancelRequestedEventAttributes') {
+          break
+        }
+        const scheduledKey = normalizeEventId(event.attributes.value.scheduledEventId)
+        if (scheduledKey && scheduledNexusOperations.has(scheduledKey)) {
+          kinds.push('request-cancel-nexus-operation')
         }
         break
       }
@@ -1068,7 +1140,7 @@ const reconstructDeterminismState = (
       seededState?.updates && seededState.updates.length > 0
         ? [...seededState.updates, ...updateEntries]
         : updateEntries
-    const { scheduledActivities, timersByStartEventId } = seedDeterminismEventMaps(
+    const { scheduledActivities, scheduledNexusOperations, timersByStartEventId } = seedDeterminismEventMaps(
       seededState,
       options?.seedHistoryEvents,
     )
@@ -1088,6 +1160,24 @@ const reconstructDeterminismState = (
             const scheduledKey = normalizeEventId(event.eventId)
             if (scheduledKey) {
               scheduledActivities.set(scheduledKey, intent.activityId)
+            }
+            sequence += 1
+          }
+          break
+        }
+        case EventType.NEXUS_OPERATION_SCHEDULED: {
+          if (event.attributes?.case !== 'nexusOperationScheduledEventAttributes') {
+            break
+          }
+          const intent = yield* fromNexusOperationScheduled(event.attributes.value, sequence, intake)
+          if (intent) {
+            commandHistory.push({
+              intent,
+              metadata: buildCommandMetadata(event, event.attributes.value),
+            })
+            const scheduledKey = normalizeEventId(event.eventId)
+            if (scheduledKey) {
+              scheduledNexusOperations.set(scheduledKey, intent.operationId)
             }
             sequence += 1
           }
@@ -1130,6 +1220,20 @@ const reconstructDeterminismState = (
             break
           }
           const intent = fromActivityTaskCancelRequested(event.attributes.value, sequence, scheduledActivities)
+          if (intent) {
+            commandHistory.push({
+              intent,
+              metadata: buildCommandMetadata(event, event.attributes.value),
+            })
+            sequence += 1
+          }
+          break
+        }
+        case EventType.NEXUS_OPERATION_CANCEL_REQUESTED: {
+          if (event.attributes?.case !== 'nexusOperationCancelRequestedEventAttributes') {
+            break
+          }
+          const intent = fromNexusOperationCancelRequested(event.attributes.value, sequence, scheduledNexusOperations)
           if (intent) {
             commandHistory.push({
               intent,
@@ -1323,6 +1427,37 @@ const fromActivityTaskScheduled = (
     return intent
   })
 
+const fromNexusOperationScheduled = (
+  attributes: NexusOperationScheduledEventAttributes,
+  sequence: number,
+  intake: ReplayIntake,
+): Effect.Effect<ScheduleNexusOperationCommandIntent | undefined, unknown, never> =>
+  Effect.gen(function* () {
+    if (!attributes.endpoint || !attributes.service || !attributes.operation) {
+      return undefined
+    }
+
+    const input = attributes.input
+      ? yield* Effect.tryPromise(async () => await intake.dataConverter.fromPayload(attributes.input))
+      : undefined
+    const operationId = attributes.nexusHeader?.[NEXUS_OPERATION_ID_HEADER] ?? `nexus-${sequence}`
+
+    const intent: ScheduleNexusOperationCommandIntent = {
+      id: `schedule-nexus-operation-${sequence}`,
+      kind: 'schedule-nexus-operation',
+      sequence,
+      endpoint: attributes.endpoint,
+      service: attributes.service,
+      operation: attributes.operation,
+      operationId,
+      input,
+      scheduleToCloseTimeoutMs: durationToMillis(attributes.scheduleToCloseTimeout),
+      nexusHeader: attributes.nexusHeader,
+    }
+
+    return intent
+  })
+
 const fromTimerStarted = (
   attributes: TimerStartedEventAttributes,
   sequence: number,
@@ -1466,6 +1601,25 @@ const fromActivityTaskCancelRequested = (
     kind: 'request-cancel-activity',
     sequence,
     activityId,
+    scheduledEventId,
+  }
+}
+
+const fromNexusOperationCancelRequested = (
+  attributes: NexusOperationCancelRequestedEventAttributes,
+  sequence: number,
+  scheduledNexusOperations: Map<string, string>,
+): RequestCancelNexusOperationCommandIntent | undefined => {
+  const scheduledEventId = normalizeBigintIdentifier(attributes.scheduledEventId)
+  if (!scheduledEventId) {
+    return undefined
+  }
+  const operationId = scheduledNexusOperations.get(scheduledEventId) ?? `nexus-${scheduledEventId}`
+  return {
+    id: `cancel-nexus-operation-${sequence}`,
+    kind: 'request-cancel-nexus-operation',
+    sequence,
+    operationId,
     scheduledEventId,
   }
 }

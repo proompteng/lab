@@ -4,19 +4,64 @@
 
 import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
-import type { RetryPolicy } from "../../common/v1/message_pb.js";
+import type { Duration, Timestamp } from "@bufbuild/protobuf/wkt";
+import { file_google_protobuf_duration, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
+import type { ActivityType, Header, Payloads, Priority, RetryPolicy, SearchAttributes } from "../../common/v1/message_pb.js";
 import { file_temporal_api_common_v1_message } from "../../common/v1/message_pb.js";
+import type { WorkerDeploymentVersion } from "../../deployment/v1/message_pb.js";
+import { file_temporal_api_deployment_v1_message } from "../../deployment/v1/message_pb.js";
+import type { ActivityExecutionStatus } from "../../enums/v1/activity_pb.js";
+import { file_temporal_api_enums_v1_activity } from "../../enums/v1/activity_pb.js";
+import type { PendingActivityState } from "../../enums/v1/workflow_pb.js";
+import { file_temporal_api_enums_v1_workflow } from "../../enums/v1/workflow_pb.js";
+import type { Failure } from "../../failure/v1/message_pb.js";
+import { file_temporal_api_failure_v1_message } from "../../failure/v1/message_pb.js";
 import type { TaskQueue } from "../../taskqueue/v1/message_pb.js";
 import { file_temporal_api_taskqueue_v1_message } from "../../taskqueue/v1/message_pb.js";
-import type { Duration } from "@bufbuild/protobuf/wkt";
-import { file_google_protobuf_duration } from "@bufbuild/protobuf/wkt";
+import type { UserMetadata } from "../../sdk/v1/user_metadata_pb.js";
+import { file_temporal_api_sdk_v1_user_metadata } from "../../sdk/v1/user_metadata_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file temporal/api/activity/v1/message.proto.
  */
 export const file_temporal_api_activity_v1_message: GenFile = /*@__PURE__*/
-  fileDesc("CiZ0ZW1wb3JhbC9hcGkvYWN0aXZpdHkvdjEvbWVzc2FnZS5wcm90bxIYdGVtcG9yYWwuYXBpLmFjdGl2aXR5LnYxIvMCCg9BY3Rpdml0eU9wdGlvbnMSOAoKdGFza19xdWV1ZRgBIAEoCzIkLnRlbXBvcmFsLmFwaS50YXNrcXVldWUudjEuVGFza1F1ZXVlEjwKGXNjaGVkdWxlX3RvX2Nsb3NlX3RpbWVvdXQYAiABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SPAoZc2NoZWR1bGVfdG9fc3RhcnRfdGltZW91dBgDIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhI5ChZzdGFydF90b19jbG9zZV90aW1lb3V0GAQgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEjQKEWhlYXJ0YmVhdF90aW1lb3V0GAUgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEjkKDHJldHJ5X3BvbGljeRgGIAEoCzIjLnRlbXBvcmFsLmFwaS5jb21tb24udjEuUmV0cnlQb2xpY3lCkwEKG2lvLnRlbXBvcmFsLmFwaS5hY3Rpdml0eS52MUIMTWVzc2FnZVByb3RvUAFaJ2dvLnRlbXBvcmFsLmlvL2FwaS9hY3Rpdml0eS92MTthY3Rpdml0eaoCGlRlbXBvcmFsaW8uQXBpLkFjdGl2aXR5LlYx6gIdVGVtcG9yYWxpbzo6QXBpOjpBY3Rpdml0eTo6VjFiBnByb3RvMw", [file_temporal_api_common_v1_message, file_temporal_api_taskqueue_v1_message, file_google_protobuf_duration]);
+  fileDesc("CiZ0ZW1wb3JhbC9hcGkvYWN0aXZpdHkvdjEvbWVzc2FnZS5wcm90bxIYdGVtcG9yYWwuYXBpLmFjdGl2aXR5LnYxIowBChhBY3Rpdml0eUV4ZWN1dGlvbk91dGNvbWUSMgoGcmVzdWx0GAEgASgLMiAudGVtcG9yYWwuYXBpLmNvbW1vbi52MS5QYXlsb2Fkc0gAEjMKB2ZhaWx1cmUYAiABKAsyIC50ZW1wb3JhbC5hcGkuZmFpbHVyZS52MS5GYWlsdXJlSABCBwoFdmFsdWUipwMKD0FjdGl2aXR5T3B0aW9ucxI4Cgp0YXNrX3F1ZXVlGAEgASgLMiQudGVtcG9yYWwuYXBpLnRhc2txdWV1ZS52MS5UYXNrUXVldWUSPAoZc2NoZWR1bGVfdG9fY2xvc2VfdGltZW91dBgCIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhI8ChlzY2hlZHVsZV90b19zdGFydF90aW1lb3V0GAMgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEjkKFnN0YXJ0X3RvX2Nsb3NlX3RpbWVvdXQYBCABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SNAoRaGVhcnRiZWF0X3RpbWVvdXQYBSABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SOQoMcmV0cnlfcG9saWN5GAYgASgLMiMudGVtcG9yYWwuYXBpLmNvbW1vbi52MS5SZXRyeVBvbGljeRIyCghwcmlvcml0eRgHIAEoCzIgLnRlbXBvcmFsLmFwaS5jb21tb24udjEuUHJpb3JpdHki3wwKFUFjdGl2aXR5RXhlY3V0aW9uSW5mbxITCgthY3Rpdml0eV9pZBgBIAEoCRIOCgZydW5faWQYAiABKAkSOwoNYWN0aXZpdHlfdHlwZRgDIAEoCzIkLnRlbXBvcmFsLmFwaS5jb21tb24udjEuQWN0aXZpdHlUeXBlEj4KBnN0YXR1cxgEIAEoDjIuLnRlbXBvcmFsLmFwaS5lbnVtcy52MS5BY3Rpdml0eUV4ZWN1dGlvblN0YXR1cxI+CglydW5fc3RhdGUYBSABKA4yKy50ZW1wb3JhbC5hcGkuZW51bXMudjEuUGVuZGluZ0FjdGl2aXR5U3RhdGUSEgoKdGFza19xdWV1ZRgGIAEoCRI8ChlzY2hlZHVsZV90b19jbG9zZV90aW1lb3V0GAcgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEjwKGXNjaGVkdWxlX3RvX3N0YXJ0X3RpbWVvdXQYCCABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SOQoWc3RhcnRfdG9fY2xvc2VfdGltZW91dBgJIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhI0ChFoZWFydGJlYXRfdGltZW91dBgKIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhI5CgxyZXRyeV9wb2xpY3kYCyABKAsyIy50ZW1wb3JhbC5hcGkuY29tbW9uLnYxLlJldHJ5UG9saWN5EjsKEWhlYXJ0YmVhdF9kZXRhaWxzGAwgASgLMiAudGVtcG9yYWwuYXBpLmNvbW1vbi52MS5QYXlsb2FkcxI3ChNsYXN0X2hlYXJ0YmVhdF90aW1lGA0gASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBI1ChFsYXN0X3N0YXJ0ZWRfdGltZRgOIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDwoHYXR0ZW1wdBgPIAEoBRI1ChJleGVjdXRpb25fZHVyYXRpb24YECABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SMQoNc2NoZWR1bGVfdGltZRgRIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASMwoPZXhwaXJhdGlvbl90aW1lGBIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpjbG9zZV90aW1lGBMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBI2CgxsYXN0X2ZhaWx1cmUYFCABKAsyIC50ZW1wb3JhbC5hcGkuZmFpbHVyZS52MS5GYWlsdXJlEhwKFGxhc3Rfd29ya2VyX2lkZW50aXR5GBUgASgJEjkKFmN1cnJlbnRfcmV0cnlfaW50ZXJ2YWwYFiABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SPgoabGFzdF9hdHRlbXB0X2NvbXBsZXRlX3RpbWUYFyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEj4KGm5leHRfYXR0ZW1wdF9zY2hlZHVsZV90aW1lGBggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBJUChdsYXN0X2RlcGxveW1lbnRfdmVyc2lvbhgZIAEoCzIzLnRlbXBvcmFsLmFwaS5kZXBsb3ltZW50LnYxLldvcmtlckRlcGxveW1lbnRWZXJzaW9uEjIKCHByaW9yaXR5GBogASgLMiAudGVtcG9yYWwuYXBpLmNvbW1vbi52MS5Qcmlvcml0eRIeChZzdGF0ZV90cmFuc2l0aW9uX2NvdW50GBsgASgDEhgKEHN0YXRlX3NpemVfYnl0ZXMYHCABKAMSQwoRc2VhcmNoX2F0dHJpYnV0ZXMYHSABKAsyKC50ZW1wb3JhbC5hcGkuY29tbW9uLnYxLlNlYXJjaEF0dHJpYnV0ZXMSLgoGaGVhZGVyGB4gASgLMh4udGVtcG9yYWwuYXBpLmNvbW1vbi52MS5IZWFkZXISOAoNdXNlcl9tZXRhZGF0YRgfIAEoCzIhLnRlbXBvcmFsLmFwaS5zZGsudjEuVXNlck1ldGFkYXRhEhcKD2NhbmNlbGVkX3JlYXNvbhggIAEoCSLqAwoZQWN0aXZpdHlFeGVjdXRpb25MaXN0SW5mbxITCgthY3Rpdml0eV9pZBgBIAEoCRIOCgZydW5faWQYAiABKAkSOwoNYWN0aXZpdHlfdHlwZRgDIAEoCzIkLnRlbXBvcmFsLmFwaS5jb21tb24udjEuQWN0aXZpdHlUeXBlEjEKDXNjaGVkdWxlX3RpbWUYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCmNsb3NlX3RpbWUYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEj4KBnN0YXR1cxgGIAEoDjIuLnRlbXBvcmFsLmFwaS5lbnVtcy52MS5BY3Rpdml0eUV4ZWN1dGlvblN0YXR1cxJDChFzZWFyY2hfYXR0cmlidXRlcxgHIAEoCzIoLnRlbXBvcmFsLmFwaS5jb21tb24udjEuU2VhcmNoQXR0cmlidXRlcxISCgp0YXNrX3F1ZXVlGAggASgJEh4KFnN0YXRlX3RyYW5zaXRpb25fY291bnQYCSABKAMSGAoQc3RhdGVfc2l6ZV9ieXRlcxgKIAEoAxI1ChJleGVjdXRpb25fZHVyYXRpb24YCyABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb25CkwEKG2lvLnRlbXBvcmFsLmFwaS5hY3Rpdml0eS52MUIMTWVzc2FnZVByb3RvUAFaJ2dvLnRlbXBvcmFsLmlvL2FwaS9hY3Rpdml0eS92MTthY3Rpdml0eaoCGlRlbXBvcmFsaW8uQXBpLkFjdGl2aXR5LlYx6gIdVGVtcG9yYWxpbzo6QXBpOjpBY3Rpdml0eTo6VjFiBnByb3RvMw", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_temporal_api_common_v1_message, file_temporal_api_deployment_v1_message, file_temporal_api_enums_v1_activity, file_temporal_api_enums_v1_workflow, file_temporal_api_failure_v1_message, file_temporal_api_taskqueue_v1_message, file_temporal_api_sdk_v1_user_metadata]);
+
+/**
+ * The outcome of a completed activity execution: either a successful result or a failure.
+ *
+ * @generated from message temporal.api.activity.v1.ActivityExecutionOutcome
+ */
+export type ActivityExecutionOutcome = Message<"temporal.api.activity.v1.ActivityExecutionOutcome"> & {
+  /**
+   * @generated from oneof temporal.api.activity.v1.ActivityExecutionOutcome.value
+   */
+  value: {
+    /**
+     * The result if the activity completed successfully.
+     *
+     * @generated from field: temporal.api.common.v1.Payloads result = 1;
+     */
+    value: Payloads;
+    case: "result";
+  } | {
+    /**
+     * The failure if the activity completed unsuccessfully.
+     *
+     * @generated from field: temporal.api.failure.v1.Failure failure = 2;
+     */
+    value: Failure;
+    case: "failure";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message temporal.api.activity.v1.ActivityExecutionOutcome.
+ * Use `create(ActivityExecutionOutcomeSchema)` to create a new message.
+ */
+export const ActivityExecutionOutcomeSchema: GenMessage<ActivityExecutionOutcome> = /*@__PURE__*/
+  messageDesc(file_temporal_api_activity_v1_message, 0);
 
 /**
  * @generated from message temporal.api.activity.v1.ActivityOptions
@@ -71,9 +116,19 @@ export type ActivityOptions = Message<"temporal.api.activity.v1.ActivityOptions"
   heartbeatTimeout?: Duration;
 
   /**
+   * The retry policy for the activity. Will never exceed `schedule_to_close_timeout`.
+   *
    * @generated from field: temporal.api.common.v1.RetryPolicy retry_policy = 6;
    */
   retryPolicy?: RetryPolicy;
+
+  /**
+   * Priority metadata. If this message is not present, or any fields are not
+   * present, they inherit the values from the workflow.
+   *
+   * @generated from field: temporal.api.common.v1.Priority priority = 7;
+   */
+  priority?: Priority;
 };
 
 /**
@@ -81,5 +136,348 @@ export type ActivityOptions = Message<"temporal.api.activity.v1.ActivityOptions"
  * Use `create(ActivityOptionsSchema)` to create a new message.
  */
 export const ActivityOptionsSchema: GenMessage<ActivityOptions> = /*@__PURE__*/
-  messageDesc(file_temporal_api_activity_v1_message, 0);
+  messageDesc(file_temporal_api_activity_v1_message, 1);
+
+/**
+ * Information about a standalone activity.
+ *
+ * @generated from message temporal.api.activity.v1.ActivityExecutionInfo
+ */
+export type ActivityExecutionInfo = Message<"temporal.api.activity.v1.ActivityExecutionInfo"> & {
+  /**
+   * Unique identifier of this activity within its namespace along with run ID (below).
+   *
+   * @generated from field: string activity_id = 1;
+   */
+  activityId: string;
+
+  /**
+   * @generated from field: string run_id = 2;
+   */
+  runId: string;
+
+  /**
+   * The type of the activity, a string that maps to a registered activity on a worker.
+   *
+   * @generated from field: temporal.api.common.v1.ActivityType activity_type = 3;
+   */
+  activityType?: ActivityType;
+
+  /**
+   * A general status for this activity, indicates whether it is currently running or in one of the terminal statuses.
+   *
+   * @generated from field: temporal.api.enums.v1.ActivityExecutionStatus status = 4;
+   */
+  status: ActivityExecutionStatus;
+
+  /**
+   * More detailed breakdown of ACTIVITY_EXECUTION_STATUS_RUNNING.
+   *
+   * @generated from field: temporal.api.enums.v1.PendingActivityState run_state = 5;
+   */
+  runState: PendingActivityState;
+
+  /**
+   * @generated from field: string task_queue = 6;
+   */
+  taskQueue: string;
+
+  /**
+   * Indicates how long the caller is willing to wait for an activity completion. Limits how long
+   * retries will be attempted.
+   *
+   * (-- api-linter: core::0140::prepositions=disabled
+   *     aip.dev/not-precedent: "to" is used to indicate interval. --)
+   *
+   * @generated from field: google.protobuf.Duration schedule_to_close_timeout = 7;
+   */
+  scheduleToCloseTimeout?: Duration;
+
+  /**
+   * Limits time an activity task can stay in a task queue before a worker picks it up. This
+   * timeout is always non retryable, as all a retry would achieve is to put it back into the same
+   * queue. Defaults to `schedule_to_close_timeout`.
+   *
+   * (-- api-linter: core::0140::prepositions=disabled
+   *     aip.dev/not-precedent: "to" is used to indicate interval. --)
+   *
+   * @generated from field: google.protobuf.Duration schedule_to_start_timeout = 8;
+   */
+  scheduleToStartTimeout?: Duration;
+
+  /**
+   * Maximum time a single activity attempt is allowed to execute after being picked up by a worker. This
+   * timeout is always retryable.
+   *
+   * (-- api-linter: core::0140::prepositions=disabled
+   *     aip.dev/not-precedent: "to" is used to indicate interval. --)
+   *
+   * @generated from field: google.protobuf.Duration start_to_close_timeout = 9;
+   */
+  startToCloseTimeout?: Duration;
+
+  /**
+   * Maximum permitted time between successful worker heartbeats.
+   *
+   * @generated from field: google.protobuf.Duration heartbeat_timeout = 10;
+   */
+  heartbeatTimeout?: Duration;
+
+  /**
+   * The retry policy for the activity. Will never exceed `schedule_to_close_timeout`.
+   *
+   * @generated from field: temporal.api.common.v1.RetryPolicy retry_policy = 11;
+   */
+  retryPolicy?: RetryPolicy;
+
+  /**
+   * Details provided in the last recorded activity heartbeat.
+   *
+   * @generated from field: temporal.api.common.v1.Payloads heartbeat_details = 12;
+   */
+  heartbeatDetails?: Payloads;
+
+  /**
+   * Time the last heartbeat was recorded.
+   *
+   * @generated from field: google.protobuf.Timestamp last_heartbeat_time = 13;
+   */
+  lastHeartbeatTime?: Timestamp;
+
+  /**
+   * Time the last attempt was started.
+   *
+   * @generated from field: google.protobuf.Timestamp last_started_time = 14;
+   */
+  lastStartedTime?: Timestamp;
+
+  /**
+   * The attempt this activity is currently on. Incremented each time a new attempt is scheduled.
+   *
+   * @generated from field: int32 attempt = 15;
+   */
+  attempt: number;
+
+  /**
+   * How long this activity has been running for, including all attempts and backoff between attempts.
+   *
+   * @generated from field: google.protobuf.Duration execution_duration = 16;
+   */
+  executionDuration?: Duration;
+
+  /**
+   * Time the activity was originally scheduled via a StartActivityExecution request.
+   *
+   * @generated from field: google.protobuf.Timestamp schedule_time = 17;
+   */
+  scheduleTime?: Timestamp;
+
+  /**
+   * Scheduled time + schedule to close timeout.
+   *
+   * @generated from field: google.protobuf.Timestamp expiration_time = 18;
+   */
+  expirationTime?: Timestamp;
+
+  /**
+   * Time when the activity transitioned to a closed state.
+   *
+   * @generated from field: google.protobuf.Timestamp close_time = 19;
+   */
+  closeTime?: Timestamp;
+
+  /**
+   * Failure details from the last failed attempt.
+   *
+   * @generated from field: temporal.api.failure.v1.Failure last_failure = 20;
+   */
+  lastFailure?: Failure;
+
+  /**
+   * @generated from field: string last_worker_identity = 21;
+   */
+  lastWorkerIdentity: string;
+
+  /**
+   * Time from the last attempt failure to the next activity retry.
+   * If the activity is currently running, this represents the next retry interval in case the attempt fails.
+   * If activity is currently backing off between attempt, this represents the current retry interval.
+   * If there is no next retry allowed, this field will be null.
+   * This interval is typically calculated from the specified retry policy, but may be modified if an activity fails
+   * with a retryable application failure specifying a retry delay.
+   *
+   * @generated from field: google.protobuf.Duration current_retry_interval = 22;
+   */
+  currentRetryInterval?: Duration;
+
+  /**
+   * The time when the last activity attempt completed. If activity has not been completed yet, it will be null.
+   *
+   * @generated from field: google.protobuf.Timestamp last_attempt_complete_time = 23;
+   */
+  lastAttemptCompleteTime?: Timestamp;
+
+  /**
+   * The time when the next activity attempt will be scheduled.
+   * If activity is currently scheduled or started, this field will be null.
+   *
+   * @generated from field: google.protobuf.Timestamp next_attempt_schedule_time = 24;
+   */
+  nextAttemptScheduleTime?: Timestamp;
+
+  /**
+   * The Worker Deployment Version this activity was dispatched to most recently.
+   * If nil, the activity has not yet been dispatched or was last dispatched to an unversioned worker.
+   *
+   * @generated from field: temporal.api.deployment.v1.WorkerDeploymentVersion last_deployment_version = 25;
+   */
+  lastDeploymentVersion?: WorkerDeploymentVersion;
+
+  /**
+   * Priority metadata.
+   *
+   * @generated from field: temporal.api.common.v1.Priority priority = 26;
+   */
+  priority?: Priority;
+
+  /**
+   * Incremented each time the activity's state is mutated in persistence.
+   *
+   * @generated from field: int64 state_transition_count = 27;
+   */
+  stateTransitionCount: bigint;
+
+  /**
+   * Updated once on scheduled and once on terminal status.
+   *
+   * @generated from field: int64 state_size_bytes = 28;
+   */
+  stateSizeBytes: bigint;
+
+  /**
+   * @generated from field: temporal.api.common.v1.SearchAttributes search_attributes = 29;
+   */
+  searchAttributes?: SearchAttributes;
+
+  /**
+   * @generated from field: temporal.api.common.v1.Header header = 30;
+   */
+  header?: Header;
+
+  /**
+   * Metadata for use by user interfaces to display the fixed as-of-start summary and details of the activity.
+   *
+   * @generated from field: temporal.api.sdk.v1.UserMetadata user_metadata = 31;
+   */
+  userMetadata?: UserMetadata;
+
+  /**
+   * Set if activity cancelation was requested.
+   *
+   * @generated from field: string canceled_reason = 32;
+   */
+  canceledReason: string;
+};
+
+/**
+ * Describes the message temporal.api.activity.v1.ActivityExecutionInfo.
+ * Use `create(ActivityExecutionInfoSchema)` to create a new message.
+ */
+export const ActivityExecutionInfoSchema: GenMessage<ActivityExecutionInfo> = /*@__PURE__*/
+  messageDesc(file_temporal_api_activity_v1_message, 2);
+
+/**
+ * Limited activity information returned in the list response.
+ * When adding fields here, ensure that it is also present in ActivityExecutionInfo (note that it
+ * may already be present in ActivityExecutionInfo but not at the top-level).
+ *
+ * @generated from message temporal.api.activity.v1.ActivityExecutionListInfo
+ */
+export type ActivityExecutionListInfo = Message<"temporal.api.activity.v1.ActivityExecutionListInfo"> & {
+  /**
+   * A unique identifier of this activity within its namespace along with run ID (below).
+   *
+   * @generated from field: string activity_id = 1;
+   */
+  activityId: string;
+
+  /**
+   * The run ID of the standalone activity.
+   *
+   * @generated from field: string run_id = 2;
+   */
+  runId: string;
+
+  /**
+   * The type of the activity, a string that maps to a registered activity on a worker.
+   *
+   * @generated from field: temporal.api.common.v1.ActivityType activity_type = 3;
+   */
+  activityType?: ActivityType;
+
+  /**
+   * Time the activity was originally scheduled via a StartActivityExecution request.
+   *
+   * @generated from field: google.protobuf.Timestamp schedule_time = 4;
+   */
+  scheduleTime?: Timestamp;
+
+  /**
+   * If the activity is in a terminal status, this field represents the time the activity transitioned to that status.
+   *
+   * @generated from field: google.protobuf.Timestamp close_time = 5;
+   */
+  closeTime?: Timestamp;
+
+  /**
+   * Only scheduled and terminal statuses appear here. More detailed information in PendingActivityInfo but not
+   * available in the list response.
+   *
+   * @generated from field: temporal.api.enums.v1.ActivityExecutionStatus status = 6;
+   */
+  status: ActivityExecutionStatus;
+
+  /**
+   * Search attributes from the start request.
+   *
+   * @generated from field: temporal.api.common.v1.SearchAttributes search_attributes = 7;
+   */
+  searchAttributes?: SearchAttributes;
+
+  /**
+   * The task queue this activity was scheduled on when it was originally started, updated on activity options update.
+   *
+   * @generated from field: string task_queue = 8;
+   */
+  taskQueue: string;
+
+  /**
+   * Updated on terminal status.
+   *
+   * @generated from field: int64 state_transition_count = 9;
+   */
+  stateTransitionCount: bigint;
+
+  /**
+   * Updated once on scheduled and once on terminal status.
+   *
+   * @generated from field: int64 state_size_bytes = 10;
+   */
+  stateSizeBytes: bigint;
+
+  /**
+   * The difference between close time and scheduled time.
+   * This field is only populated if the activity is closed.
+   *
+   * @generated from field: google.protobuf.Duration execution_duration = 11;
+   */
+  executionDuration?: Duration;
+};
+
+/**
+ * Describes the message temporal.api.activity.v1.ActivityExecutionListInfo.
+ * Use `create(ActivityExecutionListInfoSchema)` to create a new message.
+ */
+export const ActivityExecutionListInfoSchema: GenMessage<ActivityExecutionListInfo> = /*@__PURE__*/
+  messageDesc(file_temporal_api_activity_v1_message, 3);
 

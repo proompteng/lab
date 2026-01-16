@@ -252,6 +252,7 @@ Options:
   --source <cli|service|auto>
                           Force a history source when replaying live executions
   --json                  Emit a JSON replay summary alongside console output
+  --debug                 Pause execution for a debugger during replay
 `)
 }
 

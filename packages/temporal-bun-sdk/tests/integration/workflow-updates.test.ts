@@ -10,6 +10,8 @@ import type { WorkflowExecutionHandle, IntegrationHarness } from './harness'
 import { acquireIntegrationTestEnv, releaseIntegrationTestEnv, CLI_CONFIG, type IntegrationTestEnv } from './test-env'
 
 const UPDATE_WORKFLOW_TYPE = 'integrationUpdateWorkflow'
+const hookTimeoutMs = 60_000
+const scenarioTimeoutMs = 30_000
 
 let integrationEnv: IntegrationTestEnv | null = null
 let harness: IntegrationHarness | null = null
@@ -19,11 +21,11 @@ beforeAll(async () => {
   integrationEnv = await acquireIntegrationTestEnv()
   harness = integrationEnv.harness
   runScenario = integrationEnv.runOrSkip
-})
+}, { timeout: hookTimeoutMs })
 
 afterAll(async () => {
   await releaseIntegrationTestEnv()
-})
+}, { timeout: hookTimeoutMs })
 
 const execScenario = async <A>(name: string, scenario: () => Promise<A>): Promise<A | undefined> => {
   if (!runScenario) {
@@ -87,7 +89,7 @@ const terminateWorkflow = async (client: TemporalClient, handle: WorkflowHandle)
 }
 
 describe('workflow updates', () => {
-  test('workflow update completes successfully', async () => {
+  test('workflow update completes successfully', { timeout: scenarioTimeoutMs }, async () => {
     await execScenario('workflow update success', async () => {
       const execution = await startUpdateWorkflow('success')
       const handle = toWorkflowHandle(execution)
@@ -108,7 +110,7 @@ describe('workflow updates', () => {
     })
   })
 
-  test('workflow update rejection surfaces validation failures', async () => {
+  test('workflow update rejection surfaces validation failures', { timeout: scenarioTimeoutMs }, async () => {
     await execScenario('workflow update rejection', async () => {
       const execution = await startUpdateWorkflow('rejection')
       const handle = toWorkflowHandle(execution)
@@ -130,7 +132,7 @@ describe('workflow updates', () => {
     })
   })
 
-  test('awaiting a workflow update defaults to waiting for completion', async () => {
+  test('awaiting a workflow update defaults to waiting for completion', { timeout: scenarioTimeoutMs }, async () => {
     await execScenario('workflow update await default', async () => {
       const execution = await startUpdateWorkflow('await-default')
       const handle = toWorkflowHandle(execution)
@@ -154,7 +156,7 @@ describe('workflow updates', () => {
     })
   })
 
-  test('awaiting a workflow update can be cancelled and retried', async () => {
+  test('awaiting a workflow update can be cancelled and retried', { timeout: scenarioTimeoutMs }, async () => {
     await execScenario('workflow update cancellation', async () => {
       const execution = await startUpdateWorkflow('cancel')
       const handle = toWorkflowHandle(execution)

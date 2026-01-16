@@ -20,6 +20,7 @@ import { createIntegrationHarness, type TemporalDevServerConfig } from './harnes
 
 const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
 const describeIntegration = shouldRunIntegration ? describe : describe.skip
+const hookTimeoutMs = 60_000
 
 const devServerDefaults: TemporalDevServerConfig = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
@@ -46,11 +47,11 @@ describeIntegration('Temporal worker runtime integration', () => {
   beforeAll(async () => {
     harness = await Effect.runPromise(createIntegrationHarness(harnessConfig))
     await Effect.runPromise(harness.setup)
-  })
+  }, { timeout: hookTimeoutMs })
 
   afterAll(async () => {
     await Effect.runPromise(harness.teardown)
-  })
+  }, { timeout: hookTimeoutMs })
 
   test('processes workflow tasks concurrently up to configured limit', async () => {
     const metrics = await Effect.runPromise(

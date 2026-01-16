@@ -11,6 +11,7 @@ import { integrationActivities, integrationWorkflows } from './workflows'
 
 const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
 const describeIntegration = shouldRunIntegration ? describe : describe.skip
+const hookTimeoutMs = 60_000
 
 const CLI_CONFIG = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
@@ -88,7 +89,7 @@ describeIntegration('interceptor framework wiring', () => {
       clientInterceptors: [captureClientInterceptor],
     })
     client = clientHandles.client
-  })
+  }, { timeout: hookTimeoutMs })
 
   afterAll(async () => {
     if (client) {
@@ -103,7 +104,7 @@ describeIntegration('interceptor framework wiring', () => {
     if (harness && !cliUnavailable) {
       await Effect.runPromise(harness.teardown)
     }
-  })
+  }, { timeout: hookTimeoutMs })
 
   const runOrSkip = async <A>(name: string, fn: () => Promise<A>): Promise<A | undefined> => {
     if (cliUnavailable) {

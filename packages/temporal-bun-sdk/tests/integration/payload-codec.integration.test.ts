@@ -18,6 +18,7 @@ import {
 
 const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
 const describeIntegration = shouldRunIntegration ? describe : describe.skip
+const hookTimeoutMs = 60_000
 const TASK_QUEUE = `codec-e2e-${Date.now()}`
 const AES_KEY = Buffer.alloc(32, 11).toString('base64')
 
@@ -142,7 +143,7 @@ describeIntegration('payload codec E2E', () => {
       namespace: config.namespace,
     })
     temporalClient = client
-  })
+  }, { timeout: hookTimeoutMs })
 
   afterAll(async () => {
     if (temporalClient) {
@@ -157,7 +158,7 @@ describeIntegration('payload codec E2E', () => {
     if (harness) {
       await Effect.runPromise(harness.teardown)
     }
-  })
+  }, { timeout: hookTimeoutMs })
 
   test('codecs wrap workflow, activity, query, and update payloads', async () => {
     if (cliUnavailable || !temporalClient || !configDefaults) {
