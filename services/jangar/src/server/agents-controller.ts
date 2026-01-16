@@ -1074,7 +1074,7 @@ const submitJobRun = async (
 ) => {
   const workload = asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
   if (!workloadImage) {
-    throw new Error('spec.workload.image or JANGAR_AGENT_RUNNER_IMAGE is required for job runtime')
+    throw new Error('spec.workload.image, JANGAR_AGENT_RUNNER_IMAGE, or JANGAR_AGENT_IMAGE is required for job runtime')
   }
 
   const providerSpec = asRecord(provider.spec) ?? {}
@@ -1489,7 +1489,7 @@ const reconcileAgentRun = async (
           type: 'InvalidSpec',
           status: 'True',
           reason: 'MissingWorkloadImage',
-          message: 'spec.workload.image or JANGAR_AGENT_RUNNER_IMAGE is required for job runtime',
+          message: 'spec.workload.image, JANGAR_AGENT_RUNNER_IMAGE, or JANGAR_AGENT_IMAGE is required for job runtime',
         })
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
         return
