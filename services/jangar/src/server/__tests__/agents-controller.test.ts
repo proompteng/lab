@@ -342,4 +342,27 @@ describe('agents controller reconcileMemory', () => {
     const condition = findCondition(status, 'Unreachable')
     expect(condition?.reason).toBe('SecretNotFound')
   })
+
+  it('marks Memory invalid when secret key is missing', async () => {
+    const kube = buildKube({
+      get: vi.fn(async () => ({ data: { url: 'cG9zdGdyZXM6Ly8=' } })),
+    })
+    const memory = buildMemory({
+      spec: {
+        type: 'postgres',
+        connection: {
+          secretRef: {
+            name: 'memory-secret',
+            key: 'missing',
+          },
+        },
+      },
+    })
+
+    await __test.reconcileMemory(kube as never, memory, 'agents')
+
+    const status = getLastStatus(kube)
+    const condition = findCondition(status, 'InvalidSpec')
+    expect(condition?.reason).toBe('SecretKeyMissing')
+  })
 })

@@ -100,6 +100,12 @@ const runKubectl = (args: string[]) =>
     const child = spawn('kubectl', args, { stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
+    let settled = false
+    const finish = (payload: { stdout: string; stderr: string; code: number | null }) => {
+      if (settled) return
+      settled = true
+      resolve(payload)
+    }
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     child.stdout.on('data', (chunk) => {
@@ -108,7 +114,14 @@ const runKubectl = (args: string[]) =>
     child.stderr.on('data', (chunk) => {
       stderr += chunk
     })
-    child.on('close', (code) => resolve({ stdout, stderr, code }))
+    child.on('error', (error) => {
+      finish({
+        stdout,
+        stderr: stderr || (error instanceof Error ? error.message : String(error)),
+        code: 1,
+      })
+    })
+    child.on('close', (code) => finish({ stdout, stderr, code }))
   })
 
 const checkCrds = async (): Promise<CrdCheckState> => {
