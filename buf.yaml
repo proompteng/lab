@@ -5,6 +5,7 @@ modules:
 deps:
   - buf.build/protocolbuffers/wellknowntypes
   - buf.build/googleapis/googleapis
+  - buf.build/grpc-ecosystem/grpc-gateway
 lint:
   use:
     - STANDARD

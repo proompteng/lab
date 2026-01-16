@@ -73,10 +73,7 @@ export const timerWorkflow = defineWorkflow('integrationTimerWorkflow', timerInp
 export const activityWorkflow = defineWorkflow(
   'integrationActivityWorkflow',
   activityInputSchema,
-  ({ activities, input }) =>
-    activities
-      .schedule('integrationEchoActivity', [input.value])
-      .pipe(Effect.map(() => 'activity-scheduled')),
+  ({ activities, input }) => activities.schedule('integrationEchoActivity', [input.value]),
 )
 
 export const childWorkflow = defineWorkflow(

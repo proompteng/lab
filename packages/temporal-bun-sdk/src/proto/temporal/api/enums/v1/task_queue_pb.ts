@@ -16,6 +16,12 @@ export const file_temporal_api_enums_v1_task_queue: GenFile = /*@__PURE__*/
  */
 export enum TaskQueueKind {
   /**
+   * Tasks from any non workflow task may be unspecified.
+   *
+   * Task queue kind is used to differentiate whether a workflow task queue is sticky or 
+   * normal. If a task is not a workflow task, Task queue kind will sometimes be 
+   * unspecified.
+   *
    * @generated from enum value: TASK_QUEUE_KIND_UNSPECIFIED = 0;
    */
   UNSPECIFIED = 0,

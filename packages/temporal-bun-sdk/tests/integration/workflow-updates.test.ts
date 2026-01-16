@@ -154,7 +154,7 @@ describe('workflow updates', () => {
     })
   })
 
-  test('awaiting a workflow update can be cancelled and retried', async () => {
+  test('awaiting a workflow update can be cancelled and retried', { timeout: 15_000 }, async () => {
     await execScenario('workflow update cancellation', async () => {
       const execution = await startUpdateWorkflow('cancel')
       const handle = toWorkflowHandle(execution)

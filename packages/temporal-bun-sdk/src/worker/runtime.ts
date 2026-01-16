@@ -61,6 +61,11 @@ import type {
   ChildWorkflowExecutionTerminatedEventAttributes,
   ChildWorkflowExecutionTimedOutEventAttributes,
   HistoryEvent,
+  NexusOperationScheduledEventAttributes,
+  NexusOperationCompletedEventAttributes,
+  NexusOperationFailedEventAttributes,
+  NexusOperationCanceledEventAttributes,
+  NexusOperationTimedOutEventAttributes,
   WorkflowExecutionSignaledEventAttributes,
 } from '../proto/temporal/api/history/v1/message_pb'
 import type { WorkflowQuery, WorkflowQueryResult } from '../proto/temporal/api/query/v1/message_pb'
@@ -84,7 +89,7 @@ import {
 } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
 import { WorkflowService } from '../proto/temporal/api/workflowservice/v1/service_pb'
 import type { WorkflowCommandIntent } from '../workflow/commands'
-import type { ActivityResolution, WorkflowInfo } from '../workflow/context'
+import type { ActivityResolution, NexusOperationResolution, WorkflowInfo } from '../workflow/context'
 import type { WorkflowDefinition, WorkflowDefinitions } from '../workflow/definition'
 import type {
   WorkflowCommandHistoryEntry,
@@ -125,12 +130,19 @@ import {
   type WorkflowTaskEnvelope,
 } from './concurrency'
 import {
+  mergeWorkerPluginHooks,
+  mergeWorkerSchedulerHooks,
+  type WorkerPlugin,
+  type WorkerPluginContext,
+} from './plugins'
+import {
   makeStickyCache,
   type StickyCache,
   type StickyCacheEntry,
   type StickyCacheHooks,
   type StickyCacheKey,
 } from './sticky-cache'
+import type { WorkerTuner } from './tuner'
 import { buildUpdateProtocolMessages, collectWorkflowUpdates } from './update-protocol'
 
 type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
@@ -219,6 +231,7 @@ const parseMetricsFlushInterval = (value: string | undefined): number | undefine
   return Number.isFinite(parsed) ? parsed : undefined
 }
 const STICKY_QUEUE_PREFIX = 'sticky'
+const NEXUS_OPERATION_ID_HEADER = 'x-temporal-bun-operation-id'
 const COMPLETION_COMMAND_TYPES = new Set<CommandType>([
   CommandType.COMPLETE_WORKFLOW_EXECUTION,
   CommandType.FAIL_WORKFLOW_EXECUTION,
@@ -273,6 +286,8 @@ export interface WorkerRuntimeOptions {
   stickyScheduling?: boolean
   deployment?: WorkerDeploymentConfig
   schedulerHooks?: WorkerSchedulerHooks
+  plugins?: WorkerPlugin[]
+  tuner?: WorkerTuner
 }
 export class WorkerRuntime {
   static async create(options: WorkerRuntimeOptions = {}): Promise<WorkerRuntime> {
@@ -340,8 +355,15 @@ export class WorkerRuntime {
       workflowService = createClient(WorkflowService, transport)
     }
 
-    const workflowConcurrency = options.concurrency?.workflow ?? config.workerWorkflowConcurrency
-    const defaultActivityConcurrency = options.concurrency?.activity ?? config.workerActivityConcurrency
+    const plugins = mergeWorkerPluginHooks(options.plugins ?? [])
+    const pluginSchedulerHooks = mergeWorkerSchedulerHooks(plugins)
+    const schedulerHooks = mergeSchedulerHooks(options.schedulerHooks, pluginSchedulerHooks)
+
+    const tunerConcurrency = options.tuner?.initial ?? {}
+    const workflowConcurrency =
+      tunerConcurrency.workflow ?? options.concurrency?.workflow ?? config.workerWorkflowConcurrency
+    const defaultActivityConcurrency =
+      tunerConcurrency.activity ?? options.concurrency?.activity ?? config.workerActivityConcurrency
     const activityConcurrency = defaultActivityConcurrency > 0 ? defaultActivityConcurrency : 1
     const workflowPollerCount = options.pollers?.workflow ?? Math.max(1, workflowConcurrency)
 
@@ -349,7 +371,7 @@ export class WorkerRuntime {
       makeWorkerScheduler({
         workflowConcurrency,
         activityConcurrency,
-        hooks: options.schedulerHooks,
+        hooks: schedulerHooks,
         logger,
         metrics: {
           workflowTaskStarted: runtimeMetrics.workflowTaskStarted,
@@ -512,6 +534,8 @@ export class WorkerRuntime {
       identity,
       activityLifecycle,
       scheduler,
+      schedulerHooks,
+      schedulerConcurrency: { workflow: workflowConcurrency, activity: activityConcurrency },
       stickyCache,
       stickyQueue,
       stickyScheduleToStartTimeoutMs,
@@ -526,6 +550,8 @@ export class WorkerRuntime {
       determinismMarkerMaxDetailBytes,
       workflowPollerCount,
       interceptors: workerInterceptors,
+      plugins,
+      tuner: options.tuner,
     })
   }
 
@@ -547,7 +573,9 @@ export class WorkerRuntime {
   readonly #identity: string
   readonly #interceptors: WorkerInterceptor[]
   readonly #activityLifecycle: ActivityLifecycle
-  readonly #scheduler: WorkerScheduler
+  #scheduler: WorkerScheduler
+  readonly #schedulerHooks?: WorkerSchedulerHooks
+  #schedulerConcurrency: { workflow: number; activity: number }
   readonly #stickyCache: StickyCache
   readonly #stickyQueue: string
   readonly #stickySchedulingEnabled: boolean
@@ -561,6 +589,10 @@ export class WorkerRuntime {
   readonly #rpcDeploymentOptions: WorkerDeploymentOptions | undefined
   readonly #versioningBehavior: VersioningBehavior | null
   readonly #workflowPollerCount: number
+  readonly #plugins: WorkerPlugin[]
+  readonly #tuner?: WorkerTuner
+  #tunerUnsubscribe: (() => void) | null = null
+  #tunerUpdateInFlight: Promise<void> | null = null
   #running = false
   #runFiber: Fiber.RuntimeFiber<void, unknown> | null = null
   #schedulerStarted = false
@@ -585,6 +617,8 @@ export class WorkerRuntime {
     interceptors: WorkerInterceptor[]
     activityLifecycle: ActivityLifecycle
     scheduler: WorkerScheduler
+    schedulerHooks?: WorkerSchedulerHooks
+    schedulerConcurrency: { workflow: number; activity: number }
     stickyCache: StickyCache
     stickyQueue: string
     stickyScheduleToStartTimeoutMs: number
@@ -598,6 +632,8 @@ export class WorkerRuntime {
     determinismMarkerSkipUnchanged: boolean
     determinismMarkerMaxDetailBytes: number
     workflowPollerCount: number
+    plugins: WorkerPlugin[]
+    tuner?: WorkerTuner
   }) {
     this.#config = params.config
     this.#workflowService = params.workflowService
@@ -617,6 +653,8 @@ export class WorkerRuntime {
     this.#interceptors = params.interceptors
     this.#activityLifecycle = params.activityLifecycle
     this.#scheduler = params.scheduler
+    this.#schedulerHooks = params.schedulerHooks
+    this.#schedulerConcurrency = params.schedulerConcurrency
     this.#stickyCache = params.stickyCache
     this.#stickyQueue = params.stickyQueue
     this.#stickySchedulingEnabled = params.stickySchedulingEnabled
@@ -629,6 +667,8 @@ export class WorkerRuntime {
     this.#rpcDeploymentOptions = params.rpcDeploymentOptions
     this.#versioningBehavior = params.versioningBehavior
     this.#workflowPollerCount = params.workflowPollerCount
+    this.#plugins = params.plugins
+    this.#tuner = params.tuner
     this.#stickyAttributes = create(StickyExecutionAttributesSchema, {
       workerTaskQueue: create(TaskQueueSchema, { name: this.#stickyQueue }),
       scheduleToStartTimeout: durationFromMillis(params.stickyScheduleToStartTimeoutMs),
@@ -781,6 +821,11 @@ export class WorkerRuntime {
     this.#log('info', 'temporal worker shutdown requested', this.#runtimeLogFields({ running: this.#running }))
     const runtimeFiber = this.#runFiber
     if (!runtimeFiber) {
+      if (this.#tunerUnsubscribe) {
+        this.#tunerUnsubscribe()
+        this.#tunerUnsubscribe = null
+      }
+      await this.#runPluginHooks('stop')
       await this.#stopScheduler()
       await this.#flushMetrics()
       await this.#shutdownOpenTelemetry()
@@ -814,6 +859,20 @@ export class WorkerRuntime {
 
     return Effect.scoped(
       Effect.gen(function* () {
+        yield* Effect.promise(() => runtime.#runPluginHooks('start'))
+        yield* Effect.addFinalizer(() => Effect.promise(() => runtime.#runPluginHooks('stop')))
+        if (runtime.#tuner?.subscribe) {
+          const unsubscribe = runtime.#tuner.subscribe((next) => {
+            void runtime.#applyTunerUpdate(next)
+          })
+          runtime.#tunerUnsubscribe = unsubscribe
+          yield* Effect.addFinalizer(
+            Effect.sync(() => {
+              unsubscribe()
+              runtime.#tunerUnsubscribe = null
+            }),
+          )
+        }
         yield* Effect.promise(() => runtime.#startScheduler())
         runtime.#log(
           'info',
@@ -861,6 +920,90 @@ export class WorkerRuntime {
         return
       }
       throw Cause.squash(exit.cause)
+    }
+  }
+
+  #pluginContext(): WorkerPluginContext {
+    return {
+      namespace: this.#namespace,
+      taskQueue: this.#taskQueue,
+      identity: this.#identity,
+      buildId: this.#deploymentOptions.buildId,
+      deploymentName: this.#deploymentOptions.deploymentName,
+      logger: this.#logger,
+      metrics: this.#metricsRegistry,
+    }
+  }
+
+  async #runPluginHooks(kind: 'start' | 'stop'): Promise<void> {
+    const context = this.#pluginContext()
+    const effects = this.#plugins.map((plugin) => {
+      const hook = kind === 'start' ? plugin.onWorkerStart : plugin.onWorkerStop
+      return hook ? hook(context) : Effect.void
+    })
+    if (effects.length === 0) {
+      return
+    }
+    await Effect.runPromise(
+      Effect.forEach(effects, (effect) => effect, { concurrency: 'unbounded' }).pipe(
+        Effect.catchAll((error) =>
+          Effect.sync(() => {
+            this.#log('warn', 'worker plugin hook failed', {
+              error: error instanceof Error ? error.message : String(error),
+              phase: kind,
+            })
+          }),
+        ),
+      ),
+    )
+  }
+
+  async #buildScheduler(concurrency: { workflow: number; activity: number }): Promise<WorkerScheduler> {
+    return await Effect.runPromise(
+      makeWorkerScheduler({
+        workflowConcurrency: concurrency.workflow,
+        activityConcurrency: concurrency.activity,
+        hooks: this.#schedulerHooks,
+        logger: this.#logger,
+        metrics: {
+          workflowTaskStarted: this.#metrics.workflowTaskStarted,
+          workflowTaskCompleted: this.#metrics.workflowTaskCompleted,
+          activityTaskStarted: this.#metrics.activityTaskStarted,
+          activityTaskCompleted: this.#metrics.activityTaskCompleted,
+        },
+      }),
+    )
+  }
+
+  async #applyTunerUpdate(next: WorkerConcurrencyOptions): Promise<void> {
+    const workflow = next.workflow ?? this.#schedulerConcurrency.workflow
+    const activity = next.activity ?? this.#schedulerConcurrency.activity
+    if (workflow === this.#schedulerConcurrency.workflow && activity === this.#schedulerConcurrency.activity) {
+      return
+    }
+    if (this.#tunerUpdateInFlight) {
+      await this.#tunerUpdateInFlight
+    }
+    const updatePromise = (async () => {
+      const running = this.#schedulerStarted
+      if (running) {
+        await this.#stopScheduler()
+      }
+      this.#scheduler = await this.#buildScheduler({ workflow, activity })
+      this.#schedulerConcurrency = { workflow, activity }
+      if (running) {
+        await this.#startScheduler()
+      }
+      this.#log('info', 'worker scheduler updated by tuner', {
+        workflowConcurrency: workflow,
+        activityConcurrency: activity,
+      })
+    })()
+    this.#tunerUpdateInFlight = updatePromise
+    try {
+      await updatePromise
+    } finally {
+      this.#tunerUpdateInFlight = null
     }
   }
 
@@ -1213,14 +1356,24 @@ export class WorkerRuntime {
     try {
       const { results: activityResults, scheduledEventIds: activityScheduleEventIds } =
         await this.#extractActivityResolutions(historyEvents)
+      const { results: nexusResults, scheduledEventIds: nexusScheduleEventIds } =
+        await this.#extractNexusResolutions(historyEvents)
       const timerResults = await this.#extractTimerResolutions(historyEvents)
       const mergedActivityResults = new Map<string, ActivityResolution>(stickyEntry?.activityResults ?? [])
       for (const [activityId, resolution] of activityResults.entries()) {
         mergedActivityResults.set(activityId, resolution)
       }
+      const mergedNexusResults = new Map<string, NexusOperationResolution>(stickyEntry?.nexusResults ?? [])
+      for (const [operationId, resolution] of nexusResults.entries()) {
+        mergedNexusResults.set(operationId, resolution)
+      }
       const mergedScheduleEventIds = new Map<string, string>(stickyEntry?.activityScheduleEventIds ?? [])
       for (const [activityId, scheduleId] of activityScheduleEventIds.entries()) {
         mergedScheduleEventIds.set(activityId, scheduleId)
+      }
+      const mergedNexusScheduleEventIds = new Map<string, string>(stickyEntry?.nexusScheduleEventIds ?? [])
+      for (const [operationId, scheduleId] of nexusScheduleEventIds.entries()) {
+        mergedNexusScheduleEventIds.set(operationId, scheduleId)
       }
       const mergedTimerResults = new Set<string>(stickyEntry?.timerResults ?? [])
       for (const timerId of timerResults) {
@@ -1240,6 +1393,8 @@ export class WorkerRuntime {
         determinismState: previousState,
         activityResults: mergedActivityResults,
         activityScheduleEventIds: mergedScheduleEventIds,
+        nexusResults: mergedNexusResults,
+        nexusScheduleEventIds: mergedNexusScheduleEventIds,
         pendingChildWorkflows,
         signalDeliveries,
         timerResults: mergedTimerResults,
@@ -1457,6 +1612,8 @@ export class WorkerRuntime {
               ...(resolvedWorkflowArgs !== undefined ? { workflowArguments: resolvedWorkflowArgs } : {}),
               activityResults: mergedActivityResults,
               activityScheduleEventIds: mergedScheduleEventIds,
+              nexusResults: mergedNexusResults,
+              nexusScheduleEventIds: mergedNexusScheduleEventIds,
               timerResults: mergedTimerResults,
             },
           }
@@ -1835,6 +1992,124 @@ export class WorkerRuntime {
       }
     }
     return { results: resolutions, scheduledEventIds: activityScheduleById }
+  }
+
+  async #extractNexusResolutions(events: HistoryEvent[]): Promise<{
+    results: Map<string, NexusOperationResolution>
+    scheduledEventIds: Map<string, string>
+  }> {
+    const resolutions = new Map<string, NexusOperationResolution>()
+    const scheduledOperationIds = new Map<string, string>()
+    const operationScheduleById = new Map<string, string>()
+
+    const normalizeEventId = (value: bigint | number | string | undefined | null): string | undefined => {
+      if (value === undefined || value === null) {
+        return undefined
+      }
+      if (typeof value === 'string') {
+        return value
+      }
+      return value.toString()
+    }
+
+    const resolveOperationId = (
+      attrs: { nexusHeader?: Record<string, string> },
+      scheduledEventId?: bigint | number | string,
+    ) => {
+      const headerId = attrs.nexusHeader?.[NEXUS_OPERATION_ID_HEADER]
+      if (headerId) {
+        return headerId
+      }
+      const key = normalizeEventId(scheduledEventId)
+      if (!key) {
+        return undefined
+      }
+      return scheduledOperationIds.get(key) ?? `nexus-${key}`
+    }
+
+    for (const event of events) {
+      switch (event.eventType) {
+        case EventType.NEXUS_OPERATION_SCHEDULED: {
+          if (event.attributes?.case !== 'nexusOperationScheduledEventAttributes') {
+            break
+          }
+          const attrs = event.attributes.value as NexusOperationScheduledEventAttributes
+          const scheduledKey = normalizeEventId(event.eventId)
+          if (!scheduledKey) {
+            break
+          }
+          const operationId = resolveOperationId(attrs, event.eventId)
+          if (operationId) {
+            scheduledOperationIds.set(scheduledKey, operationId)
+            operationScheduleById.set(operationId, scheduledKey)
+          }
+          break
+        }
+        case EventType.NEXUS_OPERATION_COMPLETED: {
+          if (event.attributes?.case !== 'nexusOperationCompletedEventAttributes') {
+            break
+          }
+          const attrs = event.attributes.value as NexusOperationCompletedEventAttributes
+          const operationId = resolveOperationId({ nexusHeader: {} }, attrs.scheduledEventId)
+          if (!operationId) {
+            break
+          }
+          const payload = attrs.result
+          const value = payload ? await this.#dataConverter.fromPayload(payload) : undefined
+          resolutions.set(operationId, { status: 'completed', value })
+          break
+        }
+        case EventType.NEXUS_OPERATION_FAILED: {
+          if (event.attributes?.case !== 'nexusOperationFailedEventAttributes') {
+            break
+          }
+          const attrs = event.attributes.value as NexusOperationFailedEventAttributes
+          const operationId = resolveOperationId({ nexusHeader: {} }, attrs.scheduledEventId)
+          if (!operationId) {
+            break
+          }
+          const failureError =
+            (await failureToError(this.#dataConverter, attrs.failure)) ??
+            new Error(`Nexus operation ${operationId} failed`)
+          resolutions.set(operationId, { status: 'failed', error: failureError })
+          break
+        }
+        case EventType.NEXUS_OPERATION_CANCELED: {
+          if (event.attributes?.case !== 'nexusOperationCanceledEventAttributes') {
+            break
+          }
+          const attrs = event.attributes.value as NexusOperationCanceledEventAttributes
+          const operationId = resolveOperationId({ nexusHeader: {} }, attrs.scheduledEventId)
+          if (!operationId) {
+            break
+          }
+          const failureError =
+            (await failureToError(this.#dataConverter, attrs.failure)) ??
+            new Error(`Nexus operation ${operationId} canceled`)
+          resolutions.set(operationId, { status: 'failed', error: failureError })
+          break
+        }
+        case EventType.NEXUS_OPERATION_TIMED_OUT: {
+          if (event.attributes?.case !== 'nexusOperationTimedOutEventAttributes') {
+            break
+          }
+          const attrs = event.attributes.value as NexusOperationTimedOutEventAttributes
+          const operationId = resolveOperationId({ nexusHeader: {} }, attrs.scheduledEventId)
+          if (!operationId) {
+            break
+          }
+          const failureError =
+            (await failureToError(this.#dataConverter, attrs.failure)) ??
+            new Error(`Nexus operation ${operationId} timed out`)
+          resolutions.set(operationId, { status: 'failed', error: failureError })
+          break
+        }
+        default:
+          break
+      }
+    }
+
+    return { results: resolutions, scheduledEventIds: operationScheduleById }
   }
 
   async #extractSignalDeliveries(events: HistoryEvent[]): Promise<WorkflowSignalDeliveryInput[]> {
@@ -3083,6 +3358,43 @@ export class WorkerRuntime {
       workflowId: execution.workflowId,
       runId: execution.runId,
     })
+  }
+}
+
+const mergeSchedulerHooks = (
+  first?: WorkerSchedulerHooks,
+  second?: WorkerSchedulerHooks,
+): WorkerSchedulerHooks | undefined => {
+  if (!first && !second) {
+    return undefined
+  }
+  if (!first) {
+    return second
+  }
+  if (!second) {
+    return first
+  }
+  return {
+    onWorkflowStart: (task) =>
+      Effect.zipRight(
+        first.onWorkflowStart ? first.onWorkflowStart(task) : Effect.void,
+        second.onWorkflowStart ? second.onWorkflowStart(task) : Effect.void,
+      ),
+    onWorkflowComplete: (task) =>
+      Effect.zipRight(
+        first.onWorkflowComplete ? first.onWorkflowComplete(task) : Effect.void,
+        second.onWorkflowComplete ? second.onWorkflowComplete(task) : Effect.void,
+      ),
+    onActivityStart: (task) =>
+      Effect.zipRight(
+        first.onActivityStart ? first.onActivityStart(task) : Effect.void,
+        second.onActivityStart ? second.onActivityStart(task) : Effect.void,
+      ),
+    onActivityComplete: (task) =>
+      Effect.zipRight(
+        first.onActivityComplete ? first.onActivityComplete(task) : Effect.void,
+        second.onActivityComplete ? second.onActivityComplete(task) : Effect.void,
+      ),
   }
 }
 

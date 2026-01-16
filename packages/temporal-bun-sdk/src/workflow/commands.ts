@@ -11,8 +11,10 @@ import {
   ModifyWorkflowPropertiesCommandAttributesSchema,
   RecordMarkerCommandAttributesSchema,
   RequestCancelActivityTaskCommandAttributesSchema,
+  RequestCancelNexusOperationCommandAttributesSchema,
   RequestCancelExternalWorkflowExecutionCommandAttributesSchema,
   ScheduleActivityTaskCommandAttributesSchema,
+  ScheduleNexusOperationCommandAttributesSchema,
   SignalExternalWorkflowExecutionCommandAttributesSchema,
   StartChildWorkflowExecutionCommandAttributesSchema,
   StartTimerCommandAttributesSchema,
@@ -40,9 +42,11 @@ import type { WorkflowRetryPolicyInput } from './determinism'
 
 export type WorkflowCommandKind =
   | 'schedule-activity'
+  | 'schedule-nexus-operation'
   | 'start-timer'
   | 'start-child-workflow'
   | 'request-cancel-activity'
+  | 'request-cancel-nexus-operation'
   | 'cancel-timer'
   | 'signal-external-workflow'
   | 'request-cancel-external-workflow'
@@ -75,6 +79,17 @@ export interface ScheduleActivityCommandIntent extends WorkflowCommandIntentBase
   readonly requestEagerExecution?: boolean
 }
 
+export interface ScheduleNexusOperationCommandIntent extends WorkflowCommandIntentBase {
+  readonly kind: 'schedule-nexus-operation'
+  readonly endpoint: string
+  readonly service: string
+  readonly operation: string
+  readonly operationId: string
+  readonly input?: unknown
+  readonly scheduleToCloseTimeoutMs?: number
+  readonly nexusHeader?: Record<string, string>
+}
+
 export interface StartTimerCommandIntent extends WorkflowCommandIntentBase {
   readonly kind: 'start-timer'
   readonly timerId: string
@@ -84,6 +99,12 @@ export interface StartTimerCommandIntent extends WorkflowCommandIntentBase {
 export interface RequestCancelActivityCommandIntent extends WorkflowCommandIntentBase {
   readonly kind: 'request-cancel-activity'
   readonly activityId: string
+  readonly scheduledEventId?: string
+}
+
+export interface RequestCancelNexusOperationCommandIntent extends WorkflowCommandIntentBase {
+  readonly kind: 'request-cancel-nexus-operation'
+  readonly operationId: string
   readonly scheduledEventId?: string
 }
 
@@ -175,8 +196,10 @@ export interface ContinueAsNewWorkflowCommandIntent extends WorkflowCommandInten
 
 export type WorkflowCommandIntent =
   | ScheduleActivityCommandIntent
+  | ScheduleNexusOperationCommandIntent
   | StartTimerCommandIntent
   | RequestCancelActivityCommandIntent
+  | RequestCancelNexusOperationCommandIntent
   | CancelTimerCommandIntent
   | StartChildWorkflowCommandIntent
   | SignalExternalWorkflowCommandIntent
@@ -204,12 +227,20 @@ export const materializeCommands = async (
         commands.push(await buildScheduleActivityCommand(intent, options))
         break
       }
+      case 'schedule-nexus-operation': {
+        commands.push(await buildScheduleNexusOperationCommand(intent, options))
+        break
+      }
       case 'start-timer': {
         commands.push(buildStartTimerCommand(intent))
         break
       }
       case 'request-cancel-activity': {
         commands.push(buildRequestCancelActivityCommand(intent))
+        break
+      }
+      case 'request-cancel-nexus-operation': {
+        commands.push(buildRequestCancelNexusOperationCommand(intent))
         break
       }
       case 'cancel-timer': {
@@ -288,6 +319,29 @@ const buildScheduleActivityCommand = async (
   })
 }
 
+const buildScheduleNexusOperationCommand = async (
+  intent: ScheduleNexusOperationCommandIntent,
+  options: WorkflowCommandMaterializationOptions,
+): Promise<Command> => {
+  const payload = intent.input !== undefined ? await options.dataConverter.toPayload(intent.input) : undefined
+  const attributes = create(ScheduleNexusOperationCommandAttributesSchema, {
+    endpoint: intent.endpoint,
+    service: intent.service,
+    operation: intent.operation,
+    input: payload,
+    scheduleToCloseTimeout: durationFromMillis(intent.scheduleToCloseTimeoutMs),
+    nexusHeader: intent.nexusHeader ?? {},
+  })
+
+  return create(CommandSchema, {
+    commandType: CommandType.SCHEDULE_NEXUS_OPERATION,
+    attributes: {
+      case: 'scheduleNexusOperationCommandAttributes',
+      value: attributes,
+    },
+  })
+}
+
 const buildStartTimerCommand = (intent: StartTimerCommandIntent): Command => {
   const attributes = create(StartTimerCommandAttributesSchema, {
     timerId: intent.timerId,
@@ -312,6 +366,20 @@ const buildRequestCancelActivityCommand = (intent: RequestCancelActivityCommandI
     commandType: CommandType.REQUEST_CANCEL_ACTIVITY_TASK,
     attributes: {
       case: 'requestCancelActivityTaskCommandAttributes',
+      value: attributes,
+    },
+  })
+}
+
+const buildRequestCancelNexusOperationCommand = (intent: RequestCancelNexusOperationCommandIntent): Command => {
+  const attributes = create(RequestCancelNexusOperationCommandAttributesSchema, {
+    scheduledEventId: intent.scheduledEventId ? BigInt(intent.scheduledEventId) : 0n,
+  })
+
+  return create(CommandSchema, {
+    commandType: CommandType.REQUEST_CANCEL_NEXUS_OPERATION,
+    attributes: {
+      case: 'requestCancelNexusOperationCommandAttributes',
       value: attributes,
     },
   })

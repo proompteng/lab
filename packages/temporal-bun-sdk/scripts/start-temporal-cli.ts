@@ -16,6 +16,10 @@ const temporalUiPort = Number(process.env.TEMPORAL_UI_PORT ?? 8233)
 const temporalNamespace = process.env.TEMPORAL_NAMESPACE ?? 'default'
 const dbPath = process.env.TEMPORAL_DB_PATH ?? join(stateDir, 'temporal-dev.db')
 const temporalCliOverride = process.env.TEMPORAL_CLI_PATH?.trim()
+const timeSkippingEnabled = (() => {
+  const value = process.env.TEMPORAL_TIME_SKIPPING?.trim().toLowerCase()
+  return value ? ['1', 'true', 't', 'yes', 'y', 'on'].includes(value) : false
+})()
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -112,6 +116,7 @@ function startTemporalCli(executable: string) {
         String(temporalPort),
         '--ui-port',
         String(temporalUiPort),
+        ...(timeSkippingEnabled ? ['--time-skipping'] : []),
       ],
       {
         cwd: stateDir,

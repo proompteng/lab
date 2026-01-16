@@ -8,8 +8,10 @@ import type {
   ModifyWorkflowPropertiesCommandIntent,
   RecordMarkerCommandIntent,
   RequestCancelActivityCommandIntent,
+  RequestCancelNexusOperationCommandIntent,
   RequestCancelExternalWorkflowCommandIntent,
   ScheduleActivityCommandIntent,
+  ScheduleNexusOperationCommandIntent,
   SignalExternalWorkflowCommandIntent,
   StartChildWorkflowCommandIntent,
   StartTimerCommandIntent,
@@ -46,6 +48,7 @@ const MARKER_SIDE_EFFECT = 'temporal-bun-sdk/side-effect'
 const MARKER_VERSION = 'temporal-bun-sdk/get-version'
 const MARKER_PATCH = 'temporal-bun-sdk/patch'
 const MARKER_LOCAL_ACTIVITY = 'temporal-bun-sdk/local-activity'
+const NEXUS_OPERATION_ID_HEADER = 'x-temporal-bun-operation-id'
 
 export interface WorkflowInfo {
   readonly namespace: string
@@ -64,6 +67,12 @@ export interface ScheduleActivityOptions {
   readonly heartbeatTimeoutMs?: number
   readonly retry?: WorkflowRetryPolicyInput
   readonly requestEagerExecution?: boolean
+}
+
+export interface ScheduleNexusOperationOptions {
+  readonly operationId?: string
+  readonly scheduleToCloseTimeoutMs?: number
+  readonly nexusHeader?: Record<string, string>
 }
 
 export interface StartTimerOptions {
@@ -147,6 +156,7 @@ export interface WorkflowScheduledCommandRef {
   readonly sequence: number
   readonly activityId?: string
   readonly timerId?: string
+  readonly operationId?: string
   readonly result?: unknown
 }
 
@@ -160,6 +170,21 @@ export interface WorkflowActivities {
   cancel(
     activityId: string,
     options?: CancelActivityOptions,
+  ): Effect.Effect<WorkflowScheduledCommandRef, WorkflowBlockedError | Error, never>
+}
+
+export interface WorkflowNexusOperations {
+  schedule(
+    endpoint: string,
+    service: string,
+    operation: string,
+    input?: unknown,
+    options?: ScheduleNexusOperationOptions,
+  ): Effect.Effect<unknown, never, never>
+
+  cancel(
+    operationId: string,
+    options?: { scheduledEventId?: string | number | bigint },
   ): Effect.Effect<WorkflowScheduledCommandRef, WorkflowBlockedError | Error, never>
 }
 
@@ -229,6 +254,7 @@ export interface WorkflowDeterminismHelpers {
 
 export interface WorkflowRuntimeServices {
   readonly activities: WorkflowActivities
+  readonly nexus: WorkflowNexusOperations
   readonly timers: WorkflowTimers
   readonly childWorkflows: WorkflowChildWorkflows
   readonly signals: WorkflowSignalClient
@@ -252,6 +278,8 @@ export interface CreateWorkflowContextParams<I> {
   readonly determinismGuard: DeterminismGuard
   readonly activityResults?: Map<string, ActivityResolution>
   readonly activityScheduleEventIds?: Map<string, string>
+  readonly nexusResults?: Map<string, NexusOperationResolution>
+  readonly nexusScheduleEventIds?: Map<string, string>
   readonly signalDeliveries?: readonly WorkflowSignalDeliveryInput[]
   readonly timerResults?: ReadonlySet<string>
   readonly updates?: WorkflowUpdateDefinitions
@@ -259,17 +287,26 @@ export interface CreateWorkflowContextParams<I> {
 
 export type ActivityResolution = { status: 'completed'; value: unknown } | { status: 'failed'; error: Error }
 
+export type NexusOperationResolution = { status: 'completed'; value: unknown } | { status: 'failed'; error: Error }
+
 export class WorkflowCommandContext {
   readonly #info: WorkflowInfo
   readonly #guard: DeterminismGuard
   readonly #intents: WorkflowCommandIntent[] = []
   readonly #activityScheduleEventIds?: Map<string, string>
+  readonly #nexusScheduleEventIds?: Map<string, string>
   #sequence = 0
 
-  constructor(params: { info: WorkflowInfo; guard: DeterminismGuard; activityScheduleEventIds?: Map<string, string> }) {
+  constructor(params: {
+    info: WorkflowInfo
+    guard: DeterminismGuard
+    activityScheduleEventIds?: Map<string, string>
+    nexusScheduleEventIds?: Map<string, string>
+  }) {
     this.#info = params.info
     this.#guard = params.guard
     this.#activityScheduleEventIds = params.activityScheduleEventIds
+    this.#nexusScheduleEventIds = params.nexusScheduleEventIds
   }
 
   get intents(): readonly WorkflowCommandIntent[] {
@@ -294,6 +331,10 @@ export class WorkflowCommandContext {
     return this.#activityScheduleEventIds?.get(activityId)
   }
 
+  resolveScheduledNexusOperationEventId(operationId: string): string | undefined {
+    return this.#nexusScheduleEventIds?.get(operationId)
+  }
+
   previousIntent(sequence: number): WorkflowCommandIntent | undefined {
     return this.#guard.getPreviousIntent(sequence)
   }
@@ -315,10 +356,12 @@ export const createWorkflowContext = <I>(
     info: params.info,
     guard: params.determinismGuard,
     activityScheduleEventIds: params.activityScheduleEventIds,
+    nexusScheduleEventIds: params.nexusScheduleEventIds,
   })
   const updateRegistry = new WorkflowUpdateRegistry()
 
   const activityResults = params.activityResults ?? new Map<string, ActivityResolution>()
+  const nexusResults = params.nexusResults ?? new Map<string, NexusOperationResolution>()
   const inboundSignals = new WorkflowInboundSignals({
     guard: params.determinismGuard,
     deliveries: params.signalDeliveries,
@@ -353,6 +396,33 @@ export const createWorkflowContext = <I>(
         const intent = buildRequestCancelActivityIntent(commandContext, activityId, options)
         commandContext.addIntent(intent)
         return createCommandRef(intent, { activityId })
+      })
+    },
+  }
+
+  const nexus: WorkflowNexusOperations = {
+    schedule(endpoint, service, operation, input, options = {}) {
+      return Effect.sync(() => {
+        const intent = buildScheduleNexusOperationIntent(commandContext, endpoint, service, operation, input, options)
+        commandContext.addIntent(intent)
+        const resolution = nexusResults.get(intent.operationId)
+        if (!resolution) {
+          if (params.determinismGuard.isQueryMode()) {
+            return createCommandRef(intent, { operationId: intent.operationId })
+          }
+          throw new WorkflowBlockedError(`Nexus operation ${intent.operationId} pending`)
+        }
+        if (resolution.status === 'failed') {
+          throw resolution.error
+        }
+        return resolution.value
+      })
+    },
+    cancel(operationId, options = {}) {
+      return Effect.sync(() => {
+        const intent = buildRequestCancelNexusOperationIntent(commandContext, operationId, options)
+        commandContext.addIntent(intent)
+        return createCommandRef(intent, { operationId })
       })
     },
   }
@@ -501,6 +571,7 @@ export const createWorkflowContext = <I>(
     input: params.input,
     info: params.info,
     activities,
+    nexus,
     timers,
     childWorkflows,
     signals,
@@ -524,7 +595,7 @@ export const createWorkflowContext = <I>(
 
 const createCommandRef = (
   intent: WorkflowCommandIntent,
-  extras?: Partial<Pick<WorkflowScheduledCommandRef, 'activityId' | 'timerId' | 'result'>>,
+  extras?: Partial<Pick<WorkflowScheduledCommandRef, 'activityId' | 'timerId' | 'operationId' | 'result'>>,
 ): WorkflowScheduledCommandRef => ({
   id: intent.id,
   kind: intent.kind,
@@ -560,6 +631,53 @@ const buildScheduleActivityIntent = (
     },
     retry: options.retry,
     requestEagerExecution: options.requestEagerExecution,
+  }
+}
+
+const buildScheduleNexusOperationIntent = (
+  ctx: WorkflowCommandContext,
+  endpoint: string,
+  service: string,
+  operation: string,
+  input: unknown,
+  options: ScheduleNexusOperationOptions,
+): ScheduleNexusOperationCommandIntent => {
+  const sequence = ctx.nextSequence()
+  const operationId = options.operationId ?? `nexus-${sequence}`
+  const nexusHeader = { ...(options.nexusHeader ?? {}) }
+  if (!nexusHeader[NEXUS_OPERATION_ID_HEADER]) {
+    nexusHeader[NEXUS_OPERATION_ID_HEADER] = operationId
+  }
+  return {
+    id: `schedule-nexus-operation-${sequence}`,
+    kind: 'schedule-nexus-operation',
+    sequence,
+    endpoint,
+    service,
+    operation,
+    operationId,
+    input,
+    scheduleToCloseTimeoutMs: options.scheduleToCloseTimeoutMs,
+    nexusHeader,
+  }
+}
+
+const buildRequestCancelNexusOperationIntent = (
+  ctx: WorkflowCommandContext,
+  operationId: string,
+  options: { scheduledEventId?: string | number | bigint },
+): RequestCancelNexusOperationCommandIntent => {
+  const sequence = ctx.nextSequence()
+  const scheduledEventId =
+    options.scheduledEventId !== undefined && options.scheduledEventId !== null
+      ? String(options.scheduledEventId)
+      : ctx.resolveScheduledNexusOperationEventId(operationId)
+  return {
+    id: `request-cancel-nexus-operation-${sequence}`,
+    kind: 'request-cancel-nexus-operation',
+    sequence,
+    operationId,
+    scheduledEventId,
   }
 }
 
