@@ -22,7 +22,7 @@ afterAll(async () => {
   await releaseIntegrationTestEnv()
 })
 
-test('schedule client can create and manage schedules', async () => {
+test('schedule client can create and manage schedules', { timeout: 30_000 }, async () => {
   if (!env) {
     throw new Error('integration env not initialised')
   }

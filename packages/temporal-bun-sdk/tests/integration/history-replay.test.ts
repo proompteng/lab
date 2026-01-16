@@ -9,7 +9,7 @@ import { createDefaultDataConverter } from '../../src/common/payloads'
 import { makeStickyCache } from '../../src/worker/sticky-cache'
 import { ingestWorkflowHistory, diffDeterminismState } from '../../src/workflow/replay'
 import type { HistoryEvent } from '../../src/proto/temporal/api/history/v1/message_pb'
-import type { IntegrationHarness, WorkflowExecutionHandle } from './harness'
+import { TemporalCliCommandError, type IntegrationHarness, type WorkflowExecutionHandle } from './harness'
 import { acquireIntegrationTestEnv, releaseIntegrationTestEnv, CLI_CONFIG, type IntegrationTestEnv } from './test-env'
 import {
   continueAsNewWorkflow,

@@ -150,6 +150,57 @@ export const createIntegrationHarness = (
       TEMPORAL_CLI_LOG_PATH: temporalCliLogPath,
     }
 
+    const runTemporalCli = (args: readonly string[]) => {
+      const command = [cliExecutable, ...args]
+      return Effect.tryPromise({
+        try: async () => {
+          console.info('[temporal-bun-sdk] running CLI command', command.join(' '))
+          const child = Bun.spawn(command, {
+            stdout: 'pipe',
+            stderr: 'pipe',
+          })
+          const exitCode = await child.exited
+          const stdout = child.stdout ? await readStream(child.stdout) : ''
+          const stderr = child.stderr ? await readStream(child.stderr) : ''
+          if (exitCode !== 0) {
+            console.error('[temporal-bun-sdk] CLI command failed', { command, exitCode, stdout, stderr })
+            throw new TemporalCliCommandError(command, exitCode, stdout, stderr)
+          }
+          console.info('[temporal-bun-sdk] CLI command stdout', stdout)
+          if (stderr.trim().length > 0) {
+            console.info('[temporal-bun-sdk] CLI command stderr', stderr)
+          }
+          return stdout
+        },
+        catch: (error) =>
+          error instanceof TemporalCliCommandError
+            ? error
+            : new TemporalCliCommandError(
+                command,
+                -1,
+                '',
+                error instanceof Error ? error.message : String(error),
+              ),
+      })
+    }
+
+    const waitForNamespaceReady = async () => {
+      const maxAttempts = 20
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+          await Effect.runPromise(
+            runTemporalCli(['operator', 'namespace', 'describe', '--namespace', config.namespace, '--output', 'json']),
+          )
+          return
+        } catch (error) {
+          if (attempt === maxAttempts) {
+            throw error
+          }
+          await Bun.sleep(500)
+        }
+      }
+    }
+
     const setup = Effect.tryPromise(async () => {
       if (started) {
         return
@@ -187,6 +238,7 @@ export const createIntegrationHarness = (
       console.info(
         `[temporal-bun-sdk] Temporal CLI dev server running at ${hostname}:${cliPort} (ui:${cliUiPort})`,
       )
+      await waitForNamespaceReady()
     })
 
     const teardown = Effect.tryPromise(async () => {
@@ -210,40 +262,6 @@ export const createIntegrationHarness = (
       }
       started = false
     })
-
-    const runTemporalCli = (args: readonly string[]) => {
-      const command = [cliExecutable, ...args]
-      return Effect.tryPromise({
-        try: async () => {
-          console.info('[temporal-bun-sdk] running CLI command', command.join(' '))
-          const child = Bun.spawn(command, {
-            stdout: 'pipe',
-            stderr: 'pipe',
-          })
-          const exitCode = await child.exited
-          const stdout = child.stdout ? await readStream(child.stdout) : ''
-          const stderr = child.stderr ? await readStream(child.stderr) : ''
-          if (exitCode !== 0) {
-            console.error('[temporal-bun-sdk] CLI command failed', { command, exitCode, stdout, stderr })
-            throw new TemporalCliCommandError(command, exitCode, stdout, stderr)
-          }
-          console.info('[temporal-bun-sdk] CLI command stdout', stdout)
-          if (stderr.trim().length > 0) {
-            console.info('[temporal-bun-sdk] CLI command stderr', stderr)
-          }
-          return stdout
-        },
-        catch: (error) =>
-          error instanceof TemporalCliCommandError
-            ? error
-            : new TemporalCliCommandError(
-                command,
-                -1,
-                '',
-                error instanceof Error ? error.message : String(error),
-              ),
-      })
-    }
 
     const executeWorkflow = (
       options: TemporalWorkflowExecuteOptions,

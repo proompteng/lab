@@ -15,7 +15,7 @@ afterAll(async () => {
   await releaseIntegrationTestEnv()
 })
 
-test('TestWorkflowEnvironment runs a worker end-to-end', async () => {
+test('TestWorkflowEnvironment runs a worker end-to-end', { timeout: 30_000 }, async () => {
   if (!env) {
     throw new Error('integration env not initialised')
   }
