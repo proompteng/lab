@@ -1,64 +1,71 @@
-# Temporal Bun SDK - Testing Environment
+# Testing environment
 
-## Goal
-Provide a Bun-native testing harness equivalent to (and simpler than) the
-TypeScript SDK test environment. It must allow deterministic, fast integration
-runs with optional time skipping.
+The Temporal Bun SDK ships a Bun-friendly `TestWorkflowEnvironment` wrapper so
+workflow tests can boot a worker and connect to a dev server without hand-rolled
+plumbing.
 
-## Non-Goals
-- Implementing a new Temporal test server binary.
-- Replacing Temporal CLI dev server in production workflows.
+## Capabilities
 
-## Requirements
-1. Before implementation, check out `https://github.com/temporalio/sdk-core` and
-   `https://github.com/temporalio/sdk-typescript` to confirm upstream behavior.
-2. One-line setup for tests (Bun test, Vitest, or custom harness).
-3. Optional time skipping (when server supports test service).
-4. Ephemeral server lifecycle management (start/stop/health).
-5. Namespace isolation and cleanup.
-6. Built-in helpers for workflow start, signal, query, update, and replay.
-7. Works with existing `createWorker` and `runWorkerApp` APIs.
+- **Local dev server** via the bundled Temporal CLI scripts.
+- **Time-skipping server** support when the CLI (or your own server) is started
+  with `--time-skipping`.
+- **Existing server** support for integration environments.
 
-## API Sketch
+## API surface
+
 ```ts
-import { TestWorkflowEnvironment } from '@proompteng/temporal-bun-sdk/testing'
+import { TestWorkflowEnvironment } from '@proompteng/temporal-bun-sdk'
 
-const env = await TestWorkflowEnvironment.createTimeSkipping({
-  server: { type: 'dev', address: '127.0.0.1:7233' },
-  namespace: 'test-namespace',
+const env = await TestWorkflowEnvironment.createLocal({
+  address: '127.0.0.1:7233',
+  namespace: 'default',
+  taskQueue: 'unit-tests',
 })
 
-const worker = await env.createWorker({
-  workflowsPath: new URL('./workflows/index.ts', import.meta.url).pathname,
+const { worker } = await env.createWorker({
+  workflows,
   activities,
+  taskQueue: 'unit-tests',
 })
 
-await worker.runUntil(async () => {
-  const handle = await env.client.workflow.start({
-    workflowType: 'myWorkflow',
-    taskQueue: env.taskQueue,
-    args: [42],
-  })
-  return handle.result()
-})
-
+const workerPromise = worker.run()
+// ... run workflow tests ...
+await worker.shutdown()
+await workerPromise
 await env.shutdown()
 ```
 
-## Configuration
-- `TEMPORAL_TEST_SERVER` (boolean) - prefer test service if available.
-- `TEMPORAL_TEST_SERVER_PATH` - optional local test server binary.
-- `TEMPORAL_TEST_NAMESPACE` - override namespace.
-- `TEMPORAL_TEST_TIME_SKIPPING` - enable time skipping when supported.
+### Constructors
 
-## Implementation Notes
-- Reuse existing `runTemporalCliEffect` and config layers for shared setup.
-- Use `GetSystemInfo` to detect test service support.
-- Provide a single `TestWorkflowEnvironment` class with
-  `createLocal`, `createTimeSkipping`, `createExistingServer` helpers.
+- `TestWorkflowEnvironment.createLocal(options)`
+  - Starts the Temporal CLI dev server (unless `reuseExistingServer` is true).
+  - Uses `packages/temporal-bun-sdk/scripts/start-temporal-cli.ts` and
+    `stop-temporal-cli.ts`.
+- `TestWorkflowEnvironment.createTimeSkipping(options)`
+  - Starts the Temporal CLI dev server with `--time-skipping` when
+    `reuseExistingServer` is false.
+  - Use this when you need deterministic time-skipping in workflow tests.
+- `TestWorkflowEnvironment.createExisting(options)`
+  - Connects to an already-running server without touching the CLI.
 
-## Acceptance Criteria
-- Tests can create and destroy environments without leaking processes.
-- Time skipping advances timers and workflow sleeps deterministically.
-- Worker startup is < 2s in local dev for common workflows.
-- Works with determinism markers and replay fixtures.
+### Worker integration
+
+`TestWorkflowEnvironment.createWorker()` delegates to `createWorker` with the
+resolved config, so `createWorker` integration runs end-to-end using the same
+workflow/activity registration path as production.
+
+## Configuration and environment
+
+The helper honors these environment variables:
+
+- `TEMPORAL_CLI_PATH` overrides the Temporal CLI binary used by the scripts.
+- `TEMPORAL_PORT` (derived from `address`) controls the dev server port.
+- `TEMPORAL_TIME_SKIPPING=1` enables the CLI `--time-skipping` flag.
+
+When `reuseExistingServer` is true, no CLI process is spawned and shutdown only
+closes the client.
+
+## Error handling
+
+`TemporalTestServerUnavailableError` is thrown when the CLI script is missing or
+fails to start the dev server.

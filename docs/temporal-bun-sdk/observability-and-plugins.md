@@ -1,43 +1,54 @@
-# Temporal Bun SDK - Observability and Plugins
+# Observability, plugins, and tuners
 
-## Goal
-Deliver a unified observability pipeline and extensibility model that is more
-capable than the TypeScript SDK, without relying on sandboxed workflows.
+The Bun SDK includes a full observability stack and an extensible worker plugin
+system with dynamic concurrency tuning.
 
-## Non-Goals
-- Embedding a full OTEL collector.
-- Replacing external APM systems.
+## Observability
 
-## Requirements
-1. Before implementation, check out `https://github.com/temporalio/sdk-core` and
-   `https://github.com/temporalio/sdk-typescript` to confirm upstream behavior.
-2. Unified metrics/logging/tracing for worker, activities, workflows, and
-   (future) Nexus operations.
-3. Workflow-safe telemetry sinks with replay gating.
-4. Plugin system for worker bootstrap, scheduling, and config.
-5. Tuner for dynamic concurrency (resource-based or custom).
-6. Exporters: in-memory, file, OTLP, Prometheus.
+- **Logging**: structured logger with `json`/`pretty` formats.
+- **Metrics**: in-memory, Prometheus, file, and OTLP exporters.
+- **Tracing**: OpenTelemetry SDK integration with OTLP exporter support.
 
-## API Sketch
+Enable exporters with existing environment variables (see main SDK docs). Metrics
+and tracing work for client and worker operations end-to-end.
+
+## Worker plugins
+
+Worker plugins allow you to attach hooks for lifecycle and scheduling events:
+
 ```ts
-const { worker } = await createWorker({
-  workflowsPath,
-  activities,
-  plugins: [metricsPlugin(), tracingPlugin()],
-  tuner: resourceBasedTuner({ targetCpu: 0.7, targetMem: 0.6 }),
-})
+import type { WorkerPlugin } from '@proompteng/temporal-bun-sdk'
 
-const { log, metrics } = workflowTelemetry()
-log.info('inside workflow', { runId: info.runId })
-metrics.counter('workflow.step').inc(1)
+const plugin: WorkerPlugin = {
+  name: 'custom-metrics',
+  onWorkerStart: ({ logger }) => Effect.sync(() => logger.info('worker started')),
+  schedulerHooks: {
+    onWorkflowStart: (task) => Effect.sync(() => console.log('workflow task', task.workflowId)),
+  },
+}
+
+await WorkerRuntime.create({
+  plugins: [plugin],
+})
 ```
 
-## Implementation Notes
-- Implement workflow telemetry as a sink-like layer with deterministic buffers.
-- Integrate with Effect services for logger, metrics, tracer.
-- Provide a plugin lifecycle: preConfig -> postConfig -> runtime.
+## Dynamic concurrency tuning
 
-## Acceptance Criteria
-- Tracing spans correlate client -> worker -> activity.
-- Plugins can add interceptors and mutate config safely.
-- Tuner adjusts concurrency without starvation or oscillation.
+Provide a `WorkerTuner` to update workflow/activity concurrency while the
+worker is running:
+
+```ts
+import { createStaticWorkerTuner } from '@proompteng/temporal-bun-sdk'
+
+await WorkerRuntime.create({
+  tuner: createStaticWorkerTuner({ workflow: 8, activity: 4 }),
+})
+```
+
+Custom tuners can implement `subscribe(listener)` to push live updates. The
+runtime rebuilds the scheduler when updates arrive and logs each change.
+
+### Opt-in behavior
+
+Both plugins and tuners are opt-in through `WorkerRuntimeOptions` and do not
+alter existing worker behavior unless explicitly configured.
