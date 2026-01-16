@@ -809,9 +809,16 @@ const reconcileImplementationSource = async (
     return
   }
 
-  const pollInterval = Number.parseInt(String(readNested(source, ['spec', 'poll', 'intervalSeconds']) ?? ''), 10) || 60
+  const pollSpec = asRecord(readNested(source, ['spec', 'poll']))
+  const webhookEnabled = readNested(source, ['spec', 'webhook', 'enabled']) === true
+  let pollInterval: number | null = null
+  if (pollSpec) {
+    pollInterval = Number.parseInt(String(readNested(source, ['spec', 'poll', 'intervalSeconds']) ?? ''), 10) || 60
+  } else if (!webhookEnabled) {
+    pollInterval = 60
+  }
   const lastSyncedAt = asString(readNested(source, ['status', 'lastSyncedAt']))
-  if (lastSyncedAt) {
+  if (pollInterval != null && lastSyncedAt) {
     const nextAllowed = new Date(lastSyncedAt).getTime() + pollInterval * 1000
     if (Date.now() < nextAllowed) return
   }
@@ -846,6 +853,22 @@ const reconcileImplementationSource = async (
       observedGeneration: asRecord(metadata)?.generation ?? 0,
       conditions,
       lastSyncedAt: lastSyncedAt ?? undefined,
+    })
+    return
+  }
+
+  if (pollInterval == null && webhookEnabled) {
+    const conditions = upsertCondition(buildConditions(source), {
+      type: 'Ready',
+      status: 'True',
+      reason: 'WebhookEnabled',
+      message: 'Webhook enabled; waiting for events',
+    })
+    await setStatus(kube, source, {
+      observedGeneration: asRecord(metadata)?.generation ?? 0,
+      cursor: asString(readNested(source, ['status', 'cursor'])) ?? undefined,
+      lastSyncedAt: lastSyncedAt ?? undefined,
+      conditions,
     })
     return
   }
@@ -1144,6 +1167,7 @@ const submitJobRun = async (
 
   const metadata = asRecord(agentRun.metadata) ?? {}
   const runName = asString(metadata.name) ?? 'agentrun'
+  const runUid = asString(metadata.uid)
   const jobName = makeName(runName, 'job')
 
   const jobResource = {
@@ -1155,6 +1179,18 @@ const submitJobRun = async (
       labels: {
         'agents.proompteng.ai/agent-run': runName,
       },
+      ...(runUid
+        ? {
+            ownerReferences: [
+              {
+                apiVersion: 'agents.proompteng.ai/v1alpha1',
+                kind: 'AgentRun',
+                name: runName,
+                uid: runUid,
+              },
+            ],
+          }
+        : {}),
     },
     spec: {
       ttlSecondsAfterFinished: typeof ttlSeconds === 'number' ? ttlSeconds : undefined,
