@@ -22,7 +22,7 @@ spec:
           writeBackTarget: kustomization:/argocd/applications/proompteng
       images:
         - alias: proompteng
-          imageName: registry.ide-newton.ts.net/lab/proompteng:0.237.0
+          imageName: registry.ide-newton.ts.net/lab/proompteng:0.x
           manifestTargets:
             kustomize:
               name: registry.ide-newton.ts.net/lab/proompteng
@@ -35,36 +35,10 @@ spec:
           writeBackTarget: kustomization:/argocd/applications/docs
       images:
         - alias: docs
-          imageName: registry.ide-newton.ts.net/lab/docs:0.336.2
+          imageName: registry.ide-newton.ts.net/lab/docs:0.x
           manifestTargets:
             kustomize:
               name: registry.ide-newton.ts.net/lab/docs
-    - namePattern: kitty-krew
-      writeBackConfig:
-        method: git:secret:argocd/image-updater-git-ssh
-        gitConfig:
-          repository: git@github.com:proompteng/lab.git
-          branch: main:release/{{.SHA256}}
-          writeBackTarget: kustomization:/argocd/applications/kitty-krew
-      images:
-        - alias: kitty-krew
-          imageName: registry.ide-newton.ts.net/lab/kitty-krew:0.175.0
-          manifestTargets:
-            kustomize:
-              name: registry.ide-newton.ts.net/lab/kitty-krew
-    - namePattern: reviseur
-      writeBackConfig:
-        method: git:secret:argocd/image-updater-git-ssh
-        gitConfig:
-          repository: git@github.com:proompteng/lab.git
-          branch: main:release/{{.SHA256}}
-          writeBackTarget: kustomization:/argocd/applications/reviseur
-      images:
-        - alias: reviseur
-          imageName: registry.ide-newton.ts.net/lab/reviseur:0.184.0
-          manifestTargets:
-            kustomize:
-              name: registry.ide-newton.ts.net/lab/reviseur
     - namePattern: dernier
       writeBackConfig:
         method: git:secret:argocd/image-updater-git-ssh
