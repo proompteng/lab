@@ -29,6 +29,8 @@ kubectl apply -n agents -f charts/agents/examples/implementationspec-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/agentrun-sample.yaml
 ```
 
+The memory sample includes a placeholder Secret. Update the connection string before using it in production.
+
 For job runtime execution, ensure the workload image includes `agent-runner` or set
 `env.vars.JANGAR_AGENT_RUNNER_IMAGE` (or `env.vars.JANGAR_AGENT_IMAGE`) to a runner image.
 
@@ -40,6 +42,11 @@ agentctl run submit --agent codex-agent --impl codex-impl-sample --runtime job -
 Optional: configure GitHub/Linear ingestion with `ImplementationSource` manifests:
 - `charts/agents/examples/implementationsource-github.yaml`
 - `charts/agents/examples/implementationsource-linear.yaml`
+
+Local smoke test:
+```bash
+scripts/agents/smoke-agents.sh
+```
 
 ## Database configuration
 Jangar requires a database connection string. Supply one of:
@@ -64,7 +71,7 @@ native CRDs in the correct order.
 ## Publishing (OCI)
 ```bash
 helm package charts/agents
-helm push agents-0.4.0.tgz oci://ghcr.io/proompteng/charts
+helm push agents-0.5.0.tgz oci://ghcr.io/proompteng/charts
 ```
 
 ## Values

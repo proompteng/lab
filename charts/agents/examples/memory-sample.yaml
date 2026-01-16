@@ -1,3 +1,11 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: memory-postgres
+type: Opaque
+stringData:
+  url: postgresql://memory:memory@postgres.default.svc.cluster.local:5432/memory?sslmode=disable
+---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: Memory
 metadata:

@@ -40,6 +40,7 @@ retire the Crossplane package safely and move existing claims to the native CRDs
 - Strip Crossplane-specific metadata (`spec.writeConnectionSecretToRef`, `compositionRef`, etc).
 - Keep names/namespaces stable so references continue to resolve.
 - Convert labels/annotations that your workflows rely on.
+- Remove managedFields, ownerReferences, and status blocks before applying the native CRDs.
 
 ## Mapping: XAgent → Agent
 | Crossplane field | Native field | Notes |

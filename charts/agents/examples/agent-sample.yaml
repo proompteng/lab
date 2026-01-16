@@ -15,8 +15,3 @@ spec:
   defaults:
     timeoutSeconds: 3600
     retryLimit: 1
-  security:
-    allowedServiceAccounts:
-      - codex-runner
-    allowedSecrets:
-      - codex-provider-token
