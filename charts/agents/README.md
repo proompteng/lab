@@ -30,7 +30,7 @@ kubectl apply -n agents -f charts/agents/examples/agentrun-sample.yaml
 ```
 
 For job runtime execution, ensure the workload image includes `agent-runner` or set
-`env.vars.JANGAR_AGENT_RUNNER_IMAGE` to a runner image.
+`env.vars.JANGAR_AGENT_RUNNER_IMAGE` (or `env.vars.JANGAR_AGENT_IMAGE`) to a runner image.
 
 Optional: submit runs with `agentctl`:
 ```bash
@@ -80,6 +80,9 @@ helm push agents-0.4.0.tgz oci://ghcr.io/proompteng/charts
 | `controller.enabled` | Enable Agents controller loop | `true` |
 | `controller.namespaces` | Namespaces to watch | `['<release-namespace>']` |
 | `controller.intervalSeconds` | Controller poll interval | `15` |
+| `controller.concurrency.perNamespace` | Max running AgentRuns per namespace | `10` |
+| `controller.concurrency.perAgent` | Max running AgentRuns per Agent | `5` |
+| `controller.concurrency.cluster` | Max running AgentRuns cluster-wide | `100` |
 | `rbac.create` | Create RBAC | `true` |
 | `rbac.clusterScoped` | Use ClusterRole/ClusterRoleBinding for multi-namespace reconciliation | `false` |
 | `agentComms.enabled` | Enable NATS agent-comms subscriber | `false` |

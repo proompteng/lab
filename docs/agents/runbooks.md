@@ -1,6 +1,6 @@
 # Runbooks (Agents)
 
-Status: Draft (2026-01-13)
+Status: Draft (2026-01-16)
 
 ## Install
 1. `helm install agents charts/agents -n agents --create-namespace`
@@ -15,7 +15,7 @@ Status: Draft (2026-01-13)
 1. `helm rollback agents <REV> -n agents`
 2. Verify status and re-run smoke test.
 
-## Argo CD Application
+## Argo CD Application (GitOps)
 Use the sample Application manifest in `argocd/applications/agents/application.yaml`:
 
 ```bash
@@ -24,7 +24,17 @@ kubectl -n argocd get applications.argoproj.io agents
 ```
 
 The Application renders `argocd/applications/agents` (Helm + kustomize) and installs CRDs + Jangar
-into the `agents` namespace.
+into the `agents` namespace using `argocd/applications/agents/values.yaml`.
+
+Argo CD smoke test:
+```bash
+kubectl -n argocd get applications.argoproj.io agents -o yaml
+kubectl -n agents get deploy,svc
+kubectl get crd | rg agents.proompteng.ai
+kubectl -n agents apply -f charts/agents/examples/agentrun-sample.yaml
+kubectl -n agents wait --for=condition=complete job \
+  -l agents.proompteng.ai/agent-run=codex-run-sample --timeout=5m
+```
 
 ## Smoke test (kind/minikube)
 ```bash

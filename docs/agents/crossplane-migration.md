@@ -16,6 +16,7 @@ retire the Crossplane package safely and move existing claims to the native CRDs
 2. **Convert manifests to native CRDs** using the mapping tables below.
 3. **Remove Crossplane Agents package and XRDs** (stop reconcile to avoid conflicts):
    ```bash
+   # Remove GitOps references to packages/crossplane/deprecated/configuration-agents first.
    kubectl delete configurations.pkg.crossplane.io configuration-agents
    kubectl delete xrd xagents.agents.proompteng.ai xagentruns.agents.proompteng.ai xagentproviders.agents.proompteng.ai
    ```
@@ -33,6 +34,12 @@ retire the Crossplane package safely and move existing claims to the native CRDs
    - `kubectl get agents.agents.proompteng.ai -A`
    - `kubectl get agentruns.agents.proompteng.ai -A`
    - Check status conditions on each resource
+
+## Export + convert tips
+- Use `kubectl get ... -o yaml` exports as the source of truth for conversion.
+- Strip Crossplane-specific metadata (`spec.writeConnectionSecretToRef`, `compositionRef`, etc).
+- Keep names/namespaces stable so references continue to resolve.
+- Convert labels/annotations that your workflows rely on.
 
 ## Mapping: XAgent → Agent
 | Crossplane field | Native field | Notes |
