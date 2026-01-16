@@ -59,6 +59,14 @@ spec:
                 automation: manual
                 enabled: "true"
                 clusters: ryzen
+              - name: workers
+                path: argocd/applications/workers
+                namespace: workers
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: manual
+                enabled: "true"
+                clusters: ryzen
               - name: kata-containers
                 path: argocd/applications/kata-containers
                 namespace: kube-system
