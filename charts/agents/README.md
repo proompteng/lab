@@ -29,6 +29,9 @@ kubectl apply -n agents -f charts/agents/examples/implementationspec-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/agentrun-sample.yaml
 ```
 
+For job runtime execution, ensure the workload image includes `agent-runner` or set
+`env.vars.JANGAR_AGENT_RUNNER_IMAGE` to a runner image.
+
 Optional: submit runs with `agentctl`:
 ```bash
 agentctl run submit --agent codex-agent --impl codex-impl-sample --runtime job --workload-image ghcr.io/proompteng/codex-agent:latest
@@ -51,11 +54,17 @@ Use `env.vars.JANGAR_MIGRATIONS=skip` to disable automatic migrations if needed.
 - Use a dedicated Postgres/managed DB and set `database.secretRef`.
 - Pin Jangar image digests in `values-prod.yaml`.
 - Keep `service.type=ClusterIP` and use ingress/mesh externally if desired.
+- Set `rbac.clusterScoped=true` when `controller.namespaces` spans multiple namespaces or `"*"`.
+
+## Migration from Crossplane
+Crossplane-based Agents XRDs conflict with the native CRDs in this chart. Follow
+`docs/agents/crossplane-migration.md` to export claims, remove XRDs, and apply
+native CRDs in the correct order.
 
 ## Publishing (OCI)
 ```bash
 helm package charts/agents
-helm push agents-0.3.0.tgz oci://ghcr.io/proompteng/charts
+helm push agents-0.4.0.tgz oci://ghcr.io/proompteng/charts
 ```
 
 ## Values
@@ -71,7 +80,8 @@ helm push agents-0.3.0.tgz oci://ghcr.io/proompteng/charts
 | `controller.enabled` | Enable Agents controller loop | `true` |
 | `controller.namespaces` | Namespaces to watch | `['<release-namespace>']` |
 | `controller.intervalSeconds` | Controller poll interval | `15` |
-| `rbac.create` | Create namespaced RBAC (Role/RoleBinding) | `true` |
+| `rbac.create` | Create RBAC | `true` |
+| `rbac.clusterScoped` | Use ClusterRole/ClusterRoleBinding for multi-namespace reconciliation | `false` |
 | `agentComms.enabled` | Enable NATS agent-comms subscriber | `false` |
 
 See `values.yaml`, `values-local.yaml`, `values-dev.yaml`, and `values-prod.yaml` for full options.

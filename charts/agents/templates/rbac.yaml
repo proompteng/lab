@@ -1,9 +1,17 @@
 {{- if .Values.rbac.create -}}
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+{{- $fullName := include "agents.fullname" . -}}
+{{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
+{{- $rbacKind := ternary "ClusterRole" "Role" .Values.rbac.clusterScoped -}}
+{{- $bindingKind := ternary "ClusterRoleBinding" "RoleBinding" .Values.rbac.clusterScoped -}}
+{{- $bindingNamespace := ternary "" $namespace .Values.rbac.clusterScoped -}}
+{{- $apiGroup := "rbac.authorization.k8s.io" -}}
+apiVersion: {{ $apiGroup }}/v1
+kind: {{ $rbacKind }}
 metadata:
-  name: {{ include "agents.fullname" . }}
-  namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  name: {{ $fullName }}
+  {{- if not .Values.rbac.clusterScoped }}
+  namespace: {{ $namespace }}
+  {{- end }}
   labels:
     {{- include "agents.labels" . | nindent 4 }}
 rules:
@@ -80,19 +88,21 @@ rules:
   {{- toYaml . | nindent 2 }}
 {{- end }}
 ---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+apiVersion: {{ $apiGroup }}/v1
+kind: {{ $bindingKind }}
 metadata:
-  name: {{ include "agents.fullname" . }}
-  namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  name: {{ $fullName }}
+  {{- if $bindingNamespace }}
+  namespace: {{ $bindingNamespace }}
+  {{- end }}
   labels:
     {{- include "agents.labels" . | nindent 4 }}
 roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ include "agents.fullname" . }}
+  apiGroup: {{ $apiGroup }}
+  kind: {{ $rbacKind }}
+  name: {{ $fullName }}
 subjects:
   - kind: ServiceAccount
     name: {{ include "agents.serviceAccountName" . }}
-    namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+    namespace: {{ $namespace }}
 {{- end }}

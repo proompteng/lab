@@ -20,6 +20,11 @@ Required verbs (namespaced):
 Optional (if enabled):
 - `events` for publishing Kubernetes events
 
+## Jangar Controller (cluster-scoped ClusterRole)
+Use when `controller.namespaces` spans multiple namespaces or `"*"`.
+Required verbs mirror the namespaced Role, but with cluster scope and a ClusterRoleBinding
+to the Jangar service account.
+
 ## agentctl (user)
 Uses the user's kubeconfig; permissions are whatever the user has in the cluster.
 

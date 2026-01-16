@@ -24,6 +24,7 @@ render_and_check() {
 }
 
 render_and_check "${CHART_DIR}/values-dev.yaml"
+render_and_check "${CHART_DIR}/values-local.yaml"
 render_and_check "${CHART_DIR}/values-prod.yaml"
 
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_agents.yaml" agents.proompteng.ai v1alpha1 Agent

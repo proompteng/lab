@@ -15,6 +15,27 @@ Status: Draft (2026-01-13)
 1. `helm rollback agents <REV> -n agents`
 2. Verify status and re-run smoke test.
 
+## Argo CD Application
+Use the sample Application manifest in `argocd/applications/agents/application.yaml`:
+
+```bash
+kubectl apply -n argocd -f argocd/applications/agents/application.yaml
+kubectl -n argocd get applications.argoproj.io agents
+```
+
+The Application renders `argocd/applications/agents` (Helm + kustomize) and installs CRDs + Jangar
+into the `agents` namespace.
+
+## Smoke test (kind/minikube)
+```bash
+scripts/agents/smoke-agents.sh
+```
+
+This installs the chart, applies sample CRDs, submits a job runtime AgentRun, and waits for the Job
+to complete. Override `AGENTS_NAMESPACE`, `AGENTS_RELEASE_NAME`, or `AGENTS_VALUES_FILE` if needed.
+Ensure the `agentrun-sample.yaml` workload image includes `agent-runner` or set
+`env.vars.JANGAR_AGENT_RUNNER_IMAGE` in your values.
+
 ## Stuck AgentRun
 - Check status/conditions: `kubectl -n agents get agentrun <name> -o yaml`
 - If runtimeRef exists, check runtime object (job/workflow).
