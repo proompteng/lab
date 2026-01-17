@@ -25,6 +25,9 @@ spec:
             - name: rootdisk
               disk:
                 bus: virtio
+            - name: datadisk
+              disk:
+                bus: virtio
             - name: cloudinitdisk
               disk:
                 bus: virtio
@@ -38,6 +41,9 @@ spec:
         - name: rootdisk
           containerDisk:
             image: quay.io/containerdisks/ubuntu:24.04
+        - name: datadisk
+          persistentVolumeClaim:
+            claimName: workers-data
         - name: cloudinitdisk
           cloudInitNoCloud:
             userData: |-
@@ -45,6 +51,131 @@ spec:
               preserve_hostname: false
               hostname: workers
               manage_etc_hosts: true
+              package_update: true
+              package_upgrade: false
+              disk_setup:
+                /dev/vdb:
+                  table_type: gpt
+                  layout: true
+                  overwrite: false
+              fs_setup:
+                - device: /dev/vdb
+                  filesystem: ext4
+                  overwrite: false
+              mounts:
+                - ["/dev/vdb", "/home/ubuntu/data", "ext4", "defaults,nofail", "0", "2"]
+              packages:
+                - ubuntu-desktop-minimal
+                - ca-certificates
+                - curl
+                - gnupg
+                - git
+                - jq
+                - python3
+                - build-essential
+                - unzip
+                - xz-utils
+              write_files:
+                - path: /home/ubuntu/.codex/config.toml
+                  owner: ubuntu:ubuntu
+                  permissions: '0600'
+                  content: |-
+                    model = "gpt-5.2-codex"
+                    model_reasoning_summary = "detailed"
+                    model_reasoning_effort = "medium"
+                    model_verbosity = "medium"
+                    approval_policy = "never"
+                    sandbox_mode = "danger-full-access"
+
+                    [features]
+                    web_search_request = true
+                    unified_exec = true
+                    streamable_shell = true
+                    apply_patch_freeform = true
+                    rmcp_client = true
+                    shell_snapshot = true
+                    skills = true
+
+                    [shell_environment_policy]
+                    ignore_default_excludes = true
+
+                    [projects."/home/ubuntu/github.com/lab"]
+                    trust_level = "trusted"
+
+                    [projects."/home/ubuntu"]
+                    trust_level = "trusted"
+                - path: /etc/systemd/system/chrome-remote-debug.service
+                  owner: root:root
+                  permissions: '0644'
+                  content: |-
+                    [Unit]
+                    Description=Chrome remote debugging (headless)
+                    After=network-online.target
+                    Wants=network-online.target
+
+                    [Service]
+                    Type=simple
+                    User=ubuntu
+                    Environment=CHROME_PATH=/usr/bin/google-chrome
+                    Environment=CHROME_REMOTE_DEBUG_PORT=9222
+                    Environment=CHROME_DEVTOOLS_USER_DATA=/home/ubuntu/data/chrome-devtools
+                    ExecStart=/usr/local/bin/start-chrome-remote-debug
+                    Restart=always
+                    RestartSec=3
+
+                    [Install]
+                    WantedBy=multi-user.target
+                - path: /etc/systemd/system/chrome-devtools-mcp.service
+                  owner: root:root
+                  permissions: '0644'
+                  content: |-
+                    [Unit]
+                    Description=Chrome DevTools MCP server
+                    After=chrome-remote-debug.service network-online.target
+                    Requires=chrome-remote-debug.service
+
+                    [Service]
+                    Type=simple
+                    User=ubuntu
+                    Environment=NODE_NO_WARNINGS=1
+                    ExecStart=/usr/local/bin/start-chrome-devtools-mcp
+                    Restart=always
+                    RestartSec=3
+
+                    [Install]
+                    WantedBy=multi-user.target
+                - path: /usr/local/bin/start-chrome-remote-debug
+                  owner: root:root
+                  permissions: '0755'
+                  content: |-
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+                    CHROME_PATH="${CHROME_PATH:-/usr/bin/google-chrome}"
+                    USER_DATA_DIR="${CHROME_DEVTOOLS_USER_DATA:-/home/ubuntu/data/chrome-devtools}"
+                    REMOTE_DEBUG_PORT="${CHROME_REMOTE_DEBUG_PORT:-9222}"
+                    mkdir -p "${USER_DATA_DIR}"
+                    exec "${CHROME_PATH}" \
+                      --user-data-dir="${USER_DATA_DIR}" \
+                      --profile-directory=Default \
+                      --remote-debugging-port="${REMOTE_DEBUG_PORT}" \
+                      --remote-debugging-address=127.0.0.1 \
+                      --remote-allow-origins=* \
+                      --no-first-run \
+                      --no-default-browser-check \
+                      --disable-gpu \
+                      --headless=new
+                - path: /usr/local/bin/start-chrome-devtools-mcp
+                  owner: root:root
+                  permissions: '0755'
+                  content: |-
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+                    export NVM_DIR="/home/ubuntu/.nvm"
+                    if [ -s "$NVM_DIR/nvm.sh" ]; then
+                      # shellcheck disable=SC1090
+                      . "$NVM_DIR/nvm.sh"
+                    fi
+                    exec npx -y chrome-devtools-mcp@latest --browser-url http://127.0.0.1:9222
               users:
                 - name: ubuntu
                   groups: [sudo]
@@ -64,3 +195,20 @@ spec:
                     - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH77X+Ekaz8sSLPImUYO8VYhgDDcb+DXkqU26UZ2PaAP
               ssh_pwauth: false
               disable_root: true
+              runcmd:
+                - [ bash, -lc, 'install -m 0755 -d /etc/apt/keyrings' ]
+                - [ bash, -lc, 'curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg' ]
+                - [ bash, -lc, 'echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list' ]
+                - [ bash, -lc, 'apt-get update' ]
+                - [ bash, -lc, 'apt-get install -y google-chrome-stable' ]
+                - [ bash, -lc, 'apt-get clean && rm -rf /var/lib/apt/lists/*' ]
+                - [ bash, -lc, 'su - ubuntu -c "bash -lc ''curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash''"' ]
+                - [ bash, -lc, 'su - ubuntu -c "bash -lc ''source ~/.nvm/nvm.sh && nvm install --lts && nvm alias default lts/*''"' ]
+                - [ bash, -lc, 'su - ubuntu -c "bash -lc ''curl -fsSL https://bun.sh/install | bash''"' ]
+                - [ bash, -lc, 'su - ubuntu -c "bash -lc ''~/.bun/bin/bun add -g @openai/codex''"' ]
+                - [ bash, -lc, 'su - ubuntu -c "bash -lc ''mkdir -p /home/ubuntu/data/chrome-devtools ~/.codex ~/github.com''"' ]
+                - [ bash, -lc, 'su - ubuntu -c "bash -lc ''[ -d ~/github.com/lab ] || git clone --depth 1 https://github.com/proompteng/lab ~/github.com/lab''"' ]
+                - [ bash, -lc, 'su - ubuntu -c "bash -lc ''rm -rf ~/.codex/skills && mkdir -p ~/.codex/skills && cp -R ~/github.com/lab/skills/. ~/.codex/skills/''"' ]
+                - [ bash, -lc, 'systemctl daemon-reload' ]
+                - [ bash, -lc, 'systemctl enable --now chrome-remote-debug.service chrome-devtools-mcp.service' ]
+                - [ bash, -lc, 'chown -R ubuntu:ubuntu /home/ubuntu/.codex /home/ubuntu/data || true' ]
