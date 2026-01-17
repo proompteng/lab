@@ -1,5 +1,6 @@
 package ai.proompteng.graf.security
 
+import ai.proompteng.graf.model.ErrorResponse
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -77,8 +78,8 @@ class GrafSecurityTest {
     val response = mapper.toResponse(java.lang.IllegalArgumentException("bad input"))
 
     assertEquals(400, response.status)
-    val payload = response.entity as Map<*, *>
-    assertEquals("bad input", payload["error"])
+    val payload = response.entity as ErrorResponse
+    assertEquals("bad input", payload.error)
   }
 
   @Test
@@ -87,8 +88,8 @@ class GrafSecurityTest {
     val response = mapper.toResponse(RuntimeException("boom"))
 
     assertEquals(500, response.status)
-    val payload = response.entity as Map<*, *>
-    assertEquals("internal server error", payload["error"])
+    val payload = response.entity as ErrorResponse
+    assertEquals("internal server error", payload.error)
     assertTrue(response.mediaType.toString().contains("application/json"))
   }
 }

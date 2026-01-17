@@ -341,10 +341,13 @@ class GraphService(
     neo4j.executeWrite("upsertEntitiesBatch") { tx ->
       val rows =
         entities.map { entity ->
-          val label = entity.label.ensureIdentifier("label")
+          val label = entity.resolveLabel().ensureIdentifier("label")
           val entityId = entity.id.takeUnless { it.isNullOrBlank() } ?: UUID.randomUUID().toString()
           val props =
             entity.properties.toValueMap().toMutableMap().apply {
+              entity.name?.takeIf { it.isNotBlank() }?.let { name ->
+                putIfAbsent("name", name)
+              }
               this["artifactId"] = entity.artifactId
               this["researchSource"] = entity.researchSource
               this["streamId"] = entity.streamId
@@ -378,6 +381,11 @@ class GraphService(
       }
       BatchResponse(rows.map { GraphResponse(it.id, "entity upserted", it.artifactId) })
     }
+
+  private fun EntityRequest.resolveLabel(): String =
+    label?.takeIf { it.isNotBlank() } ?: type?.takeIf { it.isNotBlank() } ?: throw IllegalArgumentException(
+      "entity label must be provided",
+    )
 
   private suspend fun upsertRelationshipsBatch(relationships: List<RelationshipRequest>): BatchResponse =
     neo4j.executeWrite("upsertRelationshipsBatch") { tx ->

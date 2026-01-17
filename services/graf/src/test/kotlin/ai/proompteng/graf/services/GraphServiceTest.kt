@@ -99,6 +99,31 @@ class GraphServiceTest {
     }
 
   @Test
+  fun `upsertEntities accepts type and name fields`() =
+    runBlocking {
+      configureSession()
+      val querySlot = slot<String>()
+      val paramsSlot = slot<Map<String, Any?>>()
+      every { txContext.run(capture(querySlot), capture(paramsSlot)) } answers { resultWithIds(listOf("entity-1")) }
+
+      val response =
+        service.upsertEntities(
+          EntityBatchRequest(
+            listOf(
+              EntityRequest(type = "Company", name = "Acme Corp"),
+            ),
+          ),
+        )
+
+      assertEquals(1, response.results.size)
+      assertTrue(querySlot.captured.contains("MERGE (n:Company"))
+      val rows = paramsSlot.captured["rows"] as List<*>
+      val firstRow = rows.first() as Map<*, *>
+      val props = firstRow["props"] as Map<*, *>
+      assertEquals("Acme Corp", props["name"])
+    }
+
+  @Test
   fun `upsertRelationships batches a single query per type`() =
     runBlocking {
       configureSession()

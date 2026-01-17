@@ -20,10 +20,10 @@ class ServiceResourceTest {
 
       val response = resource.root()
 
-      assertEquals("graf", response["service"])
-      assertEquals("ok", response["status"])
-      assertEquals("2025.11.11", response["version"])
-      assertEquals("abc123", response["commit"])
+      assertEquals("graf", response.service)
+      assertEquals("ok", response.status)
+      assertEquals("2025.11.11", response.version)
+      assertEquals("abc123", response.commit)
     }
 
   @Test
@@ -37,8 +37,8 @@ class ServiceResourceTest {
 
       val response = resource.healthz()
 
-      assertEquals("ok", response["status"])
-      assertEquals("8080", response["port"])
+      assertEquals("ok", response.status)
+      assertEquals("8080", response.port)
     }
 
   private fun withEnv(

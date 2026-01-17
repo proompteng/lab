@@ -1,5 +1,6 @@
 package ai.proompteng.graf.security
 
+import ai.proompteng.graf.model.ErrorResponse
 import ai.proompteng.graf.security.requireBearerToken
 import ai.proompteng.graf.telemetry.GrafTelemetry
 import jakarta.annotation.Priority
@@ -49,7 +50,7 @@ class IllegalArgumentExceptionMapper : ExceptionMapper<IllegalArgumentException>
     logger.warn(exception) { exception.message ?: "bad request" }
     return Response
       .status(Response.Status.BAD_REQUEST)
-      .entity(mapOf("error" to (exception.message ?: "bad request")))
+      .entity(ErrorResponse(exception.message ?: "bad request"))
       .type(MediaType.APPLICATION_JSON)
       .build()
   }
@@ -62,7 +63,7 @@ class GenericExceptionMapper : ExceptionMapper<Throwable> {
     logger.info { "spanId=${GrafTelemetry.currentSpanId()} traceId=${GrafTelemetry.currentTraceId()}" }
     return Response
       .status(Response.Status.INTERNAL_SERVER_ERROR)
-      .entity(mapOf("error" to "internal server error"))
+      .entity(ErrorResponse("internal server error"))
       .type(MediaType.APPLICATION_JSON)
       .build()
   }
