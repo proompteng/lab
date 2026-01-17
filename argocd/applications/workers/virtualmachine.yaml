@@ -8,26 +8,26 @@ metadata:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   running: true
+  dataVolumeTemplates:
+    - metadata:
+        name: workers-rootdisk
+      spec:
+        source:
+          http:
+            url: https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img
+        pvc:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 50Gi
+          storageClassName: local-path
   template:
     metadata:
       labels:
         kubevirt.io/domain: workers
         app.kubernetes.io/name: workers
     spec:
-      dataVolumeTemplates:
-        - metadata:
-            name: workers-rootdisk
-          spec:
-            source:
-              http:
-                url: https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img
-            pvc:
-              accessModes:
-                - ReadWriteOnce
-              resources:
-                requests:
-                  storage: 50Gi
-              storageClassName: local-path
       domain:
         cpu:
           cores: 2
