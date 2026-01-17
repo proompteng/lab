@@ -13,6 +13,10 @@ export type BuildImageOptions = {
   dockerfile?: string
   version?: string
   commit?: string
+  gradleTasks?: string
+  gradleArgs?: string
+  cacheRef?: string
+  useBuildx?: boolean
 }
 
 export const buildImage = async (options: BuildImageOptions = {}) => {
@@ -23,6 +27,12 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   const dockerfile = resolve(repoRoot, options.dockerfile ?? process.env.GRAF_DOCKERFILE ?? 'services/graf/Dockerfile')
   const version = options.version ?? process.env.GRAF_VERSION ?? execGit(['describe', '--tags', '--always'])
   const commit = options.commit ?? process.env.GRAF_COMMIT ?? execGit(['rev-parse', 'HEAD'])
+  const gradleTasks = options.gradleTasks ?? process.env.GRAF_GRADLE_TASKS
+  const gradleArgs = options.gradleArgs ?? process.env.GRAF_GRADLE_ARGS
+  const cacheRef = options.cacheRef ?? process.env.GRAF_BUILD_CACHE_REF ?? `${registry}/${repository}:buildcache`
+  const useBuildx =
+    options.useBuildx ??
+    (process.env.GRAF_USE_BUILDX ? ['1', 'true', 'yes', 'y', 'on'].includes(process.env.GRAF_USE_BUILDX) : undefined)
 
   const result = await buildAndPushDockerImage({
     registry,
@@ -30,9 +40,13 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
     tag,
     context,
     dockerfile,
+    cacheRef,
+    useBuildx,
     buildArgs: {
       GRAF_VERSION: version,
       GRAF_COMMIT: commit,
+      ...(gradleTasks ? { GRAF_GRADLE_TASKS: gradleTasks } : {}),
+      ...(gradleArgs ? { GRAF_GRADLE_ARGS: gradleArgs } : {}),
     },
   })
 
