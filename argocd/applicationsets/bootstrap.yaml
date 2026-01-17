@@ -65,6 +65,14 @@ spec:
                     argocd.argoproj.io/sync-wave: "-1"
                   automation: auto
                   enabled: true
+                - name: local-path
+                  path: argocd/applications/local-path
+                  namespace: local-path-storage
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "-1"
+                  automation: manual
+                  enabled: true
+                  clusters: ryzen
                 - name: metallb-system
                   path: argocd/applications/metallb-system
                   namespace: metallb-system

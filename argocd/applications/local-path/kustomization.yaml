@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: local-path-storage
+resources:
+  - github.com/rancher/local-path-provisioner/deploy?ref=v0.0.31
+patches:
+  - target:
+      kind: ConfigMap
+      name: local-path-config
+      namespace: local-path-storage
+    path: patches/local-path-config.patch.yaml
+  - target:
+      kind: StorageClass
+      name: local-path
+    path: patches/local-path-storageclass.patch.yaml
