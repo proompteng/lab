@@ -4,7 +4,7 @@ metadata:
   name: graf-neo4j-browser
   namespace: graf
   annotations:
-    tailscale.com/hostname: graf
+    tailscale.com/hostname: neo4j
 spec:
   type: LoadBalancer
   loadBalancerClass: tailscale
