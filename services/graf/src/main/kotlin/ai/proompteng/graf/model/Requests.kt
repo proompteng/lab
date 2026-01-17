@@ -7,7 +7,10 @@ import kotlinx.serialization.json.JsonElement
 @Serializable
 data class EntityRequest(
   val id: String? = null,
-  val label: String,
+  val label: String? = null,
+  @SerialName("type")
+  val type: String? = null,
+  val name: String? = null,
   val properties: Map<String, JsonElement> = emptyMap(),
   val artifactId: String? = null,
   val researchSource: String? = null,
