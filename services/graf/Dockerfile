@@ -2,8 +2,13 @@
 
 FROM gradle:9.2-jdk25 as builder
 WORKDIR /workspace
+ARG GRAF_GRADLE_TASKS="quarkusBuild"
+ARG GRAF_GRADLE_ARGS="--no-daemon --build-cache"
+ENV GRADLE_USER_HOME=/home/gradle/.gradle
 COPY --chown=gradle:gradle . .
-RUN ./gradlew clean quarkusBuild --no-daemon
+RUN --mount=type=cache,target=/home/gradle/.gradle \
+  --mount=type=cache,target=/workspace/.gradle \
+  /bin/bash -lc "./gradlew ${GRAF_GRADLE_TASKS} ${GRAF_GRADLE_ARGS}"
 
 FROM gcr.io/distroless/java25:nonroot
 WORKDIR /app
