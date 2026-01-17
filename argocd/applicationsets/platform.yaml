@@ -59,6 +59,14 @@ spec:
                 automation: manual
                 enabled: "true"
                 clusters: ryzen
+              - name: cdi
+                path: argocd/applications/cdi
+                namespace: cdi
+                annotations:
+                  argocd.argoproj.io/sync-wave: "1"
+                automation: manual
+                enabled: "true"
+                clusters: ryzen
               - name: workers
                 path: argocd/applications/workers
                 namespace: workers
