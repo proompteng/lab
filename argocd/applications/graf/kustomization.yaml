@@ -9,6 +9,7 @@ resources:
   - ingressroute.yaml
   - graf-metallb-service.yaml
   - neo4j-browser-service.yaml
+  - tailscale-service.yaml
   - graf-workflows-clusterrolebinding.yaml
   - graf-otel-configmap.yaml
   - graf-quarkus-configmap.yaml
