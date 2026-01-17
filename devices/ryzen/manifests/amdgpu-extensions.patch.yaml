@@ -1,0 +1,5 @@
+machine:
+  install:
+    extensions:
+      - image: ghcr.io/siderolabs/amdgpu:<version-or-digest>
+      - image: ghcr.io/siderolabs/amd-ucode:<version-or-digest>
