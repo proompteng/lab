@@ -73,6 +73,11 @@ spec:
                   automation: manual
                   enabled: true
                   clusters: ryzen
+                  managedNamespaceMetadata:
+                    labels:
+                      pod-security.kubernetes.io/enforce: privileged
+                      pod-security.kubernetes.io/audit: privileged
+                      pod-security.kubernetes.io/warn: privileged
                 - name: metallb-system
                   path: argocd/applications/metallb-system
                   namespace: metallb-system
@@ -164,7 +169,8 @@ spec:
     {{- $hasDestName := hasKey . "destinationName" -}}
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
     {{- $auto := eq .automation "auto" -}}
-    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto (hasKey . "ignoreDifferences") -}}
+    {{- $hasManagedNS := hasKey . "managedNamespaceMetadata" -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasManagedNS (hasKey . "ignoreDifferences") -}}
     {{- if $needsSpec }}
     spec:
       {{- if or $hasDestServer $hasDestName }}
@@ -181,11 +187,28 @@ spec:
         plugin:
           name: lovely
       {{- end }}
-      {{- if $auto }}
+      {{- if or $auto $hasManagedNS }}
       syncPolicy:
+        {{- if $auto }}
         automated:
           prune: true
           selfHeal: true
+        {{- end }}
+        {{- if $hasManagedNS }}
+        managedNamespaceMetadata:
+          {{- if hasKey .managedNamespaceMetadata "labels" }}
+          labels:
+            {{- range $key, $value := .managedNamespaceMetadata.labels }}
+            {{ $key }}: {{ $value | quote }}
+            {{- end }}
+          {{- end }}
+          {{- if hasKey .managedNamespaceMetadata "annotations" }}
+          annotations:
+            {{- range $key, $value := .managedNamespaceMetadata.annotations }}
+            {{ $key }}: {{ $value | quote }}
+            {{- end }}
+          {{- end }}
+        {{- end }}
       {{- end }}
       {{- if hasKey . "ignoreDifferences" }}
       ignoreDifferences: {{ toJson .ignoreDifferences }}
