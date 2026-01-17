@@ -79,10 +79,12 @@ ii  ubuntu-desktop         1.539.2  amd64  Ubuntu desktop system
 ii  ubuntu-desktop-minimal 1.539.2  amd64  Ubuntu desktop minimal system
 ```
 
-Node/Bun/Codex:
+Node/Bun/Codex (available on PATH without sourcing):
 
 ```bash
-bash -lc 'source /home/ubuntu/.profile; node -v; bun -v; codex --version'
+node -v
+bun -v
+codex --version
 ```
 
 Output:
@@ -111,7 +113,7 @@ Google Chrome 144.0.7559.59
    "V8-Version": "14.4.258.16",
 ```
 
-Services:
+Services (note: MCP server is a stdio process; systemd may show `activating` while it waits for a client):
 
 ```bash
 systemctl is-active ssh
@@ -127,7 +129,7 @@ active
 activating
 ```
 
-Note: `chrome-devtools-mcp` is a stdio MCP server that exits when no client is attached, so systemd restarts it and shows `activating`. Use on-demand invocation to verify connectivity (next section).
+Note: `chrome-devtools-mcp` is a stdio MCP server that exits when no client is attached, so systemd may restart it and show `activating`. Use on-demand invocation to verify connectivity (next section).
 
 MCP connectivity (on-demand):
 
