@@ -25,6 +25,9 @@ spec:
             - name: rootdisk
               disk:
                 bus: virtio
+            - name: datadisk
+              disk:
+                bus: virtio
             - name: cloudinitdisk
               disk:
                 bus: virtio
@@ -38,6 +41,9 @@ spec:
         - name: rootdisk
           containerDisk:
             image: quay.io/containerdisks/ubuntu:24.04
+        - name: datadisk
+          persistentVolumeClaim:
+            claimName: workers-data
         - name: cloudinitdisk
           cloudInitNoCloud:
             userData: |-
@@ -47,6 +53,17 @@ spec:
               manage_etc_hosts: true
               package_update: true
               package_upgrade: false
+              disk_setup:
+                /dev/vdb:
+                  table_type: gpt
+                  layout: true
+                  overwrite: false
+              fs_setup:
+                - device: /dev/vdb
+                  filesystem: ext4
+                  overwrite: false
+              mounts:
+                - ["/dev/vdb", "/home/ubuntu/data", "ext4", "defaults,nofail", "0", "2"]
               packages:
                 - ubuntu-desktop-minimal
                 - ca-certificates
@@ -101,7 +118,7 @@ spec:
                     User=ubuntu
                     Environment=CHROME_PATH=/usr/bin/google-chrome
                     Environment=CHROME_REMOTE_DEBUG_PORT=9222
-                    Environment=CHROME_DEVTOOLS_USER_DATA=/home/ubuntu/.config/google-chrome-devtools
+                    Environment=CHROME_DEVTOOLS_USER_DATA=/home/ubuntu/data/chrome-devtools
                     ExecStart=/usr/local/bin/start-chrome-remote-debug
                     Restart=always
                     RestartSec=3
@@ -134,7 +151,7 @@ spec:
                     #!/usr/bin/env bash
                     set -euo pipefail
                     CHROME_PATH="${CHROME_PATH:-/usr/bin/google-chrome}"
-                    USER_DATA_DIR="${CHROME_DEVTOOLS_USER_DATA:-/home/ubuntu/.config/google-chrome-devtools}"
+                    USER_DATA_DIR="${CHROME_DEVTOOLS_USER_DATA:-/home/ubuntu/data/chrome-devtools}"
                     REMOTE_DEBUG_PORT="${CHROME_REMOTE_DEBUG_PORT:-9222}"
                     mkdir -p "${USER_DATA_DIR}"
                     exec "${CHROME_PATH}" \
@@ -189,9 +206,9 @@ spec:
                 - [ bash, -lc, 'su - ubuntu -c "bash -lc ''source ~/.nvm/nvm.sh && nvm install --lts && nvm alias default lts/*''"' ]
                 - [ bash, -lc, 'su - ubuntu -c "bash -lc ''curl -fsSL https://bun.sh/install | bash''"' ]
                 - [ bash, -lc, 'su - ubuntu -c "bash -lc ''~/.bun/bin/bun add -g @openai/codex''"' ]
-                - [ bash, -lc, 'su - ubuntu -c "bash -lc ''mkdir -p ~/.config/google-chrome ~/.config/google-chrome-devtools ~/.codex ~/github.com''"' ]
+                - [ bash, -lc, 'su - ubuntu -c "bash -lc ''mkdir -p /home/ubuntu/data/chrome-devtools ~/.codex ~/github.com''"' ]
                 - [ bash, -lc, 'su - ubuntu -c "bash -lc ''[ -d ~/github.com/lab ] || git clone --depth 1 https://github.com/proompteng/lab ~/github.com/lab''"' ]
                 - [ bash, -lc, 'su - ubuntu -c "bash -lc ''rm -rf ~/.codex/skills && mkdir -p ~/.codex/skills && cp -R ~/github.com/lab/skills/. ~/.codex/skills/''"' ]
                 - [ bash, -lc, 'systemctl daemon-reload' ]
                 - [ bash, -lc, 'systemctl enable --now chrome-remote-debug.service chrome-devtools-mcp.service' ]
-                - [ bash, -lc, 'chown -R ubuntu:ubuntu /home/ubuntu/.codex /home/ubuntu/.config || true' ]
+                - [ bash, -lc, 'chown -R ubuntu:ubuntu /home/ubuntu/.codex /home/ubuntu/data || true' ]
