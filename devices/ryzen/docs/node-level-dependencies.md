@@ -14,6 +14,8 @@ Talos is an immutable OS. You do **not** install packages at runtime; instead, y
 - ExtensionServiceConfig schema (for configuring extension services): https://www.talos.dev/v1.10/reference/configuration/extensions/extensionserviceconfig/
 - Extension services (how extension services run as privileged containers): https://www.talos.dev/latest/advanced/extension-services/
 - Official extensions catalog (includes `siderolabs/tailscale` image): https://github.com/siderolabs/extensions
+- Local storage (user volumes, mount paths, and system volume layout): https://www.talos.dev/latest/kubernetes-guides/configuration/local-storage/
+- System volumes (how Talos carves disks into system/user volumes): https://www.talos.dev/latest/learn-more/system-volumes/
 
 ### Tailscale
 - Tailscale extension exists in the official extensions catalog (see Network section): https://github.com/siderolabs/extensions
@@ -167,6 +169,63 @@ Deleting `virt-controller-pdb` unblocked the drain during the upgrade. Recreate 
   - https://www.talos.dev/latest/advanced/extension-services/
 
 ---
+
+## Local-path storage (Talos user volume)
+
+### Overview
+Talos uses **user volumes** to carve dedicated storage out of the system disk. For the Ryzen node, we allocate **1.5TB** to a user volume named `local-path-provisioner`, which Talos mounts at `/var/mnt/local-path-provisioner`. The Local Path Provisioner is then configured to use that mount point for PVs.
+
+Sources:
+- Talos local storage guide (user volumes + mount path): https://www.talos.dev/latest/kubernetes-guides/configuration/local-storage/
+- Talos system volumes (disk layout and sizing): https://www.talos.dev/latest/learn-more/system-volumes/
+
+### Repo source-of-truth
+- User volume config: `devices/ryzen/manifests/local-path.patch.yaml`
+- Local-path-provisioner config map patch: `argocd/applications/local-path/patches/local-path-config.patch.yaml`
+
+### User volume manifest (1.5TB)
+
+```yaml
+apiVersion: v1alpha1
+kind: UserVolumeConfig
+name: local-path-provisioner
+provisioning:
+  diskSelector:
+    match: disk.transport == 'nvme' || disk.transport == 'sata'
+  minSize: 1500GB
+  maxSize: 1500GB
+```
+
+### Apply to the Ryzen Talos node
+
+```bash
+export TALOSCONFIG=~/.talos/config
+talosctl patch machineconfig --patch @devices/ryzen/manifests/local-path.patch.yaml
+```
+
+### Configure local-path-provisioner
+The Argo CD application `local-path` patches the ConfigMap to use `/var/mnt/local-path-provisioner`:
+
+```json
+{
+  "nodePathMap":[
+    {
+      "node":"DEFAULT_PATH_FOR_NON_LISTED_NODES",
+      "paths":["/var/mnt/local-path-provisioner"]
+    }
+  ]
+}
+```
+
+### Validate
+
+```bash
+talosctl get volumestatuses
+kubectl get storageclass
+kubectl -n local-path-storage get pods
+```
+
+Expected: the `local-path` StorageClass exists and the provisioner is Running on the Ryzen node, using the `/var/mnt/local-path-provisioner` path.
 
 ## AMD GPU (ROCm) node-level install
 
