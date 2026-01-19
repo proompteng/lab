@@ -59,7 +59,7 @@ Ensure the `agentrun-sample.yaml` workload image includes `agent-runner` or set
 ## Failed Integration Sync
 - Inspect ImplementationSource status.
 - Check credentials secret exists and is valid.
-- Temporarily disable webhook and use polling.
+- Verify webhook delivery logs and signature headers.
 
 ## Memory Outage
 - Check Memory status and connection secret.
