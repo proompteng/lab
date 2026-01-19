@@ -72,7 +72,6 @@ type WorkflowStatus = {
   lastTransitionTime: string
   steps: WorkflowStepStatus[]
 }
-
 let started = false
 let intervalRef: NodeJS.Timeout | null = null
 let reconciling = false
@@ -264,27 +263,6 @@ const setStatus = async (
   const kind = asString(resource.kind)
   if (!apiVersion || !kind) return
   await kube.applyStatus({ apiVersion, kind, metadata: { name, namespace }, status })
-}
-
-const decodeSecretData = (secret: Record<string, unknown>) => {
-  const data = asRecord(secret.data) ?? {}
-  const decoded: Record<string, string> = {}
-  for (const [key, value] of Object.entries(data)) {
-    const raw = asString(value)
-    if (!raw) continue
-    try {
-      decoded[key] = Buffer.from(raw, 'base64').toString('utf8')
-    } catch {
-      decoded[key] = raw
-    }
-  }
-  return decoded
-}
-
-const getSecretData = async (kube: ReturnType<typeof createKubernetesClient>, namespace: string, name: string) => {
-  const secret = await kube.get('secret', name, namespace)
-  if (!secret) return null
-  return decodeSecretData(secret)
 }
 
 const parseRuntimeRef = (raw: unknown): RuntimeRef | null => asRecord(raw) ?? null
@@ -854,92 +832,6 @@ const reconcileMemory = async (
     observedGeneration: asRecord(memory.metadata)?.generation ?? 0,
     lastCheckedAt: nowIso(),
     conditions: updated,
-  })
-}
-
-const reconcileImplementationSource = async (
-  kube: ReturnType<typeof createKubernetesClient>,
-  source: Record<string, unknown>,
-  namespace: string,
-) => {
-  const metadata = asRecord(source.metadata) ?? {}
-  const webhookEnabled = readNested(source, ['spec', 'webhook', 'enabled']) === true
-  const lastSyncedAt = asString(readNested(source, ['status', 'lastSyncedAt']))
-
-  if (!webhookEnabled) {
-    const conditions = upsertCondition(buildConditions(source), {
-      type: 'Error',
-      status: 'True',
-      reason: 'WebhookDisabled',
-      message: 'spec.webhook.enabled must be true for webhook ingestion',
-    })
-    await setStatus(kube, source, {
-      observedGeneration: asRecord(metadata)?.generation ?? 0,
-      lastSyncedAt: lastSyncedAt ?? undefined,
-      conditions,
-    })
-    return
-  }
-
-  const secretName = asString(readNested(source, ['spec', 'auth', 'secretRef', 'name']))
-  const secretKey = asString(readNested(source, ['spec', 'auth', 'secretRef', 'key'])) ?? 'token'
-  if (!secretName) {
-    const conditions = upsertCondition(buildConditions(source), {
-      type: 'Error',
-      status: 'True',
-      reason: 'MissingSecretRef',
-      message: 'spec.auth.secretRef.name is required for webhook signing',
-    })
-    await setStatus(kube, source, {
-      observedGeneration: asRecord(metadata)?.generation ?? 0,
-      conditions,
-      lastSyncedAt: lastSyncedAt ?? undefined,
-    })
-    return
-  }
-
-  if (!webhookEnabled) {
-    const conditions = upsertCondition(buildConditions(source), {
-      type: 'Error',
-      status: 'True',
-      reason: 'WebhookDisabled',
-      message: 'spec.webhook.enabled must be true (polling is not supported)',
-    })
-    await setStatus(kube, source, {
-      observedGeneration: asRecord(metadata)?.generation ?? 0,
-      conditions,
-      lastSyncedAt: lastSyncedAt ?? undefined,
-    })
-    return
-  }
-
-  const secret = await getSecretData(kube, namespace, secretName)
-  const token = secret?.[secretKey] ?? ''
-  if (!token) {
-    const conditions = upsertCondition(buildConditions(source), {
-      type: 'Error',
-      status: 'True',
-      reason: 'MissingWebhookSecret',
-      message: `secret ${secretName} missing key ${secretKey} for webhook signing`,
-    })
-    await setStatus(kube, source, {
-      observedGeneration: asRecord(metadata)?.generation ?? 0,
-      conditions,
-      lastSyncedAt: lastSyncedAt ?? undefined,
-    })
-    return
-  }
-  const conditions = upsertCondition(buildConditions(source), {
-    type: 'Ready',
-    status: 'True',
-    reason: 'WebhookEnabled',
-    message: 'Webhook enabled; waiting for events',
-  })
-  await setStatus(kube, source, {
-    observedGeneration: asRecord(metadata)?.generation ?? 0,
-    cursor: asString(readNested(source, ['status', 'cursor'])) ?? undefined,
-    lastSyncedAt: lastSyncedAt ?? undefined,
-    conditions,
   })
 }
 
@@ -2216,7 +2108,6 @@ const reconcileNamespace = async (
 ) => {
   const memories = listItems(await kube.list(RESOURCE_MAP.Memory, namespace))
   const agents = listItems(await kube.list(RESOURCE_MAP.Agent, namespace))
-  const sources = listItems(await kube.list(RESOURCE_MAP.ImplementationSource, namespace))
   const specs = listItems(await kube.list(RESOURCE_MAP.ImplementationSpec, namespace))
   const providers = listItems(await kube.list(RESOURCE_MAP.AgentProvider, namespace))
 
@@ -2234,10 +2125,6 @@ const reconcileNamespace = async (
 
   for (const spec of specs) {
     await reconcileImplementationSpec(kube, spec)
-  }
-
-  for (const source of sources) {
-    await reconcileImplementationSource(kube, source, namespace)
   }
 
   const inFlight = {
