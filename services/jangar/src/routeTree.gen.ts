@@ -63,6 +63,7 @@ import { Route as ApiAtlasIndexedRouteImport } from './routes/api/atlas/indexed'
 import { Route as ApiAtlasFileRouteImport } from './routes/api/atlas/file'
 import { Route as ApiAtlasAstRouteImport } from './routes/api/atlas/ast'
 import { Route as ApiAgentsEventsRouteImport } from './routes/api/agents/events'
+import { Route as ApiAgentsImplementationSourcesWebhooksProviderRouteImport } from './routes/api/agents/implementation-sources/webhooks/$provider'
 import { Route as OpenaiV1ChatCompletionsRouteImport } from './routes/openai/v1/chat/completions'
 import { Route as ApiTorghutTaSignalsRouteImport } from './routes/api/torghut/ta/signals'
 import { Route as ApiTorghutTaLatestRouteImport } from './routes/api/torghut/ta/latest'
@@ -358,6 +359,12 @@ const ApiAgentsEventsRoute = ApiAgentsEventsRouteImport.update({
   path: '/api/agents/events',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAgentsImplementationSourcesWebhooksProviderRoute =
+  ApiAgentsImplementationSourcesWebhooksProviderRouteImport.update({
+    id: '/api/agents/implementation-sources/webhooks/$provider',
+    path: '/api/agents/implementation-sources/webhooks/$provider',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const OpenaiV1ChatCompletionsRoute = OpenaiV1ChatCompletionsRouteImport.update({
   id: '/openai/v1/chat/completions',
   path: '/openai/v1/chat/completions',
@@ -521,6 +528,7 @@ export interface FileRoutesByFullPath {
   '/atlas': typeof AtlasIndexRoute
   '/terminals': typeof TerminalsIndexRoute
   '/api/agents/events': typeof ApiAgentsEventsRoute
+  '/api/agents/implementation-sources/webhooks/$provider': typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
   '/api/atlas/ast': typeof ApiAtlasAstRoute
   '/api/atlas/file': typeof ApiAtlasFileRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
@@ -598,6 +606,7 @@ export interface FileRoutesByTo {
   '/atlas': typeof AtlasIndexRoute
   '/terminals': typeof TerminalsIndexRoute
   '/api/agents/events': typeof ApiAgentsEventsRoute
+  '/api/agents/implementation-sources/webhooks/$provider': typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
   '/api/atlas/ast': typeof ApiAtlasAstRoute
   '/api/atlas/file': typeof ApiAtlasFileRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
@@ -678,6 +687,7 @@ export interface FileRoutesById {
   '/atlas/': typeof AtlasIndexRoute
   '/terminals/': typeof TerminalsIndexRoute
   '/api/agents/events': typeof ApiAgentsEventsRoute
+  '/api/agents/implementation-sources/webhooks/$provider': typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
   '/api/atlas/ast': typeof ApiAtlasAstRoute
   '/api/atlas/file': typeof ApiAtlasFileRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
@@ -759,6 +769,7 @@ export interface FileRouteTypes {
     | '/atlas'
     | '/terminals'
     | '/api/agents/events'
+    | '/api/agents/implementation-sources/webhooks/$provider'
     | '/api/atlas/ast'
     | '/api/atlas/file'
     | '/api/atlas/indexed'
@@ -836,6 +847,7 @@ export interface FileRouteTypes {
     | '/atlas'
     | '/terminals'
     | '/api/agents/events'
+    | '/api/agents/implementation-sources/webhooks/$provider'
     | '/api/atlas/ast'
     | '/api/atlas/file'
     | '/api/atlas/indexed'
@@ -915,6 +927,7 @@ export interface FileRouteTypes {
     | '/atlas/'
     | '/terminals/'
     | '/api/agents/events'
+    | '/api/agents/implementation-sources/webhooks/$provider'
     | '/api/atlas/ast'
     | '/api/atlas/file'
     | '/api/atlas/indexed'
@@ -995,6 +1008,7 @@ export interface RootRouteChildren {
   AtlasIndexRoute: typeof AtlasIndexRoute
   TerminalsIndexRoute: typeof TerminalsIndexRoute
   ApiAgentsEventsRoute: typeof ApiAgentsEventsRoute
+  ApiAgentsImplementationSourcesWebhooksProviderRoute: typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
   ApiAtlasAstRoute: typeof ApiAtlasAstRoute
   ApiAtlasFileRoute: typeof ApiAtlasFileRoute
   ApiAtlasIndexedRoute: typeof ApiAtlasIndexedRoute
@@ -1393,6 +1407,13 @@ declare module '@tanstack/react-router' {
       path: '/api/agents/events'
       fullPath: '/api/agents/events'
       preLoaderRoute: typeof ApiAgentsEventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/agents/implementation-sources/webhooks/$provider': {
+      id: '/api/agents/implementation-sources/webhooks/$provider'
+      path: '/api/agents/implementation-sources/webhooks/$provider'
+      fullPath: '/api/agents/implementation-sources/webhooks/$provider'
+      preLoaderRoute: typeof ApiAgentsImplementationSourcesWebhooksProviderRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/openai/v1/chat/completions': {
@@ -1797,6 +1818,7 @@ const rootRouteChildren: RootRouteChildren = {
   AtlasIndexRoute: AtlasIndexRoute,
   TerminalsIndexRoute: TerminalsIndexRoute,
   ApiAgentsEventsRoute: ApiAgentsEventsRoute,
+  ApiAgentsImplementationSourcesWebhooksProviderRoute: ApiAgentsImplementationSourcesWebhooksProviderRoute,
   ApiAtlasAstRoute: ApiAtlasAstRoute,
   ApiAtlasFileRoute: ApiAtlasFileRoute,
   ApiAtlasIndexedRoute: ApiAtlasIndexedRoute,
