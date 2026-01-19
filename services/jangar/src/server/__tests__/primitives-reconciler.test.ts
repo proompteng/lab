@@ -41,6 +41,9 @@ vi.mock('~/server/primitives-kube', () => {
       listEvents: vi.fn(async () => ({ items: [] })),
       get: vi.fn(async () => null),
       apply: vi.fn(async (resource) => resource),
+      applyStatus: vi.fn(async (resource) => resource),
+      patch: vi.fn(async (_resource, _name, _namespace, patch) => patch as Record<string, unknown>),
+      listEvents: vi.fn(async () => ({ items: [] })),
     }),
   }
 })

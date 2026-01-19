@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 
-import { Button } from '@/components/ui/button'
+import { buttonVariants } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/agents-control-plane/')({
   component: AgentsControlPlanePage,
@@ -43,9 +44,9 @@ function AgentsControlPlanePage() {
               <h2 className="text-sm font-semibold text-foreground">{card.title}</h2>
               <p className="text-xs text-muted-foreground">{card.description}</p>
             </div>
-            <Button variant="outline" size="sm" render={<Link to={card.to} />}>
+            <Link to={card.to} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}>
               Open
-            </Button>
+            </Link>
           </div>
         ))}
       </section>

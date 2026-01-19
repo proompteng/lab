@@ -1,4 +1,4 @@
-export const DEFAULT_NAMESPACE = 'jangar'
+export const DEFAULT_NAMESPACE = 'agents'
 
 export type NamespaceSearchState = {
   namespace: string

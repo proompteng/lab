@@ -11,7 +11,8 @@ import {
   StatusBadge,
 } from '@/components/agents-control-plane'
 import { parseNamespaceSearch } from '@/components/agents-control-plane-search'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { fetchPrimitiveDetail, fetchPrimitiveEvents, type PrimitiveEventItem } from '@/data/agents-control-plane'
 
 export const Route = createFileRoute('/agents-control-plane/agents/$name')({
@@ -100,9 +101,13 @@ function AgentDetailPage() {
           <Button variant="outline" onClick={() => void load()} disabled={isLoading}>
             Refresh
           </Button>
-          <Button variant="ghost" render={<Link to="/agents-control-plane/agents" search={searchState} />}>
+          <Link
+            to="/agents-control-plane/agents"
+            search={searchState}
+            className={cn(buttonVariants({ variant: 'ghost', size: 'default' }))}
+          >
             Back to list
-          </Button>
+          </Link>
         </div>
       </header>
 
