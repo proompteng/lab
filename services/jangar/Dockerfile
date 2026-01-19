@@ -484,7 +484,9 @@ RUN --mount=type=cache,target=/root/.cache/bun \
     arm64|aarch64) NODE_ARCH=arm64 ;; \
     *) NODE_ARCH="${TARGETARCH:-$(uname -m)}" ;; \
   esac; \
-  cd /app/node_modules/node-pty; \
+  NODE_PTY_DIR="$(node -p "require.resolve('node-pty/package.json')" 2>/dev/null || (cd /app/services/jangar && node -p "require.resolve('node-pty/package.json')"))"; \
+  NODE_PTY_DIR="$(dirname "$NODE_PTY_DIR")"; \
+  cd "$NODE_PTY_DIR"; \
   export PYTHON=python3; \
   npm_config_build_from_source=true \
   npm_config_nodedir=/usr/local \
@@ -492,8 +494,8 @@ RUN --mount=type=cache,target=/root/.cache/bun \
   npm_config_target="$(node -p 'process.versions.node')" \
   bunx node-gyp rebuild; \
   mkdir -p /tmp/node-pty/prebuilds; \
-  cp -R /app/node_modules/node-pty/build /tmp/node-pty/build; \
-  if [ -d /app/node_modules/node-pty/prebuilds ]; then cp -R /app/node_modules/node-pty/prebuilds/* /tmp/node-pty/prebuilds/; fi
+  cp -R "$NODE_PTY_DIR/build" /tmp/node-pty/build; \
+  if [ -d "$NODE_PTY_DIR/prebuilds" ]; then cp -R "$NODE_PTY_DIR/prebuilds"/* /tmp/node-pty/prebuilds/; fi
 
 FROM tools AS jangar-deps-dev
 WORKDIR /app
