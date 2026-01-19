@@ -93,7 +93,7 @@ be installed alongside native Agents CRDs.
 - Keep names/namespaces stable so references continue to resolve.
 - Convert labels/annotations that your workflows rely on.
 - Remove managedFields, ownerReferences, and status blocks before applying the native CRDs.
-- The converter will warn about dropped fields and require required native fields (`spec.providerRef`, `spec.agentRef`, `spec.runtime.type`, `spec.binary`) before writing output.
+- The converter will warn about dropped fields and require required native fields (`spec.providerRef`, `spec.agentRef`, `spec.runtime.type`, `spec.binary`, plus `spec.implementation` or `spec.implementationSpecRef` for AgentRuns) before writing output.
 
 ## Mapping: XAgent → Agent
 | Crossplane field | Native field | Notes |

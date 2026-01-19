@@ -183,12 +183,15 @@ def build_agentrun_spec(
     runtime_overrides = spec.get("runtimeOverrides")
     runtime_config: dict[str, Any] = {}
 
+    def build_runtime(runtime_type: str | None, config: dict[str, Any]) -> dict[str, Any]:
+        runtime_output: dict[str, Any] = {"type": runtime_type}
+        if config:
+            runtime_output["config"] = config
+        return runtime_output
+
     if isinstance(runtime, dict):
         runtime_config = dict(runtime.get("config", {}) or {})
-        output["runtime"] = {
-            "type": runtime.get("type"),
-            "config": runtime_config or None,
-        }
+        output["runtime"] = build_runtime(runtime.get("type"), runtime_config)
     else:
         runtime = None
 
@@ -196,14 +199,11 @@ def build_agentrun_spec(
         argo_overrides = runtime_overrides.get("argo") or {}
         if isinstance(argo_overrides, dict):
             runtime_config.update({k: v for k, v in argo_overrides.items() if v is not None})
-        output["runtime"] = {
-            "type": "argo",
-            "config": runtime_config or None,
-        }
+        output["runtime"] = build_runtime("argo", runtime_config)
 
     if "runtime" not in output:
         if default_runtime:
-            output["runtime"] = {"type": default_runtime, "config": runtime_config or None}
+            output["runtime"] = build_runtime(default_runtime, runtime_config)
         else:
             warnings.append("spec.runtime missing; provide --default-runtime to set required runtime.type.")
 
@@ -213,7 +213,10 @@ def build_agentrun_spec(
             runtime_config["timeoutSeconds"] = spec["timeoutSeconds"]
         if "retryPolicy" in spec and "retryPolicy" not in runtime_config:
             runtime_config["retryPolicy"] = spec["retryPolicy"]
-        output["runtime"]["config"] = runtime_config or None
+        if runtime_config:
+            output["runtime"]["config"] = runtime_config
+        else:
+            output["runtime"].pop("config", None)
 
     for key in spec.keys():
         if (
@@ -253,6 +256,8 @@ def validate_required(kind: str, spec: dict[str, Any], warnings: list[str]) -> l
         runtime_type = (spec.get("runtime") or {}).get("type")
         if not runtime_type:
             errors.append("spec.runtime.type is required for AgentRun.")
+        if not (spec.get("implementation") or spec.get("implementationSpecRef")):
+            errors.append("spec.implementation or spec.implementationSpecRef is required for AgentRun.")
     if kind == AGENTPROVIDER_KIND and not spec.get("binary"):
         errors.append("spec.binary is required for AgentProvider.")
     if warnings:
