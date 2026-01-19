@@ -76,7 +76,8 @@
   "workspaces": [
     "apps/*",
     "packages/*",
-    "services/*"
+    "services/*",
+    "services/jangar/agentctl"
   ],
   "dependencies": {
     "@headlessui/react": "^2.2.9",

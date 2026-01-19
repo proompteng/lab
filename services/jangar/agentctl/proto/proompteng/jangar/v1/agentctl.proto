@@ -1,0 +1,145 @@
+syntax = "proto3";
+
+package proompteng.jangar.v1;
+
+option go_package = "github.com/proompteng/lab/services/jangar/internal/agentctlpb";
+
+service AgentctlService {
+  rpc GetServerInfo(ServerInfoRequest) returns (ServerInfoResponse);
+
+  rpc ListAgents(ListRequest) returns (ResourceListResponse);
+  rpc GetAgent(GetRequest) returns (ResourceResponse);
+  rpc ApplyAgent(ApplyManifestRequest) returns (ResourceResponse);
+  rpc DeleteAgent(DeleteRequest) returns (DeleteResponse);
+
+  rpc ListImplementationSpecs(ListRequest) returns (ResourceListResponse);
+  rpc GetImplementationSpec(GetRequest) returns (ResourceResponse);
+  rpc ApplyImplementationSpec(ApplyManifestRequest) returns (ResourceResponse);
+  rpc DeleteImplementationSpec(DeleteRequest) returns (DeleteResponse);
+  rpc CreateImplementationSpec(CreateImplementationSpecRequest) returns (ResourceResponse);
+
+  rpc ListImplementationSources(ListRequest) returns (ResourceListResponse);
+  rpc GetImplementationSource(GetRequest) returns (ResourceResponse);
+  rpc ApplyImplementationSource(ApplyManifestRequest) returns (ResourceResponse);
+  rpc DeleteImplementationSource(DeleteRequest) returns (DeleteResponse);
+
+  rpc ListMemories(ListRequest) returns (ResourceListResponse);
+  rpc GetMemory(GetRequest) returns (ResourceResponse);
+  rpc ApplyMemory(ApplyManifestRequest) returns (ResourceResponse);
+  rpc DeleteMemory(DeleteRequest) returns (DeleteResponse);
+
+  rpc ListAgentRuns(ListRequest) returns (ResourceListResponse);
+  rpc GetAgentRun(GetRequest) returns (ResourceResponse);
+  rpc ApplyAgentRun(ApplyManifestRequest) returns (ResourceResponse);
+  rpc DeleteAgentRun(DeleteRequest) returns (DeleteResponse);
+
+  rpc SubmitAgentRun(SubmitAgentRunRequest) returns (SubmitAgentRunResponse);
+  rpc CancelAgentRun(CancelAgentRunRequest) returns (CancelAgentRunResponse);
+  rpc StreamAgentRunLogs(AgentRunLogsRequest) returns (stream AgentRunLogEntry);
+}
+
+message ServerInfoRequest {}
+
+message ServerInfoResponse {
+  string version = 1;
+  string build_sha = 2;
+  string build_time = 3;
+  string service = 4;
+}
+
+message ListRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message GetRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message ApplyManifestRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ResourceResponse {
+  string json = 1;
+}
+
+message ResourceListResponse {
+  string json = 1;
+}
+
+message DeleteResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message ImplementationSourceInput {
+  string provider = 1;
+  string external_id = 2;
+  string url = 3;
+}
+
+message CreateImplementationSpecRequest {
+  string namespace = 1;
+  string text = 2;
+  string summary = 3;
+  ImplementationSourceInput source = 4;
+}
+
+message RuntimeConfigEntry {
+  string key = 1;
+  string value = 2;
+}
+
+message WorkloadSpecInput {
+  string image = 1;
+  string cpu = 2;
+  string memory = 3;
+}
+
+message SubmitAgentRunRequest {
+  string namespace = 1;
+  string agent_name = 2;
+  string implementation_name = 3;
+  string runtime_type = 4;
+  repeated RuntimeConfigEntry runtime_config = 5;
+  repeated RuntimeConfigEntry parameters = 6;
+  string idempotency_key = 7;
+  WorkloadSpecInput workload = 8;
+  string memory_ref = 9;
+}
+
+message SubmitAgentRunResponse {
+  string resource_json = 1;
+  string record_json = 2;
+  bool idempotent = 3;
+}
+
+message CancelAgentRunRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message CancelAgentRunResponse {
+  bool ok = 1;
+  string message = 2;
+}
+
+message AgentRunLogsRequest {
+  string namespace = 1;
+  string name = 2;
+  bool follow = 3;
+}
+
+message AgentRunLogEntry {
+  string stream = 1;
+  string message = 2;
+}

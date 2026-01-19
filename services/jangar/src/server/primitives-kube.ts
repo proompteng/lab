@@ -2,7 +2,10 @@ import { spawn } from 'node:child_process'
 
 export type KubernetesClient = {
   apply: (resource: Record<string, unknown>) => Promise<Record<string, unknown>>
+  applyManifest: (manifest: string, namespace?: string | null) => Promise<Record<string, unknown>>
   applyStatus: (resource: Record<string, unknown>) => Promise<Record<string, unknown>>
+  createManifest: (manifest: string, namespace?: string | null) => Promise<Record<string, unknown>>
+  delete: (resource: string, name: string, namespace: string) => Promise<Record<string, unknown> | null>
   patch: (
     resource: string,
     name: string,
@@ -71,6 +74,14 @@ export const createKubernetesClient = (): KubernetesClient => ({
     const output = await kubectl([command, '-f', '-', '-o', 'json'], JSON.stringify(resource), `kubectl ${command}`)
     return parseJson(output, `kubectl ${command}`)
   },
+  applyManifest: async (manifest, namespace) => {
+    const args = ['apply', '-f', '-', '-o', 'json']
+    if (namespace) {
+      args.push('-n', namespace)
+    }
+    const output = await kubectl(args, manifest, 'kubectl apply')
+    return parseJson(output, 'kubectl apply')
+  },
   applyStatus: async (resource) => {
     const output = await kubectl(
       ['apply', '--subresource=status', '-f', '-', '-o', 'json'],
@@ -78,6 +89,27 @@ export const createKubernetesClient = (): KubernetesClient => ({
       'kubectl apply status',
     )
     return parseJson(output, 'kubectl apply status')
+  },
+  createManifest: async (manifest, namespace) => {
+    const args = ['create', '-f', '-', '-o', 'json']
+    if (namespace) {
+      args.push('-n', namespace)
+    }
+    const output = await kubectl(args, manifest, 'kubectl create')
+    return parseJson(output, 'kubectl create')
+  },
+  delete: async (resource, name, namespace) => {
+    try {
+      const output = await kubectl(
+        ['delete', resource, name, '-n', namespace, '-o', 'json'],
+        undefined,
+        'kubectl delete',
+      )
+      return parseJson(output, 'kubectl delete')
+    } catch (error) {
+      if (notFound(error)) return null
+      throw error
+    }
   },
   patch: async (resource, name, namespace, patch) => {
     const output = await kubectl(
