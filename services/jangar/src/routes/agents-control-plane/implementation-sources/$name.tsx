@@ -12,7 +12,7 @@ import {
 } from '@/components/agents-control-plane'
 import { parseNamespaceSearch } from '@/components/agents-control-plane-search'
 import { Button } from '@/components/ui/button'
-import { fetchPrimitiveDetail, fetchPrimitiveEvents } from '@/data/agents-control-plane'
+import { fetchPrimitiveDetail, fetchPrimitiveEvents, type PrimitiveEventItem } from '@/data/agents-control-plane'
 
 export const Route = createFileRoute('/agents-control-plane/implementation-sources/$name')({
   validateSearch: parseNamespaceSearch,
@@ -24,7 +24,7 @@ function ImplementationSourceDetailPage() {
   const searchState = Route.useSearch()
 
   const [resource, setResource] = React.useState<Record<string, unknown> | null>(null)
-  const [events, setEvents] = React.useState<Array<Record<string, unknown>>>([])
+  const [events, setEvents] = React.useState<PrimitiveEventItem[]>([])
   const [error, setError] = React.useState<string | null>(null)
   const [eventsError, setEventsError] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
@@ -165,10 +165,10 @@ function ImplementationSourceDetailPage() {
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-medium text-foreground">{event.reason ?? 'Event'}</span>
                     <span className="text-muted-foreground">
-                      {formatTimestamp((event.eventTime as string | null) ?? (event.lastTimestamp as string | null))}
+                      {formatTimestamp(event.eventTime ?? event.lastTimestamp)}
                     </span>
                   </div>
-                  {event.message ? <div className="text-muted-foreground">{event.message as string}</div> : null}
+                  {event.message ? <div className="text-muted-foreground">{event.message}</div> : null}
                 </li>
               ))}
             </ul>

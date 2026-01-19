@@ -57,6 +57,7 @@ const createKubeMock = (resources: Record<string, Record<string, unknown> | null
   patch: vi.fn(async (_resource, _name, _namespace, patch) => patch as Record<string, unknown>),
   get: vi.fn(async (resource, name, namespace) => resources[`${resource}:${namespace}:${name}`] ?? null),
   list: vi.fn(async () => ({ items: [] })),
+  listEvents: vi.fn(async () => ({ items: [] })),
 })
 
 const buildRequest = (url: string, payload: Record<string, unknown>, headers?: Record<string, string>) =>

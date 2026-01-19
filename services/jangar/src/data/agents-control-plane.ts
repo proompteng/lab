@@ -22,22 +22,24 @@ export type PrimitiveDetailResult =
   | { ok: true; resource: Record<string, unknown>; kind: AgentPrimitiveKind; namespace: string }
   | { ok: false; message: string; status?: number; raw?: unknown }
 
+export type PrimitiveEventItem = {
+  name: string | null
+  namespace: string | null
+  type: string | null
+  reason: string | null
+  action: string | null
+  count: number | null
+  message: string | null
+  firstTimestamp: string | null
+  lastTimestamp: string | null
+  eventTime: string | null
+  involvedObject: unknown
+}
+
 export type PrimitiveEventsResult =
   | {
       ok: true
-      items: Array<{
-        name: string | null
-        namespace: string | null
-        type: string | null
-        reason: string | null
-        action: string | null
-        count: number | null
-        message: string | null
-        firstTimestamp: string | null
-        lastTimestamp: string | null
-        eventTime: string | null
-        involvedObject: unknown
-      }>
+      items: PrimitiveEventItem[]
       kind: AgentPrimitiveKind
       namespace: string
       name: string
@@ -179,7 +181,7 @@ export const fetchPrimitiveEvents = async (params: {
     }
   }
   const record = payload as Record<string, unknown>
-  const items = Array.isArray(record.items) ? (record.items as PrimitiveEventsResult['items']) : []
+  const items = Array.isArray(record.items) ? (record.items as PrimitiveEventItem[]) : []
   const namespace = typeof record.namespace === 'string' ? record.namespace : params.namespace
   const name = typeof record.name === 'string' ? record.name : params.name
   return { ok: true, items, kind: params.kind, namespace, name }
