@@ -9,16 +9,21 @@ def patch_file(path: Path) -> bool:
     lines = path.read_text(encoding="utf-8").splitlines()
     output: list[str] = []
     changed = False
+    skip_next_preserve = False
 
     for idx, line in enumerate(lines):
-        output.append(line)
         if line.strip() == "openAPIV3Schema:":
-            indent = line[: line.index("o")]
-            next_line = lines[idx + 1] if idx + 1 < len(lines) else ""
-            if "x-kubernetes-preserve-unknown-fields" not in next_line:
-                output.append(f"{indent}  x-kubernetes-preserve-unknown-fields: false")
-                changed = True
+            output.append(line)
+            skip_next_preserve = True
+            continue
 
+        if skip_next_preserve:
+            skip_next_preserve = False
+            if line.strip() == "x-kubernetes-preserve-unknown-fields: false":
+                changed = True
+                continue
+
+        output.append(line)
     if changed:
         path.write_text("\n".join(output) + "\n", encoding="utf-8")
     return changed
