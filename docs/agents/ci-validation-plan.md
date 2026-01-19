@@ -21,7 +21,7 @@ Status: Current (2026-01-19)
   - Apply Agent/ImplementationSpec/AgentRun
   - Verify AgentRun completion and status
   - Use `scripts/agents/smoke-agents.sh` for a repeatable local flow.
-- GitHub + Linear mock sync tests (webhook-only).
+- GitHub + Linear mock webhook sync tests (webhook-only).
 
 ## Performance
 - Load test AgentRun submission (concurrency limits enforced).
