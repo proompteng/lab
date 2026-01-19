@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { fetchPrimitiveList, type PrimitiveResource } from '@/data/agents-control-plane'
 
-export const Route = createFileRoute('/agents-control-plane/agent-runs')({
+export const Route = createFileRoute('/agents-control-plane/agent-runs/')({
   validateSearch: parseNamespaceSearch,
   component: AgentRunsListPage,
 })
