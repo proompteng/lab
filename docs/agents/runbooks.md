@@ -32,7 +32,10 @@ Argo CD smoke test:
 ```bash
 kubectl -n argocd get applications.argoproj.io agents -o yaml
 kubectl -n agents get deploy,svc
+kubectl -n agents rollout status deploy/agents
 kubectl get crd | rg agents.proompteng.ai
+kubectl -n agents port-forward svc/agents 8080:80
+curl -fsS http://localhost:8080/health
 kubectl -n agents apply -f charts/agents/examples/agentrun-sample.yaml
 kubectl -n agents wait --for=condition=complete job \
   -l agents.proompteng.ai/agent-run=codex-run-sample --timeout=5m
