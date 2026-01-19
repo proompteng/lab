@@ -65,14 +65,6 @@ spec:
                 additionalProperties:
                   type: string
                 type: object
-              poll:
-                properties:
-                  intervalSeconds:
-                    default: 60
-                    format: int32
-                    minimum: 30
-                    type: integer
-                type: object
               provider:
                 enum:
                 - github

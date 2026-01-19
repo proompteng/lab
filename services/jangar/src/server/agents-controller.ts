@@ -1,8 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createTemporalClient, loadTemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
-import { createGitHubClient, GitHubRateLimitError } from '~/server/github-client'
-import { createLinearClient } from '~/server/linear-client'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 
@@ -17,7 +15,6 @@ const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
 const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
-const IMPLEMENTATION_SUMMARY_LIMIT = 256
 const PARAMETERS_MAX_ENTRIES = 100
 const PARAMETERS_MAX_VALUE_BYTES = 2048
 
@@ -47,13 +44,6 @@ type Condition = {
 }
 
 type RuntimeRef = Record<string, unknown>
-
-type BackoffState = {
-  failures: number
-  nextAttemptAt: number
-}
-
-const backoffBySource = new Map<string, BackoffState>()
 
 let started = false
 let intervalRef: NodeJS.Timeout | null = null
@@ -370,27 +360,6 @@ const normalizeLabelValue = (value: string) => {
   const trimmed = normalized.replace(/^[^a-z0-9]+/, '').replace(/[^a-z0-9]+$/, '')
   if (!trimmed) return 'unknown'
   return trimmed.length <= 63 ? trimmed : trimmed.slice(0, 63)
-}
-
-const clampUtf8 = (value: string, maxBytes: number) => {
-  const buffer = Buffer.from(value, 'utf8')
-  if (buffer.length <= maxBytes) return value
-  return buffer.subarray(0, maxBytes).toString('utf8')
-}
-
-const normalizeSummary = (value: string | null) => {
-  if (!value) return null
-  const trimmed = value.trim()
-  if (!trimmed) return null
-  return trimmed.slice(0, IMPLEMENTATION_SUMMARY_LIMIT)
-}
-
-const normalizeText = (value: string | null, fallback?: string | null) => {
-  const trimmed = value?.trim() ?? ''
-  if (!trimmed && fallback) {
-    return clampUtf8(fallback.trim(), IMPLEMENTATION_TEXT_LIMIT)
-  }
-  return clampUtf8(trimmed, IMPLEMENTATION_TEXT_LIMIT)
 }
 
 const buildRunSpecContext = (
@@ -729,166 +698,28 @@ const reconcileMemory = async (
   })
 }
 
-const syncImplementationSpec = async (
-  kube: ReturnType<typeof createKubernetesClient>,
-  namespace: string,
-  payload: {
-    name: string
-    source: Record<string, unknown>
-    summary: string | null
-    text: string
-    labels: string[]
-    sourceVersion?: string | null
-  },
-) => {
-  const resource = {
-    apiVersion: 'agents.proompteng.ai/v1alpha1',
-    kind: 'ImplementationSpec',
-    metadata: {
-      name: payload.name,
-      namespace,
-      labels: {
-        'agents.proompteng.ai/source-provider': asString(payload.source.provider) ?? 'unknown',
-      },
-    },
-    spec: {
-      source: payload.source,
-      summary: payload.summary ?? undefined,
-      text: payload.text,
-      labels: payload.labels,
-    },
-  }
-  const applied = await kube.apply(resource)
-  const conditions = buildConditions(applied)
-  const updated = upsertCondition(conditions, { type: 'Ready', status: 'True', reason: 'Synced' })
-  await setStatus(kube, applied, {
-    observedGeneration: asRecord(applied.metadata)?.generation ?? 0,
-    syncedAt: nowIso(),
-    sourceVersion: payload.sourceVersion ?? undefined,
-    conditions: updated,
-  })
-}
-
-const syncGitHubIssues = async (
-  kube: ReturnType<typeof createKubernetesClient>,
-  namespace: string,
-  source: Record<string, unknown>,
-  token: string,
-) => {
-  const scope = (asRecord(readNested(source, ['spec', 'scope'])) ?? {}) as Record<string, unknown>
-  const repo = asString(scope.repository) ?? ''
-  if (!repo.includes('/')) {
-    throw new Error('spec.scope.repository must be in owner/repo form')
-  }
-  const [owner, name] = repo.split('/')
-  const labelValue = scope.labels
-  const labels = Array.isArray(labelValue) ? labelValue.filter((item): item is string => typeof item === 'string') : []
-  const cursor = asString(readNested(source, ['status', 'cursor'])) ?? undefined
-  const client = createGitHubClient({
-    token,
-    apiBaseUrl: process.env.JANGAR_GITHUB_API_BASE_URL?.trim() || 'https://api.github.com',
-    userAgent: 'jangar-agents-controller',
-  })
-
-  const issues = await client.listIssues({ owner, repo: name, labels, since: cursor })
-  let latest = cursor ?? ''
-  for (const issue of issues) {
-    const externalId = `${owner}/${name}#${issue.number}`
-    const shortName = makeName(`${owner}-${name}-${issue.number}`, 'impl')
-    const summary = normalizeSummary(issue.title)
-    const text = normalizeText(issue.body ?? '', summary)
-    const sourceRef = {
-      provider: 'github',
-      externalId,
-      url: issue.htmlUrl ?? undefined,
-    }
-    await syncImplementationSpec(kube, namespace, {
-      name: shortName,
-      source: sourceRef,
-      summary,
-      text,
-      labels: issue.labels,
-      sourceVersion: issue.updatedAt ?? undefined,
-    })
-    if (issue.updatedAt && issue.updatedAt > latest) {
-      latest = issue.updatedAt
-    }
-  }
-  return { cursor: latest || cursor || nowIso() }
-}
-
-const syncLinearIssues = async (
-  kube: ReturnType<typeof createKubernetesClient>,
-  namespace: string,
-  source: Record<string, unknown>,
-  token: string,
-) => {
-  const scope = asRecord(readNested(source, ['spec', 'scope'])) ?? {}
-  const project = asString(scope.project) ?? undefined
-  const team = asString(scope.team) ?? undefined
-  const labelValue = (scope as Record<string, unknown>).labels
-  const labels = Array.isArray(labelValue) ? labelValue.filter((item): item is string => typeof item === 'string') : []
-  const cursor = asString(readNested(source, ['status', 'cursor'])) ?? undefined
-
-  const client = createLinearClient({
-    token,
-    apiUrl: process.env.JANGAR_LINEAR_API_URL?.trim() || 'https://api.linear.app/graphql',
-  })
-
-  const issues = await client.listIssues({
-    project,
-    team,
-    labels,
-    updatedAfter: cursor ?? undefined,
-  })
-
-  let latest = cursor ?? ''
-  for (const issue of issues) {
-    const externalId = issue.identifier
-    const shortName = makeName(`linear-${issue.identifier}`, 'impl')
-    const summary = normalizeSummary(issue.title)
-    const text = normalizeText(issue.description ?? '', summary)
-    await syncImplementationSpec(kube, namespace, {
-      name: shortName,
-      source: { provider: 'linear', externalId, url: issue.url ?? undefined },
-      summary,
-      text,
-      labels: issue.labels,
-      sourceVersion: issue.updatedAt ?? undefined,
-    })
-    if (issue.updatedAt && issue.updatedAt > latest) {
-      latest = issue.updatedAt
-    }
-  }
-  return { cursor: latest || cursor || nowIso() }
-}
-
 const reconcileImplementationSource = async (
   kube: ReturnType<typeof createKubernetesClient>,
   source: Record<string, unknown>,
   namespace: string,
 ) => {
   const metadata = asRecord(source.metadata) ?? {}
-  const name = asString(metadata.name) ?? ''
-  const stateKey = `${namespace}/${name}`
-
-  const backoff = backoffBySource.get(stateKey)
-  if (backoff && Date.now() < backoff.nextAttemptAt) {
-    return
-  }
-
-  const pollSpec = asRecord(readNested(source, ['spec', 'poll']))
   const webhookEnabled = readNested(source, ['spec', 'webhook', 'enabled']) === true
-  let pollInterval: number | null = null
-  if (pollSpec) {
-    pollInterval = Number.parseInt(String(readNested(source, ['spec', 'poll', 'intervalSeconds']) ?? ''), 10) || 60
-  } else if (!webhookEnabled) {
-    pollInterval = 60
-  }
   const lastSyncedAt = asString(readNested(source, ['status', 'lastSyncedAt']))
-  if (pollInterval != null && lastSyncedAt) {
-    const nextAllowed = new Date(lastSyncedAt).getTime() + pollInterval * 1000
-    if (Date.now() < nextAllowed) return
+
+  if (!webhookEnabled) {
+    const conditions = upsertCondition(buildConditions(source), {
+      type: 'Error',
+      status: 'True',
+      reason: 'WebhookDisabled',
+      message: 'spec.webhook.enabled must be true for webhook ingestion',
+    })
+    await setStatus(kube, source, {
+      observedGeneration: asRecord(metadata)?.generation ?? 0,
+      lastSyncedAt: lastSyncedAt ?? undefined,
+      conditions,
+    })
+    return
   }
 
   const secretName = asString(readNested(source, ['spec', 'auth', 'secretRef', 'name']))
@@ -898,7 +729,7 @@ const reconcileImplementationSource = async (
       type: 'Error',
       status: 'True',
       reason: 'MissingSecretRef',
-      message: 'spec.auth.secretRef.name is required',
+      message: 'spec.auth.secretRef.name is required for webhook signing',
     })
     await setStatus(kube, source, {
       observedGeneration: asRecord(metadata)?.generation ?? 0,
@@ -914,8 +745,8 @@ const reconcileImplementationSource = async (
     const conditions = upsertCondition(buildConditions(source), {
       type: 'Error',
       status: 'True',
-      reason: 'MissingToken',
-      message: `secret ${secretName} missing key ${secretKey}`,
+      reason: 'MissingWebhookSecret',
+      message: `secret ${secretName} missing key ${secretKey} for webhook signing`,
     })
     await setStatus(kube, source, {
       observedGeneration: asRecord(metadata)?.generation ?? 0,
@@ -924,79 +755,18 @@ const reconcileImplementationSource = async (
     })
     return
   }
-
-  if (pollInterval == null && webhookEnabled) {
-    const conditions = upsertCondition(buildConditions(source), {
-      type: 'Ready',
-      status: 'True',
-      reason: 'WebhookEnabled',
-      message: 'Webhook enabled; waiting for events',
-    })
-    await setStatus(kube, source, {
-      observedGeneration: asRecord(metadata)?.generation ?? 0,
-      cursor: asString(readNested(source, ['status', 'cursor'])) ?? undefined,
-      lastSyncedAt: lastSyncedAt ?? undefined,
-      conditions,
-    })
-    return
-  }
-
-  try {
-    await setStatus(kube, source, {
-      observedGeneration: asRecord(metadata)?.generation ?? 0,
-      cursor: asString(readNested(source, ['status', 'cursor'])) ?? undefined,
-      lastSyncedAt: lastSyncedAt ?? undefined,
-      conditions: upsertCondition(buildConditions(source), {
-        type: 'Syncing',
-        status: 'True',
-        reason: 'InProgress',
-      }),
-    })
-    const provider = asString(readNested(source, ['spec', 'provider'])) ?? 'github'
-    const result =
-      provider === 'linear'
-        ? await syncLinearIssues(kube, namespace, source, token)
-        : await syncGitHubIssues(kube, namespace, source, token)
-
-    backoffBySource.delete(stateKey)
-
-    const conditions = upsertCondition(buildConditions(source), {
-      type: 'Ready',
-      status: 'True',
-      reason: 'Synced',
-    })
-    await setStatus(kube, source, {
-      observedGeneration: asRecord(metadata)?.generation ?? 0,
-      cursor: result.cursor,
-      lastSyncedAt: nowIso(),
-      conditions: upsertCondition(conditions, { type: 'Syncing', status: 'False', reason: 'Complete' }),
-    })
-  } catch (error) {
-    const failureCount = (backoff?.failures ?? 0) + 1
-    const baseMs = 5000
-    const maxMs = 300000
-    const jitter = 0.2
-    let delayMs = Math.min(baseMs * 2 ** (failureCount - 1), maxMs)
-    delayMs = delayMs * (1 - jitter + Math.random() * jitter * 2)
-
-    if (error instanceof GitHubRateLimitError) {
-      delayMs = Math.max(delayMs, error.retryAt - Date.now())
-    }
-
-    backoffBySource.set(stateKey, { failures: failureCount, nextAttemptAt: Date.now() + delayMs })
-
-    const conditions = upsertCondition(buildConditions(source), {
-      type: 'Error',
-      status: 'True',
-      reason: 'SyncFailed',
-      message: error instanceof Error ? error.message : String(error),
-    })
-    await setStatus(kube, source, {
-      observedGeneration: asRecord(metadata)?.generation ?? 0,
-      conditions,
-      lastSyncedAt: lastSyncedAt ?? undefined,
-    })
-  }
+  const conditions = upsertCondition(buildConditions(source), {
+    type: 'Ready',
+    status: 'True',
+    reason: 'WebhookEnabled',
+    message: 'Webhook enabled; waiting for events',
+  })
+  await setStatus(kube, source, {
+    observedGeneration: asRecord(metadata)?.generation ?? 0,
+    cursor: asString(readNested(source, ['status', 'cursor'])) ?? undefined,
+    lastSyncedAt: lastSyncedAt ?? undefined,
+    conditions,
+  })
 }
 
 const buildJobResources = (workload: Record<string, unknown>) => {

@@ -249,7 +249,6 @@ type ImplementationSourceSpec struct {
 	Provider string                       `json:"provider"`
 	Auth     ImplementationSourceAuth     `json:"auth"`
 	Webhook  *ImplementationSourceWebhook `json:"webhook,omitempty"`
-	Poll     *ImplementationSourcePoll    `json:"poll,omitempty"`
 	Scope    *ImplementationScope         `json:"scope,omitempty"`
 	Mapping  map[string]string            `json:"mapping,omitempty"`
 }
@@ -261,12 +260,6 @@ type ImplementationSourceAuth struct {
 type ImplementationSourceWebhook struct {
 	// +kubebuilder:default=false
 	Enabled bool `json:"enabled,omitempty"`
-}
-
-type ImplementationSourcePoll struct {
-	// +kubebuilder:validation:Minimum=30
-	// +kubebuilder:default=60
-	IntervalSeconds int32 `json:"intervalSeconds,omitempty"`
 }
 
 type ImplementationScope struct {
