@@ -59,7 +59,7 @@ const appNav: AppNavItem[] = [
   { to: '/terminals', label: 'Terminals', icon: IconTerminal2 },
   {
     to: '/agents',
-    label: 'Agents',
+    label: 'Agent comms',
     icon: IconMessages,
     children: [{ to: '/agents/general', label: 'General' }],
   },
@@ -74,6 +74,16 @@ const appNav: AppNavItem[] = [
     ],
   },
 ]
+
+const agentsControlNav = [
+  { to: '/agents-control-plane', label: 'Overview', icon: IconRobot },
+  { to: '/agents-control-plane/agents', label: 'Agents', icon: IconMessages },
+  { to: '/agents-control-plane/agent-runs', label: 'Agent runs', icon: IconList },
+  { to: '/agents-control-plane/agent-providers', label: 'Agent providers', icon: IconDatabase },
+  { to: '/agents-control-plane/implementation-specs', label: 'Implementation specs', icon: IconBrain },
+  { to: '/agents-control-plane/implementation-sources', label: 'Implementation sources', icon: IconGitPullRequest },
+  { to: '/agents-control-plane/memories', label: 'Memories', icon: IconHeart },
+] as const
 
 const apiNav = [
   { to: '/api/models', label: 'Models', icon: IconRobot },
@@ -171,6 +181,25 @@ export function AppSidebar() {
                   </SidebarMenuItem>
                 )
               })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>Agents</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {agentsControlNav.map((item) => (
+                <SidebarMenuItem key={item.to}>
+                  <SidebarNavButton
+                    icon={item.icon}
+                    isActive={pathname === item.to || pathname.startsWith(`${item.to}/`)}
+                    isCollapsed={isCollapsed}
+                    label={item.label}
+                    to={item.to}
+                  />
+                </SidebarMenuItem>
+              ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
