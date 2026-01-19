@@ -17,7 +17,52 @@ be installed alongside native Agents CRDs.
    kubectl get agentruns.agents.proompteng.ai -A -o yaml > /tmp/xplane-agentruns.yaml
    kubectl get agentproviders.agents.proompteng.ai -A -o yaml > /tmp/xplane-agentproviders.yaml
    ```
-2. **Convert manifests to native CRDs** using the mapping tables below.
+2. **Convert manifests to native CRDs** using the converter helper.
+   ```bash
+   python3 scripts/agents/convert-crossplane-claims.py \
+     /tmp/xplane-agents.yaml \
+     /tmp/xplane-agentruns.yaml \
+     /tmp/xplane-agentproviders.yaml \
+     --output-dir /tmp \
+     --default-runtime argo
+   ```
+   - The converter writes `/tmp/native-agents.yaml`, `/tmp/native-agentruns.yaml`, and `/tmp/native-agentproviders.yaml`.
+   - If you do not pass `--default-runtime`, AgentRuns without `spec.runtimeOverrides.argo` will fail validation.
+   - Example input (Crossplane claim):
+     ```yaml
+     apiVersion: agents.proompteng.ai/v1alpha1
+     kind: AgentRun
+     metadata:
+       name: sample-run
+       namespace: agents
+     spec:
+       agentRef:
+         name: sample-agent
+       parameters:
+         issueNumber: "2513"
+       runtimeOverrides:
+         argo:
+           namespace: argo-workflows
+           serviceAccount: codex-workflow
+     ```
+   - Example output (native CRD):
+     ```yaml
+     apiVersion: agents.proompteng.ai/v1alpha1
+     kind: AgentRun
+     metadata:
+       name: sample-run
+       namespace: agents
+     spec:
+       agentRef:
+         name: sample-agent
+       parameters:
+         issueNumber: "2513"
+       runtime:
+         type: argo
+         config:
+           namespace: argo-workflows
+           serviceAccount: codex-workflow
+     ```
 3. **Remove Crossplane Agents package, compositions, and XRDs** (stop reconcile to avoid conflicts):
    ```bash
    # Remove GitOps references to packages/crossplane/deprecated/archived/configuration-agents first.
@@ -48,6 +93,7 @@ be installed alongside native Agents CRDs.
 - Keep names/namespaces stable so references continue to resolve.
 - Convert labels/annotations that your workflows rely on.
 - Remove managedFields, ownerReferences, and status blocks before applying the native CRDs.
+- The converter will warn about dropped fields and require required native fields (`spec.providerRef`, `spec.agentRef`, `spec.runtime.type`, `spec.binary`) before writing output.
 
 ## Mapping: XAgent → Agent
 | Crossplane field | Native field | Notes |
