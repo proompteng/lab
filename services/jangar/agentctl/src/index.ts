@@ -117,7 +117,7 @@ agentctl ${version}
 
 Usage:
   agentctl version [--client]
-  agentctl config view|set --namespace <ns> [--server <addr>] [--token <token>]
+  agentctl config view|set --namespace <ns> [--server <addr>] [--address <addr>] [--token <token>]
   agentctl completion <shell>
   agentctl status [--output json|yaml|table]
   agentctl diagnose [--output json|yaml|table]
@@ -278,16 +278,36 @@ const parseGlobalFlags = (argv: string[]) => {
       flags.namespace = argv[++i]
       continue
     }
+    if (arg.startsWith('--namespace=')) {
+      flags.namespace = arg.slice('--namespace='.length)
+      continue
+    }
     if (arg === '--address' || arg === '--server') {
       flags.address = argv[++i]
+      continue
+    }
+    if (arg.startsWith('--address=')) {
+      flags.address = arg.slice('--address='.length)
+      continue
+    }
+    if (arg.startsWith('--server=')) {
+      flags.address = arg.slice('--server='.length)
       continue
     }
     if (arg === '--token') {
       flags.token = argv[++i]
       continue
     }
+    if (arg.startsWith('--token=')) {
+      flags.token = arg.slice('--token='.length)
+      continue
+    }
     if (arg === '--output' || arg === '-o') {
       flags.output = argv[++i]
+      continue
+    }
+    if (arg.startsWith('--output=')) {
+      flags.output = arg.slice('--output='.length)
       continue
     }
     if (arg === '--tls') {
@@ -474,20 +494,34 @@ const renderTable = <T>(rows: T[], columns: TableColumn<T>[]) => {
   }
 }
 
-const toRow = (resource: Record<string, unknown>) => {
-  const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+const resolveStatusPhase = (resource: Record<string, unknown>) => {
   const status = (resource.status ?? {}) as Record<string, unknown>
+  const statusKeys = ['phase', 'status', 'state', 'result']
+  for (const key of statusKeys) {
+    const value = status[key]
+    if (typeof value === 'string' && value.trim()) {
+      return value
+    }
+  }
   const conditions = Array.isArray(status.conditions) ? status.conditions : []
   const ready = conditions.find((item) => (item as { type?: string }).type === 'Ready') as
     | { status?: string }
     | undefined
-  const phase = status.phase ?? ready?.status ?? ''
+  if (ready?.status) {
+    return ready.status
+  }
+  return ''
+}
+
+const toRow = (resource: Record<string, unknown>) => {
+  const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+  const phase = resolveStatusPhase(resource)
   return {
     name: toCell(metadata.name ?? metadata.generateName ?? ''),
     namespace: toCell(metadata.namespace ?? ''),
     kind: toCell(resource.kind ?? ''),
     age: formatAge(typeof metadata.creationTimestamp === 'string' ? metadata.creationTimestamp : undefined),
-    status: typeof phase === 'string' ? phase : toCell(phase),
+    status: phase,
   }
 }
 
@@ -594,9 +628,9 @@ const waitForRunCompletion = async (
     const response = await callUnary<{ json: string }>(client, 'GetAgentRun', { name, namespace }, metadata)
     const resource = parseJson(response.json)
     if (resource) {
-      const status = (resource.status ?? {}) as Record<string, unknown>
-      const phase = typeof status.phase === 'string' ? status.phase : ''
-      if (['Succeeded', 'Failed', 'Cancelled'].includes(phase)) {
+      const phase = resolveStatusPhase(resource)
+      const normalized = phase.toLowerCase()
+      if (['succeeded', 'failed', 'cancelled', 'canceled'].includes(normalized)) {
         outputResource(resource, output)
         return 0
       }
@@ -706,11 +740,23 @@ const main = async () => {
           if (args[i] === '--namespace' || args[i] === '-n') {
             next.namespace = args[++i]
           }
+          if (args[i]?.startsWith('--namespace=')) {
+            next.namespace = args[i].slice('--namespace='.length)
+          }
           if (args[i] === '--address' || args[i] === '--server') {
             next.address = args[++i]
           }
+          if (args[i]?.startsWith('--address=')) {
+            next.address = args[i].slice('--address='.length)
+          }
+          if (args[i]?.startsWith('--server=')) {
+            next.address = args[i].slice('--server='.length)
+          }
           if (args[i] === '--token') {
             next.token = args[++i]
+          }
+          if (args[i]?.startsWith('--token=')) {
+            next.token = args[i].slice('--token='.length)
           }
         }
         if (!next.namespace && !next.address && !next.token) {
