@@ -7,6 +7,7 @@ import * as grpc from '@grpc/grpc-js'
 import { status as GrpcStatus, ServerCredentials, type ServerUnaryCall, type ServerWritableStream } from '@grpc/grpc-js'
 import { loadSync } from '@grpc/proto-loader'
 import { postAgentRunsHandler } from '~/routes/v1/agent-runs'
+import { postOrchestrationRunsHandler } from '~/routes/v1/orchestration-runs'
 import { asRecord, asString } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 
@@ -48,6 +49,20 @@ type SubmitRunRequest = {
   idempotency_key?: string
   workload?: { image?: string; cpu?: string; memory?: string }
   memory_ref?: string
+}
+type SubmitOrchestrationRunRequest = {
+  namespace?: string
+  orchestration_name?: string
+  parameters?: RuntimeEntry[]
+  idempotency_key?: string
+  budget_ref?: string
+}
+type SubmitToolRunRequest = {
+  namespace?: string
+  tool_name?: string
+  parameters?: RuntimeEntry[]
+  retry_limit?: number
+  timeout_seconds?: number
 }
 type LogsRequest = { namespace?: string; name?: string; follow?: boolean }
 
@@ -197,6 +212,62 @@ const buildServerInfo = () => ({
   service: SERVICE_NAME,
 })
 
+const createCrudHandlers = (kube: ReturnType<typeof createKubernetesClient>, resource: string, kindLabel: string) => ({
+  list: async (call: UnaryCall<ListRequest>, callback: UnaryCallback) => {
+    const authError = requireAuth(call)
+    if (authError) return callback(authError, null)
+    try {
+      const namespace = normalizeNamespace(call.request?.namespace)
+      const result = await kube.list(resource, namespace, call.request?.label_selector || undefined)
+      callback(null, { json: JSON.stringify(result) })
+    } catch (error) {
+      handleUnaryError(callback, error)
+    }
+  },
+  get: async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
+    const authError = requireAuth(call)
+    if (authError) return callback(authError, null)
+    try {
+      const namespace = normalizeNamespace(call.request?.namespace)
+      const name = call.request?.name ?? ''
+      const result = await kube.get(resource, name, namespace)
+      if (!result) {
+        return callback({ code: GrpcStatus.NOT_FOUND, message: `${kindLabel} not found` }, null)
+      }
+      callback(null, { json: JSON.stringify(result) })
+    } catch (error) {
+      handleUnaryError(callback, error)
+    }
+  },
+  apply: async (call: UnaryCall<ApplyRequest>, callback: UnaryCallback) => {
+    const authError = requireAuth(call)
+    if (authError) return callback(authError, null)
+    try {
+      const namespace = call.request?.namespace ? normalizeNamespace(call.request.namespace) : null
+      const manifest = call.request?.manifest_yaml ?? ''
+      const result = await kube.applyManifest(manifest, namespace)
+      callback(null, { json: JSON.stringify(result) })
+    } catch (error) {
+      handleUnaryError(callback, error)
+    }
+  },
+  del: async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
+    const authError = requireAuth(call)
+    if (authError) return callback(authError, null)
+    try {
+      const namespace = normalizeNamespace(call.request?.namespace)
+      const name = call.request?.name ?? ''
+      const result = await kube.delete(resource, name, namespace)
+      if (!result) {
+        return callback({ code: GrpcStatus.NOT_FOUND, message: `${kindLabel} not found` }, null)
+      }
+      callback(null, { ok: true, message: 'deleted', json: JSON.stringify(result) })
+    } catch (error) {
+      handleUnaryError(callback, error)
+    }
+  },
+})
+
 export const startAgentctlGrpcServer = (): AgentctlServer | null => {
   const enabled = (process.env.JANGAR_GRPC_ENABLED ?? '').trim().toLowerCase()
   if (!['1', 'true', 'yes', 'on'].includes(enabled)) {
@@ -211,6 +282,27 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
   const server = new grpc.Server()
 
   const kube = createKubernetesClient()
+  const agentHandlers = createCrudHandlers(kube, RESOURCE_MAP.Agent, 'Agent')
+  const implementationSpecHandlers = createCrudHandlers(kube, RESOURCE_MAP.ImplementationSpec, 'ImplementationSpec')
+  const implementationSourceHandlers = createCrudHandlers(
+    kube,
+    RESOURCE_MAP.ImplementationSource,
+    'ImplementationSource',
+  )
+  const memoryHandlers = createCrudHandlers(kube, RESOURCE_MAP.Memory, 'Memory')
+  const orchestrationHandlers = createCrudHandlers(kube, RESOURCE_MAP.Orchestration, 'Orchestration')
+  const orchestrationRunHandlers = createCrudHandlers(kube, RESOURCE_MAP.OrchestrationRun, 'OrchestrationRun')
+  const toolHandlers = createCrudHandlers(kube, RESOURCE_MAP.Tool, 'Tool')
+  const toolRunHandlers = createCrudHandlers(kube, RESOURCE_MAP.ToolRun, 'ToolRun')
+  const signalHandlers = createCrudHandlers(kube, RESOURCE_MAP.Signal, 'Signal')
+  const signalDeliveryHandlers = createCrudHandlers(kube, RESOURCE_MAP.SignalDelivery, 'SignalDelivery')
+  const approvalPolicyHandlers = createCrudHandlers(kube, RESOURCE_MAP.ApprovalPolicy, 'ApprovalPolicy')
+  const budgetHandlers = createCrudHandlers(kube, RESOURCE_MAP.Budget, 'Budget')
+  const secretBindingHandlers = createCrudHandlers(kube, RESOURCE_MAP.SecretBinding, 'SecretBinding')
+  const scheduleHandlers = createCrudHandlers(kube, RESOURCE_MAP.Schedule, 'Schedule')
+  const artifactHandlers = createCrudHandlers(kube, RESOURCE_MAP.Artifact, 'Artifact')
+  const workspaceHandlers = createCrudHandlers(kube, RESOURCE_MAP.Workspace, 'Workspace')
+  const agentRunHandlers = createCrudHandlers(kube, RESOURCE_MAP.AgentRun, 'AgentRun')
 
   server.addService(pkg.AgentctlService, {
     GetServerInfo: (call: UnaryCall<Record<string, never>>, callback: UnaryCallback) => {
@@ -219,117 +311,15 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
       callback(null, buildServerInfo())
     },
 
-    ListAgents: async (call: UnaryCall<ListRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = normalizeNamespace(call.request?.namespace)
-        const result = await kube.list(RESOURCE_MAP.Agent, namespace, call.request?.label_selector || undefined)
-        callback(null, { json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
-    GetAgent: async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = normalizeNamespace(call.request?.namespace)
-        const name = call.request?.name ?? ''
-        const result = await kube.get(RESOURCE_MAP.Agent, name, namespace)
-        if (!result) {
-          return callback({ code: GrpcStatus.NOT_FOUND, message: 'Agent not found' }, null)
-        }
-        callback(null, { json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
-    ApplyAgent: async (call: UnaryCall<ApplyRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = call.request?.namespace ? normalizeNamespace(call.request.namespace) : null
-        const manifest = call.request?.manifest_yaml ?? ''
-        const result = await kube.applyManifest(manifest, namespace)
-        callback(null, { json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
-    DeleteAgent: async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = normalizeNamespace(call.request?.namespace)
-        const name = call.request?.name ?? ''
-        const result = await kube.delete(RESOURCE_MAP.Agent, name, namespace)
-        if (!result) {
-          return callback({ code: GrpcStatus.NOT_FOUND, message: 'Agent not found' }, null)
-        }
-        callback(null, { ok: true, message: 'deleted', json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
+    ListAgents: agentHandlers.list,
+    GetAgent: agentHandlers.get,
+    ApplyAgent: agentHandlers.apply,
+    DeleteAgent: agentHandlers.del,
 
-    ListImplementationSpecs: async (call: UnaryCall<ListRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = normalizeNamespace(call.request?.namespace)
-        const result = await kube.list(
-          RESOURCE_MAP.ImplementationSpec,
-          namespace,
-          call.request?.label_selector || undefined,
-        )
-        callback(null, { json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
-    GetImplementationSpec: async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = normalizeNamespace(call.request?.namespace)
-        const name = call.request?.name ?? ''
-        const result = await kube.get(RESOURCE_MAP.ImplementationSpec, name, namespace)
-        if (!result) {
-          return callback({ code: GrpcStatus.NOT_FOUND, message: 'ImplementationSpec not found' }, null)
-        }
-        callback(null, { json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
-    ApplyImplementationSpec: async (call: UnaryCall<ApplyRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = call.request?.namespace ? normalizeNamespace(call.request.namespace) : null
-        const manifest = call.request?.manifest_yaml ?? ''
-        const result = await kube.applyManifest(manifest, namespace)
-        callback(null, { json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
-    DeleteImplementationSpec: async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = normalizeNamespace(call.request?.namespace)
-        const name = call.request?.name ?? ''
-        const result = await kube.delete(RESOURCE_MAP.ImplementationSpec, name, namespace)
-        if (!result) {
-          return callback({ code: GrpcStatus.NOT_FOUND, message: 'ImplementationSpec not found' }, null)
-        }
-        callback(null, { ok: true, message: 'deleted', json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
+    ListImplementationSpecs: implementationSpecHandlers.list,
+    GetImplementationSpec: implementationSpecHandlers.get,
+    ApplyImplementationSpec: implementationSpecHandlers.apply,
+    DeleteImplementationSpec: implementationSpecHandlers.del,
     CreateImplementationSpec: async (call: UnaryCall<CreateImplRequest>, callback: UnaryCallback) => {
       const authError = requireAuth(call)
       if (authError) return callback(authError, null)
@@ -366,171 +356,163 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
       }
     },
 
-    ListImplementationSources: async (call: UnaryCall<ListRequest>, callback: UnaryCallback) => {
+    ListImplementationSources: implementationSourceHandlers.list,
+    GetImplementationSource: implementationSourceHandlers.get,
+    ApplyImplementationSource: implementationSourceHandlers.apply,
+    DeleteImplementationSource: implementationSourceHandlers.del,
+
+    ListMemories: memoryHandlers.list,
+    GetMemory: memoryHandlers.get,
+    ApplyMemory: memoryHandlers.apply,
+    DeleteMemory: memoryHandlers.del,
+
+    ListOrchestrations: orchestrationHandlers.list,
+    GetOrchestration: orchestrationHandlers.get,
+    ApplyOrchestration: orchestrationHandlers.apply,
+    DeleteOrchestration: orchestrationHandlers.del,
+
+    ListOrchestrationRuns: orchestrationRunHandlers.list,
+    GetOrchestrationRun: orchestrationRunHandlers.get,
+    ApplyOrchestrationRun: orchestrationRunHandlers.apply,
+    DeleteOrchestrationRun: orchestrationRunHandlers.del,
+
+    SubmitOrchestrationRun: async (call: UnaryCall<SubmitOrchestrationRunRequest>, callback: UnaryCallback) => {
       const authError = requireAuth(call)
       if (authError) return callback(authError, null)
       try {
         const namespace = normalizeNamespace(call.request?.namespace)
-        const result = await kube.list(
-          RESOURCE_MAP.ImplementationSource,
+        const orchestrationName = call.request?.orchestration_name ?? ''
+        if (!orchestrationName) {
+          return callback({ code: GrpcStatus.INVALID_ARGUMENT, message: 'orchestration_name is required' }, null)
+        }
+
+        const idempotencyKey = call.request?.idempotency_key ?? ''
+        const parameters = parseEntryMap(call.request?.parameters ?? [])
+        const budgetRef = call.request?.budget_ref ?? ''
+        const payload: Record<string, unknown> = {
+          orchestrationRef: { name: orchestrationName },
           namespace,
-          call.request?.label_selector || undefined,
-        )
-        callback(null, { json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
-    GetImplementationSource: async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = normalizeNamespace(call.request?.namespace)
-        const name = call.request?.name ?? ''
-        const result = await kube.get(RESOURCE_MAP.ImplementationSource, name, namespace)
-        if (!result) {
-          return callback({ code: GrpcStatus.NOT_FOUND, message: 'ImplementationSource not found' }, null)
+          ...(Object.keys(parameters).length > 0 ? { parameters } : {}),
+          ...(budgetRef ? { policy: { budgetRef } } : {}),
         }
-        callback(null, { json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
-    ApplyImplementationSource: async (call: UnaryCall<ApplyRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = call.request?.namespace ? normalizeNamespace(call.request.namespace) : null
-        const manifest = call.request?.manifest_yaml ?? ''
-        const result = await kube.applyManifest(manifest, namespace)
-        callback(null, { json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
-    DeleteImplementationSource: async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = normalizeNamespace(call.request?.namespace)
-        const name = call.request?.name ?? ''
-        const result = await kube.delete(RESOURCE_MAP.ImplementationSource, name, namespace)
-        if (!result) {
-          return callback({ code: GrpcStatus.NOT_FOUND, message: 'ImplementationSource not found' }, null)
+
+        const request = new Request('http://localhost/v1/orchestration-runs', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'idempotency-key': idempotencyKey || randomUUID(),
+          },
+          body: JSON.stringify(payload),
+        })
+
+        const response = await postOrchestrationRunsHandler(request, { kubeClient: kube })
+        const body = (await response.json()) as Record<string, unknown>
+
+        if (!response.ok) {
+          const errorMessage = asString(body.error) ?? 'orchestration run submit failed'
+          const status = response.status === 404 ? GrpcStatus.NOT_FOUND : GrpcStatus.FAILED_PRECONDITION
+          return callback({ code: status, message: errorMessage }, null)
         }
-        callback(null, { ok: true, message: 'deleted', json: JSON.stringify(result) })
+
+        callback(null, {
+          resource_json: body.resource ? JSON.stringify(body.resource) : '',
+          record_json: body.orchestrationRun ? JSON.stringify(body.orchestrationRun) : '',
+          idempotent: Boolean(body.idempotent),
+        })
       } catch (error) {
         handleUnaryError(callback, error)
       }
     },
 
-    ListMemories: async (call: UnaryCall<ListRequest>, callback: UnaryCallback) => {
+    ListTools: toolHandlers.list,
+    GetTool: toolHandlers.get,
+    ApplyTool: toolHandlers.apply,
+    DeleteTool: toolHandlers.del,
+
+    ListToolRuns: toolRunHandlers.list,
+    GetToolRun: toolRunHandlers.get,
+    ApplyToolRun: toolRunHandlers.apply,
+    DeleteToolRun: toolRunHandlers.del,
+
+    SubmitToolRun: async (call: UnaryCall<SubmitToolRunRequest>, callback: UnaryCallback) => {
       const authError = requireAuth(call)
       if (authError) return callback(authError, null)
       try {
         const namespace = normalizeNamespace(call.request?.namespace)
-        const result = await kube.list(RESOURCE_MAP.Memory, namespace, call.request?.label_selector || undefined)
-        callback(null, { json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
-    GetMemory: async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = normalizeNamespace(call.request?.namespace)
-        const name = call.request?.name ?? ''
-        const result = await kube.get(RESOURCE_MAP.Memory, name, namespace)
-        if (!result) {
-          return callback({ code: GrpcStatus.NOT_FOUND, message: 'Memory not found' }, null)
+        const toolName = call.request?.tool_name ?? ''
+        if (!toolName) {
+          return callback({ code: GrpcStatus.INVALID_ARGUMENT, message: 'tool_name is required' }, null)
         }
-        callback(null, { json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
-    ApplyMemory: async (call: UnaryCall<ApplyRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = call.request?.namespace ? normalizeNamespace(call.request.namespace) : null
-        const manifest = call.request?.manifest_yaml ?? ''
-        const result = await kube.applyManifest(manifest, namespace)
-        callback(null, { json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
-    DeleteMemory: async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = normalizeNamespace(call.request?.namespace)
-        const name = call.request?.name ?? ''
-        const result = await kube.delete(RESOURCE_MAP.Memory, name, namespace)
-        if (!result) {
-          return callback({ code: GrpcStatus.NOT_FOUND, message: 'Memory not found' }, null)
+        const parameters = parseEntryMap(call.request?.parameters ?? [])
+        const retryLimit = call.request?.retry_limit ?? 0
+        const timeoutSeconds = call.request?.timeout_seconds ?? 0
+
+        const manifest: Record<string, unknown> = {
+          apiVersion: 'tools.proompteng.ai/v1alpha1',
+          kind: 'ToolRun',
+          metadata: {
+            generateName: `${toolName}-`,
+            namespace,
+          },
+          spec: {
+            toolRef: { name: toolName },
+            ...(Object.keys(parameters).length > 0 ? { parameters } : {}),
+            ...(retryLimit > 0 ? { retryPolicy: { limit: retryLimit } } : {}),
+            ...(timeoutSeconds > 0 ? { timeoutSeconds } : {}),
+          },
         }
-        callback(null, { ok: true, message: 'deleted', json: JSON.stringify(result) })
+
+        const result = await kube.apply(manifest)
+        callback(null, { json: JSON.stringify(result) })
       } catch (error) {
         handleUnaryError(callback, error)
       }
     },
 
-    ListAgentRuns: async (call: UnaryCall<ListRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = normalizeNamespace(call.request?.namespace)
-        const result = await kube.list(RESOURCE_MAP.AgentRun, namespace, call.request?.label_selector || undefined)
-        callback(null, { json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
-    GetAgentRun: async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = normalizeNamespace(call.request?.namespace)
-        const name = call.request?.name ?? ''
-        const result = await kube.get(RESOURCE_MAP.AgentRun, name, namespace)
-        if (!result) {
-          return callback({ code: GrpcStatus.NOT_FOUND, message: 'AgentRun not found' }, null)
-        }
-        callback(null, { json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
-    ApplyAgentRun: async (call: UnaryCall<ApplyRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = call.request?.namespace ? normalizeNamespace(call.request.namespace) : null
-        const manifest = call.request?.manifest_yaml ?? ''
-        const result = await kube.applyManifest(manifest, namespace)
-        callback(null, { json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
-    DeleteAgentRun: async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
-      const authError = requireAuth(call)
-      if (authError) return callback(authError, null)
-      try {
-        const namespace = normalizeNamespace(call.request?.namespace)
-        const name = call.request?.name ?? ''
-        const result = await kube.delete(RESOURCE_MAP.AgentRun, name, namespace)
-        if (!result) {
-          return callback({ code: GrpcStatus.NOT_FOUND, message: 'AgentRun not found' }, null)
-        }
-        callback(null, { ok: true, message: 'deleted', json: JSON.stringify(result) })
-      } catch (error) {
-        handleUnaryError(callback, error)
-      }
-    },
+    ListSignals: signalHandlers.list,
+    GetSignal: signalHandlers.get,
+    ApplySignal: signalHandlers.apply,
+    DeleteSignal: signalHandlers.del,
+
+    ListSignalDeliveries: signalDeliveryHandlers.list,
+    GetSignalDelivery: signalDeliveryHandlers.get,
+    ApplySignalDelivery: signalDeliveryHandlers.apply,
+    DeleteSignalDelivery: signalDeliveryHandlers.del,
+
+    ListApprovalPolicies: approvalPolicyHandlers.list,
+    GetApprovalPolicy: approvalPolicyHandlers.get,
+    ApplyApprovalPolicy: approvalPolicyHandlers.apply,
+    DeleteApprovalPolicy: approvalPolicyHandlers.del,
+
+    ListBudgets: budgetHandlers.list,
+    GetBudget: budgetHandlers.get,
+    ApplyBudget: budgetHandlers.apply,
+    DeleteBudget: budgetHandlers.del,
+
+    ListSecretBindings: secretBindingHandlers.list,
+    GetSecretBinding: secretBindingHandlers.get,
+    ApplySecretBinding: secretBindingHandlers.apply,
+    DeleteSecretBinding: secretBindingHandlers.del,
+
+    ListSchedules: scheduleHandlers.list,
+    GetSchedule: scheduleHandlers.get,
+    ApplySchedule: scheduleHandlers.apply,
+    DeleteSchedule: scheduleHandlers.del,
+
+    ListArtifacts: artifactHandlers.list,
+    GetArtifact: artifactHandlers.get,
+    ApplyArtifact: artifactHandlers.apply,
+    DeleteArtifact: artifactHandlers.del,
+
+    ListWorkspaces: workspaceHandlers.list,
+    GetWorkspace: workspaceHandlers.get,
+    ApplyWorkspace: workspaceHandlers.apply,
+    DeleteWorkspace: workspaceHandlers.del,
+
+    ListAgentRuns: agentRunHandlers.list,
+    GetAgentRun: agentRunHandlers.get,
+    ApplyAgentRun: agentRunHandlers.apply,
+    DeleteAgentRun: agentRunHandlers.del,
 
     SubmitAgentRun: async (call: UnaryCall<SubmitRunRequest>, callback: UnaryCallback) => {
       const authError = requireAuth(call)
