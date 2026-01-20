@@ -50,6 +50,20 @@ const namespaceQueues = new Map<string, Promise<void>>()
 
 const nowIso = () => new Date().toISOString()
 
+const hasJobCondition = (job: Record<string, unknown>, conditionType: string) => {
+  const status = asRecord(job.status) ?? {}
+  const conditions = Array.isArray(status.conditions) ? status.conditions : []
+  return conditions.some((entry) => {
+    const record = asRecord(entry)
+    if (!record) return false
+    return asString(record.type) === conditionType && asString(record.status) === 'True'
+  })
+}
+
+const isJobComplete = (job: Record<string, unknown>) => hasJobCondition(job, 'Complete')
+
+const isJobFailed = (job: Record<string, unknown>) => hasJobCondition(job, 'Failed')
+
 const shouldStart = () => {
   if (process.env.NODE_ENV === 'test') return false
   const flag = (process.env.JANGAR_ORCHESTRATION_CONTROLLER_ENABLED ?? '1').trim().toLowerCase()
@@ -513,7 +527,7 @@ const reconcileToolRun = async (
   const jobStatus = asRecord(job.status) ?? {}
   const succeeded = Number(jobStatus.succeeded ?? 0)
   const failed = Number(jobStatus.failed ?? 0)
-  if (succeeded > 0) {
+  if (succeeded > 0 || isJobComplete(job)) {
     await setStatus(kube, toolRun, {
       observedGeneration: asRecord(toolRun.metadata)?.generation ?? 0,
       phase: 'Succeeded',
@@ -526,7 +540,7 @@ const reconcileToolRun = async (
         reason: 'Completed',
       }),
     })
-  } else if (failed > 0) {
+  } else if (failed > 0 && isJobFailed(job)) {
     await setStatus(kube, toolRun, {
       observedGeneration: asRecord(toolRun.metadata)?.generation ?? 0,
       phase: 'Failed',
