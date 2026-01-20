@@ -29,6 +29,7 @@ if [[ -d "$SCHEMA_DIR" ]]; then
   SCHEMA_ARGS+=(
     "--schema-location" "${SCHEMA_DIR}/{{.ResourceKind}}{{.KindSuffix}}.json"
     "--schema-location" "${SCHEMA_DIR}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json"
+    "--schema-location" "${SCHEMA_DIR}/{{.Group}}/{{.ResourceAPIVersion}}/{{.ResourceKind}}.json"
   )
 fi
 
