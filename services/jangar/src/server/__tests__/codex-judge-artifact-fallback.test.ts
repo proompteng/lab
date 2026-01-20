@@ -68,6 +68,8 @@ const globalState = globalThis as typeof globalThis & {
     rerunOrchestrationNamespace: string
     systemImprovementOrchestrationName: string | null
     systemImprovementOrchestrationNamespace: string
+    systemImprovementJudgePrompt: string
+    defaultJudgePrompt: string
   }
   __codexJudgeMemoryStoreMock?: { persist: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
 }
@@ -146,6 +148,8 @@ if (!globalState.__codexJudgeConfigMock) {
     rerunOrchestrationNamespace: 'jangar',
     systemImprovementOrchestrationName: null,
     systemImprovementOrchestrationNamespace: 'jangar',
+    systemImprovementJudgePrompt: 'system improvement judge prompt',
+    defaultJudgePrompt: 'judge prompt',
   }
 }
 

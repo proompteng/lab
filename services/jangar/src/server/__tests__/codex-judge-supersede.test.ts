@@ -50,6 +50,8 @@ const globalState = globalThis as typeof globalThis & {
     rerunOrchestrationNamespace: string
     systemImprovementOrchestrationName: string | null
     systemImprovementOrchestrationNamespace: string
+    systemImprovementJudgePrompt: string
+    defaultJudgePrompt: string
   }
   __codexJudgeMemoryStoreMock?: { persist: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
 }
@@ -128,6 +130,8 @@ if (!globalState.__codexJudgeConfigMock) {
     rerunOrchestrationNamespace: 'jangar',
     systemImprovementOrchestrationName: null,
     systemImprovementOrchestrationNamespace: 'jangar',
+    systemImprovementJudgePrompt: 'system improvement judge prompt',
+    defaultJudgePrompt: 'judge prompt',
   }
 }
 
@@ -216,6 +220,8 @@ const config = {
   rerunOrchestrationNamespace: 'jangar',
   systemImprovementOrchestrationName: null,
   systemImprovementOrchestrationNamespace: 'jangar',
+  systemImprovementJudgePrompt: 'system improvement judge prompt',
+  defaultJudgePrompt: 'judge prompt',
 }
 const memoriesStore = {
   persist: vi.fn(),
@@ -248,7 +254,7 @@ const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
   attempt: 1,
   workflowName: 'workflow-1',
   workflowUid: null,
-  workflowNamespace: 'argo',
+  workflowNamespace: 'agents',
   turnId: null,
   threadId: null,
   stage: 'implementation',
@@ -291,7 +297,7 @@ const buildPayload = () => {
       metadata: {
         name: 'workflow-1',
         uid: 'workflow-uid-1',
-        namespace: 'argo',
+        namespace: 'agents',
       },
       status: {
         phase: 'Succeeded',
@@ -329,7 +335,7 @@ describe('codex judge run-complete ingestion', () => {
         metadata: {
           name: 'workflow-1',
           uid: 'workflow-uid-1',
-          namespace: 'argo',
+          namespace: 'agents',
           labels: {
             'codex.repository': 'owner/repo',
             'codex.issue_number': '456',

@@ -907,7 +907,6 @@ const updateArtifactsFromWorkflow = async (
 ) => {
   const workflowName = run.workflowName
   if (!workflowName) return []
-  const workflowNamespace = run.workflowNamespace ?? config.workflowNamespace ?? null
   const artifactBucket = getArtifactBucket()
 
   const artifactMap = new Map<string, ResolvedArtifact>()
@@ -2086,8 +2085,17 @@ const maybeSubmitSystemImprovementWorkflow = async (
       return { submitted: false, error: error instanceof Error ? error.message : String(error) }
     }
   }
-
   return { submitted: false, error: 'system_improvement_orchestration_unconfigured' }
+}
+
+let rerunWorkerStarted = false
+
+const startRerunSubmissionWorker = () => {
+  if (rerunWorkerStarted || _RECONCILE_DISABLED) return
+  rerunWorkerStarted = true
+  setInterval(() => {
+    void processRerunQueue()
+  }, RERUN_WORKER_POLL_MS)
 }
 
 const shouldDelayRerun = (submissionAttempt: number, updatedAt: string | null) => {
@@ -2227,7 +2235,7 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
   let lastError: string | undefined =
     orchestrationResult?.status === 'failed'
       ? `Native orchestration submission failed: ${orchestrationResult.error}`
-      : undefined
+      : 'Native orchestration is not configured for reruns'
 
   const { CodexTaskSchema, CodexTaskStage, CodexIterationsPolicySchema } = await import('./proto/codex_task_pb')
   const { create, toBinary } = await import('@bufbuild/protobuf')
