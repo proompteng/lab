@@ -8,7 +8,7 @@ import { status as GrpcStatus, ServerCredentials, type ServerUnaryCall, type Ser
 import { loadSync } from '@grpc/proto-loader'
 import { postAgentRunsHandler } from '~/routes/v1/agent-runs'
 import { asRecord, asString } from '~/server/primitives-http'
-import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 
 const DEFAULT_NAMESPACE = 'agents'
 const DEFAULT_GRPC_PORT = 50051
@@ -144,6 +144,69 @@ const handleUnaryError = (callback: UnaryCallback, error: unknown) => {
   callback({ code: GrpcStatus.INTERNAL, message }, null)
 }
 
+const createListHandler =
+  (kube: KubernetesClient, resource: string) => async (call: UnaryCall<ListRequest>, callback: UnaryCallback) => {
+    const authError = requireAuth(call)
+    if (authError) return callback(authError, null)
+    try {
+      const namespace = normalizeNamespace(call.request?.namespace)
+      const result = await kube.list(resource, namespace, call.request?.label_selector || undefined)
+      callback(null, { json: JSON.stringify(result) })
+    } catch (error) {
+      handleUnaryError(callback, error)
+    }
+  }
+
+const createGetHandler =
+  (kube: KubernetesClient, resource: string, notFoundMessage: string) =>
+  async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
+    const authError = requireAuth(call)
+    if (authError) return callback(authError, null)
+    try {
+      const namespace = normalizeNamespace(call.request?.namespace)
+      const name = call.request?.name ?? ''
+      const result = await kube.get(resource, name, namespace)
+      if (!result) {
+        return callback({ code: GrpcStatus.NOT_FOUND, message: notFoundMessage }, null)
+      }
+      callback(null, { json: JSON.stringify(result) })
+    } catch (error) {
+      handleUnaryError(callback, error)
+    }
+  }
+
+const createApplyHandler =
+  (kube: KubernetesClient) => async (call: UnaryCall<ApplyRequest>, callback: UnaryCallback) => {
+    const authError = requireAuth(call)
+    if (authError) return callback(authError, null)
+    try {
+      const namespace = call.request?.namespace ? normalizeNamespace(call.request.namespace) : null
+      const manifest = call.request?.manifest_yaml ?? ''
+      const result = await kube.applyManifest(manifest, namespace)
+      callback(null, { json: JSON.stringify(result) })
+    } catch (error) {
+      handleUnaryError(callback, error)
+    }
+  }
+
+const createDeleteHandler =
+  (kube: KubernetesClient, resource: string, notFoundMessage: string) =>
+  async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
+    const authError = requireAuth(call)
+    if (authError) return callback(authError, null)
+    try {
+      const namespace = normalizeNamespace(call.request?.namespace)
+      const name = call.request?.name ?? ''
+      const result = await kube.delete(resource, name, namespace)
+      if (!result) {
+        return callback({ code: GrpcStatus.NOT_FOUND, message: notFoundMessage }, null)
+      }
+      callback(null, { ok: true, message: 'deleted', json: JSON.stringify(result) })
+    } catch (error) {
+      handleUnaryError(callback, error)
+    }
+  }
+
 const spawnKubectl = (args: string[]) =>
   spawn('kubectl', args, {
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -272,6 +335,11 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
         handleUnaryError(callback, error)
       }
     },
+
+    ListAgentProviders: createListHandler(kube, RESOURCE_MAP.AgentProvider),
+    GetAgentProvider: createGetHandler(kube, RESOURCE_MAP.AgentProvider, 'AgentProvider not found'),
+    ApplyAgentProvider: createApplyHandler(kube),
+    DeleteAgentProvider: createDeleteHandler(kube, RESOURCE_MAP.AgentProvider, 'AgentProvider not found'),
 
     ListImplementationSpecs: async (call: UnaryCall<ListRequest>, callback: UnaryCallback) => {
       const authError = requireAuth(call)
@@ -477,6 +545,66 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
         handleUnaryError(callback, error)
       }
     },
+
+    ListTools: createListHandler(kube, RESOURCE_MAP.Tool),
+    GetTool: createGetHandler(kube, RESOURCE_MAP.Tool, 'Tool not found'),
+    ApplyTool: createApplyHandler(kube),
+    DeleteTool: createDeleteHandler(kube, RESOURCE_MAP.Tool, 'Tool not found'),
+
+    ListToolRuns: createListHandler(kube, RESOURCE_MAP.ToolRun),
+    GetToolRun: createGetHandler(kube, RESOURCE_MAP.ToolRun, 'ToolRun not found'),
+    ApplyToolRun: createApplyHandler(kube),
+    DeleteToolRun: createDeleteHandler(kube, RESOURCE_MAP.ToolRun, 'ToolRun not found'),
+
+    ListOrchestrations: createListHandler(kube, RESOURCE_MAP.Orchestration),
+    GetOrchestration: createGetHandler(kube, RESOURCE_MAP.Orchestration, 'Orchestration not found'),
+    ApplyOrchestration: createApplyHandler(kube),
+    DeleteOrchestration: createDeleteHandler(kube, RESOURCE_MAP.Orchestration, 'Orchestration not found'),
+
+    ListOrchestrationRuns: createListHandler(kube, RESOURCE_MAP.OrchestrationRun),
+    GetOrchestrationRun: createGetHandler(kube, RESOURCE_MAP.OrchestrationRun, 'OrchestrationRun not found'),
+    ApplyOrchestrationRun: createApplyHandler(kube),
+    DeleteOrchestrationRun: createDeleteHandler(kube, RESOURCE_MAP.OrchestrationRun, 'OrchestrationRun not found'),
+
+    ListApprovalPolicies: createListHandler(kube, RESOURCE_MAP.ApprovalPolicy),
+    GetApprovalPolicy: createGetHandler(kube, RESOURCE_MAP.ApprovalPolicy, 'ApprovalPolicy not found'),
+    ApplyApprovalPolicy: createApplyHandler(kube),
+    DeleteApprovalPolicy: createDeleteHandler(kube, RESOURCE_MAP.ApprovalPolicy, 'ApprovalPolicy not found'),
+
+    ListBudgets: createListHandler(kube, RESOURCE_MAP.Budget),
+    GetBudget: createGetHandler(kube, RESOURCE_MAP.Budget, 'Budget not found'),
+    ApplyBudget: createApplyHandler(kube),
+    DeleteBudget: createDeleteHandler(kube, RESOURCE_MAP.Budget, 'Budget not found'),
+
+    ListSecretBindings: createListHandler(kube, RESOURCE_MAP.SecretBinding),
+    GetSecretBinding: createGetHandler(kube, RESOURCE_MAP.SecretBinding, 'SecretBinding not found'),
+    ApplySecretBinding: createApplyHandler(kube),
+    DeleteSecretBinding: createDeleteHandler(kube, RESOURCE_MAP.SecretBinding, 'SecretBinding not found'),
+
+    ListSignals: createListHandler(kube, RESOURCE_MAP.Signal),
+    GetSignal: createGetHandler(kube, RESOURCE_MAP.Signal, 'Signal not found'),
+    ApplySignal: createApplyHandler(kube),
+    DeleteSignal: createDeleteHandler(kube, RESOURCE_MAP.Signal, 'Signal not found'),
+
+    ListSignalDeliveries: createListHandler(kube, RESOURCE_MAP.SignalDelivery),
+    GetSignalDelivery: createGetHandler(kube, RESOURCE_MAP.SignalDelivery, 'SignalDelivery not found'),
+    ApplySignalDelivery: createApplyHandler(kube),
+    DeleteSignalDelivery: createDeleteHandler(kube, RESOURCE_MAP.SignalDelivery, 'SignalDelivery not found'),
+
+    ListSchedules: createListHandler(kube, RESOURCE_MAP.Schedule),
+    GetSchedule: createGetHandler(kube, RESOURCE_MAP.Schedule, 'Schedule not found'),
+    ApplySchedule: createApplyHandler(kube),
+    DeleteSchedule: createDeleteHandler(kube, RESOURCE_MAP.Schedule, 'Schedule not found'),
+
+    ListArtifacts: createListHandler(kube, RESOURCE_MAP.Artifact),
+    GetArtifact: createGetHandler(kube, RESOURCE_MAP.Artifact, 'Artifact not found'),
+    ApplyArtifact: createApplyHandler(kube),
+    DeleteArtifact: createDeleteHandler(kube, RESOURCE_MAP.Artifact, 'Artifact not found'),
+
+    ListWorkspaces: createListHandler(kube, RESOURCE_MAP.Workspace),
+    GetWorkspace: createGetHandler(kube, RESOURCE_MAP.Workspace, 'Workspace not found'),
+    ApplyWorkspace: createApplyHandler(kube),
+    DeleteWorkspace: createDeleteHandler(kube, RESOURCE_MAP.Workspace, 'Workspace not found'),
 
     ListAgentRuns: async (call: UnaryCall<ListRequest>, callback: UnaryCallback) => {
       const authError = requireAuth(call)
