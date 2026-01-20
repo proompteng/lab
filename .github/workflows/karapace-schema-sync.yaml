@@ -40,7 +40,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y make g++
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Validate protos compile
         run: buf build proto

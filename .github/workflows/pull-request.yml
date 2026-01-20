@@ -80,7 +80,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-1.3.5-
 
-      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Oxlint (non-blocking)
         continue-on-error: true
@@ -130,7 +130,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-1.3.5-
 
-      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Oxlint (non-blocking)
         continue-on-error: true
@@ -164,7 +164,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-1.3.5-
 
-      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile --ignore-scripts
 
       - run: bun run --filter @proompteng/bonjour build
 
@@ -198,7 +198,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-1.3.5-
 
-      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Oxlint (non-blocking)
         continue-on-error: true
@@ -230,7 +230,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: apps/kitty-krew
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Oxlint (non-blocking)
         continue-on-error: true
@@ -280,7 +280,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-1.3.5-
 
-      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile --ignore-scripts
         working-directory: apps/reviseur
 
       - name: Oxlint (non-blocking)
