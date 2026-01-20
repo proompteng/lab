@@ -15,7 +15,12 @@ spec:
       ttlSecondsAfterFinished: 600
   workflow:
     steps:
+      - name: plan
+        parameters:
+          stage: plan
       - name: implement
+        parameters:
+          stage: implement
   workload:
     image: ghcr.io/proompteng/codex-agent:latest
     resources:
