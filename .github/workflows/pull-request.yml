@@ -166,6 +166,8 @@ jobs:
 
       - run: bun install --frozen-lockfile --ignore-scripts
 
+      - run: bun run --filter @proompteng/otel build
+
       - run: bun run --filter @proompteng/bonjour build
 
   codex:

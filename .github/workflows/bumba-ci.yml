@@ -36,7 +36,7 @@ jobs:
     with:
       bun-version: 1.3.5
       node-version: 24.11.1
-      install-command: bun install --frozen-lockfile --ignore-scripts
+      install-command: bun install --frozen-lockfile --ignore-scripts && bun run --filter @proompteng/temporal-bun-sdk build
       lint-command: bunx biome check services/bumba packages/scripts/src/bumba argocd/applications/bumba
       oxlint-command: bun run --cwd services/bumba lint:oxlint
       oxlint-type-command: bun run --cwd services/bumba lint:oxlint:type
