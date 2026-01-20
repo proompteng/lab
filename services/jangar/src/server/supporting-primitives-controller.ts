@@ -152,10 +152,7 @@ const checkCrds = async (): Promise<CrdCheckState> => {
     missing: [...missing, ...forbidden],
     checkedAt: nowIso(),
   }
-<<<<<<< HEAD
   _crdCheckState = state
-=======
->>>>>>> 5247c5e7 (chore(jangar): fix lint warnings (#2660))
   controllerState.crdCheckState = state
   if (!state.ok) {
     if (missing.length > 0) {
