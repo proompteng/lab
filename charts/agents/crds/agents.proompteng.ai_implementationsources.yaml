@@ -90,17 +90,13 @@ spec:
               webhook:
                 properties:
                   enabled:
-                    default: true
+                    default: false
                     type: boolean
                 type: object
             required:
             - auth
             - provider
-            - webhook
             type: object
-            x-kubernetes-validations:
-            - message: spec.webhook.enabled must be true
-              rule: self.webhook.enabled == true
           status:
             properties:
               conditions:
@@ -159,8 +155,6 @@ spec:
                   - type
                   type: object
                 type: array
-              cursor:
-                type: string
               lastSyncedAt:
                 format: date-time
                 type: string
