@@ -1,7 +1,0 @@
-apiVersion: pkg.crossplane.io/v1
-kind: Configuration
-metadata:
-  name: configuration-orchestration
-spec:
-  package: registry.ide-newton.ts.net/lab/configuration-orchestration:20260111
-  packagePullPolicy: Always

@@ -1,7 +1,0 @@
-apiVersion: pkg.crossplane.io/v1
-kind: Function
-metadata:
-  name: function-orchestration-dag
-spec:
-  package: registry.ide-newton.ts.net/lab/function-orchestration-dag:20260111
-  packagePullPolicy: Always

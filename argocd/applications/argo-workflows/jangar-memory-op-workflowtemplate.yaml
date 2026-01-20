@@ -62,9 +62,6 @@ spec:
           payload="{{inputs.parameters.payload}}"
           namespace="{{inputs.parameters.namespace}}"
           if [ -z "${namespace}" ]; then
-            namespace="$(kubectl get workflow {{workflow.name}} -n {{workflow.namespace}} -o jsonpath='{.metadata.labels.crossplane\\.io/claim-namespace}' 2>/dev/null || true)"
-          fi
-          if [ -z "${namespace}" ]; then
             namespace="{{workflow.namespace}}"
           fi
 

@@ -1,8 +1,0 @@
----
-apiVersion: meta.pkg.crossplane.io/v1beta1
-kind: Function
-metadata:
-  name: function-agent-provider-json
-spec:
-  capabilities:
-    - composition

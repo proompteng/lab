@@ -18,13 +18,11 @@ This document is implementation‑grade: it describes *what* needs to exist in t
 ## Non‑Goals
 - Bundling an embedded database, backups, ingress, or migrations job in the chart.
 - Implementing a separate operator beyond Jangar.
-- Fully automating Crossplane → native CRD migration (only provide guidance and tools).
 
 ## Current State Summary
 - CRDs live under `charts/agents/crds/` and are referenced in `charts/agents/Chart.yaml` annotations.
 - Jangar implements the native v1alpha1 types in `services/jangar/api/agents/v1alpha1` and a controller in `services/jangar/src/server/agents-controller.ts`.
-- Crossplane XRDs have been retired to `packages/crossplane/deprecated/archived/…` and are not used by Jangar.
-- The chart is “minimal” but lacks a documented, end‑to‑end implementation plan for completeness, validation, and migration.
+- The chart is “minimal” but lacks a documented, end‑to‑end implementation plan for completeness and validation.
 
 ## Design Principles
 1) **CRDs are installed by Helm, not at runtime**. Jangar should verify CRD availability and emit actionable errors; it should not create CRDs by default. This aligns with Artifact Hub and Helm best practices.
@@ -121,19 +119,8 @@ Design note: Without cluster‑scoped RBAC, multi‑namespace reconciliation wil
 - Examples live in `charts/agents/examples/` and are referenced in `Chart.yaml` annotations.
 - Examples must be validated in CI against the CRD schemas.
 
-## Migration: Crossplane → Native CRDs
-### Why migration is required
-Crossplane claim CRDs (`Agent`, `AgentRun`, `AgentProvider`) conflict with native CRDs because they share the same group/kind. Only one set can exist in a cluster.
-
-### Migration strategy (documented, not fully automated)
-1) Export Crossplane claims (`Agent`, `AgentRun`, `AgentProvider`) as YAML.
-2) Convert claim specs into native CRD specs:
-   - Remove Crossplane‑specific fields (`runtime`, `inputs`, `payloads`, etc.).
-   - Map provider references and runtime configuration into native schema.
-3) Delete Crossplane XRDs and compositions.
-4) Install `charts/agents` (native CRDs), then apply converted manifests.
-
-Deliverable: a mapping table and a one‑off conversion script (optional) to ease migration.
+## Crossplane removal
+Crossplane is no longer used by Agents. Remove any Crossplane installs before deploying the native chart.
 
 ## CI Validation (Required)
 Add or update CI checks to ensure:
@@ -165,8 +152,8 @@ A release is considered “fully functional” when:
    - Add startup validation for missing CRDs with actionable logs/errors.
 5) **CI Validation**
    - Add CI steps for CRD generation diff, kubeconform example validation, and Helm lint.
-6) **Migration Guide**
-   - Add a dedicated doc for Crossplane → native migration and optionally a converter script.
+6) **Crossplane Removal Guide**
+   - Keep removal guidance up to date for operators who still have Crossplane installed.
 
 ## Open Questions
 - Should the chart support an optional CRD install guard (e.g., pre‑install job) for clusters that skip `crds/`? Current best practice says no, but some GitOps tools may need explicit handling.
