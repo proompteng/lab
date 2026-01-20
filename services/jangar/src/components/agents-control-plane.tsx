@@ -183,7 +183,15 @@ export const deriveStatusLabel = (resource: Record<string, unknown>) => {
 
 const toneForStatus = (value: string) => {
   const normalized = normalizeStatusLabel(value)
-  if (normalized.includes('fail') || normalized.includes('error') || normalized.includes('invalid')) return 'danger'
+  if (
+    normalized.includes('fail') ||
+    normalized.includes('error') ||
+    normalized.includes('invalid') ||
+    normalized.includes('degrad') ||
+    normalized.includes('unhealthy') ||
+    normalized.includes('not ready')
+  )
+    return 'danger'
   if (normalized.includes('running') || normalized.includes('in progress')) return 'accent'
   if (normalized.includes('pending') || normalized.includes('queued')) return 'warning'
   if (normalized.includes('ready') || normalized.includes('succeeded')) return 'success'
