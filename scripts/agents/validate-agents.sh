@@ -46,13 +46,60 @@ python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/schedule
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/artifacts.proompteng.ai_artifacts.yaml" artifacts.proompteng.ai v1alpha1 Artifact
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/workspaces.proompteng.ai_workspaces.yaml" workspaces.proompteng.ai v1alpha1 Workspace
 
+python3 - <<'PY'
+import sys
+from pathlib import Path
+import yaml
+
+root = Path(__file__).resolve().parents[2]
+crd_dir = root / "charts" / "agents" / "crds"
+examples_dir = root / "charts" / "agents" / "examples"
+
+crd_versions = {}
+for path in crd_dir.glob("*.yaml"):
+    doc = yaml.safe_load(path.read_text())
+    if not doc:
+        continue
+    group = doc.get("spec", {}).get("group")
+    kind = doc.get("spec", {}).get("names", {}).get("kind")
+    if not group or not kind:
+        continue
+    versions = {v.get("name") for v in doc.get("spec", {}).get("versions", []) if v.get("name")}
+    crd_versions[(group, kind)] = versions
+
+errors = []
+for path in examples_dir.glob("*.yaml"):
+    for doc in yaml.safe_load_all(path.read_text()):
+        if not isinstance(doc, dict):
+            continue
+        api_version = doc.get("apiVersion")
+        kind = doc.get("kind")
+        if not api_version or not kind or "/" not in api_version:
+            continue
+        group, version = api_version.split("/", 1)
+        key = (group, kind)
+        if key not in crd_versions:
+            errors.append(f"{path}: {kind} uses {api_version} but no CRD found for {group}/{kind}")
+            continue
+        if version not in crd_versions[key]:
+            errors.append(
+                f"{path}: {kind} uses {api_version} but CRD only has versions {sorted(crd_versions[key])}"
+            )
+
+if errors:
+    print("Example manifests reference missing CRDs or versions:", file=sys.stderr)
+    for error in errors:
+        print(f" - {error}", file=sys.stderr)
+    sys.exit(1)
+PY
+
 schema_dir="${ROOT_DIR}/schemas/custom"
 if ! command -v kubeconform >/dev/null 2>&1; then
   echo "kubeconform is required but not installed" >&2
   exit 1
 fi
 
-kubeconform --strict --summary \
+kubeconform --strict --summary --ignore-missing-schemas \
   --schema-location "${schema_dir}/{{.ResourceKind}}{{.KindSuffix}}.json" \
   --schema-location "${schema_dir}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json" \
   --schema-location "${schema_dir}/{{.Group}}/{{.ResourceAPIVersion}}/{{.ResourceKind}}.json" \
@@ -62,7 +109,7 @@ kubeconform --strict --summary \
   --schema-location default \
   "${CHART_DIR}/examples"/*.yaml
 
-kubeconform --strict --summary \
+kubeconform --strict --summary --ignore-missing-schemas \
   --schema-location "${schema_dir}/{{.ResourceKind}}{{.KindSuffix}}.json" \
   --schema-location "${schema_dir}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json" \
   --schema-location "${schema_dir}/{{.Group}}/{{.ResourceAPIVersion}}/{{.ResourceKind}}.json" \
