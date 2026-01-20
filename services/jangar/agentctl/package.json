@@ -35,6 +35,7 @@
     "build:bins": "bun run sync:proto && bun run scripts/build-binaries.ts --all",
     "build:release": "bun run sync:proto && bun run scripts/build-release.ts --all",
     "lint": "bunx biome check --config-path ../../../biome.json src scripts",
+    "validate:bin": "bun run scripts/validate-binary.ts",
     "prepack": "bun run build && bun run build:bins"
   },
   "dependencies": {
