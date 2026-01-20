@@ -5,6 +5,7 @@ metadata:
 spec:
   durableName: jangar-agent-comms
   streamName: agent-comms
+  deliverSubject: jangar.agent-comms.deliver
   ackPolicy: explicit
   deliverPolicy: all
   replayPolicy: instant
