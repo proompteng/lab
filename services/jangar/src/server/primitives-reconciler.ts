@@ -1,6 +1,6 @@
+import { startResourceWatch } from '~/server/kube-watch'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
-import { startResourceWatch } from '~/server/kube-watch'
 import { hydrateMemoryRecord } from '~/server/primitives-memory'
 import { createPrimitivesStore } from '~/server/primitives-store'
 
@@ -107,9 +107,9 @@ const resolveDeliveryId = (resource: Record<string, unknown>) => {
 
 const reconcileAgentRunItem = async (
   item: Record<string, unknown>,
-  namespace: string,
+  _namespace: string,
   store: ReturnType<typeof createPrimitivesStore>,
-  kube: ReturnType<typeof createKubernetesClient>,
+  _kube: ReturnType<typeof createKubernetesClient>,
 ) => {
   try {
     const metadata = asRecord(item.metadata) ?? {}
@@ -171,9 +171,9 @@ const reconcileAgentRuns = async (
 
 const reconcileOrchestrationRunItem = async (
   item: Record<string, unknown>,
-  namespace: string,
+  _namespace: string,
   store: ReturnType<typeof createPrimitivesStore>,
-  kube: ReturnType<typeof createKubernetesClient>,
+  _kube: ReturnType<typeof createKubernetesClient>,
 ) => {
   try {
     const metadata = asRecord(item.metadata) ?? {}
@@ -327,7 +327,9 @@ export const startPrimitivesReconciler = () => {
 }
 
 export const stopPrimitivesReconciler = () => {
-  watchHandles.forEach((handle) => handle.stop())
+  for (const handle of watchHandles) {
+    handle.stop()
+  }
   watchHandles = []
   namespaceQueues.clear()
   if (intervalRef) {

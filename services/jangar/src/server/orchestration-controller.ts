@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
+import { startResourceWatch } from '~/server/kube-watch'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
-import { startResourceWatch } from '~/server/kube-watch'
 
 const DEFAULT_NAMESPACES = ['agents']
 const DEFAULT_INTERVAL_SECONDS = 0
@@ -781,10 +781,7 @@ const reconcileOrchestrationRun = async (
   const existingSteps = Array.isArray(status.stepStatuses)
     ? status.stepStatuses.filter((item): item is StepStatus => !!item && typeof item === 'object')
     : []
-  const { statuses: normalizedSteps, index: statusIndex } = normalizeStepStatuses(
-    steps as Record<string, unknown>[],
-    existingSteps,
-  )
+  const { index: statusIndex } = normalizeStepStatuses(steps as Record<string, unknown>[], existingSteps)
 
   const orchestrationParams = normalizeStringMap(asRecord(spec.parameters))
   let anyRunning = false
@@ -1294,7 +1291,9 @@ export const startOrchestrationController = async () => {
 }
 
 export const stopOrchestrationController = () => {
-  watchHandles.forEach((handle) => handle.stop())
+  for (const handle of watchHandles) {
+    handle.stop()
+  }
   watchHandles = []
   namespaceQueues.clear()
   if (intervalRef) {
