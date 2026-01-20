@@ -28,7 +28,8 @@ Artifacts:
 - Each archive contains a single `agentctl` binary (no suffix).
 - `services/jangar/agentctl/dist/release/*.sha256`
 - `services/jangar/agentctl/dist/release/agentctl.rb` (Homebrew formula with checksums, generated when all targets are built)
-- Compiled binaries are built with Bun's CJS output format to keep gRPC calls working under `bun build --compile`.
+- Compiled binaries use Bun's CJS output format plus `--compile-autoload-package-json` so `@grpc/grpc-js` can read its
+  embedded package metadata when running as a standalone binary.
 
 ## Validation (compiled binary)
 

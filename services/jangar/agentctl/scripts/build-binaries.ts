@@ -19,7 +19,18 @@ export const buildBinaries = async (argv: string[]) => {
     console.log(`Building ${target.bunTarget} → ${output}`)
 
     const proc = Bun.spawn(
-      ['bun', 'build', entry, '--compile', '--format=cjs', '--target', target.bunTarget, '--outfile', output],
+      [
+        'bun',
+        'build',
+        entry,
+        '--compile',
+        '--compile-autoload-package-json',
+        '--format=cjs',
+        '--target',
+        target.bunTarget,
+        '--outfile',
+        output,
+      ],
       {
         cwd: root,
         stderr: 'inherit',
