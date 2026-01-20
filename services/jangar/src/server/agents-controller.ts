@@ -1039,6 +1039,9 @@ const buildEventPayload = (implementation: Record<string, unknown>, parameters: 
   const issueBody = resolveParam(parameters, ['issueBody', 'body']) || text
   const issueUrl = resolveParam(parameters, ['issueUrl', 'url']) || sourceUrl
   const prompt = resolveParam(parameters, ['prompt']) || text || summary
+  const base = resolveParam(parameters, ['base', 'baseBranch', 'base_ref', 'baseRef'])
+  const head = resolveParam(parameters, ['head', 'headBranch', 'head_ref', 'headRef'])
+  const stage = resolveParam(parameters, ['stage', 'workflowStage', 'codexStage'])
 
   if ((!repository || !issueNumber) && provider === 'github' && externalId) {
     const parsed = parseGithubExternalId(externalId)
@@ -1055,6 +1058,9 @@ const buildEventPayload = (implementation: Record<string, unknown>, parameters: 
   if (issueTitle) payload.issueTitle = issueTitle
   if (issueBody) payload.issueBody = issueBody
   if (issueUrl) payload.issueUrl = issueUrl
+  if (base) payload.base = base
+  if (head) payload.head = head
+  if (stage) payload.stage = stage
   return payload
 }
 
