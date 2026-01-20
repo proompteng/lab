@@ -14,6 +14,7 @@ group = sys.argv[2]
 version = sys.argv[3]
 kind = sys.argv[4]
 kind_slug = kind.lower()
+kind_suffix = f"-{group}-{version}" if group else f"-{version}"
 
 import yaml
 
@@ -33,10 +34,12 @@ for version_entry in crd.get("spec", {}).get("versions", []):
             "definitions": schema.get("definitions", {}),
             "additionalProperties": schema.get("additionalProperties", True),
         }
-        # kubeconform resolution differs across kinds; emit both lowercase and original kind.
+        # kubeconform resolution differs across kinds; emit multiple naming styles.
         out_paths = [
             Path(f"schemas/custom/{group}_{version}_{kind_slug}.json"),
             Path(f"schemas/custom/{group}_{version}_{kind}.json"),
+            Path(f"schemas/custom/{kind}{kind_suffix}.json"),
+            Path(f"schemas/custom/{kind_slug}{kind_suffix}.json"),
         ]
         for out_path in out_paths:
             out_path.parent.mkdir(parents=True, exist_ok=True)
