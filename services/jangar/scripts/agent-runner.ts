@@ -251,12 +251,41 @@ const buildEnvironment = (base: Record<string, string | undefined>, updates: Rec
   return env
 }
 
+const runCommand = (command: string, args: string[]) =>
+  new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, { stdio: 'ignore' })
+    child.on('error', (error) => reject(error))
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve()
+        return
+      }
+      reject(new Error(`${command} exited with code ${code ?? 'unknown'}`))
+    })
+  })
+
+const configureGitAuth = async () => {
+  const token = (process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? '').trim()
+  if (!token) return
+
+  const authUrl = `https://x-access-token:${token}@github.com/`
+  try {
+    await runCommand('git', ['config', '--global', `url.${authUrl}.insteadOf`, 'https://github.com/'])
+    await runCommand('git', ['config', '--global', `url.${authUrl}.insteadOf`, 'ssh://git@github.com/'])
+    await runCommand('git', ['config', '--global', `url.${authUrl}.insteadOf`, 'git@github.com:'])
+  } catch (error) {
+    console.warn('[agent-runner] failed to configure git auth', error)
+  }
+}
+
 const run = async () => {
   const spec = await loadSpec()
   const providerName = spec.provider?.trim()
   if (!providerName) {
     throw new Error('Agent spec missing provider name')
   }
+
+  await configureGitAuth()
 
   const providerSpec = await loadProviderSpec(providerName, spec.providerSpec)
 
