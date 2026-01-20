@@ -1,0 +1,9 @@
+apiVersion: orchestration.proompteng.ai/v1alpha1
+kind: OrchestrationRun
+metadata:
+  name: sample-orchestration-run
+spec:
+  orchestrationRef:
+    name: sample-orchestration
+  parameters:
+    message: "hello from orchestration"

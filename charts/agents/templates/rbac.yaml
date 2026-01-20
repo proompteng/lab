@@ -45,9 +45,209 @@ rules:
       - update
       - patch
   - apiGroups:
+      - orchestration.proompteng.ai
+    resources:
+      - orchestrations
+      - orchestrationruns
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - orchestration.proompteng.ai
+    resources:
+      - orchestrations/status
+      - orchestrationruns/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - approvals.proompteng.ai
+    resources:
+      - approvalpolicies
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - approvals.proompteng.ai
+    resources:
+      - approvalpolicies/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - budgets.proompteng.ai
+    resources:
+      - budgets
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - budgets.proompteng.ai
+    resources:
+      - budgets/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - security.proompteng.ai
+    resources:
+      - secretbindings
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - security.proompteng.ai
+    resources:
+      - secretbindings/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - signals.proompteng.ai
+    resources:
+      - signals
+      - signaldeliveries
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - signals.proompteng.ai
+    resources:
+      - signals/status
+      - signaldeliveries/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - tools.proompteng.ai
+    resources:
+      - tools
+      - toolruns
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - tools.proompteng.ai
+    resources:
+      - tools/status
+      - toolruns/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - schedules.proompteng.ai
+    resources:
+      - schedules
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - schedules.proompteng.ai
+    resources:
+      - schedules/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - artifacts.proompteng.ai
+    resources:
+      - artifacts
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - artifacts.proompteng.ai
+    resources:
+      - artifacts/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - workspaces.proompteng.ai
+    resources:
+      - workspaces
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - workspaces.proompteng.ai
+    resources:
+      - workspaces/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
       - batch
     resources:
       - jobs
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - batch
+    resources:
+      - cronjobs
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups: [""]
+    resources:
+      - persistentvolumeclaims
     verbs:
       - get
       - list

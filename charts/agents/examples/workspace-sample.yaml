@@ -1,0 +1,11 @@
+apiVersion: workspaces.proompteng.ai/v1alpha1
+kind: Workspace
+metadata:
+  name: shared-workspace
+spec:
+  storageClassName: standard
+  size: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  ttlSeconds: 86400
+

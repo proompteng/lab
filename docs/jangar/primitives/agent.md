@@ -3,7 +3,7 @@
 ## Purpose
 
 The `Agent` primitive represents a provider-agnostic intent to run an agent workload. It decouples the
-user-facing API from any specific runtime (Argo, Temporal, Kubernetes Jobs, etc.) and provides a stable
+user-facing API from any specific runtime (native workflow runtime, Temporal, custom jobs, etc.) and provides a stable
 contract for long-horizon agent execution.
 
 Jangar is the control plane for all `Agent` resources. All creation, update, and deletion flows
@@ -11,13 +11,9 @@ must pass through Jangar.
 
 ## Grounding in the current codebase
 
-- Workflow submission runtime: `services/facteur/internal/argo/workflow_runner.go`
-- Argo client + workflow build: `services/facteur/internal/argo/kube_client.go`
-- Orchestration dispatch: `services/facteur/internal/orchestrator/implementation.go`
-- Workflow templates (Argo):
-  - `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
-  - `argocd/applications/froussard/codex-autonomous-workflow-template.yaml`
-  - `argocd/applications/argo-workflows/codex-research-workflow.yaml`
+- Agents controller: `services/jangar/src/server/agents-controller.ts`
+- Orchestration controller: `services/jangar/src/server/orchestration-controller.ts`
+- Runtime entrypoint: `services/jangar/scripts/agent-runner.ts`
 
 ## CRDs
 
@@ -33,12 +29,6 @@ metadata:
 spec:
   providerRef:
     name: codex
-  runtime:
-    type: argo
-    argo:
-      workflowTemplate: github-codex-implementation
-      namespace: argo-workflows
-      serviceAccount: codex-workflow
   inputs:
     repository: proompteng/lab
     issueNumber: 1966
@@ -67,8 +57,12 @@ metadata:
 spec:
   agentRef:
     name: codex-implementation
+  implementationSpecRef:
+    name: codex-impl-sample
   parameters:
     eventBodyB64: e30=
+  runtime:
+    type: workflow
   deliveryId: 3f6d7b5d-acde-4aa0-9f31-8b4d2c4d3a4e
 ```
 
@@ -130,28 +124,24 @@ The unified entrypoint must exist in every runtime image used for agent executio
 - Provider-specific fields live under `spec.runtime.<provider>` or `spec.provider.<provider>`.
 - The Jangar controller binds runtime providers at reconciliation time based on the selected runtime profile.
 
-## Runtime mapping (Argo)
+## Native runtime (default)
 
-- `Agent` references an Argo `WorkflowTemplate` by name.
-- `AgentRun` composes into an Argo `Workflow` with parameters mapped from `AgentRun.spec.parameters`.
+- `AgentRun` launches a Kubernetes Job with `agent-runner`.
+- Parameters are rendered into config files and env for the job runtime.
 
 ## Status contract
 
 `AgentRun.status` must include:
 
 - `phase`: Pending | Running | Succeeded | Failed | Cancelled
-- `workflowName`, `workflowUID` (if provider is Argo)
+- `runtimeRef` (job or external runtime metadata)
 - `submittedAt`, `finishedAt`
 - `artifactKeys` and any runtime metadata
 
 ## Observability
 
 - Enforce `WORKFLOW_*` and `AGENT_*` env vars for traceability.
-- Use existing NATS + Kafka patterns:
-  - NATS agent comms: `docs/nats-argo-agent-communications.md`
-  - Kafka workflow completion: `apps/froussard/scripts/codex-run-complete-kafka.ts`
 
 ## Security
 
-- Default service account remains `codex-workflow` for Argo executions.
 - Privileged workloads must be gated with explicit policy (see `supporting-primitives.md`).

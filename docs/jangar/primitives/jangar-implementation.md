@@ -92,14 +92,17 @@ CREATE TABLE IF NOT EXISTS audit_events (
 Jangar must implement:
 
 - CRD creation + updates (Agent, AgentRun, Memory, Orchestration)
-- Status reconciliation (poll or watch provider resources)
+- Status reconciliation (watch provider resources; optional resync interval)
 - Policy enforcement (budgets, approvals, secrets)
 - Retry + idempotency
 - Audit log emission
+- Supporting primitives reconciliation (Tool, ApprovalPolicy, Budget, SecretBinding, Signal, SignalDelivery, Schedule, Artifact, Workspace)
+- Schedule execution via native Kubernetes CronJobs (no vendor workflows)
+- Workspace provisioning via PVCs (status reflects PVC phase)
 
 ## 4) Provider watchers
 
-- Argo: watch `Workflow` and `WorkflowTemplate`
+- Native workflow runtime: watch `Job` status for AgentRun/ToolRun execution
 - CNPG: read secrets and cluster status
 - NATS/Kafka: ingest runtime events
 

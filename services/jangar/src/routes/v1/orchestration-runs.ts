@@ -166,7 +166,7 @@ export const postOrchestrationRunsHandler = async (
     const record = await store.createOrchestrationRun({
       orchestrationName: parsed.orchestrationRef.name,
       deliveryId,
-      provider: 'argo',
+      provider: 'workflow',
       status: statusPhase,
       externalRunId,
       payload: { request: payload, resource: applied, status: asRecord(applied.status) ?? {} },

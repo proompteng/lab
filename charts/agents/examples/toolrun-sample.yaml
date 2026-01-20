@@ -1,0 +1,9 @@
+apiVersion: tools.proompteng.ai/v1alpha1
+kind: ToolRun
+metadata:
+  name: lint-run
+spec:
+  toolRef:
+    name: echo-tool
+  parameters:
+    path: services/jangar

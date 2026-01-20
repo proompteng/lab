@@ -1,3 +1,4 @@
+import { startResourceWatch } from '~/server/kube-watch'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { hydrateMemoryRecord } from '~/server/primitives-memory'
@@ -20,11 +21,14 @@ type OrchestrationRunStatus = {
 }
 
 const DEFAULT_NAMESPACES = ['jangar']
-const DEFAULT_INTERVAL_SECONDS = 30
+const DEFAULT_INTERVAL_SECONDS = 0
 
 let started = false
 let intervalRef: NodeJS.Timeout | null = null
 let reconciling = false
+let watchHandles: Array<{ stop: () => void }> = []
+const namespaceQueues = new Map<string, Promise<void>>()
+let storeRef: ReturnType<typeof createPrimitivesStore> | null = null
 
 const shouldStart = () => {
   if (process.env.NODE_ENV === 'test') return false
@@ -45,8 +49,19 @@ const parseNamespaces = () => {
 const parseIntervalSeconds = () => {
   const raw = process.env.JANGAR_PRIMITIVES_RECONCILER_INTERVAL_SECONDS
   const parsed = raw ? Number.parseInt(raw, 10) : NaN
-  if (Number.isFinite(parsed) && parsed > 0) return parsed
+  if (Number.isFinite(parsed) && parsed >= 0) return parsed
   return DEFAULT_INTERVAL_SECONDS
+}
+
+const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
+  const current = namespaceQueues.get(namespace) ?? Promise.resolve()
+  const next = current
+    .catch(() => undefined)
+    .then(task)
+    .catch((error) => {
+      console.warn('[jangar] primitives reconciler task failed', error)
+    })
+  namespaceQueues.set(namespace, next)
 }
 
 const normalizePayload = (payload: Record<string, unknown> | null | undefined) =>
@@ -84,9 +99,62 @@ const resolveDeliveryId = (resource: Record<string, unknown>) => {
   const labels = asRecord(readNested(resource, ['metadata', 'labels']))
   return (
     asString(labels?.['jangar.proompteng.ai/delivery-id']) ??
+    asString(readNested(resource, ['spec', 'deliveryId'])) ??
     asString(readNested(resource, ['spec', 'idempotencyKey'])) ??
     null
   )
+}
+
+const reconcileAgentRunItem = async (
+  item: Record<string, unknown>,
+  _namespace: string,
+  store: ReturnType<typeof createPrimitivesStore>,
+  _kube: ReturnType<typeof createKubernetesClient>,
+) => {
+  try {
+    const metadata = asRecord(item.metadata) ?? {}
+    const externalRunId = asString(metadata.name)
+    const deliveryId = resolveDeliveryId(item)
+    const agentName = asString(readNested(item, ['spec', 'agentRef', 'name']))
+    const status = extractAgentRunStatus(item)
+    const runtimeType =
+      asString(readNested(status.runtimeRef ?? {}, ['type'])) ?? asString(readNested(item, ['spec', 'runtime', 'type']))
+    const provider =
+      runtimeType === 'temporal' || runtimeType === 'custom' ? runtimeType : runtimeType ? 'workflow' : 'workflow'
+
+    let record = deliveryId ? await store.getAgentRunByDeliveryId(deliveryId) : null
+    if (!record && externalRunId) {
+      record = await store.getAgentRunByExternalRunId(externalRunId)
+    }
+
+    if (!record && deliveryId && agentName) {
+      record = await store.createAgentRun({
+        agentName,
+        deliveryId,
+        provider,
+        status: status.phase,
+        externalRunId: externalRunId ?? null,
+        payload: { resource: item, status },
+      })
+    }
+
+    if (!record) return
+
+    const payload = {
+      ...normalizePayload(record.payload),
+      resource: item,
+      status,
+    }
+
+    await store.updateAgentRunDetails({
+      id: record.id,
+      status: status.phase,
+      externalRunId: externalRunId ?? record.externalRunId ?? null,
+      payload,
+    })
+  } catch (error) {
+    console.warn('[jangar] failed to reconcile agent run', error)
+  }
 }
 
 const reconcileAgentRuns = async (
@@ -96,48 +164,57 @@ const reconcileAgentRuns = async (
 ) => {
   const response = await kube.list(RESOURCE_MAP.AgentRun, namespace)
   const items = Array.isArray(response.items) ? (response.items as Record<string, unknown>[]) : []
-
   for (const item of items) {
-    try {
-      const metadata = asRecord(item.metadata) ?? {}
-      const externalRunId = asString(metadata.name)
-      const deliveryId = resolveDeliveryId(item)
-      const agentName = asString(readNested(item, ['spec', 'agentRef', 'name']))
-      const status = extractAgentRunStatus(item)
+    await reconcileAgentRunItem(item, namespace, store, kube)
+  }
+}
 
-      let record = deliveryId ? await store.getAgentRunByDeliveryId(deliveryId) : null
-      if (!record && externalRunId) {
-        record = await store.getAgentRunByExternalRunId(externalRunId)
-      }
+const reconcileOrchestrationRunItem = async (
+  item: Record<string, unknown>,
+  _namespace: string,
+  store: ReturnType<typeof createPrimitivesStore>,
+  _kube: ReturnType<typeof createKubernetesClient>,
+) => {
+  try {
+    const metadata = asRecord(item.metadata) ?? {}
+    const externalRunId = asString(metadata.name)
+    const deliveryId = resolveDeliveryId(item)
+    const orchestrationName = asString(readNested(item, ['spec', 'orchestrationRef', 'name']))
+    const status = extractOrchestrationRunStatus(item)
+    const provider = 'workflow'
 
-      if (!record && deliveryId && agentName) {
-        record = await store.createAgentRun({
-          agentName,
-          deliveryId,
-          provider: 'argo',
-          status: status.phase,
-          externalRunId: externalRunId ?? null,
-          payload: { resource: item, status },
-        })
-      }
-
-      if (!record) continue
-
-      const payload = {
-        ...normalizePayload(record.payload),
-        resource: item,
-        status,
-      }
-
-      await store.updateAgentRunDetails({
-        id: record.id,
-        status: status.phase,
-        externalRunId: externalRunId ?? record.externalRunId ?? null,
-        payload,
-      })
-    } catch (error) {
-      console.warn('[jangar] failed to reconcile agent run', error)
+    let record = deliveryId ? await store.getOrchestrationRunByDeliveryId(deliveryId) : null
+    if (!record && externalRunId) {
+      record = await store.getOrchestrationRunByExternalRunId(externalRunId)
     }
+
+    if (!record && deliveryId && orchestrationName) {
+      record = await store.createOrchestrationRun({
+        orchestrationName,
+        deliveryId,
+        provider,
+        status: status.phase,
+        externalRunId: externalRunId ?? null,
+        payload: { resource: item, status },
+      })
+    }
+
+    if (!record) return
+
+    const payload = {
+      ...normalizePayload(record.payload),
+      resource: item,
+      status,
+    }
+
+    await store.updateOrchestrationRunDetails({
+      id: record.id,
+      status: status.phase,
+      externalRunId: externalRunId ?? record.externalRunId ?? null,
+      payload,
+    })
+  } catch (error) {
+    console.warn('[jangar] failed to reconcile orchestration run', error)
   }
 }
 
@@ -148,48 +225,8 @@ const reconcileOrchestrationRuns = async (
 ) => {
   const response = await kube.list(RESOURCE_MAP.OrchestrationRun, namespace)
   const items = Array.isArray(response.items) ? (response.items as Record<string, unknown>[]) : []
-
   for (const item of items) {
-    try {
-      const metadata = asRecord(item.metadata) ?? {}
-      const externalRunId = asString(metadata.name)
-      const deliveryId = resolveDeliveryId(item)
-      const orchestrationName = asString(readNested(item, ['spec', 'orchestrationRef', 'name']))
-      const status = extractOrchestrationRunStatus(item)
-
-      let record = deliveryId ? await store.getOrchestrationRunByDeliveryId(deliveryId) : null
-      if (!record && externalRunId) {
-        record = await store.getOrchestrationRunByExternalRunId(externalRunId)
-      }
-
-      if (!record && deliveryId && orchestrationName) {
-        record = await store.createOrchestrationRun({
-          orchestrationName,
-          deliveryId,
-          provider: 'argo',
-          status: status.phase,
-          externalRunId: externalRunId ?? null,
-          payload: { resource: item, status },
-        })
-      }
-
-      if (!record) continue
-
-      const payload = {
-        ...normalizePayload(record.payload),
-        resource: item,
-        status,
-      }
-
-      await store.updateOrchestrationRunDetails({
-        id: record.id,
-        status: status.phase,
-        externalRunId: externalRunId ?? record.externalRunId ?? null,
-        payload,
-      })
-    } catch (error) {
-      console.warn('[jangar] failed to reconcile orchestration run', error)
-    }
+    await reconcileOrchestrationRunItem(item, namespace, store, kube)
   }
 }
 
@@ -209,14 +246,15 @@ const reconcileMemories = async (
   }
 }
 
-const reconcileOnce = async () => {
+const reconcileOnce = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  store: ReturnType<typeof createPrimitivesStore>,
+  namespaces: string[],
+) => {
   if (reconciling) return
   reconciling = true
-  const store = createPrimitivesStore()
-  const kube = createKubernetesClient()
   try {
     await store.ready
-    const namespaces = parseNamespaces()
     for (const namespace of namespaces) {
       await reconcileAgentRuns(namespace, store, kube)
       await reconcileOrchestrationRuns(namespace, store, kube)
@@ -226,24 +264,81 @@ const reconcileOnce = async () => {
     console.warn('[jangar] primitives reconciler failed', error)
   } finally {
     reconciling = false
-    await store.close()
   }
 }
 
 export const startPrimitivesReconciler = () => {
   if (started || !shouldStart()) return
   started = true
-  void reconcileOnce()
-  const intervalMs = parseIntervalSeconds() * 1000
-  intervalRef = setInterval(() => {
-    void reconcileOnce()
-  }, intervalMs)
+  const store = createPrimitivesStore()
+  storeRef = store
+  const kube = createKubernetesClient()
+  const namespaces = parseNamespaces()
+
+  void reconcileOnce(kube, store, namespaces)
+
+  for (const namespace of namespaces) {
+    watchHandles.push(
+      startResourceWatch({
+        resource: RESOURCE_MAP.AgentRun,
+        namespace,
+        onEvent: (event) => {
+          const resource = asRecord(event.object)
+          if (!resource || event.type === 'DELETED') return
+          enqueueNamespaceTask(namespace, () => reconcileAgentRunItem(resource, namespace, store, kube))
+        },
+        onError: (error) => console.warn('[jangar] primitives agent run watch failed', error),
+      }),
+    )
+    watchHandles.push(
+      startResourceWatch({
+        resource: RESOURCE_MAP.OrchestrationRun,
+        namespace,
+        onEvent: (event) => {
+          const resource = asRecord(event.object)
+          if (!resource || event.type === 'DELETED') return
+          enqueueNamespaceTask(namespace, () => reconcileOrchestrationRunItem(resource, namespace, store, kube))
+        },
+        onError: (error) => console.warn('[jangar] primitives orchestration run watch failed', error),
+      }),
+    )
+    watchHandles.push(
+      startResourceWatch({
+        resource: RESOURCE_MAP.Memory,
+        namespace,
+        onEvent: (event) => {
+          const resource = asRecord(event.object)
+          if (!resource || event.type === 'DELETED') return
+          enqueueNamespaceTask(namespace, async () => {
+            await reconcileMemories(namespace, store, kube)
+          })
+        },
+        onError: (error) => console.warn('[jangar] primitives memory watch failed', error),
+      }),
+    )
+  }
+
+  const intervalSeconds = parseIntervalSeconds()
+  if (intervalSeconds > 0) {
+    intervalRef = setInterval(() => {
+      void reconcileOnce(kube, store, namespaces)
+    }, intervalSeconds * 1000)
+  }
 }
 
 export const stopPrimitivesReconciler = () => {
+  for (const handle of watchHandles) {
+    handle.stop()
+  }
+  watchHandles = []
+  namespaceQueues.clear()
   if (intervalRef) {
     clearInterval(intervalRef)
     intervalRef = null
+  }
+  if (storeRef) {
+    void storeRef.close()
+    storeRef = null
   }
   started = false
 }

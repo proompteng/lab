@@ -2,7 +2,7 @@
 
 Status: Current (2026-01-19)
 
-Location: `services/jangar/agentctl`
+Location: `services/jangar/agentctl` (ships with the Jangar service; not a separate product).
 
 ## Purpose
 `agentctl` is the Jangar CLI for managing Agents primitives and submitting AgentRuns without hand‑writing YAML.
@@ -10,6 +10,7 @@ It talks to the Jangar controller over gRPC.
 
 ## Goals
 - CRUD for Agent, AgentRun, ImplementationSpec, ImplementationSource, Memory.
+- CRUD for supporting primitives (Tool, Schedule, Workspace, Signal, ApprovalPolicy, Budget, SecretBinding).
 - First‑class “run” command to submit an AgentRun from flags or a spec file.
 - Works against any Kubernetes cluster where Jangar is deployed.
 - In‑cluster gRPC by default (port‑forward or in‑cluster usage).
@@ -24,6 +25,10 @@ It talks to the Jangar controller over gRPC.
 - Client talks to the Jangar gRPC API (no direct Kubernetes access).
 - Default namespace is `agents`, with explicit overrides via flags/config.
 - Jangar is the source of truth for list/get/apply/delete operations.
+
+### gRPC connectivity (current + future)
+- **Current:** in-cluster gRPC only; external access via `kubectl port-forward` or an in-cluster client.
+- **Future-proofing:** TLS/mTLS support, optional auth tokens, and a dedicated Ingress/gateway can be layered without changing CLI commands.
 
 ## Command Surface (proposed)
 ### Core
@@ -55,6 +60,15 @@ It talks to the Jangar controller over gRPC.
 - `agentctl memory get <name>`
 - `agentctl memory apply -f <file>`
 - `agentctl memory delete <name>`
+
+### Supporting primitives
+- `agentctl tool list|get|apply|delete`
+- `agentctl schedule list|get|apply|delete`
+- `agentctl workspace list|get|apply|delete`
+- `agentctl signal list|get|apply|delete`
+- `agentctl approval list|get|apply|delete`
+- `agentctl budget list|get|apply|delete`
+- `agentctl secretbinding list|get|apply|delete`
 
 ### AgentRun
 - `agentctl run submit --agent <name> --impl <name> --runtime <type> [--workload-image ...] [--cpu ...] [--memory ...] [--idempotency-key ...]`

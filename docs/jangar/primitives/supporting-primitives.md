@@ -42,7 +42,8 @@ Used for:
 **Purpose:** time-based triggers for AgentRuns and OrchestrationRuns.
 
 - `Schedule` defines cron, timezone, and target resource
-- Provider-agnostic; can map to K8s CronJob or Temporal schedules
+- Native implementation uses Kubernetes `CronJob` to create AgentRun/OrchestrationRun instances (no vendor workflows)
+- `targetRef.kind` must reference an existing `AgentRun` or `OrchestrationRun` template in the cluster
 
 ## 5) Budget
 
@@ -72,6 +73,7 @@ Used for:
 
 - `Workspace` defines storage class, size, and lifecycle
 - Orchestration steps can mount a shared workspace
+- Native implementation provisions PVCs and reflects PVC status in Workspace status
 
 ## Common design rules
 

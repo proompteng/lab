@@ -80,11 +80,21 @@ envFromConfigMapRefs: []
 controller:
   enabled: true
   namespaces: []
-  intervalSeconds: 15
+  intervalSeconds: 0
   concurrency:
     perNamespace: 10
     perAgent: 5
     cluster: 100
+
+orchestrationController:
+  enabled: true
+  namespaces: []
+  intervalSeconds: 0
+
+supportingController:
+  enabled: true
+  namespaces: []
+  intervalSeconds: 0
 
 agentComms:
   enabled: false

@@ -1,22 +1,24 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GithubWebhookEvent } from '../github-review-ingest'
 import type { GithubReviewStore } from '../github-review-store'
 
-vi.mock('../github-worktree-snapshot', () => ({
-  refreshWorktreeSnapshot: vi.fn(async () => ({
-    repository: 'proompteng/lab',
-    prNumber: 0,
-    commitSha: 'mock',
-    baseSha: 'base',
-    worktreeName: 'mock',
-    worktreePath: '/tmp/mock',
-    fileCount: 0,
-  })),
-}))
-
 const globalState = globalThis as typeof globalThis & {
   __githubReviewStoreMock?: GithubReviewStore
+  __githubWorktreeSnapshotMock?: (input: {
+    repository: string
+    prNumber: number
+    headRef: string
+    baseRef: string
+  }) => Promise<{
+    repository: string
+    prNumber: number
+    commitSha: string
+    baseSha: string
+    worktreeName: string
+    worktreePath: string
+    fileCount: number
+  }>
 }
 
 const buildStore = (): GithubReviewStore => ({
@@ -63,6 +65,19 @@ const requireHandler = async () => {
 beforeEach(() => {
   vi.clearAllMocks()
   globalState.__githubReviewStoreMock = buildStore()
+  globalState.__githubWorktreeSnapshotMock = vi.fn(async () => ({
+    repository: 'proompteng/lab',
+    prNumber: 0,
+    commitSha: 'mock',
+    baseSha: 'base',
+    worktreeName: 'mock',
+    worktreePath: '/tmp/mock',
+    fileCount: 0,
+  }))
+})
+
+afterEach(() => {
+  delete globalState.__githubWorktreeSnapshotMock
 })
 
 describe('github review ingest', () => {

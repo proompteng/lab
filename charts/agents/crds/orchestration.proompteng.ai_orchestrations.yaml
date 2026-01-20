@@ -1,0 +1,123 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
+  name: orchestrations.orchestration.proompteng.ai
+spec:
+  group: orchestration.proompteng.ai
+  names:
+    kind: Orchestration
+    listKind: OrchestrationList
+    plural: orchestrations
+    singular: orchestration
+  scope: Namespaced
+  versions:
+    - additionalPrinterColumns:
+        - jsonPath: .status.phase
+          name: Phase
+          type: string
+        - jsonPath: .spec.entrypoint
+          name: Entrypoint
+          type: string
+      name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            apiVersion:
+              description: |-
+                APIVersion defines the versioned schema of this representation of an object.
+                Servers should convert recognized schemas to the latest internal value, and
+                may reject unrecognized values.
+                More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+              type: string
+            kind:
+              description: |-
+                Kind is a string value representing the REST resource this object represents.
+                Servers may infer this from the endpoint the client submits requests to.
+                Cannot be updated.
+                In CamelCase.
+                More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              properties:
+                entrypoint:
+                  type: string
+                steps:
+                  type: array
+                  items:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                    properties:
+                      name:
+                        type: string
+                      kind:
+                        type: string
+                      dependsOn:
+                        type: array
+                        items:
+                          type: string
+                      agentRef:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                      toolRef:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                      orchestrationRef:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                      policyRef:
+                        type: string
+                      with:
+                        type: object
+                        additionalProperties:
+                          type: string
+                    required:
+                      - name
+                      - kind
+                policies:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+              required:
+                - steps
+            status:
+              type: object
+              properties:
+                observedGeneration:
+                  format: int64
+                  type: integer
+                phase:
+                  type: string
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                    required:
+                      - type
+                      - status
+      subresources:
+        status: {}

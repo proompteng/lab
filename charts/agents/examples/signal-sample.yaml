@@ -1,0 +1,8 @@
+apiVersion: signals.proompteng.ai/v1alpha1
+kind: Signal
+metadata:
+  name: human-approval
+spec:
+  channel: slack
+  description: Manual approval signal
+

@@ -30,6 +30,7 @@ type GithubReviewIngestResult = {
 
 const globalOverrides = globalThis as typeof globalThis & {
   __githubReviewStoreMock?: GithubReviewStore
+  __githubWorktreeSnapshotMock?: typeof refreshWorktreeSnapshot
 }
 
 let cachedStore: GithubReviewStore | null = null
@@ -41,6 +42,8 @@ const getStore = () => {
   }
   return cachedStore
 }
+
+const getWorktreeSnapshot = () => globalOverrides.__githubWorktreeSnapshotMock ?? refreshWorktreeSnapshot
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -309,7 +312,7 @@ const maybeRefreshWorktreeSnapshot = async (
   const existing = await store.getPrWorktree({ repository: input.repository, prNumber: input.prNumber })
   if (existing?.headSha && input.headSha && existing.headSha === input.headSha) return
   try {
-    await refreshWorktreeSnapshot({
+    await getWorktreeSnapshot()({
       repository: input.repository,
       prNumber: input.prNumber,
       headRef: input.headRef,

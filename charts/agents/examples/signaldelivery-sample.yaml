@@ -1,0 +1,11 @@
+apiVersion: signals.proompteng.ai/v1alpha1
+kind: SignalDelivery
+metadata:
+  name: approval-1
+spec:
+  signalRef:
+    name: human-approval
+  deliveryId: "delivery-001"
+  payload:
+    approved: true
+

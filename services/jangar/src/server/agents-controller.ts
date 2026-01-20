@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createTemporalClient, loadTemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
+import { startResourceWatch } from '~/server/kube-watch'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 
 const DEFAULT_NAMESPACES = ['agents']
-const DEFAULT_INTERVAL_SECONDS = 15
+const DEFAULT_INTERVAL_SECONDS = 0
 const DEFAULT_CONCURRENCY = {
   perNamespace: 10,
   perAgent: 5,
@@ -72,10 +73,26 @@ type WorkflowStatus = {
   lastTransitionTime: string
   steps: WorkflowStepStatus[]
 }
+
+type NamespaceState = {
+  agents: Map<string, Record<string, unknown>>
+  providers: Map<string, Record<string, unknown>>
+  specs: Map<string, Record<string, unknown>>
+  memories: Map<string, Record<string, unknown>>
+  runs: Map<string, Record<string, unknown>>
+}
+
+type ControllerState = {
+  namespaces: Map<string, NamespaceState>
+}
+
 let started = false
 let intervalRef: NodeJS.Timeout | null = null
 let reconciling = false
 let temporalClientPromise: ReturnType<typeof createTemporalClient> | null = null
+let watchHandles: Array<{ stop: () => void }> = []
+let _controllerState: ControllerState | null = null
+const namespaceQueues = new Map<string, Promise<void>>()
 
 const nowIso = () => new Date().toISOString()
 
@@ -128,7 +145,7 @@ const resolveNamespaces = async () => {
 const parseIntervalSeconds = () => {
   const raw = process.env.JANGAR_AGENTS_CONTROLLER_INTERVAL_SECONDS
   const parsed = raw ? Number.parseInt(raw, 10) : NaN
-  if (Number.isFinite(parsed) && parsed > 0) return parsed
+  if (Number.isFinite(parsed) && parsed >= 0) return parsed
   return DEFAULT_INTERVAL_SECONDS
 }
 
@@ -585,6 +602,73 @@ const resolveMemory = (
     return memories.find((memory) => asString(readNested(memory, ['metadata', 'name'])) === agentRef) ?? null
   }
   return selectDefaultMemory(memories)
+}
+
+const createNamespaceState = (): NamespaceState => ({
+  agents: new Map(),
+  providers: new Map(),
+  specs: new Map(),
+  memories: new Map(),
+  runs: new Map(),
+})
+
+const ensureNamespaceState = (state: ControllerState, namespace: string) => {
+  const existing = state.namespaces.get(namespace)
+  if (existing) return existing
+  const created = createNamespaceState()
+  state.namespaces.set(namespace, created)
+  return created
+}
+
+const updateStateMap = (
+  map: Map<string, Record<string, unknown>>,
+  eventType: string | undefined,
+  resource: Record<string, unknown>,
+) => {
+  const name = asString(readNested(resource, ['metadata', 'name']))
+  if (!name) return
+  if (eventType === 'DELETED') {
+    map.delete(name)
+    return
+  }
+  map.set(name, resource)
+}
+
+const snapshotNamespace = (state: NamespaceState) => ({
+  agents: Array.from(state.agents.values()),
+  providers: Array.from(state.providers.values()),
+  specs: Array.from(state.specs.values()),
+  memories: Array.from(state.memories.values()),
+  runs: Array.from(state.runs.values()),
+})
+
+const buildInFlightCounts = (state: ControllerState, namespace: string) => {
+  const perAgent = new Map<string, number>()
+  let total = 0
+  let cluster = 0
+  for (const [ns, nsState] of state.namespaces.entries()) {
+    for (const run of nsState.runs.values()) {
+      const phase = asString(readNested(run, ['status', 'phase'])) ?? 'Pending'
+      if (phase !== 'Running') continue
+      cluster += 1
+      if (ns !== namespace) continue
+      total += 1
+      const agentName = asString(readNested(run, ['spec', 'agentRef', 'name'])) ?? 'unknown'
+      perAgent.set(agentName, (perAgent.get(agentName) ?? 0) + 1)
+    }
+  }
+  return { total, perAgent, cluster }
+}
+
+const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
+  const current = namespaceQueues.get(namespace) ?? Promise.resolve()
+  const next = current
+    .catch(() => undefined)
+    .then(task)
+    .catch((error) => {
+      console.warn('[jangar] agents controller task failed', error)
+    })
+  namespaceQueues.set(namespace, next)
 }
 
 const buildRuntimeRef = (
@@ -2099,17 +2183,14 @@ const reconcileAgentRun = async (
   }
 }
 
-const reconcileNamespace = async (
+const reconcileNamespaceSnapshot = async (
   kube: ReturnType<typeof createKubernetesClient>,
   namespace: string,
-  runs: Record<string, unknown>[],
-  globalInFlight: number,
+  snapshot: ReturnType<typeof snapshotNamespace>,
+  state: ControllerState,
   concurrency: ReturnType<typeof parseConcurrency>,
 ) => {
-  const memories = listItems(await kube.list(RESOURCE_MAP.Memory, namespace))
-  const agents = listItems(await kube.list(RESOURCE_MAP.Agent, namespace))
-  const specs = listItems(await kube.list(RESOURCE_MAP.ImplementationSpec, namespace))
-  const providers = listItems(await kube.list(RESOURCE_MAP.AgentProvider, namespace))
+  const { agents, providers, specs, memories, runs } = snapshot
 
   for (const memory of memories) {
     await reconcileMemory(kube, memory, namespace)
@@ -2127,51 +2208,193 @@ const reconcileNamespace = async (
     await reconcileImplementationSpec(kube, spec)
   }
 
+  const counts = buildInFlightCounts(state, namespace)
   const inFlight = {
-    total: 0,
-    perAgent: new Map<string, number>(),
-  }
-  for (const run of runs) {
-    const phase = asString(readNested(run, ['status', 'phase'])) ?? 'Pending'
-    if (phase === 'Running') {
-      inFlight.total += 1
-      const agent = asString(readNested(run, ['spec', 'agentRef', 'name'])) ?? 'unknown'
-      inFlight.perAgent.set(agent, (inFlight.perAgent.get(agent) ?? 0) + 1)
-    }
+    total: counts.total,
+    perAgent: counts.perAgent,
   }
 
   for (const run of runs) {
-    await reconcileAgentRun(kube, run, namespace, memories, concurrency, inFlight, globalInFlight)
+    await reconcileAgentRun(kube, run, namespace, memories, concurrency, inFlight, counts.cluster)
   }
 }
 
-const reconcileOnce = async () => {
+const reconcileRunWithState = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+  run: Record<string, unknown>,
+  state: ControllerState,
+  concurrency: ReturnType<typeof parseConcurrency>,
+) => {
+  const snapshot = snapshotNamespace(ensureNamespaceState(state, namespace))
+  const counts = buildInFlightCounts(state, namespace)
+  const inFlight = {
+    total: counts.total,
+    perAgent: counts.perAgent,
+  }
+  await reconcileAgentRun(kube, run, namespace, snapshot.memories, concurrency, inFlight, counts.cluster)
+}
+
+const reconcileNamespaceState = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+  state: ControllerState,
+  concurrency: ReturnType<typeof parseConcurrency>,
+) => {
+  const snapshot = snapshotNamespace(ensureNamespaceState(state, namespace))
+  await reconcileNamespaceSnapshot(kube, namespace, snapshot, state, concurrency)
+}
+
+const reconcileAll = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  state: ControllerState,
+  namespaces: string[],
+  concurrency: ReturnType<typeof parseConcurrency>,
+) => {
   if (reconciling) return
   reconciling = true
   try {
-    const namespaces = await resolveNamespaces()
-    const kube = createKubernetesClient()
-    const concurrency = parseConcurrency()
-    const runsByNamespace = new Map<string, Record<string, unknown>[]>()
-    let globalInFlight = 0
     for (const namespace of namespaces) {
-      const runs = listItems(await kube.list(RESOURCE_MAP.AgentRun, namespace))
-      runsByNamespace.set(namespace, runs)
-      for (const run of runs) {
-        const phase = asString(readNested(run, ['status', 'phase'])) ?? 'Pending'
-        if (phase === 'Running') {
-          globalInFlight += 1
-        }
-      }
-    }
-    for (const namespace of namespaces) {
-      await reconcileNamespace(kube, namespace, runsByNamespace.get(namespace) ?? [], globalInFlight, concurrency)
+      await reconcileNamespaceState(kube, namespace, state, concurrency)
     }
   } catch (error) {
     console.warn('[jangar] agents controller failed', error)
   } finally {
     reconciling = false
   }
+}
+
+const seedNamespaceState = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+  state: ControllerState,
+  concurrency: ReturnType<typeof parseConcurrency>,
+) => {
+  const nsState = ensureNamespaceState(state, namespace)
+  const memories = listItems(await kube.list(RESOURCE_MAP.Memory, namespace))
+  const agents = listItems(await kube.list(RESOURCE_MAP.Agent, namespace))
+  const specs = listItems(await kube.list(RESOURCE_MAP.ImplementationSpec, namespace))
+  const providers = listItems(await kube.list(RESOURCE_MAP.AgentProvider, namespace))
+  const runs = listItems(await kube.list(RESOURCE_MAP.AgentRun, namespace))
+
+  for (const resource of memories) updateStateMap(nsState.memories, 'ADDED', resource)
+  for (const resource of agents) updateStateMap(nsState.agents, 'ADDED', resource)
+  for (const resource of specs) updateStateMap(nsState.specs, 'ADDED', resource)
+  for (const resource of providers) updateStateMap(nsState.providers, 'ADDED', resource)
+  for (const resource of runs) updateStateMap(nsState.runs, 'ADDED', resource)
+
+  await reconcileNamespaceSnapshot(kube, namespace, snapshotNamespace(nsState), state, concurrency)
+}
+
+const startNamespaceWatches = (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+  state: ControllerState,
+  concurrency: ReturnType<typeof parseConcurrency>,
+) => {
+  const nsState = ensureNamespaceState(state, namespace)
+  const enqueueFull = () =>
+    enqueueNamespaceTask(namespace, () => reconcileNamespaceState(kube, namespace, state, concurrency))
+
+  const handleAgentRunEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
+    const resource = asRecord(event.object)
+    if (!resource) return
+    updateStateMap(nsState.runs, event.type, resource)
+    if (event.type === 'DELETED') return
+    enqueueNamespaceTask(namespace, () => reconcileRunWithState(kube, namespace, resource, state, concurrency))
+  }
+
+  const handleAgentEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
+    const resource = asRecord(event.object)
+    if (!resource) return
+    updateStateMap(nsState.agents, event.type, resource)
+    enqueueFull()
+  }
+
+  const handleProviderEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
+    const resource = asRecord(event.object)
+    if (!resource) return
+    updateStateMap(nsState.providers, event.type, resource)
+    enqueueFull()
+  }
+
+  const handleSpecEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
+    const resource = asRecord(event.object)
+    if (!resource) return
+    updateStateMap(nsState.specs, event.type, resource)
+    enqueueFull()
+  }
+
+  const handleMemoryEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
+    const resource = asRecord(event.object)
+    if (!resource) return
+    updateStateMap(nsState.memories, event.type, resource)
+    enqueueFull()
+  }
+
+  const handleJobEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
+    const resource = asRecord(event.object)
+    if (!resource) return
+    const runName = asString(readNested(resource, ['metadata', 'labels', 'agents.proompteng.ai/agent-run']))
+    if (!runName) return
+    enqueueNamespaceTask(namespace, async () => {
+      const existing = nsState.runs.get(runName)
+      const run = existing ?? (await kube.get(RESOURCE_MAP.AgentRun, runName, namespace))
+      if (!run) return
+      nsState.runs.set(runName, run)
+      await reconcileRunWithState(kube, namespace, run, state, concurrency)
+    })
+  }
+
+  watchHandles.push(
+    startResourceWatch({
+      resource: RESOURCE_MAP.AgentRun,
+      namespace,
+      onEvent: handleAgentRunEvent,
+      onError: (error) => console.warn('[jangar] agent run watch failed', error),
+    }),
+  )
+  watchHandles.push(
+    startResourceWatch({
+      resource: RESOURCE_MAP.Agent,
+      namespace,
+      onEvent: handleAgentEvent,
+      onError: (error) => console.warn('[jangar] agent watch failed', error),
+    }),
+  )
+  watchHandles.push(
+    startResourceWatch({
+      resource: RESOURCE_MAP.AgentProvider,
+      namespace,
+      onEvent: handleProviderEvent,
+      onError: (error) => console.warn('[jangar] provider watch failed', error),
+    }),
+  )
+  watchHandles.push(
+    startResourceWatch({
+      resource: RESOURCE_MAP.ImplementationSpec,
+      namespace,
+      onEvent: handleSpecEvent,
+      onError: (error) => console.warn('[jangar] implementation spec watch failed', error),
+    }),
+  )
+  watchHandles.push(
+    startResourceWatch({
+      resource: RESOURCE_MAP.Memory,
+      namespace,
+      onEvent: handleMemoryEvent,
+      onError: (error) => console.warn('[jangar] memory watch failed', error),
+    }),
+  )
+  watchHandles.push(
+    startResourceWatch({
+      resource: 'job',
+      namespace,
+      labelSelector: 'agents.proompteng.ai/agent-run',
+      onEvent: handleJobEvent,
+      onError: (error) => console.warn('[jangar] agent job watch failed', error),
+    }),
+  )
 }
 
 export const startAgentsController = async () => {
@@ -2181,15 +2404,37 @@ export const startAgentsController = async () => {
     console.error('[jangar] agents controller will not start without CRDs')
     return
   }
-  started = true
-  void reconcileOnce()
-  const intervalMs = parseIntervalSeconds() * 1000
-  intervalRef = setInterval(() => {
-    void reconcileOnce()
-  }, intervalMs)
+  try {
+    const namespaces = await resolveNamespaces()
+    const kube = createKubernetesClient()
+    const concurrency = parseConcurrency()
+    const state: ControllerState = { namespaces: new Map() }
+    _controllerState = state
+    for (const namespace of namespaces) {
+      await seedNamespaceState(kube, namespace, state, concurrency)
+    }
+    for (const namespace of namespaces) {
+      startNamespaceWatches(kube, namespace, state, concurrency)
+    }
+    const intervalSeconds = parseIntervalSeconds()
+    if (intervalSeconds > 0) {
+      intervalRef = setInterval(() => {
+        void reconcileAll(kube, state, namespaces, concurrency)
+      }, intervalSeconds * 1000)
+    }
+    started = true
+  } catch (error) {
+    console.error('[jangar] agents controller failed to start', error)
+  }
 }
 
 export const stopAgentsController = () => {
+  for (const handle of watchHandles) {
+    handle.stop()
+  }
+  watchHandles = []
+  _controllerState = null
+  namespaceQueues.clear()
   if (intervalRef) {
     clearInterval(intervalRef)
     intervalRef = null

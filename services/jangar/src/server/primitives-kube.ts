@@ -159,5 +159,11 @@ export const RESOURCE_MAP = {
   ApprovalPolicy: 'approvalpolicies.approvals.proompteng.ai',
   Budget: 'budgets.budgets.proompteng.ai',
   SecretBinding: 'secretbindings.security.proompteng.ai',
+  Signal: 'signals.signals.proompteng.ai',
   SignalDelivery: 'signaldeliveries.signals.proompteng.ai',
+  Tool: 'tools.tools.proompteng.ai',
+  ToolRun: 'toolruns.tools.proompteng.ai',
+  Schedule: 'schedules.schedules.proompteng.ai',
+  Artifact: 'artifacts.artifacts.proompteng.ai',
+  Workspace: 'workspaces.workspaces.proompteng.ai',
 } as const

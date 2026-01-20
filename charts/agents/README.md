@@ -3,10 +3,12 @@
 Minimal, production‑ready bundle for the Agents control plane (Jangar) plus Agents CRDs.
 
 ## Features
-- Ships v1alpha1 CRDs: Agent, AgentRun, AgentProvider, ImplementationSpec, ImplementationSource, Memory.
+- Ships v1alpha1 CRDs: Agent, AgentRun, AgentProvider, ImplementationSpec, ImplementationSource, Memory,
+  Orchestration, OrchestrationRun, ApprovalPolicy, Budget, SecretBinding, Signal, SignalDelivery, Tool, ToolRun,
+  Schedule, Artifact, Workspace.
 - Deploys the Jangar control-plane deployment + service.
 - Minimal chart footprint (no ingress, no embedded database, no backups, no migrations job).
-- Controller runs in‑cluster and reconciles AgentRun, ImplementationSpec, ImplementationSource, AgentProvider, Memory.
+- Controllers run in‑cluster and reconcile Agents, Orchestration, and supporting primitives (schedules, tools, workspaces).
 - Job runtime creates input/run spec ConfigMaps and labels Jobs for traceability.
 - Artifact Hub metadata included (Apache‑2.0 license).
 
@@ -28,6 +30,22 @@ kubectl apply -n agents -f charts/agents/examples/agent-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/memory-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/implementationspec-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/agentrun-sample.yaml
+kubectl apply -n agents -f charts/agents/examples/tool-sample.yaml
+kubectl apply -n agents -f charts/agents/examples/orchestration-sample.yaml
+kubectl apply -n agents -f charts/agents/examples/orchestrationrun-sample.yaml
+```
+
+Optional supporting primitives:
+```bash
+kubectl apply -n agents -f charts/agents/examples/approvalpolicy-sample.yaml
+kubectl apply -n agents -f charts/agents/examples/budget-sample.yaml
+kubectl apply -n agents -f charts/agents/examples/secretbinding-sample.yaml
+kubectl apply -n agents -f charts/agents/examples/signal-sample.yaml
+kubectl apply -n agents -f charts/agents/examples/signaldelivery-sample.yaml
+kubectl apply -n agents -f charts/agents/examples/toolrun-sample.yaml
+kubectl apply -n agents -f charts/agents/examples/schedule-sample.yaml
+kubectl apply -n agents -f charts/agents/examples/artifact-sample.yaml
+kubectl apply -n agents -f charts/agents/examples/workspace-sample.yaml
 ```
 
 The memory sample includes a placeholder Secret. Update the connection string before using it in production.
@@ -105,10 +123,16 @@ helm push agents-0.6.0.tgz oci://ghcr.io/proompteng/charts
 | `envFromConfigMapRefs` | ConfigMap names to load as envFrom | `[]` |
 | `controller.enabled` | Enable Agents controller loop | `true` |
 | `controller.namespaces` | Namespaces to watch | `['<release-namespace>']` |
-| `controller.intervalSeconds` | Controller reconcile interval | `15` |
+| `controller.intervalSeconds` | Controller resync interval (0 disables periodic resync) | `0` |
 | `controller.concurrency.perNamespace` | Max running AgentRuns per namespace | `10` |
 | `controller.concurrency.perAgent` | Max running AgentRuns per Agent | `5` |
 | `controller.concurrency.cluster` | Max running AgentRuns cluster-wide | `100` |
+| `orchestrationController.enabled` | Enable Orchestration controller loop | `true` |
+| `orchestrationController.namespaces` | Namespaces to watch for OrchestrationRuns | `['<release-namespace>']` |
+| `orchestrationController.intervalSeconds` | Orchestration resync interval (0 disables periodic resync) | `0` |
+| `supportingController.enabled` | Enable supporting primitives controller | `true` |
+| `supportingController.namespaces` | Namespaces to watch for schedules/artifacts/workspaces | `['<release-namespace>']` |
+| `supportingController.intervalSeconds` | Supporting controller resync interval (0 disables periodic resync) | `0` |
 | `agentComms.enabled` | Enable NATS agent-comms subscriber | `false` |
 | `agentComms.nats.url` | NATS URL | `""` |
 | `livenessProbe.enabled` | Enable liveness probe | `true` |

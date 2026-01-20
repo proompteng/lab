@@ -596,7 +596,11 @@ func (in *ImplementationSourceRef) DeepCopy() *ImplementationSourceRef {
 func (in *ImplementationSourceSpec) DeepCopyInto(out *ImplementationSourceSpec) {
 	*out = *in
 	out.Auth = in.Auth
-	out.Webhook = in.Webhook
+	if in.Webhook != nil {
+		in, out := &in.Webhook, &out.Webhook
+		*out = new(ImplementationSourceWebhook)
+		**out = **in
+	}
 	if in.Scope != nil {
 		in, out := &in.Scope, &out.Scope
 		*out = new(ImplementationScope)

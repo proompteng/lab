@@ -1,0 +1,10 @@
+apiVersion: artifacts.proompteng.ai/v1alpha1
+kind: Artifact
+metadata:
+  name: run-logs
+spec:
+  storageRef:
+    name: default-storage
+  lifecycle:
+    ttlDays: 7
+
