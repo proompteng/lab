@@ -2300,7 +2300,7 @@ const reconcileNamespaceState = async (
   await reconcileNamespaceSnapshot(kube, namespace, snapshot, state, concurrency)
 }
 
-const reconcileAll = async (
+const _reconcileAll = async (
   kube: ReturnType<typeof createKubernetesClient>,
   state: ControllerState,
   namespaces: string[],
