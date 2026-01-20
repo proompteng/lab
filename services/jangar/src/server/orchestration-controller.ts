@@ -282,6 +282,14 @@ const deriveStandardConditionUpdates = (conditions: Condition[], phase: string |
   ] satisfies Array<Omit<Condition, 'lastTransitionTime'>>
 }
 
+const buildReadyCondition = (ready: boolean, reason: string, message?: string) =>
+  ({
+    type: 'Ready',
+    status: ready ? 'True' : 'False',
+    reason,
+    message,
+  }) satisfies Omit<Condition, 'lastTransitionTime'>
+
 const setStatus = async (
   kube: ReturnType<typeof createKubernetesClient>,
   resource: Record<string, unknown>,
@@ -316,6 +324,81 @@ const setStatus = async (
 const listItems = (payload: Record<string, unknown>) => {
   const items = Array.isArray(payload.items) ? payload.items : []
   return items.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+}
+
+const validateOrchestrationSpec = (spec: Record<string, unknown>) => {
+  const steps = Array.isArray(spec.steps) ? spec.steps : []
+  if (steps.length === 0) {
+    return {
+      ok: false as const,
+      reason: 'MissingSteps',
+      message: 'spec.steps must include at least one step',
+    }
+  }
+
+  const stepNames = new Set<string>()
+
+  for (const rawStep of steps) {
+    const step = asRecord(rawStep) ?? {}
+    const name = asString(step.name)?.trim() ?? ''
+    const kind = asString(step.kind)?.trim() ?? ''
+    if (!name) {
+      return {
+        ok: false as const,
+        reason: 'StepMissingName',
+        message: 'steps[].name is required',
+      }
+    }
+    if (!kind) {
+      return {
+        ok: false as const,
+        reason: 'StepMissingKind',
+        message: `step ${name} is missing kind`,
+      }
+    }
+    if (stepNames.has(name)) {
+      return {
+        ok: false as const,
+        reason: 'DuplicateStep',
+        message: `step ${name} is duplicated`,
+      }
+    }
+    stepNames.add(name)
+  }
+
+  const entrypoint = asString(spec.entrypoint)?.trim()
+  if (entrypoint && !stepNames.has(entrypoint)) {
+    return {
+      ok: false as const,
+      reason: 'EntrypointMissing',
+      message: `entrypoint ${entrypoint} not found in steps`,
+    }
+  }
+
+  for (const rawStep of steps) {
+    const step = asRecord(rawStep) ?? {}
+    const name = asString(step.name)?.trim() ?? ''
+    const dependsOn = Array.isArray(step.dependsOn) ? step.dependsOn : []
+    for (const dep of dependsOn) {
+      if (typeof dep !== 'string' || dep.trim().length === 0) continue
+      if (dep === name) {
+        return {
+          ok: false as const,
+          reason: 'InvalidDependency',
+          message: `step ${name} cannot depend on itself`,
+        }
+      }
+      if (!stepNames.has(dep)) {
+        return {
+          ok: false as const,
+          reason: 'MissingDependency',
+          message: `step ${name} depends on missing step ${dep}`,
+        }
+      }
+    }
+  }
+
+  return { ok: true as const }
 }
 
 const normalizeStringMap = (value: Record<string, unknown> | null | undefined): Record<string, string> => {
@@ -533,6 +616,29 @@ const submitToolRunJob = async (
     namespace,
     uid: asString(readNested(applied, ['metadata', 'uid'])) ?? undefined,
   }
+}
+
+const reconcileOrchestration = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  orchestration: Record<string, unknown>,
+) => {
+  const spec = asRecord(orchestration.spec) ?? {}
+  const status = asRecord(orchestration.status) ?? {}
+  const validation = validateOrchestrationSpec(spec)
+  const conditions = upsertCondition(
+    normalizeConditions(status.conditions),
+    buildReadyCondition(
+      validation.ok,
+      validation.ok ? 'ValidSpec' : validation.reason,
+      validation.ok ? 'orchestration ready' : validation.message,
+    ),
+  )
+
+  await setStatus(kube, orchestration, {
+    observedGeneration: asRecord(orchestration.metadata)?.generation ?? 0,
+    phase: validation.ok ? 'Ready' : 'Invalid',
+    conditions,
+  })
 }
 
 const reconcileToolRun = async (
@@ -1233,6 +1339,11 @@ const reconcileAll = async (kube: ReturnType<typeof createKubernetesClient>, nam
   try {
     await checkCrds()
     for (const namespace of namespaces) {
+      const orchestrations = listItems(await kube.list(RESOURCE_MAP.Orchestration, namespace))
+      for (const orchestration of orchestrations) {
+        await reconcileOrchestration(kube, orchestration)
+      }
+
       const toolRuns = listItems(await kube.list(RESOURCE_MAP.ToolRun, namespace))
       for (const toolRun of toolRuns) {
         await reconcileToolRun(kube, toolRun, namespace)
@@ -1320,6 +1431,15 @@ const startNamespaceWatches = (kube: ReturnType<typeof createKubernetesClient>, 
     enqueueNamespaceTask(namespace, () => reconcileAllRunsInNamespace(kube, namespace))
   }
 
+  const handleOrchestration = (event: { type?: string; object?: Record<string, unknown> }) => {
+    const resource = asRecord(event.object)
+    if (!resource || event.type === 'DELETED') return
+    enqueueNamespaceTask(namespace, async () => {
+      await reconcileOrchestration(kube, resource)
+      await reconcileAllRunsInNamespace(kube, namespace)
+    })
+  }
+
   watchHandles.push(
     startResourceWatch({
       resource: RESOURCE_MAP.OrchestrationRun,
@@ -1364,7 +1484,7 @@ const startNamespaceWatches = (kube: ReturnType<typeof createKubernetesClient>, 
     startResourceWatch({
       resource: RESOURCE_MAP.Orchestration,
       namespace,
-      onEvent: handlePolicyOrSignal,
+      onEvent: handleOrchestration,
       onError: (error) => console.warn('[jangar] orchestration watch failed', error),
     }),
   )
@@ -1402,4 +1522,8 @@ export const stopOrchestrationController = () => {
   watchHandles = []
   namespaceQueues.clear()
   started = false
+}
+
+export const __test__ = {
+  reconcileOrchestration,
 }
