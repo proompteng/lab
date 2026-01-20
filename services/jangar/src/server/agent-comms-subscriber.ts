@@ -39,6 +39,8 @@ type SubscriberConfig = {
   maxAckPending: number
   ackWaitMs: number
   consumerDescription: string
+  deliverSubject: string
+  filterSubjects: string[]
 }
 
 const DEFAULT_CONFIG: SubscriberConfig = {
@@ -52,17 +54,31 @@ const DEFAULT_CONFIG: SubscriberConfig = {
   maxAckPending: 20000,
   ackWaitMs: 30000,
   consumerDescription: 'Jangar agent communications ingestion',
+  deliverSubject: 'jangar.agent-comms.deliver',
+  filterSubjects: ['workflow.>', 'agents.workflow.>', 'workflow_comms.agent_messages.>'],
 }
 
 const isSubscriberDisabled = () =>
   process.env.NODE_ENV === 'test' || process.env.VITEST || process.env.JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED === 'true'
 
-const resolveConfig = (): SubscriberConfig => ({
-  ...DEFAULT_CONFIG,
-  natsUrl: process.env.NATS_URL?.trim() || DEFAULT_CONFIG.natsUrl,
-  natsUser: process.env.NATS_USER?.trim() || undefined,
-  natsPassword: process.env.NATS_PASSWORD?.trim() || undefined,
-})
+const parseFilterSubjects = (value?: string | null): string[] => {
+  if (!value) return []
+  return value
+    .split(',')
+    .map((subject) => subject.trim())
+    .filter((subject) => subject.length > 0)
+}
+
+const resolveConfig = (): SubscriberConfig => {
+  const envSubjects = parseFilterSubjects(process.env.JANGAR_AGENT_COMMS_SUBJECTS)
+  return {
+    ...DEFAULT_CONFIG,
+    natsUrl: process.env.NATS_URL?.trim() || DEFAULT_CONFIG.natsUrl,
+    natsUser: process.env.NATS_USER?.trim() || undefined,
+    natsPassword: process.env.NATS_PASSWORD?.trim() || undefined,
+    filterSubjects: envSubjects.length > 0 ? envSubjects : DEFAULT_CONFIG.filterSubjects,
+  }
+}
 
 type DeferredPromise = {
   promise: Promise<void>
@@ -121,15 +137,17 @@ const safeParseJson = (value: string): unknown => {
 
 const parseSubject = (subject: string) => {
   const parts = subject.split('.')
-  if (parts.length < 3) return null
-  const prefixOffset = (() => {
-    if (parts[0] === 'agents' && parts[1] === 'workflow') return 2
+  if (parts.length < 2) return null
+  const prefix = (() => {
+    if (parts[0] === 'workflow') return { offset: 1, runtime: 'native' }
+    if (parts[0] === 'agents' && parts[1] === 'workflow') return { offset: 2, runtime: 'native' }
+    if (parts[0] === 'argo' && parts[1] === 'workflow') return { offset: 2, runtime: 'argo' }
     return null
   })()
-  if (prefixOffset === null) return null
-  const scoped = parts.slice(prefixOffset)
+  if (!prefix) return null
+  const scoped = parts.slice(prefix.offset)
   if (scoped[0] === 'general') {
-    return { channel: 'general', kind: scoped[1] ?? null }
+    return { channel: 'general', kind: scoped[1] ?? null, runtime: prefix.runtime }
   }
   const agentIndex = scoped.indexOf('agent')
   if (agentIndex === -1) return null
@@ -143,6 +161,7 @@ const parseSubject = (subject: string) => {
     agentId,
     kind,
     channel: null,
+    runtime: prefix.runtime,
   }
 }
 
@@ -185,6 +204,9 @@ const normalizePayload = (raw: string, subject: string): AgentMessageInput | nul
   const channel = coerceNonEmptyString(payload.channel) ?? subjectInfo?.channel ?? null
   const stage = coerceNonEmptyString(payload.stage ?? payload.workflow_stage ?? payload.workflowStage)
 
+  const runtime =
+    coerceNonEmptyString(payload.runtime ?? payload.runtime_type ?? payload.runtimeType) ?? subjectInfo?.runtime ?? null
+
   const attrs: Record<string, unknown> = {
     ...attrsPayload,
     ...(toolPayload ? { tool: toolPayload } : {}),
@@ -194,6 +216,7 @@ const normalizePayload = (raw: string, subject: string): AgentMessageInput | nul
     ...(payload.repository ? { repository: payload.repository } : {}),
     ...(payload.issueNumber ? { issueNumber: payload.issueNumber } : {}),
     ...(payload.branch ? { branch: payload.branch } : {}),
+    ...(runtime ? { runtime } : {}),
   }
 
   const dedupeKey = messageId ? `${subject}:${messageId}` : null
@@ -231,6 +254,8 @@ const buildConsumerConfig = (config: SubscriberConfig): ConsumerConfig => ({
   max_ack_pending: config.maxAckPending,
   ack_wait: msToNanos(config.ackWaitMs),
   description: config.consumerDescription,
+  deliver_subject: config.deliverSubject,
+  filter_subjects: config.filterSubjects,
 })
 
 const isMissingConsumer = (error: unknown) => {

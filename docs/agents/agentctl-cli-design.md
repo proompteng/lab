@@ -2,11 +2,12 @@
 
 Status: Current (2026-01-19)
 
-Location: `services/jangar/agentctl` (ships with the Jangar service; not a separate product).
+Location: `services/jangar/agentctl` (ships with the Jangar service; **not** a separate product or service).
 
 ## Purpose
 `agentctl` is the Jangar CLI for managing Agents primitives and submitting AgentRuns without hand‑writing YAML.
-It talks to the Jangar controller over gRPC.
+It is a thin wrapper around Jangar’s gRPC endpoints (like `kubectl`/`argocd`/`virtctl` style CLIs) and **never**
+talks to Kubernetes directly.
 
 ## Goals
 - CRUD for Agent, AgentRun, ImplementationSpec, ImplementationSource, Memory.
@@ -14,6 +15,7 @@ It talks to the Jangar controller over gRPC.
 - First‑class “run” command to submit an AgentRun from flags or a spec file.
 - Works against any Kubernetes cluster where Jangar is deployed.
 - In‑cluster gRPC by default (port‑forward or in‑cluster usage).
+- Packaged via Bun into a single binary and distributed via npm and Homebrew.
 - Human‑friendly status, logs, and controller health.
 
 ## Non‑goals
@@ -24,6 +26,7 @@ It talks to the Jangar controller over gRPC.
 ## Architecture
 - Client talks to the Jangar gRPC API (no direct Kubernetes access).
 - Default namespace is `agents`, with explicit overrides via flags/config.
+- CLI is bundled and versioned with the Jangar service, even though it is published independently.
 - Jangar is the source of truth for list/get/apply/delete operations.
 
 ### gRPC connectivity (current + future)
