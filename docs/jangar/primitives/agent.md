@@ -128,7 +128,7 @@ The unified entrypoint must exist in every runtime image used for agent executio
 
 - `Agent` and `AgentRun` expose provider-agnostic fields only.
 - Provider-specific fields live under `spec.runtime.<provider>` or `spec.provider.<provider>`.
-- Crossplane compositions bind the runtime provider at reconciliation time.
+- The Jangar controller binds runtime providers at reconciliation time based on the selected runtime profile.
 
 ## Runtime mapping (Argo)
 

@@ -1,8 +1,7 @@
 # Jangar Primitives Production Validation
 
 Use this checklist to validate end-to-end Jangar primitives in production. The goal is to confirm
-Crossplane package health, Jangar control-plane persistence, memory writes, and orchestration
-execution across all step types.
+Jangar control-plane persistence, memory writes, and orchestration execution across all step types.
 
 ## Prereqs
 
@@ -11,17 +10,7 @@ execution across all step types.
 - `python3` or `python` available (used by validation script).
 - Access to `jangar` and `facteur` namespaces.
 
-## 1) Crossplane package health (optional)
-
-```bash
-kubectl get configurations.pkg.crossplane.io
-kubectl get functions.pkg.crossplane.io
-```
-
-Expect `function-map-to-list` to show `Installed=True` and `Healthy=True`. The deprecated
-`configuration-agents` package should not be installed once native Agents CRDs are in use.
-
-## 2) Control-plane schema and API
+## 1) Control-plane schema and API
 
 Verify tables in `jangar-db`:
 
@@ -43,7 +32,7 @@ curl -fsS https://jangar/v1/agents/demo-agent?namespace=jangar
 
 Repeat for `/v1/agent-runs`, `/v1/memories`, `/v1/orchestrations`, `/v1/orchestration-runs`, and `/v1/runs/{id}`.
 
-## 3) MemoryOp + Checkpoint writes
+## 2) MemoryOp + Checkpoint writes
 
 Check for non-zero rows in the memory provider (`facteur-vector-cluster`):
 
@@ -54,7 +43,7 @@ kubectl cnpg psql -n facteur facteur-vector-cluster -- -d facteur_kb -c \
 
 The counts in `memory_events`, `memory_kv`, and `memory_embeddings` should be > 0 after runs.
 
-## 4) Orchestration runs
+## 3) Orchestration runs
 
 Run an orchestration that uses all step types (AgentRun, ToolRun, MemoryOp, ApprovalGate,
 SignalWait, Checkpoint, SubOrchestration). Then confirm status + stepStatuses:
@@ -66,7 +55,7 @@ kubectl get orchestrationruns.orchestration.proompteng.ai -n jangar <run-name> -
 
 Ensure `status.stepStatuses` is populated and `status.phase` is `Succeeded`.
 
-## 5) Policy enforcement
+## 4) Policy enforcement
 
 Run both negative and positive checks:
 
@@ -84,6 +73,5 @@ For a quick smoke check, run:
 scripts/jangar/validate-primitives.sh
 ```
 
-The script asserts pinned Crossplane function tags, non-zero memory tables, and a
-succeeded orchestration run with populated `stepStatuses`. Adjust env vars for
-non-default namespaces or clusters.
+The script asserts non-zero memory tables and a succeeded orchestration run with
+populated `stepStatuses`. Adjust env vars for non-default namespaces or clusters.

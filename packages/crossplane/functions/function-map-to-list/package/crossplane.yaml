@@ -1,8 +1,0 @@
----
-apiVersion: meta.pkg.crossplane.io/v1beta1
-kind: Function
-metadata:
-  name: function-map-to-list
-spec:
-  capabilities:
-    - composition

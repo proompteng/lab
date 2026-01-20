@@ -86,7 +86,7 @@ Each step is an atomic unit with:
 ## Provider decoupling rules
 
 - `Orchestration` is runtime-agnostic.
-- Provider binding happens at reconciliation via Crossplane composition or Jangar runtime routing.
+- Provider binding happens at reconciliation via the Jangar runtime router.
 - Provider-specific overrides may be introduced later.
 
 ## Mapping to Argo (current runtime)

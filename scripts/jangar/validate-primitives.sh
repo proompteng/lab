@@ -45,37 +45,6 @@ require_python() {
   exit 1
 }
 
-check_package_pin() {
-  local kind="$1"
-  local name="$2"
-  local package
-  package=$(kubectl get "${kind}.pkg.crossplane.io" "${name}" -o jsonpath='{.spec.package}' 2>/dev/null || true)
-  if [ -z "${package}" ]; then
-    echo "${kind} ${name} package is missing" >&2
-    exit 1
-  fi
-  if [[ "${package}" == *":latest" || "${package}" == *"@latest" ]]; then
-    echo "${kind} ${name} is pinned to latest (${package}); use an immutable tag" >&2
-    exit 1
-  fi
-  echo "${kind} ${name} package pinned: ${package}"
-}
-
-check_crossplane_package() {
-  local kind="$1"
-  local name="$2"
-  local installed
-  local healthy
-
-  installed=$(kubectl get "${kind}.pkg.crossplane.io" "${name}" -o jsonpath='{.status.conditions[?(@.type=="Installed")].status}' 2>/dev/null || true)
-  healthy=$(kubectl get "${kind}.pkg.crossplane.io" "${name}" -o jsonpath='{.status.conditions[?(@.type=="Healthy")].status}' 2>/dev/null || true)
-
-  if [[ "${installed}" != "True" || "${healthy}" != "True" ]]; then
-    echo "${kind} ${name} not ready (Installed=${installed:-missing}, Healthy=${healthy:-missing})" >&2
-    exit 1
-  fi
-  echo "${kind} ${name}: Installed=${installed} Healthy=${healthy}"
-}
 
 check_jangar_tables() {
   kubectl cnpg psql -n "${JANGAR_NAMESPACE}" "${JANGAR_DB_CLUSTER}" "${CNPG_FLAGS[@]}" -- -d "${JANGAR_DB_NAME}" -c \
@@ -121,12 +90,6 @@ check_memory_tables() {
   assert_nonzero_count "memory_embeddings" "${embeddings}"
 }
 
-check_crossplane_resources() {
-  echo "== Crossplane configurations/functions =="
-  check_crossplane_package function function-map-to-list
-  check_package_pin function function-map-to-list
-}
-
 check_orchestration_runs() {
   echo "== OrchestrationRuns with stepStatuses =="
   kubectl get orchestrationruns.orchestration.proompteng.ai -n "${JANGAR_NAMESPACE}" \
@@ -157,7 +120,6 @@ print(f"Found succeeded orchestration run with stepStatuses: {name}")
 main() {
   require_kubectl
   require_cnpg
-  check_crossplane_resources
   echo "== Jangar DB tables =="
   check_jangar_tables
   echo "== Memory provider tables =="
