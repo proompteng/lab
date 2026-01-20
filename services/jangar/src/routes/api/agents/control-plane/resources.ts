@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { resolvePrimitiveKind } from '~/server/primitives-control-plane'
 import { asRecord, asString, errorResponse, normalizeNamespace, okResponse } from '~/server/primitives-http'
 import { createKubernetesClient } from '~/server/primitives-kube'
+import { createKubectlWatchStream } from '~/server/primitives-watch'
 
 export const Route = createFileRoute('/api/agents/control-plane/resources')({
   server: {
@@ -24,6 +25,8 @@ const parseFilter = (value: string | null) => {
   return trimmed.length > 0 ? trimmed : null
 }
 
+const parseStream = (value: string | null) => value === 'true' || value === '1'
+
 const toSummary = (resource: Record<string, unknown>) => ({
   apiVersion: asString(resource.apiVersion) ?? null,
   kind: asString(resource.kind) ?? null,
@@ -31,6 +34,21 @@ const toSummary = (resource: Record<string, unknown>) => ({
   spec: asRecord(resource.spec) ?? {},
   status: asRecord(resource.status) ?? {},
 })
+
+const matchesAgentRunFilters = (resource: Record<string, unknown>, phase?: string | null, runtime?: string | null) => {
+  if (phase) {
+    const status = asRecord(resource.status) ?? {}
+    const itemPhase = asString(status.phase)
+    if (itemPhase !== phase) return false
+  }
+  if (runtime) {
+    const spec = asRecord(resource.spec) ?? {}
+    const runtimeSpec = asRecord(spec.runtime) ?? {}
+    const runtimeType = asString(runtimeSpec.type)
+    if (runtimeType !== runtime) return false
+  }
+  return true
+}
 
 export const listPrimitiveResources = async (
   request: Request,
@@ -48,30 +66,37 @@ export const listPrimitiveResources = async (
   const phase = parseFilter(url.searchParams.get('phase'))
   const runtime = parseFilter(url.searchParams.get('runtime'))
   const kube = deps.kubeClient ?? createKubernetesClient()
+  const stream = parseStream(url.searchParams.get('stream'))
 
   try {
+    if (stream) {
+      const args = ['get', resolved.resource, '-n', namespace, '-o', 'json', '--watch', '--output-watch-events']
+      return createKubectlWatchStream({
+        request,
+        args,
+        onEvent: (event) => {
+          const summary = toSummary(asRecord(event.object) ?? {})
+          if (resolved.kind === 'AgentRun' && event.type !== 'DELETED') {
+            if (!matchesAgentRunFilters(summary, phase, runtime)) return null
+          }
+          const metadata = asRecord(summary.metadata) ?? {}
+          return {
+            type: event.type,
+            kind: resolved.kind,
+            namespace,
+            name: asString(metadata.name),
+            resource: summary,
+          }
+        },
+      })
+    }
     const list = await kube.list(resolved.resource, namespace)
     const itemsRaw = Array.isArray(list.items) ? list.items : []
     const summaries = itemsRaw.map((item) => toSummary(asRecord(item) ?? {}))
     const filtered =
       resolved.kind === 'AgentRun' && (phase || runtime)
         ? summaries.filter((item) => {
-            if (phase) {
-              const status = asRecord(item.status) ?? {}
-              const itemPhase = asString(status.phase)
-              if (itemPhase !== phase) {
-                return false
-              }
-            }
-            if (runtime) {
-              const spec = asRecord(item.spec) ?? {}
-              const runtimeSpec = asRecord(spec.runtime) ?? {}
-              const runtimeType = asString(runtimeSpec.type)
-              if (runtimeType !== runtime) {
-                return false
-              }
-            }
-            return true
+            return matchesAgentRunFilters(item, phase, runtime)
           })
         : summaries
     const sliced = limit ? filtered.slice(0, limit) : filtered

@@ -63,7 +63,10 @@ type StepStatus = {
 
 let started = controllerState.started
 let reconciling = false
+<<<<<<< HEAD
 let _crdCheckState: CrdCheckState | null = controllerState.crdCheckState
+=======
+>>>>>>> 5247c5e7 (chore(jangar): fix lint warnings (#2660))
 let watchHandles: Array<{ stop: () => void }> = []
 const namespaceQueues = new Map<string, Promise<void>>()
 const retrySchedules = new Map<string, { timeout: NodeJS.Timeout; retryAt: number }>()
@@ -165,7 +168,10 @@ const checkCrds = async (): Promise<CrdCheckState> => {
     missing: [...missing, ...forbidden],
     checkedAt: nowIso(),
   }
+<<<<<<< HEAD
   _crdCheckState = state
+=======
+>>>>>>> 5247c5e7 (chore(jangar): fix lint warnings (#2660))
   controllerState.crdCheckState = state
   if (!state.ok) {
     if (missing.length > 0) {
