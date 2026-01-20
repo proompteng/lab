@@ -140,9 +140,9 @@ spec:
                     x-kubernetes-preserve-unknown-fields: true
                   type:
                     enum:
-                    - workflow
-                    - job
+                    - argo
                     - temporal
+                    - job
                     - custom
                     type: string
                 required:
@@ -152,127 +152,6 @@ spec:
                 items:
                   type: string
                 type: array
-              workflow:
-                properties:
-                  steps:
-                    items:
-                      properties:
-                        implementation:
-                          properties:
-                            inline:
-                              properties:
-                                acceptanceCriteria:
-                                  items:
-                                    type: string
-                                  maxItems: 50
-                                  type: array
-                                description:
-                                  maxLength: 131072
-                                  type: string
-                                labels:
-                                  items:
-                                    type: string
-                                  type: array
-                                source:
-                                  properties:
-                                    externalId:
-                                      type: string
-                                    provider:
-                                      enum:
-                                      - github
-                                      - linear
-                                      - manual
-                                      - custom
-                                      type: string
-                                    url:
-                                      type: string
-                                  required:
-                                  - provider
-                                  type: object
-                                summary:
-                                  maxLength: 256
-                                  type: string
-                                text:
-                                  maxLength: 131072
-                                  type: string
-                              required:
-                              - text
-                              type: object
-                          required:
-                          - inline
-                          type: object
-                        implementationSpecRef:
-                          properties:
-                            name:
-                              type: string
-                          required:
-                          - name
-                          type: object
-                        name:
-                          type: string
-                        parameters:
-                          additionalProperties:
-                            type: string
-                          maxProperties: 100
-                          type: object
-                        retries:
-                          format: int32
-                          type: integer
-                        retryBackoffSeconds:
-                          format: int32
-                          type: integer
-                        workload:
-                          properties:
-                            image:
-                              type: string
-                            resources:
-                              properties:
-                                limits:
-                                  additionalProperties:
-                                    type: string
-                                  type: object
-                                requests:
-                                  additionalProperties:
-                                    type: string
-                                  type: object
-                              type: object
-                            volumes:
-                              items:
-                                properties:
-                                  claimName:
-                                    type: string
-                                  medium:
-                                    type: string
-                                  mountPath:
-                                    type: string
-                                  name:
-                                    type: string
-                                  readOnly:
-                                    type: boolean
-                                  secretName:
-                                    type: string
-                                  sizeLimit:
-                                    type: string
-                                  type:
-                                    enum:
-                                    - emptyDir
-                                    - pvc
-                                    - secret
-                                    type: string
-                                required:
-                                - mountPath
-                                - name
-                                - type
-                                type: object
-                              type: array
-                          type: object
-                      required:
-                      - name
-                      type: object
-                    type: array
-                required:
-                - steps
-                type: object
               workload:
                 properties:
                   image:
@@ -414,49 +293,6 @@ spec:
               startedAt:
                 format: date-time
                 type: string
-              workflow:
-                properties:
-                  lastTransitionTime:
-                    format: date-time
-                    type: string
-                  phase:
-                    type: string
-                  steps:
-                    items:
-                      properties:
-                        attempt:
-                          format: int32
-                          type: integer
-                        finishedAt:
-                          format: date-time
-                          type: string
-                        jobRef:
-                          properties:
-                            name:
-                              type: string
-                            namespace:
-                              type: string
-                            uid:
-                              type: string
-                          type: object
-                        lastTransitionTime:
-                          format: date-time
-                          type: string
-                        message:
-                          type: string
-                        name:
-                          type: string
-                        nextRetryAt:
-                          format: date-time
-                          type: string
-                        phase:
-                          type: string
-                        startedAt:
-                          format: date-time
-                          type: string
-                      type: object
-                    type: array
-                type: object
             type: object
         required:
         - spec
