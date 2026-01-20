@@ -243,7 +243,7 @@ Backfill / reconciliation:
 ### Argo Workflows adapter (optional)
 
 Argo Workflows can publish the same schema if you still run Argo templates. If you adopt an
-Argo adapter:
+Argo adapter (optional integration):
 
 - Map Argo fields to the runtime-agnostic metadata:
   - `workflow_uid`: `workflow.uid`
@@ -254,4 +254,3 @@ Argo adapter:
 - Use the default subject prefix `workflow.` whenever possible.
 - If compatibility requires `argo.workflow.>`, configure the stream to include both prefixes and
   include `runtime: "argo"` in payloads.
-
