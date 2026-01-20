@@ -107,6 +107,11 @@ const createDeferredPromise = (): DeferredPromise => {
   return { promise, resolve, reject }
 }
 
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms)
+  })
+
 const coerceString = (value: unknown): string | null => {
   if (typeof value === 'string') return value
   if (typeof value === 'number' && Number.isFinite(value)) return String(value)
@@ -331,7 +336,7 @@ const ensureConsumer = async (manager: JetStreamManager, config: SubscriberConfi
 
 type MessageStream = AsyncIterable<JsMsg> & {
   stop?: (error?: Error) => void
-  close?: () => Promise<undefined | Error>
+  close?: () => Promise<void | Error>
 }
 
 const consumeStream = async (
