@@ -6,11 +6,17 @@ option go_package = "github.com/proompteng/lab/services/jangar/internal/agentctl
 
 service AgentctlService {
   rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse);
+  rpc GetControlPlaneStatus(GetControlPlaneStatusRequest) returns (GetControlPlaneStatusResponse);
 
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
   rpc GetAgent(GetAgentRequest) returns (GetAgentResponse);
   rpc ApplyAgent(ApplyAgentRequest) returns (ApplyAgentResponse);
   rpc DeleteAgent(DeleteAgentRequest) returns (DeleteAgentResponse);
+
+  rpc ListAgentProviders(ListAgentProvidersRequest) returns (ListAgentProvidersResponse);
+  rpc GetAgentProvider(GetAgentProviderRequest) returns (GetAgentProviderResponse);
+  rpc ApplyAgentProvider(ApplyAgentProviderRequest) returns (ApplyAgentProviderResponse);
+  rpc DeleteAgentProvider(DeleteAgentProviderRequest) returns (DeleteAgentProviderResponse);
 
   rpc ListImplementationSpecs(ListImplementationSpecsRequest) returns (ListImplementationSpecsResponse);
   rpc GetImplementationSpec(GetImplementationSpecRequest) returns (GetImplementationSpecResponse);
@@ -27,6 +33,66 @@ service AgentctlService {
   rpc GetMemory(GetMemoryRequest) returns (GetMemoryResponse);
   rpc ApplyMemory(ApplyMemoryRequest) returns (ApplyMemoryResponse);
   rpc DeleteMemory(DeleteMemoryRequest) returns (DeleteMemoryResponse);
+
+  rpc ListTools(ListToolsRequest) returns (ListToolsResponse);
+  rpc GetTool(GetToolRequest) returns (GetToolResponse);
+  rpc ApplyTool(ApplyToolRequest) returns (ApplyToolResponse);
+  rpc DeleteTool(DeleteToolRequest) returns (DeleteToolResponse);
+
+  rpc ListToolRuns(ListToolRunsRequest) returns (ListToolRunsResponse);
+  rpc GetToolRun(GetToolRunRequest) returns (GetToolRunResponse);
+  rpc ApplyToolRun(ApplyToolRunRequest) returns (ApplyToolRunResponse);
+  rpc DeleteToolRun(DeleteToolRunRequest) returns (DeleteToolRunResponse);
+
+  rpc ListOrchestrations(ListOrchestrationsRequest) returns (ListOrchestrationsResponse);
+  rpc GetOrchestration(GetOrchestrationRequest) returns (GetOrchestrationResponse);
+  rpc ApplyOrchestration(ApplyOrchestrationRequest) returns (ApplyOrchestrationResponse);
+  rpc DeleteOrchestration(DeleteOrchestrationRequest) returns (DeleteOrchestrationResponse);
+
+  rpc ListOrchestrationRuns(ListOrchestrationRunsRequest) returns (ListOrchestrationRunsResponse);
+  rpc GetOrchestrationRun(GetOrchestrationRunRequest) returns (GetOrchestrationRunResponse);
+  rpc ApplyOrchestrationRun(ApplyOrchestrationRunRequest) returns (ApplyOrchestrationRunResponse);
+  rpc DeleteOrchestrationRun(DeleteOrchestrationRunRequest) returns (DeleteOrchestrationRunResponse);
+
+  rpc ListApprovalPolicies(ListApprovalPoliciesRequest) returns (ListApprovalPoliciesResponse);
+  rpc GetApprovalPolicy(GetApprovalPolicyRequest) returns (GetApprovalPolicyResponse);
+  rpc ApplyApprovalPolicy(ApplyApprovalPolicyRequest) returns (ApplyApprovalPolicyResponse);
+  rpc DeleteApprovalPolicy(DeleteApprovalPolicyRequest) returns (DeleteApprovalPolicyResponse);
+
+  rpc ListBudgets(ListBudgetsRequest) returns (ListBudgetsResponse);
+  rpc GetBudget(GetBudgetRequest) returns (GetBudgetResponse);
+  rpc ApplyBudget(ApplyBudgetRequest) returns (ApplyBudgetResponse);
+  rpc DeleteBudget(DeleteBudgetRequest) returns (DeleteBudgetResponse);
+
+  rpc ListSecretBindings(ListSecretBindingsRequest) returns (ListSecretBindingsResponse);
+  rpc GetSecretBinding(GetSecretBindingRequest) returns (GetSecretBindingResponse);
+  rpc ApplySecretBinding(ApplySecretBindingRequest) returns (ApplySecretBindingResponse);
+  rpc DeleteSecretBinding(DeleteSecretBindingRequest) returns (DeleteSecretBindingResponse);
+
+  rpc ListSignals(ListSignalsRequest) returns (ListSignalsResponse);
+  rpc GetSignal(GetSignalRequest) returns (GetSignalResponse);
+  rpc ApplySignal(ApplySignalRequest) returns (ApplySignalResponse);
+  rpc DeleteSignal(DeleteSignalRequest) returns (DeleteSignalResponse);
+
+  rpc ListSignalDeliveries(ListSignalDeliveriesRequest) returns (ListSignalDeliveriesResponse);
+  rpc GetSignalDelivery(GetSignalDeliveryRequest) returns (GetSignalDeliveryResponse);
+  rpc ApplySignalDelivery(ApplySignalDeliveryRequest) returns (ApplySignalDeliveryResponse);
+  rpc DeleteSignalDelivery(DeleteSignalDeliveryRequest) returns (DeleteSignalDeliveryResponse);
+
+  rpc ListSchedules(ListSchedulesRequest) returns (ListSchedulesResponse);
+  rpc GetSchedule(GetScheduleRequest) returns (GetScheduleResponse);
+  rpc ApplySchedule(ApplyScheduleRequest) returns (ApplyScheduleResponse);
+  rpc DeleteSchedule(DeleteScheduleRequest) returns (DeleteScheduleResponse);
+
+  rpc ListArtifacts(ListArtifactsRequest) returns (ListArtifactsResponse);
+  rpc GetArtifact(GetArtifactRequest) returns (GetArtifactResponse);
+  rpc ApplyArtifact(ApplyArtifactRequest) returns (ApplyArtifactResponse);
+  rpc DeleteArtifact(DeleteArtifactRequest) returns (DeleteArtifactResponse);
+
+  rpc ListWorkspaces(ListWorkspacesRequest) returns (ListWorkspacesResponse);
+  rpc GetWorkspace(GetWorkspaceRequest) returns (GetWorkspaceResponse);
+  rpc ApplyWorkspace(ApplyWorkspaceRequest) returns (ApplyWorkspaceResponse);
+  rpc DeleteWorkspace(DeleteWorkspaceRequest) returns (DeleteWorkspaceResponse);
 
   rpc ListAgentRuns(ListAgentRunsRequest) returns (ListAgentRunsResponse);
   rpc GetAgentRun(GetAgentRunRequest) returns (GetAgentRunResponse);
@@ -80,6 +146,44 @@ message DeleteAgentRequest {
 }
 
 message DeleteAgentResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message ListAgentProvidersRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListAgentProvidersResponse {
+  string json = 1;
+}
+
+message GetAgentProviderRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetAgentProviderResponse {
+  string json = 1;
+}
+
+message ApplyAgentProviderRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplyAgentProviderResponse {
+  string json = 1;
+}
+
+message DeleteAgentProviderRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteAgentProviderResponse {
   bool ok = 1;
   string message = 2;
   string json = 3;
@@ -255,6 +359,462 @@ message DeleteMemoryResponse {
   string json = 3;
 }
 
+message ListToolsRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListToolsResponse {
+  string json = 1;
+}
+
+message GetToolRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetToolResponse {
+  string json = 1;
+}
+
+message ApplyToolRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplyToolResponse {
+  string json = 1;
+}
+
+message DeleteToolRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteToolResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message ListToolRunsRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListToolRunsResponse {
+  string json = 1;
+}
+
+message GetToolRunRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetToolRunResponse {
+  string json = 1;
+}
+
+message ApplyToolRunRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplyToolRunResponse {
+  string json = 1;
+}
+
+message DeleteToolRunRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteToolRunResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message ListOrchestrationsRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListOrchestrationsResponse {
+  string json = 1;
+}
+
+message GetOrchestrationRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetOrchestrationResponse {
+  string json = 1;
+}
+
+message ApplyOrchestrationRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplyOrchestrationResponse {
+  string json = 1;
+}
+
+message DeleteOrchestrationRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteOrchestrationResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message ListOrchestrationRunsRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListOrchestrationRunsResponse {
+  string json = 1;
+}
+
+message GetOrchestrationRunRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetOrchestrationRunResponse {
+  string json = 1;
+}
+
+message ApplyOrchestrationRunRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplyOrchestrationRunResponse {
+  string json = 1;
+}
+
+message DeleteOrchestrationRunRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteOrchestrationRunResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message ListApprovalPoliciesRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListApprovalPoliciesResponse {
+  string json = 1;
+}
+
+message GetApprovalPolicyRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetApprovalPolicyResponse {
+  string json = 1;
+}
+
+message ApplyApprovalPolicyRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplyApprovalPolicyResponse {
+  string json = 1;
+}
+
+message DeleteApprovalPolicyRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteApprovalPolicyResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message ListBudgetsRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListBudgetsResponse {
+  string json = 1;
+}
+
+message GetBudgetRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetBudgetResponse {
+  string json = 1;
+}
+
+message ApplyBudgetRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplyBudgetResponse {
+  string json = 1;
+}
+
+message DeleteBudgetRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteBudgetResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message ListSecretBindingsRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListSecretBindingsResponse {
+  string json = 1;
+}
+
+message GetSecretBindingRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetSecretBindingResponse {
+  string json = 1;
+}
+
+message ApplySecretBindingRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplySecretBindingResponse {
+  string json = 1;
+}
+
+message DeleteSecretBindingRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteSecretBindingResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message ListSignalsRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListSignalsResponse {
+  string json = 1;
+}
+
+message GetSignalRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetSignalResponse {
+  string json = 1;
+}
+
+message ApplySignalRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplySignalResponse {
+  string json = 1;
+}
+
+message DeleteSignalRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteSignalResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message ListSignalDeliveriesRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListSignalDeliveriesResponse {
+  string json = 1;
+}
+
+message GetSignalDeliveryRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetSignalDeliveryResponse {
+  string json = 1;
+}
+
+message ApplySignalDeliveryRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplySignalDeliveryResponse {
+  string json = 1;
+}
+
+message DeleteSignalDeliveryRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteSignalDeliveryResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message ListSchedulesRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListSchedulesResponse {
+  string json = 1;
+}
+
+message GetScheduleRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetScheduleResponse {
+  string json = 1;
+}
+
+message ApplyScheduleRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplyScheduleResponse {
+  string json = 1;
+}
+
+message DeleteScheduleRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteScheduleResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message ListArtifactsRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListArtifactsResponse {
+  string json = 1;
+}
+
+message GetArtifactRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetArtifactResponse {
+  string json = 1;
+}
+
+message ApplyArtifactRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplyArtifactResponse {
+  string json = 1;
+}
+
+message DeleteArtifactRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteArtifactResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message ListWorkspacesRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListWorkspacesResponse {
+  string json = 1;
+}
+
+message GetWorkspaceRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetWorkspaceResponse {
+  string json = 1;
+}
+
+message ApplyWorkspaceRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplyWorkspaceResponse {
+  string json = 1;
+}
+
+message DeleteWorkspaceRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteWorkspaceResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
 message ListAgentRunsRequest {
   string namespace = 1;
   string label_selector = 2;
@@ -302,4 +862,58 @@ message StreamAgentRunLogsRequest {
 message StreamAgentRunLogsResponse {
   string stream = 1;
   string message = 2;
+}
+
+message GetControlPlaneStatusRequest {
+  string namespace = 1;
+}
+
+message GetControlPlaneStatusResponse {
+  string service = 1;
+  string generated_at = 2;
+  repeated ControllerHealth controllers = 3;
+  repeated RuntimeAdapterHealth runtime_adapters = 4;
+  DatabaseHealth database = 5;
+  GrpcHealth grpc = 6;
+  repeated NamespaceHealth namespaces = 7;
+}
+
+message ControllerHealth {
+  string name = 1;
+  bool enabled = 2;
+  bool started = 3;
+  bool crds_ready = 4;
+  repeated string missing_crds = 5;
+  string last_checked_at = 6;
+  string status = 7;
+  string message = 8;
+}
+
+message RuntimeAdapterHealth {
+  string name = 1;
+  bool available = 2;
+  string status = 3;
+  string message = 4;
+  string endpoint = 5;
+}
+
+message DatabaseHealth {
+  bool configured = 1;
+  bool connected = 2;
+  string status = 3;
+  string message = 4;
+  int32 latency_ms = 5;
+}
+
+message GrpcHealth {
+  bool enabled = 1;
+  string address = 2;
+  string status = 3;
+  string message = 4;
+}
+
+message NamespaceHealth {
+  string namespace = 1;
+  string status = 2;
+  repeated string degraded_components = 3;
 }
