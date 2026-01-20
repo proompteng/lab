@@ -72,13 +72,21 @@ spec:
             - name: {{ $name }}
               value: {{ $value | quote }}
             {{- end }}
+            - name: JANGAR_IMAGE
+              value: "{{ .Values.image.repository }}:{{ .Values.image.tag }}{{- if .Values.image.digest }}@{{ .Values.image.digest }}{{ end }}"
+            - name: JANGAR_SERVICE_ACCOUNT_NAME
+              value: {{ include "agents.serviceAccountName" . | quote }}
+            - name: JANGAR_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             {{- if .Values.controller.enabled }}
             - name: JANGAR_AGENTS_CONTROLLER_ENABLED
               value: "1"
             - name: JANGAR_AGENTS_CONTROLLER_NAMESPACES
               value: {{ include "agents.controllerNamespaces" . | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_INTERVAL_SECONDS
-              value: {{ .Values.controller.intervalSeconds | default 15 | quote }}
+              value: {{ .Values.controller.intervalSeconds | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE
               value: {{ .Values.controller.concurrency.perNamespace | default 10 | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_CONCURRENCY_AGENT
@@ -87,6 +95,28 @@ spec:
               value: {{ .Values.controller.concurrency.cluster | default 100 | quote }}
             {{- else }}
             - name: JANGAR_AGENTS_CONTROLLER_ENABLED
+              value: "0"
+            {{- end }}
+            {{- if .Values.orchestrationController.enabled }}
+            - name: JANGAR_ORCHESTRATION_CONTROLLER_ENABLED
+              value: "1"
+            - name: JANGAR_ORCHESTRATION_CONTROLLER_NAMESPACES
+              value: {{ include "agents.orchestrationNamespaces" . | quote }}
+            - name: JANGAR_ORCHESTRATION_CONTROLLER_INTERVAL_SECONDS
+              value: {{ .Values.orchestrationController.intervalSeconds | quote }}
+            {{- else }}
+            - name: JANGAR_ORCHESTRATION_CONTROLLER_ENABLED
+              value: "0"
+            {{- end }}
+            {{- if .Values.supportingController.enabled }}
+            - name: JANGAR_SUPPORTING_CONTROLLER_ENABLED
+              value: "1"
+            - name: JANGAR_SUPPORTING_CONTROLLER_NAMESPACES
+              value: {{ include "agents.supportingNamespaces" . | quote }}
+            - name: JANGAR_SUPPORTING_CONTROLLER_INTERVAL_SECONDS
+              value: {{ .Values.supportingController.intervalSeconds | quote }}
+            {{- else }}
+            - name: JANGAR_SUPPORTING_CONTROLLER_ENABLED
               value: "0"
             {{- end }}
             {{- if .Values.agentComms.enabled }}

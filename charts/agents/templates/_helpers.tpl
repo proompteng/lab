@@ -71,3 +71,19 @@ url
 {{- end -}}
 {{- join "," $namespaces -}}
 {{- end -}}
+
+{{- define "agents.orchestrationNamespaces" -}}
+{{- $namespaces := .Values.orchestrationController.namespaces | default (list) -}}
+{{- if or (not $namespaces) (eq (len $namespaces) 0) -}}
+{{- $namespaces = list (.Values.namespaceOverride | default .Release.Namespace) -}}
+{{- end -}}
+{{- join "," $namespaces -}}
+{{- end -}}
+
+{{- define "agents.supportingNamespaces" -}}
+{{- $namespaces := .Values.supportingController.namespaces | default (list) -}}
+{{- if or (not $namespaces) (eq (len $namespaces) 0) -}}
+{{- $namespaces = list (.Values.namespaceOverride | default .Release.Namespace) -}}
+{{- end -}}
+{{- join "," $namespaces -}}
+{{- end -}}

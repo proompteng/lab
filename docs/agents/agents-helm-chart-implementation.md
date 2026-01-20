@@ -3,14 +3,14 @@
 Status: Current (2026-01-19)
 
 ## Purpose
-Define the next iteration required to make `charts/agents` a fully functional, production‑ready Helm chart that installs CRDs, deploys the Jangar control plane, and supports the full primitive lifecycle (Agent, AgentRun, AgentProvider, ImplementationSpec, ImplementationSource, Memory).
+Define the next iteration required to make `charts/agents` a fully functional, production‑ready Helm chart that installs CRDs, deploys the Jangar control plane, and supports the full primitive lifecycle (Agent, AgentRun, AgentProvider, ImplementationSpec, ImplementationSource, Memory, Orchestration, OrchestrationRun, ApprovalPolicy, Budget, SecretBinding, Signal, SignalDelivery, Tool, ToolRun, Schedule, Artifact, Workspace).
 
 This document is implementation‑grade: it describes *what* needs to exist in the chart, controller, and CI validation to make the chart “complete” and operable in real clusters.
 
 ## Goals
 - Ship a single Helm chart that installs all Agents CRDs and deploys Jangar in a usable, production‑safe configuration.
 - Keep CRDs and controller in sync (schema and behavior).
-- Support the full primitive set: Agent, AgentRun, AgentProvider, ImplementationSpec, ImplementationSource, Memory.
+- Support the full primitive set: Agent, AgentRun, AgentProvider, ImplementationSpec, ImplementationSource, Memory, Orchestration, OrchestrationRun, ApprovalPolicy, Budget, SecretBinding, Signal, SignalDelivery, Tool, ToolRun, Schedule, Artifact, Workspace.
 - Allow AgentRun to execute as a Kubernetes Job with a provided or default image.
 - Support multi‑namespace reconciliation with correct RBAC.
 - Ensure artifact hub compliance (README, CRD metadata, examples).
@@ -41,6 +41,7 @@ A fully functional chart must provide:
 - **CI validation** to ensure CRDs and examples are valid and up‑to‑date.
 - **Crossplane removal guidance** (no migration required).
 - **agentctl** packaged under `services/jangar/**` and backed by Jangar gRPC APIs.
+- **Supporting primitives controller** for schedules, artifacts, and workspaces with native Kubernetes resources.
 
 ## CRD Lifecycle
 ### Source of truth
@@ -66,7 +67,10 @@ Jangar is the controller for all primitives and must:
 - Reconcile **AgentProvider** templates and expose invalid spec errors.
 - Reconcile **ImplementationSpec** and **ImplementationSource** (webhook-only).
 - Reconcile **Memory** and validate referenced Secrets.
+- Reconcile **Orchestration** and **OrchestrationRun** with the native workflow runtime.
+- Reconcile **ToolRun** jobs and update status.
 - Reconcile **AgentRun** and submit workloads to the configured runtime adapter.
+- Reconcile **Tool**, **ApprovalPolicy**, **Budget**, **SecretBinding**, **Signal**, **SignalDelivery**, **Schedule**, **Artifact**, and **Workspace** resources.
 
 ### AgentRun → Job runtime (required)
 - If `spec.runtime.type == "job"`, Jangar submits a Kubernetes Job in the target namespace.
@@ -101,6 +105,8 @@ Controller behavior requires permissions to:
 - Create/update/delete Jobs for workflow runtime execution.
 - Read Secrets referenced by Agent/Memory/ImplementationSource.
 - Create/update ConfigMaps for run inputs.
+- Create/update CronJobs for schedules.
+- Create/update PVCs for workspaces.
 - Emit Events.
 
 ## Helm Chart Structure
@@ -116,7 +122,8 @@ Controller behavior requires permissions to:
 `values.schema.json` must cover:
 - Image configuration (`repository`, `tag`, `digest`, pull policy, pull secrets).
 - Database configuration (URL, secret ref, CA secret).
-- Controller settings (`enabled`, `namespaces`, `intervalSeconds`, `concurrency`).
+- Controller settings (`enabled`, `namespaces`, optional `intervalSeconds` resync, `concurrency`).
+- Supporting controller settings (`enabled`, `namespaces`, optional `intervalSeconds` resync).
 - Agent comms configuration (NATS, optional).
 - gRPC service configuration (`grpc.enabled`, `grpc.port`, `grpc.servicePort`).
 - RBAC and service account options.

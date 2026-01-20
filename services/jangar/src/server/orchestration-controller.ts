@@ -1,0 +1,1299 @@
+import { spawn } from 'node:child_process'
+import { asRecord, asString, readNested } from '~/server/primitives-http'
+import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import { startResourceWatch } from '~/server/kube-watch'
+
+const DEFAULT_NAMESPACES = ['agents']
+const DEFAULT_INTERVAL_SECONDS = 0
+
+const REQUIRED_CRDS = [
+  RESOURCE_MAP.Orchestration,
+  RESOURCE_MAP.OrchestrationRun,
+  RESOURCE_MAP.Tool,
+  RESOURCE_MAP.ToolRun,
+  RESOURCE_MAP.ApprovalPolicy,
+  RESOURCE_MAP.Budget,
+  RESOURCE_MAP.SecretBinding,
+  RESOURCE_MAP.Signal,
+  RESOURCE_MAP.SignalDelivery,
+]
+
+type CrdCheckState = {
+  ok: boolean
+  missing: string[]
+  checkedAt: string
+}
+
+type Condition = {
+  type: string
+  status: 'True' | 'False' | 'Unknown'
+  reason?: string
+  message?: string
+  lastTransitionTime: string
+}
+
+type StepStatus = {
+  name: string
+  kind: string
+  phase: string
+  message?: string
+  startedAt?: string
+  finishedAt?: string
+  resourceRef?: Record<string, unknown>
+  outputs?: Record<string, unknown>
+}
+
+let started = false
+let intervalRef: NodeJS.Timeout | null = null
+let reconciling = false
+let crdCheckState: CrdCheckState | null = null
+let watchHandles: Array<{ stop: () => void }> = []
+const namespaceQueues = new Map<string, Promise<void>>()
+
+const nowIso = () => new Date().toISOString()
+
+const shouldStart = () => {
+  if (process.env.NODE_ENV === 'test') return false
+  const flag = (process.env.JANGAR_ORCHESTRATION_CONTROLLER_ENABLED ?? '1').trim().toLowerCase()
+  return flag !== '0' && flag !== 'false'
+}
+
+const parseNamespaces = () => {
+  const raw = process.env.JANGAR_ORCHESTRATION_CONTROLLER_NAMESPACES
+  if (!raw) return DEFAULT_NAMESPACES
+  const list = raw
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+  return list.length > 0 ? list : DEFAULT_NAMESPACES
+}
+
+const parseIntervalSeconds = () => {
+  const raw = process.env.JANGAR_ORCHESTRATION_CONTROLLER_INTERVAL_SECONDS
+  const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN
+  if (Number.isFinite(parsed) && parsed >= 0) return parsed
+  return DEFAULT_INTERVAL_SECONDS
+}
+
+const resolveCrdCheckNamespace = () => {
+  const namespaces = parseNamespaces()
+  if (namespaces.includes('*')) return 'default'
+  return namespaces[0] ?? 'default'
+}
+
+const runKubectl = (args: string[]) =>
+  new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
+    const child = spawn('kubectl', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    const finish = (payload: { stdout: string; stderr: string; code: number | null }) => {
+      if (settled) return
+      settled = true
+      resolve(payload)
+    }
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+    child.on('error', (error) => {
+      finish({
+        stdout,
+        stderr: stderr || (error instanceof Error ? error.message : String(error)),
+        code: 1,
+      })
+    })
+    child.on('close', (code) => finish({ stdout, stderr, code }))
+  })
+
+const checkCrds = async (): Promise<CrdCheckState> => {
+  const namespace = resolveCrdCheckNamespace()
+  const missing: string[] = []
+  const forbidden: string[] = []
+  for (const name of REQUIRED_CRDS) {
+    const resource = name.split('.')[0] ?? name
+    const result = await runKubectl(['get', resource, '-n', namespace, '-o', 'json'])
+    if (result.code !== 0) {
+      const details = (result.stderr || result.stdout || '').toLowerCase()
+      if (details.includes('forbidden') || details.includes('unauthorized')) {
+        forbidden.push(name)
+      } else {
+        missing.push(name)
+      }
+    }
+  }
+  const state = {
+    ok: missing.length === 0 && forbidden.length === 0,
+    missing: [...missing, ...forbidden],
+    checkedAt: nowIso(),
+  }
+  crdCheckState = state
+  if (!state.ok) {
+    if (missing.length > 0) {
+      console.error('[jangar] missing required Orchestration CRDs:', missing.join(', '))
+    }
+    if (forbidden.length > 0) {
+      console.error(`[jangar] insufficient RBAC to read Orchestration CRDs in namespace ${namespace}: ${forbidden.join(', ')}`)
+    }
+  }
+  return state
+}
+
+export const getOrchestrationControllerHealth = () => ({
+  enabled: shouldStart(),
+  started,
+  crdsReady: crdCheckState?.ok ?? null,
+  missingCrds: crdCheckState?.missing ?? [],
+  lastCheckedAt: crdCheckState?.checkedAt ?? null,
+})
+
+const normalizeConditions = (raw: unknown): Condition[] => {
+  if (!Array.isArray(raw)) return []
+  const output: Condition[] = []
+  for (const item of raw) {
+    const record = asRecord(item)
+    if (!record) continue
+    const type = asString(record.type)
+    const status = asString(record.status)
+    if (!type || !status) continue
+    output.push({
+      type,
+      status: status === 'True' ? 'True' : status === 'False' ? 'False' : 'Unknown',
+      reason: asString(record.reason) ?? undefined,
+      message: asString(record.message) ?? undefined,
+      lastTransitionTime: asString(record.lastTransitionTime) ?? nowIso(),
+    })
+  }
+  return output
+}
+
+const upsertCondition = (conditions: Condition[], update: Omit<Condition, 'lastTransitionTime'>): Condition[] => {
+  const next = [...conditions]
+  const index = next.findIndex((cond) => cond.type === update.type)
+  if (index === -1) {
+    next.push({ ...update, lastTransitionTime: nowIso() })
+    return next
+  }
+  const existing = next[index]
+  if (existing.status !== update.status || existing.reason !== update.reason || existing.message !== update.message) {
+    next[index] = { ...existing, ...update, lastTransitionTime: nowIso() }
+  }
+  return next
+}
+
+const setStatus = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  resource: Record<string, unknown>,
+  status: Record<string, unknown>,
+) => {
+  const metadata = asRecord(resource.metadata) ?? {}
+  const name = asString(metadata.name)
+  const namespace = asString(metadata.namespace)
+  if (!name || !namespace) return
+  const apiVersion = asString(resource.apiVersion)
+  const kind = asString(resource.kind)
+  if (!apiVersion || !kind) return
+  await kube.applyStatus({ apiVersion, kind, metadata: { name, namespace }, status })
+}
+
+const listItems = (payload: Record<string, unknown>) => {
+  const items = Array.isArray(payload.items) ? payload.items : []
+  return items.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+}
+
+const normalizeStringMap = (value: Record<string, unknown> | null | undefined): Record<string, string> => {
+  if (!value) return {}
+  const entries = Object.entries(value)
+  const output: Record<string, string> = {}
+  for (const [key, raw] of entries) {
+    if (raw == null) continue
+    output[key] = typeof raw === 'string' ? raw : JSON.stringify(raw)
+  }
+  return output
+}
+
+const mergeParameters = (base: Record<string, string>, overlay: Record<string, string>) => ({
+  ...base,
+  ...overlay,
+})
+
+const normalizeStepStatuses = (
+  steps: Record<string, unknown>[],
+  existing: StepStatus[],
+): { statuses: StepStatus[]; index: Map<string, StepStatus> } => {
+  const byName = new Map(existing.map((status) => [status.name, status]))
+  const output: StepStatus[] = []
+  for (const step of steps) {
+    const stepName = asString(step.name) ?? ''
+    const stepKind = asString(step.kind) ?? 'Unknown'
+    if (!stepName) continue
+    const current = byName.get(stepName)
+    output.push({
+      name: stepName,
+      kind: stepKind,
+      phase: current?.phase ?? 'Pending',
+      message: current?.message,
+      startedAt: current?.startedAt,
+      finishedAt: current?.finishedAt,
+      resourceRef: current?.resourceRef,
+      outputs: current?.outputs,
+    })
+  }
+  return { statuses: output, index: new Map(output.map((status) => [status.name, status])) }
+}
+
+const setStepStatus = (status: StepStatus, update: Partial<StepStatus>) => ({
+  ...status,
+  ...update,
+})
+
+const makeName = (base: string, suffix: string) => {
+  const max = 50
+  const sanitized = base.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-')
+  const trimmed = sanitized.length > max ? sanitized.slice(0, max) : sanitized
+  return `${trimmed}-${suffix}`
+}
+
+const renderTemplate = (input: string, context: Record<string, unknown>) => {
+  return input.replace(/\{\{\s*([^}]+)\s*\}\}/g, (_match, key) => {
+    const path = String(key)
+      .split('.')
+      .map((part) => part.trim())
+      .filter(Boolean)
+    let cursor: unknown = context
+    for (const part of path) {
+      if (!cursor || typeof cursor !== 'object') return ''
+      cursor = (cursor as Record<string, unknown>)[part]
+    }
+    if (cursor == null) return ''
+    return typeof cursor === 'string' ? cursor : JSON.stringify(cursor)
+  })
+}
+
+const createRunSpecConfigMap = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+  owner: { name: string; uid?: string; apiVersion: string; kind: string },
+  name: string,
+  payload: Record<string, unknown>,
+  labels: Record<string, string>,
+) => {
+  const configMap = {
+    apiVersion: 'v1',
+    kind: 'ConfigMap',
+    metadata: {
+      name,
+      namespace,
+      labels,
+      ...(owner.uid
+        ? {
+            ownerReferences: [
+              {
+                apiVersion: owner.apiVersion,
+                kind: owner.kind,
+                name: owner.name,
+                uid: owner.uid,
+              },
+            ],
+          }
+        : {}),
+    },
+    data: {
+      'run.json': JSON.stringify(payload, null, 2),
+    },
+  }
+  await kube.apply(configMap)
+  return configMap
+}
+
+const submitToolRunJob = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  toolRun: Record<string, unknown>,
+  tool: Record<string, unknown>,
+  namespace: string,
+) => {
+  const toolSpec = asRecord(tool.spec) ?? {}
+  const toolRunSpec = asRecord(toolRun.spec) ?? {}
+  const parameters = normalizeStringMap(asRecord(toolRunSpec.parameters))
+  const context = { parameters, tool, toolRun }
+
+  const image = asString(toolSpec.image)
+  if (!image) {
+    throw new Error('tool.spec.image is required')
+  }
+
+  const command = Array.isArray(toolSpec.command) ? toolSpec.command.map((arg) => renderTemplate(String(arg), context)) : null
+  const args = Array.isArray(toolSpec.args) ? toolSpec.args.map((arg) => renderTemplate(String(arg), context)) : null
+  if (!command && (!args || args.length === 0)) {
+    throw new Error('tool.spec.command or tool.spec.args is required')
+  }
+
+  const envTemplate = Array.isArray(toolSpec.env) ? toolSpec.env : []
+  const env = envTemplate
+    .map((entry) => ({
+      name: asString((entry as Record<string, unknown>).name) ?? '',
+      value: renderTemplate(String((entry as Record<string, unknown>).value ?? ''), context),
+    }))
+    .filter((entry) => entry.name)
+
+  const metadata = asRecord(toolRun.metadata) ?? {}
+  const runName = asString(metadata.name) ?? 'toolrun'
+  const runUid = asString(metadata.uid)
+  const jobName = makeName(runName, 'job')
+
+  const labels = {
+    'jangar.proompteng.ai/tool-run': runName,
+  }
+
+  const configName = makeName(runName, 'spec')
+  const configMap = await createRunSpecConfigMap(
+    kube,
+    namespace,
+    { name: runName, uid: runUid, apiVersion: 'tools.proompteng.ai/v1alpha1', kind: 'ToolRun' },
+    configName,
+    { toolRun, tool, parameters },
+    labels,
+  )
+
+  const volumeName = makeName(configName, 'vol')
+
+  const jobResource = {
+    apiVersion: 'batch/v1',
+    kind: 'Job',
+    metadata: {
+      name: jobName,
+      namespace,
+      labels,
+      ...(runUid
+        ? {
+            ownerReferences: [
+              {
+                apiVersion: 'tools.proompteng.ai/v1alpha1',
+                kind: 'ToolRun',
+                name: runName,
+                uid: runUid,
+              },
+            ],
+          }
+        : {}),
+    },
+    spec: {
+      ttlSecondsAfterFinished: typeof toolSpec.ttlSecondsAfterFinished === 'number' ? toolSpec.ttlSecondsAfterFinished : undefined,
+      template: {
+        metadata: {
+          labels,
+        },
+        spec: {
+          serviceAccountName: asString(toolSpec.serviceAccount) ?? undefined,
+          restartPolicy: 'Never',
+          containers: [
+            {
+              name: 'tool-runner',
+              image,
+              command: command ?? undefined,
+              args: args ?? undefined,
+              env: [{ name: 'TOOL_RUN_SPEC', value: '/workspace/run.json' }, ...env],
+              workingDir: asString(toolSpec.workingDir) ?? undefined,
+              volumeMounts: [
+                { name: volumeName, mountPath: '/workspace/run.json', subPath: 'run.json' },
+              ],
+            },
+          ],
+          volumes: [
+            { name: volumeName, configMap: { name: asString(configMap.metadata?.name) ?? configName } },
+          ],
+        },
+      },
+    },
+  }
+
+  const applied = await kube.apply(jobResource)
+  return {
+    type: 'job',
+    name: jobName,
+    namespace,
+    uid: asString(readNested(applied, ['metadata', 'uid'])) ?? undefined,
+  }
+}
+
+const reconcileToolRun = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  toolRun: Record<string, unknown>,
+  namespace: string,
+) => {
+  const metadata = asRecord(toolRun.metadata) ?? {}
+  const name = asString(metadata.name) ?? ''
+  if (!name) return
+
+  const spec = asRecord(toolRun.spec) ?? {}
+  const status = asRecord(toolRun.status) ?? {}
+  const phase = asString(status.phase) ?? 'Pending'
+  const runtimeRef = asRecord(status.runtimeRef) ?? null
+
+  if (['Succeeded', 'Failed', 'Cancelled'].includes(phase)) return
+
+  if (!runtimeRef && phase === 'Pending') {
+    const toolRefName = asString(readNested(spec, ['toolRef', 'name']))
+    if (!toolRefName) {
+      await setStatus(kube, toolRun, {
+        observedGeneration: asRecord(toolRun.metadata)?.generation ?? 0,
+        phase: 'Failed',
+        conditions: upsertCondition(normalizeConditions(status.conditions), {
+          type: 'Failed',
+          status: 'True',
+          reason: 'MissingTool',
+          message: 'spec.toolRef.name is required',
+        }),
+      })
+      return
+    }
+    const tool = await kube.get(RESOURCE_MAP.Tool, toolRefName, namespace)
+    if (!tool) {
+      await setStatus(kube, toolRun, {
+        observedGeneration: asRecord(toolRun.metadata)?.generation ?? 0,
+        phase: 'Failed',
+        conditions: upsertCondition(normalizeConditions(status.conditions), {
+          type: 'Failed',
+          status: 'True',
+          reason: 'MissingTool',
+          message: `tool ${toolRefName} not found`,
+        }),
+      })
+      return
+    }
+    try {
+      const newRuntimeRef = await submitToolRunJob(kube, toolRun, tool, namespace)
+      await setStatus(kube, toolRun, {
+        observedGeneration: asRecord(toolRun.metadata)?.generation ?? 0,
+        phase: 'Running',
+        startedAt: nowIso(),
+        runtimeRef: newRuntimeRef,
+        conditions: upsertCondition(normalizeConditions(status.conditions), {
+          type: 'Running',
+          status: 'True',
+          reason: 'Submitted',
+        }),
+      })
+    } catch (error) {
+      await setStatus(kube, toolRun, {
+        observedGeneration: asRecord(toolRun.metadata)?.generation ?? 0,
+        phase: 'Failed',
+        finishedAt: nowIso(),
+        conditions: upsertCondition(normalizeConditions(status.conditions), {
+          type: 'Failed',
+          status: 'True',
+          reason: 'SubmitFailed',
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      })
+    }
+    return
+  }
+
+  if (!runtimeRef) return
+  if (asString(runtimeRef.type) !== 'job') return
+  const jobName = asString(runtimeRef.name)
+  if (!jobName) return
+
+  const job = await kube.get('job', jobName, asString(runtimeRef.namespace) ?? namespace)
+  if (!job) return
+
+  const jobStatus = asRecord(job.status) ?? {}
+  const succeeded = Number(jobStatus.succeeded ?? 0)
+  const failed = Number(jobStatus.failed ?? 0)
+  if (succeeded > 0) {
+    await setStatus(kube, toolRun, {
+      observedGeneration: asRecord(toolRun.metadata)?.generation ?? 0,
+      phase: 'Succeeded',
+      startedAt: asString(jobStatus.startTime) ?? asString(status.startedAt) ?? undefined,
+      finishedAt: asString(jobStatus.completionTime) ?? nowIso(),
+      runtimeRef,
+      conditions: upsertCondition(normalizeConditions(status.conditions), {
+        type: 'Succeeded',
+        status: 'True',
+        reason: 'Completed',
+      }),
+    })
+  } else if (failed > 0) {
+    await setStatus(kube, toolRun, {
+      observedGeneration: asRecord(toolRun.metadata)?.generation ?? 0,
+      phase: 'Failed',
+      finishedAt: nowIso(),
+      runtimeRef,
+      conditions: upsertCondition(normalizeConditions(status.conditions), {
+        type: 'Failed',
+        status: 'True',
+        reason: 'JobFailed',
+      }),
+    })
+  }
+}
+
+const resolveDependsOn = (step: Record<string, unknown>) => {
+  const raw = step.dependsOn
+  if (!Array.isArray(raw)) return []
+  return raw.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+}
+
+const depsSatisfied = (dependsOn: string[], statusIndex: Map<string, StepStatus>) => {
+  if (dependsOn.length === 0) return true
+  return dependsOn.every((dep) => statusIndex.get(dep)?.phase === 'Succeeded')
+}
+
+const buildResourceRef = (resource: Record<string, unknown>) => {
+  const metadata = asRecord(resource.metadata) ?? {}
+  return {
+    apiVersion: asString(resource.apiVersion) ?? undefined,
+    kind: asString(resource.kind) ?? undefined,
+    name: asString(metadata.name) ?? undefined,
+    namespace: asString(metadata.namespace) ?? undefined,
+    uid: asString(metadata.uid) ?? undefined,
+  }
+}
+
+const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
+  const current = namespaceQueues.get(namespace) ?? Promise.resolve()
+  const next = current
+    .catch(() => undefined)
+    .then(task)
+    .catch((error) => {
+      console.warn('[jangar] orchestration controller task failed', error)
+    })
+  namespaceQueues.set(namespace, next)
+}
+
+const submitAgentRunStep = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  step: Record<string, unknown>,
+  orchestrationRun: Record<string, unknown>,
+  namespace: string,
+  parameters: Record<string, string>,
+) => {
+  const agentRefName =
+    asString(readNested(step, ['agentRef', 'name'])) ??
+    asString(step.agentRef) ??
+    asString(readNested(step, ['with', 'agentRef']))
+  if (!agentRefName) {
+    throw new Error('agentRef.name is required for AgentRun step')
+  }
+
+  const implRefName =
+    asString(readNested(step, ['implementationSpecRef', 'name'])) ??
+    asString(step.implementationSpecRef) ??
+    asString(readNested(step, ['with', 'implementationSpecRef']))
+  const implementation = asRecord(readNested(step, ['implementation'])) ?? null
+
+  if (!implRefName && !implementation) {
+    throw new Error('implementationSpecRef or implementation is required for AgentRun step')
+  }
+
+  const runtime = asRecord(readNested(step, ['runtime'])) ?? { type: 'workflow' }
+  const memoryRefName = asString(readNested(step, ['memoryRef', 'name'])) ?? asString(step.memoryRef)
+  const secrets = Array.isArray(step.secrets) ? step.secrets.filter((val): val is string => typeof val === 'string') : []
+
+  const metadata = asRecord(orchestrationRun.metadata) ?? {}
+  const runName = asString(metadata.name) ?? 'orchestration'
+
+  const resource = {
+    apiVersion: 'agents.proompteng.ai/v1alpha1',
+    kind: 'AgentRun',
+    metadata: {
+      generateName: `${makeName(runName, asString(step.name) ?? 'step')}-`,
+      namespace,
+      labels: {
+        'jangar.proompteng.ai/orchestration-run': runName,
+        'jangar.proompteng.ai/orchestration-step': asString(step.name) ?? '',
+      },
+    },
+    spec: {
+      agentRef: { name: agentRefName },
+      ...(implRefName ? { implementationSpecRef: { name: implRefName } } : {}),
+      ...(implementation ? { implementation } : {}),
+      parameters,
+      ...(memoryRefName ? { memoryRef: { name: memoryRefName } } : {}),
+      ...(secrets.length > 0 ? { secrets } : {}),
+      runtime,
+    },
+  }
+
+  const applied = await kube.apply(resource)
+  return buildResourceRef(applied)
+}
+
+const submitToolRunStep = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  step: Record<string, unknown>,
+  orchestrationRun: Record<string, unknown>,
+  namespace: string,
+  parameters: Record<string, string>,
+) => {
+  const toolRefName =
+    asString(readNested(step, ['toolRef', 'name'])) ??
+    asString(step.toolRef) ??
+    asString(readNested(step, ['with', 'toolRef']))
+  if (!toolRefName) {
+    throw new Error('toolRef.name is required for ToolRun step')
+  }
+
+  const metadata = asRecord(orchestrationRun.metadata) ?? {}
+  const runName = asString(metadata.name) ?? 'orchestration'
+
+  const resource = {
+    apiVersion: 'tools.proompteng.ai/v1alpha1',
+    kind: 'ToolRun',
+    metadata: {
+      generateName: `${makeName(runName, asString(step.name) ?? 'tool')}-`,
+      namespace,
+      labels: {
+        'jangar.proompteng.ai/orchestration-run': runName,
+        'jangar.proompteng.ai/orchestration-step': asString(step.name) ?? '',
+      },
+    },
+    spec: {
+      toolRef: { name: toolRefName },
+      parameters,
+    },
+  }
+
+  const applied = await kube.apply(resource)
+  return buildResourceRef(applied)
+}
+
+const submitSubOrchestrationStep = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  step: Record<string, unknown>,
+  orchestrationRun: Record<string, unknown>,
+  namespace: string,
+  parameters: Record<string, string>,
+) => {
+  const orchestrationName =
+    asString(readNested(step, ['orchestrationRef', 'name'])) ??
+    asString(step.orchestrationRef) ??
+    asString(readNested(step, ['with', 'orchestrationRef']))
+  if (!orchestrationName) {
+    throw new Error('orchestrationRef.name is required for SubOrchestration step')
+  }
+
+  const metadata = asRecord(orchestrationRun.metadata) ?? {}
+  const runName = asString(metadata.name) ?? 'orchestration'
+
+  const resource = {
+    apiVersion: 'orchestration.proompteng.ai/v1alpha1',
+    kind: 'OrchestrationRun',
+    metadata: {
+      generateName: `${makeName(runName, asString(step.name) ?? 'sub')}-`,
+      namespace,
+      labels: {
+        'jangar.proompteng.ai/orchestration-run': runName,
+        'jangar.proompteng.ai/orchestration-step': asString(step.name) ?? '',
+      },
+    },
+    spec: {
+      orchestrationRef: { name: orchestrationName },
+      parameters,
+    },
+  }
+
+  const applied = await kube.apply(resource)
+  return buildResourceRef(applied)
+}
+
+const resolvePhase = (raw: unknown) => asString(raw) ?? 'Pending'
+
+const classifyPhase = (phase: string) => phase.toLowerCase()
+
+const isTerminal = (phase: string) => ['succeeded', 'failed', 'cancelled'].includes(classifyPhase(phase))
+
+const reconcileOrchestrationRun = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  orchestrationRun: Record<string, unknown>,
+  namespace: string,
+) => {
+  const metadata = asRecord(orchestrationRun.metadata) ?? {}
+  const name = asString(metadata.name) ?? ''
+  if (!name) return
+
+  const spec = asRecord(orchestrationRun.spec) ?? {}
+  const status = asRecord(orchestrationRun.status) ?? {}
+  const runPhase = resolvePhase(status.phase)
+
+  if (isTerminal(runPhase)) return
+
+  const orchestrationName = asString(readNested(spec, ['orchestrationRef', 'name']))
+  if (!orchestrationName) {
+    await setStatus(kube, orchestrationRun, {
+      observedGeneration: asRecord(orchestrationRun.metadata)?.generation ?? 0,
+      phase: 'Failed',
+      finishedAt: nowIso(),
+      conditions: upsertCondition(normalizeConditions(status.conditions), {
+        type: 'Failed',
+        status: 'True',
+        reason: 'MissingOrchestration',
+        message: 'spec.orchestrationRef.name is required',
+      }),
+    })
+    return
+  }
+
+  const orchestration = await kube.get(RESOURCE_MAP.Orchestration, orchestrationName, namespace)
+  if (!orchestration) {
+    await setStatus(kube, orchestrationRun, {
+      observedGeneration: asRecord(orchestrationRun.metadata)?.generation ?? 0,
+      phase: 'Failed',
+      finishedAt: nowIso(),
+      conditions: upsertCondition(normalizeConditions(status.conditions), {
+        type: 'Failed',
+        status: 'True',
+        reason: 'MissingOrchestration',
+        message: `orchestration ${orchestrationName} not found`,
+      }),
+    })
+    return
+  }
+
+  const orchestrationSpec = asRecord(orchestration.spec) ?? {}
+  const steps = Array.isArray(orchestrationSpec.steps) ? orchestrationSpec.steps : []
+  if (steps.length === 0) {
+    await setStatus(kube, orchestrationRun, {
+      observedGeneration: asRecord(orchestrationRun.metadata)?.generation ?? 0,
+      phase: 'Failed',
+      finishedAt: nowIso(),
+      conditions: upsertCondition(normalizeConditions(status.conditions), {
+        type: 'Failed',
+        status: 'True',
+        reason: 'EmptySteps',
+        message: 'orchestration spec.steps is empty',
+      }),
+    })
+    return
+  }
+
+  const existingSteps = Array.isArray(status.stepStatuses)
+    ? status.stepStatuses.filter((item): item is StepStatus => !!item && typeof item === 'object')
+    : []
+  const { statuses: normalizedSteps, index: statusIndex } = normalizeStepStatuses(steps as Record<string, unknown>[], existingSteps)
+
+  const orchestrationParams = normalizeStringMap(asRecord(spec.parameters))
+  let anyRunning = false
+  let anyFailed = false
+  let allSucceeded = true
+
+  const nextStatuses: StepStatus[] = []
+
+  for (const rawStep of steps as Record<string, unknown>[]) {
+    const step = asRecord(rawStep) ?? {}
+    const stepName = asString(step.name) ?? ''
+    const stepKind = asString(step.kind) ?? 'Unknown'
+    if (!stepName) continue
+
+    const current = statusIndex.get(stepName) ?? { name: stepName, kind: stepKind, phase: 'Pending' }
+    const dependsOn = resolveDependsOn(step)
+    const canStart = depsSatisfied(dependsOn, statusIndex)
+
+    if (current.phase === 'Succeeded') {
+      nextStatuses.push(current)
+      continue
+    }
+
+    if (current.phase === 'Failed') {
+      anyFailed = true
+      allSucceeded = false
+      nextStatuses.push(current)
+      continue
+    }
+
+    if (!canStart) {
+      allSucceeded = false
+      nextStatuses.push(current)
+      continue
+    }
+
+    try {
+      if (stepKind === 'ApprovalGate') {
+        const policyName = asString(step.policyRef) ?? asString(readNested(step, ['with', 'policyRef']))
+        if (!policyName) {
+          throw new Error('policyRef is required for ApprovalGate')
+        }
+        const policy = await kube.get(RESOURCE_MAP.ApprovalPolicy, policyName, namespace)
+        if (!policy) {
+          throw new Error(`approval policy ${policyName} not found`)
+        }
+        const policyPhase = asString(readNested(policy, ['status', 'phase']))?.toLowerCase() ?? ''
+        if (['denied', 'rejected', 'blocked', 'failed'].includes(policyPhase)) {
+          const failed = setStepStatus(current, {
+            phase: 'Failed',
+            finishedAt: nowIso(),
+            message: `approval policy ${policyName} is ${policyPhase}`,
+          })
+          anyFailed = true
+          allSucceeded = false
+          nextStatuses.push(failed)
+        } else if (['approved', 'allowed', 'ready', 'succeeded'].includes(policyPhase)) {
+          const succeeded = setStepStatus(current, {
+            phase: 'Succeeded',
+            startedAt: current.startedAt ?? nowIso(),
+            finishedAt: nowIso(),
+          })
+          nextStatuses.push(succeeded)
+        } else {
+          anyRunning = true
+          allSucceeded = false
+          nextStatuses.push(setStepStatus(current, { phase: 'Pending' }))
+        }
+        continue
+      }
+
+      if (stepKind === 'SignalWait') {
+        const signalRef =
+          asString(step.signalRef) ??
+          asString(readNested(step, ['with', 'signalRef'])) ??
+          asString(readNested(step, ['signalRef', 'name']))
+        const deliveryId = asString(step.deliveryId) ?? asString(readNested(step, ['with', 'deliveryId']))
+        if (!signalRef && !deliveryId) {
+          throw new Error('signalRef or deliveryId is required for SignalWait')
+        }
+        const deliveries = listItems(await kube.list(RESOURCE_MAP.SignalDelivery, namespace))
+        const match = deliveries.find((delivery) => {
+          const refName = asString(readNested(delivery, ['spec', 'signalRef', 'name']))
+          const refDeliveryId = asString(readNested(delivery, ['spec', 'deliveryId']))
+          if (deliveryId && refDeliveryId === deliveryId) return true
+          if (signalRef && refName === signalRef) return true
+          return false
+        })
+        if (match) {
+          const succeeded = setStepStatus(current, {
+            phase: 'Succeeded',
+            startedAt: current.startedAt ?? nowIso(),
+            finishedAt: nowIso(),
+            resourceRef: buildResourceRef(match),
+          })
+          nextStatuses.push(succeeded)
+        } else {
+          anyRunning = true
+          allSucceeded = false
+          nextStatuses.push(setStepStatus(current, { phase: 'Pending' }))
+        }
+        continue
+      }
+
+      if (stepKind === 'Checkpoint' || stepKind === 'MemoryOp') {
+        const succeeded = setStepStatus(current, {
+          phase: 'Succeeded',
+          startedAt: current.startedAt ?? nowIso(),
+          finishedAt: nowIso(),
+        })
+        nextStatuses.push(succeeded)
+        continue
+      }
+
+      if (stepKind === 'AgentRun') {
+        if (!current.resourceRef) {
+          const merged = mergeParameters(orchestrationParams, normalizeStringMap(asRecord(step.with)))
+          const resourceRef = await submitAgentRunStep(kube, step, orchestrationRun, namespace, merged)
+          const running = setStepStatus(current, {
+            phase: 'Running',
+            startedAt: current.startedAt ?? nowIso(),
+            resourceRef,
+          })
+          anyRunning = true
+          allSucceeded = false
+          nextStatuses.push(running)
+        } else {
+          const refName = asString(current.resourceRef.name)
+          const refNamespace = asString(current.resourceRef.namespace) ?? namespace
+          if (refName) {
+            const agentRun = await kube.get(RESOURCE_MAP.AgentRun, refName, refNamespace)
+            if (!agentRun) {
+              const failed = setStepStatus(current, {
+                phase: 'Failed',
+                finishedAt: nowIso(),
+                message: 'agent run not found',
+              })
+              anyFailed = true
+              allSucceeded = false
+              nextStatuses.push(failed)
+            } else {
+              const agentPhase = asString(readNested(agentRun, ['status', 'phase'])) ?? 'Pending'
+              if (agentPhase === 'Succeeded') {
+                nextStatuses.push(
+                  setStepStatus(current, {
+                    phase: 'Succeeded',
+                    finishedAt: nowIso(),
+                  }),
+                )
+              } else if (agentPhase === 'Failed' || agentPhase === 'Cancelled') {
+                anyFailed = true
+                allSucceeded = false
+                nextStatuses.push(
+                  setStepStatus(current, {
+                    phase: 'Failed',
+                    finishedAt: nowIso(),
+                    message: `agent run ${agentPhase.toLowerCase()}`,
+                  }),
+                )
+              } else {
+                anyRunning = true
+                allSucceeded = false
+                nextStatuses.push(setStepStatus(current, { phase: 'Running' }))
+              }
+            }
+          }
+        }
+        continue
+      }
+
+      if (stepKind === 'ToolRun') {
+        if (!current.resourceRef) {
+          const merged = mergeParameters(orchestrationParams, normalizeStringMap(asRecord(step.with)))
+          const resourceRef = await submitToolRunStep(kube, step, orchestrationRun, namespace, merged)
+          const running = setStepStatus(current, {
+            phase: 'Running',
+            startedAt: current.startedAt ?? nowIso(),
+            resourceRef,
+          })
+          anyRunning = true
+          allSucceeded = false
+          nextStatuses.push(running)
+        } else {
+          const refName = asString(current.resourceRef.name)
+          const refNamespace = asString(current.resourceRef.namespace) ?? namespace
+          if (refName) {
+            const toolRun = await kube.get(RESOURCE_MAP.ToolRun, refName, refNamespace)
+            if (!toolRun) {
+              const failed = setStepStatus(current, {
+                phase: 'Failed',
+                finishedAt: nowIso(),
+                message: 'tool run not found',
+              })
+              anyFailed = true
+              allSucceeded = false
+              nextStatuses.push(failed)
+            } else {
+              const toolPhase = asString(readNested(toolRun, ['status', 'phase'])) ?? 'Pending'
+              if (toolPhase === 'Succeeded') {
+                nextStatuses.push(
+                  setStepStatus(current, {
+                    phase: 'Succeeded',
+                    finishedAt: nowIso(),
+                  }),
+                )
+              } else if (toolPhase === 'Failed' || toolPhase === 'Cancelled') {
+                anyFailed = true
+                allSucceeded = false
+                nextStatuses.push(
+                  setStepStatus(current, {
+                    phase: 'Failed',
+                    finishedAt: nowIso(),
+                    message: `tool run ${toolPhase.toLowerCase()}`,
+                  }),
+                )
+              } else {
+                anyRunning = true
+                allSucceeded = false
+                nextStatuses.push(setStepStatus(current, { phase: 'Running' }))
+              }
+            }
+          }
+        }
+        continue
+      }
+
+      if (stepKind === 'SubOrchestration') {
+        if (!current.resourceRef) {
+          const merged = mergeParameters(orchestrationParams, normalizeStringMap(asRecord(step.with)))
+          const resourceRef = await submitSubOrchestrationStep(kube, step, orchestrationRun, namespace, merged)
+          const running = setStepStatus(current, {
+            phase: 'Running',
+            startedAt: current.startedAt ?? nowIso(),
+            resourceRef,
+          })
+          anyRunning = true
+          allSucceeded = false
+          nextStatuses.push(running)
+        } else {
+          const refName = asString(current.resourceRef.name)
+          const refNamespace = asString(current.resourceRef.namespace) ?? namespace
+          if (refName) {
+            const subRun = await kube.get(RESOURCE_MAP.OrchestrationRun, refName, refNamespace)
+            if (!subRun) {
+              const failed = setStepStatus(current, {
+                phase: 'Failed',
+                finishedAt: nowIso(),
+                message: 'sub orchestration run not found',
+              })
+              anyFailed = true
+              allSucceeded = false
+              nextStatuses.push(failed)
+            } else {
+              const subPhase = asString(readNested(subRun, ['status', 'phase'])) ?? 'Pending'
+              if (subPhase === 'Succeeded') {
+                nextStatuses.push(
+                  setStepStatus(current, {
+                    phase: 'Succeeded',
+                    finishedAt: nowIso(),
+                  }),
+                )
+              } else if (subPhase === 'Failed' || subPhase === 'Cancelled') {
+                anyFailed = true
+                allSucceeded = false
+                nextStatuses.push(
+                  setStepStatus(current, {
+                    phase: 'Failed',
+                    finishedAt: nowIso(),
+                    message: `sub orchestration ${subPhase.toLowerCase()}`,
+                  }),
+                )
+              } else {
+                anyRunning = true
+                allSucceeded = false
+                nextStatuses.push(setStepStatus(current, { phase: 'Running' }))
+              }
+            }
+          }
+        }
+        continue
+      }
+
+      const failed = setStepStatus(current, {
+        phase: 'Failed',
+        finishedAt: nowIso(),
+        message: `unsupported step kind ${stepKind}`,
+      })
+      anyFailed = true
+      allSucceeded = false
+      nextStatuses.push(failed)
+    } catch (error) {
+      const failed = setStepStatus(current, {
+        phase: 'Failed',
+        finishedAt: nowIso(),
+        message: error instanceof Error ? error.message : String(error),
+      })
+      anyFailed = true
+      allSucceeded = false
+      nextStatuses.push(failed)
+    }
+  }
+
+  let nextPhase = 'Pending'
+  if (anyFailed) {
+    nextPhase = 'Failed'
+  } else if (allSucceeded && nextStatuses.length > 0) {
+    nextPhase = 'Succeeded'
+  } else if (anyRunning) {
+    nextPhase = 'Running'
+  }
+
+  const conditions = normalizeConditions(status.conditions)
+  let updatedConditions = conditions
+  if (nextPhase === 'Running') {
+    updatedConditions = upsertCondition(updatedConditions, { type: 'Running', status: 'True', reason: 'InProgress' })
+  }
+  if (nextPhase === 'Succeeded') {
+    updatedConditions = upsertCondition(updatedConditions, { type: 'Succeeded', status: 'True', reason: 'Completed' })
+  }
+  if (nextPhase === 'Failed') {
+    updatedConditions = upsertCondition(updatedConditions, { type: 'Failed', status: 'True', reason: 'StepFailed' })
+  }
+
+  await setStatus(kube, orchestrationRun, {
+    observedGeneration: asRecord(orchestrationRun.metadata)?.generation ?? 0,
+    phase: nextPhase,
+    runId: asString(metadata.name) ?? undefined,
+    startedAt: asString(status.startedAt) ?? (nextPhase === 'Running' ? nowIso() : undefined),
+    finishedAt: nextPhase === 'Succeeded' || nextPhase === 'Failed' ? nowIso() : undefined,
+    stepStatuses: nextStatuses,
+    conditions: updatedConditions,
+  })
+}
+
+const reconcileAll = async (kube: ReturnType<typeof createKubernetesClient>, namespaces: string[]) => {
+  if (reconciling) return
+  reconciling = true
+  try {
+    await checkCrds()
+    for (const namespace of namespaces) {
+      const toolRuns = listItems(await kube.list(RESOURCE_MAP.ToolRun, namespace))
+      for (const toolRun of toolRuns) {
+        await reconcileToolRun(kube, toolRun, namespace)
+      }
+
+      const orchestrationRuns = listItems(await kube.list(RESOURCE_MAP.OrchestrationRun, namespace))
+      for (const orchestrationRun of orchestrationRuns) {
+        await reconcileOrchestrationRun(kube, orchestrationRun, namespace)
+      }
+    }
+  } catch (error) {
+    console.warn('[jangar] orchestration controller failed', error)
+  } finally {
+    reconciling = false
+  }
+}
+
+const resolveParentRunLabel = (resource: Record<string, unknown>) =>
+  asString(readNested(resource, ['metadata', 'labels', 'jangar.proompteng.ai/orchestration-run']))
+
+const reconcileOrchestrationRunByName = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+  name: string,
+) => {
+  if (!name) return
+  const run = await kube.get(RESOURCE_MAP.OrchestrationRun, name, namespace)
+  if (!run) return
+  await reconcileOrchestrationRun(kube, run, namespace)
+}
+
+const reconcileAllRunsInNamespace = async (kube: ReturnType<typeof createKubernetesClient>, namespace: string) => {
+  const orchestrationRuns = listItems(await kube.list(RESOURCE_MAP.OrchestrationRun, namespace))
+  for (const orchestrationRun of orchestrationRuns) {
+    await reconcileOrchestrationRun(kube, orchestrationRun, namespace)
+  }
+}
+
+const startNamespaceWatches = (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+) => {
+  const handleOrchestrationRun = (event: { type?: string; object?: Record<string, unknown> }) => {
+    const resource = asRecord(event.object)
+    if (!resource || event.type === 'DELETED') return
+    enqueueNamespaceTask(namespace, () => reconcileOrchestrationRun(kube, resource, namespace))
+  }
+
+  const handleToolRun = (event: { type?: string; object?: Record<string, unknown> }) => {
+    const resource = asRecord(event.object)
+    if (!resource) return
+    enqueueNamespaceTask(namespace, async () => {
+      if (event.type !== 'DELETED') {
+        await reconcileToolRun(kube, resource, namespace)
+      }
+      const parent = resolveParentRunLabel(resource)
+      if (parent) {
+        await reconcileOrchestrationRunByName(kube, namespace, parent)
+      }
+    })
+  }
+
+  const handleAgentRun = (event: { type?: string; object?: Record<string, unknown> }) => {
+    const resource = asRecord(event.object)
+    if (!resource) return
+    const parent = resolveParentRunLabel(resource)
+    if (!parent) return
+    enqueueNamespaceTask(namespace, () => reconcileOrchestrationRunByName(kube, namespace, parent))
+  }
+
+  const handleJob = (event: { type?: string; object?: Record<string, unknown> }) => {
+    const resource = asRecord(event.object)
+    if (!resource) return
+    const toolRunName = asString(readNested(resource, ['metadata', 'labels', 'jangar.proompteng.ai/tool-run']))
+    if (!toolRunName) return
+    enqueueNamespaceTask(namespace, async () => {
+      const toolRun = await kube.get(RESOURCE_MAP.ToolRun, toolRunName, namespace)
+      if (!toolRun) return
+      await reconcileToolRun(kube, toolRun, namespace)
+      const parent = resolveParentRunLabel(toolRun)
+      if (parent) {
+        await reconcileOrchestrationRunByName(kube, namespace, parent)
+      }
+    })
+  }
+
+  const handlePolicyOrSignal = () => {
+    enqueueNamespaceTask(namespace, () => reconcileAllRunsInNamespace(kube, namespace))
+  }
+
+  watchHandles.push(
+    startResourceWatch({
+      resource: RESOURCE_MAP.OrchestrationRun,
+      namespace,
+      onEvent: handleOrchestrationRun,
+      onError: (error) => console.warn('[jangar] orchestration run watch failed', error),
+    }),
+  )
+  watchHandles.push(
+    startResourceWatch({
+      resource: RESOURCE_MAP.ToolRun,
+      namespace,
+      onEvent: handleToolRun,
+      onError: (error) => console.warn('[jangar] tool run watch failed', error),
+    }),
+  )
+  watchHandles.push(
+    startResourceWatch({
+      resource: RESOURCE_MAP.AgentRun,
+      namespace,
+      onEvent: handleAgentRun,
+      onError: (error) => console.warn('[jangar] agent run watch failed', error),
+    }),
+  )
+  watchHandles.push(
+    startResourceWatch({
+      resource: RESOURCE_MAP.SignalDelivery,
+      namespace,
+      onEvent: handlePolicyOrSignal,
+      onError: (error) => console.warn('[jangar] signal delivery watch failed', error),
+    }),
+  )
+  watchHandles.push(
+    startResourceWatch({
+      resource: RESOURCE_MAP.ApprovalPolicy,
+      namespace,
+      onEvent: handlePolicyOrSignal,
+      onError: (error) => console.warn('[jangar] approval policy watch failed', error),
+    }),
+  )
+  watchHandles.push(
+    startResourceWatch({
+      resource: RESOURCE_MAP.Orchestration,
+      namespace,
+      onEvent: handlePolicyOrSignal,
+      onError: (error) => console.warn('[jangar] orchestration watch failed', error),
+    }),
+  )
+  watchHandles.push(
+    startResourceWatch({
+      resource: 'job',
+      namespace,
+      labelSelector: 'jangar.proompteng.ai/tool-run',
+      onEvent: handleJob,
+      onError: (error) => console.warn('[jangar] tool job watch failed', error),
+    }),
+  )
+}
+
+export const startOrchestrationController = async () => {
+  if (started || !shouldStart()) return
+  try {
+    await checkCrds()
+    const kube = createKubernetesClient()
+    const namespaces = parseNamespaces()
+    await reconcileAll(kube, namespaces)
+    for (const namespace of namespaces) {
+      startNamespaceWatches(kube, namespace)
+    }
+    const intervalSeconds = parseIntervalSeconds()
+    if (intervalSeconds > 0) {
+      intervalRef = setInterval(() => {
+        void reconcileAll(kube, namespaces)
+      }, intervalSeconds * 1000)
+    }
+    started = true
+  } catch (error) {
+    console.warn('[jangar] orchestration controller failed to start', error)
+  }
+}
+
+export const stopOrchestrationController = () => {
+  watchHandles.forEach((handle) => handle.stop())
+  watchHandles = []
+  namespaceQueues.clear()
+  if (intervalRef) {
+    clearInterval(intervalRef)
+    intervalRef = null
+  }
+  started = false
+}

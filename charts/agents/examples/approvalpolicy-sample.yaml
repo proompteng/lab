@@ -1,0 +1,11 @@
+apiVersion: approvals.proompteng.ai/v1alpha1
+kind: ApprovalPolicy
+metadata:
+  name: default-approval
+spec:
+  mode: manual
+  defaultDecision: deny
+  subjects:
+    - kind: Orchestration
+      name: codex-autonomous
+

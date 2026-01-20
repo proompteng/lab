@@ -1,0 +1,11 @@
+apiVersion: budgets.proompteng.ai/v1alpha1
+kind: Budget
+metadata:
+  name: default-budget
+spec:
+  limits:
+    tokens: "100000"
+    dollars: "50"
+    cpu: "8"
+    memory: "16Gi"
+

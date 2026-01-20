@@ -4,15 +4,15 @@
 
 The Orchestration primitive represents a composable workflow definition and execution that coordinates
 multiple steps (agent runs, tool invocations, memory operations) over long horizons. It is provider-agnostic
-and can be implemented by Argo, Temporal, or other workflow engines.
+and implemented by the Jangar native workflow runtime by default, with optional adapters for external
+workflow engines.
 
 Jangar is the control plane for orchestration resources.
 
 ## Grounding in the current platform
 
-- Existing Argo templates: `codex-autonomous`, `github-codex-implementation`, `codex-research-workflow`
-- Facteur orchestration entrypoint: `services/facteur/internal/orchestrator/implementation.go`
-- Argo runtime namespace: `argo-workflows`
+- Native runtime: `services/jangar/src/server/orchestration-controller.ts`
+- Agent execution runtime: `services/jangar/src/server/agents-controller.ts`
 
 ## CRDs
 
@@ -89,14 +89,13 @@ Each step is an atomic unit with:
 - Provider binding happens at reconciliation via the Jangar runtime router.
 - Provider-specific overrides may be introduced later.
 
-## Mapping to Argo (current runtime)
+## Native runtime (default)
 
-- `Orchestration` → `WorkflowTemplate` (or DAG template)
-- `OrchestrationRun` → `Workflow`
-- `dependsOn` maps to DAG dependencies
-- `AgentRun` steps map to `templateRef` to existing agent workflow templates
+- `Orchestration` defines the DAG and step contracts.
+- `OrchestrationRun` coordinates step execution through Jangar.
+- Steps create `AgentRun` and `ToolRun` resources and track their status.
 
-## Mapping to Temporal (future runtime)
+## Optional adapters (future)
 
 - `Orchestration` → Workflow Type and Task Queue
 - `steps` map to Activities or Child Workflows

@@ -33,6 +33,18 @@ python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.p
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_implementationspecs.yaml" agents.proompteng.ai v1alpha1 ImplementationSpec
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_implementationsources.yaml" agents.proompteng.ai v1alpha1 ImplementationSource
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_memories.yaml" agents.proompteng.ai v1alpha1 Memory
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/orchestration.proompteng.ai_orchestrations.yaml" orchestration.proompteng.ai v1alpha1 Orchestration
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/orchestration.proompteng.ai_orchestrationruns.yaml" orchestration.proompteng.ai v1alpha1 OrchestrationRun
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/approvals.proompteng.ai_approvalpolicies.yaml" approvals.proompteng.ai v1alpha1 ApprovalPolicy
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/budgets.proompteng.ai_budgets.yaml" budgets.proompteng.ai v1alpha1 Budget
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/security.proompteng.ai_secretbindings.yaml" security.proompteng.ai v1alpha1 SecretBinding
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/signals.proompteng.ai_signals.yaml" signals.proompteng.ai v1alpha1 Signal
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/signals.proompteng.ai_signaldeliveries.yaml" signals.proompteng.ai v1alpha1 SignalDelivery
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/tools.proompteng.ai_tools.yaml" tools.proompteng.ai v1alpha1 Tool
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/tools.proompteng.ai_toolruns.yaml" tools.proompteng.ai v1alpha1 ToolRun
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/schedules.proompteng.ai_schedules.yaml" schedules.proompteng.ai v1alpha1 Schedule
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/artifacts.proompteng.ai_artifacts.yaml" artifacts.proompteng.ai v1alpha1 Artifact
+python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/workspaces.proompteng.ai_workspaces.yaml" workspaces.proompteng.ai v1alpha1 Workspace
 
 schema_dir="${ROOT_DIR}/schemas/custom"
 if ! command -v kubeconform >/dev/null 2>&1; then
