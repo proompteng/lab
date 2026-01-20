@@ -465,7 +465,10 @@ describe('agents controller reconcileAgentRun', () => {
     const firstWorkflow = firstStatus.workflow as Record<string, unknown>
     const firstSteps = (firstWorkflow.steps as Record<string, unknown>[]) ?? []
     const firstJobName = (firstSteps[0]?.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
-    jobStatuses.set(firstJobName ?? '', { ...jobStatuses.get(firstJobName ?? ''), status: { failed: 1 } })
+    jobStatuses.set(firstJobName ?? '', {
+      ...jobStatuses.get(firstJobName ?? ''),
+      status: { failed: 1, conditions: [{ type: 'Failed', status: 'True' }] },
+    })
 
     const secondAgentRun = { ...agentRun, status: firstStatus }
     await __test.reconcileAgentRun(
