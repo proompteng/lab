@@ -27,7 +27,6 @@ resources:
   - workflow-completions-rbac.yaml
   - jangar-primitives-agentprovider.yaml
   - jangar-primitives-agent.yaml
-  - jangar-primitives-memoryprovider.yaml
   - jangar-primitives-memory.yaml
   - jangar-primitives-tool.yaml
   - jangar-primitives-toolrun.yaml

@@ -4,8 +4,6 @@ metadata:
   name: jangar-primitives
   namespace: jangar
 spec:
-  compositionRef:
-    name: orchestration-argo-template
   entrypoint: main
   steps:
     - name: agent-run

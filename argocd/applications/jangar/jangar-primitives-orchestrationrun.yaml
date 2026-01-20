@@ -4,8 +4,6 @@ metadata:
   name: jangar-primitives-run
   namespace: jangar
 spec:
-  compositionRef:
-    name: orchestrationrun-argo
   orchestrationRef:
     name: jangar-primitives
   parameters:

@@ -1,18 +1,13 @@
-apiVersion: memory.proompteng.ai/v1alpha1
+apiVersion: agents.proompteng.ai/v1alpha1
 kind: Memory
 metadata:
   name: jangar-primitives
   namespace: jangar
 spec:
-  compositionRef:
-    name: memory-postgres
-  providerRef:
-    name: postgres-default
-  dataset:
-    name: jangar_primitives
-    schema: jangar_primitives
-  retention:
-    ttlDays: 30
-  embeddings:
-    enabled: true
-    dimension: 1536
+  type: postgres
+  connection:
+    secretRef:
+      name: jangar-db-app
+      key: uri
+  capabilities:
+    - vector
