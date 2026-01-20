@@ -10,7 +10,7 @@ spec:
   memoryRef:
     name: default-memory
   runtime:
-    type: job
+    type: workflow
     config:
       ttlSecondsAfterFinished: 600
   workload:

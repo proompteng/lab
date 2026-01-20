@@ -11,11 +11,11 @@ spec:
       summary: "Run the jangar primitives smoke implementation"
       text: "Execute the sample implementation for the jangar primitives workflow."
   runtime:
-    type: argo
+    type: workflow
     config:
-      workflowTemplate: codex-implementation
-      namespace: argo-workflows
-      serviceAccount: codex-workflow
+      ttlSecondsAfterFinished: 600
+  workload:
+    image: ghcr.io/proompteng/codex-agent:latest
   parameters:
     repository: proompteng/lab
     base: main

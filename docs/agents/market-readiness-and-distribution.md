@@ -1,6 +1,6 @@
 # Agents Platform: Market Readiness & Distribution Plan
 
-Status: Draft (2026-01-13)
+Status: Current (2026-01-19)
 
 ## Artifact Hub Publishability (Required)
 ### Chart & Repo Metadata
@@ -68,7 +68,7 @@ Status: Draft (2026-01-13)
 - **Proof**: published case studies + logos.
 
 ### Ecosystem Leverage
-- Runtime adapters for Argo/Temporal/Job/Custom.
+- Runtime adapters for workflow/job, temporal, and custom.
 - Templates/examples for CI/CD and AI‑agent workflows.
 - Interop with popular observability stacks.
 

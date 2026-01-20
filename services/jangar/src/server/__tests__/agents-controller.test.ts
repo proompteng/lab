@@ -182,31 +182,6 @@ describe('agents controller reconcileAgentRun', () => {
     if (previousAgentImage) process.env.JANGAR_AGENT_IMAGE = previousAgentImage
   })
 
-  it('marks AgentRun failed when argo runtime lacks workflowTemplate', async () => {
-    const kube = buildKube()
-    const agentRun = buildAgentRun({
-      spec: {
-        agentRef: { name: 'agent-1' },
-        implementationSpecRef: { name: 'impl-1' },
-        runtime: { type: 'argo', config: {} },
-      },
-    })
-
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
-      0,
-    )
-
-    const status = getLastStatus(kube)
-    const condition = findCondition(status, 'InvalidSpec')
-    expect(condition?.reason).toBe('MissingWorkflowTemplate')
-  })
-
   it('marks AgentRun failed when temporal runtime lacks workflowType and taskQueue', async () => {
     const kube = buildKube()
     const agentRun = buildAgentRun({

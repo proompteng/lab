@@ -1,6 +1,6 @@
 # CRD YAML Spec (Agents)
 
-Status: Draft (2026-01-13)
+Status: Current (2026-01-19)
 
 ## Required CRDs
 - Agent
@@ -16,7 +16,8 @@ Status: Draft (2026-01-13)
 - `spec.versions[*].subresources.status` enabled
 - `spec.versions[*].additionalPrinterColumns` present where useful
 - `spec.versions[*].schema.openAPIV3Schema.properties.status.properties.observedGeneration` included
-- `spec.versions[*].schema.openAPIV3Schema.x-kubernetes-preserve-unknown-fields` **false**
+- Do not set `x-kubernetes-preserve-unknown-fields: false` on the root schema. Omit the field and
+  rely on structural schemas, marking only explicit subtrees as schemaless.
 - Mark only specific subtrees as schemaless via:
   - `x-kubernetes-preserve-unknown-fields: true` or
   - `additionalProperties: { type: string }` (for string maps)
@@ -57,7 +58,7 @@ Status: Draft (2026-01-13)
   - AgentRun: `spec.agentRef.name`, `spec.runtime.type`, `spec.implementationSpecRef.name` OR `spec.implementation.inline`
   - AgentProvider: `spec.binary`
   - ImplementationSpec: `spec.text`
-  - ImplementationSource: `spec.provider`, `spec.auth.secretRef`
+  - ImplementationSource: `spec.provider`, `spec.auth.secretRef`, `spec.webhook.enabled=true`
   - Memory: `spec.type`, `spec.connection.secretRef`
 
 ## Status Conditions (standard)

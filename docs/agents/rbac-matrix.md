@@ -1,11 +1,11 @@
 # RBAC Matrix (Agents)
 
-Status: Draft (2026-01-13)
+Status: Current (2026-01-19)
 
 ## Components
 - Jangar controller (namespaced)
 - agentctl (user client)
-- Runtime adapters (Argo/Temporal/Job/Custom)
+- Runtime adapters (Workflow/Temporal/Custom)
 
 ## Jangar Controller (namespaced Role)
 Required verbs (namespaced):
@@ -13,8 +13,7 @@ Required verbs (namespaced):
   - `agents`, `agentruns`, `agentproviders`, `implementationspecs`, `implementationsources`, `memories`
 - `update` on `*/status` for all CRDs
 - `create`, `get`, `list`, `watch`, `update`, `patch`, `delete` on runtime resources:
-  - `jobs.batch` (for job runtime)
-  - `workflows.argoproj.io` (if Argo adapter enabled)
+  - `jobs.batch` (for workflow/job runtime)
 - `get` on `secrets` referenced in AgentRun allowlist
 
 Optional (if enabled):
@@ -28,7 +27,7 @@ Additional verbs for namespace discovery when using `"*"`:
 - `get`, `list`, `watch` on `namespaces`
 
 ## agentctl (user)
-Uses the user's kubeconfig; permissions are whatever the user has in the cluster.
+Uses Jangar gRPC endpoints; no direct Kubernetes access.
 
 ## Runtime Adapter Service Accounts
 If adapters run outside Jangar:

@@ -1,6 +1,6 @@
 # Runbooks (Agents)
 
-Status: Draft (2026-01-16)
+Status: Current (2026-01-19)
 
 ## Install
 1. `helm install agents charts/agents -n agents --create-namespace`
@@ -46,7 +46,7 @@ kubectl -n agents wait --for=condition=complete job \
 scripts/agents/smoke-agents.sh
 ```
 
-This installs the chart, applies sample CRDs, submits a job runtime AgentRun, and waits for the Job
+This installs the chart, applies sample CRDs, submits a workflow runtime AgentRun, and waits for the Job
 to complete. Override `AGENTS_NAMESPACE`, `AGENTS_RELEASE_NAME`, or `AGENTS_VALUES_FILE` if needed.
 Ensure the `agentrun-sample.yaml` workload image includes `agent-runner` or set
 `env.vars.JANGAR_AGENT_RUNNER_IMAGE` in your values.

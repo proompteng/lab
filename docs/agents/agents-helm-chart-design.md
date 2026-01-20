@@ -1,6 +1,6 @@
 # Agents Helm Chart Design
 
-Status: Draft (2026-01-13)
+Status: Current (2026-01-19)
 
 ## Context
 The current `charts/agents` chart bundles control-plane deployment plus CRDs and several optional add-ons.
@@ -81,7 +81,7 @@ Local cluster usage (minikube/kind):
 Jangar is the reconciler for all Agents CRDs. No separate operator is required as long as Jangar runs.
 It provides:
 - Controller manager (leader-elected) that owns reconciliation loops.
-- Runtime adapter layer (Argo/Temporal/Job/Custom) for execution.
+- Runtime adapter layer (workflow/job, temporal, custom) for execution.
 - Integration layer for GitHub + Linear ingestion into ImplementationSpec.
 - Status/condition management and event emission.
 
@@ -97,7 +97,7 @@ It provides:
   - Validate schema, normalize plaintext `spec.text`.
   - Track provenance (`spec.source`) and update conditions when upstream changes.
 - `ImplementationSource` reconciler:
-  - Accept webhook events from GitHub/Linear only.
+  - Connect to GitHub/Linear via **webhooks only** (no polling).
   - Normalize external issues to ImplementationSpec objects (create/update/delete).
   - Maintain sync cursor and emit reconciliation events.
 - `Memory` reconciler:
@@ -132,7 +132,7 @@ All CRDs remain under `charts/agents/crds` and are cluster-scoped definitions.
 ### CRD Best Practices Adopted (from Argo, Tekton, Flyte)
 - Generate CRDs from Go types with `controller-gen`, then publish static YAML under `charts/agents/crds` (Argo, Tekton).
 - Keep CRD JSON size below 256KB (Tekton) and provide a fallback minimal variant or trimmed descriptions when needed (Argo).
-- Use structural schemas with `preserveUnknownFields: false`, and only mark specific subtrees as schemaless (Argo/Tekton).
+- Use structural schemas and avoid top-level `x-kubernetes-preserve-unknown-fields: false`; only mark specific subtrees as schemaless (Argo/Tekton).
 - Enable `subresources.status` for all CRDs and use conditions + `observedGeneration` for reconciliation state (Tekton).
 - Add `additionalPrinterColumns` for run status and timestamps to improve `kubectl get` UX (Tekton).
 - Use CEL validations sparingly for user-facing invariants; avoid heavy CEL on controller-managed specs (Argo).
@@ -194,7 +194,7 @@ Workload requirements:
   - `name`, `mountPath`, and type-specific fields (`claimName`, `secretName`, `sizeLimit`).
 
 Overrides:
-- `spec.runtime`: runtime-specific configuration for this run (runtime-agnostic schema; examples may include Argo or Temporal).
+- `spec.runtime`: runtime-specific configuration for this run (runtime-agnostic schema; examples may include Temporal).
 - `spec.parameters`: map of string -> string parameters for the provider.
 - `spec.secrets`: named secret refs allowed for this run.
 
@@ -206,13 +206,14 @@ Status fields (required):
 - `status.observedGeneration`
 
 Runtime schema (spec.runtime):
-- `type`: `argo` | `temporal` | `job` | `custom`
+- `type`: `workflow` | `job` | `temporal` | `custom`
+  - `workflow` is the default, vendor-neutral runtime (Job-backed).
+  - `job` is a legacy alias for `workflow`.
 - `config`: schemaless map for adapter-specific keys
-  - `argo` required: `workflowTemplate`
-  - `argo` optional: `namespace`, `serviceAccount`, `arguments`
   - `temporal` required: `taskQueue`, `workflowType`
   - `temporal` optional: `namespace`, `workflowId`, `timeouts`
-  - `job` optional: `namespace`, `serviceAccount`, `ttlSecondsAfterFinished`
+  - `workflow` optional: `serviceAccount`, `ttlSecondsAfterFinished`
+  - `job` optional: `serviceAccount`, `ttlSecondsAfterFinished`
   - `custom` optional: `endpoint`, `payload`
 
 Mermaid: execution flow
@@ -283,7 +284,7 @@ Add an `ImplementationSource` CRD that configures webhook-only sync from GitHub 
 ImplementationSource schema (summary):
 - `spec.provider`: `github` | `linear`
 - `spec.auth.secretRef`: reference to credentials secret
-- `spec.webhook.enabled`: bool
+- `spec.webhook.enabled`: boolean (must be true)
 - `spec.scope`: selector for org/project/repo
 - `spec.mapping`: optional overrides for field mapping
 

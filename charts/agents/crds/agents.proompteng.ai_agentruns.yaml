@@ -140,9 +140,9 @@ spec:
                     x-kubernetes-preserve-unknown-fields: true
                   type:
                     enum:
-                    - argo
-                    - temporal
+                    - workflow
                     - job
+                    - temporal
                     - custom
                     type: string
                 required:

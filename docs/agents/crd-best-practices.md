@@ -1,6 +1,6 @@
 # CRD Best Practices (Argo + Tekton + Flyte)
 
-Status: Draft (2026-01-13)
+Status: Current (2026-01-19)
 
 ## Sources Mapped
 - Argo Workflows: generate CRDs from Go types, post-process for size, validate examples.
@@ -10,7 +10,7 @@ Status: Draft (2026-01-13)
 ## Adopted Practices for Agents CRDs
 ### Schema & Generation
 - Generate CRDs from Go types with `controller-gen` and publish static YAML into `charts/agents/crds`.
-- Keep CRDs structural (`preserveUnknownFields: false`) and mark only specific subtrees as schemaless.
+- Keep CRDs structural and avoid top-level `x-kubernetes-preserve-unknown-fields: false`; mark only specific subtrees as schemaless.
 - Use `x-kubernetes-preserve-unknown-fields` or `additionalProperties` for:
   - `Agent.spec.config`
   - `AgentRun.spec.parameters`

@@ -1,6 +1,6 @@
 # Production-Grade Design Requirements (Agents Platform)
 
-Status: Draft (2026-01-13)
+Status: Current (2026-01-19)
 
 ## API & Contracts
 - Full CRD schemas for all resources (spec + status) with defaults and validation rules.

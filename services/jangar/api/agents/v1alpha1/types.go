@@ -94,7 +94,7 @@ type InlineImplementation struct {
 }
 
 type RuntimeSpec struct {
-	// +kubebuilder:validation:Enum=argo;temporal;job;custom
+	// +kubebuilder:validation:Enum=workflow;job;temporal;custom
 	Type string `json:"type"`
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Config map[string]apiextensionsv1.JSON `json:"config,omitempty"`
@@ -244,11 +244,13 @@ type ImplementationSource struct {
 	Status ImplementationSourceStatus `json:"status,omitempty"`
 }
 
+// +kubebuilder:validation:XValidation:rule="self.webhook.enabled == true",message="spec.webhook.enabled must be true"
 type ImplementationSourceSpec struct {
 	// +kubebuilder:validation:Enum=github;linear
 	Provider string                       `json:"provider"`
 	Auth     ImplementationSourceAuth     `json:"auth"`
-	Webhook  *ImplementationSourceWebhook `json:"webhook,omitempty"`
+	// +kubebuilder:validation:Required
+	Webhook ImplementationSourceWebhook `json:"webhook"`
 	Scope    *ImplementationScope         `json:"scope,omitempty"`
 	Mapping  map[string]string            `json:"mapping,omitempty"`
 }
@@ -258,7 +260,7 @@ type ImplementationSourceAuth struct {
 }
 
 type ImplementationSourceWebhook struct {
-	// +kubebuilder:default=false
+	// +kubebuilder:default=true
 	Enabled bool `json:"enabled,omitempty"`
 }
 
