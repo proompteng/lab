@@ -80,11 +80,46 @@ agentctl memory watch
 agentctl memory apply -f memory.yaml
 agentctl memory delete <name>
 
+agentctl orchestration list
+agentctl orchestration get <name>
+agentctl orchestration describe <name>
+agentctl orchestration apply -f orchestration.yaml
+
+agentctl orchestrationrun list
+agentctl orchestrationrun get <name>
+agentctl orchestrationrun describe <name>
+agentctl orchestrationrun apply -f orchestration-run.yaml
+
+agentctl tool list
+agentctl tool get <name>
+agentctl tool describe <name>
+agentctl tool apply -f tool.yaml
+
+agentctl signal list
+agentctl signal get <name>
+agentctl signal describe <name>
+agentctl signal apply -f signal.yaml
+
+agentctl schedule list
+agentctl schedule get <name>
+agentctl schedule describe <name>
+agentctl schedule apply -f schedule.yaml
+
+agentctl artifact list
+agentctl artifact get <name>
+agentctl artifact describe <name>
+agentctl artifact apply -f artifact.yaml
+
+agentctl workspace list
+agentctl workspace get <name>
+agentctl workspace describe <name>
+agentctl workspace apply -f workspace.yaml
+
 agentctl run submit --agent <name> --impl <name> --runtime <type>
 agentctl run list
 agentctl run get <name>
-agentctl run status <name>
 agentctl run describe <name>
+agentctl run status <name>
 agentctl run watch
 agentctl run wait <name>
 agentctl run logs <name> --follow
@@ -93,7 +128,8 @@ agentctl run cancel <name>
 
 By default, `agentctl` targets the in-cluster service address `agents-grpc.agents.svc.cluster.local:50051` in the
 `agents` namespace. Use `--namespace`/`-n` to override the namespace and `--server` (or `--address`) for
-port-forwarded access. `--output` supports `table` (default), `json`, and `yaml`.
+port-forwarded access. `--output` supports `table` (default), `json`, and `yaml`; `describe` defaults to `yaml` when
+`--output` is omitted.
 
 Port-forward example:
 

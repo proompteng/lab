@@ -8,6 +8,7 @@ import { status as GrpcStatus, ServerCredentials, type ServerUnaryCall, type Ser
 import { loadSync } from '@grpc/proto-loader'
 import { postAgentRunsHandler } from '~/routes/v1/agent-runs'
 import { buildControlPlaneStatus, type GrpcStatus as ControlPlaneGrpcStatus } from '~/server/control-plane-status'
+import { startResourceWatch } from '~/server/kube-watch'
 import { asRecord, asString } from '~/server/primitives-http'
 import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 
@@ -29,6 +30,7 @@ type AgentctlPackage = {
 type UnaryCallback = grpc.sendUnaryData<unknown>
 type UnaryCall<Request> = ServerUnaryCall<Request, unknown>
 type ReadableCall<Request> = grpc.ServerReadableStream<Request, unknown>
+type WritableCall<Request> = grpc.ServerWritableStream<Request, unknown>
 
 type ListRequest = { namespace?: string; label_selector?: string }
 type NameRequest = { namespace?: string; name?: string }
@@ -51,6 +53,7 @@ type SubmitRunRequest = {
   memory_ref?: string
 }
 type LogsRequest = { namespace?: string; name?: string; follow?: boolean }
+type StatusStreamRequest = { namespace?: string; name?: string }
 type ControlPlaneStatusRequest = { namespace?: string }
 
 const resolveProtoPath = () => {
@@ -126,7 +129,7 @@ const resolveAuthToken = (metadata: grpc.Metadata) => {
   return raw.trim()
 }
 
-const requireAuth = (call: UnaryCall<unknown> | ReadableCall<unknown>) => {
+const requireAuth = (call: UnaryCall<unknown> | ReadableCall<unknown> | WritableCall<unknown>) => {
   const expected = process.env.JANGAR_GRPC_TOKEN?.trim()
   if (!expected) return null
   const provided = resolveAuthToken(call.metadata)
@@ -222,6 +225,28 @@ const resolveAgentRunRuntime = (resource: Record<string, unknown>) => {
   const runtimeType = asString(runtimeRef?.type) ?? asString(readNested(resource, ['spec', 'runtime', 'type']))
   const runtimeName = asString(runtimeRef?.name)
   return { runtimeType, runtimeName }
+}
+
+const resolveStatusPhase = (resource: Record<string, unknown>) => {
+  const status = asRecord(resource.status)
+  const keys = ['phase', 'status', 'state', 'result']
+  for (const key of keys) {
+    const value = asString(status[key])
+    if (value?.trim()) {
+      return value
+    }
+  }
+  const conditions = Array.isArray(status.conditions) ? status.conditions : []
+  const ready = conditions.find((entry) => asString(asRecord(entry).type) === 'Ready')
+  const readyStatus = asString(asRecord(ready).status)
+  return readyStatus ?? ''
+}
+
+const isTerminalPhase = (phase: string) => {
+  const normalized = phase.trim().toLowerCase()
+  return (
+    normalized === 'succeeded' || normalized === 'failed' || normalized === 'cancelled' || normalized === 'canceled'
+  )
 }
 
 const readNested = (value: unknown, path: string[]) => {
@@ -817,6 +842,80 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
       })
       call.on('close', () => {
         child.kill('SIGTERM')
+      })
+    },
+
+    StreamAgentRunStatus: async (call: ServerWritableStream<StatusStreamRequest, unknown>) => {
+      const authError = requireAuth(call)
+      if (authError) {
+        call.destroy(Object.assign(new Error(authError.message), { code: authError.code }))
+        return
+      }
+
+      const namespace = normalizeNamespace(call.request?.namespace)
+      const name = call.request?.name ?? ''
+      if (!name) {
+        call.destroy(Object.assign(new Error('AgentRun name is required'), { code: GrpcStatus.INVALID_ARGUMENT }))
+        return
+      }
+
+      const existing = await kube.get(RESOURCE_MAP.AgentRun, name, namespace)
+      if (!existing) {
+        call.destroy(Object.assign(new Error('AgentRun not found'), { code: GrpcStatus.NOT_FOUND }))
+        return
+      }
+
+      let ended = false
+      let watchHandle: { stop: () => void } | null = null
+
+      const stop = () => {
+        if (ended) return
+        ended = true
+        watchHandle?.stop()
+        watchHandle = null
+        call.end()
+      }
+
+      const writeResource = (resource: Record<string, unknown>, isTerminal = false) => {
+        if (ended) return
+        const phase = resolveStatusPhase(resource)
+        call.write({ json: JSON.stringify(resource), phase })
+        if (isTerminal || (phase && isTerminalPhase(phase))) {
+          stop()
+        }
+      }
+
+      writeResource(existing)
+      if (ended) {
+        return
+      }
+
+      watchHandle = startResourceWatch({
+        resource: RESOURCE_MAP.AgentRun,
+        namespace,
+        fieldSelector: `metadata.name=${name}`,
+        logPrefix: '[jangar][agentctl][watch]',
+        onEvent: (event) => {
+          if (ended) return
+          const resource = event.object
+          if (!resource) return
+          const isDeleted = event.type === 'DELETED'
+          writeResource(resource, isDeleted)
+        },
+        onError: (error) => {
+          if (ended) return
+          ended = true
+          watchHandle?.stop()
+          watchHandle = null
+          call.destroy(Object.assign(new Error(error.message), { code: GrpcStatus.INTERNAL }))
+        },
+      })
+
+      call.on('cancelled', () => {
+        stop()
+      })
+      call.on('close', () => {
+        stop()
       })
     },
 
