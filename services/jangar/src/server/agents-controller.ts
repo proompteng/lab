@@ -140,7 +140,6 @@ const resolveNamespaces = async () => {
   return resolved
 }
 
-
 const parseConcurrency = () => ({
   perNamespace:
     Number.parseInt(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE ?? '', 10) ||
@@ -245,16 +244,27 @@ const normalizeConditions = (raw: unknown): Condition[] => {
   return output
 }
 
+const normalizeConditionUpdate = (update: Omit<Condition, 'lastTransitionTime'>) => ({
+  ...update,
+  reason: update.reason?.trim() || 'Reconciled',
+  message: update.message ?? '',
+})
+
 const upsertCondition = (conditions: Condition[], update: Omit<Condition, 'lastTransitionTime'>): Condition[] => {
   const next = [...conditions]
-  const index = next.findIndex((cond) => cond.type === update.type)
+  const normalized = normalizeConditionUpdate(update)
+  const index = next.findIndex((cond) => cond.type === normalized.type)
   if (index === -1) {
-    next.push({ ...update, lastTransitionTime: nowIso() })
+    next.push({ ...normalized, lastTransitionTime: nowIso() })
     return next
   }
   const existing = next[index]
-  if (existing.status !== update.status || existing.reason !== update.reason || existing.message !== update.message) {
-    next[index] = { ...existing, ...update, lastTransitionTime: nowIso() }
+  if (
+    existing.status !== normalized.status ||
+    existing.reason !== normalized.reason ||
+    existing.message !== normalized.message
+  ) {
+    next[index] = { ...existing, ...normalized, lastTransitionTime: nowIso() }
   }
   return next
 }
