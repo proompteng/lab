@@ -6,6 +6,7 @@ const websocketEnabled = ['1', 'true', 'yes', 'on'].includes(
   (process.env.JANGAR_WEBSOCKETS_ENABLED ?? '').toLowerCase(),
 )
 const rootDir = dirname(fileURLToPath(import.meta.url))
+const agentsRuntimePlugin = resolve(rootDir, 'server/plugins/agents-runtime')
 const agentctlPlugin = resolve(rootDir, 'server/plugins/agentctl-grpc')
 
 export default defineNitroConfig({
@@ -13,5 +14,5 @@ export default defineNitroConfig({
   experimental: {
     websocket: websocketEnabled,
   },
-  plugins: [agentctlPlugin],
+  plugins: [agentsRuntimePlugin, agentctlPlugin],
 })
