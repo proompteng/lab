@@ -8,7 +8,9 @@
     "start": "bun src/index.ts",
     "lint": "bunx biome check --config-path ../../biome.json src",
     "tsc": "bunx tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.oxlint.json ."
   },
   "dependencies": {
     "@proompteng/discord": "workspace:*",

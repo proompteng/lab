@@ -63,7 +63,9 @@
     "start:worker": "bun run dist/bin/start-worker.js",
     "temporal:start": "bun scripts/start-temporal-cli.ts",
     "temporal:stop": "bun scripts/stop-temporal-cli.ts",
-    "prepack": "bun run build"
+    "prepack": "bun run build",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.oxlint.json --ignore-pattern tests ."
   },
   "engines": {
     "bun": ">=1.1.20"

@@ -5,6 +5,7 @@
     "noEmit": true,
     "strict": true,
     "strictNullChecks": true,
+    "baseUrl": "./src",
     "paths": {
       "@/*": ["./*"],
       "~/*": ["./*"],
@@ -12,5 +13,5 @@
       "@proompteng/codex/*": ["../../../packages/codex/src/*"]
     }
   },
-  "include": ["./src/**/*", "./server/**/*", "./nitro.config.ts"]
+  "include": ["./src/**/*"]
 }

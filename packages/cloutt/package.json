@@ -7,7 +7,9 @@
   "scripts": {
     "import": "cdk8s import",
     "synth": "cdk8s synth",
-    "build": "bun main.ts"
+    "build": "bun main.ts",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
   },
   "dependencies": {
     "cdk8s": "^2.69.48",

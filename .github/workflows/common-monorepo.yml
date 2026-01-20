@@ -18,6 +18,14 @@ on:
         required: false
         type: string
         default: ''
+      oxlint-command:
+        required: false
+        type: string
+        default: ''
+      oxlint-type-command:
+        required: false
+        type: string
+        default: ''
       test-command:
         required: false
         type: string
@@ -61,6 +69,16 @@ jobs:
       - name: Lint
         if: inputs.lint-command != ''
         run: ${{ inputs.lint-command }}
+
+      - name: Oxlint (non-blocking)
+        if: inputs.oxlint-command != ''
+        continue-on-error: true
+        run: ${{ inputs.oxlint-command }}
+
+      - name: Oxlint (type-aware, non-blocking)
+        if: inputs.oxlint-type-command != ''
+        continue-on-error: true
+        run: ${{ inputs.oxlint-type-command }}
 
       - name: Test
         if: inputs.test-command != ''
