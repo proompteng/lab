@@ -4,12 +4,8 @@ metadata:
   name: jangar-primitives-budget
   namespace: jangar
 spec:
-  compositionRef:
-    name: budget-kubernetes
   limits:
     cpu: "36"
     dollars: 50
     memory: 128Gi
     tokens: 100000
-  window:
-    period: 30d
