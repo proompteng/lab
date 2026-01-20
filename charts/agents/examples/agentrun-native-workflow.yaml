@@ -32,6 +32,6 @@ spec:
     base: main
     head: codex/agents/2614
     prompt: |
-      Add a concise runbook note in docs/agents/runbooks.md describing how to retrieve
-      native workflow AgentRun artifacts and confirm the resulting PR exists. Keep the
-      change documentation-only and scoped to the Agents runbook.
+      Add a short "Verification checklist" subsection under the Native workflow e2e proof
+      runbook in docs/agents/runbooks.md that lists steps to confirm AgentRun success,
+      artifact output location, and PR verification. Keep the change documentation-only.

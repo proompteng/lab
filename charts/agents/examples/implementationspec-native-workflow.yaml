@@ -7,13 +7,14 @@ spec:
     provider: manual
     externalId: manual:native-workflow-e2e
     url: https://example.com/agents/native-workflow-e2e
-  summary: "Add native workflow runbook note"
+  summary: "Add native workflow verification checklist"
   text: |
-    Add a short runbook section documenting how to verify native workflow AgentRun artifacts
-    and confirm that a Codex implementation run opened a PR in proompteng/lab.
+    Add a short "Verification checklist" subsection under the Native workflow e2e proof
+    runbook that lists concrete steps to confirm the AgentRun succeeded, artifacts exist,
+    and the Codex PR is visible. Keep the change documentation-only and scoped to the runbook.
   acceptanceCriteria:
-    - Runbook includes artifact retrieval steps
-    - Runbook describes how to confirm the PR exists
+    - Runbook includes a "Verification checklist" under native workflow e2e proof
+    - Checklist mentions AgentRun status, artifact output location, and PR verification command
     - Changes are limited to documentation
   labels:
     - agents

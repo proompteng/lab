@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 EXAMPLES_DIR="${ROOT_DIR}/charts/agents/examples"
 NAMESPACE="${AGENTS_NAMESPACE:-agents}"
 TIMEOUT="${AGENTS_E2E_TIMEOUT:-15m}"
+VERIFY_PR="${AGENTS_E2E_VERIFY_PR:-true}"
 
 AGENT_PROVIDER_FILE="${EXAMPLES_DIR}/agentprovider-native-workflow.yaml"
 AGENT_FILE="${EXAMPLES_DIR}/agent-native-workflow.yaml"
@@ -17,7 +18,7 @@ ISSUE_TITLE="${AGENTS_E2E_ISSUE_TITLE:-agents: native workflow e2e proof + runbo
 ISSUE_URL="${AGENTS_E2E_ISSUE_URL:-https://github.com/${REPOSITORY}/issues/${ISSUE_NUMBER}}"
 BASE_BRANCH="${AGENTS_E2E_BASE:-main}"
 HEAD_BRANCH="${AGENTS_E2E_HEAD:-codex/agents/${ISSUE_NUMBER}}"
-PROMPT="${AGENTS_E2E_PROMPT:-Add a concise runbook note in docs/agents/runbooks.md describing how to retrieve native workflow AgentRun artifacts and confirm the resulting PR exists. Keep the change documentation-only and scoped to the Agents runbook.}"
+PROMPT="${AGENTS_E2E_PROMPT:-Add a short \"Verification checklist\" subsection under the Native workflow e2e proof runbook in docs/agents/runbooks.md that lists steps to confirm AgentRun success, artifact output location, and PR verification. Keep the change documentation-only.}"
 SECRET_NAME="${AGENTS_E2E_SECRET_NAME:-codex-github-token}"
 GH_TOKEN="${AGENTS_E2E_GH_TOKEN:-}"
 
@@ -52,6 +53,27 @@ wait_for_phase() {
     kubectl -n "${NAMESPACE}" get agentrun "${name}" -o yaml >&2 || true
     exit 1
   fi
+}
+
+resolve_pr_url() {
+  local pr_url=""
+
+  if [[ "${VERIFY_PR}" != "true" ]]; then
+    return 0
+  fi
+
+  if command -v gh >/dev/null 2>&1; then
+    if [[ -n "${GH_TOKEN}" ]]; then
+      export GH_TOKEN
+    fi
+    pr_url="$(gh pr list --repo "${REPOSITORY}" --head "${HEAD_BRANCH}" --state all --json url -q '.[0].url' 2>/dev/null || true)"
+  fi
+
+  if [[ -z "${pr_url}" ]]; then
+    return 1
+  fi
+
+  echo "${pr_url}"
 }
 
 require_command kubectl
@@ -156,6 +178,11 @@ for job in ${job_names}; do
   echo "${job} -> ${pod}" >> "${OUTPUT_DIR}/jobs.txt"
 done
 
+pr_url="$(resolve_pr_url || true)"
+if [[ -z "${pr_url}" ]]; then
+  log "PR verification skipped or not found. Use: gh pr list --repo ${REPOSITORY} --head \"${HEAD_BRANCH}\""
+fi
+
 log "Native workflow e2e complete."
 cat <<SUMMARY
 Status: Succeeded
@@ -164,4 +191,5 @@ RuntimeRef: ${runtime_type}/${runtime_name}
 Output: ${OUTPUT_DIR}
 Logs: ${LOG_DIR}
 Artifacts: ${ARTIFACT_DIR}
+PR: ${pr_url:-not found}
 SUMMARY
