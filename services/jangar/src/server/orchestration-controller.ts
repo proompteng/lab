@@ -33,10 +33,10 @@ const globalState = globalThis as typeof globalThis & {
 }
 
 const controllerState = (() => {
-  if (!globalState.__jangarOrchestrationControllerState) {
-    globalState.__jangarOrchestrationControllerState = { started: false, crdCheckState: null }
-  }
-  return globalState.__jangarOrchestrationControllerState
+  if (globalState.__jangarOrchestrationControllerState) return globalState.__jangarOrchestrationControllerState
+  const initial = { started: false, crdCheckState: null }
+  globalState.__jangarOrchestrationControllerState = initial
+  return initial
 })()
 
 type Condition = {
@@ -54,16 +54,30 @@ type StepStatus = {
   message?: string
   startedAt?: string
   finishedAt?: string
+  lastTransitionTime?: string
   resourceRef?: Record<string, unknown>
   outputs?: Record<string, unknown>
+  attempt?: number
+  nextRetryAt?: string
 }
 
 let started = controllerState.started
 let reconciling = false
+let _crdCheckState: CrdCheckState | null = controllerState.crdCheckState
 let watchHandles: Array<{ stop: () => void }> = []
 const namespaceQueues = new Map<string, Promise<void>>()
+const retrySchedules = new Map<string, { timeout: NodeJS.Timeout; retryAt: number }>()
 
 const nowIso = () => new Date().toISOString()
+
+const parseOptionalNumber = (value: unknown): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number.parseFloat(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
+}
 
 const hasJobCondition = (job: Record<string, unknown>, conditionType: string) => {
   const status = asRecord(job.status) ?? {}
@@ -151,6 +165,7 @@ const checkCrds = async (): Promise<CrdCheckState> => {
     missing: [...missing, ...forbidden],
     checkedAt: nowIso(),
   }
+  _crdCheckState = state
   controllerState.crdCheckState = state
   if (!state.ok) {
     if (missing.length > 0) {
@@ -450,17 +465,27 @@ const normalizeStepStatuses = (
       message: current?.message,
       startedAt: current?.startedAt,
       finishedAt: current?.finishedAt,
+      lastTransitionTime: current?.lastTransitionTime,
       resourceRef: current?.resourceRef,
       outputs: current?.outputs,
+      attempt: typeof current?.attempt === 'number' ? current.attempt : 0,
+      nextRetryAt: current?.nextRetryAt,
     })
   }
   return { statuses: output, index: new Map(output.map((status) => [status.name, status])) }
 }
 
-const setStepStatus = (status: StepStatus, update: Partial<StepStatus>) => ({
-  ...status,
-  ...update,
-})
+const setStepPhase = (status: StepStatus, phase: string, message?: string) => {
+  const next = { ...status }
+  if (next.phase !== phase) {
+    next.phase = phase
+    next.lastTransitionTime = nowIso()
+  }
+  if (message !== undefined) {
+    next.message = message
+  }
+  return next
+}
 
 const makeName = (base: string, suffix: string) => {
   const max = 50
@@ -470,6 +495,56 @@ const makeName = (base: string, suffix: string) => {
     .replace(/-+/g, '-')
   const trimmed = sanitized.length > max ? sanitized.slice(0, max) : sanitized
   return `${trimmed}-${suffix}`
+}
+
+const resolveRetryConfig = (step: Record<string, unknown>) => {
+  const retries = Math.max(0, Math.floor(parseOptionalNumber(step.retries) ?? 0))
+  const retryBackoffSeconds = Math.max(0, Math.floor(parseOptionalNumber(step.retryBackoffSeconds) ?? 0))
+  return { maxAttempts: retries + 1, retryBackoffSeconds }
+}
+
+const shouldRetryStep = (status: StepStatus, now: number) => {
+  if (!status.nextRetryAt) return true
+  const retryAt = Date.parse(status.nextRetryAt)
+  return Number.isNaN(retryAt) ? true : retryAt <= now
+}
+
+const recordRetryAt = (current: number | null, retryAt: number | string | null | undefined) => {
+  if (retryAt == null) return current
+  const parsed = typeof retryAt === 'number' ? retryAt : Date.parse(retryAt)
+  if (!Number.isFinite(parsed)) return current
+  return Math.min(current ?? Number.POSITIVE_INFINITY, parsed)
+}
+
+const scheduleRetry = (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+  runName: string,
+  retryAt: number,
+) => {
+  if (!runName) return
+  const key = `${namespace}/${runName}`
+  const existing = retrySchedules.get(key)
+  if (existing && existing.retryAt === retryAt) return
+  if (existing) {
+    clearTimeout(existing.timeout)
+    retrySchedules.delete(key)
+  }
+  const delay = Math.max(0, retryAt - Date.now())
+  const timeout = setTimeout(() => {
+    retrySchedules.delete(key)
+    enqueueNamespaceTask(namespace, () => reconcileOrchestrationRunByName(kube, namespace, runName))
+  }, delay)
+  retrySchedules.set(key, { timeout, retryAt })
+}
+
+const clearRetrySchedule = (namespace: string, runName: string) => {
+  const key = `${namespace}/${runName}`
+  const existing = retrySchedules.get(key)
+  if (existing) {
+    clearTimeout(existing.timeout)
+    retrySchedules.delete(key)
+  }
 }
 
 const renderTemplate = (input: string, context: Record<string, unknown>) => {
@@ -827,7 +902,10 @@ const submitAgentRunStep = async (
     throw new Error('implementationSpecRef or implementation is required for AgentRun step')
   }
 
-  const runtime = asRecord(readNested(step, ['runtime'])) ?? { type: 'workflow' }
+  const runtime = asRecord(readNested(step, ['runtime'])) ?? asRecord(readNested(step, ['with', 'runtime'])) ?? {}
+  const runtimeType = asString(runtime.type) ?? 'job'
+  const runtimeConfig = asRecord(runtime.config) ?? {}
+  const workload = asRecord(readNested(step, ['workload'])) ?? undefined
   const memoryRefName = asString(readNested(step, ['memoryRef', 'name'])) ?? asString(step.memoryRef)
   const secrets = Array.isArray(step.secrets)
     ? step.secrets.filter((val): val is string => typeof val === 'string')
@@ -854,7 +932,8 @@ const submitAgentRunStep = async (
       parameters,
       ...(memoryRefName ? { memoryRef: { name: memoryRefName } } : {}),
       ...(secrets.length > 0 ? { secrets } : {}),
-      runtime,
+      runtime: { type: runtimeType, ...(Object.keys(runtimeConfig).length > 0 ? { config: runtimeConfig } : {}) },
+      ...(workload ? { workload } : {}),
     },
   }
 
@@ -946,6 +1025,97 @@ const classifyPhase = (phase: string) => phase.toLowerCase()
 
 const isTerminal = (phase: string) => ['succeeded', 'failed', 'cancelled'].includes(classifyPhase(phase))
 
+const buildStepGraph = (steps: Record<string, unknown>[]) => {
+  const names = steps.map((step) => asString(step.name) ?? '').filter(Boolean)
+  const indexMap = new Map(names.map((name, index) => [name, index]))
+  const adjacency = new Map<string, string[]>()
+  const indegree = new Map<string, number>()
+  for (const name of names) {
+    adjacency.set(name, [])
+    indegree.set(name, 0)
+  }
+  for (const step of steps) {
+    const stepName = asString(step.name) ?? ''
+    if (!stepName) continue
+    const deps = resolveDependsOn(step)
+    for (const dep of deps) {
+      if (!adjacency.has(dep)) continue
+      adjacency.get(dep)?.push(stepName)
+      indegree.set(stepName, (indegree.get(stepName) ?? 0) + 1)
+    }
+  }
+
+  const sorted: Record<string, unknown>[] = []
+  const queue = names
+    .filter((name) => (indegree.get(name) ?? 0) === 0)
+    .sort((a, b) => (indexMap.get(a) ?? 0) - (indexMap.get(b) ?? 0))
+
+  while (queue.length > 0) {
+    const name = queue.shift()
+    if (!name) continue
+    const step = steps.find((candidate) => asString(candidate.name) === name)
+    if (step) sorted.push(step)
+    for (const neighbor of adjacency.get(name) ?? []) {
+      const nextDegree = (indegree.get(neighbor) ?? 0) - 1
+      indegree.set(neighbor, nextDegree)
+      if (nextDegree === 0) {
+        queue.push(neighbor)
+        queue.sort((a, b) => (indexMap.get(a) ?? 0) - (indexMap.get(b) ?? 0))
+      }
+    }
+  }
+
+  if (sorted.length !== steps.length) {
+    return {
+      ok: false as const,
+      reason: 'DependencyCycle',
+      message: 'orchestration has a dependency cycle',
+    }
+  }
+
+  return { ok: true as const, steps: sorted }
+}
+
+const emitRunEvent = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  run: Record<string, unknown>,
+  reason: string,
+  message: string,
+  type: 'Normal' | 'Warning' = 'Warning',
+) => {
+  const metadata = asRecord(run.metadata) ?? {}
+  const name = asString(metadata.name)
+  const namespace = asString(metadata.namespace)
+  if (!name || !namespace) return
+  const uid = asString(metadata.uid)
+  const eventName = makeName(name, 'event')
+  const event = {
+    apiVersion: 'v1',
+    kind: 'Event',
+    metadata: {
+      generateName: `${eventName}-`,
+      namespace,
+    },
+    type,
+    reason,
+    message,
+    involvedObject: {
+      apiVersion: asString(run.apiVersion) ?? 'orchestration.proompteng.ai/v1alpha1',
+      kind: asString(run.kind) ?? 'OrchestrationRun',
+      name,
+      namespace,
+      uid: uid ?? undefined,
+    },
+    source: {
+      component: 'jangar-orchestration-controller',
+    },
+    firstTimestamp: nowIso(),
+    lastTimestamp: nowIso(),
+    count: 1,
+  }
+  await kube.apply(event)
+}
+
 const reconcileOrchestrationRun = async (
   kube: ReturnType<typeof createKubernetesClient>,
   orchestrationRun: Record<string, unknown>,
@@ -995,7 +1165,8 @@ const reconcileOrchestrationRun = async (
 
   const orchestrationSpec = asRecord(orchestration.spec) ?? {}
   const steps = Array.isArray(orchestrationSpec.steps) ? orchestrationSpec.steps : []
-  if (steps.length === 0) {
+  const orchestrationValidation = validateOrchestrationSpec(orchestrationSpec)
+  if (!orchestrationValidation.ok) {
     await setStatus(kube, orchestrationRun, {
       observedGeneration: asRecord(orchestrationRun.metadata)?.generation ?? 0,
       phase: 'Failed',
@@ -1003,50 +1174,112 @@ const reconcileOrchestrationRun = async (
       conditions: upsertCondition(normalizeConditions(status.conditions), {
         type: 'InvalidSpec',
         status: 'True',
-        reason: 'EmptySteps',
-        message: 'orchestration spec.steps is empty',
+        reason: orchestrationValidation.reason,
+        message: orchestrationValidation.message,
       }),
     })
     return
   }
-
+  const graph = buildStepGraph(steps as Record<string, unknown>[])
+  if (!graph.ok) {
+    await setStatus(kube, orchestrationRun, {
+      observedGeneration: asRecord(orchestrationRun.metadata)?.generation ?? 0,
+      phase: 'Failed',
+      finishedAt: nowIso(),
+      conditions: upsertCondition(normalizeConditions(status.conditions), {
+        type: 'InvalidSpec',
+        status: 'True',
+        reason: graph.reason,
+        message: graph.message,
+      }),
+    })
+    return
+  }
+  const orderedSteps = graph.steps
   const existingSteps = Array.isArray(status.stepStatuses)
     ? status.stepStatuses.filter((item): item is StepStatus => !!item && typeof item === 'object')
     : []
   const { index: statusIndex } = normalizeStepStatuses(steps as Record<string, unknown>[], existingSteps)
+  const nextStatusMap = new Map<string, StepStatus>()
 
   const orchestrationParams = normalizeStringMap(asRecord(spec.parameters))
   let anyRunning = false
   let anyFailed = false
   let allSucceeded = true
+  let failureMessage = ''
+  let failureReason = ''
+  let scheduledRetryAt: number | null = null
 
-  const nextStatuses: StepStatus[] = []
-
-  for (const rawStep of steps as Record<string, unknown>[]) {
+  for (const rawStep of orderedSteps as Record<string, unknown>[]) {
     const step = asRecord(rawStep) ?? {}
     const stepName = asString(step.name) ?? ''
     const stepKind = asString(step.kind) ?? 'Unknown'
     if (!stepName) continue
 
-    const current = statusIndex.get(stepName) ?? { name: stepName, kind: stepKind, phase: 'Pending' }
+    const current = statusIndex.get(stepName) ?? { name: stepName, kind: stepKind, phase: 'Pending', attempt: 0 }
     const dependsOn = resolveDependsOn(step)
     const canStart = depsSatisfied(dependsOn, statusIndex)
+    const retryConfig = resolveRetryConfig(step)
+    const now = Date.now()
 
     if (current.phase === 'Succeeded') {
-      nextStatuses.push(current)
+      nextStatusMap.set(stepName, current)
+      statusIndex.set(stepName, current)
       continue
     }
 
     if (current.phase === 'Failed') {
-      anyFailed = true
-      allSucceeded = false
-      nextStatuses.push(current)
+      if (current.attempt < retryConfig.maxAttempts) {
+        const retryAt =
+          retryConfig.retryBackoffSeconds > 0
+            ? new Date(now + retryConfig.retryBackoffSeconds * 1000).toISOString()
+            : nowIso()
+        const retrying = setStepPhase(current, 'Retrying', current.message ?? 'Retrying')
+        retrying.nextRetryAt = retryAt
+        retrying.finishedAt = retrying.finishedAt ?? nowIso()
+        anyRunning = true
+        allSucceeded = false
+        scheduledRetryAt = recordRetryAt(scheduledRetryAt, retryAt)
+        nextStatusMap.set(stepName, retrying)
+        statusIndex.set(stepName, retrying)
+      } else {
+        anyFailed = true
+        allSucceeded = false
+        if (!failureMessage) {
+          failureMessage = current.message ?? `step ${stepName} failed`
+          failureReason = 'StepFailed'
+        }
+        nextStatusMap.set(stepName, current)
+        statusIndex.set(stepName, current)
+      }
       continue
+    }
+
+    if (current.phase === 'Retrying') {
+      if (!shouldRetryStep(current, now)) {
+        anyRunning = true
+        allSucceeded = false
+        const retryAt = current.nextRetryAt ? Date.parse(current.nextRetryAt) : now
+        scheduledRetryAt = recordRetryAt(scheduledRetryAt, retryAt)
+        nextStatusMap.set(stepName, current)
+        statusIndex.set(stepName, current)
+        continue
+      }
+      const pending = setStepPhase(current, 'Pending')
+      pending.nextRetryAt = undefined
+      pending.resourceRef = undefined
+      statusIndex.set(stepName, pending)
+      nextStatusMap.set(stepName, pending)
+      current.phase = pending.phase
+      current.lastTransitionTime = pending.lastTransitionTime
+      current.nextRetryAt = pending.nextRetryAt
+      current.resourceRef = pending.resourceRef
     }
 
     if (!canStart) {
       allSucceeded = false
-      nextStatuses.push(current)
+      nextStatusMap.set(stepName, current)
+      statusIndex.set(stepName, current)
       continue
     }
 
@@ -1062,25 +1295,27 @@ const reconcileOrchestrationRun = async (
         }
         const policyPhase = asString(readNested(policy, ['status', 'phase']))?.toLowerCase() ?? ''
         if (['denied', 'rejected', 'blocked', 'failed'].includes(policyPhase)) {
-          const failed = setStepStatus(current, {
-            phase: 'Failed',
-            finishedAt: nowIso(),
-            message: `approval policy ${policyName} is ${policyPhase}`,
-          })
+          const failed = setStepPhase(current, 'Failed', `approval policy ${policyName} is ${policyPhase}`)
+          failed.finishedAt = nowIso()
           anyFailed = true
           allSucceeded = false
-          nextStatuses.push(failed)
+          if (!failureMessage) {
+            failureMessage = failed.message ?? `step ${stepName} failed`
+            failureReason = 'ApprovalDenied'
+          }
+          nextStatusMap.set(stepName, failed)
+          statusIndex.set(stepName, failed)
         } else if (['approved', 'allowed', 'ready', 'succeeded'].includes(policyPhase)) {
-          const succeeded = setStepStatus(current, {
-            phase: 'Succeeded',
-            startedAt: current.startedAt ?? nowIso(),
-            finishedAt: nowIso(),
-          })
-          nextStatuses.push(succeeded)
+          const succeeded = setStepPhase(current, 'Succeeded')
+          succeeded.startedAt = current.startedAt ?? nowIso()
+          succeeded.finishedAt = nowIso()
+          nextStatusMap.set(stepName, succeeded)
+          statusIndex.set(stepName, succeeded)
         } else {
           anyRunning = true
           allSucceeded = false
-          nextStatuses.push(setStepStatus(current, { phase: 'Pending' }))
+          nextStatusMap.set(stepName, current)
+          statusIndex.set(stepName, current)
         }
         continue
       }
@@ -1103,82 +1338,138 @@ const reconcileOrchestrationRun = async (
           return false
         })
         if (match) {
-          const succeeded = setStepStatus(current, {
-            phase: 'Succeeded',
-            startedAt: current.startedAt ?? nowIso(),
-            finishedAt: nowIso(),
-            resourceRef: buildResourceRef(match),
-          })
-          nextStatuses.push(succeeded)
+          const succeeded = setStepPhase(current, 'Succeeded')
+          succeeded.startedAt = current.startedAt ?? nowIso()
+          succeeded.finishedAt = nowIso()
+          succeeded.resourceRef = buildResourceRef(match)
+          nextStatusMap.set(stepName, succeeded)
+          statusIndex.set(stepName, succeeded)
         } else {
           anyRunning = true
           allSucceeded = false
-          nextStatuses.push(setStepStatus(current, { phase: 'Pending' }))
+          nextStatusMap.set(stepName, current)
+          statusIndex.set(stepName, current)
         }
         continue
       }
 
       if (stepKind === 'Checkpoint' || stepKind === 'MemoryOp') {
-        const succeeded = setStepStatus(current, {
-          phase: 'Succeeded',
-          startedAt: current.startedAt ?? nowIso(),
-          finishedAt: nowIso(),
-        })
-        nextStatuses.push(succeeded)
+        const succeeded = setStepPhase(current, 'Succeeded')
+        succeeded.startedAt = current.startedAt ?? nowIso()
+        succeeded.finishedAt = nowIso()
+        nextStatusMap.set(stepName, succeeded)
+        statusIndex.set(stepName, succeeded)
         continue
       }
 
       if (stepKind === 'AgentRun') {
         if (!current.resourceRef) {
+          const attempt = (current.attempt ?? 0) + 1
+          if (attempt > retryConfig.maxAttempts) {
+            const failed = setStepPhase(current, 'Failed', 'Retry limit exceeded')
+            failed.finishedAt = nowIso()
+            anyFailed = true
+            allSucceeded = false
+            if (!failureMessage) {
+              failureMessage = failed.message ?? `step ${stepName} failed`
+              failureReason = 'RetriesExhausted'
+            }
+            nextStatusMap.set(stepName, failed)
+            statusIndex.set(stepName, failed)
+            continue
+          }
           const merged = mergeParameters(orchestrationParams, normalizeStringMap(asRecord(step.with)))
           const resourceRef = await submitAgentRunStep(kube, step, orchestrationRun, namespace, merged)
-          const running = setStepStatus(current, {
-            phase: 'Running',
-            startedAt: current.startedAt ?? nowIso(),
-            resourceRef,
-          })
+          const running = setStepPhase(current, 'Running')
+          running.startedAt = current.startedAt ?? nowIso()
+          running.resourceRef = resourceRef
+          running.attempt = attempt
           anyRunning = true
           allSucceeded = false
-          nextStatuses.push(running)
+          nextStatusMap.set(stepName, running)
+          statusIndex.set(stepName, running)
         } else {
           const refName = asString(current.resourceRef.name)
           const refNamespace = asString(current.resourceRef.namespace) ?? namespace
           if (refName) {
             const agentRun = await kube.get(RESOURCE_MAP.AgentRun, refName, refNamespace)
             if (!agentRun) {
-              const failed = setStepStatus(current, {
-                phase: 'Failed',
-                finishedAt: nowIso(),
-                message: 'agent run not found',
-              })
-              anyFailed = true
-              allSucceeded = false
-              nextStatuses.push(failed)
+              const failed = setStepPhase(current, 'Failed', 'agent run not found')
+              failed.finishedAt = nowIso()
+              if (current.attempt < retryConfig.maxAttempts) {
+                const retryAt =
+                  retryConfig.retryBackoffSeconds > 0
+                    ? new Date(now + retryConfig.retryBackoffSeconds * 1000).toISOString()
+                    : nowIso()
+                const retrying = setStepPhase(failed, 'Retrying', failed.message)
+                retrying.nextRetryAt = retryAt
+                anyRunning = true
+                allSucceeded = false
+                scheduledRetryAt = recordRetryAt(scheduledRetryAt, retryAt)
+                nextStatusMap.set(stepName, retrying)
+                statusIndex.set(stepName, retrying)
+              } else {
+                anyFailed = true
+                allSucceeded = false
+                if (!failureMessage) {
+                  failureMessage = failed.message ?? `step ${stepName} failed`
+                  failureReason = 'AgentRunMissing'
+                }
+                nextStatusMap.set(stepName, failed)
+                statusIndex.set(stepName, failed)
+              }
             } else {
               const agentPhase = asString(readNested(agentRun, ['status', 'phase'])) ?? 'Pending'
               if (agentPhase === 'Succeeded') {
-                nextStatuses.push(
-                  setStepStatus(current, {
-                    phase: 'Succeeded',
-                    finishedAt: nowIso(),
-                  }),
-                )
+                const succeeded = setStepPhase(current, 'Succeeded')
+                succeeded.finishedAt = asString(readNested(agentRun, ['status', 'finishedAt'])) ?? nowIso()
+                succeeded.startedAt =
+                  asString(readNested(agentRun, ['status', 'startedAt'])) ?? current.startedAt ?? undefined
+                nextStatusMap.set(stepName, succeeded)
+                statusIndex.set(stepName, succeeded)
               } else if (agentPhase === 'Failed' || agentPhase === 'Cancelled') {
-                anyFailed = true
-                allSucceeded = false
-                nextStatuses.push(
-                  setStepStatus(current, {
-                    phase: 'Failed',
-                    finishedAt: nowIso(),
-                    message: `agent run ${agentPhase.toLowerCase()}`,
-                  }),
-                )
+                const failed = setStepPhase(current, 'Failed', `agent run ${agentPhase.toLowerCase()}`)
+                failed.finishedAt = asString(readNested(agentRun, ['status', 'finishedAt'])) ?? nowIso()
+                if (current.attempt < retryConfig.maxAttempts) {
+                  const retryAt =
+                    retryConfig.retryBackoffSeconds > 0
+                      ? new Date(now + retryConfig.retryBackoffSeconds * 1000).toISOString()
+                      : nowIso()
+                  const retrying = setStepPhase(failed, 'Retrying', failed.message)
+                  retrying.nextRetryAt = retryAt
+                  anyRunning = true
+                  allSucceeded = false
+                  scheduledRetryAt = recordRetryAt(scheduledRetryAt, retryAt)
+                  nextStatusMap.set(stepName, retrying)
+                  statusIndex.set(stepName, retrying)
+                } else {
+                  anyFailed = true
+                  allSucceeded = false
+                  if (!failureMessage) {
+                    failureMessage = failed.message ?? `step ${stepName} failed`
+                    failureReason = 'AgentRunFailed'
+                  }
+                  nextStatusMap.set(stepName, failed)
+                  statusIndex.set(stepName, failed)
+                }
               } else {
                 anyRunning = true
                 allSucceeded = false
-                nextStatuses.push(setStepStatus(current, { phase: 'Running' }))
+                nextStatusMap.set(stepName, current)
+                statusIndex.set(stepName, current)
               }
             }
+          } else {
+            const failed = setStepPhase(current, 'Failed', 'agent run reference missing')
+            failed.finishedAt = nowIso()
+            anyFailed = true
+            allSucceeded = false
+            if (!failureMessage) {
+              failureMessage = failed.message ?? `step ${stepName} failed`
+              failureReason = 'AgentRunMissing'
+            }
+            nextStatusMap.set(stepName, failed)
+            statusIndex.set(stepName, failed)
           }
         }
         continue
@@ -1186,55 +1477,112 @@ const reconcileOrchestrationRun = async (
 
       if (stepKind === 'ToolRun') {
         if (!current.resourceRef) {
+          const attempt = (current.attempt ?? 0) + 1
+          if (attempt > retryConfig.maxAttempts) {
+            const failed = setStepPhase(current, 'Failed', 'Retry limit exceeded')
+            failed.finishedAt = nowIso()
+            anyFailed = true
+            allSucceeded = false
+            if (!failureMessage) {
+              failureMessage = failed.message ?? `step ${stepName} failed`
+              failureReason = 'RetriesExhausted'
+            }
+            nextStatusMap.set(stepName, failed)
+            statusIndex.set(stepName, failed)
+            continue
+          }
           const merged = mergeParameters(orchestrationParams, normalizeStringMap(asRecord(step.with)))
           const resourceRef = await submitToolRunStep(kube, step, orchestrationRun, namespace, merged)
-          const running = setStepStatus(current, {
-            phase: 'Running',
-            startedAt: current.startedAt ?? nowIso(),
-            resourceRef,
-          })
+          const running = setStepPhase(current, 'Running')
+          running.startedAt = current.startedAt ?? nowIso()
+          running.resourceRef = resourceRef
+          running.attempt = attempt
           anyRunning = true
           allSucceeded = false
-          nextStatuses.push(running)
+          nextStatusMap.set(stepName, running)
+          statusIndex.set(stepName, running)
         } else {
           const refName = asString(current.resourceRef.name)
           const refNamespace = asString(current.resourceRef.namespace) ?? namespace
           if (refName) {
             const toolRun = await kube.get(RESOURCE_MAP.ToolRun, refName, refNamespace)
             if (!toolRun) {
-              const failed = setStepStatus(current, {
-                phase: 'Failed',
-                finishedAt: nowIso(),
-                message: 'tool run not found',
-              })
-              anyFailed = true
-              allSucceeded = false
-              nextStatuses.push(failed)
+              const failed = setStepPhase(current, 'Failed', 'tool run not found')
+              failed.finishedAt = nowIso()
+              if (current.attempt < retryConfig.maxAttempts) {
+                const retryAt =
+                  retryConfig.retryBackoffSeconds > 0
+                    ? new Date(now + retryConfig.retryBackoffSeconds * 1000).toISOString()
+                    : nowIso()
+                const retrying = setStepPhase(failed, 'Retrying', failed.message)
+                retrying.nextRetryAt = retryAt
+                anyRunning = true
+                allSucceeded = false
+                scheduledRetryAt = recordRetryAt(scheduledRetryAt, retryAt)
+                nextStatusMap.set(stepName, retrying)
+                statusIndex.set(stepName, retrying)
+              } else {
+                anyFailed = true
+                allSucceeded = false
+                if (!failureMessage) {
+                  failureMessage = failed.message ?? `step ${stepName} failed`
+                  failureReason = 'ToolRunMissing'
+                }
+                nextStatusMap.set(stepName, failed)
+                statusIndex.set(stepName, failed)
+              }
             } else {
               const toolPhase = asString(readNested(toolRun, ['status', 'phase'])) ?? 'Pending'
               if (toolPhase === 'Succeeded') {
-                nextStatuses.push(
-                  setStepStatus(current, {
-                    phase: 'Succeeded',
-                    finishedAt: nowIso(),
-                  }),
-                )
+                const succeeded = setStepPhase(current, 'Succeeded')
+                succeeded.finishedAt = asString(readNested(toolRun, ['status', 'finishedAt'])) ?? nowIso()
+                succeeded.startedAt =
+                  asString(readNested(toolRun, ['status', 'startedAt'])) ?? current.startedAt ?? undefined
+                nextStatusMap.set(stepName, succeeded)
+                statusIndex.set(stepName, succeeded)
               } else if (toolPhase === 'Failed' || toolPhase === 'Cancelled') {
-                anyFailed = true
-                allSucceeded = false
-                nextStatuses.push(
-                  setStepStatus(current, {
-                    phase: 'Failed',
-                    finishedAt: nowIso(),
-                    message: `tool run ${toolPhase.toLowerCase()}`,
-                  }),
-                )
+                const failed = setStepPhase(current, 'Failed', `tool run ${toolPhase.toLowerCase()}`)
+                failed.finishedAt = asString(readNested(toolRun, ['status', 'finishedAt'])) ?? nowIso()
+                if (current.attempt < retryConfig.maxAttempts) {
+                  const retryAt =
+                    retryConfig.retryBackoffSeconds > 0
+                      ? new Date(now + retryConfig.retryBackoffSeconds * 1000).toISOString()
+                      : nowIso()
+                  const retrying = setStepPhase(failed, 'Retrying', failed.message)
+                  retrying.nextRetryAt = retryAt
+                  anyRunning = true
+                  allSucceeded = false
+                  scheduledRetryAt = recordRetryAt(scheduledRetryAt, retryAt)
+                  nextStatusMap.set(stepName, retrying)
+                  statusIndex.set(stepName, retrying)
+                } else {
+                  anyFailed = true
+                  allSucceeded = false
+                  if (!failureMessage) {
+                    failureMessage = failed.message ?? `step ${stepName} failed`
+                    failureReason = 'ToolRunFailed'
+                  }
+                  nextStatusMap.set(stepName, failed)
+                  statusIndex.set(stepName, failed)
+                }
               } else {
                 anyRunning = true
                 allSucceeded = false
-                nextStatuses.push(setStepStatus(current, { phase: 'Running' }))
+                nextStatusMap.set(stepName, current)
+                statusIndex.set(stepName, current)
               }
             }
+          } else {
+            const failed = setStepPhase(current, 'Failed', 'tool run reference missing')
+            failed.finishedAt = nowIso()
+            anyFailed = true
+            allSucceeded = false
+            if (!failureMessage) {
+              failureMessage = failed.message ?? `step ${stepName} failed`
+              failureReason = 'ToolRunMissing'
+            }
+            nextStatusMap.set(stepName, failed)
+            statusIndex.set(stepName, failed)
           }
         }
         continue
@@ -1242,79 +1590,144 @@ const reconcileOrchestrationRun = async (
 
       if (stepKind === 'SubOrchestration') {
         if (!current.resourceRef) {
+          const attempt = (current.attempt ?? 0) + 1
+          if (attempt > retryConfig.maxAttempts) {
+            const failed = setStepPhase(current, 'Failed', 'Retry limit exceeded')
+            failed.finishedAt = nowIso()
+            anyFailed = true
+            allSucceeded = false
+            if (!failureMessage) {
+              failureMessage = failed.message ?? `step ${stepName} failed`
+              failureReason = 'RetriesExhausted'
+            }
+            nextStatusMap.set(stepName, failed)
+            statusIndex.set(stepName, failed)
+            continue
+          }
           const merged = mergeParameters(orchestrationParams, normalizeStringMap(asRecord(step.with)))
           const resourceRef = await submitSubOrchestrationStep(kube, step, orchestrationRun, namespace, merged)
-          const running = setStepStatus(current, {
-            phase: 'Running',
-            startedAt: current.startedAt ?? nowIso(),
-            resourceRef,
-          })
+          const running = setStepPhase(current, 'Running')
+          running.startedAt = current.startedAt ?? nowIso()
+          running.resourceRef = resourceRef
+          running.attempt = attempt
           anyRunning = true
           allSucceeded = false
-          nextStatuses.push(running)
+          nextStatusMap.set(stepName, running)
+          statusIndex.set(stepName, running)
         } else {
           const refName = asString(current.resourceRef.name)
           const refNamespace = asString(current.resourceRef.namespace) ?? namespace
           if (refName) {
             const subRun = await kube.get(RESOURCE_MAP.OrchestrationRun, refName, refNamespace)
             if (!subRun) {
-              const failed = setStepStatus(current, {
-                phase: 'Failed',
-                finishedAt: nowIso(),
-                message: 'sub orchestration run not found',
-              })
-              anyFailed = true
-              allSucceeded = false
-              nextStatuses.push(failed)
+              const failed = setStepPhase(current, 'Failed', 'sub orchestration run not found')
+              failed.finishedAt = nowIso()
+              if (current.attempt < retryConfig.maxAttempts) {
+                const retryAt =
+                  retryConfig.retryBackoffSeconds > 0
+                    ? new Date(now + retryConfig.retryBackoffSeconds * 1000).toISOString()
+                    : nowIso()
+                const retrying = setStepPhase(failed, 'Retrying', failed.message)
+                retrying.nextRetryAt = retryAt
+                anyRunning = true
+                allSucceeded = false
+                scheduledRetryAt = recordRetryAt(scheduledRetryAt, retryAt)
+                nextStatusMap.set(stepName, retrying)
+                statusIndex.set(stepName, retrying)
+              } else {
+                anyFailed = true
+                allSucceeded = false
+                if (!failureMessage) {
+                  failureMessage = failed.message ?? `step ${stepName} failed`
+                  failureReason = 'SubOrchestrationMissing'
+                }
+                nextStatusMap.set(stepName, failed)
+                statusIndex.set(stepName, failed)
+              }
             } else {
               const subPhase = asString(readNested(subRun, ['status', 'phase'])) ?? 'Pending'
               if (subPhase === 'Succeeded') {
-                nextStatuses.push(
-                  setStepStatus(current, {
-                    phase: 'Succeeded',
-                    finishedAt: nowIso(),
-                  }),
-                )
+                const succeeded = setStepPhase(current, 'Succeeded')
+                succeeded.finishedAt = asString(readNested(subRun, ['status', 'finishedAt'])) ?? nowIso()
+                succeeded.startedAt =
+                  asString(readNested(subRun, ['status', 'startedAt'])) ?? current.startedAt ?? undefined
+                nextStatusMap.set(stepName, succeeded)
+                statusIndex.set(stepName, succeeded)
               } else if (subPhase === 'Failed' || subPhase === 'Cancelled') {
-                anyFailed = true
-                allSucceeded = false
-                nextStatuses.push(
-                  setStepStatus(current, {
-                    phase: 'Failed',
-                    finishedAt: nowIso(),
-                    message: `sub orchestration ${subPhase.toLowerCase()}`,
-                  }),
-                )
+                const failed = setStepPhase(current, 'Failed', `sub orchestration ${subPhase.toLowerCase()}`)
+                failed.finishedAt = asString(readNested(subRun, ['status', 'finishedAt'])) ?? nowIso()
+                if (current.attempt < retryConfig.maxAttempts) {
+                  const retryAt =
+                    retryConfig.retryBackoffSeconds > 0
+                      ? new Date(now + retryConfig.retryBackoffSeconds * 1000).toISOString()
+                      : nowIso()
+                  const retrying = setStepPhase(failed, 'Retrying', failed.message)
+                  retrying.nextRetryAt = retryAt
+                  anyRunning = true
+                  allSucceeded = false
+                  scheduledRetryAt = recordRetryAt(scheduledRetryAt, retryAt)
+                  nextStatusMap.set(stepName, retrying)
+                  statusIndex.set(stepName, retrying)
+                } else {
+                  anyFailed = true
+                  allSucceeded = false
+                  if (!failureMessage) {
+                    failureMessage = failed.message ?? `step ${stepName} failed`
+                    failureReason = 'SubOrchestrationFailed'
+                  }
+                  nextStatusMap.set(stepName, failed)
+                  statusIndex.set(stepName, failed)
+                }
               } else {
                 anyRunning = true
                 allSucceeded = false
-                nextStatuses.push(setStepStatus(current, { phase: 'Running' }))
+                nextStatusMap.set(stepName, current)
+                statusIndex.set(stepName, current)
               }
             }
+          } else {
+            const failed = setStepPhase(current, 'Failed', 'sub orchestration reference missing')
+            failed.finishedAt = nowIso()
+            anyFailed = true
+            allSucceeded = false
+            if (!failureMessage) {
+              failureMessage = failed.message ?? `step ${stepName} failed`
+              failureReason = 'SubOrchestrationMissing'
+            }
+            nextStatusMap.set(stepName, failed)
+            statusIndex.set(stepName, failed)
           }
         }
         continue
       }
 
-      const failed = setStepStatus(current, {
-        phase: 'Failed',
-        finishedAt: nowIso(),
-        message: `unsupported step kind ${stepKind}`,
-      })
+      const failed = setStepPhase(current, 'Failed', `unsupported step kind ${stepKind}`)
+      failed.finishedAt = nowIso()
       anyFailed = true
       allSucceeded = false
-      nextStatuses.push(failed)
+      if (!failureMessage) {
+        failureMessage = failed.message ?? `step ${stepName} failed`
+        failureReason = 'UnsupportedStep'
+      }
+      nextStatusMap.set(stepName, failed)
+      statusIndex.set(stepName, failed)
     } catch (error) {
-      const failed = setStepStatus(current, {
-        phase: 'Failed',
-        finishedAt: nowIso(),
-        message: error instanceof Error ? error.message : String(error),
-      })
+      const failed = setStepPhase(current, 'Failed', error instanceof Error ? error.message : String(error))
+      failed.finishedAt = nowIso()
       anyFailed = true
       allSucceeded = false
-      nextStatuses.push(failed)
+      if (!failureMessage) {
+        failureMessage = failed.message ?? `step ${stepName} failed`
+        failureReason = 'StepError'
+      }
+      nextStatusMap.set(stepName, failed)
+      statusIndex.set(stepName, failed)
     }
   }
+
+  const nextStatuses = (steps as Record<string, unknown>[])
+    .map((step) => nextStatusMap.get(asString(step.name) ?? ''))
+    .filter((status): status is StepStatus => !!status)
 
   let nextPhase = 'Pending'
   if (anyFailed) {
@@ -1336,7 +1749,12 @@ const reconcileOrchestrationRun = async (
     updatedConditions = upsertCondition(updatedConditions, { type: 'Succeeded', status: 'True', reason: 'Completed' })
   }
   if (nextPhase === 'Failed') {
-    updatedConditions = upsertCondition(updatedConditions, { type: 'Failed', status: 'True', reason: 'StepFailed' })
+    updatedConditions = upsertCondition(updatedConditions, {
+      type: 'Failed',
+      status: 'True',
+      reason: failureReason || 'StepFailed',
+      message: failureMessage || 'orchestration step failed',
+    })
   }
 
   await setStatus(kube, orchestrationRun, {
@@ -1348,6 +1766,27 @@ const reconcileOrchestrationRun = async (
     stepStatuses: nextStatuses,
     conditions: updatedConditions,
   })
+
+  if (scheduledRetryAt !== null && Number.isFinite(scheduledRetryAt)) {
+    scheduleRetry(kube, namespace, name, scheduledRetryAt)
+  } else {
+    clearRetrySchedule(namespace, name)
+  }
+
+  if (nextPhase === 'Failed') {
+    const failedSteps = nextStatuses.filter((status) => status.phase === 'Failed')
+    await Promise.allSettled(
+      failedSteps.map((step) =>
+        emitRunEvent(
+          kube,
+          orchestrationRun,
+          'StepFailed',
+          `step ${step.name} failed${step.message ? `: ${step.message}` : ''}`,
+          'Warning',
+        ),
+      ),
+    )
+  }
 }
 
 const reconcileAll = async (kube: ReturnType<typeof createKubernetesClient>, namespaces: string[]) => {
@@ -1539,10 +1978,16 @@ export const stopOrchestrationController = () => {
   }
   watchHandles = []
   namespaceQueues.clear()
+  for (const entry of retrySchedules.values()) {
+    clearTimeout(entry.timeout)
+  }
+  retrySchedules.clear()
   started = false
   controllerState.started = false
 }
 
 export const __test__ = {
   reconcileOrchestration,
+  reconcileOrchestrationRun,
+  emitRunEvent,
 }

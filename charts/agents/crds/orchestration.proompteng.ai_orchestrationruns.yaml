@@ -105,6 +105,15 @@ spec:
                       finishedAt:
                         format: date-time
                         type: string
+                      lastTransitionTime:
+                        format: date-time
+                        type: string
+                      attempt:
+                        format: int32
+                        type: integer
+                      nextRetryAt:
+                        format: date-time
+                        type: string
                       resourceRef:
                         type: object
                         properties:

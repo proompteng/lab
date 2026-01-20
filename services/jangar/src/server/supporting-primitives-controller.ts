@@ -42,14 +42,15 @@ const globalState = globalThis as typeof globalThis & {
 }
 
 const controllerState = (() => {
-  if (!globalState.__jangarSupportingControllerState) {
-    globalState.__jangarSupportingControllerState = { started: false, crdCheckState: null }
-  }
-  return globalState.__jangarSupportingControllerState
+  if (globalState.__jangarSupportingControllerState) return globalState.__jangarSupportingControllerState
+  const initial = { started: false, crdCheckState: null }
+  globalState.__jangarSupportingControllerState = initial
+  return initial
 })()
 
 let started = controllerState.started
 let reconciling = false
+let _crdCheckState: CrdCheckState | null = controllerState.crdCheckState
 let watchHandles: Array<{ stop: () => void }> = []
 const namespaceQueues = new Map<string, Promise<void>>()
 
@@ -151,6 +152,7 @@ const checkCrds = async (): Promise<CrdCheckState> => {
     missing: [...missing, ...forbidden],
     checkedAt: nowIso(),
   }
+  _crdCheckState = state
   controllerState.crdCheckState = state
   if (!state.ok) {
     if (missing.length > 0) {
