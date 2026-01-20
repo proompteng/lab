@@ -27,6 +27,8 @@ const globalState = globalThis as typeof globalThis & {
     backoffScheduleMs: number[]
     facteurBaseUrl: string
     argoServerUrl: string | null
+    workflowArtifactsBucket: string
+    workflowNamespace: string | null
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
@@ -96,6 +98,8 @@ const configMock: NonNullable<typeof globalState.__codexJudgeConfigMock> = {
   backoffScheduleMs: [1000],
   facteurBaseUrl: 'http://facteur',
   argoServerUrl: null,
+  workflowArtifactsBucket: 'jangar-artifacts',
+  workflowNamespace: null,
   discordBotToken: null,
   discordChannelId: null,
   discordApiBaseUrl: 'https://discord.com/api/v10',
@@ -104,10 +108,10 @@ const configMock: NonNullable<typeof globalState.__codexJudgeConfigMock> = {
   promptTuningFailureThreshold: 3,
   promptTuningWindowHours: 24,
   promptTuningCooldownHours: 6,
-  rerunWorkflowTemplate: 'codex-autonomous',
-  rerunWorkflowNamespace: 'argo-workflows',
-  systemImprovementWorkflowTemplate: 'codex-autonomous',
-  systemImprovementWorkflowNamespace: 'argo-workflows',
+  rerunWorkflowTemplate: null,
+  rerunWorkflowNamespace: 'jangar',
+  systemImprovementWorkflowTemplate: null,
+  systemImprovementWorkflowNamespace: 'jangar',
   systemImprovementJudgePrompt: 'system-improvement prompt',
   defaultJudgePrompt: 'default-judge-prompt',
 }

@@ -53,6 +53,12 @@ The memory sample includes a placeholder Secret. Update the connection string be
 For workflow runtime execution, ensure the workload image includes `agent-runner` or set
 `env.vars.JANGAR_AGENT_RUNNER_IMAGE` (or `env.vars.JANGAR_AGENT_IMAGE`) to a runner image.
 
+Native orchestration runs are handled in-cluster and do not require Argo Workflows. To opt into an Argo
+adapter for Codex reruns or system-improvement workflows, set `env.vars.ARGO_SERVER_URL` along with
+`env.vars.JANGAR_CODEX_RERUN_TEMPLATE` and/or `env.vars.JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE`.
+Native orchestration currently supports `AgentRun`, `ToolRun`, `SubOrchestration`, and `ApprovalGate` steps;
+other step kinds require adapters or future controller extensions.
+
 Optional: submit runs with `agentctl`:
 ```bash
 agentctl run submit --agent codex-agent --impl codex-impl-sample --runtime workflow --workload-image ghcr.io/proompteng/codex-agent:latest

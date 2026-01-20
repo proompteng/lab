@@ -99,6 +99,11 @@ Jangar is the controller for all primitives and must:
 ### Runtime adapters (expected to exist)
 - `workflow` (native step runner), `job`, `temporal`, `custom` adapters with clear error messages when configuration is missing.
 
+### Orchestration runtime (native)
+- Orchestration and OrchestrationRun execute in-cluster by default with no external workflow engine.
+- External adapters remain opt-in for specialized vendors (Argo, Temporal) via explicit configuration.
+- Native controller currently supports `AgentRun`, `ToolRun`, `SubOrchestration`, and `ApprovalGate` steps; other step kinds require adapters or future extensions.
+
 ### RBAC alignment
 Controller behavior requires permissions to:
 - Read/write all Agents CRDs and their `status` subresources.

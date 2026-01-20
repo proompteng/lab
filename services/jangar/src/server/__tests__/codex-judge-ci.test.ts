@@ -30,6 +30,8 @@ const globalState = globalThis as typeof globalThis & {
     backoffScheduleMs: number[]
     facteurBaseUrl: string
     argoServerUrl: string | null
+    workflowArtifactsBucket: string
+    workflowNamespace: string | null
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
@@ -110,6 +112,8 @@ if (!globalState.__codexJudgeConfigMock) {
     backoffScheduleMs: [1000],
     facteurBaseUrl: 'http://facteur',
     argoServerUrl: null,
+    workflowArtifactsBucket: 'jangar-artifacts',
+    workflowNamespace: null,
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
@@ -162,6 +166,8 @@ const config = {
   backoffScheduleMs: [1000],
   facteurBaseUrl: 'http://facteur',
   argoServerUrl: null,
+  workflowArtifactsBucket: 'jangar-artifacts',
+  workflowNamespace: null,
   discordBotToken: null,
   discordChannelId: null,
   discordApiBaseUrl: 'https://discord.com/api/v10',
