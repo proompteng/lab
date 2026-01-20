@@ -32,6 +32,7 @@ grpc:
   enabled: false
   port: 50051
   servicePort: 50051
+  serviceType: ClusterIP
 
 resources:
   requests:
@@ -80,7 +81,6 @@ envFromConfigMapRefs: []
 controller:
   enabled: true
   namespaces: []
-  intervalSeconds: 0
   concurrency:
     perNamespace: 10
     perAgent: 5
@@ -89,12 +89,10 @@ controller:
 orchestrationController:
   enabled: true
   namespaces: []
-  intervalSeconds: 0
 
 supportingController:
   enabled: true
   namespaces: []
-  intervalSeconds: 0
 
 agentComms:
   enabled: false

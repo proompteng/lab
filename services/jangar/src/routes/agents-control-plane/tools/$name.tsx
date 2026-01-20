@@ -23,13 +23,12 @@ function ToolDetailRoute() {
       searchState={searchState}
       summaryItems={(resource, namespace) => [
         { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
-        { label: 'Runtime', value: readNestedValue(resource, ['spec', 'runtime', 'type']) ?? '—' },
-        { label: 'Image', value: readNestedValue(resource, ['spec', 'runtime', 'argo', 'image']) ?? '—' },
+        { label: 'Image', value: readNestedValue(resource, ['spec', 'image']) ?? '—' },
         {
           label: 'Command',
-          value: readNestedArrayValue(resource, ['spec', 'runtime', 'argo', 'command']) ?? '—',
+          value: readNestedArrayValue(resource, ['spec', 'command']) ?? '—',
         },
-        { label: 'Args', value: readNestedArrayValue(resource, ['spec', 'runtime', 'argo', 'args']) ?? '—' },
+        { label: 'Args', value: readNestedArrayValue(resource, ['spec', 'args']) ?? '—' },
       ]}
     />
   )

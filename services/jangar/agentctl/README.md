@@ -25,7 +25,7 @@ Supported fields:
 
 ```json
 {
-  "address": "agents.agents.svc.cluster.local:50051",
+  "address": "agents-grpc.agents.svc.cluster.local:50051",
   "namespace": "agents",
   "token": "optional-shared-token"
 }
@@ -78,7 +78,7 @@ agentctl run logs <name> --follow
 agentctl run cancel <name>
 ```
 
-By default, `agentctl` targets the in-cluster service address `agents.agents.svc.cluster.local:50051` in the
+By default, `agentctl` targets the in-cluster service address `agents-grpc.agents.svc.cluster.local:50051` in the
 `agents` namespace. Use `--namespace`/`-n` to override the namespace and `--server` (or `--address`) for
 port-forwarded access.
 

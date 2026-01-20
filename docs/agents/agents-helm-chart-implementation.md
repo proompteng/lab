@@ -122,10 +122,11 @@ Controller behavior requires permissions to:
 `values.schema.json` must cover:
 - Image configuration (`repository`, `tag`, `digest`, pull policy, pull secrets).
 - Database configuration (URL, secret ref, CA secret).
-- Controller settings (`enabled`, `namespaces`, optional `intervalSeconds` resync, `concurrency`).
-- Supporting controller settings (`enabled`, `namespaces`, optional `intervalSeconds` resync).
+- Controller settings (`enabled`, `namespaces`, `concurrency`).
+- Supporting controller settings (`enabled`, `namespaces`).
 - Agent comms configuration (NATS, optional).
-- gRPC service configuration (`grpc.enabled`, `grpc.port`, `grpc.servicePort`).
+- gRPC service configuration (`grpc.enabled`, `grpc.port`, `grpc.servicePort`, `grpc.serviceType`).
+- gRPC service is exposed as a dedicated ClusterIP Service (`<release>-grpc`) for in-cluster access only.
 - RBAC and service account options.
 - Resource requests/limits, probes, node selectors, tolerations, security context.
 

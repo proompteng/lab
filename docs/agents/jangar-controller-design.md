@@ -7,6 +7,7 @@ Jangar is the control plane and controller for the Agents CRDs. It reconciles Ag
 
 ## Scope
 - Watch and reconcile Agents CRDs in configured namespaces.
+- Event-driven only (watch + webhook triggers); no periodic polling/resync loops.
 - Normalize incoming work (GitHub + Linear) into ImplementationSpec objects.
 - Resolve Agent + Provider + ImplementationSpec into an execution plan.
 - Dispatch runs via runtime adapters and keep status up to date.

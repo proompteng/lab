@@ -6,7 +6,6 @@ import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 
 const DEFAULT_NAMESPACES = ['agents']
-const DEFAULT_INTERVAL_SECONDS = 0
 const DEFAULT_CONCURRENCY = {
   perNamespace: 10,
   perAgent: 5,
@@ -87,7 +86,6 @@ type ControllerState = {
 }
 
 let started = false
-let intervalRef: NodeJS.Timeout | null = null
 let reconciling = false
 let temporalClientPromise: ReturnType<typeof createTemporalClient> | null = null
 let watchHandles: Array<{ stop: () => void }> = []
@@ -142,12 +140,6 @@ const resolveNamespaces = async () => {
   return resolved
 }
 
-const parseIntervalSeconds = () => {
-  const raw = process.env.JANGAR_AGENTS_CONTROLLER_INTERVAL_SECONDS
-  const parsed = raw ? Number.parseInt(raw, 10) : NaN
-  if (Number.isFinite(parsed) && parsed >= 0) return parsed
-  return DEFAULT_INTERVAL_SECONDS
-}
 
 const parseConcurrency = () => ({
   perNamespace:
@@ -2416,12 +2408,6 @@ export const startAgentsController = async () => {
     for (const namespace of namespaces) {
       startNamespaceWatches(kube, namespace, state, concurrency)
     }
-    const intervalSeconds = parseIntervalSeconds()
-    if (intervalSeconds > 0) {
-      intervalRef = setInterval(() => {
-        void reconcileAll(kube, state, namespaces, concurrency)
-      }, intervalSeconds * 1000)
-    }
     started = true
   } catch (error) {
     console.error('[jangar] agents controller failed to start', error)
@@ -2435,10 +2421,6 @@ export const stopAgentsController = () => {
   watchHandles = []
   _controllerState = null
   namespaceQueues.clear()
-  if (intervalRef) {
-    clearInterval(intervalRef)
-    intervalRef = null
-  }
   started = false
 }
 

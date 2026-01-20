@@ -21,7 +21,6 @@ resources:
 controller:
   namespaces:
     - agents
-  intervalSeconds: 15
 
 agentComms:
   enabled: false

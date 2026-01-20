@@ -31,7 +31,6 @@ resources:
 controller:
   namespaces:
     - agents
-  intervalSeconds: 30
 
 agentComms:
   enabled: true
