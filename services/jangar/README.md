@@ -139,6 +139,13 @@ export JANGAR_GRPC_TOKEN=... # server-side
 export AGENTCTL_TOKEN=...    # client-side
 ```
 
+Control-plane status:
+
+```bash
+agentctl status
+agentctl status --output json
+```
+
 Environment variables:
 
 - `JANGAR_GRPC_ENABLED` (default: off)

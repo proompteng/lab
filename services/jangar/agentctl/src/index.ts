@@ -34,6 +34,55 @@ type GlobalFlags = {
 }
 
 type RuntimeEntry = { key: string; value: string }
+type ControlPlaneStatus = {
+  service?: string
+  generated_at?: string
+  controllers?: ControllerHealth[]
+  runtime_adapters?: RuntimeAdapterHealth[]
+  database?: DatabaseHealth
+  grpc?: GrpcHealth
+  namespaces?: NamespaceHealth[]
+}
+
+type ControllerHealth = {
+  name?: string
+  enabled?: boolean
+  started?: boolean
+  crds_ready?: boolean
+  missing_crds?: string[]
+  last_checked_at?: string
+  status?: string
+  message?: string
+}
+
+type RuntimeAdapterHealth = {
+  name?: string
+  available?: boolean
+  status?: string
+  message?: string
+  endpoint?: string
+}
+
+type DatabaseHealth = {
+  configured?: boolean
+  connected?: boolean
+  status?: string
+  message?: string
+  latency_ms?: number
+}
+
+type GrpcHealth = {
+  enabled?: boolean
+  address?: string
+  status?: string
+  message?: string
+}
+
+type NamespaceHealth = {
+  namespace?: string
+  status?: string
+  degraded_components?: string[]
+}
 
 type AgentctlPackage = {
   AgentctlService: grpc.ServiceClientConstructor
@@ -70,6 +119,8 @@ Usage:
   agentctl version [--client]
   agentctl config view|set --namespace <ns> [--server <addr>] [--token <token>]
   agentctl completion <shell>
+  agentctl status [--output json|yaml|table]
+  agentctl diagnose [--output json|yaml|table]
 
   agentctl agent get <name>
   agentctl agent list
@@ -457,7 +508,7 @@ const handleCompletion = (shell: string) => {
 _agentctl_complete() {
   COMPREPLY=()
   local cur="${COMP_WORDS[COMP_CWORD]}"
-  local cmds="version config completion agent provider impl source memory tool toolrun orchestration orchestrationrun approval budget secretbinding signal signaldelivery schedule artifact workspace run"
+  local cmds="version config completion status diagnose agent provider impl source memory tool toolrun orchestration orchestrationrun approval budget secretbinding signal signaldelivery schedule artifact workspace run"
   COMPREPLY=( $(compgen -W "$cmds" -- "$cur") )
 }
 complete -F _agentctl_complete agentctl
@@ -466,7 +517,7 @@ complete -F _agentctl_complete agentctl
   }
   if (shell === 'fish') {
     console.log(
-      'complete -c agentctl -f -a "version config completion agent provider impl source memory tool toolrun orchestration orchestrationrun approval budget secretbinding signal signaldelivery schedule artifact workspace run"',
+      'complete -c agentctl -f -a "version config completion status diagnose agent provider impl source memory tool toolrun orchestration orchestrationrun approval budget secretbinding signal signaldelivery schedule artifact workspace run"',
     )
     return 0
   }
@@ -500,6 +551,69 @@ const waitForRunCompletion = async (
   }
   console.error('Timed out waiting for AgentRun completion')
   return EXIT_RUNTIME
+}
+
+const outputStatus = (status: ControlPlaneStatus, output: string, namespace: string) => {
+  if (output === 'json') {
+    console.log(JSON.stringify(status, null, 2))
+    return
+  }
+  if (output === 'yaml') {
+    console.log(YAML.stringify(status))
+    return
+  }
+
+  const rows: Array<{ component: string; namespace: string; status: string; message: string }> = []
+  const namespaces = status.namespaces ?? []
+  if (namespaces.length > 0) {
+    for (const entry of namespaces) {
+      rows.push({
+        component: 'namespace',
+        namespace: entry.namespace ?? namespace,
+        status: entry.status ?? '',
+        message: (entry.degraded_components ?? []).join(', '),
+      })
+    }
+  }
+
+  for (const controller of status.controllers ?? []) {
+    rows.push({
+      component: controller.name ?? 'controller',
+      namespace,
+      status: controller.status ?? '',
+      message: controller.message ?? '',
+    })
+  }
+
+  for (const adapter of status.runtime_adapters ?? []) {
+    const message = adapter.message ?? adapter.endpoint ?? ''
+    rows.push({
+      component: `runtime:${adapter.name ?? 'unknown'}`,
+      namespace,
+      status: adapter.status ?? '',
+      message,
+    })
+  }
+
+  if (status.database) {
+    rows.push({
+      component: 'database',
+      namespace,
+      status: status.database.status ?? '',
+      message: status.database.message ?? '',
+    })
+  }
+
+  if (status.grpc) {
+    rows.push({
+      component: 'grpc',
+      namespace,
+      status: status.grpc.status ?? '',
+      message: status.grpc.message ?? status.grpc.address ?? '',
+    })
+  }
+
+  console.table(rows)
 }
 
 const readFileContent = async (file: string) => {
@@ -581,6 +695,12 @@ const main = async () => {
       if (response.build_sha) {
         console.log(`build ${response.build_sha}${response.build_time ? ` (${response.build_time})` : ''}`)
       }
+      return 0
+    }
+
+    if (command === 'status' || command === 'diagnose') {
+      const response = await callUnary<ControlPlaneStatus>(client, 'GetControlPlaneStatus', { namespace }, metadata)
+      outputStatus(response, output, namespace)
       return 0
     }
 

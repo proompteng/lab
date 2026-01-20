@@ -35,6 +35,7 @@ It talks to the Jangar controller over gRPC.
 - `agentctl version [--client]`
 - `agentctl config view|set`
 - `agentctl completion <shell>`
+- `agentctl status` / `agentctl diagnose` (control-plane health)
 
 ### Agent
 - `agentctl agent get <name>`
@@ -77,6 +78,77 @@ It talks to the Jangar controller over gRPC.
 - `agentctl run list`
 - `agentctl run logs <name> [--follow]` (via Jangar gRPC)
 - `agentctl run cancel <name>`
+
+### Status / Diagnose
+`agentctl status` and `agentctl diagnose` call the Jangar control-plane status endpoint and present a summary table
+by component and namespace. Use `--output json` for machine parsing.
+
+Example table:
+
+```
+component                  | namespace | status     | message
+---------------------------|-----------|------------|------------------------------
+namespace                  | agents    | healthy    |
+agents-controller          | agents    | healthy    |
+supporting-controller      | agents    | healthy    |
+orchestration-controller   | agents    | healthy    |
+runtime:workflow           | agents    | healthy    |
+runtime:job                | agents    | healthy    |
+runtime:temporal           | agents    | configured | temporal configuration resolved
+runtime:custom             | agents    | unknown    | custom runtime configured per AgentRun
+database                   | agents    | healthy    |
+grpc                       | agents    | healthy    | 127.0.0.1:50051
+```
+
+`--output json` includes:
+
+```json
+{
+  "service": "jangar",
+  "generated_at": "...",
+  "controllers": [
+    {
+      "name": "agents-controller",
+      "enabled": true,
+      "started": true,
+      "crds_ready": true,
+      "missing_crds": [],
+      "last_checked_at": "...",
+      "status": "healthy",
+      "message": ""
+    }
+  ],
+  "runtime_adapters": [
+    {
+      "name": "workflow",
+      "available": true,
+      "status": "healthy",
+      "message": "",
+      "endpoint": ""
+    }
+  ],
+  "database": {
+    "configured": true,
+    "connected": true,
+    "status": "healthy",
+    "message": "",
+    "latency_ms": 12
+  },
+  "grpc": {
+    "enabled": true,
+    "address": "127.0.0.1:50051",
+    "status": "healthy",
+    "message": ""
+  },
+  "namespaces": [
+    {
+      "namespace": "agents",
+      "status": "healthy",
+      "degraded_components": []
+    }
+  ]
+}
+```
 
 ## Flags & Defaults
 - `--namespace` / `-n` (default `agents`).
