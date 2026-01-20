@@ -22,11 +22,13 @@ const parseBool = (value: string | undefined) => {
   return ['1', 'true', 'yes'].includes(value.trim().toLowerCase())
 }
 
+const DEFAULT_BUCKET = 'agents-artifacts'
+
 const main = async () => {
   const endpointRaw = requireEnv('MINIO_ENDPOINT')
   const accessKey = requireEnv('MINIO_ACCESS_KEY')
   const secretKey = requireEnv('MINIO_SECRET_KEY')
-  const bucket = (process.env.MINIO_BUCKET ?? process.env.ARTIFACT_BUCKET ?? 'argo-workflows').trim()
+  const bucket = (process.env.MINIO_BUCKET ?? process.env.ARTIFACT_BUCKET ?? DEFAULT_BUCKET).trim()
   if (!bucket) {
     throw new Error('Missing MINIO_BUCKET')
   }

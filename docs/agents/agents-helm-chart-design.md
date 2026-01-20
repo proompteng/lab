@@ -87,7 +87,9 @@ It provides:
 
 Default runtime stance:
 - The vanilla chart runs the native `job`/`workflow` runtimes with no external workflow engine required.
-- External adapters (Argo, Temporal) are opt-in via explicit runtime configuration or environment settings.
+- The default workflow runtime is vendor-neutral and ships without Argo-specific defaults or subjects.
+- External adapters are opt-in via explicit runtime configuration or environment settings.
+- Ingestion is webhook-only by design (no polling).
 
 #### Reconciliation loops (high-level)
 - `AgentRun` reconciler:
@@ -133,15 +135,15 @@ Default runtime stance:
 ## CRD Redesign
 All CRDs remain under `charts/agents/crds` and are cluster-scoped definitions.
 
-### CRD Best Practices Adopted (from Argo, Tekton, Flyte)
-- Generate CRDs from Go types with `controller-gen`, then publish static YAML under `charts/agents/crds` (Argo, Tekton).
-- Keep CRD JSON size below 256KB (Tekton) and provide a fallback minimal variant or trimmed descriptions when needed (Argo).
-- Use structural schemas and avoid top-level `x-kubernetes-preserve-unknown-fields: false`; only mark specific subtrees as schemaless (Argo/Tekton).
-- Enable `subresources.status` for all CRDs and use conditions + `observedGeneration` for reconciliation state (Tekton).
-- Add `additionalPrinterColumns` for run status and timestamps to improve `kubectl get` UX (Tekton).
-- Use CEL validations sparingly for user-facing invariants; avoid heavy CEL on controller-managed specs (Argo).
-- Validate examples against CRDs in CI (Argo).
-- Prefer CRDs installed from Helm `crds/` (static, versioned); Jangar should only verify presence, not create CRDs at runtime (Flyte uses runtime creation, but we prefer Helm for Artifact Hub compatibility).
+### CRD Best Practices Adopted
+- Generate CRDs from Go types with `controller-gen`, then publish static YAML under `charts/agents/crds`.
+- Keep CRD JSON size below 256KB and provide a fallback minimal variant or trimmed descriptions when needed.
+- Use structural schemas and avoid top-level `x-kubernetes-preserve-unknown-fields: false`; only mark specific subtrees as schemaless.
+- Enable `subresources.status` for all CRDs and use conditions + `observedGeneration` for reconciliation state.
+- Add `additionalPrinterColumns` for run status and timestamps to improve `kubectl get` UX.
+- Use CEL validations sparingly for user-facing invariants; avoid heavy CEL on controller-managed specs.
+- Validate examples against CRDs in CI.
+- Prefer CRDs installed from Helm `crds/` (static, versioned); Jangar should only verify presence, not create CRDs at runtime.
 
 Mermaid: CRD relationships
 ```mermaid
