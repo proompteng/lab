@@ -34,11 +34,17 @@ jobs:
       - name: Lint
         run: bun run --filter @proompteng/agentctl lint
 
+      - name: Validate npm metadata
+        run: bun run --filter @proompteng/agentctl validate:metadata
+
       - name: Build npm launcher
         run: bun run --filter @proompteng/agentctl build
 
-      - name: Build compiled binaries
-        run: bun run --filter @proompteng/agentctl build:bins
+      - name: Build release artifacts
+        run: bun run --filter @proompteng/agentctl build:release
+
+      - name: Generate Homebrew formula
+        run: bun run --filter @proompteng/agentctl homebrew:generate -- --input dist/release
 
       - name: Validate host binary (mock gRPC)
         run: bun run --filter @proompteng/agentctl validate:bin -- --mock
