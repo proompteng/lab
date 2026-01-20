@@ -1,8 +1,7 @@
 import { spawn } from 'node:child_process'
-
+import { startResourceWatch } from '~/server/kube-watch'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
-import { startResourceWatch } from '~/server/kube-watch'
 
 const DEFAULT_NAMESPACES = ['agents']
 const DEFAULT_INTERVAL_SECONDS = 0
@@ -245,7 +244,10 @@ const listItems = (payload: Record<string, unknown>) => {
 
 const makeName = (base: string, suffix: string) => {
   const max = 45
-  const sanitized = base.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-')
+  const sanitized = base
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
   const trimmed = sanitized.length > max ? sanitized.slice(0, max) : sanitized
   return `${trimmed}-${suffix}`
 }
@@ -270,10 +272,7 @@ const buildOwnerRefs = (resource: Record<string, unknown>) => {
 const resolveNamespace = (resource: Record<string, unknown>) =>
   asString(readNested(resource, ['metadata', 'namespace'])) ?? 'default'
 
-const reconcileTool = async (
-  kube: ReturnType<typeof createKubernetesClient>,
-  tool: Record<string, unknown>,
-) => {
+const reconcileTool = async (kube: ReturnType<typeof createKubernetesClient>, tool: Record<string, unknown>) => {
   const spec = asRecord(tool.spec) ?? {}
   const image = asString(spec.image)
   const command = Array.isArray(spec.command) ? spec.command : []
@@ -528,9 +527,7 @@ const reconcileSchedule = async (
     await kube.apply(configMap)
 
     const image =
-      process.env.JANGAR_SCHEDULE_RUNNER_IMAGE ||
-      process.env.JANGAR_IMAGE ||
-      'ghcr.io/proompteng/jangar:latest'
+      process.env.JANGAR_SCHEDULE_RUNNER_IMAGE || process.env.JANGAR_IMAGE || 'ghcr.io/proompteng/jangar:latest'
     const podNamespace = process.env.JANGAR_POD_NAMESPACE
     const scheduleServiceAccount =
       process.env.JANGAR_SCHEDULE_SERVICE_ACCOUNT || process.env.JANGAR_SERVICE_ACCOUNT_NAME
@@ -570,7 +567,7 @@ const reconcileSchedule = async (
                       '-ec',
                       [
                         'DELIVERY_ID=$(cat /proc/sys/kernel/random/uuid);',
-                        'sed "s/__JANGAR_DELIVERY_ID__/${DELIVERY_ID}/g" /config/run.json | kubectl create -f -',
+                        `sed "s/__JANGAR_DELIVERY_ID__/\\${DELIVERY_ID}/g" /config/run.json | kubectl create -f -`,
                       ].join(' '),
                     ],
                     volumeMounts: [{ name: 'schedule-template', mountPath: '/config' }],
@@ -689,11 +686,7 @@ const reconcileWorkspace = async (
   const phase = pvcPhase === 'Bound' ? 'Ready' : pvcPhase === 'Lost' ? 'Failed' : 'Pending'
   const conditions = upsertCondition(
     normalizeConditions(status.conditions),
-    buildReadyCondition(
-      phase === 'Ready',
-      phase === 'Ready' ? 'Bound' : 'Pending',
-      `workspace ${phase.toLowerCase()}`,
-    ),
+    buildReadyCondition(phase === 'Ready', phase === 'Ready' ? 'Bound' : 'Pending', `workspace ${phase.toLowerCase()}`),
   )
   await setStatus(kube, workspace, {
     observedGeneration: asRecord(workspace.metadata)?.generation ?? 0,
@@ -787,10 +780,7 @@ const reconcileNamespace = async (kube: ReturnType<typeof createKubernetesClient
   }
 }
 
-const reconcileAll = async (
-  kube: ReturnType<typeof createKubernetesClient>,
-  namespaces: string[],
-) => {
+const reconcileAll = async (kube: ReturnType<typeof createKubernetesClient>, namespaces: string[]) => {
   if (reconciling) return
   reconciling = true
   try {
@@ -962,7 +952,9 @@ export const startSupportingPrimitivesController = async () => {
 }
 
 export const stopSupportingPrimitivesController = () => {
-  watchHandles.forEach((handle) => handle.stop())
+  for (const handle of watchHandles) {
+    handle.stop()
+  }
   watchHandles = []
   namespaceQueues.clear()
   if (intervalRef) {
