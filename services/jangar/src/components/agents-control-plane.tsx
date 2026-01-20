@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
 
+import type { PrimitiveEventItem } from '@/data/agents-control-plane'
+
 import { cn } from '@/lib/utils'
 
 type ConditionEntry = {
@@ -26,6 +28,73 @@ const readString = (value: unknown) => {
 
 const readRecord = (value: unknown) =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  value != null && typeof value === 'object' && !Array.isArray(value)
+
+const needsYamlQuotes = (value: string) =>
+  value.length === 0 ||
+  value.startsWith(' ') ||
+  value.endsWith(' ') ||
+  value.includes('\n') ||
+  value.includes(':') ||
+  value.includes('#') ||
+  value.includes('{') ||
+  value.includes('}') ||
+  value.includes('[') ||
+  value.includes(']') ||
+  value.includes(',') ||
+  value.includes('"') ||
+  value.includes("'")
+
+const formatYamlScalar = (value: unknown): string => {
+  if (value == null) return 'null'
+  if (typeof value === 'string') {
+    return needsYamlQuotes(value) ? JSON.stringify(value) : value
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return JSON.stringify(value)
+    return `${value}`
+  }
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  return JSON.stringify(value)
+}
+
+const stringifyYaml = (value: unknown, indent = 0): string => {
+  const indentText = ' '.repeat(indent)
+  if (Array.isArray(value)) {
+    if (value.length === 0) return `${indentText}[]`
+    return value
+      .map((entry) => {
+        const entryIsObject = isPlainObject(entry) || Array.isArray(entry)
+        const prefix = `${indentText}- `
+        if (!entryIsObject) {
+          return `${prefix}${formatYamlScalar(entry)}`
+        }
+        const nested = stringifyYaml(entry, indent + 2)
+        return `${prefix}${nested.trimStart()}`
+      })
+      .join('\n')
+  }
+
+  if (isPlainObject(value)) {
+    const entries = Object.entries(value)
+    if (entries.length === 0) return `${indentText}{}`
+    return entries
+      .map(([key, entry]) => {
+        const safeKey = needsYamlQuotes(key) ? JSON.stringify(key) : key
+        const entryIsObject = isPlainObject(entry) || Array.isArray(entry)
+        if (!entryIsObject) {
+          return `${indentText}${safeKey}: ${formatYamlScalar(entry)}`
+        }
+        const nested = stringifyYaml(entry, indent + 2)
+        return `${indentText}${safeKey}:\n${nested}`
+      })
+      .join('\n')
+  }
+
+  return `${indentText}${formatYamlScalar(value)}`
+}
 
 export const getMetadataValue = (resource: Record<string, unknown>, key: string) => {
   const metadata = readRecord(resource.metadata) ?? {}
@@ -124,6 +193,87 @@ export const StatusBadge = ({ label }: { label: string }) => {
             : `${base} border-border bg-muted text-muted-foreground`
 
   return <span className={classes}>{label}</span>
+}
+
+export const ConditionsList = ({
+  conditions,
+  emptyLabel = 'No conditions reported.',
+}: {
+  conditions: ConditionEntry[]
+  emptyLabel?: string
+}) => {
+  if (conditions.length === 0) {
+    return <div className="text-xs text-muted-foreground">{emptyLabel}</div>
+  }
+
+  return (
+    <ul className="space-y-2 text-xs">
+      {conditions.map((condition) => (
+        <li key={`${condition.type}-${condition.lastTransitionTime ?? 'unknown'}`} className="space-y-1">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="font-medium text-foreground">{condition.type ?? 'Unknown'}</div>
+            <span className="text-muted-foreground">{condition.status ?? '—'}</span>
+          </div>
+          {condition.reason ? <div className="text-muted-foreground">{condition.reason}</div> : null}
+          {condition.message ? <div className="text-muted-foreground">{condition.message}</div> : null}
+          {condition.lastTransitionTime ? (
+            <div className="text-muted-foreground">{formatTimestamp(condition.lastTransitionTime)}</div>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+export const EventsList = ({
+  events,
+  error,
+  emptyLabel = 'No recent events.',
+}: {
+  events: PrimitiveEventItem[]
+  error?: string | null
+  emptyLabel?: string
+}) => {
+  if (error) {
+    return <div className="text-xs text-destructive">{error}</div>
+  }
+  if (events.length === 0) {
+    return <div className="text-xs text-muted-foreground">{emptyLabel}</div>
+  }
+
+  return (
+    <ul className="space-y-2 text-xs">
+      {events.map((event) => (
+        <li key={`${event.name ?? 'event'}-${event.lastTimestamp ?? event.eventTime ?? 'time'}`} className="space-y-1">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium text-foreground">{event.reason ?? 'Event'}</span>
+              {event.type ? (
+                <span className="rounded-none border border-border bg-muted px-1.5 py-0.5 text-[10px] uppercase">
+                  {event.type}
+                </span>
+              ) : null}
+              {typeof event.count === 'number' && event.count > 1 ? (
+                <span className="text-muted-foreground">x{event.count}</span>
+              ) : null}
+            </div>
+            <span className="text-muted-foreground">{formatTimestamp(event.eventTime ?? event.lastTimestamp)}</span>
+          </div>
+          {event.action ? <div className="text-muted-foreground">Action: {event.action}</div> : null}
+          {event.message ? <div className="text-muted-foreground">{event.message}</div> : null}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+export const YamlCodeBlock = ({ value, className }: { value: unknown; className?: string }) => {
+  const yaml = stringifyYaml(value ?? {})
+  return (
+    <pre className={cn('overflow-auto rounded-none border p-3 text-xs border-border bg-muted/30', className)}>
+      <code className="font-mono">{yaml}</code>
+    </pre>
+  )
 }
 
 export const DescriptionList = ({

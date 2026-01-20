@@ -2,16 +2,19 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
 import {
+  ConditionsList,
   DescriptionList,
   deriveStatusLabel,
-  formatTimestamp,
+  EventsList,
   getMetadataValue,
   getStatusConditions,
   readNestedValue,
   StatusBadge,
+  YamlCodeBlock,
 } from '@/components/agents-control-plane'
 import { parseNamespaceSearch } from '@/components/agents-control-plane-search'
 import { Button, buttonVariants } from '@/components/ui/button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { fetchPrimitiveDetail, fetchPrimitiveEvents, type PrimitiveEventItem } from '@/data/agents-control-plane'
 import { cn } from '@/lib/utils'
 
@@ -121,74 +124,52 @@ function MemoryDetailPage() {
       ) : null}
 
       {resource ? (
-        <section className="space-y-4 rounded-none border border-border bg-card p-4">
-          <h2 className="text-sm font-semibold text-foreground">Summary</h2>
-          <DescriptionList items={summaryItems} />
-        </section>
-      ) : null}
-
-      <section className="grid gap-4 lg:grid-cols-2">
-        <div className="space-y-3 rounded-none border border-border bg-card p-4">
-          <h2 className="text-sm font-semibold text-foreground">Conditions</h2>
-          {conditions.length === 0 ? (
-            <div className="text-xs text-muted-foreground">No conditions reported.</div>
-          ) : (
-            <ul className="space-y-2 text-xs">
-              {conditions.map((condition) => (
-                <li key={`${condition.type}-${condition.lastTransitionTime ?? 'unknown'}`} className="space-y-1">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="font-medium text-foreground">{condition.type ?? 'Unknown'}</div>
-                    <span className="text-muted-foreground">{condition.status ?? '—'}</span>
-                  </div>
-                  {condition.reason ? <div className="text-muted-foreground">{condition.reason}</div> : null}
-                  {condition.message ? <div className="text-muted-foreground">{condition.message}</div> : null}
-                  {condition.lastTransitionTime ? (
-                    <div className="text-muted-foreground">{formatTimestamp(condition.lastTransitionTime)}</div>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <div className="space-y-3 rounded-none border border-border bg-card p-4">
-          <h2 className="text-sm font-semibold text-foreground">Recent events</h2>
-          {eventsError ? <div className="text-xs text-destructive">{eventsError}</div> : null}
-          {events.length === 0 && !eventsError ? (
-            <div className="text-xs text-muted-foreground">No recent events.</div>
-          ) : (
-            <ul className="space-y-2 text-xs">
-              {events.map((event) => (
-                <li key={`${event.name ?? 'event'}-${event.lastTimestamp ?? event.eventTime ?? 'time'}`}>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-medium text-foreground">{event.reason ?? 'Event'}</span>
-                    <span className="text-muted-foreground">
-                      {formatTimestamp(event.eventTime ?? event.lastTimestamp)}
-                    </span>
-                  </div>
-                  {event.message ? <div className="text-muted-foreground">{event.message}</div> : null}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
-
-      {resource ? (
-        <section className="grid gap-4 lg:grid-cols-2">
-          <div className="space-y-3 rounded-none border border-border bg-card p-4">
-            <h2 className="text-sm font-semibold text-foreground">Spec</h2>
-            <pre className="overflow-auto text-xs">
-              <code className="font-mono">{JSON.stringify(spec, null, 2)}</code>
-            </pre>
-          </div>
-          <div className="space-y-3 rounded-none border border-border bg-card p-4">
-            <h2 className="text-sm font-semibold text-foreground">Status</h2>
-            <pre className="overflow-auto text-xs">
-              <code className="font-mono">{JSON.stringify(status, null, 2)}</code>
-            </pre>
-          </div>
-        </section>
+        <Tabs defaultValue="summary" className="space-y-4">
+          <TabsList variant="line" className="w-full justify-start">
+            <TabsTrigger value="summary">Summary</TabsTrigger>
+            <TabsTrigger value="yaml">YAML</TabsTrigger>
+            <TabsTrigger value="conditions">Conditions</TabsTrigger>
+            <TabsTrigger value="events">Events</TabsTrigger>
+          </TabsList>
+          <TabsContent value="summary" className="space-y-4">
+            <section className="space-y-4 rounded-none border border-border bg-card p-4">
+              <h2 className="text-sm font-semibold text-foreground">Summary</h2>
+              <DescriptionList items={summaryItems} />
+            </section>
+            <section className="grid gap-4 lg:grid-cols-2">
+              <div className="space-y-3 rounded-none border border-border bg-card p-4">
+                <h2 className="text-sm font-semibold text-foreground">Spec snapshot</h2>
+                <pre className="overflow-auto text-xs">
+                  <code className="font-mono">{JSON.stringify(spec, null, 2)}</code>
+                </pre>
+              </div>
+              <div className="space-y-3 rounded-none border border-border bg-card p-4">
+                <h2 className="text-sm font-semibold text-foreground">Status snapshot</h2>
+                <pre className="overflow-auto text-xs">
+                  <code className="font-mono">{JSON.stringify(status, null, 2)}</code>
+                </pre>
+              </div>
+            </section>
+          </TabsContent>
+          <TabsContent value="yaml">
+            <section className="space-y-3 rounded-none border border-border bg-card p-4">
+              <h2 className="text-sm font-semibold text-foreground">Resource YAML</h2>
+              <YamlCodeBlock value={resource} />
+            </section>
+          </TabsContent>
+          <TabsContent value="conditions">
+            <section className="space-y-3 rounded-none border border-border bg-card p-4">
+              <h2 className="text-sm font-semibold text-foreground">Conditions</h2>
+              <ConditionsList conditions={conditions} />
+            </section>
+          </TabsContent>
+          <TabsContent value="events">
+            <section className="space-y-3 rounded-none border border-border bg-card p-4">
+              <h2 className="text-sm font-semibold text-foreground">Events</h2>
+              <EventsList events={events} error={eventsError} />
+            </section>
+          </TabsContent>
+        </Tabs>
       ) : null}
     </main>
   )

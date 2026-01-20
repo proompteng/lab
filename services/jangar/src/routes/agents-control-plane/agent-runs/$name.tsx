@@ -2,16 +2,20 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
 import {
+  ConditionsList,
   DescriptionList,
   deriveStatusLabel,
+  EventsList,
   formatTimestamp,
   getMetadataValue,
   getStatusConditions,
   readNestedValue,
   StatusBadge,
+  YamlCodeBlock,
 } from '@/components/agents-control-plane'
 import { parseNamespaceSearch } from '@/components/agents-control-plane-search'
 import { Button, buttonVariants } from '@/components/ui/button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { fetchPrimitiveDetail, fetchPrimitiveEvents, type PrimitiveEventItem } from '@/data/agents-control-plane'
 import { cn } from '@/lib/utils'
 
@@ -21,6 +25,42 @@ export const Route = createFileRoute('/agents-control-plane/agent-runs/$name')({
 })
 
 const isUrl = (value: string) => value.startsWith('http://') || value.startsWith('https://')
+
+type ActivityEntry = {
+  name: string
+  status: string | null
+  startedAt: string | null
+  finishedAt: string | null
+  message: string | null
+  logs: string[]
+}
+
+const readText = (value: unknown) => {
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? trimmed : null
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value.toString()
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false'
+  }
+  return null
+}
+
+const readTextFromKeys = (record: Record<string, unknown>, keys: string[]) => {
+  for (const key of keys) {
+    const value = readText(record[key])
+    if (value) return value
+  }
+  return null
+}
+
+const asRecord = (value: unknown) =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
+
+const asArray = (value: unknown) => (Array.isArray(value) ? value : [])
 
 const collectLogLinks = (value: unknown, depth = 0, links = new Set<string>()) => {
   if (depth > 4 || value == null) return links
@@ -46,6 +86,43 @@ const collectLogLinks = (value: unknown, depth = 0, links = new Set<string>()) =
     })
   }
   return links
+}
+
+const normalizeActivityEntry = (entry: Record<string, unknown>, index: number): ActivityEntry => {
+  const name =
+    readTextFromKeys(entry, ['name', 'step', 'title', 'id']) ??
+    readTextFromKeys(entry, ['stage', 'task']) ??
+    `Step ${index + 1}`
+  const status = readTextFromKeys(entry, ['phase', 'status', 'state', 'result'])
+  const startedAt = readTextFromKeys(entry, ['startedAt', 'startTime', 'started', 'started_at'])
+  const finishedAt = readTextFromKeys(entry, ['finishedAt', 'finished', 'completedAt', 'endTime'])
+  const message = readTextFromKeys(entry, ['message', 'reason', 'detail', 'summary'])
+  const logs = Array.from(collectLogLinks(entry))
+  return { name, status, startedAt, finishedAt, message, logs }
+}
+
+const extractActivityEntries = (resource: Record<string, unknown>) => {
+  const status = asRecord(resource.status) ?? {}
+  const candidates = [
+    { label: 'steps', items: status.steps },
+    { label: 'stepStatuses', items: status.stepStatuses },
+    { label: 'activity', items: status.activity ?? status.activities },
+    { label: 'timeline', items: status.timeline ?? status.events },
+    { label: 'artifacts', items: status.artifacts },
+  ]
+
+  for (const candidate of candidates) {
+    const rawItems = asArray(candidate.items)
+    const items = rawItems.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    if (items.length > 0) {
+      return {
+        source: candidate.label,
+        entries: items.map((entry, index) => normalizeActivityEntry(entry, index)),
+      }
+    }
+  }
+
+  return { source: null, entries: [] as ActivityEntry[] }
 }
 
 function AgentRunDetailPage() {
@@ -116,6 +193,8 @@ function AgentRunDetailPage() {
         : null
   const phase = resource ? readNestedValue(resource, ['status', 'phase']) : null
   const logLinks = resource ? Array.from(collectLogLinks(status)) : []
+  const activity = resource ? extractActivityEntries(resource) : { source: null, entries: [] as ActivityEntry[] }
+  const recentEvents = events.slice(0, 5)
 
   const summaryItems = resource
     ? [
@@ -163,114 +242,145 @@ function AgentRunDetailPage() {
       ) : null}
 
       {resource ? (
-        <section className="space-y-4 rounded-none border border-border bg-card p-4">
-          <h2 className="text-sm font-semibold text-foreground">Summary</h2>
-          <DescriptionList items={summaryItems} />
-        </section>
-      ) : null}
+        <Tabs defaultValue="summary" className="space-y-4">
+          <TabsList variant="line" className="w-full justify-start">
+            <TabsTrigger value="summary">Summary</TabsTrigger>
+            <TabsTrigger value="yaml">YAML</TabsTrigger>
+            <TabsTrigger value="conditions">Conditions</TabsTrigger>
+            <TabsTrigger value="events">Events</TabsTrigger>
+          </TabsList>
+          <TabsContent value="summary" className="space-y-4">
+            <section className="space-y-4 rounded-none border border-border bg-card p-4">
+              <h2 className="text-sm font-semibold text-foreground">Summary</h2>
+              <DescriptionList items={summaryItems} />
+            </section>
 
-      <section className="grid gap-4 lg:grid-cols-2">
-        <div className="space-y-3 rounded-none border border-border bg-card p-4">
-          <h2 className="text-sm font-semibold text-foreground">Runtime</h2>
-          <DescriptionList
-            items={[
-              { label: 'Runtime type', value: runtimeType ?? '—' },
-              { label: 'Runtime ref', value: runtimeRef ?? '—' },
-              { label: 'Phase', value: phase ?? '—' },
-              {
-                label: 'Started',
-                value: formatTimestamp(readNestedValue(resource ?? {}, ['status', 'startedAt'])),
-              },
-              {
-                label: 'Finished',
-                value: formatTimestamp(readNestedValue(resource ?? {}, ['status', 'finishedAt'])),
-              },
-            ]}
-          />
-          {logLinks.length > 0 ? (
-            <div className="space-y-2 text-xs">
-              <div className="font-semibold text-foreground">Log links</div>
-              <ul className="space-y-1">
-                {logLinks.map((link) => (
-                  <li key={link}>
-                    <a
-                      className="text-sky-600 underline-offset-2 hover:underline"
-                      href={link}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {link}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <div className="text-xs text-muted-foreground">No log links reported.</div>
-          )}
-        </div>
-
-        <div className="space-y-3 rounded-none border border-border bg-card p-4">
-          <h2 className="text-sm font-semibold text-foreground">Conditions</h2>
-          {conditions.length === 0 ? (
-            <div className="text-xs text-muted-foreground">No conditions reported.</div>
-          ) : (
-            <ul className="space-y-2 text-xs">
-              {conditions.map((condition) => (
-                <li key={`${condition.type}-${condition.lastTransitionTime ?? 'unknown'}`} className="space-y-1">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="font-medium text-foreground">{condition.type ?? 'Unknown'}</div>
-                    <span className="text-muted-foreground">{condition.status ?? '—'}</span>
+            <section className="grid gap-4 lg:grid-cols-2">
+              <div className="space-y-3 rounded-none border border-border bg-card p-4">
+                <h2 className="text-sm font-semibold text-foreground">Runtime</h2>
+                <DescriptionList
+                  items={[
+                    { label: 'Runtime type', value: runtimeType ?? '—' },
+                    { label: 'Runtime ref', value: runtimeRef ?? '—' },
+                    { label: 'Phase', value: phase ?? '—' },
+                    {
+                      label: 'Started',
+                      value: formatTimestamp(readNestedValue(resource ?? {}, ['status', 'startedAt'])),
+                    },
+                    {
+                      label: 'Finished',
+                      value: formatTimestamp(readNestedValue(resource ?? {}, ['status', 'finishedAt'])),
+                    },
+                  ]}
+                />
+                {logLinks.length > 0 ? (
+                  <div className="space-y-2 text-xs">
+                    <div className="font-semibold text-foreground">Log links</div>
+                    <ul className="space-y-1">
+                      {logLinks.map((link) => (
+                        <li key={link}>
+                          <a
+                            className="text-sky-600 underline-offset-2 hover:underline"
+                            href={link}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {link}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                  {condition.reason ? <div className="text-muted-foreground">{condition.reason}</div> : null}
-                  {condition.message ? <div className="text-muted-foreground">{condition.message}</div> : null}
-                  {condition.lastTransitionTime ? (
-                    <div className="text-muted-foreground">{formatTimestamp(condition.lastTransitionTime)}</div>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
+                ) : (
+                  <div className="text-xs text-muted-foreground">No log links reported.</div>
+                )}
+              </div>
 
-      <section className="space-y-3 rounded-none border border-border bg-card p-4">
-        <h2 className="text-sm font-semibold text-foreground">Recent events</h2>
-        {eventsError ? <div className="text-xs text-destructive">{eventsError}</div> : null}
-        {events.length === 0 && !eventsError ? (
-          <div className="text-xs text-muted-foreground">No recent events.</div>
-        ) : (
-          <ul className="space-y-2 text-xs">
-            {events.map((event) => (
-              <li key={`${event.name ?? 'event'}-${event.lastTimestamp ?? event.eventTime ?? 'time'}`}>
+              <div className="space-y-3 rounded-none border border-border bg-card p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-medium text-foreground">{event.reason ?? 'Event'}</span>
-                  <span className="text-muted-foreground">
-                    {formatTimestamp(event.eventTime ?? event.lastTimestamp)}
-                  </span>
+                  <h2 className="text-sm font-semibold text-foreground">Activity timeline</h2>
+                  {activity.source ? (
+                    <span className="rounded-none border border-border bg-muted px-2 py-0.5 text-[10px] uppercase">
+                      {activity.source}
+                    </span>
+                  ) : null}
                 </div>
-                {event.message ? <div className="text-muted-foreground">{event.message}</div> : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+                {activity.entries.length === 0 ? (
+                  <div className="text-xs text-muted-foreground">No activity steps reported.</div>
+                ) : (
+                  <ul className="space-y-3 border-l border-border pl-4">
+                    {activity.entries.map((entry, index) => (
+                      <li key={`${entry.name}-${index}`} className="space-y-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-medium text-foreground">{entry.name}</span>
+                          {entry.status ? <StatusBadge label={entry.status} /> : null}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3 text-muted-foreground">
+                          {entry.startedAt ? <span>Started: {formatTimestamp(entry.startedAt)}</span> : null}
+                          {entry.finishedAt ? <span>Finished: {formatTimestamp(entry.finishedAt)}</span> : null}
+                        </div>
+                        {entry.message ? <div className="text-muted-foreground">{entry.message}</div> : null}
+                        {entry.logs.length > 0 ? (
+                          <div className="space-y-1 text-muted-foreground">
+                            {entry.logs.map((link) => (
+                              <a
+                                key={link}
+                                className="block text-sky-600 underline-offset-2 hover:underline"
+                                href={link}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                {link}
+                              </a>
+                            ))}
+                          </div>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </section>
 
-      {resource ? (
-        <section className="grid gap-4 lg:grid-cols-2">
-          <div className="space-y-3 rounded-none border border-border bg-card p-4">
-            <h2 className="text-sm font-semibold text-foreground">Spec</h2>
-            <pre className="overflow-auto text-xs">
-              <code className="font-mono">{JSON.stringify(spec, null, 2)}</code>
-            </pre>
-          </div>
-          <div className="space-y-3 rounded-none border border-border bg-card p-4">
-            <h2 className="text-sm font-semibold text-foreground">Status</h2>
-            <pre className="overflow-auto text-xs">
-              <code className="font-mono">{JSON.stringify(status, null, 2)}</code>
-            </pre>
-          </div>
-        </section>
+            <section className="space-y-3 rounded-none border border-border bg-card p-4">
+              <h2 className="text-sm font-semibold text-foreground">Recent events</h2>
+              <EventsList events={recentEvents} error={eventsError} emptyLabel="No recent events logged." />
+            </section>
+
+            <section className="grid gap-4 lg:grid-cols-2">
+              <div className="space-y-3 rounded-none border border-border bg-card p-4">
+                <h2 className="text-sm font-semibold text-foreground">Spec snapshot</h2>
+                <pre className="overflow-auto text-xs">
+                  <code className="font-mono">{JSON.stringify(spec, null, 2)}</code>
+                </pre>
+              </div>
+              <div className="space-y-3 rounded-none border border-border bg-card p-4">
+                <h2 className="text-sm font-semibold text-foreground">Status snapshot</h2>
+                <pre className="overflow-auto text-xs">
+                  <code className="font-mono">{JSON.stringify(status, null, 2)}</code>
+                </pre>
+              </div>
+            </section>
+          </TabsContent>
+          <TabsContent value="yaml">
+            <section className="space-y-3 rounded-none border border-border bg-card p-4">
+              <h2 className="text-sm font-semibold text-foreground">Resource YAML</h2>
+              <YamlCodeBlock value={resource} />
+            </section>
+          </TabsContent>
+          <TabsContent value="conditions">
+            <section className="space-y-3 rounded-none border border-border bg-card p-4">
+              <h2 className="text-sm font-semibold text-foreground">Conditions</h2>
+              <ConditionsList conditions={conditions} />
+            </section>
+          </TabsContent>
+          <TabsContent value="events">
+            <section className="space-y-3 rounded-none border border-border bg-card p-4">
+              <h2 className="text-sm font-semibold text-foreground">Events</h2>
+              <EventsList events={events} error={eventsError} />
+            </section>
+          </TabsContent>
+        </Tabs>
       ) : null}
     </main>
   )
