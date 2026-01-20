@@ -1,7 +1,7 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: codex-run-sample
+  name: codex-run-workflow-smoke
 spec:
   agentRef:
     name: codex-agent
@@ -28,5 +28,5 @@ spec:
         cpu: 250m
         memory: 512Mi
   parameters:
-    task: "Update onboarding flow"
+    task: "Workflow smoke validation"
     priority: "medium"
