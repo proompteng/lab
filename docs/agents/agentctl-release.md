@@ -21,7 +21,7 @@ bun run --filter @proompteng/agentctl build:release
 
 Artifacts:
 
-- `services/jangar/agentctl/dist/agentctl.js` (npm entry)
+- `services/jangar/agentctl/dist/agentctl.js` (npm launcher; dispatches to platform binary)
 - `services/jangar/agentctl/dist/agentctl-<os>-<arch>` (standalone binary)
 - `services/jangar/agentctl/dist/release/agentctl-<version>-<os>-<arch>.tar.gz`
 - `services/jangar/agentctl/dist/release/*.sha256`
@@ -31,6 +31,8 @@ Artifacts:
 
 ```bash
 cd services/jangar/agentctl
+npm run prepack # builds launcher + all platform binaries
+npm pack # optional sanity check: ensures dist/ contains launcher + binaries
 npm publish --access public
 ```
 

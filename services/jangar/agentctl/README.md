@@ -25,7 +25,7 @@ Supported fields:
 
 ```json
 {
-  "address": "127.0.0.1:50051",
+  "address": "agents.agents.svc.cluster.local:50051",
   "namespace": "agents",
   "token": "optional-shared-token"
 }
@@ -33,10 +33,13 @@ Supported fields:
 
 Environment overrides:
 
+- `AGENTCTL_SERVER` (preferred)
 - `AGENTCTL_ADDRESS`
 - `AGENTCTL_NAMESPACE`
 - `AGENTCTL_TOKEN`
 - `AGENTCTL_TLS` (`1` to enable TLS)
+- `JANGAR_GRPC_ADDRESS` (server-side default if set)
+- `AGENTCTL_BINARY` (override path to the bundled binary)
 - `AGENTCTL_CA_CERT` (path to CA cert, optional)
 - `AGENTCTL_CLIENT_CERT` / `AGENTCTL_CLIENT_KEY` (mTLS, optional)
 
@@ -44,8 +47,9 @@ Environment overrides:
 
 ```bash
 agentctl version
+agentctl version --client
 agentctl config view
-agentctl config set --namespace agents
+agentctl config set --namespace agents --server 127.0.0.1:50051
 
 agentctl agent list
 agentctl agent get <name>
@@ -73,6 +77,9 @@ agentctl run get <name>
 agentctl run logs <name> --follow
 agentctl run cancel <name>
 ```
+
+By default, `agentctl` targets the in-cluster service address `agents.agents.svc.cluster.local:50051`.
+Use `--server` (or `--address`) for port-forwarded access.
 
 ## Build
 
