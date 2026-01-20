@@ -34,12 +34,10 @@ type SubscriberConfig = {
   consumerName: string
   pullBatchSize: number
   pullExpiresMs: number
-  pollDelayMs: number
   reconnectDelayMs: number
   maxAckPending: number
   ackWaitMs: number
   consumerDescription: string
-  deliverSubject: string
   filterSubjects: string[]
 }
 
@@ -49,12 +47,10 @@ const DEFAULT_CONFIG: SubscriberConfig = {
   consumerName: 'jangar-agent-comms',
   pullBatchSize: 250,
   pullExpiresMs: 1500,
-  pollDelayMs: 250,
   reconnectDelayMs: 2000,
   maxAckPending: 20000,
   ackWaitMs: 30000,
   consumerDescription: 'Jangar agent communications ingestion',
-  deliverSubject: 'jangar.agent-comms.deliver',
   filterSubjects: ['workflow.>', 'agents.workflow.>', 'workflow_comms.agent_messages.>'],
 }
 
@@ -239,8 +235,6 @@ const normalizePayload = (raw: string, subject: string): AgentMessageInput | nul
   }
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
 const msToNanos = (ms: number) => Math.max(1, Math.floor(ms)) * 1_000_000
 
 const isNatsError = (error: unknown): error is NatsError => error instanceof NatsError
@@ -254,7 +248,6 @@ const buildConsumerConfig = (config: SubscriberConfig): ConsumerConfig => ({
   max_ack_pending: config.maxAckPending,
   ack_wait: msToNanos(config.ackWaitMs),
   description: config.consumerDescription,
-  deliver_subject: config.deliverSubject,
   filter_subjects: config.filterSubjects,
 })
 
@@ -269,6 +262,8 @@ const isAlreadyExists = (error: unknown) => {
   const apiError = error.jsError() ?? error.api_error
   return apiError?.code === 409
 }
+
+const isPushConsumer = (config: ConsumerConfig) => typeof config.deliver_subject === 'string'
 
 const shouldReconnect = (error: unknown) => {
   if (!isNatsError(error)) return false
@@ -291,6 +286,15 @@ const isNoMessageError = (error: unknown) => {
 const ensureConsumer = async (manager: JetStreamManager, config: SubscriberConfig) => {
   try {
     const info = await manager.consumers.info(config.streamName, config.consumerName)
+    if (isPushConsumer(info.config)) {
+      console.warn('Agent comms consumer is push-based; recreating as pull consumer', {
+        stream: config.streamName,
+        consumer: config.consumerName,
+      })
+      await manager.consumers.delete(config.streamName, config.consumerName)
+      await manager.consumers.add(config.streamName, buildConsumerConfig(config))
+      return
+    }
     const expected = buildConsumerConfig(config)
     const mismatches: string[] = []
 
@@ -326,8 +330,13 @@ const ensureConsumer = async (manager: JetStreamManager, config: SubscriberConfi
   }
 }
 
-const consumeBatch = async (
-  js: JetStreamClient,
+type MessageStream = AsyncIterable<JsMsg> & {
+  stop?: (error?: Error) => void
+  close?: () => Promise<void | Error>
+}
+
+const consumeStream = async (
+  messages: MessageStream,
   sc: ReturnType<typeof StringCodec>,
   store: ReturnType<typeof createAgentMessagesStore>,
   config: SubscriberConfig,
@@ -335,42 +344,92 @@ const consumeBatch = async (
 ) => {
   const batchInputs: AgentMessageInput[] = []
   const ackables: JsMsg[] = []
-  let stage: 'fetch' | 'insert' | 'unknown' = 'fetch'
+  let flushTimer: ReturnType<typeof setTimeout> | null = null
+  let flushPromise: Promise<void> | null = null
+  let stage: 'fetch' | 'insert' = 'fetch'
 
+  const clearFlushTimer = () => {
+    if (!flushTimer) return
+    clearTimeout(flushTimer)
+    flushTimer = null
+  }
+
+  const flushBatch = async () => {
+    if (flushPromise) return flushPromise
+    flushPromise = (async () => {
+      clearFlushTimer()
+      if (batchInputs.length === 0) return
+      stage = 'insert'
+      const insertStart = Date.now()
+      const pendingInputs = batchInputs.splice(0, batchInputs.length)
+      const pendingAckables = ackables.splice(0, ackables.length)
+      try {
+        const inserted = await store.insertMessages(pendingInputs)
+        if (inserted.length > 0) {
+          publishAgentMessages(inserted)
+        }
+        recordAgentCommsBatch(inserted.length, Date.now() - insertStart)
+        for (const msg of pendingAckables) {
+          msg.ack()
+        }
+      } catch (error) {
+        throw error
+      } finally {
+        stage = 'fetch'
+      }
+    })()
+    try {
+      await flushPromise
+    } finally {
+      flushPromise = null
+    }
+  }
+
+  const scheduleFlush = () => {
+    if (flushTimer || config.pullExpiresMs <= 0) return
+    flushTimer = setTimeout(() => {
+      void flushBatch()
+    }, config.pullExpiresMs)
+  }
+
+  const handleAbort = () => {
+    messages.stop?.()
+  }
+
+  if (abort.aborted) {
+    messages.stop?.()
+    return
+  }
+
+  abort.addEventListener('abort', handleAbort)
   try {
-    const iterator = js.fetch(config.streamName, config.consumerName, {
-      batch: config.pullBatchSize,
-      expires: config.pullExpiresMs,
-    })
-
-    for await (const msg of iterator) {
+    for await (const msg of messages) {
       if (abort.aborted) break
       const decoded = sc.decode(msg.data)
       const input = normalizePayload(decoded, msg.subject)
       if (input) {
         batchInputs.push(input)
         ackables.push(msg)
+        if (batchInputs.length === 1) scheduleFlush()
+        if (batchInputs.length >= config.pullBatchSize) {
+          await flushBatch()
+        }
       } else {
         recordAgentCommsError('decode')
         msg.ack()
       }
     }
-
-    if (batchInputs.length > 0) {
-      stage = 'insert'
-      const insertStart = Date.now()
-      const inserted = await store.insertMessages(batchInputs)
-      if (inserted.length > 0) {
-        publishAgentMessages(inserted)
-      }
-      recordAgentCommsBatch(inserted.length, Date.now() - insertStart)
-      for (const msg of ackables) {
-        msg.ack()
-      }
-    }
+    await flushBatch()
   } catch (error) {
     recordAgentCommsError(stage)
     throw error
+  } finally {
+    abort.removeEventListener('abort', handleAbort)
+    clearFlushTimer()
+    messages.stop?.()
+    if (messages.close) {
+      await messages.close()
+    }
   }
 }
 
@@ -381,9 +440,12 @@ const consumeLoop = async (
   config: SubscriberConfig,
   abort: AbortSignal,
 ) => {
+  const consumer = await js.consumers.get(config.streamName, config.consumerName)
+
   while (!abort.aborted) {
     try {
-      await consumeBatch(js, sc, store, config, abort)
+      const messages = await consumer.consume({ max_messages: config.pullBatchSize })
+      await consumeStream(messages, sc, store, config, abort)
     } catch (error) {
       if (abort.aborted) return
       if (isNoMessageError(error)) {
@@ -393,10 +455,6 @@ const consumeLoop = async (
       } else {
         console.warn('Agent comms subscriber error', error)
       }
-    }
-
-    if (!abort.aborted) {
-      await sleep(config.pollDelayMs)
     }
   }
 }
@@ -513,4 +571,9 @@ export const startAgentCommsSubscriber = () => {
   }
 
   return readyPromise ?? Promise.resolve()
+}
+
+export const __test__ = {
+  consumeStream,
+  normalizePayload,
 }
