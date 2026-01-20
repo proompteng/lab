@@ -37,7 +37,7 @@ export const listPrimitiveResources = async (
     return errorResponse('kind is required', 400)
   }
 
-  const namespace = normalizeNamespace(url.searchParams.get('namespace'))
+  const namespace = normalizeNamespace(url.searchParams.get('namespace'), 'agents')
   const limit = parseLimit(url.searchParams.get('limit'))
   const kube = deps.kubeClient ?? createKubernetesClient()
 

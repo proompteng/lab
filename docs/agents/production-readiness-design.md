@@ -8,6 +8,7 @@ Status: Current (2026-01-19)
 - Conversion strategy when moving beyond v1alpha1 (webhook design + deprecation policy).
 - Runtime adapter contract: submit/status/cancel inputs and error codes.
 - Agent-runner spec contract: required fields, workspace layout, artifact paths.
+- Control-plane status endpoint (gRPC + `/api/agents/control-plane/status`) for controller/runtime/database health.
 
 ## Reliability & Scaling
 - SLOs: availability, submission latency, reconcile delay, failure rate.

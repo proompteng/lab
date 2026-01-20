@@ -26,7 +26,7 @@ export const getPrimitiveResource = async (
     return errorResponse('name is required', 400)
   }
 
-  const namespace = normalizeNamespace(url.searchParams.get('namespace'))
+  const namespace = normalizeNamespace(url.searchParams.get('namespace'), 'agents')
   const kube = deps.kubeClient ?? createKubernetesClient()
 
   try {

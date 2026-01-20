@@ -6,22 +6,14 @@ import { fileURLToPath } from 'node:url'
 import * as grpc from '@grpc/grpc-js'
 import { status as GrpcStatus, ServerCredentials, type ServerUnaryCall, type ServerWritableStream } from '@grpc/grpc-js'
 import { loadSync } from '@grpc/proto-loader'
-import { loadTemporalConfig } from '@proompteng/temporal-bun-sdk'
-import { sql } from 'kysely'
 import { postAgentRunsHandler } from '~/routes/v1/agent-runs'
-import { getAgentsControllerHealth } from '~/server/agents-controller'
-import { getDb } from '~/server/db'
-import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
+import { buildControlPlaneStatus } from '~/server/control-plane-status'
 import { asRecord, asString } from '~/server/primitives-http'
 import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
-import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
 
 const DEFAULT_NAMESPACE = 'agents'
 const DEFAULT_GRPC_PORT = 50051
 const SERVICE_NAME = 'jangar'
-const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
-const DEFAULT_TEMPORAL_PORT = 7233
-const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
 
 type AgentctlServer = {
   server: grpc.Server
@@ -154,142 +146,6 @@ const handleUnaryError = (callback: UnaryCallback, error: unknown) => {
   }
   const message = error instanceof Error ? error.message : String(error)
   callback({ code: GrpcStatus.INTERNAL, message }, null)
-}
-
-const normalizeMessage = (value: unknown) => (value instanceof Error ? value.message : String(value))
-
-const buildControllerStatus = (name: string, health: ReturnType<typeof getAgentsControllerHealth>) => {
-  if (!health.enabled) {
-    return {
-      name,
-      enabled: false,
-      started: health.started,
-      crds_ready: false,
-      missing_crds: health.missingCrds,
-      last_checked_at: health.lastCheckedAt ?? '',
-      status: 'disabled',
-      message: 'controller disabled',
-    }
-  }
-  if (!health.started) {
-    return {
-      name,
-      enabled: true,
-      started: false,
-      crds_ready: false,
-      missing_crds: health.missingCrds,
-      last_checked_at: health.lastCheckedAt ?? '',
-      status: 'degraded',
-      message: 'controller not started',
-    }
-  }
-  if (health.crdsReady === false) {
-    return {
-      name,
-      enabled: true,
-      started: true,
-      crds_ready: false,
-      missing_crds: health.missingCrds,
-      last_checked_at: health.lastCheckedAt ?? '',
-      status: 'degraded',
-      message: `missing CRDs: ${health.missingCrds.join(', ') || 'unknown'}`,
-    }
-  }
-  if (health.crdsReady === null) {
-    return {
-      name,
-      enabled: true,
-      started: true,
-      crds_ready: false,
-      missing_crds: health.missingCrds,
-      last_checked_at: health.lastCheckedAt ?? '',
-      status: 'unknown',
-      message: 'CRD status not yet checked',
-    }
-  }
-  return {
-    name,
-    enabled: true,
-    started: true,
-    crds_ready: true,
-    missing_crds: health.missingCrds,
-    last_checked_at: health.lastCheckedAt ?? '',
-    status: 'healthy',
-    message: '',
-  }
-}
-
-const resolveAdapterFromController = (controllerStatus: string, controllerMessage: string) => {
-  if (controllerStatus === 'healthy') {
-    return { available: true, status: 'healthy', message: '' }
-  }
-  if (controllerStatus === 'unknown') {
-    return { available: false, status: 'unknown', message: controllerMessage || 'controller status unknown' }
-  }
-  if (controllerStatus === 'disabled') {
-    return { available: false, status: 'disabled', message: controllerMessage || 'controller disabled' }
-  }
-  return { available: false, status: 'degraded', message: controllerMessage || 'controller unhealthy' }
-}
-
-const resolveTemporalAdapter = async () => {
-  try {
-    const config = await loadTemporalConfig({
-      defaults: {
-        host: DEFAULT_TEMPORAL_HOST,
-        port: DEFAULT_TEMPORAL_PORT,
-        address: DEFAULT_TEMPORAL_ADDRESS,
-      },
-    })
-    return {
-      name: 'temporal',
-      available: true,
-      status: 'configured',
-      message: 'temporal configuration resolved',
-      endpoint: config.address ?? DEFAULT_TEMPORAL_ADDRESS,
-    }
-  } catch (error) {
-    return {
-      name: 'temporal',
-      available: false,
-      status: 'degraded',
-      message: normalizeMessage(error),
-      endpoint: DEFAULT_TEMPORAL_ADDRESS,
-    }
-  }
-}
-
-const checkDatabase = async () => {
-  const db = getDb()
-  if (!db) {
-    return {
-      configured: false,
-      connected: false,
-      status: 'disabled',
-      message: 'DATABASE_URL not set',
-      latency_ms: 0,
-    }
-  }
-
-  const start = Date.now()
-  try {
-    await sql`select 1`.execute(db)
-    return {
-      configured: true,
-      connected: true,
-      status: 'healthy',
-      message: '',
-      latency_ms: Math.max(0, Date.now() - start),
-    }
-  } catch (error) {
-    return {
-      configured: true,
-      connected: false,
-      status: 'degraded',
-      message: normalizeMessage(error),
-      latency_ms: Math.max(0, Date.now() - start),
-    }
-  }
 }
 
 const createListHandler =
@@ -969,76 +825,18 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
       if (authError) return callback(authError, null)
       try {
         const namespace = normalizeNamespace(call.request?.namespace)
-        const agentsController = buildControllerStatus('agents-controller', getAgentsControllerHealth())
-        const supportingController = buildControllerStatus('supporting-controller', getSupportingControllerHealth())
-        const orchestrationController = buildControllerStatus(
-          'orchestration-controller',
-          getOrchestrationControllerHealth(),
-        )
-        const controllers = [agentsController, supportingController, orchestrationController]
-
-        const workflowAdapter = resolveAdapterFromController(agentsController.status, agentsController.message)
-        const jobAdapter = resolveAdapterFromController(agentsController.status, agentsController.message)
-
-        const runtimeAdapters = [
-          {
-            name: 'workflow',
-            available: workflowAdapter.available,
-            status: workflowAdapter.status,
-            message: workflowAdapter.message,
-            endpoint: '',
-          },
-          {
-            name: 'job',
-            available: jobAdapter.available,
-            status: jobAdapter.status,
-            message: jobAdapter.message,
-            endpoint: '',
-          },
-          await resolveTemporalAdapter(),
-          {
-            name: 'custom',
-            available: true,
-            status: 'unknown',
-            message: 'custom runtime configured per AgentRun',
-            endpoint: '',
-          },
-        ]
-
-        const database = await checkDatabase()
         const grpcStatus = {
           enabled: true,
           address,
           status: 'healthy',
           message: '',
         }
-
-        const degradedComponents = [
-          ...controllers
-            .filter((controller) => controller.status === 'degraded' || controller.status === 'disabled')
-            .map((controller) => controller.name),
-          ...runtimeAdapters
-            .filter((adapter) => adapter.status === 'degraded')
-            .map((adapter) => `runtime:${adapter.name}`),
-          ...(database.status === 'healthy' ? [] : ['database']),
-          ...(grpcStatus.status === 'healthy' ? [] : ['grpc']),
-        ]
-
-        callback(null, {
+        const status = await buildControlPlaneStatus({
+          namespace,
           service: SERVICE_NAME,
-          generated_at: new Date().toISOString(),
-          controllers,
-          runtime_adapters: runtimeAdapters,
-          database,
           grpc: grpcStatus,
-          namespaces: [
-            {
-              namespace,
-              status: degradedComponents.length === 0 ? 'healthy' : 'degraded',
-              degraded_components: degradedComponents,
-            },
-          ],
         })
+        callback(null, status)
       } catch (error) {
         handleUnaryError(callback, error)
       }
