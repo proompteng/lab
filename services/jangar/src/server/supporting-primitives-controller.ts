@@ -32,9 +32,22 @@ type CrdCheckState = {
   checkedAt: string
 }
 
-let started = false
+type ControllerHealthState = {
+  started: boolean
+  crdCheckState: CrdCheckState | null
+}
+
+const globalState = globalThis as typeof globalThis & {
+  __jangarSupportingControllerState?: ControllerHealthState
+}
+
+const controllerState =
+  globalState.__jangarSupportingControllerState ??
+  (globalState.__jangarSupportingControllerState = { started: false, crdCheckState: null })
+
+let started = controllerState.started
 let reconciling = false
-let crdCheckState: CrdCheckState | null = null
+let crdCheckState: CrdCheckState | null = controllerState.crdCheckState
 let watchHandles: Array<{ stop: () => void }> = []
 const namespaceQueues = new Map<string, Promise<void>>()
 
@@ -137,6 +150,7 @@ const checkCrds = async (): Promise<CrdCheckState> => {
     checkedAt: nowIso(),
   }
   crdCheckState = state
+  controllerState.crdCheckState = state
   if (!state.ok) {
     if (missing.length > 0) {
       console.error('[jangar] missing supporting primitives CRDs:', missing.join(', '))
@@ -154,10 +168,10 @@ const checkCrds = async (): Promise<CrdCheckState> => {
 
 export const getSupportingControllerHealth = () => ({
   enabled: shouldStart(),
-  started,
-  crdsReady: crdCheckState?.ok ?? null,
-  missingCrds: crdCheckState?.missing ?? [],
-  lastCheckedAt: crdCheckState?.checkedAt ?? null,
+  started: controllerState.started,
+  crdsReady: controllerState.crdCheckState?.ok ?? null,
+  missingCrds: controllerState.crdCheckState?.missing ?? [],
+  lastCheckedAt: controllerState.crdCheckState?.checkedAt ?? null,
 })
 
 const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
@@ -1036,6 +1050,7 @@ export const startSupportingPrimitivesController = async () => {
     }
 
     started = true
+    controllerState.started = true
   } catch (error) {
     console.error('[jangar] supporting controller failed to start', error)
   }
@@ -1048,6 +1063,7 @@ export const stopSupportingPrimitivesController = () => {
   watchHandles = []
   namespaceQueues.clear()
   started = false
+  controllerState.started = false
 }
 
 export const __test__ = {
