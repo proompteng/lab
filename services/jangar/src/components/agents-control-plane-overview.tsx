@@ -2,7 +2,7 @@ import { Link } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { deriveStatusLabel, formatTimestamp, getMetadataValue, StatusBadge } from '@/components/agents-control-plane'
-import { Button, buttonVariants } from '@/components/ui/button'
+import { buttonVariants } from '@/components/ui/button'
 import type { AgentPrimitiveKind, PrimitiveEventItem, PrimitiveResource } from '@/data/agents-control-plane'
 import { fetchPrimitiveEvents, fetchPrimitiveList } from '@/data/agents-control-plane'
 import { cn } from '@/lib/utils'
@@ -16,6 +16,8 @@ type PrimitiveDefinition = {
   detailPath: string
 }
 
+type ControlPlaneHealth = 'Ready' | 'Degraded' | 'Unknown'
+
 type PrimitiveTileData = {
   definition: PrimitiveDefinition
   total: number
@@ -23,7 +25,7 @@ type PrimitiveTileData = {
   readyCount: number
   degradedCount: number
   unknownCount: number
-  health: 'Ready' | 'Degraded' | 'Unknown'
+  health: ControlPlaneHealth
   error: string | null
 }
 
@@ -229,7 +231,7 @@ const isReadyStatus = (value: string) => {
   )
 }
 
-const deriveHealth = (resources: PrimitiveResource[], error: string | null) => {
+const deriveHealth = (resources: PrimitiveResource[], error: string | null): ControlPlaneHealth => {
   if (error) return 'Unknown'
   if (resources.length === 0) return 'Unknown'
   let degradedCount = 0
@@ -343,7 +345,7 @@ export const useControlPlaneOverview = (namespace: string): OverviewState => {
             return {
               definition,
               total: 0,
-              resources: [],
+              resources: [] as PrimitiveResource[],
               readyCount: 0,
               degradedCount: 0,
               unknownCount: 0,
@@ -551,11 +553,14 @@ export const ControlPlaneOverviewTile = ({
           Open list
         </Link>
         {primaryName ? (
-          <Button variant="ghost" size="sm" asChild>
-            <Link to={definition.detailPath} params={{ name: primaryName }} search={{ namespace: primaryNamespace }}>
-              View latest
-            </Link>
-          </Button>
+          <Link
+            to={definition.detailPath}
+            params={{ name: primaryName }}
+            search={{ namespace: primaryNamespace }}
+            className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }))}
+          >
+            View latest
+          </Link>
         ) : null}
       </div>
     </div>
