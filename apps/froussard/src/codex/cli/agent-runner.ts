@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
+import { chmod, readFile, writeFile } from 'node:fs/promises'
 import process from 'node:process'
 
 import { runCli } from './lib/cli'
@@ -198,6 +198,38 @@ const writeInputFiles = async (files: AgentProviderInputFile[]) => {
   }
 }
 
+const configureGitAskpass = async (env: Record<string, string>) => {
+  const token = env.GH_TOKEN || env.GITHUB_TOKEN
+  if (!token) {
+    return
+  }
+
+  if (!env.GITHUB_TOKEN) env.GITHUB_TOKEN = token
+  if (!env.GH_TOKEN) env.GH_TOKEN = token
+
+  if (!env.GIT_ASKPASS) {
+    const askpassPath = '/tmp/git-askpass.sh'
+    const script = `#!/bin/sh
+case "$1" in
+  *Username*) printf '%s\\n' \"${GIT_ASKPASS_USERNAME:-x-access-token}\" ;;
+  *Password*) printf '%s\\n' \"${GIT_ASKPASS_TOKEN:-}\" ;;
+  *) printf '%s\\n' \"${GIT_ASKPASS_TOKEN:-}\" ;;
+esac
+`
+    await writeFile(askpassPath, script, { mode: 0o700 })
+    await chmod(askpassPath, 0o700)
+    env.GIT_ASKPASS = askpassPath
+  }
+
+  env.GIT_ASKPASS_TOKEN = token
+  if (!env.GIT_ASKPASS_USERNAME) {
+    env.GIT_ASKPASS_USERNAME = 'x-access-token'
+  }
+  if (!env.GIT_TERMINAL_PROMPT) {
+    env.GIT_TERMINAL_PROMPT = '0'
+  }
+}
+
 type AgentRunnerStatus = {
   provider: string
   binary: string
@@ -293,6 +325,7 @@ export const runAgentRunner = async (spec: AgentRunnerSpec): Promise<number> => 
       ...process.env,
       ...renderedEnv,
     } as Record<string, string>
+    await configureGitAskpass(env)
 
     const result = await spawnWithLogs(provider.binary, renderedArgs, env, logPath)
     exitCode = result.exitCode

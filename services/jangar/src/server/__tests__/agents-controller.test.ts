@@ -18,7 +18,7 @@ const buildAgentRun = (overrides: Record<string, unknown> = {}) => ({
     agentRef: { name: 'agent-1' },
     implementationSpecRef: { name: 'impl-1' },
     runtime: { type: 'job', config: {} },
-    workload: { image: 'ghcr.io/proompteng/codex-agent:latest' },
+    workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
   },
   status: {},
   ...overrides,
@@ -129,7 +129,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'ghcr.io/proompteng/codex-agent:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
         memoryRef: { name: 'default-memory' },
       },
     })
@@ -328,7 +328,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'ghcr.io/proompteng/codex-agent:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
         workflow: {
           steps: [{ name: 'step-one' }, { name: 'step-two' }],
         },
@@ -444,7 +444,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'ghcr.io/proompteng/codex-agent:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
         workflow: {
           steps: [{ name: 'retry-step', retries: 1, retryBackoffSeconds: 60 }],
         },

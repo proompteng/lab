@@ -19,6 +19,7 @@ ISSUE_URL="${AGENTS_E2E_ISSUE_URL:-https://github.com/${REPOSITORY}/issues/${ISS
 BASE_BRANCH="${AGENTS_E2E_BASE:-main}"
 HEAD_BRANCH="${AGENTS_E2E_HEAD:-codex/agents/${ISSUE_NUMBER}}"
 PROMPT="${AGENTS_E2E_PROMPT:-Add a short \"Verification checklist\" subsection under the Native workflow e2e proof runbook in docs/agents/runbooks.md that lists steps to confirm AgentRun success, artifact output location, and PR verification. Keep the change documentation-only.}"
+WORKLOAD_IMAGE="${AGENTS_E2E_WORKLOAD_IMAGE:-registry.ide-newton.ts.net/lab/codex-universal:latest}"
 SECRET_NAME="${AGENTS_E2E_SECRET_NAME:-codex-github-token}"
 GH_TOKEN="${AGENTS_E2E_GH_TOKEN:-}"
 
@@ -124,7 +125,7 @@ spec:
         parameters:
           stage: implement
   workload:
-    image: ghcr.io/proompteng/codex-agent:latest
+    image: ${WORKLOAD_IMAGE}
     resources:
       requests:
         cpu: 250m
