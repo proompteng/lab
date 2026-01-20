@@ -55,14 +55,23 @@ For workflow runtime execution, ensure the workload image includes `agent-runner
 
 Native orchestration runs are handled in-cluster and do not require Argo Workflows. For Codex reruns or
 system-improvement workflows, use the native OrchestrationRun path by setting
-`env.vars.JANGAR_CODEX_RERUN_ORCHESTRATION` and/or `env.vars.JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION`
-(override namespaces with `env.vars.JANGAR_CODEX_RERUN_ORCHESTRATION_NAMESPACE` and
-`env.vars.JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE`). Ensure the referenced Orchestration
-exists (for example, `codex-autonomous`). To opt into an Argo adapter instead, set
-`env.vars.ARGO_SERVER_URL` along with `env.vars.JANGAR_CODEX_RERUN_TEMPLATE` and/or
-`env.vars.JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE`.
+`workflowRuntime.native.rerunOrchestration` and/or `workflowRuntime.native.systemImprovementOrchestration`
+(override namespaces with the matching `workflowRuntime.native.*Namespace` values). Ensure the referenced
+Orchestration exists (for example, `codex-autonomous`). To opt into an Argo adapter instead, enable the
+Argo adapter values below or set the equivalent `env.vars.*` overrides.
 Native orchestration currently supports `AgentRun`, `ToolRun`, `SubOrchestration`, and `ApprovalGate` steps;
 other step kinds require adapters or future controller extensions.
+
+Optional vendor adapters (Argo Workflows):
+```yaml
+workflowRuntime:
+  adapters:
+    argo:
+      enabled: true
+      serverUrl: "http://argo-workflows-server.argo.svc.cluster.local:2746"
+      rerunTemplate: "codex-rerun"
+      systemImprovementTemplate: "codex-system-improvement"
+```
 
 Optional: submit runs with `agentctl`:
 ```bash
@@ -134,6 +143,19 @@ helm push agents-0.6.0.tgz oci://ghcr.io/proompteng/charts
 | `database.caSecret.name` | Secret containing DB CA cert | `""` |
 | `envFromSecretRefs` | Secret names to load as envFrom | `[]` |
 | `envFromConfigMapRefs` | ConfigMap names to load as envFrom | `[]` |
+| `workflowRuntime.namespace` | Default workflow namespace for Codex workflows | `""` |
+| `workflowRuntime.native.rerunOrchestration` | Orchestration name for native Codex reruns | `""` |
+| `workflowRuntime.native.rerunOrchestrationNamespace` | Namespace for native Codex rerun orchestration | `""` |
+| `workflowRuntime.native.systemImprovementOrchestration` | Orchestration name for native system improvement runs | `""` |
+| `workflowRuntime.native.systemImprovementOrchestrationNamespace` | Namespace for native system improvement orchestration | `""` |
+| `workflowRuntime.adapters.argo.enabled` | Enable Argo workflow adapter env vars | `false` |
+| `workflowRuntime.adapters.argo.serverUrl` | Argo server URL | `""` |
+| `workflowRuntime.adapters.argo.rerunTemplate` | Argo workflow template for Codex reruns | `""` |
+| `workflowRuntime.adapters.argo.rerunNamespace` | Namespace for Codex rerun workflows | `""` |
+| `workflowRuntime.adapters.argo.systemImprovementTemplate` | Argo workflow template for system improvement runs | `""` |
+| `workflowRuntime.adapters.argo.systemImprovementNamespace` | Namespace for system improvement workflows | `""` |
+| `workflowRuntime.adapters.argo.tokenSecret.name` | Secret with Argo token | `""` |
+| `workflowRuntime.adapters.argo.tokenSecret.key` | Secret key for Argo token | `"token"` |
 | `controller.enabled` | Enable Agents controller loop | `true` |
 | `controller.namespaces` | Namespaces to watch | `['<release-namespace>']` |
 | `controller.concurrency.perNamespace` | Max running AgentRuns per namespace | `10` |

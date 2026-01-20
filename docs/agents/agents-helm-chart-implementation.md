@@ -99,13 +99,15 @@ Jangar is the controller for all primitives and must:
 
 ### Runtime adapters (expected to exist)
 - `workflow` (native step runner), `job`, `temporal`, `custom` adapters with clear error messages when configuration is missing.
+The Helm chart enables the native workflow runtime controllers by default; vendor adapters (for example, Argo Workflows)
+are opt-in via `workflowRuntime.adapters.*` values (or explicit `env.vars.*` overrides).
 
 ### Orchestration runtime (native)
 - Orchestration and OrchestrationRun execute in-cluster by default with no external workflow engine.
 - External adapters remain opt-in via explicit configuration.
 - Native controller currently supports `AgentRun`, `ToolRun`, `SubOrchestration`, and `ApprovalGate` steps; other step kinds require adapters or future extensions.
-- Codex reruns/system-improvements should point at native OrchestrationRuns via `JANGAR_CODEX_RERUN_ORCHESTRATION` and
-  `JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION` (namespaces via the matching `*_NAMESPACE` vars).
+- Codex reruns/system-improvements should point at native OrchestrationRuns via `workflowRuntime.native.*`
+  values (or the equivalent `JANGAR_CODEX_RERUN_ORCHESTRATION` and `JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION` env vars).
 
 ### RBAC alignment
 Controller behavior requires permissions to:

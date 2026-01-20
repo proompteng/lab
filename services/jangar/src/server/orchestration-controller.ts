@@ -754,9 +754,9 @@ const reconcileOrchestrationRun = async (
       phase: 'Failed',
       finishedAt: nowIso(),
       conditions: upsertCondition(normalizeConditions(status.conditions), {
-        type: 'Failed',
+        type: 'InvalidSpec',
         status: 'True',
-        reason: 'MissingOrchestration',
+        reason: 'MissingOrchestrationRef',
         message: 'spec.orchestrationRef.name is required',
       }),
     })
@@ -770,7 +770,7 @@ const reconcileOrchestrationRun = async (
       phase: 'Failed',
       finishedAt: nowIso(),
       conditions: upsertCondition(normalizeConditions(status.conditions), {
-        type: 'Failed',
+        type: 'InvalidSpec',
         status: 'True',
         reason: 'MissingOrchestration',
         message: `orchestration ${orchestrationName} not found`,
@@ -787,7 +787,7 @@ const reconcileOrchestrationRun = async (
       phase: 'Failed',
       finishedAt: nowIso(),
       conditions: upsertCondition(normalizeConditions(status.conditions), {
-        type: 'Failed',
+        type: 'InvalidSpec',
         status: 'True',
         reason: 'EmptySteps',
         message: 'orchestration spec.steps is empty',
@@ -1114,6 +1114,8 @@ const reconcileOrchestrationRun = async (
   const conditions = normalizeConditions(status.conditions)
   let updatedConditions = conditions
   if (nextPhase === 'Running') {
+    updatedConditions = upsertCondition(updatedConditions, { type: 'Accepted', status: 'True', reason: 'Submitted' })
+    updatedConditions = upsertCondition(updatedConditions, { type: 'InProgress', status: 'True', reason: 'Running' })
     updatedConditions = upsertCondition(updatedConditions, { type: 'Running', status: 'True', reason: 'InProgress' })
   }
   if (nextPhase === 'Succeeded') {
