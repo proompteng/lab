@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
 
+import { formatTimestamp } from '@/components/agents-control-plane'
 import {
   ControlPlaneControllersPanel,
   ControlPlaneOverviewTile,
@@ -88,7 +89,7 @@ function AgentsControlPlanePage() {
           <div>
             Namespace <span className="font-semibold text-foreground">{searchState.namespace}</span>
           </div>
-          <div>Last updated {lastUpdatedAt ? new Date(lastUpdatedAt).toLocaleString() : '—'}</div>
+          <div>Last updated {formatTimestamp(lastUpdatedAt)}</div>
         </div>
       </header>
 
