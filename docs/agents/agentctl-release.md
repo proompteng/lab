@@ -1,6 +1,7 @@
 # agentctl release process
 
 This document describes how to build and publish `agentctl` (bundled with the Jangar service) for npm and Homebrew.
+`agentctl` ships with Jangar and uses gRPC only (no direct Kubernetes access).
 
 ## Prereqs
 
@@ -9,6 +10,9 @@ This document describes how to build and publish `agentctl` (bundled with the Ja
 - Access to `proompteng` npm org and the Homebrew tap repo
 
 ## Build artifacts
+
+`agentctl` is packaged as Bun single binaries for each target (macOS/Linux, amd64/arm64) plus an npm launcher
+that dispatches to the correct compiled binary.
 
 From the repo root:
 
@@ -22,7 +26,7 @@ bun run --filter @proompteng/agentctl build:release
 Artifacts:
 
 - `services/jangar/agentctl/dist/agentctl.js` (npm launcher; dispatches to platform binary)
-- `services/jangar/agentctl/dist/agentctl-<os>-<arch>` (standalone binary)
+- `services/jangar/agentctl/dist/agentctl-<os>-<arch>` (standalone Bun-compiled binary)
 - `services/jangar/agentctl/dist/agentctl` (host binary helper for npm + local runs)
 - `services/jangar/agentctl/dist/release/agentctl-<version>-<os>-<arch>.tar.gz`
 - Each archive contains a single `agentctl` binary (no suffix).
@@ -62,7 +66,7 @@ npm publish --access public
 ## Homebrew
 
 1. Upload the compiled archives from `dist/release` to a GitHub release.
-2. To generate the formula, run `bun run --filter @proompteng/agentctl build:release -- --all` (or set
+2. To generate the formula, run `bun run --filter @proompteng/agentctl build:release` (or set
    `AGENTCTL_TARGETS=darwin-amd64,darwin-arm64,linux-amd64,linux-arm64`) so all checksums are present.
 3. Copy the generated `dist/release/agentctl.rb` into the Homebrew tap repo and commit.
 4. If needed, the template lives at `services/jangar/agentctl/scripts/homebrew/agentctl.rb`.

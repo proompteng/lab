@@ -1,19 +1,19 @@
 # agentctl CLI Design
 
-Status: Current (2026-01-19)
+Status: Current (2026-01-20)
 
 Location: `services/jangar/agentctl` (ships with the Jangar service; **not** a separate product or service).
 
 ## Purpose
 `agentctl` is the Jangar CLI for managing Agents primitives and submitting AgentRuns without hand‑writing YAML.
-It is a thin wrapper around Jangar’s gRPC endpoints (like `kubectl`/`argocd`/`virtctl` style CLIs) and **never**
-talks to Kubernetes directly.
+It ships with the Jangar service and is a thin wrapper around Jangar’s gRPC endpoints (like `kubectl`/`argocd`/`virtctl`
+style CLIs) that **never** talk to Kubernetes directly.
 
 ## Goals
 - CRUD for Agent, AgentRun, ImplementationSpec, ImplementationSource, Memory.
 - CRUD for supporting primitives (Tool, Schedule, Workspace, Signal, ApprovalPolicy, Budget, SecretBinding).
 - First‑class “run” command to submit an AgentRun from flags or a spec file.
-- Works against any Kubernetes cluster where Jangar is deployed.
+- Works against any Kubernetes cluster where Jangar is deployed, as long as the Jangar gRPC endpoint is reachable.
 - In‑cluster gRPC by default (port‑forward or in‑cluster usage).
 - Packaged via Bun into a single binary and distributed via npm and Homebrew.
 - Human‑friendly status, logs, and controller health.
@@ -78,6 +78,8 @@ talks to Kubernetes directly.
 - `agentctl run submit --agent <name> --impl <name> --runtime <type> [--workload-image ...] [--cpu ...] [--memory ...] [--idempotency-key ...]`
 - `agentctl run apply -f <file>`
 - `agentctl run get <name>`
+- `agentctl run status <name>` (alias for `run get`)
+- `agentctl run wait <name>` (block until terminal phase)
 - `agentctl run list`
 - `agentctl run logs <name> [--follow]` (via Jangar gRPC)
 - `agentctl run cancel <name>`
@@ -86,21 +88,20 @@ talks to Kubernetes directly.
 `agentctl status` and `agentctl diagnose` call the Jangar control-plane status endpoint and present a summary table
 by component and namespace. Use `--output json` for machine parsing.
 
-Example table:
+Example table (left-aligned, kubectl-style headers):
 
 ```
-component                  | namespace | status     | message
----------------------------|-----------|------------|------------------------------
-namespace                  | agents    | healthy    |
-agents-controller          | agents    | healthy    |
-supporting-controller      | agents    | healthy    |
-orchestration-controller   | agents    | healthy    |
-runtime:workflow           | agents    | healthy    |
-runtime:job                | agents    | healthy    |
-runtime:temporal           | agents    | configured | temporal configuration resolved
-runtime:custom             | agents    | unknown    | custom runtime configured per AgentRun
-database                   | agents    | healthy    |
-grpc                       | agents    | healthy    | 127.0.0.1:50051
+COMPONENT                NAMESPACE  STATUS     MESSAGE
+namespace                agents     healthy
+agents-controller        agents     healthy
+supporting-controller    agents     healthy
+orchestration-controller agents     healthy
+runtime:workflow         agents     healthy
+runtime:job              agents     healthy
+runtime:temporal         agents     configured temporal configuration resolved
+runtime:custom           agents     unknown    custom runtime configured per AgentRun
+database                 agents     healthy
+grpc                     agents     healthy   127.0.0.1:50051
 ```
 
 `--output json` includes:
@@ -160,7 +161,7 @@ grpc                       | agents    | healthy    | 127.0.0.1:50051
 - In‑cluster usage targets the `agents-grpc` Service (requires `grpc.enabled` and `JANGAR_GRPC_*` envs in Helm values).
 - `--token` (optional shared secret).
 - `--tls` to enable TLS when configured (future-proofed).
-- `--output` (`yaml|json|table`).
+- `--output` / `-o` (`yaml|json|table`, default `table`).
 - `--wait` for `run submit` to block until completion.
 - `--idempotency-key` to avoid duplicate run submissions.
 
