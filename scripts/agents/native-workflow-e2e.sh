@@ -153,6 +153,15 @@ if [[ "${runtime_type}" != "workflow" ]]; then
   exit 1
 fi
 
+if kubectl api-resources --api-group=argoproj.io --no-headers 2>/dev/null | grep -q '^workflows'; then
+  argo_workflows="$(kubectl -n "${NAMESPACE}" get workflows.argoproj.io \
+    -l "agents.proompteng.ai/agent-run=${AGENT_RUN_NAME}" -o name 2>/dev/null || true)"
+  if [[ -n "${argo_workflows}" ]]; then
+    echo "Native workflow run should not create Argo Workflow resources (found: ${argo_workflows})." >&2
+    exit 1
+  fi
+fi
+
 kubectl -n "${NAMESPACE}" get agentrun "${AGENT_RUN_NAME}" -o json > "${OUTPUT_DIR}/agentrun.json"
 
 log "Collecting job logs and artifacts..."

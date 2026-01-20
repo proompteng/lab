@@ -1114,6 +1114,8 @@ const reconcileOrchestrationRun = async (
   const conditions = normalizeConditions(status.conditions)
   let updatedConditions = conditions
   if (nextPhase === 'Running') {
+    updatedConditions = upsertCondition(updatedConditions, { type: 'Accepted', status: 'True', reason: 'Submitted' })
+    updatedConditions = upsertCondition(updatedConditions, { type: 'InProgress', status: 'True', reason: 'Running' })
     updatedConditions = upsertCondition(updatedConditions, { type: 'Running', status: 'True', reason: 'InProgress' })
   }
   if (nextPhase === 'Succeeded') {
