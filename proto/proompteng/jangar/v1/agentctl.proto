@@ -7,35 +7,35 @@ option go_package = "github.com/proompteng/lab/services/jangar/internal/agentctl
 service AgentctlService {
   rpc GetServerInfo(ServerInfoRequest) returns (ServerInfoResponse);
 
-  rpc ListAgents(ListRequest) returns (ResourceListResponse);
-  rpc GetAgent(GetRequest) returns (ResourceResponse);
-  rpc ApplyAgent(ApplyManifestRequest) returns (ResourceResponse);
-  rpc DeleteAgent(DeleteRequest) returns (DeleteResponse);
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+  rpc GetAgent(GetAgentRequest) returns (GetAgentResponse);
+  rpc ApplyAgent(ApplyAgentRequest) returns (ApplyAgentResponse);
+  rpc DeleteAgent(DeleteAgentRequest) returns (DeleteAgentResponse);
 
-  rpc ListImplementationSpecs(ListRequest) returns (ResourceListResponse);
-  rpc GetImplementationSpec(GetRequest) returns (ResourceResponse);
-  rpc ApplyImplementationSpec(ApplyManifestRequest) returns (ResourceResponse);
-  rpc DeleteImplementationSpec(DeleteRequest) returns (DeleteResponse);
-  rpc CreateImplementationSpec(CreateImplementationSpecRequest) returns (ResourceResponse);
+  rpc ListImplementationSpecs(ListImplementationSpecsRequest) returns (ListImplementationSpecsResponse);
+  rpc GetImplementationSpec(GetImplementationSpecRequest) returns (GetImplementationSpecResponse);
+  rpc ApplyImplementationSpec(ApplyImplementationSpecRequest) returns (ApplyImplementationSpecResponse);
+  rpc DeleteImplementationSpec(DeleteImplementationSpecRequest) returns (DeleteImplementationSpecResponse);
+  rpc CreateImplementationSpec(CreateImplementationSpecRequest) returns (CreateImplementationSpecResponse);
 
-  rpc ListImplementationSources(ListRequest) returns (ResourceListResponse);
-  rpc GetImplementationSource(GetRequest) returns (ResourceResponse);
-  rpc ApplyImplementationSource(ApplyManifestRequest) returns (ResourceResponse);
-  rpc DeleteImplementationSource(DeleteRequest) returns (DeleteResponse);
+  rpc ListImplementationSources(ListImplementationSourcesRequest) returns (ListImplementationSourcesResponse);
+  rpc GetImplementationSource(GetImplementationSourceRequest) returns (GetImplementationSourceResponse);
+  rpc ApplyImplementationSource(ApplyImplementationSourceRequest) returns (ApplyImplementationSourceResponse);
+  rpc DeleteImplementationSource(DeleteImplementationSourceRequest) returns (DeleteImplementationSourceResponse);
 
-  rpc ListMemories(ListRequest) returns (ResourceListResponse);
-  rpc GetMemory(GetRequest) returns (ResourceResponse);
-  rpc ApplyMemory(ApplyManifestRequest) returns (ResourceResponse);
-  rpc DeleteMemory(DeleteRequest) returns (DeleteResponse);
+  rpc ListMemories(ListMemoriesRequest) returns (ListMemoriesResponse);
+  rpc GetMemory(GetMemoryRequest) returns (GetMemoryResponse);
+  rpc ApplyMemory(ApplyMemoryRequest) returns (ApplyMemoryResponse);
+  rpc DeleteMemory(DeleteMemoryRequest) returns (DeleteMemoryResponse);
 
-  rpc ListAgentRuns(ListRequest) returns (ResourceListResponse);
-  rpc GetAgentRun(GetRequest) returns (ResourceResponse);
-  rpc ApplyAgentRun(ApplyManifestRequest) returns (ResourceResponse);
-  rpc DeleteAgentRun(DeleteRequest) returns (DeleteResponse);
+  rpc ListAgentRuns(ListAgentRunsRequest) returns (ListAgentRunsResponse);
+  rpc GetAgentRun(GetAgentRunRequest) returns (GetAgentRunResponse);
+  rpc ApplyAgentRun(ApplyAgentRunRequest) returns (ApplyAgentRunResponse);
+  rpc DeleteAgentRun(DeleteAgentRunRequest) returns (DeleteAgentRunResponse);
 
   rpc SubmitAgentRun(SubmitAgentRunRequest) returns (SubmitAgentRunResponse);
   rpc CancelAgentRun(CancelAgentRunRequest) returns (CancelAgentRunResponse);
-  rpc StreamAgentRunLogs(AgentRunLogsRequest) returns (stream AgentRunLogEntry);
+  rpc StreamAgentRunLogs(StreamAgentRunLogsRequest) returns (stream StreamAgentRunLogsResponse);
 }
 
 message ServerInfoRequest {}
@@ -47,35 +47,77 @@ message ServerInfoResponse {
   string service = 4;
 }
 
-message ListRequest {
+message ListAgentsRequest {
   string namespace = 1;
   string label_selector = 2;
 }
 
-message GetRequest {
+message ListAgentsResponse {
+  string json = 1;
+}
+
+message GetAgentRequest {
   string namespace = 1;
   string name = 2;
 }
 
-message DeleteRequest {
-  string namespace = 1;
-  string name = 2;
+message GetAgentResponse {
+  string json = 1;
 }
 
-message ApplyManifestRequest {
+message ApplyAgentRequest {
   string namespace = 1;
   string manifest_yaml = 2;
 }
 
-message ResourceResponse {
+message ApplyAgentResponse {
   string json = 1;
 }
 
-message ResourceListResponse {
+message DeleteAgentRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteAgentResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message ListImplementationSpecsRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListImplementationSpecsResponse {
   string json = 1;
 }
 
-message DeleteResponse {
+message GetImplementationSpecRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetImplementationSpecResponse {
+  string json = 1;
+}
+
+message ApplyImplementationSpecRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplyImplementationSpecResponse {
+  string json = 1;
+}
+
+message DeleteImplementationSpecRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteImplementationSpecResponse {
   bool ok = 1;
   string message = 2;
   string json = 3;
@@ -92,6 +134,10 @@ message CreateImplementationSpecRequest {
   string text = 2;
   string summary = 3;
   ImplementationSourceInput source = 4;
+}
+
+message CreateImplementationSpecResponse {
+  string json = 1;
 }
 
 message RuntimeConfigEntry {
@@ -133,13 +179,127 @@ message CancelAgentRunResponse {
   string message = 2;
 }
 
-message AgentRunLogsRequest {
+message ListImplementationSourcesRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListImplementationSourcesResponse {
+  string json = 1;
+}
+
+message GetImplementationSourceRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetImplementationSourceResponse {
+  string json = 1;
+}
+
+message ApplyImplementationSourceRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplyImplementationSourceResponse {
+  string json = 1;
+}
+
+message DeleteImplementationSourceRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteImplementationSourceResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message ListMemoriesRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListMemoriesResponse {
+  string json = 1;
+}
+
+message GetMemoryRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetMemoryResponse {
+  string json = 1;
+}
+
+message ApplyMemoryRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplyMemoryResponse {
+  string json = 1;
+}
+
+message DeleteMemoryRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteMemoryResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message ListAgentRunsRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListAgentRunsResponse {
+  string json = 1;
+}
+
+message GetAgentRunRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetAgentRunResponse {
+  string json = 1;
+}
+
+message ApplyAgentRunRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplyAgentRunResponse {
+  string json = 1;
+}
+
+message DeleteAgentRunRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteAgentRunResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message StreamAgentRunLogsRequest {
   string namespace = 1;
   string name = 2;
   bool follow = 3;
 }
 
-message AgentRunLogEntry {
+message StreamAgentRunLogsResponse {
   string stream = 1;
   string message = 2;
 }
