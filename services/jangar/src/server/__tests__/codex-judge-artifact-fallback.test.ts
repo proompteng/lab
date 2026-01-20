@@ -65,6 +65,10 @@ const globalState = globalThis as typeof globalThis & {
     promptTuningFailureThreshold: number
     promptTuningWindowHours: number
     promptTuningCooldownHours: number
+    rerunOrchestrationName: string | null
+    rerunOrchestrationNamespace: string
+    systemImprovementOrchestrationName: string | null
+    systemImprovementOrchestrationNamespace: string
   }
   __codexJudgeMemoryStoreMock?: { persist: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
 }
@@ -140,6 +144,10 @@ if (!globalState.__codexJudgeConfigMock) {
     promptTuningFailureThreshold: 3,
     promptTuningWindowHours: 24,
     promptTuningCooldownHours: 6,
+    rerunOrchestrationName: null,
+    rerunOrchestrationNamespace: 'jangar',
+    systemImprovementOrchestrationName: null,
+    systemImprovementOrchestrationNamespace: 'jangar',
   }
 }
 

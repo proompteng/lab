@@ -23,6 +23,7 @@ import {
 import { createGitHubClient, GitHubRateLimitError, type PullRequest } from '~/server/github-client'
 import { ingestGithubReviewEvent } from '~/server/github-review-ingest'
 import { createPostgresMemoriesStore } from '~/server/memories-store'
+import { submitOrchestrationRun } from '~/server/orchestration-submit'
 
 type MemoryStoreFactory = () => ReturnType<typeof createPostgresMemoriesStore>
 
@@ -33,6 +34,7 @@ const globalOverrides = globalThis as typeof globalThis & {
   __codexJudgeMemoryStoreMock?: ReturnType<typeof createPostgresMemoriesStore>
   __codexJudgeMemoryStoreFactory?: MemoryStoreFactory
   __codexJudgeArgoMock?: ReturnType<typeof createArgoClient> | null
+  __codexJudgeOrchestrationSubmitMock?: typeof submitOrchestrationRun
 }
 
 let cachedStore: ReturnType<typeof createCodexJudgeStore> | null = null
@@ -80,6 +82,7 @@ const resolveArgo = () => {
   return cachedArgo
 }
 const argo = resolveArgo()
+const resolveOrchestrationSubmit = () => globalOverrides.__codexJudgeOrchestrationSubmitMock ?? submitOrchestrationRun
 const getMemoryStoreFactory = () => globalOverrides.__codexJudgeMemoryStoreFactory ?? createPostgresMemoriesStore
 
 const scheduledRuns = new Map<string, NodeJS.Timeout>()
@@ -826,6 +829,62 @@ type ResolvedArtifact = {
 }
 
 const coalesceString = (value: string | null | undefined) => (value && value.trim().length > 0 ? value : null)
+
+const addParam = (params: Record<string, string>, key: string, value: unknown) => {
+  if (value == null) return
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (trimmed.length > 0) {
+      params[key] = trimmed
+    }
+    return
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    params[key] = String(value)
+    return
+  }
+  if (typeof value === 'boolean') {
+    params[key] = value ? 'true' : 'false'
+    return
+  }
+  params[key] = JSON.stringify(value)
+}
+
+const addParamAlias = (params: Record<string, string>, keys: string[], value: unknown) => {
+  for (const key of keys) {
+    addParam(params, key, value)
+  }
+}
+
+const buildCodexParameters = (input: {
+  repository?: string | null
+  issueNumber?: number | string | null
+  base?: string | null
+  head?: string | null
+  prompt?: string | null
+  judgePrompt?: string | null
+  attempt?: number | string | null
+  parentRunUid?: string | null
+  iterationCycle?: number | string | null
+  iterationsCount?: number | string | null
+  resumeKey?: string | null
+  changesKey?: string | null
+}) => {
+  const params: Record<string, string> = {}
+  addParam(params, 'repository', input.repository)
+  addParamAlias(params, ['issueNumber', 'issue_number'], input.issueNumber)
+  addParam(params, 'base', input.base)
+  addParam(params, 'head', input.head)
+  addParam(params, 'prompt', input.prompt)
+  addParamAlias(params, ['judgePrompt', 'judge_prompt'], input.judgePrompt)
+  addParam(params, 'attempt', input.attempt)
+  addParamAlias(params, ['parentRunUid', 'parent_run_uid'], input.parentRunUid)
+  addParamAlias(params, ['iterationCycle', 'iteration_cycle'], input.iterationCycle)
+  addParamAlias(params, ['implementationIterations', 'implementation_iterations'], input.iterationsCount)
+  addParamAlias(params, ['implementationResumeKey', 'implementation_resume_key'], input.resumeKey)
+  addParamAlias(params, ['implementationChangesKey', 'implementation_changes_key'], input.changesKey)
+  return params
+}
 
 const mergeArtifactEntry = (existing: ResolvedArtifact | undefined, incoming: ResolvedArtifact) => {
   if (!existing) return incoming
@@ -1834,7 +1893,7 @@ const evaluateRun = async (runId: string) => {
         nextPrompt: null,
         promptTuning: {},
         systemSuggestions: {
-          suggestions: ['Attach codex repository/issue/head/base metadata to Argo workflow labels or annotations.'],
+          suggestions: ['Attach codex repository/issue/head/base metadata to workflow labels or annotations.'],
         },
       })
       const refreshedRun = (await store.getRunById(run.id)) ?? run
@@ -2052,17 +2111,43 @@ const maybeSubmitSystemImprovementWorkflow = async (
   reason: string | null,
   evaluation?: CodexEvaluationRecord,
 ): Promise<{ submitted: boolean; error?: string }> => {
-  const argoClient = globalOverrides.__codexJudgeArgoMock ?? argo
-  if (!argoClient || !config.systemImprovementWorkflowTemplate) {
-    return { submitted: false, error: 'system_improvement_workflow_unconfigured' }
-  }
-
   const baseRef =
     typeof run.runCompletePayload?.base === 'string' && run.runCompletePayload.base.trim().length > 0
       ? run.runCompletePayload.base.trim()
       : 'main'
   const branch = `codex/system-improvement-${run.issueNumber}-${run.id.slice(0, 8)}`
   const prompt = buildSystemImprovementPrompt(run, reason, evaluation)
+  const orchestrationName = config.systemImprovementOrchestrationName
+  if (orchestrationName) {
+    const submitter = resolveOrchestrationSubmit()
+    const deliveryId = `codex-system-improvement-${run.id}`
+    const parameters = buildCodexParameters({
+      repository: run.repository,
+      issueNumber: run.issueNumber,
+      base: baseRef,
+      head: branch,
+      prompt,
+      judgePrompt: config.systemImprovementJudgePrompt,
+      parentRunUid: run.workflowUid ?? run.id,
+    })
+    try {
+      await submitter({
+        deliveryId,
+        orchestrationRef: { name: orchestrationName },
+        namespace: config.systemImprovementOrchestrationNamespace,
+        parameters,
+      })
+      return { submitted: true }
+    } catch (error) {
+      console.warn('Failed to submit system improvement orchestration', error)
+      return { submitted: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  const argoClient = globalOverrides.__codexJudgeArgoMock ?? argo
+  if (!argoClient || !config.systemImprovementWorkflowTemplate) {
+    return { submitted: false, error: 'system_improvement_workflow_unconfigured' }
+  }
 
   try {
     await argoClient.submitWorkflowTemplate({
@@ -2181,23 +2266,62 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
     return { status: 'skipped' }
   }
 
+  const baseRef =
+    typeof run.runCompletePayload?.base === 'string' && run.runCompletePayload.base.trim().length > 0
+      ? run.runCompletePayload.base.trim()
+      : 'main'
+  const iterationCycle =
+    typeof run.iterationCycle === 'number' && Number.isFinite(run.iterationCycle)
+      ? run.iterationCycle + 1
+      : typeof run.runCompletePayload?.iteration_cycle === 'number' &&
+          Number.isFinite(run.runCompletePayload?.iteration_cycle)
+        ? Number(run.runCompletePayload?.iteration_cycle) + 1
+        : 1
+  const iterationsCount =
+    typeof run.runCompletePayload?.iterations === 'number' && Number.isFinite(run.runCompletePayload?.iterations)
+      ? Number(run.runCompletePayload?.iterations)
+      : null
+
+  const submitViaOrchestration = async () => {
+    if (!config.rerunOrchestrationName) return null
+    const submitter = resolveOrchestrationSubmit()
+    const parameters = buildCodexParameters({
+      repository: run.repository,
+      issueNumber: run.issueNumber,
+      base: baseRef,
+      head: run.branch,
+      prompt,
+      judgePrompt: config.defaultJudgePrompt,
+      attempt,
+      parentRunUid: run.workflowUid ?? run.id,
+      iterationCycle,
+      iterationsCount,
+      resumeKey: resumeArtifacts.resumeKey,
+      changesKey: resumeArtifacts.changesKey,
+    })
+    try {
+      await submitter({
+        deliveryId,
+        orchestrationRef: { name: config.rerunOrchestrationName },
+        namespace: config.rerunOrchestrationNamespace,
+        parameters,
+      })
+      await store.updateRerunSubmission({
+        id: claimed.submission.id,
+        status: 'submitted',
+        responseStatus: 201,
+        error: null,
+        submittedAt: new Date().toISOString(),
+      })
+      return { status: 'submitted' as const }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { status: 'failed' as const, error: message }
+    }
+  }
+
   const submitViaArgo = async () => {
     if (!argo || !config.rerunWorkflowTemplate) return null
-    const baseRef =
-      typeof run.runCompletePayload?.base === 'string' && run.runCompletePayload.base.trim().length > 0
-        ? run.runCompletePayload.base.trim()
-        : 'main'
-    const iterationCycle =
-      typeof run.iterationCycle === 'number' && Number.isFinite(run.iterationCycle)
-        ? run.iterationCycle + 1
-        : typeof run.runCompletePayload?.iteration_cycle === 'number' &&
-            Number.isFinite(run.runCompletePayload?.iteration_cycle)
-          ? Number(run.runCompletePayload?.iteration_cycle) + 1
-          : 1
-    const iterationsCount =
-      typeof run.runCompletePayload?.iterations === 'number' && Number.isFinite(run.runCompletePayload?.iterations)
-        ? Number(run.runCompletePayload?.iterations)
-        : null
     try {
       const parameters = [
         `repository=${run.repository}`,
@@ -2245,28 +2369,26 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
     }
   }
 
+  const orchestrationResult = await submitViaOrchestration()
+  if (orchestrationResult?.status === 'submitted') {
+    return orchestrationResult
+  }
+  let lastError: string | undefined =
+    orchestrationResult?.status === 'failed'
+      ? `Native orchestration submission failed: ${orchestrationResult.error}`
+      : undefined
+
   const argoResult = await submitViaArgo()
   if (argoResult?.status === 'submitted') {
     return argoResult
   }
-  let lastError: string | undefined =
-    argoResult?.status === 'failed' ? `Argo rerun submission failed: ${argoResult.error}` : undefined
+  if (argoResult?.status === 'failed') {
+    lastError = `Argo rerun submission failed: ${argoResult.error}`
+  }
 
   const { CodexTaskSchema, CodexTaskStage, CodexIterationsPolicySchema } = await import('./proto/codex_task_pb')
   const { create, toBinary } = await import('@bufbuild/protobuf')
   const { timestampFromDate } = await import('@bufbuild/protobuf/wkt')
-
-  const iterationsCount =
-    typeof run.runCompletePayload?.iterations === 'number' && Number.isFinite(run.runCompletePayload?.iterations)
-      ? Number(run.runCompletePayload?.iterations)
-      : null
-  const iterationCycle =
-    typeof run.iterationCycle === 'number' && Number.isFinite(run.iterationCycle)
-      ? run.iterationCycle + 1
-      : typeof run.runCompletePayload?.iteration_cycle === 'number' &&
-          Number.isFinite(run.runCompletePayload?.iteration_cycle)
-        ? Number(run.runCompletePayload?.iteration_cycle) + 1
-        : 1
 
   const iterationsPolicy = iterationsCount
     ? create(CodexIterationsPolicySchema, { mode: 'fixed', count: iterationsCount })

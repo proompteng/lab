@@ -19,8 +19,12 @@ export type CodexJudgeConfig = {
   promptTuningFailureThreshold: number
   promptTuningWindowHours: number
   promptTuningCooldownHours: number
+  rerunOrchestrationName: string | null
+  rerunOrchestrationNamespace: string
   rerunWorkflowTemplate: string | null
   rerunWorkflowNamespace: string
+  systemImprovementOrchestrationName: string | null
+  systemImprovementOrchestrationNamespace: string
   systemImprovementWorkflowTemplate: string | null
   systemImprovementWorkflowNamespace: string
   systemImprovementJudgePrompt: string
@@ -84,6 +88,7 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
   const promptTuningFailureThreshold = parseNumber(process.env.JANGAR_PROMPT_TUNING_FAILURE_THRESHOLD, 3)
   const promptTuningWindowHours = parseNumber(process.env.JANGAR_PROMPT_TUNING_WINDOW_HOURS, 24)
   const promptTuningCooldownHours = parseNumber(process.env.JANGAR_PROMPT_TUNING_COOLDOWN_HOURS, 6)
+  const rerunOrchestrationName = (process.env.JANGAR_CODEX_RERUN_ORCHESTRATION ?? '').trim() || null
   const rerunWorkflowTemplate = (process.env.JANGAR_CODEX_RERUN_TEMPLATE ?? '').trim() || null
   const rerunWorkflowNamespace = (
     process.env.JANGAR_CODEX_RERUN_NAMESPACE ??
@@ -91,8 +96,23 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     process.env.JANGAR_NAMESPACE ??
     'jangar'
   ).trim()
+  const rerunOrchestrationNamespace = (
+    process.env.JANGAR_CODEX_RERUN_ORCHESTRATION_NAMESPACE ??
+    process.env.JANGAR_CODEX_RERUN_NAMESPACE ??
+    workflowNamespace ??
+    process.env.JANGAR_NAMESPACE ??
+    'jangar'
+  ).trim()
+  const systemImprovementOrchestrationName = (process.env.JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION ?? '').trim() || null
   const systemImprovementWorkflowTemplate = (process.env.JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE ?? '').trim() || null
   const systemImprovementWorkflowNamespace = (
+    process.env.JANGAR_SYSTEM_IMPROVEMENT_NAMESPACE ??
+    workflowNamespace ??
+    process.env.JANGAR_NAMESPACE ??
+    'jangar'
+  ).trim()
+  const systemImprovementOrchestrationNamespace = (
+    process.env.JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE ??
     process.env.JANGAR_SYSTEM_IMPROVEMENT_NAMESPACE ??
     workflowNamespace ??
     process.env.JANGAR_NAMESPACE ??
@@ -124,8 +144,12 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     promptTuningFailureThreshold,
     promptTuningWindowHours,
     promptTuningCooldownHours,
+    rerunOrchestrationName,
+    rerunOrchestrationNamespace,
     rerunWorkflowTemplate,
     rerunWorkflowNamespace,
+    systemImprovementOrchestrationName,
+    systemImprovementOrchestrationNamespace,
     systemImprovementWorkflowTemplate,
     systemImprovementWorkflowNamespace,
     systemImprovementJudgePrompt,

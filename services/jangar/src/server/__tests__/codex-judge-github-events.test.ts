@@ -37,8 +37,12 @@ const globalState = globalThis as typeof globalThis & {
     promptTuningFailureThreshold: number
     promptTuningWindowHours: number
     promptTuningCooldownHours: number
+    rerunOrchestrationName: string | null
+    rerunOrchestrationNamespace: string
     rerunWorkflowTemplate: string | null
     rerunWorkflowNamespace: string
+    systemImprovementOrchestrationName: string | null
+    systemImprovementOrchestrationNamespace: string
     systemImprovementWorkflowTemplate: string | null
     systemImprovementWorkflowNamespace: string
     systemImprovementJudgePrompt: string
@@ -108,8 +112,12 @@ const configMock: NonNullable<typeof globalState.__codexJudgeConfigMock> = {
   promptTuningFailureThreshold: 3,
   promptTuningWindowHours: 24,
   promptTuningCooldownHours: 6,
+  rerunOrchestrationName: null,
+  rerunOrchestrationNamespace: 'jangar',
   rerunWorkflowTemplate: null,
   rerunWorkflowNamespace: 'jangar',
+  systemImprovementOrchestrationName: null,
+  systemImprovementOrchestrationNamespace: 'jangar',
   systemImprovementWorkflowTemplate: null,
   systemImprovementWorkflowNamespace: 'jangar',
   systemImprovementJudgePrompt: 'system-improvement prompt',
