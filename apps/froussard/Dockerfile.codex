@@ -119,11 +119,10 @@ RUN rm -rf "$WORKTREE" \
     && bun install --frozen-lockfile --ignore-scripts
 
 COPY apps/froussard/src/codex/cli/codex-bootstrap.ts /usr/local/bin/codex-bootstrap
+COPY apps/froussard/src/codex/cli/agent-runner.ts /usr/local/bin/agent-runner
 COPY apps/froussard/src/codex/cli/codex-implement.ts /usr/local/bin/codex-implement
 COPY apps/froussard/src/codex/cli/codex-research.ts /usr/local/bin/codex-research
 COPY apps/froussard/src/codex/cli/codex-graf.ts /usr/local/bin/codex-graf
-COPY services/jangar/scripts/agent-runner.ts /usr/local/bin/agent-runner
-COPY services/jangar/scripts/agent-providers /etc/agent-providers
 COPY apps/froussard/scripts/codex-nats-publish.ts /usr/local/bin/codex-nats-publish
 COPY apps/froussard/scripts/codex-nats-soak.ts /usr/local/bin/codex-nats-soak
 COPY apps/froussard/scripts/discord-channel.ts /usr/local/bin/discord-channel.ts
@@ -137,7 +136,7 @@ RUN bash -lc 'cd /opt/proompteng/packages/discord && bun install --no-save && bu
 RUN mkdir -p /usr/local/node_modules/@proompteng \
     && cp -R /opt/proompteng/packages/codex /usr/local/node_modules/@proompteng/codex \
     && cp -R /opt/proompteng/packages/discord /usr/local/node_modules/@proompteng/discord
-RUN chmod +x /usr/local/bin/codex-bootstrap /usr/local/bin/codex-implement /usr/local/bin/codex-research /usr/local/bin/codex-graf /usr/local/bin/agent-runner /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak /usr/local/bin/discord-channel.ts
+RUN chmod +x /usr/local/bin/codex-bootstrap /usr/local/bin/agent-runner /usr/local/bin/codex-implement /usr/local/bin/codex-research /usr/local/bin/codex-graf /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak /usr/local/bin/discord-channel.ts
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/codex-bootstrap"]
