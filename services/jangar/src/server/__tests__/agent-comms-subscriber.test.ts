@@ -1,6 +1,5 @@
+import type { JsMsg } from 'nats'
 import { describe, expect, it, vi } from 'vitest'
-
-import { StringCodec, type JsMsg } from 'nats'
 
 import { __test__ } from '~/server/agent-comms-subscriber'
 import { publishAgentMessages } from '~/server/agent-messages-bus'
@@ -15,7 +14,7 @@ vi.mock('~/server/metrics', () => ({
   recordAgentCommsError: vi.fn(),
 }))
 
-type StringCodecValue = ReturnType<typeof StringCodec>
+type StringCodecValue = { decode: (data: Uint8Array) => string }
 
 const toBytes = (value: string) => new TextEncoder().encode(value)
 
@@ -35,7 +34,7 @@ const createStream = (messages: JsMsg[]) =>
     },
     stop: vi.fn(),
     close: vi.fn(async () => {}),
-  }) as AsyncIterable<JsMsg> & { stop: () => void; close: () => Promise<void | Error> }
+  }) as AsyncIterable<JsMsg> & { stop: () => void; close: () => Promise<undefined | Error> }
 
 describe('agent comms subscriber consume', () => {
   it('acks messages after insert and records batch metrics', async () => {
