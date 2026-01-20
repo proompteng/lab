@@ -98,7 +98,7 @@ function AgentProvidersListPage() {
       </header>
 
       <form className="flex flex-wrap items-end gap-2" onSubmit={submit}>
-        <div className="flex min-w-[200px] flex-1 flex-col gap-1">
+        <div className="flex flex-col gap-1 flex-1 min-w-0">
           <label className="text-xs font-medium text-foreground" htmlFor={namespaceId}>
             Namespace
           </label>
