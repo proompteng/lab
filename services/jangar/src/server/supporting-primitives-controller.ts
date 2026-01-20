@@ -940,10 +940,11 @@ const reconcileSchedule = async (
           const applied = await kube.apply(resource)
           const appliedMeta = asRecord(applied.metadata) ?? {}
           lastTriggeredAt = now.toISOString()
+          const fallbackName = asString(readNested(resource, ['metadata', 'generateName']))
           lastRunRef = {
             kind: asString(applied.kind) ?? resource.kind,
-            name: asString(appliedMeta.name) ?? asString(resource.metadata?.name) ?? null,
-            namespace: asString(appliedMeta.namespace) ?? asString(resource.metadata?.namespace) ?? namespace,
+            name: asString(appliedMeta.name) ?? fallbackName ?? null,
+            namespace: asString(appliedMeta.namespace) ?? namespace,
           }
           triggered = true
         } catch (error) {
