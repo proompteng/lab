@@ -85,7 +85,7 @@ export const createKubernetesClient = (): KubernetesClient => ({
   },
   applyStatus: async (resource) => {
     const output = await kubectl(
-      ['apply', '--subresource=status', '-f', '-', '-o', 'json'],
+      ['apply', '--server-side', '--subresource=status', '-f', '-', '-o', 'json'],
       JSON.stringify(resource),
       'kubectl apply status',
     )
