@@ -7,6 +7,7 @@ Status: Current (2026-01-19)
   - Structural schema
   - JSON size <= 256KB
   - `subresources.status` present
+- Validate CRDs with kubeconform (`charts/agents/crds/*.yaml`).
 - Validate CRD examples against schemas.
   - Use `scripts/agents/validate-agents.sh` (also runs `helm lint` and render checks).
 
