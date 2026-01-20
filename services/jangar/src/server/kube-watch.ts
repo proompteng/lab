@@ -27,19 +27,19 @@ const parseJsonStream = (onJson: (jsonText: string) => void) => {
   let depth = 0
   let startIndex = -1
   let inString = false
-  let escape = false
+  let escaped = false
 
   return (chunk: string) => {
     buffer += chunk
     for (let i = 0; i < buffer.length; i += 1) {
       const char = buffer[i]
       if (inString) {
-        if (escape) {
-          escape = false
+        if (escaped) {
+          escaped = false
           continue
         }
         if (char === '\\\\') {
-          escape = true
+          escaped = true
           continue
         }
         if (char === '"') {

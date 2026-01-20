@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createTemporalClient, loadTemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
+import { startResourceWatch } from '~/server/kube-watch'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
-import { startResourceWatch } from '~/server/kube-watch'
 
 const DEFAULT_NAMESPACES = ['agents']
 const DEFAULT_INTERVAL_SECONDS = 0
@@ -91,7 +91,7 @@ let intervalRef: NodeJS.Timeout | null = null
 let reconciling = false
 let temporalClientPromise: ReturnType<typeof createTemporalClient> | null = null
 let watchHandles: Array<{ stop: () => void }> = []
-let controllerState: ControllerState | null = null
+let _controllerState: ControllerState | null = null
 const namespaceQueues = new Map<string, Promise<void>>()
 
 const nowIso = () => new Date().toISOString()
@@ -2293,7 +2293,8 @@ const startNamespaceWatches = (
   concurrency: ReturnType<typeof parseConcurrency>,
 ) => {
   const nsState = ensureNamespaceState(state, namespace)
-  const enqueueFull = () => enqueueNamespaceTask(namespace, () => reconcileNamespaceState(kube, namespace, state, concurrency))
+  const enqueueFull = () =>
+    enqueueNamespaceTask(namespace, () => reconcileNamespaceState(kube, namespace, state, concurrency))
 
   const handleAgentRunEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
     const resource = asRecord(event.object)
@@ -2408,7 +2409,7 @@ export const startAgentsController = async () => {
     const kube = createKubernetesClient()
     const concurrency = parseConcurrency()
     const state: ControllerState = { namespaces: new Map() }
-    controllerState = state
+    _controllerState = state
     for (const namespace of namespaces) {
       await seedNamespaceState(kube, namespace, state, concurrency)
     }
@@ -2428,9 +2429,11 @@ export const startAgentsController = async () => {
 }
 
 export const stopAgentsController = () => {
-  watchHandles.forEach((handle) => handle.stop())
+  for (const handle of watchHandles) {
+    handle.stop()
+  }
   watchHandles = []
-  controllerState = null
+  _controllerState = null
   namespaceQueues.clear()
   if (intervalRef) {
     clearInterval(intervalRef)
