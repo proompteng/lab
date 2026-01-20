@@ -53,9 +53,14 @@ The memory sample includes a placeholder Secret. Update the connection string be
 For workflow runtime execution, ensure the workload image includes `agent-runner` or set
 `env.vars.JANGAR_AGENT_RUNNER_IMAGE` (or `env.vars.JANGAR_AGENT_IMAGE`) to a runner image.
 
-Native orchestration runs are handled in-cluster and do not require Argo Workflows. To opt into an Argo
-adapter for Codex reruns or system-improvement workflows, set `env.vars.ARGO_SERVER_URL` along with
-`env.vars.JANGAR_CODEX_RERUN_TEMPLATE` and/or `env.vars.JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE`.
+Native orchestration runs are handled in-cluster and do not require Argo Workflows. For Codex reruns or
+system-improvement workflows, use the native OrchestrationRun path by setting
+`env.vars.JANGAR_CODEX_RERUN_ORCHESTRATION` and/or `env.vars.JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION`
+(override namespaces with `env.vars.JANGAR_CODEX_RERUN_ORCHESTRATION_NAMESPACE` and
+`env.vars.JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE`). Ensure the referenced Orchestration
+exists (for example, `codex-autonomous`). To opt into an Argo adapter instead, set
+`env.vars.ARGO_SERVER_URL` along with `env.vars.JANGAR_CODEX_RERUN_TEMPLATE` and/or
+`env.vars.JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE`.
 Native orchestration currently supports `AgentRun`, `ToolRun`, `SubOrchestration`, and `ApprovalGate` steps;
 other step kinds require adapters or future controller extensions.
 
@@ -67,6 +72,7 @@ If you enable the gRPC port (`grpc.enabled=true`), you can port-forward it:
 ```bash
 kubectl -n agents port-forward svc/agents 50051:50051 &
 ```
+Keep the gRPC service ClusterIP-only and expose it externally only via a controlled gateway or mesh.
 
 Optional: configure GitHub/Linear ingestion with `ImplementationSource` manifests:
 - `charts/agents/examples/implementationsource-github.yaml`

@@ -53,6 +53,13 @@ to complete. Override `AGENTS_NAMESPACE`, `AGENTS_RELEASE_NAME`, or `AGENTS_VALU
 Ensure the `agentrun-sample.yaml` workload image includes `agent-runner` or set
 `env.vars.JANGAR_AGENT_RUNNER_IMAGE` in your values.
 
+## Codex reruns/system improvements (native)
+- Configure `JANGAR_CODEX_RERUN_ORCHESTRATION` and/or `JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION` (plus the matching
+  `*_NAMESPACE` variables if needed).
+- Ensure the referenced Orchestration exists and watch OrchestrationRun status for progress.
+- To use the Argo adapter instead, set `ARGO_SERVER_URL` along with `JANGAR_CODEX_RERUN_TEMPLATE` and/or
+  `JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE`.
+
 ## Jangar /health 500 (router init error)
 - Symptom: `/health` returns 500 with `ReferenceError: Cannot access 'aE' before initialization`.
 - Root cause: Jangar builds picked up an incompatible Nitro `latest` bundle output.

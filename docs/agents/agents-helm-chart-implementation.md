@@ -103,6 +103,9 @@ Jangar is the controller for all primitives and must:
 - Orchestration and OrchestrationRun execute in-cluster by default with no external workflow engine.
 - External adapters remain opt-in for specialized vendors (Argo, Temporal) via explicit configuration.
 - Native controller currently supports `AgentRun`, `ToolRun`, `SubOrchestration`, and `ApprovalGate` steps; other step kinds require adapters or future extensions.
+- Codex reruns/system-improvements should point at native OrchestrationRuns via `JANGAR_CODEX_RERUN_ORCHESTRATION` and
+  `JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION` (namespaces via the matching `*_NAMESPACE` vars). The Argo adapter remains
+  available when `ARGO_SERVER_URL` + workflow templates are explicitly configured.
 
 ### RBAC alignment
 Controller behavior requires permissions to:
