@@ -208,7 +208,7 @@ Status fields (required):
 Runtime schema (spec.runtime):
 - `type`: `workflow` | `job` | `temporal` | `custom`
   - `workflow` is the default, vendor-neutral runtime (Job-backed).
-  - `job` is a legacy alias for `workflow`.
+  - `job` runs a single Job for backward-compatible AgentRun submissions.
 - `config`: schemaless map for adapter-specific keys
   - `temporal` required: `taskQueue`, `workflowType`
   - `temporal` optional: `namespace`, `workflowId`, `timeouts`
