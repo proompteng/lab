@@ -340,11 +340,6 @@ func (in *AgentRunStatus) DeepCopyInto(out *AgentRunStatus) {
 			(*out)[key] = *val.DeepCopy()
 		}
 	}
-	if in.Workflow != nil {
-		in, out := &in.Workflow, &out.Workflow
-		*out = new(WorkflowStatus)
-		(*in).DeepCopyInto(*out)
-	}
 	if in.StartedAt != nil {
 		in, out := &in.StartedAt, &out.StartedAt
 		*out = (*in).DeepCopy()
@@ -352,6 +347,11 @@ func (in *AgentRunStatus) DeepCopyInto(out *AgentRunStatus) {
 	if in.FinishedAt != nil {
 		in, out := &in.FinishedAt, &out.FinishedAt
 		*out = (*in).DeepCopy()
+	}
+	if in.Workflow != nil {
+		in, out := &in.Workflow, &out.Workflow
+		*out = new(WorkflowStatus)
+		(*in).DeepCopyInto(*out)
 	}
 	if in.Artifacts != nil {
 		in, out := &in.Artifacts, &out.Artifacts

@@ -24,7 +24,7 @@ Options:
   --content <text>      Publish a single event with the provided content.
   --log-file <path>     Tail a log file and publish each line as an event.
   --channel <value>     Channel name for run-specific events (default: run).
-  --publish-general     Also publish each event to <subject-prefix>.general.<kind> (default: argo.workflow.general.<kind>).
+  --publish-general     Also publish each event to <subject-prefix>.general.<kind> (default: workflow.general.<kind>).
   --status <value>      Optional status value for status events.
   --exit-code <value>   Optional exit code for status events.
   --attrs-json <value>  Optional JSON payload merged into attrs.
@@ -34,10 +34,10 @@ Environment:
   NATS_URL              NATS server URL.
   NATS_CREDS            Optional credentials content.
   NATS_CREDS_FILE       Optional credentials file path.
-  NATS_SUBJECT_PREFIX   Subject prefix (default: argo.workflow).
-  WORKFLOW_NAME         Argo workflow name.
-  WORKFLOW_UID          Argo workflow uid.
-  WORKFLOW_NAMESPACE    Argo workflow namespace.
+  NATS_SUBJECT_PREFIX   Subject prefix (default: workflow).
+  WORKFLOW_NAME         Workflow name.
+  WORKFLOW_UID          Workflow uid.
+  WORKFLOW_NAMESPACE    Workflow namespace.
   WORKFLOW_STAGE        Optional workflow stage.
   WORKFLOW_STEP         Optional workflow step (e.g. pod name).
   AGENT_ID              Agent identifier.
@@ -259,7 +259,7 @@ const main = async () => {
     return
   }
 
-  const workflowNamespace = process.env.WORKFLOW_NAMESPACE?.trim() || 'argo-workflows'
+  const workflowNamespace = process.env.WORKFLOW_NAMESPACE?.trim() || 'jangar'
   const workflowName = process.env.WORKFLOW_NAME?.trim() || 'unknown'
   const workflowUid = process.env.WORKFLOW_UID?.trim() || 'unknown'
   const workflowStage = coerceNonEmpty(process.env.WORKFLOW_STAGE)
@@ -274,7 +274,7 @@ const main = async () => {
   const issueNumberRaw = coerceNonEmpty(process.env.CODEX_ISSUE_NUMBER) ?? coerceNonEmpty(process.env.ISSUE_NUMBER)
   const issueNumber = issueNumberRaw ? Number.parseInt(issueNumberRaw, 10) : null
   const branch = coerceNonEmpty(process.env.CODEX_BRANCH) ?? coerceNonEmpty(process.env.HEAD_BRANCH)
-  const subjectPrefix = process.env.NATS_SUBJECT_PREFIX?.trim() || 'argo.workflow'
+  const subjectPrefix = process.env.NATS_SUBJECT_PREFIX?.trim() || 'workflow'
 
   const creds = resolveCredsFile()
   const natsArgs = buildNatsArgs(creds.path)

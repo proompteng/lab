@@ -786,7 +786,7 @@ const scheduleEvaluation = (runId: string, delayMs: number, options: { reschedul
   scheduledRuns.set(runId, timeout)
 }
 
-const DEFAULT_ARTIFACT_BUCKET = 'argo-workflows'
+const getArtifactBucket = () => config.workflowArtifactsBucket
 const MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
 const MAX_LOG_CHARS = 20_000
 
@@ -866,10 +866,11 @@ const updateArtifactsFromWorkflow = async (
 ) => {
   const workflowName = run.workflowName
   if (!workflowName) return []
-  const workflowNamespace = run.workflowNamespace ?? 'argo-workflows'
+  const workflowNamespace = run.workflowNamespace ?? config.workflowNamespace ?? null
+  const artifactBucket = getArtifactBucket()
 
   const artifactMap = new Map<string, ResolvedArtifact>()
-  for (const artifact of buildFallbackArtifactEntries(workflowName, DEFAULT_ARTIFACT_BUCKET)) {
+  for (const artifact of buildFallbackArtifactEntries(workflowName, artifactBucket)) {
     addArtifactEntry(artifactMap, artifact)
   }
 
@@ -878,7 +879,7 @@ const updateArtifactsFromWorkflow = async (
       addArtifactEntry(artifactMap, {
         name: artifact.name,
         key: artifact.key,
-        bucket: artifact.bucket ?? DEFAULT_ARTIFACT_BUCKET,
+        bucket: artifact.bucket ?? artifactBucket,
         url: artifact.url ?? null,
         metadata: { ...(artifact.metadata ?? {}), source: 'run-complete' },
       })
@@ -893,7 +894,7 @@ const updateArtifactsFromWorkflow = async (
           addArtifactEntry(artifactMap, {
             name: artifact.name,
             key: artifact.key,
-            bucket: artifact.bucket ?? DEFAULT_ARTIFACT_BUCKET,
+            bucket: artifact.bucket ?? artifactBucket,
             url: artifact.url ?? null,
             metadata: {
               ...artifact.metadata,
@@ -925,7 +926,7 @@ const updateArtifactsFromWorkflow = async (
       .map((artifact) => ({
         name: artifact.name,
         key: artifact.key ?? '',
-        bucket: artifact.bucket ?? DEFAULT_ARTIFACT_BUCKET,
+        bucket: artifact.bucket ?? artifactBucket,
         url: artifact.url,
         metadata: artifact.metadata,
       })),
@@ -1974,7 +1975,7 @@ const buildSystemImprovementLinks = (run: CodexRunRecord) => {
   }
   const workflowUrl = resolveWorkflowUrl(run)
   if (workflowUrl) {
-    links.push(`Argo workflow: ${workflowUrl}`)
+    links.push(`Workflow: ${workflowUrl}`)
   }
   return links
 }
@@ -2649,8 +2650,8 @@ const parseRerunPayload = (payload: Record<string, unknown>) => {
   const prompt = typeof payload.prompt === 'string' ? payload.prompt.trim() : ''
   const runId = typeof payload.run_id === 'string' ? payload.run_id.trim() : ''
   const workflowName = typeof payload.workflow_name === 'string' ? payload.workflow_name.trim() : ''
-  const workflowNamespace =
-    typeof payload.workflow_namespace === 'string' ? payload.workflow_namespace.trim() : 'argo-workflows'
+  const workflowNamespace = typeof payload.workflow_namespace === 'string' ? payload.workflow_namespace.trim() : ''
+  const resolvedWorkflowNamespace = workflowNamespace || config.workflowNamespace || null
   const deliveryId =
     typeof payload.delivery_id === 'string'
       ? payload.delivery_id.trim()
@@ -2669,7 +2670,7 @@ const parseRerunPayload = (payload: Record<string, unknown>) => {
     prompt,
     runId: runId || null,
     workflowName: workflowName || null,
-    workflowNamespace: workflowNamespace || 'argo-workflows',
+    workflowNamespace: resolvedWorkflowNamespace,
     deliveryId,
   }
 }

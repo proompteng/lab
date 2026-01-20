@@ -55,6 +55,8 @@ const globalState = globalThis as typeof globalThis & {
     backoffScheduleMs: number[]
     facteurBaseUrl: string
     argoServerUrl: string | null
+    workflowArtifactsBucket: string
+    workflowNamespace: string | null
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
@@ -128,6 +130,8 @@ if (!globalState.__codexJudgeConfigMock) {
     backoffScheduleMs: [0],
     facteurBaseUrl: 'http://facteur.test',
     argoServerUrl: null,
+    workflowArtifactsBucket: 'jangar-artifacts',
+    workflowNamespace: null,
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
@@ -179,7 +183,7 @@ afterEach(() => {
 describe('codex-judge artifact fallback', () => {
   it('uses workflow output filenames for fallback keys', async () => {
     const { buildFallbackArtifactEntries } = await requirePrivate()
-    const artifacts = buildFallbackArtifactEntries('workflow-1', 'argo-workflows')
+    const artifacts = buildFallbackArtifactEntries('workflow-1', 'jangar-artifacts')
     const byName = new Map(artifacts.map((artifact) => [artifact.name, artifact]))
 
     expect(byName.get('implementation-changes')?.key).toBe('workflow-1/workflow-1/.codex-implementation-changes.tar.gz')
@@ -216,7 +220,7 @@ describe('codex-judge artifact fetch', () => {
     const result = await fetchArtifactBuffer({
       name: 'implementation-log',
       key: 'workflow-1/workflow-1/.codex-implementation.log',
-      bucket: 'argo-workflows',
+      bucket: 'jangar-artifacts',
       url: null,
       metadata: {},
     })
@@ -224,7 +228,7 @@ describe('codex-judge artifact fetch', () => {
     expect(result).toEqual(Buffer.from(payload))
     expect(getSignedUrl).toHaveBeenCalledTimes(1)
     expect(getObjectInputs[0]).toEqual({
-      Bucket: 'argo-workflows',
+      Bucket: 'jangar-artifacts',
       Key: 'workflow-1/workflow-1/.codex-implementation.log',
     })
     expect(fetchMock).toHaveBeenCalledWith('http://minio.local/signed')
