@@ -1195,10 +1195,12 @@ const buildRunSpec = (
   parameters: Record<string, string>,
   memory: Record<string, unknown> | null,
   artifacts?: Array<Record<string, unknown>>,
+  providerName?: string,
 ) => {
   const context = buildRunSpecContext(agentRun, agent, implementation, parameters, memory)
   const eventPayload = buildEventPayload(implementation, parameters)
   return {
+    provider: providerName ?? asString(readNested(agent, ['spec', 'providerRef', 'name'])) ?? '',
     agentRun: context.agentRun,
     implementation,
     parameters,
@@ -1389,6 +1391,7 @@ const submitJobRun = async (
     parameters,
     memory,
     Array.isArray(outputArtifacts) ? outputArtifacts : [],
+    providerName,
   )
   const runSecrets = parseStringList(readNested(agentRun, ['spec', 'secrets']))
   const envFrom = runSecrets.map((name) => ({ secretRef: { name } }))
@@ -1576,8 +1579,9 @@ const submitTemporalRun = async (
 
   const parameters = resolveParameters(agentRun)
   const providerSpec = asRecord(provider.spec) ?? {}
+  const providerName = asString(readNested(provider, ['metadata', 'name'])) ?? ''
   const outputArtifacts = Array.isArray(providerSpec.outputArtifacts) ? providerSpec.outputArtifacts : []
-  const payload = buildRunSpec(agentRun, agent, implementation, parameters, memory, outputArtifacts)
+  const payload = buildRunSpec(agentRun, agent, implementation, parameters, memory, outputArtifacts, providerName)
 
   const client = await getTemporalClient()
   const result = await client.workflow.start({
