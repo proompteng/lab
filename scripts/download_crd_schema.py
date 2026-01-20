@@ -33,11 +33,15 @@ for version_entry in crd.get("spec", {}).get("versions", []):
             "definitions": schema.get("definitions", {}),
             "additionalProperties": schema.get("additionalProperties", True),
         }
-        # kubeconform lowercases kind when resolving schema paths.
-        out_path = Path(f"schemas/custom/{group}_{version}_{kind_slug}.json")
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(output))
-        print(f"wrote {out_path}")
+        # kubeconform resolution differs across kinds; emit both lowercase and original kind.
+        out_paths = [
+            Path(f"schemas/custom/{group}_{version}_{kind_slug}.json"),
+            Path(f"schemas/custom/{group}_{version}_{kind}.json"),
+        ]
+        for out_path in out_paths:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(output))
+            print(f"wrote {out_path}")
         sys.exit(0)
 
 print("schema not found", file=sys.stderr)
