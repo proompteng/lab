@@ -205,6 +205,83 @@ const upsertCondition = (conditions: Condition[], update: Omit<Condition, 'lastT
   return next
 }
 
+const normalizeConditionStatus = (status?: string): Condition['status'] =>
+  status === 'True' ? 'True' : status === 'False' ? 'False' : 'Unknown'
+
+const findCondition = (conditions: Condition[], types: string[]) =>
+  conditions.find((condition) => types.includes(condition.type))
+
+const phaseCategory = (phase: string | null) => (phase ?? '').toLowerCase()
+
+const deriveStandardConditionUpdates = (conditions: Condition[], phase: string | null) => {
+  const normalizedPhase = phaseCategory(phase)
+  const failureCondition = findCondition(conditions, ['Failed', 'InvalidSpec', 'Unreachable', 'Cancelled'])
+  const runningCondition = findCondition(conditions, ['Running', 'InProgress', 'Progressing'])
+  const successCondition = findCondition(conditions, ['Succeeded', 'Completed'])
+  const readyCondition = findCondition(conditions, ['Ready'])
+
+  const phaseReady = ['ready', 'active', 'succeeded', 'success', 'completed'].includes(normalizedPhase)
+  const phaseProgressing = ['pending', 'running', 'progressing', 'inprogress', 'queued'].includes(normalizedPhase)
+  const phaseDegraded = ['failed', 'invalid', 'cancelled', 'error'].includes(normalizedPhase)
+
+  let readyStatus: Condition['status'] = 'Unknown'
+  let progressingStatus: Condition['status'] = 'Unknown'
+  let degradedStatus: Condition['status'] = 'Unknown'
+  let readyReason = readyCondition?.reason
+  let readyMessage = readyCondition?.message
+  let progressingReason = runningCondition?.reason
+  const progressingMessage = runningCondition?.message
+  let degradedReason = failureCondition?.reason
+  let degradedMessage = failureCondition?.message
+
+  if (phaseDegraded || failureCondition?.status === 'True') {
+    degradedStatus = 'True'
+    progressingStatus = 'False'
+    readyStatus = 'False'
+    degradedReason = degradedReason ?? 'Degraded'
+  } else if (phaseProgressing || runningCondition?.status === 'True') {
+    progressingStatus = 'True'
+    degradedStatus = 'False'
+    readyStatus = 'False'
+    progressingReason = progressingReason ?? 'Progressing'
+  } else if (phaseReady || successCondition?.status === 'True' || readyCondition?.status === 'True') {
+    readyStatus = 'True'
+    progressingStatus = 'False'
+    degradedStatus = 'False'
+    readyReason = readyReason ?? successCondition?.reason ?? 'Ready'
+    readyMessage = readyMessage ?? successCondition?.message
+  } else if (readyCondition?.status === 'False') {
+    readyStatus = 'False'
+    progressingStatus = 'False'
+    degradedStatus = 'True'
+    degradedReason = degradedReason ?? readyReason ?? 'NotReady'
+    degradedMessage = degradedMessage ?? readyMessage
+  } else if (readyCondition) {
+    readyStatus = normalizeConditionStatus(readyCondition.status)
+  }
+
+  return [
+    {
+      type: 'Ready',
+      status: readyStatus,
+      reason: readyReason,
+      message: readyMessage,
+    },
+    {
+      type: 'Progressing',
+      status: progressingStatus,
+      reason: progressingReason ?? 'Progressing',
+      message: progressingMessage,
+    },
+    {
+      type: 'Degraded',
+      status: degradedStatus,
+      reason: degradedReason ?? 'Degraded',
+      message: degradedMessage,
+    },
+  ] satisfies Array<Omit<Condition, 'lastTransitionTime'>>
+}
+
 const setStatus = async (
   kube: ReturnType<typeof createKubernetesClient>,
   resource: Record<string, unknown>,
@@ -217,7 +294,23 @@ const setStatus = async (
   const apiVersion = asString(resource.apiVersion)
   const kind = asString(resource.kind)
   if (!apiVersion || !kind) return
-  await kube.applyStatus({ apiVersion, kind, metadata: { name, namespace }, status })
+  const phase = asString(status.phase) ?? null
+  const baseConditions = normalizeConditions(status.conditions)
+  const standardUpdates = deriveStandardConditionUpdates(baseConditions, phase)
+  let conditions = baseConditions
+  for (const update of standardUpdates) {
+    conditions = upsertCondition(conditions, update)
+  }
+  await kube.applyStatus({
+    apiVersion,
+    kind,
+    metadata: { name, namespace },
+    status: {
+      ...status,
+      updatedAt: nowIso(),
+      conditions,
+    },
+  })
 }
 
 const listItems = (payload: Record<string, unknown>) => {

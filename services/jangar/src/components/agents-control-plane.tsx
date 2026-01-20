@@ -215,13 +215,16 @@ const isRunningStatus = (value: string) =>
 const isReadyStatus = (value: string) =>
   statusIncludes(value, ['ready', 'succeeded', 'success', 'completed', 'available', 'healthy'])
 
+const findConditionByType = (conditions: ConditionEntry[], type: string) =>
+  conditions.find((condition) => normalizeStatusLabel(condition.type ?? '') === type)
+
 export const deriveStatusLabel = (resource: Record<string, unknown>) => {
   const status = readRecord(resource.status) ?? {}
   const phase = readString(status.phase) ?? readString(status.state) ?? readString(status.status)
   if (phase) return phase
 
   const conditions = getStatusConditions(resource)
-  const ready = conditions.find((condition) => normalizeStatusLabel(condition.type ?? '') === 'ready')
+  const ready = findConditionByType(conditions, 'ready')
   if (ready?.status) {
     return ready.status === 'True' ? 'Ready' : 'Not Ready'
   }
@@ -240,7 +243,12 @@ export const deriveStatusCategory = (resource: Record<string, unknown>): StatusC
   const normalizedPhase = phase ? normalizeStatusLabel(phase) : null
 
   const conditions = getStatusConditions(resource)
-  const readyCondition = conditions.find((condition) => normalizeStatusLabel(condition.type ?? '') === 'ready')
+  const degradedCondition = findConditionByType(conditions, 'degraded')
+  if (degradedCondition?.status === 'True') return 'Failed'
+  const progressingCondition = findConditionByType(conditions, 'progressing')
+  if (progressingCondition?.status === 'True') return 'Running'
+
+  const readyCondition = findConditionByType(conditions, 'ready')
   if (readyCondition?.status) {
     if (readyCondition.status === 'True') return 'Ready'
     if (readyCondition.status === 'False') return 'Failed'
