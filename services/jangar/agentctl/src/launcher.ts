@@ -33,12 +33,15 @@ const resolveBinaryPath = () => {
 
 const run = () => {
   const binaryPath = resolveBinaryPath()
-  if (!binaryPath || !existsSync(binaryPath)) {
+  const localBinary = resolve(dirname(fileURLToPath(import.meta.url)), 'agentctl')
+  const resolvedBinary = binaryPath && existsSync(binaryPath) ? binaryPath : localBinary
+
+  if (!resolvedBinary || !existsSync(resolvedBinary)) {
     console.error('agentctl binary not found. Run `bun run build:bins` to generate packaged binaries.')
     process.exit(1)
   }
 
-  const child = spawn(binaryPath, process.argv.slice(2), { stdio: 'inherit' })
+  const child = spawn(resolvedBinary, process.argv.slice(2), { stdio: 'inherit' })
   child.on('exit', (code) => process.exit(code ?? 1))
   child.on('error', (error) => {
     console.error(error instanceof Error ? error.message : String(error))

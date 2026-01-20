@@ -1,7 +1,7 @@
-import { mkdir } from 'node:fs/promises'
+import { chmod, copyFile, mkdir } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { resolveTargets } from './targets'
+import { resolveHostTarget, resolveTargets } from './targets'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const root = resolve(scriptDir, '..')
@@ -10,6 +10,7 @@ const distDir = resolve(root, 'dist')
 
 export const buildBinaries = async (argv: string[]) => {
   const targets = resolveTargets(argv, process.env.AGENTCTL_TARGETS)
+  const hostLabel = resolveHostTarget().label
 
   await mkdir(distDir, { recursive: true })
 
@@ -26,6 +27,13 @@ export const buildBinaries = async (argv: string[]) => {
     const exitCode = await proc.exited
     if (exitCode !== 0) {
       throw new Error(`bun build failed for ${target.bunTarget} with exit code ${exitCode}`)
+    }
+
+    if (target.label === hostLabel) {
+      const hostBinary = resolve(distDir, 'agentctl')
+      await copyFile(output, hostBinary)
+      await chmod(hostBinary, 0o755)
+      console.log(`Linked host binary → ${hostBinary}`)
     }
   }
 }

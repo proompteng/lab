@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildBinaries } from './build-binaries'
@@ -26,26 +27,36 @@ const buildArchive = async (version: string, label: string) => {
   const binaryName = `agentctl-${label}`
   const archiveName = `agentctl-${version}-${label}.tar.gz`
   const archivePath = resolve(releaseDir, archiveName)
+  const tempDir = await mkdtemp(resolve(tmpdir(), 'agentctl-release-'))
+  const stagedBinary = resolve(tempDir, 'agentctl')
+  const sourceBinary = resolve(distDir, binaryName)
 
-  const proc = Bun.spawn(['tar', '-C', distDir, '-czf', archivePath, binaryName], {
-    cwd: root,
-    stderr: 'inherit',
-    stdout: 'inherit',
-  })
+  try {
+    await copyFile(sourceBinary, stagedBinary)
+    await chmod(stagedBinary, 0o755)
 
-  const exitCode = await proc.exited
-  if (exitCode !== 0) {
-    throw new Error(`tar failed for ${binaryName} with exit code ${exitCode}`)
+    const proc = Bun.spawn(['tar', '-C', tempDir, '-czf', archivePath, 'agentctl'], {
+      cwd: root,
+      stderr: 'inherit',
+      stdout: 'inherit',
+    })
+
+    const exitCode = await proc.exited
+    if (exitCode !== 0) {
+      throw new Error(`tar failed for ${binaryName} with exit code ${exitCode}`)
+    }
+
+    const data = await readFile(archivePath)
+    const sha256 = createHash('sha256').update(data).digest('hex')
+    const checksumPath = `${archivePath}.sha256`
+    await writeFile(checksumPath, `${sha256}  ${archiveName}\n`, 'utf8')
+
+    console.log(`Wrote ${archiveName} and ${archiveName}.sha256`)
+
+    return sha256
+  } finally {
+    await rm(tempDir, { recursive: true, force: true })
   }
-
-  const data = await readFile(archivePath)
-  const sha256 = createHash('sha256').update(data).digest('hex')
-  const checksumPath = `${archivePath}.sha256`
-  await writeFile(checksumPath, `${sha256}  ${archiveName}\n`, 'utf8')
-
-  console.log(`Wrote ${archiveName} and ${archiveName}.sha256`)
-
-  return sha256
 }
 
 const renderHomebrewFormula = async (version: string, checksums: Map<string, string>) => {
