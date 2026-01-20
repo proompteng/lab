@@ -27,7 +27,7 @@ This document is implementation‑grade: it describes *what* needs to exist in t
 ## Design Principles
 1) **CRDs are installed by Helm, not at runtime**. Jangar should verify CRD availability and emit actionable errors; it should not create CRDs by default. This aligns with Artifact Hub and Helm best practices.
 2) **Controller behavior matches CRD schema**. Any schema change must be reflected in Jangar’s reconciliation logic.
-3) **Vendor-neutral runtime and webhook ingestion**. The workflow runtime is native by default and external adapters are opt-in; ingestion relies on webhooks only (no polling).
+3) **Vendor-neutral runtime and webhook ingestion**. The workflow runtime is native by default and external adapters are opt-in; ingestion relies on webhooks only (no polling). Agent event streaming is push-based via NATS → Jangar storage → SSE (no periodic polling).
 4) **Minimal defaults, explicit overrides**. Only the necessary defaults in `values.yaml`; real deployments pass secrets and images explicitly.
 5) **Deterministic upgrades**. CRDs and examples are static YAML, version‑controlled, and validated in CI.
 
@@ -41,7 +41,7 @@ A fully functional chart must provide:
 - **Examples** for each CRD and implementation source.
 - **CI validation** to ensure CRDs and examples are valid and up‑to‑date.
 - **Crossplane removal guidance** (no migration required).
-- **agentctl** packaged under `services/jangar/**` and backed by Jangar gRPC APIs.
+- **agentctl** packaged under `services/jangar/**`, shipped with the Jangar service, and backed by Jangar gRPC APIs (no direct Kubernetes access). Built as a Bun single-binary for npm + Homebrew distribution.
 - **Supporting primitives controller** for schedules, artifacts, and workspaces with native Kubernetes resources.
 
 ## CRD Lifecycle
@@ -140,9 +140,11 @@ Controller behavior requires permissions to:
 
 ### Agent comms subject naming
 Agent comms publishes vendor-neutral NATS subjects using the following pattern:
-- `agents.workflow.<namespace>.<workflow>.<uid>.agent.<agentId>.<kind>` for workflow-scoped agent messages.
-- `agents.workflow.general.<kind>` for general agent status updates.
-Breaking change (2026-01-20): the subscriber only accepts `agents.workflow.*` subjects.
+- `workflow.<namespace>.<workflow>.<uid>.agent.<agentId>.<kind>` for workflow-scoped agent messages.
+- `workflow.general.<kind>` for general agent status updates.
+
+Legacy compatibility: `agents.workflow.*` subjects are still accepted; optional adapters (for example,
+Argo Workflows) can publish with `argo.workflow.*` when configured.
 
 ### RBAC modes
 Support two modes:

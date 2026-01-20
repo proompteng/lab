@@ -89,9 +89,9 @@ spec:
           - name: NATS_URL
             value: nats://nats.nats.svc.cluster.local:4222
           - name: NATS_SUBJECT_PREFIX
-            value: argo.workflow
+            value: workflow
           - name: NATS_CONTEXT_SUBJECT
-            value: argo.workflow.general.>
+            value: workflow.general.>
           - name: NATS_USER
             valueFrom:
               secretKeyRef:

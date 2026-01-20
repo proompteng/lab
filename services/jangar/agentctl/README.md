@@ -1,6 +1,7 @@
 # agentctl
 
-`agentctl` is a gRPC CLI for managing Agents primitives through the Jangar controller. It never calls Kubernetes directly; all operations go through the Jangar gRPC API.
+`agentctl` is a gRPC CLI for managing Agents primitives through the Jangar controller. It ships with the Jangar service
+and never calls Kubernetes directly; all operations go through the Jangar gRPC API.
 
 ## Install
 

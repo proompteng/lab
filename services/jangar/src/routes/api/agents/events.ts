@@ -213,14 +213,6 @@ export const getAgentEvents = async (request: Request) => {
         push(buildPayload(record))
       }
 
-      const matchesRecord = (record: AgentMessageRecord) => {
-        if (channel && record.channel !== channel) return false
-        if (identifiers.size === 0) return true
-        if (record.runId && identifiers.has(record.runId)) return true
-        if (record.workflowUid && identifiers.has(record.workflowUid)) return true
-        return false
-      }
-
       let resolveKeepAlive: (() => void) | null = null
       const keepAlive = new Promise<void>((resolve) => {
         resolveKeepAlive = resolve
@@ -231,7 +223,10 @@ export const getAgentEvents = async (request: Request) => {
         isClosed = true
         request.signal.removeEventListener('abort', handleAbort)
         if (heartbeat) clearInterval(heartbeat)
-        if (unsubscribe) unsubscribe()
+        if (unsubscribe) {
+          unsubscribe()
+          unsubscribe = null
+        }
         try {
           await store.close()
         } catch (error) {
@@ -267,9 +262,16 @@ export const getAgentEvents = async (request: Request) => {
 
       void (async () => {
         initialRecords.forEach(pushRecord)
+
         unsubscribe = subscribeAgentMessages((records) => {
           for (const record of records) {
-            if (!matchesRecord(record)) continue
+            if (identifiers.size > 0) {
+              const matchesIdentifier =
+                (record.runId && identifiers.has(record.runId)) ||
+                (record.workflowUid && identifiers.has(record.workflowUid))
+              if (!matchesIdentifier) continue
+            }
+            if (channel && record.channel !== channel) continue
             pushRecord(record)
           }
         })
@@ -281,7 +283,10 @@ export const getAgentEvents = async (request: Request) => {
       if (isClosed) return
       isClosed = true
       if (heartbeat) clearInterval(heartbeat)
-      if (unsubscribe) unsubscribe()
+      if (unsubscribe) {
+        unsubscribe()
+        unsubscribe = null
+      }
       void store.close()
       if (!connectionClosed) {
         recordSseConnection('agent-events', 'closed')

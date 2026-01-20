@@ -1,6 +1,6 @@
 # agentctl release process
 
-This document describes how to build and publish `agentctl` for npm and Homebrew.
+This document describes how to build and publish `agentctl` (bundled with the Jangar service) for npm and Homebrew.
 
 ## Prereqs
 
