@@ -149,6 +149,7 @@ const normalizePayload = (raw: string, subject: string): AgentMessageInput | nul
   const parsed = safeParseJson(raw)
   const record = toRecord(parsed)
   const subjectInfo = parseSubject(subject)
+  if (!subjectInfo) return null
   const candidate = record ? (toRecord(record.message) ?? toRecord(record.data) ?? record) : null
 
   const payload = candidate ?? {}

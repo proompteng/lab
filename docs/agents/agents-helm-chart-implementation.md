@@ -142,7 +142,7 @@ Controller behavior requires permissions to:
 Agent comms publishes vendor-neutral NATS subjects using the following pattern:
 - `agents.workflow.<namespace>.<workflow>.<uid>.agent.<agentId>.<kind>` for workflow-scoped agent messages.
 - `agents.workflow.general.<kind>` for general agent status updates.
-Breaking change (2026-01-20): the subscriber only accepts `agents.workflow.*` subjects; legacy subjects are no longer supported.
+Breaking change (2026-01-20): the subscriber only accepts `agents.workflow.*` subjects.
 
 ### RBAC modes
 Support two modes:

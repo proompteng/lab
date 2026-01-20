@@ -87,6 +87,7 @@ It provides:
 
 Default runtime stance:
 - The vanilla chart runs the native `job`/`workflow` runtimes with no external workflow engine required.
+- The default workflow runtime is vendor-neutral and ships without Argo-specific defaults or subjects.
 - External adapters are opt-in via explicit runtime configuration or environment settings.
 - Ingestion is webhook-only by design (no polling).
 
