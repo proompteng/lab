@@ -57,10 +57,12 @@ agentctl impl apply -f impl.yaml
 agentctl impl delete <name>
 
 agentctl source list
+agentctl source get <name>
 agentctl source apply -f source.yaml
 agentctl source delete <name>
 
 agentctl memory list
+agentctl memory get <name>
 agentctl memory apply -f memory.yaml
 agentctl memory delete <name>
 
@@ -93,4 +95,3 @@ npm publish --access public
 ```
 
 3. Compute checksums for the binary artifacts and update the Homebrew formula in the tap repository.
-

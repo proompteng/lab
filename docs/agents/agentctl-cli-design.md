@@ -44,11 +44,13 @@ Location: `services/jangar/agentctl`
 
 ### ImplementationSource (GitHub/Linear)
 - `agentctl source list`
+- `agentctl source get <name>`
 - `agentctl source apply -f <file>`
 - `agentctl source delete <name>`
 
 ### Memory
 - `agentctl memory list`
+- `agentctl memory get <name>`
 - `agentctl memory apply -f <file>`
 - `agentctl memory delete <name>`
 
