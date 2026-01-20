@@ -5,7 +5,7 @@ package proompteng.jangar.v1;
 option go_package = "github.com/proompteng/lab/services/jangar/internal/agentctlpb";
 
 service AgentctlService {
-  rpc GetServerInfo(ServerInfoRequest) returns (ServerInfoResponse);
+  rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse);
 
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
   rpc GetAgent(GetAgentRequest) returns (GetAgentResponse);
@@ -38,9 +38,9 @@ service AgentctlService {
   rpc StreamAgentRunLogs(StreamAgentRunLogsRequest) returns (stream StreamAgentRunLogsResponse);
 }
 
-message ServerInfoRequest {}
+message GetServerInfoRequest {}
 
-message ServerInfoResponse {
+message GetServerInfoResponse {
   string version = 1;
   string build_sha = 2;
   string build_time = 3;
