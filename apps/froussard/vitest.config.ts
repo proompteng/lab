@@ -8,7 +8,7 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
       '@bufbuild/protobuf/codegenv2': path.resolve(
         __dirname,
-        './node_modules/@bufbuild/protobuf/dist/esm/codegenv2/index.js',
+        '../../node_modules/@bufbuild/protobuf/dist/esm/codegenv2/index.js',
       ),
     },
   },
