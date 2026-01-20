@@ -21,8 +21,7 @@ function WorkspaceDetailRoute() {
       name={params.name}
       backPath="/agents-control-plane/workspaces"
       searchState={searchState}
-      summaryItems={(resource, namespace) => [
-        { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
+      summaryItems={(resource, _namespace) => [
         { label: 'Size', value: readNestedValue(resource, ['spec', 'size']) ?? '—' },
         { label: 'Access modes', value: readNestedArrayValue(resource, ['spec', 'accessModes']) ?? '—' },
         { label: 'Storage class', value: readNestedValue(resource, ['spec', 'storageClassName']) ?? '—' },

@@ -10,6 +10,7 @@ import {
   useControlPlaneOverview,
 } from '@/components/agents-control-plane-overview'
 import { DEFAULT_NAMESPACE, parseNamespaceSearch } from '@/components/agents-control-plane-search'
+import { ControlPlaneStatusPanel, useControlPlaneStatus } from '@/components/agents-control-plane-status'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
@@ -32,6 +33,7 @@ function AgentsControlPlanePage() {
   const searchId = React.useId()
 
   const { tiles, problems, isLoading, error, lastUpdatedAt, refresh } = useControlPlaneOverview(searchState.namespace)
+  const controlPlaneStatus = useControlPlaneStatus(searchState.namespace)
 
   React.useEffect(() => {
     setNamespace(searchState.namespace)
@@ -177,6 +179,11 @@ function AgentsControlPlanePage() {
         </div>
 
         <div className="space-y-6">
+          <ControlPlaneStatusPanel
+            status={controlPlaneStatus.status}
+            error={controlPlaneStatus.error}
+            isLoading={controlPlaneStatus.isLoading}
+          />
           <ControlPlaneControllersPanel tiles={tiles} />
           <ControlPlaneProblems
             problems={problems}

@@ -21,8 +21,7 @@ function ToolRunDetailRoute() {
       name={params.name}
       backPath="/agents-control-plane/tool-runs"
       searchState={searchState}
-      summaryItems={(resource, namespace) => [
-        { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
+      summaryItems={(resource, _namespace) => [
         { label: 'Tool', value: readNestedValue(resource, ['spec', 'toolRef', 'name']) ?? '—' },
         { label: 'Delivery ID', value: readNestedValue(resource, ['spec', 'deliveryId']) ?? '—' },
         { label: 'Run ID', value: readNestedValue(resource, ['status', 'runId']) ?? '—' },

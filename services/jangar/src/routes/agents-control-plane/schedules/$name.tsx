@@ -21,8 +21,7 @@ function ScheduleDetailRoute() {
       name={params.name}
       backPath="/agents-control-plane/schedules"
       searchState={searchState}
-      summaryItems={(resource, namespace) => [
-        { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
+      summaryItems={(resource, _namespace) => [
         { label: 'Cron', value: readNestedValue(resource, ['spec', 'cron']) ?? '—' },
         { label: 'Timezone', value: readNestedValue(resource, ['spec', 'timezone']) ?? '—' },
         { label: 'Target kind', value: readNestedValue(resource, ['spec', 'targetRef', 'kind']) ?? '—' },

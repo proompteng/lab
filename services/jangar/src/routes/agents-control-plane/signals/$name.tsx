@@ -34,8 +34,7 @@ function SignalDetailRoute() {
       name={params.name}
       backPath="/agents-control-plane/signals"
       searchState={searchState}
-      summaryItems={(resource, namespace) => [
-        { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
+      summaryItems={(resource, _namespace) => [
         { label: 'Channel', value: readNestedValue(resource, ['spec', 'channel']) ?? '—' },
         { label: 'Description', value: readNestedValue(resource, ['spec', 'description']) ?? '—' },
         { label: 'Payload', value: formatObjectKeys(readSpecValue(resource, 'payload')) },

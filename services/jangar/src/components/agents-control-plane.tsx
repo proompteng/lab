@@ -143,6 +143,38 @@ export const getResourceUpdatedAt = (resource: Record<string, unknown>) =>
   getLatestManagedFieldTime(resource) ??
   getMetadataValue(resource, 'creationTimestamp')
 
+export const getResourceReconciledAt = (resource: Record<string, unknown>) =>
+  readNestedValue(resource, ['status', 'reconciledAt']) ??
+  readNestedValue(resource, ['status', 'lastReconciledAt']) ??
+  readNestedValue(resource, ['status', 'lastReconciled']) ??
+  readNestedValue(resource, ['status', 'lastAppliedAt']) ??
+  readNestedValue(resource, ['status', 'lastSyncedAt']) ??
+  readNestedValue(resource, ['status', 'observedAt']) ??
+  null
+
+export const getResourceObservedGeneration = (resource: Record<string, unknown>) =>
+  readNestedValue(resource, ['status', 'observedGeneration']) ??
+  readNestedValue(resource, ['status', 'observedRevision']) ??
+  null
+
+export const getResourceGeneration = (resource: Record<string, unknown>) =>
+  readNestedValue(resource, ['metadata', 'generation']) ??
+  readNestedValue(resource, ['metadata', 'resourceVersion']) ??
+  null
+
+export const formatGenerationSummary = (resource: Record<string, unknown>) => {
+  const observed = getResourceObservedGeneration(resource)
+  const generation = getResourceGeneration(resource)
+  if (!observed && !generation) return '—'
+  if (observed && generation && observed !== generation) {
+    return `${observed} / ${generation}`
+  }
+  if (observed && generation) {
+    return `${observed} / ${generation}`
+  }
+  return observed ?? generation ?? '—'
+}
+
 export const getSpecValue = (resource: Record<string, unknown>, key: string) => {
   const spec = readRecord(resource.spec) ?? {}
   return readString(spec[key])

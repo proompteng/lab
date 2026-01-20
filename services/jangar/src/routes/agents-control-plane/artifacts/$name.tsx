@@ -21,8 +21,7 @@ function ArtifactDetailRoute() {
       name={params.name}
       backPath="/agents-control-plane/artifacts"
       searchState={searchState}
-      summaryItems={(resource, namespace) => [
-        { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
+      summaryItems={(resource, _namespace) => [
         { label: 'Storage', value: readNestedValue(resource, ['spec', 'storageRef', 'name']) ?? '—' },
         { label: 'TTL', value: readNestedValue(resource, ['spec', 'lifecycle', 'ttlDays']) ?? '—' },
         { label: 'URI', value: readNestedValue(resource, ['status', 'uri']) ?? '—' },

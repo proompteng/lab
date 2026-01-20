@@ -8,9 +8,11 @@ import {
   deriveStatusCategory,
   deriveStatusLabel,
   EventsList,
+  formatGenerationSummary,
   formatTimestamp,
   getMetadataValue,
   getResourceCreatedAt,
+  getResourceReconciledAt,
   getResourceUpdatedAt,
   getStatusConditions,
   StatusBadge,
@@ -18,6 +20,7 @@ import {
   YamlCodeBlock,
 } from '@/components/agents-control-plane'
 import { DEFAULT_NAMESPACE, type NamespaceSearchState } from '@/components/agents-control-plane-search'
+import { useControlPlaneStream } from '@/components/agents-control-plane-stream'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -60,6 +63,14 @@ type PrimitiveDetailPageProps = {
   errorLabel?: string
 }
 
+export const buildBaseSummaryItems = (resource: Record<string, unknown>, namespace: string) => [
+  { label: 'Namespace', value: getMetadataValue(resource, 'namespace') ?? namespace },
+  { label: 'Status', value: deriveStatusLabel(resource) },
+  { label: 'Updated', value: formatTimestamp(getResourceUpdatedAt(resource)) },
+  { label: 'Reconciled', value: formatTimestamp(getResourceReconciledAt(resource)) },
+  { label: 'Observed generation', value: formatGenerationSummary(resource) },
+]
+
 export function PrimitiveListPage({
   title,
   description,
@@ -77,6 +88,7 @@ export function PrimitiveListPage({
   const [error, setError] = React.useState<string | null>(null)
   const [status, setStatus] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
+  const reloadTimerRef = React.useRef<number | null>(null)
 
   const namespaceId = React.useId()
 
@@ -114,6 +126,23 @@ export function PrimitiveListPage({
   React.useEffect(() => {
     void load(searchState.namespace)
   }, [load, searchState.namespace])
+
+  const scheduleReload = React.useCallback(() => {
+    if (reloadTimerRef.current !== null) return
+    reloadTimerRef.current = window.setTimeout(() => {
+      reloadTimerRef.current = null
+      void load(searchState.namespace)
+    }, 350)
+  }, [load, searchState.namespace])
+
+  useControlPlaneStream(searchState.namespace, {
+    onEvent: (event) => {
+      if (event.type !== 'resource') return
+      if (event.kind !== kind) return
+      if (event.namespace !== searchState.namespace) return
+      scheduleReload()
+    },
+  })
 
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -173,6 +202,8 @@ export function PrimitiveListPage({
             const conditionSummary = summarizeConditions(resource)
             const createdAt = getResourceCreatedAt(resource)
             const updatedAt = getResourceUpdatedAt(resource)
+            const reconciledAt = getResourceReconciledAt(resource)
+            const generationSummary = formatGenerationSummary(resource)
             return (
               <li key={`${resourceNamespace}/${name}`} className="border-b border-border last:border-b-0">
                 <Link
@@ -204,6 +235,14 @@ export function PrimitiveListPage({
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-[10px] uppercase tracking-wide">Updated</span>
                       <span className="text-foreground">{formatTimestamp(updatedAt)}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] uppercase tracking-wide">Reconciled</span>
+                      <span className="text-foreground">{formatTimestamp(reconciledAt)}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] uppercase tracking-wide">Observed gen</span>
+                      <span className="text-foreground">{generationSummary}</span>
                     </div>
                   </div>
                   <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
@@ -240,6 +279,7 @@ export function PrimitiveDetailPage({
   const [error, setError] = React.useState<string | null>(null)
   const [eventsError, setEventsError] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
+  const reloadTimerRef = React.useRef<number | null>(null)
 
   const load = React.useCallback(async () => {
     setIsLoading(true)
@@ -284,12 +324,32 @@ export function PrimitiveDetailPage({
     void load()
   }, [load])
 
+  const scheduleReload = React.useCallback(() => {
+    if (reloadTimerRef.current !== null) return
+    reloadTimerRef.current = window.setTimeout(() => {
+      reloadTimerRef.current = null
+      void load()
+    }, 350)
+  }, [load])
+
+  useControlPlaneStream(searchState.namespace, {
+    onEvent: (event) => {
+      if (event.type !== 'resource') return
+      if (event.kind !== kind) return
+      if (event.name !== name) return
+      if (event.namespace !== searchState.namespace) return
+      scheduleReload()
+    },
+  })
+
   const statusLabel = resource ? deriveStatusLabel(resource) : 'Unknown'
   const conditions = resource ? getStatusConditions(resource) : []
   const spec = resource && typeof resource.spec === 'object' ? resource.spec : {}
   const status = resource && typeof resource.status === 'object' ? resource.status : {}
 
-  const summary = resource ? summaryItems(resource, searchState.namespace) : []
+  const summary = resource
+    ? [...buildBaseSummaryItems(resource, searchState.namespace), ...summaryItems(resource, searchState.namespace)]
+    : []
 
   return (
     <main className="mx-auto w-full max-w-6xl space-y-6 p-6">
