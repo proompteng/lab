@@ -51,6 +51,12 @@ to complete. Override `AGENTS_NAMESPACE`, `AGENTS_RELEASE_NAME`, or `AGENTS_VALU
 Ensure the `agentrun-sample.yaml` workload image includes `agent-runner` or set
 `env.vars.JANGAR_AGENT_RUNNER_IMAGE` in your values.
 
+## Jangar /health 500 (router init error)
+- Symptom: `/health` returns 500 with `ReferenceError: Cannot access 'aE' before initialization`.
+- Root cause: Jangar builds picked up an incompatible Nitro `latest` bundle output.
+- Fix: Pin Nitro to `3.0.0` in `services/jangar/package.json` and deploy a pinned Jangar image digest
+  (avoid `latest`).
+
 ## Stuck AgentRun
 - Check status/conditions: `kubectl -n agents get agentrun <name> -o yaml`
 - If runtimeRef exists, check runtime object (job/workflow).
