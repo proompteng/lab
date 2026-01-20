@@ -26,7 +26,7 @@ const main = async () => {
   const endpointRaw = requireEnv('MINIO_ENDPOINT')
   const accessKey = requireEnv('MINIO_ACCESS_KEY')
   const secretKey = requireEnv('MINIO_SECRET_KEY')
-  const bucket = (process.env.MINIO_BUCKET ?? process.env.ARTIFACT_BUCKET ?? 'argo-workflows').trim()
+  const bucket = (process.env.MINIO_BUCKET ?? process.env.ARTIFACT_BUCKET ?? 'agents-artifacts').trim()
   if (!bucket) {
     throw new Error('Missing MINIO_BUCKET')
   }

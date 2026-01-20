@@ -120,10 +120,9 @@ const safeParseJson = (value: string): unknown => {
 
 const parseSubject = (subject: string) => {
   const parts = subject.split('.')
-  if (parts.length < 2) return null
+  if (parts.length < 3) return null
   const prefixOffset = (() => {
-    if (parts[0] === 'workflow') return 1
-    if (parts[0] === 'argo' && parts[1] === 'workflow') return 2
+    if (parts[0] === 'agents' && parts[1] === 'workflow') return 2
     return null
   })()
   if (prefixOffset === null) return null
