@@ -920,6 +920,55 @@ const buildJobResources = (workload: Record<string, unknown>) => {
   }
 }
 
+const resolveParam = (params: Record<string, string>, keys: string[]) => {
+  for (const key of keys) {
+    const value = params[key]
+    if (typeof value === 'string' && value.trim().length > 0) return value.trim()
+  }
+  return ''
+}
+
+const parseGithubExternalId = (externalId: string) => {
+  const trimmed = externalId.trim()
+  const [repo, number] = trimmed.split('#')
+  if (!repo || !number) return null
+  return { repository: repo.trim(), issueNumber: number.trim() }
+}
+
+const buildEventPayload = (implementation: Record<string, unknown>, parameters: Record<string, string>) => {
+  const source = asRecord(implementation.source) ?? {}
+  const provider = asString(source.provider) ?? ''
+  const externalId = asString(source.externalId) ?? ''
+  const sourceUrl = asString(source.url) ?? ''
+
+  const summary = asString(implementation.summary) ?? ''
+  const text = asString(implementation.text) ?? ''
+
+  let repository = resolveParam(parameters, ['repository', 'repo', 'issueRepository'])
+  let issueNumber = resolveParam(parameters, ['issueNumber', 'issue_number', 'issue', 'issueId'])
+  const issueTitle = resolveParam(parameters, ['issueTitle', 'title']) || summary
+  const issueBody = resolveParam(parameters, ['issueBody', 'body']) || text
+  const issueUrl = resolveParam(parameters, ['issueUrl', 'url']) || sourceUrl
+  const prompt = resolveParam(parameters, ['prompt']) || text || summary
+
+  if ((!repository || !issueNumber) && provider === 'github' && externalId) {
+    const parsed = parseGithubExternalId(externalId)
+    if (parsed) {
+      repository = repository || parsed.repository
+      issueNumber = issueNumber || parsed.issueNumber
+    }
+  }
+
+  const payload: Record<string, unknown> = {}
+  if (prompt) payload.prompt = prompt
+  if (repository) payload.repository = repository
+  if (issueNumber) payload.issueNumber = issueNumber
+  if (issueTitle) payload.issueTitle = issueTitle
+  if (issueBody) payload.issueBody = issueBody
+  if (issueUrl) payload.issueUrl = issueUrl
+  return payload
+}
+
 const buildRunSpec = (
   agentRun: Record<string, unknown>,
   agent: Record<string, unknown> | null,
@@ -929,6 +978,7 @@ const buildRunSpec = (
   artifacts?: Array<Record<string, unknown>>,
 ) => {
   const context = buildRunSpecContext(agentRun, agent, implementation, parameters, memory)
+  const eventPayload = buildEventPayload(implementation, parameters)
   return {
     agentRun: context.agentRun,
     implementation,
@@ -941,6 +991,7 @@ const buildRunSpec = (
             connectionRef: asString(readNested(memory, ['spec', 'connection', 'secretRef', 'name'])) ?? '',
           },
     artifacts: artifacts ?? [],
+    ...eventPayload,
   }
 }
 
