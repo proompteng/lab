@@ -286,6 +286,233 @@ describe('agents controller reconcileAgentRun', () => {
     expect(jobLabels?.['agents.proompteng.ai/agent']).toBe('agent-1')
     expect(jobLabels?.['agents.proompteng.ai/provider']).toBe('provider-1')
   })
+
+  it('advances workflow steps and completes', async () => {
+    const jobStatuses = new Map<string, Record<string, unknown>>()
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      const applied = { ...resource, metadata: { ...metadata, uid } }
+      if (resource.kind === 'Job') {
+        const name = (resource.metadata as Record<string, unknown> | undefined)?.name as string | undefined
+        if (name) {
+          jobStatuses.set(name, applied)
+        }
+      }
+      return applied
+    })
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'provider-1' },
+            spec: { binary: '/usr/local/bin/agent-runner' },
+          }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === 'job') {
+          return jobStatuses.get(name) ?? null
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'workflow', config: {} },
+        workload: { image: 'ghcr.io/proompteng/codex-agent:latest' },
+        workflow: {
+          steps: [{ name: 'step-one' }, { name: 'step-two' }],
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const firstStatus = getLastStatus(kube)
+    expect(firstStatus.phase).toBe('Running')
+    const workflow = firstStatus.workflow as Record<string, unknown>
+    const steps = (workflow.steps as Record<string, unknown>[]) ?? []
+    expect(steps[0]?.phase).toBe('Running')
+    expect(steps[1]?.phase).toBe('Pending')
+
+    const firstJobName = (steps[0]?.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
+    expect(firstJobName).toBeTruthy()
+
+    jobStatuses.set(firstJobName ?? '', {
+      ...jobStatuses.get(firstJobName ?? ''),
+      status: { succeeded: 1, startTime: '2026-01-20T00:00:00Z', completionTime: '2026-01-20T00:01:00Z' },
+    })
+
+    const secondAgentRun = { ...agentRun, status: firstStatus }
+    await __test.reconcileAgentRun(
+      kube as never,
+      secondAgentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const secondStatus = getLastStatus(kube)
+    const secondWorkflow = secondStatus.workflow as Record<string, unknown>
+    const secondSteps = (secondWorkflow.steps as Record<string, unknown>[]) ?? []
+    expect(secondSteps[0]?.phase).toBe('Succeeded')
+    expect(secondSteps[1]?.phase).toBe('Running')
+
+    const secondJobName = (secondSteps[1]?.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
+    jobStatuses.set(secondJobName ?? '', {
+      ...jobStatuses.get(secondJobName ?? ''),
+      status: { succeeded: 1, startTime: '2026-01-20T00:02:00Z', completionTime: '2026-01-20T00:03:00Z' },
+    })
+
+    const thirdAgentRun = { ...agentRun, status: secondStatus }
+    await __test.reconcileAgentRun(
+      kube as never,
+      thirdAgentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const thirdStatus = getLastStatus(kube)
+    const thirdWorkflow = thirdStatus.workflow as Record<string, unknown>
+    const thirdSteps = (thirdWorkflow.steps as Record<string, unknown>[]) ?? []
+    expect(thirdStatus.phase).toBe('Succeeded')
+    expect(thirdWorkflow.phase).toBe('Succeeded')
+    expect(thirdSteps[0]?.phase).toBe('Succeeded')
+    expect(thirdSteps[1]?.phase).toBe('Succeeded')
+  })
+
+  it('retries workflow steps with backoff', async () => {
+    const jobStatuses = new Map<string, Record<string, unknown>>()
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      const applied = { ...resource, metadata: { ...metadata, uid } }
+      if (resource.kind === 'Job') {
+        const name = (resource.metadata as Record<string, unknown> | undefined)?.name as string | undefined
+        if (name) {
+          jobStatuses.set(name, applied)
+        }
+      }
+      return applied
+    })
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'provider-1' },
+            spec: { binary: '/usr/local/bin/agent-runner' },
+          }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === 'job') {
+          return jobStatuses.get(name) ?? null
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'workflow', config: {} },
+        workload: { image: 'ghcr.io/proompteng/codex-agent:latest' },
+        workflow: {
+          steps: [{ name: 'retry-step', retries: 1, retryBackoffSeconds: 60 }],
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const firstStatus = getLastStatus(kube)
+    const firstWorkflow = firstStatus.workflow as Record<string, unknown>
+    const firstSteps = (firstWorkflow.steps as Record<string, unknown>[]) ?? []
+    const firstJobName = (firstSteps[0]?.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
+    jobStatuses.set(firstJobName ?? '', { ...jobStatuses.get(firstJobName ?? ''), status: { failed: 1 } })
+
+    const secondAgentRun = { ...agentRun, status: firstStatus }
+    await __test.reconcileAgentRun(
+      kube as never,
+      secondAgentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const secondStatus = getLastStatus(kube)
+    const secondWorkflow = secondStatus.workflow as Record<string, unknown>
+    const secondSteps = (secondWorkflow.steps as Record<string, unknown>[]) ?? []
+    expect(secondSteps[0]?.phase).toBe('Retrying')
+    expect(secondSteps[0]?.nextRetryAt).toBeTruthy()
+
+    const retryStatus = {
+      ...secondStatus,
+      workflow: {
+        ...(secondStatus.workflow as Record<string, unknown>),
+        steps: [
+          {
+            ...secondSteps[0],
+            nextRetryAt: new Date(Date.now() - 1000).toISOString(),
+          },
+        ],
+      },
+    }
+    const thirdAgentRun = { ...agentRun, status: retryStatus }
+    await __test.reconcileAgentRun(
+      kube as never,
+      thirdAgentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const thirdStatus = getLastStatus(kube)
+    const thirdWorkflow = thirdStatus.workflow as Record<string, unknown>
+    const thirdSteps = (thirdWorkflow.steps as Record<string, unknown>[]) ?? []
+    expect(thirdSteps[0]?.attempt).toBe(2)
+    expect(thirdSteps[0]?.phase).toBe('Running')
+  })
 })
 
 describe('agents controller reconcileMemory', () => {

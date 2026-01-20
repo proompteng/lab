@@ -104,7 +104,7 @@ Runtime adapter responsibilities:
 Adapter config keys (minimum):
 - `workflow` (built-in job runner): `serviceAccount`, `ttlSecondsAfterFinished`
 - `temporal`: `taskQueue` (required), `workflowType` (required), `namespace`, `workflowId`, `timeouts`
-- `job`: legacy alias for `workflow` (same config keys)
+- `job`: single-job runtime with `serviceAccount`, `ttlSecondsAfterFinished`
 - `custom`: `endpoint`, `payload`
 
 ## Agent Provider Rendering

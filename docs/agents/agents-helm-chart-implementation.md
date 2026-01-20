@@ -77,8 +77,23 @@ Jangar is the controller for all primitives and must:
 - Job inputs must include a JSON spec (e.g., `run.json`) and optional provider input files.
 - Job should be labeled with `agents.proompteng.ai/agent-run` for tracking.
 
+### AgentRun → Workflow runtime (native)
+- If `spec.runtime.type == "workflow"`, Jangar orchestrates a step-based workflow using Kubernetes Jobs.
+- Define steps in `spec.workflow.steps[]`; each step can provide:
+  - `name` (required, unique within the workflow)
+  - `parameters` (merged over top-level `spec.parameters`)
+  - `implementationSpecRef` or `implementation.inline` (optional overrides)
+  - `workload` (optional override for image/resources/volumes)
+  - `retries` and `retryBackoffSeconds` (per-step retry policy)
+- The controller runs steps sequentially, creating a Job per attempt and advancing only after success.
+- Failed steps retry up to `retries`, waiting `retryBackoffSeconds` between attempts.
+- Status reporting:
+  - `status.workflow.phase` reflects overall workflow state (`Running`, `Succeeded`, `Failed`).
+  - `status.workflow.steps[]` tracks per-step phase, attempt count, timestamps, and job reference.
+  - `status.phase` mirrors workflow phase for compatibility with existing clients.
+
 ### Runtime adapters (expected to exist)
-- `workflow` (built-in job runner), `temporal`, `custom` adapters with clear error messages when configuration is missing.
+- `workflow` (native step runner), `job`, `temporal`, `custom` adapters with clear error messages when configuration is missing.
 
 ### RBAC alignment
 Controller behavior requires permissions to:

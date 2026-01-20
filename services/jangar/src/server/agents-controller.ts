@@ -45,6 +45,34 @@ type Condition = {
 
 type RuntimeRef = Record<string, unknown>
 
+type WorkflowStepSpec = {
+  name: string
+  implementationSpecRefName: string | null
+  implementationInline: Record<string, unknown> | null
+  parameters: Record<string, string>
+  workload: Record<string, unknown> | null
+  retries: number
+  retryBackoffSeconds: number
+}
+
+type WorkflowStepStatus = {
+  name: string
+  phase: string
+  attempt: number
+  startedAt?: string
+  finishedAt?: string
+  lastTransitionTime: string
+  message?: string
+  jobRef?: Record<string, unknown>
+  nextRetryAt?: string
+}
+
+type WorkflowStatus = {
+  phase: string
+  lastTransitionTime: string
+  steps: WorkflowStepStatus[]
+}
+
 let started = false
 let intervalRef: NodeJS.Timeout | null = null
 let reconciling = false
@@ -263,6 +291,125 @@ const parseRuntimeRef = (raw: unknown): RuntimeRef | null => asRecord(raw) ?? nu
 
 const resolveJobImage = (workload: Record<string, unknown>) =>
   asString(workload.image) ?? process.env.JANGAR_AGENT_RUNNER_IMAGE ?? process.env.JANGAR_AGENT_IMAGE ?? null
+
+const parseWorkflowSteps = (agentRun: Record<string, unknown>): WorkflowStepSpec[] => {
+  const workflow = asRecord(readNested(agentRun, ['spec', 'workflow'])) ?? {}
+  const steps = Array.isArray(workflow.steps) ? (workflow.steps as Record<string, unknown>[]) : []
+  return steps
+    .map((step) => {
+      const name = asString(step.name) ?? ''
+      const parameters = asRecord(step.parameters) ?? {}
+      const parsedParameters: Record<string, string> = {}
+      for (const [key, value] of Object.entries(parameters)) {
+        if (typeof value !== 'string') continue
+        parsedParameters[key] = value
+      }
+      const retries = parseOptionalNumber(step.retries)
+      const retryBackoffSeconds = parseOptionalNumber(step.retryBackoffSeconds)
+      return {
+        name,
+        implementationSpecRefName: asString(readNested(step, ['implementationSpecRef', 'name'])) ?? null,
+        implementationInline: asRecord(readNested(step, ['implementation', 'inline'])) ?? null,
+        parameters: parsedParameters,
+        workload: asRecord(step.workload) ?? null,
+        retries: Number.isFinite(retries) ? Math.max(0, Math.trunc(retries ?? 0)) : 0,
+        retryBackoffSeconds: Number.isFinite(retryBackoffSeconds)
+          ? Math.max(0, Math.trunc(retryBackoffSeconds ?? 0))
+          : 0,
+      }
+    })
+    .filter((step) => step.name.length > 0)
+}
+
+const validateWorkflowSteps = (steps: WorkflowStepSpec[]) => {
+  if (steps.length === 0) {
+    return {
+      ok: false as const,
+      reason: 'MissingWorkflowSteps',
+      message: 'spec.workflow.steps must include at least one step for workflow runtime',
+    }
+  }
+  const seen = new Set<string>()
+  for (const step of steps) {
+    if (!step.name) {
+      return {
+        ok: false as const,
+        reason: 'WorkflowStepMissingName',
+        message: 'workflow steps must include a name',
+      }
+    }
+    if (seen.has(step.name)) {
+      return {
+        ok: false as const,
+        reason: 'WorkflowStepDuplicate',
+        message: `workflow step name ${step.name} is duplicated`,
+      }
+    }
+    seen.add(step.name)
+    const paramsCheck = validateParameters(step.parameters as Record<string, unknown>)
+    if (!paramsCheck.ok) {
+      return {
+        ok: false as const,
+        reason: paramsCheck.reason,
+        message: `workflow step ${step.name}: ${paramsCheck.message}`,
+      }
+    }
+  }
+  return { ok: true as const }
+}
+
+const normalizeWorkflowStatus = (
+  existing: Record<string, unknown> | null,
+  steps: WorkflowStepSpec[],
+): WorkflowStatus => {
+  const existingSteps = Array.isArray(existing?.steps) ? (existing?.steps as Record<string, unknown>[]) : []
+  const byName = new Map<string, Record<string, unknown>>()
+  for (const item of existingSteps) {
+    const name = asString(item.name)
+    if (name) byName.set(name, item)
+  }
+  return {
+    phase: asString(existing?.phase) ?? 'Pending',
+    lastTransitionTime: asString(existing?.lastTransitionTime) ?? nowIso(),
+    steps: steps.map((step) => {
+      const current = byName.get(step.name) ?? {}
+      return {
+        name: step.name,
+        phase: asString(current.phase) ?? 'Pending',
+        attempt: Number(current.attempt ?? 0) || 0,
+        startedAt: asString(current.startedAt) ?? undefined,
+        finishedAt: asString(current.finishedAt) ?? undefined,
+        lastTransitionTime: asString(current.lastTransitionTime) ?? nowIso(),
+        message: asString(current.message) ?? undefined,
+        jobRef: asRecord(current.jobRef) ?? undefined,
+        nextRetryAt: asString(current.nextRetryAt) ?? undefined,
+      }
+    }),
+  }
+}
+
+const setWorkflowPhase = (workflow: WorkflowStatus, phase: string) => {
+  if (workflow.phase !== phase) {
+    workflow.phase = phase
+    workflow.lastTransitionTime = nowIso()
+  }
+}
+
+const setWorkflowStepPhase = (step: WorkflowStepStatus, phase: string, message?: string) => {
+  if (step.phase !== phase) {
+    step.phase = phase
+    step.lastTransitionTime = nowIso()
+  }
+  if (message !== undefined) {
+    step.message = message
+  }
+}
+
+const shouldRetryStep = (step: WorkflowStepStatus, now: number) => {
+  if (!step.nextRetryAt) return true
+  const retryAt = Date.parse(step.nextRetryAt)
+  return Number.isNaN(retryAt) ? true : retryAt <= now
+}
 
 const renderTemplate = (template: string, context: Record<string, unknown>) =>
   template.replace(/\{\{\s*([^}]+)\s*\}\}/g, (_match, path) => {
@@ -486,8 +633,24 @@ const cancelRuntime = async (runtimeRef: RuntimeRef, namespace: string) => {
   const name = asString(runtimeRef.name) ?? ''
   const runtimeNamespace = asString(runtimeRef.namespace) ?? namespace
   if (!name) return
-  if (type === 'job' || type === 'workflow') {
+  if (type === 'job') {
     await deleteRuntimeResource('job', name, runtimeNamespace)
+    return
+  }
+  if (type === 'workflow') {
+    const runName = asString(runtimeRef.runName) ?? name
+    const result = await runKubectl([
+      'delete',
+      'job',
+      '-n',
+      runtimeNamespace,
+      '-l',
+      `agents.proompteng.ai/agent-run=${runName}`,
+      '--ignore-not-found',
+    ])
+    if (result.code !== 0) {
+      throw new Error(result.stderr || result.stdout || `failed to delete workflow jobs for ${runName}`)
+    }
     return
   }
   if (type === 'temporal') {
@@ -861,12 +1024,13 @@ const createInputFilesConfigMap = async (
   agentRun: Record<string, unknown>,
   inputFiles: Array<{ path: string; content: string }>,
   labels: Record<string, string>,
+  suffix?: string,
 ) => {
   if (inputFiles.length === 0) return null
   const metadata = asRecord(agentRun.metadata) ?? {}
   const uid = asString(metadata.uid)
   const runName = asString(metadata.name) ?? 'agentrun'
-  const configName = makeName(runName, 'inputs')
+  const configName = makeName(runName, suffix ? `inputs-${suffix}` : 'inputs')
   const data: Record<string, string> = {}
   inputFiles.forEach((file, index) => {
     data[`input-${index}`] = file.content
@@ -903,11 +1067,12 @@ const createRunSpecConfigMap = async (
   agentRun: Record<string, unknown>,
   runSpec: Record<string, unknown>,
   labels: Record<string, string>,
+  suffix?: string,
 ) => {
   const metadata = asRecord(agentRun.metadata) ?? {}
   const uid = asString(metadata.uid)
   const runName = asString(metadata.name) ?? 'agentrun'
-  const configName = makeName(runName, 'spec')
+  const configName = makeName(runName, suffix ? `spec-${suffix}` : 'spec')
   const configMap = {
     apiVersion: 'v1',
     kind: 'ConfigMap',
@@ -946,8 +1111,15 @@ const submitJobRun = async (
   namespace: string,
   workloadImage: string,
   runtimeType: 'job' | 'workflow',
+  options: {
+    nameSuffix?: string
+    labels?: Record<string, string>
+    workload?: Record<string, unknown>
+    parameters?: Record<string, string>
+    runtimeConfig?: Record<string, unknown>
+  } = {},
 ) => {
-  const workload = asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
+  const workload = options.workload ?? asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
   if (!workloadImage) {
     throw new Error('spec.workload.image, JANGAR_AGENT_RUNNER_IMAGE, or JANGAR_AGENT_IMAGE is required for job runtime')
   }
@@ -958,7 +1130,7 @@ const submitJobRun = async (
   const binary = asString(providerSpec.binary) ?? '/usr/local/bin/agent-runner'
   const providerName = asString(readNested(provider, ['metadata', 'name'])) ?? ''
 
-  const parameters = resolveParameters(agentRun)
+  const parameters = options.parameters ?? resolveParameters(agentRun)
   const context = buildRunSpecContext(agentRun, agent, implementation, parameters, memory)
 
   const argsTemplate = Array.isArray(providerSpec.argsTemplate) ? providerSpec.argsTemplate : []
@@ -989,14 +1161,14 @@ const submitJobRun = async (
     }))
     .filter((file) => file.path && file.content)
 
-  const runtimeConfig = asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
+  const runtimeConfig = options.runtimeConfig ?? asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
   const serviceAccount = asString(runtimeConfig.serviceAccount)
   const ttlSeconds = runtimeConfig.ttlSecondsAfterFinished
 
   const metadata = asRecord(agentRun.metadata) ?? {}
   const runName = asString(metadata.name) ?? 'agentrun'
   const runUid = asString(metadata.uid)
-  const jobName = makeName(runName, 'job')
+  const jobName = makeName(runName, options.nameSuffix ?? 'job')
   const agentName = asString(readNested(agent, ['metadata', 'name']))
   const implName = asString(readNested(agentRun, ['spec', 'implementationSpecRef', 'name']))
   const labels: Record<string, string> = {
@@ -1012,8 +1184,23 @@ const submitJobRun = async (
     labels['agents.proompteng.ai/implementation'] = normalizeLabelValue(implName)
   }
 
-  const inputsConfig = await createInputFilesConfigMap(kube, namespace, agentRun, inputEntries, labels)
-  const specConfigName = await createRunSpecConfigMap(kube, namespace, agentRun, runSpec, labels)
+  const mergedLabels = { ...labels, ...(options.labels ?? {}) }
+  const inputsConfig = await createInputFilesConfigMap(
+    kube,
+    namespace,
+    agentRun,
+    inputEntries,
+    mergedLabels,
+    options.nameSuffix,
+  )
+  const specConfigName = await createRunSpecConfigMap(
+    kube,
+    namespace,
+    agentRun,
+    runSpec,
+    mergedLabels,
+    options.nameSuffix,
+  )
 
   const { volumeSpecs, volumeMounts } = buildVolumeSpecs(workload)
 
@@ -1042,7 +1229,7 @@ const submitJobRun = async (
     metadata: {
       name: jobName,
       namespace,
-      labels,
+      labels: mergedLabels,
       ...(runUid
         ? {
             ownerReferences: [
@@ -1060,7 +1247,7 @@ const submitJobRun = async (
       ttlSecondsAfterFinished: typeof ttlSeconds === 'number' ? ttlSeconds : undefined,
       template: {
         metadata: {
-          labels,
+          labels: mergedLabels,
         },
         spec: {
           serviceAccountName: serviceAccount ?? undefined,
@@ -1213,6 +1400,436 @@ const reconcileTemporalRun = async (
   }
 }
 
+const loadWorkflowDependencies = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  agentRun: Record<string, unknown>,
+  namespace: string,
+  memories: Record<string, unknown>[],
+  runtimeConfig: Record<string, unknown>,
+) => {
+  const spec = asRecord(agentRun.spec) ?? {}
+  const agentName = asString(readNested(spec, ['agentRef', 'name']))
+  if (!agentName) {
+    return {
+      ok: false as const,
+      reason: 'MissingAgent',
+      message: 'spec.agentRef.name is required',
+    }
+  }
+  const agent = await kube.get(RESOURCE_MAP.Agent, agentName, namespace)
+  if (!agent) {
+    return {
+      ok: false as const,
+      reason: 'MissingAgent',
+      message: `agent ${agentName} not found`,
+    }
+  }
+
+  const providerName = asString(readNested(agent, ['spec', 'providerRef', 'name']))
+  const provider = providerName ? await kube.get(RESOURCE_MAP.AgentProvider, providerName, namespace) : null
+  if (!provider) {
+    return {
+      ok: false as const,
+      reason: 'MissingProvider',
+      message: `agent provider ${providerName ?? 'unknown'} not found`,
+    }
+  }
+
+  let implResource = resolveImplementation(agentRun)
+  if (!implResource) {
+    const implRefName = asString(readNested(spec, ['implementationSpecRef', 'name']))
+    if (implRefName) {
+      const impl = await kube.get(RESOURCE_MAP.ImplementationSpec, implRefName, namespace)
+      implResource = asRecord(impl?.spec) ?? null
+    }
+  }
+  if (!implResource) {
+    return {
+      ok: false as const,
+      reason: 'MissingImplementation',
+      message: 'implementationSpecRef or implementation.inline is required',
+    }
+  }
+
+  const memory = resolveMemory(agentRun, agent, memories)
+  const runMemoryRef = asString(readNested(spec, ['memoryRef', 'name']))
+  const agentMemoryRef = asString(readNested(agent, ['spec', 'memoryRef', 'name']))
+  if ((runMemoryRef || agentMemoryRef) && !memory) {
+    const missingName = runMemoryRef || agentMemoryRef || 'unknown'
+    return {
+      ok: false as const,
+      reason: 'MissingMemory',
+      message: `memory ${missingName} not found`,
+    }
+  }
+
+  const security = asRecord(readNested(agent, ['spec', 'security'])) ?? {}
+  const allowedSecrets = parseStringList(security.allowedSecrets)
+  const allowedServiceAccounts = parseStringList(security.allowedServiceAccounts)
+  const runSecrets = parseStringList(spec.secrets)
+
+  if (allowedSecrets.length > 0) {
+    const forbidden = runSecrets.filter((secret) => !allowedSecrets.includes(secret))
+    if (forbidden.length > 0) {
+      return {
+        ok: false as const,
+        reason: 'SecretNotAllowed',
+        message: `spec.secrets contains disallowed entries: ${forbidden.join(', ')}`,
+      }
+    }
+  }
+
+  const memorySecretName = asString(readNested(memory, ['spec', 'connection', 'secretRef', 'name']))
+  if (memorySecretName) {
+    if (allowedSecrets.length > 0 && !allowedSecrets.includes(memorySecretName)) {
+      return {
+        ok: false as const,
+        reason: 'SecretNotAllowed',
+        message: `memory secret ${memorySecretName} is not allowlisted by the Agent`,
+      }
+    }
+    if (runSecrets.length > 0 && !runSecrets.includes(memorySecretName)) {
+      return {
+        ok: false as const,
+        reason: 'SecretNotAllowed',
+        message: `memory secret ${memorySecretName} is not included in spec.secrets`,
+      }
+    }
+  }
+
+  if (allowedServiceAccounts.length > 0) {
+    const rawServiceAccount = asString(runtimeConfig.serviceAccount)
+    const effectiveServiceAccount = rawServiceAccount || 'default'
+    if (!allowedServiceAccounts.includes(effectiveServiceAccount)) {
+      return {
+        ok: false as const,
+        reason: 'ServiceAccountNotAllowed',
+        message: `serviceAccount ${effectiveServiceAccount} is not allowlisted`,
+      }
+    }
+  }
+
+  return {
+    ok: true as const,
+    agent,
+    provider,
+    implementation: implResource,
+    memory,
+  }
+}
+
+const resolveWorkflowStepImplementation = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  agentRun: Record<string, unknown>,
+  namespace: string,
+  step: WorkflowStepSpec,
+  fallback: Record<string, unknown>,
+) => {
+  if (step.implementationInline) return step.implementationInline
+  if (step.implementationSpecRefName) {
+    const impl = await kube.get(RESOURCE_MAP.ImplementationSpec, step.implementationSpecRefName, namespace)
+    return asRecord(impl?.spec) ?? null
+  }
+  const inline = resolveImplementation(agentRun)
+  if (inline) return inline
+  return fallback
+}
+
+const reconcileWorkflowRun = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  agentRun: Record<string, unknown>,
+  namespace: string,
+  memories: Record<string, unknown>[],
+  options: { initialSubmit?: boolean } = {},
+) => {
+  const metadata = asRecord(agentRun.metadata) ?? {}
+  const runName = asString(metadata.name) ?? 'agentrun'
+  const status = asRecord(agentRun.status) ?? {}
+  const observedGeneration = asRecord(agentRun.metadata)?.generation ?? 0
+  const runtimeConfig = asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
+  const workflowSteps = parseWorkflowSteps(agentRun)
+  const workflowValidation = validateWorkflowSteps(workflowSteps)
+  const conditions = buildConditions(agentRun)
+
+  if (!workflowValidation.ok) {
+    const updated = upsertCondition(conditions, {
+      type: 'InvalidSpec',
+      status: 'True',
+      reason: workflowValidation.reason,
+      message: workflowValidation.message,
+    })
+    await setStatus(kube, agentRun, {
+      observedGeneration,
+      phase: 'Failed',
+      finishedAt: nowIso(),
+      conditions: updated,
+    })
+    return
+  }
+
+  const dependencies = await loadWorkflowDependencies(kube, agentRun, namespace, memories, runtimeConfig)
+  if (!dependencies.ok) {
+    const updated = upsertCondition(conditions, {
+      type: 'InvalidSpec',
+      status: 'True',
+      reason: dependencies.reason,
+      message: dependencies.message,
+    })
+    await setStatus(kube, agentRun, {
+      observedGeneration,
+      phase: 'Failed',
+      finishedAt: nowIso(),
+      conditions: updated,
+    })
+    return
+  }
+
+  const baseParameters = resolveParameters(agentRun)
+  const baseWorkload = asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
+  const workflowStatus = normalizeWorkflowStatus(asRecord(status.workflow) ?? null, workflowSteps)
+  let runtimeRefUpdate: RuntimeRef | null = null
+  let workflowFailure: { reason: string; message: string } | null = null
+  let workflowRunning = false
+  const now = Date.now()
+
+  for (let index = 0; index < workflowSteps.length; index += 1) {
+    const stepSpec = workflowSteps[index]
+    const stepStatus = workflowStatus.steps[index]
+    if (stepStatus.phase === 'Succeeded') {
+      continue
+    }
+    const maxAttempts = stepSpec.retries + 1
+
+    if (stepStatus.phase === 'Failed') {
+      workflowFailure = {
+        reason: 'WorkflowStepFailed',
+        message: `workflow step ${stepSpec.name} failed`,
+      }
+      break
+    }
+
+    if (stepStatus.phase === 'Retrying' && !shouldRetryStep(stepStatus, now)) {
+      workflowRunning = true
+      runtimeRefUpdate = buildRuntimeRef('workflow', asString(stepStatus.jobRef?.name) ?? '', namespace, {
+        runName,
+        stepName: stepSpec.name,
+      })
+      break
+    }
+
+    if (stepStatus.phase === 'Pending' || stepStatus.phase === 'Retrying') {
+      const attempt = stepStatus.attempt + 1
+      if (attempt > maxAttempts) {
+        setWorkflowStepPhase(stepStatus, 'Failed', 'Retry limit exceeded')
+        stepStatus.finishedAt = nowIso()
+        workflowFailure = {
+          reason: 'WorkflowStepRetriesExhausted',
+          message: `workflow step ${stepSpec.name} exceeded retry limit`,
+        }
+        break
+      }
+
+      const implementation = await resolveWorkflowStepImplementation(
+        kube,
+        agentRun,
+        namespace,
+        stepSpec,
+        dependencies.implementation,
+      )
+      if (!implementation) {
+        setWorkflowStepPhase(stepStatus, 'Failed', 'Implementation not found')
+        stepStatus.finishedAt = nowIso()
+        workflowFailure = {
+          reason: 'MissingImplementation',
+          message: `workflow step ${stepSpec.name} implementation not found`,
+        }
+        break
+      }
+
+      const stepWorkload = stepSpec.workload ?? baseWorkload
+      const workloadImage = resolveJobImage(stepWorkload)
+      if (!workloadImage) {
+        setWorkflowStepPhase(stepStatus, 'Failed', 'Missing workload image')
+        stepStatus.finishedAt = nowIso()
+        workflowFailure = {
+          reason: 'MissingWorkloadImage',
+          message:
+            'spec.workload.image, JANGAR_AGENT_RUNNER_IMAGE, or JANGAR_AGENT_IMAGE is required for workflow runtime',
+        }
+        break
+      }
+
+      const stepParameters = { ...baseParameters, ...stepSpec.parameters }
+      const jobSuffix = `step-${index + 1}-attempt-${attempt}`
+      const stepLabels = {
+        'agents.proompteng.ai/step': normalizeLabelValue(stepSpec.name),
+        'agents.proompteng.ai/step-index': String(index + 1),
+      }
+      const stepRuntimeRef = await submitJobRun(
+        kube,
+        agentRun,
+        dependencies.agent,
+        dependencies.provider,
+        implementation,
+        dependencies.memory,
+        namespace,
+        workloadImage,
+        'workflow',
+        {
+          nameSuffix: jobSuffix,
+          labels: stepLabels,
+          workload: stepWorkload,
+          parameters: stepParameters,
+          runtimeConfig,
+        },
+      )
+
+      stepStatus.attempt = attempt
+      stepStatus.startedAt = nowIso()
+      stepStatus.finishedAt = undefined
+      stepStatus.nextRetryAt = undefined
+      stepStatus.jobRef = {
+        name: asString(stepRuntimeRef.name) ?? '',
+        namespace: asString(stepRuntimeRef.namespace) ?? namespace,
+        uid: asString(stepRuntimeRef.uid) ?? undefined,
+      }
+      setWorkflowStepPhase(stepStatus, 'Running')
+      runtimeRefUpdate = buildRuntimeRef('workflow', asString(stepRuntimeRef.name) ?? '', namespace, {
+        uid: asString(stepRuntimeRef.uid) ?? undefined,
+        runName,
+        stepName: stepSpec.name,
+      })
+      workflowRunning = true
+      break
+    }
+
+    if (stepStatus.phase === 'Running') {
+      const jobName = asString(stepStatus.jobRef?.name) ?? ''
+      if (!jobName) {
+        setWorkflowStepPhase(stepStatus, 'Failed', 'Job reference missing')
+        stepStatus.finishedAt = nowIso()
+        workflowFailure = {
+          reason: 'WorkflowJobMissing',
+          message: `workflow step ${stepSpec.name} is missing a job reference`,
+        }
+        break
+      }
+      const jobNamespace = asString(stepStatus.jobRef?.namespace) ?? namespace
+      const job = await kube.get('job', jobName, jobNamespace)
+      if (!job) {
+        if (stepStatus.attempt < maxAttempts) {
+          setWorkflowStepPhase(stepStatus, 'Retrying', 'Job missing; retrying')
+          stepStatus.finishedAt = nowIso()
+          stepStatus.nextRetryAt =
+            stepSpec.retryBackoffSeconds > 0
+              ? new Date(now + stepSpec.retryBackoffSeconds * 1000).toISOString()
+              : nowIso()
+          workflowRunning = true
+          break
+        }
+        setWorkflowStepPhase(stepStatus, 'Failed', 'Job missing')
+        stepStatus.finishedAt = nowIso()
+        workflowFailure = {
+          reason: 'WorkflowJobMissing',
+          message: `workflow step ${stepSpec.name} job ${jobName} not found`,
+        }
+        break
+      }
+      const jobStatus = asRecord(job.status) ?? {}
+      const succeeded = Number(jobStatus.succeeded ?? 0)
+      const failed = Number(jobStatus.failed ?? 0)
+      if (succeeded > 0) {
+        setWorkflowStepPhase(stepStatus, 'Succeeded')
+        stepStatus.startedAt = asString(jobStatus.startTime) ?? stepStatus.startedAt ?? undefined
+        stepStatus.finishedAt = asString(jobStatus.completionTime) ?? nowIso()
+        stepStatus.nextRetryAt = undefined
+        continue
+      }
+      if (failed > 0) {
+        if (stepStatus.attempt < maxAttempts) {
+          setWorkflowStepPhase(stepStatus, 'Retrying', 'Step failed; retrying')
+          stepStatus.finishedAt = nowIso()
+          stepStatus.nextRetryAt =
+            stepSpec.retryBackoffSeconds > 0
+              ? new Date(now + stepSpec.retryBackoffSeconds * 1000).toISOString()
+              : nowIso()
+          workflowRunning = true
+          break
+        }
+        setWorkflowStepPhase(stepStatus, 'Failed', 'Step failed')
+        stepStatus.finishedAt = nowIso()
+        workflowFailure = {
+          reason: 'WorkflowStepFailed',
+          message: `workflow step ${stepSpec.name} failed`,
+        }
+        break
+      }
+      runtimeRefUpdate = buildRuntimeRef('workflow', jobName, jobNamespace, {
+        uid: asString(readNested(job, ['metadata', 'uid'])) ?? undefined,
+        runName,
+        stepName: stepSpec.name,
+      })
+      workflowRunning = true
+      break
+    }
+  }
+
+  if (workflowFailure) {
+    setWorkflowPhase(workflowStatus, 'Failed')
+    const updated = upsertCondition(conditions, {
+      type: 'Failed',
+      status: 'True',
+      reason: workflowFailure.reason,
+      message: workflowFailure.message,
+    })
+    await setStatus(kube, agentRun, {
+      observedGeneration,
+      phase: 'Failed',
+      finishedAt: nowIso(),
+      runtimeRef: runtimeRefUpdate ?? parseRuntimeRef(status.runtimeRef) ?? undefined,
+      workflow: workflowStatus,
+      conditions: updated,
+    })
+    return
+  }
+
+  const allSucceeded = workflowStatus.steps.every((step) => step.phase === 'Succeeded')
+  if (allSucceeded) {
+    setWorkflowPhase(workflowStatus, 'Succeeded')
+    const updated = upsertCondition(conditions, {
+      type: 'Succeeded',
+      status: 'True',
+      reason: 'Completed',
+    })
+    await setStatus(kube, agentRun, {
+      observedGeneration,
+      phase: 'Succeeded',
+      finishedAt: nowIso(),
+      runtimeRef: runtimeRefUpdate ?? parseRuntimeRef(status.runtimeRef) ?? undefined,
+      workflow: workflowStatus,
+      conditions: updated,
+    })
+    return
+  }
+
+  if (workflowRunning) {
+    setWorkflowPhase(workflowStatus, 'Running')
+    let updated = conditions
+    if (options.initialSubmit) {
+      updated = upsertCondition(updated, { type: 'Accepted', status: 'True', reason: 'Submitted' })
+    }
+    updated = upsertCondition(updated, { type: 'InProgress', status: 'True', reason: 'Running' })
+    await setStatus(kube, agentRun, {
+      observedGeneration,
+      phase: 'Running',
+      startedAt: asString(status.startedAt) ?? nowIso(),
+      runtimeRef: runtimeRefUpdate ?? parseRuntimeRef(status.runtimeRef) ?? undefined,
+      workflow: workflowStatus,
+      conditions: updated,
+    })
+  }
+}
+
 const reconcileAgentRun = async (
   kube: ReturnType<typeof createKubernetesClient>,
   agentRun: Record<string, unknown>,
@@ -1326,15 +1943,14 @@ const reconcileAgentRun = async (
       return
     }
 
-    if (runtimeType === 'job' || runtimeType === 'workflow') {
+    if (runtimeType === 'job') {
       workloadImage = resolveJobImage(workload)
       if (!workloadImage) {
         const updated = upsertCondition(conditions, {
           type: 'InvalidSpec',
           status: 'True',
           reason: 'MissingWorkloadImage',
-          message:
-            'spec.workload.image, JANGAR_AGENT_RUNNER_IMAGE, or JANGAR_AGENT_IMAGE is required for workflow runtime',
+          message: 'spec.workload.image, JANGAR_AGENT_RUNNER_IMAGE, or JANGAR_AGENT_IMAGE is required for job runtime',
         })
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
         return
@@ -1369,6 +1985,11 @@ const reconcileAgentRun = async (
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
         return
       }
+    }
+
+    if (runtimeType === 'workflow') {
+      await reconcileWorkflowRun(kube, agentRun, namespace, memories, { initialSubmit: true })
+      return
     }
 
     const agent = agentName ? await kube.get(RESOURCE_MAP.Agent, agentName, namespace) : null
@@ -1491,7 +2112,7 @@ const reconcileAgentRun = async (
 
     let newRuntimeRef: RuntimeRef | null = null
     try {
-      if (runtimeType === 'job' || runtimeType === 'workflow') {
+      if (runtimeType === 'job') {
         newRuntimeRef = await submitJobRun(
           kube,
           agentRun,
@@ -1540,9 +2161,16 @@ const reconcileAgentRun = async (
     return
   }
 
-  if (!runtimeRef || phase !== 'Running') return
+  if (phase !== 'Running') return
 
-  if (runtimeRef.type === 'job' || runtimeRef.type === 'workflow') {
+  if (runtimeType === 'workflow' || runtimeRef?.type === 'workflow') {
+    await reconcileWorkflowRun(kube, agentRun, namespace, memories)
+    return
+  }
+
+  if (!runtimeRef) return
+
+  if (runtimeRef.type === 'job') {
     const job = await kube.get('job', asString(runtimeRef.name) ?? '', asString(runtimeRef.namespace) ?? namespace)
     if (!job) return
     const jobStatus = asRecord(job.status) ?? {}

@@ -81,6 +81,7 @@ type AgentRunSpec struct {
 	ImplementationSpecRef *LocalRef             `json:"implementationSpecRef,omitempty"`
 	Implementation        *InlineImplementation `json:"implementation,omitempty"`
 	Runtime               RuntimeSpec           `json:"runtime"`
+	Workflow              *WorkflowSpec         `json:"workflow,omitempty"`
 	Workload              *WorkloadSpec         `json:"workload,omitempty"`
 	// +kubebuilder:validation:MaxProperties=100
 	Parameters     map[string]string `json:"parameters,omitempty"`
@@ -98,6 +99,21 @@ type RuntimeSpec struct {
 	Type string `json:"type"`
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Config map[string]apiextensionsv1.JSON `json:"config,omitempty"`
+}
+
+type WorkflowSpec struct {
+	Steps []WorkflowStep `json:"steps"`
+}
+
+type WorkflowStep struct {
+	Name                  string                `json:"name"`
+	ImplementationSpecRef *LocalRef             `json:"implementationSpecRef,omitempty"`
+	Implementation        *InlineImplementation `json:"implementation,omitempty"`
+	// +kubebuilder:validation:MaxProperties=100
+	Parameters          map[string]string `json:"parameters,omitempty"`
+	Workload            *WorkloadSpec     `json:"workload,omitempty"`
+	Retries             int32             `json:"retries,omitempty"`
+	RetryBackoffSeconds int32             `json:"retryBackoffSeconds,omitempty"`
 }
 
 type WorkloadSpec struct {
@@ -127,11 +143,36 @@ type AgentRunStatus struct {
 	Phase string `json:"phase,omitempty"`
 	// +kubebuilder:pruning:PreserveUnknownFields
 	RuntimeRef         map[string]apiextensionsv1.JSON `json:"runtimeRef,omitempty"`
+	Workflow           *WorkflowStatus                 `json:"workflow,omitempty"`
 	StartedAt          *metav1.Time                    `json:"startedAt,omitempty"`
 	FinishedAt         *metav1.Time                    `json:"finishedAt,omitempty"`
 	Artifacts          []Artifact                      `json:"artifacts,omitempty"`
 	Conditions         []metav1.Condition              `json:"conditions,omitempty"`
 	ObservedGeneration int64                           `json:"observedGeneration,omitempty"`
+}
+
+type WorkflowStatus struct {
+	Phase              string               `json:"phase,omitempty"`
+	LastTransitionTime *metav1.Time         `json:"lastTransitionTime,omitempty"`
+	Steps              []WorkflowStepStatus `json:"steps,omitempty"`
+}
+
+type WorkflowStepStatus struct {
+	Name               string       `json:"name,omitempty"`
+	Phase              string       `json:"phase,omitempty"`
+	Attempt            int32        `json:"attempt,omitempty"`
+	StartedAt          *metav1.Time `json:"startedAt,omitempty"`
+	FinishedAt         *metav1.Time `json:"finishedAt,omitempty"`
+	LastTransitionTime *metav1.Time `json:"lastTransitionTime,omitempty"`
+	Message            string       `json:"message,omitempty"`
+	NextRetryAt        *metav1.Time `json:"nextRetryAt,omitempty"`
+	JobRef             *JobRef      `json:"jobRef,omitempty"`
+}
+
+type JobRef struct {
+	Name      string `json:"name,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Uid       string `json:"uid,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -247,12 +288,12 @@ type ImplementationSource struct {
 // +kubebuilder:validation:XValidation:rule="self.webhook.enabled == true",message="spec.webhook.enabled must be true"
 type ImplementationSourceSpec struct {
 	// +kubebuilder:validation:Enum=github;linear
-	Provider string                       `json:"provider"`
-	Auth     ImplementationSourceAuth     `json:"auth"`
+	Provider string                   `json:"provider"`
+	Auth     ImplementationSourceAuth `json:"auth"`
 	// +kubebuilder:validation:Required
 	Webhook ImplementationSourceWebhook `json:"webhook"`
-	Scope    *ImplementationScope         `json:"scope,omitempty"`
-	Mapping  map[string]string            `json:"mapping,omitempty"`
+	Scope   *ImplementationScope        `json:"scope,omitempty"`
+	Mapping map[string]string           `json:"mapping,omitempty"`
 }
 
 type ImplementationSourceAuth struct {
