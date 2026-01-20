@@ -336,6 +336,7 @@ const ensureConsumer = async (manager: JetStreamManager, config: SubscriberConfi
 
 type MessageStream = AsyncIterable<JsMsg> & {
   stop?: (error?: Error) => void
+  // biome-ignore lint/suspicious/noConfusingVoidType: NATS close uses Promise<void | Error>.
   close?: () => Promise<void | Error>
 }
 

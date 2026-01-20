@@ -1,9 +1,9 @@
-import { StringCodec, type JsMsg } from 'nats'
+import { type JsMsg, StringCodec } from 'nats'
 import { describe, expect, it, vi } from 'vitest'
 
 import { __test__ } from '~/server/agent-comms-subscriber'
-import type { AgentMessageRecord } from '~/server/agent-messages-store'
 import { publishAgentMessages } from '~/server/agent-messages-bus'
+import type { AgentMessageRecord } from '~/server/agent-messages-store'
 import { recordAgentCommsBatch, recordAgentCommsError } from '~/server/metrics'
 
 vi.mock('~/server/agent-messages-bus', () => ({
@@ -52,6 +52,7 @@ const createStream = (messages: JsMsg[]) =>
     },
     stop: vi.fn(),
     close: vi.fn(async () => {}),
+    // biome-ignore lint/suspicious/noConfusingVoidType: align with MessageStream close signature.
   }) as AsyncIterable<JsMsg> & { stop: () => void; close: () => Promise<void | Error> }
 
 describe('agent comms subscriber consume', () => {
