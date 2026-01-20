@@ -8,7 +8,7 @@ its XRDs so the native `agents.proompteng.ai/v1alpha1` CRDs can own the kinds.
 
 ## Required actions
 1) **Disable Crossplane in GitOps**
-   - Remove/disable any Argo CD apps or ApplicationSet entries that install Crossplane.
+   - Remove/disable any GitOps apps or ApplicationSet entries that install Crossplane.
 2) **Delete Crossplane packages and XRDs**
    ```bash
    kubectl delete configurations.pkg.crossplane.io --all || true

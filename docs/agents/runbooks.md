@@ -15,8 +15,9 @@ Status: Current (2026-01-19)
 1. `helm rollback agents <REV> -n agents`
 2. Verify status and re-run smoke test.
 
-## Argo CD Application (GitOps)
-Use the sample Application manifest in `argocd/applications/agents/application.yaml`:
+## Argo CD Application (GitOps, optional)
+If you deploy via Argo CD, use the sample Application manifest in
+`argocd/applications/agents/application.yaml`:
 
 ```bash
 kubectl apply -n argocd -f argocd/applications/agents/application.yaml
@@ -28,7 +29,7 @@ into the `agents` namespace using `argocd/applications/agents/values.yaml`.
 Update the values file with your Jangar image tag, database secret, and (optional) agent runner image.
 If `controller.namespaces` spans multiple namespaces or `"*"`, set `rbac.clusterScoped=true`.
 
-Argo CD smoke test:
+Optional Argo CD smoke test:
 ```bash
 kubectl -n argocd get applications.argoproj.io agents -o yaml
 kubectl -n agents get deploy,svc

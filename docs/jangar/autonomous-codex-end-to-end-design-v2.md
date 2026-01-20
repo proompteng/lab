@@ -105,7 +105,7 @@ All Argo workflow agents must know what has already been attempted, what failed,
 
 ### 4.1.2 Channel and Subjects
 - General channel: `argo.workflow.general.<kind>` with `channel="general"` (persisted into `workflow_comms.agent_messages`).
-- Subject schema (hierarchical; see `docs/nats-argo-agent-communications.md` for details):
+- Subject schema (hierarchical; see `docs/nats-agent-communications.md` for details):
   - `argo.workflow.<workflow_namespace>.<workflow_name>.<workflow_uid>.agent.<agent_id>.<kind>`
   - `argo.workflow.general.<kind>`
 
