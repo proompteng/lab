@@ -137,7 +137,9 @@ const checkCrds = async (): Promise<CrdCheckState> => {
       console.error('[jangar] missing required Orchestration CRDs:', missing.join(', '))
     }
     if (forbidden.length > 0) {
-      console.error(`[jangar] insufficient RBAC to read Orchestration CRDs in namespace ${namespace}: ${forbidden.join(', ')}`)
+      console.error(
+        `[jangar] insufficient RBAC to read Orchestration CRDs in namespace ${namespace}: ${forbidden.join(', ')}`,
+      )
     }
   }
   return state
@@ -253,7 +255,10 @@ const setStepStatus = (status: StepStatus, update: Partial<StepStatus>) => ({
 
 const makeName = (base: string, suffix: string) => {
   const max = 50
-  const sanitized = base.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-')
+  const sanitized = base
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
   const trimmed = sanitized.length > max ? sanitized.slice(0, max) : sanitized
   return `${trimmed}-${suffix}`
 }
@@ -326,7 +331,9 @@ const submitToolRunJob = async (
     throw new Error('tool.spec.image is required')
   }
 
-  const command = Array.isArray(toolSpec.command) ? toolSpec.command.map((arg) => renderTemplate(String(arg), context)) : null
+  const command = Array.isArray(toolSpec.command)
+    ? toolSpec.command.map((arg) => renderTemplate(String(arg), context))
+    : null
   const args = Array.isArray(toolSpec.args) ? toolSpec.args.map((arg) => renderTemplate(String(arg), context)) : null
   if (!command && (!args || args.length === 0)) {
     throw new Error('tool.spec.command or tool.spec.args is required')
@@ -342,7 +349,7 @@ const submitToolRunJob = async (
 
   const metadata = asRecord(toolRun.metadata) ?? {}
   const runName = asString(metadata.name) ?? 'toolrun'
-  const runUid = asString(metadata.uid)
+  const runUid = asString(metadata.uid) ?? undefined
   const jobName = makeName(runName, 'job')
 
   const labels = {
@@ -382,7 +389,8 @@ const submitToolRunJob = async (
         : {}),
     },
     spec: {
-      ttlSecondsAfterFinished: typeof toolSpec.ttlSecondsAfterFinished === 'number' ? toolSpec.ttlSecondsAfterFinished : undefined,
+      ttlSecondsAfterFinished:
+        typeof toolSpec.ttlSecondsAfterFinished === 'number' ? toolSpec.ttlSecondsAfterFinished : undefined,
       template: {
         metadata: {
           labels,
@@ -398,14 +406,10 @@ const submitToolRunJob = async (
               args: args ?? undefined,
               env: [{ name: 'TOOL_RUN_SPEC', value: '/workspace/run.json' }, ...env],
               workingDir: asString(toolSpec.workingDir) ?? undefined,
-              volumeMounts: [
-                { name: volumeName, mountPath: '/workspace/run.json', subPath: 'run.json' },
-              ],
+              volumeMounts: [{ name: volumeName, mountPath: '/workspace/run.json', subPath: 'run.json' }],
             },
           ],
-          volumes: [
-            { name: volumeName, configMap: { name: asString(configMap.metadata?.name) ?? configName } },
-          ],
+          volumes: [{ name: volumeName, configMap: { name: asString(configMap.metadata?.name) ?? configName } }],
         },
       },
     },
@@ -593,7 +597,9 @@ const submitAgentRunStep = async (
 
   const runtime = asRecord(readNested(step, ['runtime'])) ?? { type: 'workflow' }
   const memoryRefName = asString(readNested(step, ['memoryRef', 'name'])) ?? asString(step.memoryRef)
-  const secrets = Array.isArray(step.secrets) ? step.secrets.filter((val): val is string => typeof val === 'string') : []
+  const secrets = Array.isArray(step.secrets)
+    ? step.secrets.filter((val): val is string => typeof val === 'string')
+    : []
 
   const metadata = asRecord(orchestrationRun.metadata) ?? {}
   const runName = asString(metadata.name) ?? 'orchestration'
@@ -775,7 +781,10 @@ const reconcileOrchestrationRun = async (
   const existingSteps = Array.isArray(status.stepStatuses)
     ? status.stepStatuses.filter((item): item is StepStatus => !!item && typeof item === 'object')
     : []
-  const { statuses: normalizedSteps, index: statusIndex } = normalizeStepStatuses(steps as Record<string, unknown>[], existingSteps)
+  const { statuses: normalizedSteps, index: statusIndex } = normalizeStepStatuses(
+    steps as Record<string, unknown>[],
+    existingSteps,
+  )
 
   const orchestrationParams = normalizeStringMap(asRecord(spec.parameters))
   let anyRunning = false
@@ -1154,10 +1163,7 @@ const reconcileAllRunsInNamespace = async (kube: ReturnType<typeof createKuberne
   }
 }
 
-const startNamespaceWatches = (
-  kube: ReturnType<typeof createKubernetesClient>,
-  namespace: string,
-) => {
+const startNamespaceWatches = (kube: ReturnType<typeof createKubernetesClient>, namespace: string) => {
   const handleOrchestrationRun = (event: { type?: string; object?: Record<string, unknown> }) => {
     const resource = asRecord(event.object)
     if (!resource || event.type === 'DELETED') return

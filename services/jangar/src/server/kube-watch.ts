@@ -135,15 +135,23 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
       }
     })
 
-    child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk) => parse(String(chunk)))
-    child.stderr.setEncoding('utf8')
-    child.stderr.on('data', (chunk) => {
-      const message = String(chunk).trim()
-      if (message) {
-        onError?.(new Error(`${logPrefix} ${resource} (${namespace}) stderr: ${message}`))
-      }
-    })
+    if (child.stdout) {
+      child.stdout.setEncoding('utf8')
+      child.stdout.on('data', (chunk) => parse(String(chunk)))
+    } else {
+      onError?.(new Error(`${logPrefix} ${resource} (${namespace}) stdout unavailable`))
+    }
+    if (child.stderr) {
+      child.stderr.setEncoding('utf8')
+      child.stderr.on('data', (chunk) => {
+        const message = String(chunk).trim()
+        if (message) {
+          onError?.(new Error(`${logPrefix} ${resource} (${namespace}) stderr: ${message}`))
+        }
+      })
+    } else {
+      onError?.(new Error(`${logPrefix} ${resource} (${namespace}) stderr unavailable`))
+    }
     child.on('error', (error) => {
       onError?.(error instanceof Error ? error : new Error(String(error)))
       scheduleRestart()
