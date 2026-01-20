@@ -75,6 +75,11 @@ Usage:
   agentctl agent apply -f <file>
   agentctl agent delete <name>
 
+  agentctl provider list
+  agentctl provider get <name>
+  agentctl provider apply -f <file>
+  agentctl provider delete <name>
+
   agentctl impl get <name>
   agentctl impl list
   agentctl impl create --text <text> [--summary <text>] [--source provider=github,externalId=...,url=...]
@@ -90,6 +95,66 @@ Usage:
   agentctl memory get <name>
   agentctl memory apply -f <file>
   agentctl memory delete <name>
+
+  agentctl tool list
+  agentctl tool get <name>
+  agentctl tool apply -f <file>
+  agentctl tool delete <name>
+
+  agentctl toolrun list
+  agentctl toolrun get <name>
+  agentctl toolrun apply -f <file>
+  agentctl toolrun delete <name>
+
+  agentctl orchestration list
+  agentctl orchestration get <name>
+  agentctl orchestration apply -f <file>
+  agentctl orchestration delete <name>
+
+  agentctl orchestrationrun list
+  agentctl orchestrationrun get <name>
+  agentctl orchestrationrun apply -f <file>
+  agentctl orchestrationrun delete <name>
+
+  agentctl approval list
+  agentctl approval get <name>
+  agentctl approval apply -f <file>
+  agentctl approval delete <name>
+
+  agentctl budget list
+  agentctl budget get <name>
+  agentctl budget apply -f <file>
+  agentctl budget delete <name>
+
+  agentctl secretbinding list
+  agentctl secretbinding get <name>
+  agentctl secretbinding apply -f <file>
+  agentctl secretbinding delete <name>
+
+  agentctl signal list
+  agentctl signal get <name>
+  agentctl signal apply -f <file>
+  agentctl signal delete <name>
+
+  agentctl signaldelivery list
+  agentctl signaldelivery get <name>
+  agentctl signaldelivery apply -f <file>
+  agentctl signaldelivery delete <name>
+
+  agentctl schedule list
+  agentctl schedule get <name>
+  agentctl schedule apply -f <file>
+  agentctl schedule delete <name>
+
+  agentctl artifact list
+  agentctl artifact get <name>
+  agentctl artifact apply -f <file>
+  agentctl artifact delete <name>
+
+  agentctl workspace list
+  agentctl workspace get <name>
+  agentctl workspace apply -f <file>
+  agentctl workspace delete <name>
 
   agentctl run submit --agent <name> --impl <name> --runtime <type> [flags]
   agentctl run apply -f <file>
@@ -392,7 +457,7 @@ const handleCompletion = (shell: string) => {
 _agentctl_complete() {
   COMPREPLY=()
   local cur="${COMP_WORDS[COMP_CWORD]}"
-  local cmds="version config completion agent impl source memory run"
+  local cmds="version config completion agent provider impl source memory tool toolrun orchestration orchestrationrun approval budget secretbinding signal signaldelivery schedule artifact workspace run"
   COMPREPLY=( $(compgen -W "$cmds" -- "$cur") )
 }
 complete -F _agentctl_complete agentctl
@@ -400,7 +465,9 @@ complete -F _agentctl_complete agentctl
     return 0
   }
   if (shell === 'fish') {
-    console.log('complete -c agentctl -f -a "version config completion agent impl source memory run"')
+    console.log(
+      'complete -c agentctl -f -a "version config completion agent provider impl source memory tool toolrun orchestration orchestrationrun approval budget secretbinding signal signaldelivery schedule artifact workspace run"',
+    )
     return 0
   }
   console.error(`Unsupported shell: ${shell}`)
@@ -517,36 +584,114 @@ const main = async () => {
       return 0
     }
 
-    if (command === 'agent' || command === 'impl' || command === 'source' || command === 'memory') {
-      const resourceMap: Record<string, { list: string; get: string; apply: string; del: string; create?: string }> = {
-        agent: {
-          list: 'ListAgents',
-          get: 'GetAgent',
-          apply: 'ApplyAgent',
-          del: 'DeleteAgent',
-        },
-        impl: {
-          list: 'ListImplementationSpecs',
-          get: 'GetImplementationSpec',
-          apply: 'ApplyImplementationSpec',
-          del: 'DeleteImplementationSpec',
-          create: 'CreateImplementationSpec',
-        },
-        source: {
-          list: 'ListImplementationSources',
-          get: 'GetImplementationSource',
-          apply: 'ApplyImplementationSource',
-          del: 'DeleteImplementationSource',
-        },
-        memory: {
-          list: 'ListMemories',
-          get: 'GetMemory',
-          apply: 'ApplyMemory',
-          del: 'DeleteMemory',
-        },
-      }
+    const resourceMap: Record<string, { list: string; get: string; apply: string; del: string; create?: string }> = {
+      agent: {
+        list: 'ListAgents',
+        get: 'GetAgent',
+        apply: 'ApplyAgent',
+        del: 'DeleteAgent',
+      },
+      provider: {
+        list: 'ListAgentProviders',
+        get: 'GetAgentProvider',
+        apply: 'ApplyAgentProvider',
+        del: 'DeleteAgentProvider',
+      },
+      impl: {
+        list: 'ListImplementationSpecs',
+        get: 'GetImplementationSpec',
+        apply: 'ApplyImplementationSpec',
+        del: 'DeleteImplementationSpec',
+        create: 'CreateImplementationSpec',
+      },
+      source: {
+        list: 'ListImplementationSources',
+        get: 'GetImplementationSource',
+        apply: 'ApplyImplementationSource',
+        del: 'DeleteImplementationSource',
+      },
+      memory: {
+        list: 'ListMemories',
+        get: 'GetMemory',
+        apply: 'ApplyMemory',
+        del: 'DeleteMemory',
+      },
+      tool: {
+        list: 'ListTools',
+        get: 'GetTool',
+        apply: 'ApplyTool',
+        del: 'DeleteTool',
+      },
+      toolrun: {
+        list: 'ListToolRuns',
+        get: 'GetToolRun',
+        apply: 'ApplyToolRun',
+        del: 'DeleteToolRun',
+      },
+      orchestration: {
+        list: 'ListOrchestrations',
+        get: 'GetOrchestration',
+        apply: 'ApplyOrchestration',
+        del: 'DeleteOrchestration',
+      },
+      orchestrationrun: {
+        list: 'ListOrchestrationRuns',
+        get: 'GetOrchestrationRun',
+        apply: 'ApplyOrchestrationRun',
+        del: 'DeleteOrchestrationRun',
+      },
+      approval: {
+        list: 'ListApprovalPolicies',
+        get: 'GetApprovalPolicy',
+        apply: 'ApplyApprovalPolicy',
+        del: 'DeleteApprovalPolicy',
+      },
+      budget: {
+        list: 'ListBudgets',
+        get: 'GetBudget',
+        apply: 'ApplyBudget',
+        del: 'DeleteBudget',
+      },
+      secretbinding: {
+        list: 'ListSecretBindings',
+        get: 'GetSecretBinding',
+        apply: 'ApplySecretBinding',
+        del: 'DeleteSecretBinding',
+      },
+      signal: {
+        list: 'ListSignals',
+        get: 'GetSignal',
+        apply: 'ApplySignal',
+        del: 'DeleteSignal',
+      },
+      signaldelivery: {
+        list: 'ListSignalDeliveries',
+        get: 'GetSignalDelivery',
+        apply: 'ApplySignalDelivery',
+        del: 'DeleteSignalDelivery',
+      },
+      schedule: {
+        list: 'ListSchedules',
+        get: 'GetSchedule',
+        apply: 'ApplySchedule',
+        del: 'DeleteSchedule',
+      },
+      artifact: {
+        list: 'ListArtifacts',
+        get: 'GetArtifact',
+        apply: 'ApplyArtifact',
+        del: 'DeleteArtifact',
+      },
+      workspace: {
+        list: 'ListWorkspaces',
+        get: 'GetWorkspace',
+        apply: 'ApplyWorkspace',
+        del: 'DeleteWorkspace',
+      },
+    }
 
-      const rpc = resourceMap[command]
+    const rpc = resourceMap[command]
+    if (rpc) {
       if (subcommand === 'get') {
         const response = await callUnary<{ json: string }>(client, rpc.get, { name: args[0], namespace }, metadata)
         const resource = parseJson(response.json)
