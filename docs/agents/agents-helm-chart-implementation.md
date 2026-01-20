@@ -40,7 +40,7 @@ A fully functional chart must provide:
 - **Controller configuration** (namespaces, concurrency, resync interval) exposed via values.
 - **Examples** for each CRD and implementation source.
 - **CI validation** to ensure CRDs and examples are valid and up‑to‑date.
-- **Crossplane removal guidance** (no migration required).
+- **Crossplane unsupported**: ensure Crossplane is uninstalled so native CRDs are the only definitions.
 - **agentctl** packaged under `services/jangar/**`, shipped with the Jangar service, and backed by Jangar gRPC APIs (no direct Kubernetes access). Built as a Bun single-binary for npm + Homebrew distribution.
 - **Supporting primitives controller** for schedules, artifacts, and workspaces with native Kubernetes resources.
 
@@ -160,8 +160,9 @@ Design note: Without cluster‑scoped RBAC, multi‑namespace reconciliation wil
 - Examples live in `charts/agents/examples/` and are referenced in `Chart.yaml` annotations.
 - Examples must be validated in CI against the CRD schemas.
 
-## Crossplane removal
-Crossplane is no longer used by Agents. Remove any Crossplane installs before deploying the native chart.
+## Crossplane
+Crossplane is not supported by Agents. Uninstall it before deploying the native chart so the native CRDs
+remain the only definitions.
 
 ## CI Validation (Required)
 Add or update CI checks to ensure:
@@ -193,8 +194,8 @@ A release is considered “fully functional” when:
    - Add startup validation for missing CRDs with actionable logs/errors.
 5) **CI Validation**
    - Add CI steps for CRD generation diff, kubeconform example validation, and Helm lint.
-6) **Crossplane Removal Guide**
-   - Keep removal guidance up to date for operators who still have Crossplane installed.
+6) **Crossplane**
+   - Document that Crossplane is unsupported and must be uninstalled before deploying the chart.
 
 ## Open Questions
 - Should the chart support an optional CRD install guard (e.g., pre‑install job) for clusters that skip `crds/`? Current best practice says no, but some GitOps tools may need explicit handling.
@@ -205,6 +206,5 @@ A release is considered “fully functional” when:
 - `docs/agents/ci-validation-plan.md`
 - `docs/agents/crd-yaml-spec.md`
 - `docs/agents/rbac-matrix.md`
-- `docs/agents/crossplane-migration.md`
 - `services/jangar/api/agents/v1alpha1/types.go`
 - `charts/agents/README.md`

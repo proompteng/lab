@@ -108,9 +108,9 @@ Use `env.vars.JANGAR_MIGRATIONS=skip` to disable automatic migrations if needed.
 - Keep `service.type=ClusterIP` and use ingress/mesh externally if desired.
 - Set `rbac.clusterScoped=true` when `controller.namespaces` spans multiple namespaces or `"*"`.
 
-## Crossplane removal
-Crossplane-based Agents XRDs are not used. Remove Crossplane and XRDs before installing
-the native chart. See `docs/agents/crossplane-migration.md`.
+## Crossplane
+Crossplane is not supported by Agents. Uninstall it before installing the native chart so the
+native CRDs remain the only definitions.
 
 ## Publishing (OCI)
 ```bash
