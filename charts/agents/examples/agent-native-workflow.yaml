@@ -1,0 +1,15 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: Agent
+metadata:
+  name: codex-native-workflow
+spec:
+  providerRef:
+    name: codex
+  config:
+    model: gpt-5
+  env:
+    - name: CODEX_MODE
+      value: autonomous
+  defaults:
+    timeoutSeconds: 7200
+    retryLimit: 1

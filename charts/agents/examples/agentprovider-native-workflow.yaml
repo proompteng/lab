@@ -1,0 +1,14 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: codex
+spec:
+  binary: /usr/local/bin/agent-runner
+  argsTemplate: []
+  envTemplate:
+    CODEX_LOG_LEVEL: info
+  outputArtifacts:
+    - name: runner-log
+      path: /workspace/.agent/runner.log
+    - name: runner-status
+      path: /workspace/.agent/status.json

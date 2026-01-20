@@ -1,0 +1,22 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: codex-native-workflow-impl
+spec:
+  source:
+    provider: manual
+    externalId: manual:native-workflow-e2e
+    url: https://example.com/agents/native-workflow-e2e
+  summary: "Add native workflow verification checklist"
+  text: |
+    Add a short "Verification checklist" subsection under the Native workflow e2e proof
+    runbook that lists concrete steps to confirm the AgentRun succeeded, artifacts exist,
+    and the Codex PR is visible. Keep the change documentation-only and scoped to the runbook.
+  acceptanceCriteria:
+    - Runbook includes a "Verification checklist" under native workflow e2e proof
+    - Checklist mentions AgentRun status, artifact output location, and PR verification command
+    - Changes are limited to documentation
+  labels:
+    - agents
+    - workflow
+    - e2e
