@@ -34,6 +34,7 @@ Status: Current (2026-01-19)
 - Tracing/correlation IDs across Jangar, runtime adapter, and agent-runner.
 - Standard dashboards and alert thresholds.
 - Kubernetes Events for submit/start/finish/failure.
+- HTTP control-plane status endpoint (`/api/agents/control-plane/status`) mirroring `GetControlPlaneStatus`.
 
 ## Testing & Validation
 - CRD example validation in CI.
