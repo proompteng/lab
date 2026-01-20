@@ -35,6 +35,9 @@ Artifacts:
 - Compiled binaries use Bun's CJS output format plus `--compile-autoload-package-json` so `@grpc/grpc-js` can read its
   embedded package metadata when running as a standalone binary.
 
+`build:release` builds all targets by default. To limit targets (e.g., per-OS builds in CI), set
+`AGENTCTL_TARGETS=darwin-amd64,darwin-arm64,linux-amd64,linux-arm64` or pass `--targets`.
+
 ## Validation (compiled binary)
 
 By default, the validation script spins up a local mock gRPC server and exercises the compiled binary:
@@ -53,13 +56,16 @@ bun run --filter @proompteng/agentctl validate:bin -- --server 127.0.0.1:50052
 
 ## Publish npm
 
-Before publishing, confirm the npm metadata is correct in `services/jangar/agentctl/package.json`
-(`name`, `version`, and `bin` -> `dist/agentctl.js`).
+Before publishing, confirm the npm metadata is correct in `services/jangar/agentctl/package.json`:
+
+- `name`, `version`, `description`, `license`, `repository`, and `homepage`
+- `bin` points to `dist/agentctl.js`
+- `files` includes `dist/` and `README.md`
 
 ```bash
 cd services/jangar/agentctl
 npm run prepack # builds launcher + all platform binaries
-npm pack # optional sanity check: ensures dist/ contains launcher + binaries
+npm pack --dry-run # optional sanity check: ensures dist/ contains launcher + binaries
 npm publish --access public
 ```
 
@@ -68,7 +74,10 @@ npm publish --access public
 1. Upload the compiled archives from `dist/release` to a GitHub release.
 2. To generate the formula, run `bun run --filter @proompteng/agentctl build:release` (or set
    `AGENTCTL_TARGETS=darwin-amd64,darwin-arm64,linux-amd64,linux-arm64`) so all checksums are present.
-3. Copy the generated `dist/release/agentctl.rb` into the Homebrew tap repo and commit.
+3. If you built artifacts on multiple machines, combine them and run
+   `bun run --filter @proompteng/agentctl homebrew:generate -- --input dist/release`
+   to generate `agentctl.rb` with verified checksums.
+4. Copy the generated `dist/release/agentctl.rb` into the Homebrew tap repo and commit.
 4. If needed, the template lives at `services/jangar/agentctl/scripts/homebrew/agentctl.rb`.
 
 Example checksum:
