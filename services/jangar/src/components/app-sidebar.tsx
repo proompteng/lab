@@ -1,14 +1,26 @@
 import {
+  IconActivity,
   IconBrain,
+  IconBriefcase,
+  IconBroadcast,
+  IconCalendar,
   IconChartCandle,
+  IconChecklist,
   IconDatabase,
   IconGitPullRequest,
   IconHeart,
   IconHome,
+  IconKey,
   IconList,
   IconMessages,
+  IconPackage,
   IconRobot,
+  IconRoute,
+  IconSend,
   IconTerminal2,
+  IconTimeline,
+  IconTool,
+  IconWallet,
 } from '@tabler/icons-react'
 import { Link, useRouterState } from '@tanstack/react-router'
 import * as React from 'react'
@@ -83,6 +95,18 @@ const agentsControlNav = [
   { to: '/agents-control-plane/implementation-specs', label: 'Implementation specs', icon: IconBrain },
   { to: '/agents-control-plane/implementation-sources', label: 'Implementation sources', icon: IconGitPullRequest },
   { to: '/agents-control-plane/memories', label: 'Memories', icon: IconHeart },
+  { to: '/agents-control-plane/tools', label: 'Tools', icon: IconTool },
+  { to: '/agents-control-plane/tool-runs', label: 'Tool runs', icon: IconActivity },
+  { to: '/agents-control-plane/approvals', label: 'Approvals', icon: IconChecklist },
+  { to: '/agents-control-plane/budgets', label: 'Budgets', icon: IconWallet },
+  { to: '/agents-control-plane/signals', label: 'Signals', icon: IconBroadcast },
+  { to: '/agents-control-plane/signal-deliveries', label: 'Signal deliveries', icon: IconSend },
+  { to: '/agents-control-plane/schedules', label: 'Schedules', icon: IconCalendar },
+  { to: '/agents-control-plane/artifacts', label: 'Artifacts', icon: IconPackage },
+  { to: '/agents-control-plane/workspaces', label: 'Workspaces', icon: IconBriefcase },
+  { to: '/agents-control-plane/secret-bindings', label: 'Secret bindings', icon: IconKey },
+  { to: '/agents-control-plane/orchestrations', label: 'Orchestrations', icon: IconRoute },
+  { to: '/agents-control-plane/orchestration-runs', label: 'Orchestration runs', icon: IconTimeline },
 ] as const
 
 const apiNav = [

@@ -17,7 +17,15 @@ render_and_check() {
   output="$(mktemp)"
   helm template "${CHART_DIR}" --values "${values_file}" >"${output}"
 
-  if rg -n "^kind: (Ingress|StatefulSet|CronJob|PersistentVolumeClaim)" "${output}"; then
+  if command -v rg >/dev/null 2>&1; then
+    if rg -n "^kind: (Ingress|StatefulSet|CronJob|PersistentVolumeClaim)" "${output}"; then
+      echo "Disallowed resources found in rendered chart (${values_file})" >&2
+      exit 1
+    fi
+    return 0
+  fi
+
+  if grep -nE "^kind: (Ingress|StatefulSet|CronJob|PersistentVolumeClaim)" "${output}"; then
     echo "Disallowed resources found in rendered chart (${values_file})" >&2
     exit 1
   fi
