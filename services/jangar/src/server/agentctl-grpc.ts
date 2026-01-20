@@ -8,7 +8,7 @@ import { status as GrpcStatus, ServerCredentials, type ServerUnaryCall, type Ser
 import { loadSync } from '@grpc/proto-loader'
 import { postAgentRunsHandler } from '~/routes/v1/agent-runs'
 import { asRecord, asString } from '~/server/primitives-http'
-import { type KubernetesClient, createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 
 const DEFAULT_NAMESPACE = 'agents'
 const DEFAULT_GRPC_PORT = 50051
