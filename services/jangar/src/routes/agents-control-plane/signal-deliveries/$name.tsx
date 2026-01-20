@@ -9,6 +9,19 @@ export const Route = createFileRoute('/agents-control-plane/signal-deliveries/$n
   component: SignalDeliveryDetailRoute,
 })
 
+const formatObjectKeys = (value: unknown) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '—'
+  const count = Object.keys(value as Record<string, unknown>).length
+  if (count === 0) return '—'
+  return `${count} ${count === 1 ? 'key' : 'keys'}`
+}
+
+const readSpecValue = (resource: Record<string, unknown>, key: string) => {
+  const spec = resource.spec
+  if (!spec || typeof spec !== 'object' || Array.isArray(spec)) return null
+  return (spec as Record<string, unknown>)[key] ?? null
+}
+
 function SignalDeliveryDetailRoute() {
   const params = Route.useParams()
   const searchState = Route.useSearch()
@@ -24,9 +37,9 @@ function SignalDeliveryDetailRoute() {
       summaryItems={(resource, namespace) => [
         { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
         { label: 'Signal', value: readNestedValue(resource, ['spec', 'signalRef', 'name']) ?? '—' },
-        { label: 'Signal namespace', value: readNestedValue(resource, ['spec', 'signalRef', 'namespace']) ?? '—' },
         { label: 'Delivery ID', value: readNestedValue(resource, ['spec', 'deliveryId']) ?? '—' },
-        { label: 'Payload', value: readNestedValue(resource, ['spec', 'payload', 'message']) ?? '—' },
+        { label: 'Payload', value: formatObjectKeys(readSpecValue(resource, 'payload')) },
+        { label: 'Delivered', value: readNestedValue(resource, ['status', 'deliveredAt']) ?? '—' },
       ]}
     />
   )

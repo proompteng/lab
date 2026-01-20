@@ -16,19 +16,20 @@ const formatCount = (value: unknown, label: string) => {
   return `${count} ${label}${count === 1 ? '' : 's'}`
 }
 
-const readFirstSubjectKind = (resource: PrimitiveResource) => {
+const readFirstSubject = (resource: PrimitiveResource) => {
   const subjects = Array.isArray(resource.spec.subjects) ? resource.spec.subjects : []
   const first = subjects[0]
   if (!first || typeof first !== 'object' || Array.isArray(first)) return '—'
   const record = first as Record<string, unknown>
-  return typeof record.kind === 'string' && record.kind.trim().length > 0 ? record.kind : '—'
+  const kind = typeof record.kind === 'string' && record.kind.trim().length > 0 ? record.kind : null
+  const name = typeof record.name === 'string' && record.name.trim().length > 0 ? record.name : null
+  const namespace = typeof record.namespace === 'string' && record.namespace.trim().length > 0 ? record.namespace : null
+  if (kind && name && namespace) return `${kind}/${name} (${namespace})`
+  if (kind && name) return `${kind}/${name}`
+  return kind ?? name ?? '—'
 }
 
 const fields = [
-  {
-    label: 'Namespace',
-    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'namespace']) ?? '—',
-  },
   {
     label: 'Allowed secrets',
     value: (resource: PrimitiveResource) => readNestedArrayValue(resource, ['spec', 'allowedSecrets']) ?? '—',
@@ -38,8 +39,12 @@ const fields = [
     value: (resource: PrimitiveResource) => formatCount(resource.spec.subjects, 'subject'),
   },
   {
-    label: 'Subject kind',
-    value: (resource: PrimitiveResource) => readFirstSubjectKind(resource),
+    label: 'First subject',
+    value: (resource: PrimitiveResource) => readFirstSubject(resource),
+  },
+  {
+    label: 'Phase',
+    value: (resource: PrimitiveResource) => readNestedValue(resource, ['status', 'phase']) ?? '—',
   },
 ]
 

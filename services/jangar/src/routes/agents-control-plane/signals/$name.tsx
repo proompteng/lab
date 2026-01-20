@@ -9,6 +9,19 @@ export const Route = createFileRoute('/agents-control-plane/signals/$name')({
   component: SignalDetailRoute,
 })
 
+const formatObjectKeys = (value: unknown) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '—'
+  const count = Object.keys(value as Record<string, unknown>).length
+  if (count === 0) return '—'
+  return `${count} ${count === 1 ? 'key' : 'keys'}`
+}
+
+const readSpecValue = (resource: Record<string, unknown>, key: string) => {
+  const spec = resource.spec
+  if (!spec || typeof spec !== 'object' || Array.isArray(spec)) return null
+  return (spec as Record<string, unknown>)[key] ?? null
+}
+
 function SignalDetailRoute() {
   const params = Route.useParams()
   const searchState = Route.useSearch()
@@ -23,10 +36,10 @@ function SignalDetailRoute() {
       searchState={searchState}
       summaryItems={(resource, namespace) => [
         { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
+        { label: 'Channel', value: readNestedValue(resource, ['spec', 'channel']) ?? '—' },
         { label: 'Description', value: readNestedValue(resource, ['spec', 'description']) ?? '—' },
-        { label: 'Retention', value: readNestedValue(resource, ['spec', 'retentionSeconds']) ?? '—' },
-        { label: 'Schema', value: readNestedValue(resource, ['spec', 'payloadSchema']) ?? '—' },
-        { label: 'Phase', value: readNestedValue(resource, ['status', 'phase']) ?? '—' },
+        { label: 'Payload', value: formatObjectKeys(readSpecValue(resource, 'payload')) },
+        { label: 'Last delivery', value: readNestedValue(resource, ['status', 'lastDeliveryAt']) ?? '—' },
       ]}
     />
   )

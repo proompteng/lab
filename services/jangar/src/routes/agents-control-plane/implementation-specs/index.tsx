@@ -15,18 +15,15 @@ export const Route = createFileRoute('/agents-control-plane/implementation-specs
 const buildSpecFields = (resource: PrimitiveResource) => [
   {
     label: 'Source',
-    value:
-      readNestedValue(resource, ['spec', 'sourceRef', 'name']) ??
-      readNestedValue(resource, ['spec', 'source', 'kind']) ??
-      '—',
+    value: readNestedValue(resource, ['spec', 'source', 'provider']) ?? '—',
   },
   {
-    label: 'Title',
-    value: readNestedValue(resource, ['spec', 'title']) ?? '—',
+    label: 'Summary',
+    value: readNestedValue(resource, ['spec', 'summary']) ?? '—',
   },
   {
     label: 'External ID',
-    value: readNestedValue(resource, ['spec', 'externalId']) ?? '—',
+    value: readNestedValue(resource, ['spec', 'source', 'externalId']) ?? '—',
   },
   {
     label: 'Synced',

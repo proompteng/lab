@@ -23,6 +23,10 @@ const fields = [
     label: 'Args',
     value: (resource: PrimitiveResource) => readNestedArrayValue(resource, ['spec', 'args']) ?? '—',
   },
+  {
+    label: 'Timeout',
+    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'timeoutSeconds']) ?? '—',
+  },
 ]
 
 function ToolsListRoute() {

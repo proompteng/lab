@@ -1,7 +1,13 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
-import { deriveStatusLabel, getMetadataValue, readNestedValue, StatusBadge } from '@/components/agents-control-plane'
+import {
+  deriveStatusLabel,
+  getMetadataValue,
+  readNestedArrayValue,
+  readNestedValue,
+  StatusBadge,
+} from '@/components/agents-control-plane'
 import { DEFAULT_NAMESPACE, parseNamespaceSearch } from '@/components/agents-control-plane-search'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,16 +24,16 @@ const buildMemoryFields = (resource: PrimitiveResource) => [
     value: readNestedValue(resource, ['spec', 'type']) ?? '—',
   },
   {
+    label: 'Default',
+    value: readNestedValue(resource, ['spec', 'default']) ?? '—',
+  },
+  {
     label: 'Secret',
     value: readNestedValue(resource, ['spec', 'connection', 'secretRef', 'name']) ?? '—',
   },
   {
-    label: 'Provider',
-    value: readNestedValue(resource, ['spec', 'provider']) ?? '—',
-  },
-  {
-    label: 'Phase',
-    value: readNestedValue(resource, ['status', 'phase']) ?? '—',
+    label: 'Capabilities',
+    value: readNestedArrayValue(resource, ['spec', 'capabilities']) ?? '—',
   },
 ]
 

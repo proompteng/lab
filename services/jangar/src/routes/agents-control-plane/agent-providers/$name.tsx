@@ -8,6 +8,7 @@ import {
   EventsList,
   getMetadataValue,
   getStatusConditions,
+  readNestedArrayValue,
   readNestedValue,
   StatusBadge,
   YamlCodeBlock,
@@ -22,6 +23,25 @@ export const Route = createFileRoute('/agents-control-plane/agent-providers/$nam
   validateSearch: parseNamespaceSearch,
   component: AgentProviderDetailPage,
 })
+
+const formatCount = (value: unknown, label: string) => {
+  const count = Array.isArray(value) ? value.length : 0
+  if (count === 0) return '—'
+  return `${count} ${label}${count === 1 ? '' : 's'}`
+}
+
+const formatObjectCount = (value: unknown, label: string) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '—'
+  const count = Object.keys(value as Record<string, unknown>).length
+  if (count === 0) return '—'
+  return `${count} ${label}${count === 1 ? '' : 's'}`
+}
+
+const readSpecValue = (resource: Record<string, unknown>, key: string) => {
+  const spec = resource.spec
+  if (!spec || typeof spec !== 'object' || Array.isArray(spec)) return null
+  return (spec as Record<string, unknown>)[key] ?? null
+}
 
 function AgentProviderDetailPage() {
   const params = Route.useParams()
@@ -84,19 +104,11 @@ function AgentProviderDetailPage() {
   const summaryItems = resource
     ? [
         { label: 'Namespace', value: getMetadataValue(resource, 'namespace') ?? searchState.namespace },
-        {
-          label: 'Type',
-          value: readNestedValue(resource, ['spec', 'type']) ?? readNestedValue(resource, ['spec', 'provider']) ?? '—',
-        },
-        { label: 'Endpoint', value: readNestedValue(resource, ['spec', 'endpoint']) ?? '—' },
-        {
-          label: 'Secret',
-          value:
-            readNestedValue(resource, ['spec', 'connection', 'secretRef', 'name']) ??
-            readNestedValue(resource, ['spec', 'secretRef', 'name']) ??
-            '—',
-        },
-        { label: 'Mode', value: readNestedValue(resource, ['spec', 'mode']) ?? '—' },
+        { label: 'Binary', value: readNestedValue(resource, ['spec', 'binary']) ?? '—' },
+        { label: 'Args template', value: readNestedArrayValue(resource, ['spec', 'argsTemplate']) ?? '—' },
+        { label: 'Env template', value: formatObjectCount(readSpecValue(resource, 'envTemplate'), 'var') },
+        { label: 'Input files', value: formatCount(readSpecValue(resource, 'inputFiles'), 'file') },
+        { label: 'Output artifacts', value: formatCount(readSpecValue(resource, 'outputArtifacts'), 'artifact') },
       ]
     : []
 

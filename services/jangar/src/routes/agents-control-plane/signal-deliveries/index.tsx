@@ -10,14 +10,17 @@ export const Route = createFileRoute('/agents-control-plane/signal-deliveries/')
   component: SignalDeliveriesListRoute,
 })
 
+const formatObjectKeys = (value: unknown) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '—'
+  const count = Object.keys(value as Record<string, unknown>).length
+  if (count === 0) return '—'
+  return `${count} ${count === 1 ? 'key' : 'keys'}`
+}
+
 const fields = [
   {
     label: 'Signal',
     value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'signalRef', 'name']) ?? '—',
-  },
-  {
-    label: 'Signal namespace',
-    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'signalRef', 'namespace']) ?? '—',
   },
   {
     label: 'Delivery ID',
@@ -25,7 +28,11 @@ const fields = [
   },
   {
     label: 'Payload',
-    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'payload', 'message']) ?? '—',
+    value: (resource: PrimitiveResource) => formatObjectKeys(resource.spec.payload),
+  },
+  {
+    label: 'Delivered',
+    value: (resource: PrimitiveResource) => readNestedValue(resource, ['status', 'deliveredAt']) ?? '—',
   },
 ]
 

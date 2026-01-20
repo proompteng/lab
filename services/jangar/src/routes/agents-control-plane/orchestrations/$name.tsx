@@ -15,6 +15,13 @@ const formatCount = (value: unknown, label: string) => {
   return `${count} ${label}${count === 1 ? '' : 's'}`
 }
 
+const formatObjectCount = (value: unknown, label: string) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '—'
+  const count = Object.keys(value as Record<string, unknown>).length
+  if (count === 0) return '—'
+  return `${count} ${label}${count === 1 ? '' : 's'}`
+}
+
 const readFirstStep = (value: unknown) => {
   if (!Array.isArray(value)) return '—'
   const first = value[0]
@@ -46,12 +53,13 @@ function OrchestrationDetailRoute() {
       searchState={searchState}
       summaryItems={(resource, namespace) => {
         const steps = readSpecValue(resource, 'steps')
+        const policies = readSpecValue(resource, 'policies')
         return [
           { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
-          { label: 'Composition', value: readNestedValue(resource, ['spec', 'compositionRef', 'name']) ?? '—' },
           { label: 'Entrypoint', value: readNestedValue(resource, ['spec', 'entrypoint']) ?? '—' },
           { label: 'Steps', value: formatCount(steps, 'step') },
           { label: 'First step', value: readFirstStep(steps) },
+          { label: 'Policies', value: formatObjectCount(policies, 'policy') },
         ]
       }}
     />

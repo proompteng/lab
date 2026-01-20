@@ -87,26 +87,62 @@ const appNav: AppNavItem[] = [
   },
 ]
 
-const agentsControlNav = [
-  { to: '/agents-control-plane', label: 'Overview', icon: IconRobot },
-  { to: '/agents-control-plane/agents', label: 'Agents', icon: IconMessages },
-  { to: '/agents-control-plane/agent-runs', label: 'Agent runs', icon: IconList },
-  { to: '/agents-control-plane/agent-providers', label: 'Agent providers', icon: IconDatabase },
-  { to: '/agents-control-plane/implementation-specs', label: 'Implementation specs', icon: IconBrain },
-  { to: '/agents-control-plane/implementation-sources', label: 'Implementation sources', icon: IconGitPullRequest },
-  { to: '/agents-control-plane/memories', label: 'Memories', icon: IconHeart },
-  { to: '/agents-control-plane/tools', label: 'Tools', icon: IconTool },
-  { to: '/agents-control-plane/tool-runs', label: 'Tool runs', icon: IconActivity },
-  { to: '/agents-control-plane/approvals', label: 'Approvals', icon: IconChecklist },
-  { to: '/agents-control-plane/budgets', label: 'Budgets', icon: IconWallet },
-  { to: '/agents-control-plane/signals', label: 'Signals', icon: IconBroadcast },
-  { to: '/agents-control-plane/signal-deliveries', label: 'Signal deliveries', icon: IconSend },
-  { to: '/agents-control-plane/schedules', label: 'Schedules', icon: IconCalendar },
-  { to: '/agents-control-plane/artifacts', label: 'Artifacts', icon: IconPackage },
-  { to: '/agents-control-plane/workspaces', label: 'Workspaces', icon: IconBriefcase },
-  { to: '/agents-control-plane/secret-bindings', label: 'Secret bindings', icon: IconKey },
-  { to: '/agents-control-plane/orchestrations', label: 'Orchestrations', icon: IconRoute },
-  { to: '/agents-control-plane/orchestration-runs', label: 'Orchestration runs', icon: IconTimeline },
+type AgentsControlNavGroup = {
+  label: string
+  items: AppNavItem[]
+}
+
+const agentsControlOverview: AppNavItem = { to: '/agents-control-plane', label: 'Overview', icon: IconRobot }
+
+const agentsControlGroups: AgentsControlNavGroup[] = [
+  {
+    label: 'Resources',
+    items: [
+      { to: '/agents-control-plane/agents', label: 'Agents', icon: IconMessages },
+      { to: '/agents-control-plane/agent-providers', label: 'Agent providers', icon: IconDatabase },
+      { to: '/agents-control-plane/implementation-specs', label: 'Implementation specs', icon: IconBrain },
+      { to: '/agents-control-plane/implementation-sources', label: 'Implementation sources', icon: IconGitPullRequest },
+      { to: '/agents-control-plane/tools', label: 'Tools', icon: IconTool },
+    ],
+  },
+  {
+    label: 'Runs',
+    items: [
+      { to: '/agents-control-plane/agent-runs', label: 'Agent runs', icon: IconList },
+      { to: '/agents-control-plane/tool-runs', label: 'Tool runs', icon: IconActivity },
+    ],
+  },
+  {
+    label: 'Policies',
+    items: [
+      { to: '/agents-control-plane/approvals', label: 'Approvals', icon: IconChecklist },
+      { to: '/agents-control-plane/budgets', label: 'Budgets', icon: IconWallet },
+      { to: '/agents-control-plane/secret-bindings', label: 'Secret bindings', icon: IconKey },
+    ],
+  },
+  {
+    label: 'Signals',
+    items: [
+      { to: '/agents-control-plane/signals', label: 'Signals', icon: IconBroadcast },
+      { to: '/agents-control-plane/signal-deliveries', label: 'Signal deliveries', icon: IconSend },
+    ],
+  },
+  {
+    label: 'Storage',
+    items: [
+      { to: '/agents-control-plane/memories', label: 'Memories', icon: IconHeart },
+      { to: '/agents-control-plane/artifacts', label: 'Artifacts', icon: IconPackage },
+      { to: '/agents-control-plane/workspaces', label: 'Workspaces', icon: IconBriefcase },
+    ],
+  },
+  {
+    label: 'Orchestration',
+    items: [
+      { to: '/agents-control-plane/orchestrations', label: 'Orchestrations', icon: IconRoute },
+      { to: '/agents-control-plane/orchestration-runs', label: 'Orchestration runs', icon: IconTimeline },
+      { to: '/agents-control-plane/schedules', label: 'Schedules', icon: IconCalendar },
+    ],
+  },
 ] as const
 
 const apiNav = [
@@ -211,20 +247,42 @@ export function AppSidebar() {
 
         <SidebarGroup>
           <SidebarGroupLabel>Agents</SidebarGroupLabel>
-          <SidebarGroupContent>
+          <SidebarGroupContent className="space-y-2">
             <SidebarMenu>
-              {agentsControlNav.map((item) => (
-                <SidebarMenuItem key={item.to}>
-                  <SidebarNavButton
-                    icon={item.icon}
-                    isActive={pathname === item.to || pathname.startsWith(`${item.to}/`)}
-                    isCollapsed={isCollapsed}
-                    label={item.label}
-                    to={item.to}
-                  />
-                </SidebarMenuItem>
-              ))}
+              <SidebarMenuItem key={agentsControlOverview.to}>
+                <SidebarNavButton
+                  icon={agentsControlOverview.icon}
+                  isActive={
+                    pathname === agentsControlOverview.to || pathname.startsWith(`${agentsControlOverview.to}/`)
+                  }
+                  isCollapsed={isCollapsed}
+                  label={agentsControlOverview.label}
+                  to={agentsControlOverview.to}
+                />
+              </SidebarMenuItem>
             </SidebarMenu>
+            {agentsControlGroups.map((group) => (
+              <div key={group.label} className="space-y-1">
+                {isCollapsed ? null : (
+                  <div className="px-3 pt-2 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+                    {group.label}
+                  </div>
+                )}
+                <SidebarMenu>
+                  {group.items.map((item) => (
+                    <SidebarMenuItem key={item.to}>
+                      <SidebarNavButton
+                        icon={item.icon}
+                        isActive={pathname === item.to || pathname.startsWith(`${item.to}/`)}
+                        isCollapsed={isCollapsed}
+                        label={item.label}
+                        to={item.to}
+                      />
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </div>
+            ))}
           </SidebarGroupContent>
         </SidebarGroup>
 

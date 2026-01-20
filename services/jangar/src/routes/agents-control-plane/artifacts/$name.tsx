@@ -24,9 +24,9 @@ function ArtifactDetailRoute() {
       summaryItems={(resource, namespace) => [
         { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
         { label: 'Storage', value: readNestedValue(resource, ['spec', 'storageRef', 'name']) ?? '—' },
-        { label: 'Provider', value: readNestedValue(resource, ['spec', 'storageRef', 'provider']) ?? '—' },
         { label: 'TTL', value: readNestedValue(resource, ['spec', 'lifecycle', 'ttlDays']) ?? '—' },
-        { label: 'Content type', value: readNestedValue(resource, ['spec', 'metadata', 'contentType']) ?? '—' },
+        { label: 'URI', value: readNestedValue(resource, ['status', 'uri']) ?? '—' },
+        { label: 'Checksum', value: readNestedValue(resource, ['status', 'checksum']) ?? '—' },
       ]}
     />
   )

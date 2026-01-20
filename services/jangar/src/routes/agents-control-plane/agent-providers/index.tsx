@@ -1,7 +1,13 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
-import { deriveStatusLabel, getMetadataValue, readNestedValue, StatusBadge } from '@/components/agents-control-plane'
+import {
+  deriveStatusLabel,
+  getMetadataValue,
+  readNestedArrayValue,
+  readNestedValue,
+  StatusBadge,
+} from '@/components/agents-control-plane'
 import { DEFAULT_NAMESPACE, parseNamespaceSearch } from '@/components/agents-control-plane-search'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,25 +18,35 @@ export const Route = createFileRoute('/agents-control-plane/agent-providers/')({
   component: AgentProvidersListPage,
 })
 
+const formatCount = (value: unknown, label: string) => {
+  const count = Array.isArray(value) ? value.length : 0
+  if (count === 0) return '—'
+  return `${count} ${label}${count === 1 ? '' : 's'}`
+}
+
+const formatObjectCount = (value: unknown, label: string) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '—'
+  const count = Object.keys(value as Record<string, unknown>).length
+  if (count === 0) return '—'
+  return `${count} ${label}${count === 1 ? '' : 's'}`
+}
+
 const buildProviderFields = (resource: PrimitiveResource) => [
   {
-    label: 'Type',
-    value: readNestedValue(resource, ['spec', 'type']) ?? readNestedValue(resource, ['spec', 'provider']) ?? '—',
+    label: 'Binary',
+    value: readNestedValue(resource, ['spec', 'binary']) ?? '—',
   },
   {
-    label: 'Endpoint',
-    value: readNestedValue(resource, ['spec', 'endpoint']) ?? '—',
+    label: 'Args template',
+    value: readNestedArrayValue(resource, ['spec', 'argsTemplate']) ?? '—',
   },
   {
-    label: 'Secret',
-    value:
-      readNestedValue(resource, ['spec', 'connection', 'secretRef', 'name']) ??
-      readNestedValue(resource, ['spec', 'secretRef', 'name']) ??
-      '—',
+    label: 'Env template',
+    value: formatObjectCount(resource.spec.envTemplate, 'var'),
   },
   {
-    label: 'Mode',
-    value: readNestedValue(resource, ['spec', 'mode']) ?? '—',
+    label: 'Input files',
+    value: formatCount(resource.spec.inputFiles, 'file'),
   },
 ]
 

@@ -23,6 +23,14 @@ export const Route = createFileRoute('/agents-control-plane/implementation-sourc
   component: ImplementationSourceDetailPage,
 })
 
+const readScopeTarget = (resource: Record<string, unknown>) =>
+  readNestedValue(resource, ['spec', 'scope', 'repository']) ??
+  readNestedValue(resource, ['spec', 'scope', 'project']) ??
+  readNestedValue(resource, ['spec', 'scope', 'organization']) ??
+  readNestedValue(resource, ['spec', 'scope', 'team']) ??
+  readNestedValue(resource, ['spec', 'scope', 'query']) ??
+  '—'
+
 function ImplementationSourceDetailPage() {
   const params = Route.useParams()
   const searchState = Route.useSearch()
@@ -84,17 +92,11 @@ function ImplementationSourceDetailPage() {
   const summaryItems = resource
     ? [
         { label: 'Namespace', value: getMetadataValue(resource, 'namespace') ?? searchState.namespace },
-        {
-          label: 'Type',
-          value: readNestedValue(resource, ['spec', 'type']) ?? readNestedValue(resource, ['spec', 'provider']) ?? '—',
-        },
-        {
-          label: 'Target',
-          value:
-            readNestedValue(resource, ['spec', 'target']) ?? readNestedValue(resource, ['spec', 'repository']) ?? '—',
-        },
-        { label: 'Cursor', value: readNestedValue(resource, ['status', 'cursor']) ?? '—' },
-        { label: 'Synced at', value: readNestedValue(resource, ['status', 'syncedAt']) ?? '—' },
+        { label: 'Provider', value: readNestedValue(resource, ['spec', 'provider']) ?? '—' },
+        { label: 'Scope', value: readScopeTarget(resource) },
+        { label: 'Auth secret', value: readNestedValue(resource, ['spec', 'auth', 'secretRef', 'name']) ?? '—' },
+        { label: 'Webhook', value: readNestedValue(resource, ['spec', 'webhook', 'enabled']) ?? '—' },
+        { label: 'Last sync', value: readNestedValue(resource, ['status', 'lastSyncedAt']) ?? '—' },
       ]
     : []
 

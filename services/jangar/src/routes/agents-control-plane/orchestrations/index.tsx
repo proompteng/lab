@@ -16,6 +16,13 @@ const formatCount = (value: unknown, label: string) => {
   return `${count} ${label}${count === 1 ? '' : 's'}`
 }
 
+const formatObjectCount = (value: unknown, label: string) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '—'
+  const count = Object.keys(value as Record<string, unknown>).length
+  if (count === 0) return '—'
+  return `${count} ${label}${count === 1 ? '' : 's'}`
+}
+
 const readFirstStepKind = (resource: PrimitiveResource) => {
   const steps = Array.isArray(resource.spec.steps) ? resource.spec.steps : []
   const first = steps[0]
@@ -25,10 +32,6 @@ const readFirstStepKind = (resource: PrimitiveResource) => {
 }
 
 const fields = [
-  {
-    label: 'Composition',
-    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'compositionRef', 'name']) ?? '—',
-  },
   {
     label: 'Entrypoint',
     value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'entrypoint']) ?? '—',
@@ -40,6 +43,10 @@ const fields = [
   {
     label: 'First step',
     value: (resource: PrimitiveResource) => readFirstStepKind(resource),
+  },
+  {
+    label: 'Policies',
+    value: (resource: PrimitiveResource) => formatObjectCount(resource.spec.policies, 'policy'),
   },
 ]
 

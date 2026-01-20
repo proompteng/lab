@@ -12,12 +12,12 @@ export const Route = createFileRoute('/agents-control-plane/budgets/')({
 
 const fields = [
   {
-    label: 'Composition',
-    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'compositionRef', 'name']) ?? '—',
-  },
-  {
     label: 'CPU',
     value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'limits', 'cpu']) ?? '—',
+  },
+  {
+    label: 'Memory',
+    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'limits', 'memory']) ?? '—',
   },
   {
     label: 'Tokens',

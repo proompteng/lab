@@ -23,11 +23,13 @@ function BudgetDetailRoute() {
       searchState={searchState}
       summaryItems={(resource, namespace) => [
         { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
-        { label: 'Composition', value: readNestedValue(resource, ['spec', 'compositionRef', 'name']) ?? '—' },
         { label: 'CPU limit', value: readNestedValue(resource, ['spec', 'limits', 'cpu']) ?? '—' },
+        { label: 'Memory limit', value: readNestedValue(resource, ['spec', 'limits', 'memory']) ?? '—' },
+        { label: 'GPU limit', value: readNestedValue(resource, ['spec', 'limits', 'gpu']) ?? '—' },
         { label: 'Token limit', value: readNestedValue(resource, ['spec', 'limits', 'tokens']) ?? '—' },
         { label: 'Dollar limit', value: readNestedValue(resource, ['spec', 'limits', 'dollars']) ?? '—' },
-        { label: 'Window', value: readNestedValue(resource, ['spec', 'window', 'period']) ?? '—' },
+        { label: 'Tokens used', value: readNestedValue(resource, ['status', 'used', 'tokens']) ?? '—' },
+        { label: 'Dollars used', value: readNestedValue(resource, ['status', 'used', 'dollars']) ?? '—' },
       ]}
     />
   )

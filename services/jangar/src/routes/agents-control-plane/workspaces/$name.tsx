@@ -26,7 +26,8 @@ function WorkspaceDetailRoute() {
         { label: 'Size', value: readNestedValue(resource, ['spec', 'size']) ?? '—' },
         { label: 'Access modes', value: readNestedArrayValue(resource, ['spec', 'accessModes']) ?? '—' },
         { label: 'Storage class', value: readNestedValue(resource, ['spec', 'storageClassName']) ?? '—' },
-        { label: 'Volume mode', value: readNestedValue(resource, ['spec', 'volumeMode']) ?? '—' },
+        { label: 'TTL', value: readNestedValue(resource, ['spec', 'ttlSeconds']) ?? '—' },
+        { label: 'Volume', value: readNestedValue(resource, ['status', 'volumeName']) ?? '—' },
       ]}
     />
   )
