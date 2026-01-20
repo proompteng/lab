@@ -18,11 +18,14 @@ export const buildBinaries = async (argv: string[]) => {
     const output = resolve(distDir, `agentctl-${target.label}`)
     console.log(`Building ${target.bunTarget} → ${output}`)
 
-    const proc = Bun.spawn(['bun', 'build', entry, '--compile', '--target', target.bunTarget, '--outfile', output], {
-      cwd: root,
-      stderr: 'inherit',
-      stdout: 'inherit',
-    })
+    const proc = Bun.spawn(
+      ['bun', 'build', entry, '--compile', '--format=cjs', '--target', target.bunTarget, '--outfile', output],
+      {
+        cwd: root,
+        stderr: 'inherit',
+        stdout: 'inherit',
+      },
+    )
 
     const exitCode = await proc.exited
     if (exitCode !== 0) {

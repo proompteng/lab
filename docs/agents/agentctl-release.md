@@ -28,6 +28,17 @@ Artifacts:
 - Each archive contains a single `agentctl` binary (no suffix).
 - `services/jangar/agentctl/dist/release/*.sha256`
 - `services/jangar/agentctl/dist/release/agentctl.rb` (Homebrew formula with checksums, generated when all targets are built)
+- Compiled binaries are built with Bun's CJS output format to keep gRPC calls working under `bun build --compile`.
+
+## Validation (compiled binary)
+
+With a port-forward running (for example, `kubectl -n agents port-forward svc/agents-grpc 50052:50051`), validate the
+compiled binary:
+
+```bash
+bun run --filter @proompteng/agentctl build:bin
+bun run --filter @proompteng/agentctl validate:bin -- --server 127.0.0.1:50052
+```
 
 ## Publish npm
 

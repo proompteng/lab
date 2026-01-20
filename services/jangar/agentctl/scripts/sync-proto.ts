@@ -12,7 +12,9 @@ await mkdir(dirname(destination), { recursive: true })
 await copyFile(source, destination)
 
 const protoContents = await readFile(source, 'utf8')
-await writeFile(embeddedOutput, `export const EMBEDDED_AGENTCTL_PROTO = ${JSON.stringify(protoContents)}\n`, 'utf8')
+const escaped = protoContents.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, '\\n')
+const embedded = `export const EMBEDDED_AGENTCTL_PROTO =\n  '${escaped}'\n`
+await writeFile(embeddedOutput, embedded, 'utf8')
 
 console.log(`Synced proto to ${destination}`)
 console.log(`Updated embedded proto at ${embeddedOutput}`)
