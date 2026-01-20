@@ -1,7 +1,7 @@
 # agentctl
 
-`agentctl` is a gRPC CLI for managing Agents primitives through the Jangar controller. It ships with the Jangar service
-and never calls Kubernetes directly; all operations go through the Jangar gRPC API.
+`agentctl` is a gRPC CLI for managing Agents primitives through the Jangar controller. It ships with the Jangar
+service and never calls Kubernetes directly; all operations go through the Jangar gRPC API.
 
 ## Install
 
@@ -75,13 +75,15 @@ agentctl memory delete <name>
 agentctl run submit --agent <name> --impl <name> --runtime <type>
 agentctl run list
 agentctl run get <name>
+agentctl run status <name>
+agentctl run wait <name>
 agentctl run logs <name> --follow
 agentctl run cancel <name>
 ```
 
 By default, `agentctl` targets the in-cluster service address `agents-grpc.agents.svc.cluster.local:50051` in the
 `agents` namespace. Use `--namespace`/`-n` to override the namespace and `--server` (or `--address`) for
-port-forwarded access.
+port-forwarded access. `--output` supports `table` (default), `json`, and `yaml`.
 
 ## Build
 

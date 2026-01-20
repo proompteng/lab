@@ -211,6 +211,8 @@ Usage:
   agentctl run submit --agent <name> --impl <name> --runtime <type> [flags]
   agentctl run apply -f <file>
   agentctl run get <name>
+  agentctl run status <name>
+  agentctl run wait <name>
   agentctl run list
   agentctl run logs <name> [--follow]
   agentctl run cancel <name>
@@ -412,11 +414,16 @@ const callUnary = <Response>(
     })
   })
 
-const parseOutput = (value: string | undefined) => value ?? 'table'
-
 const parseJson = (value: string) => {
   if (!value) return null
   return JSON.parse(value) as Record<string, unknown>
+}
+
+const normalizeOutput = (value: string | undefined) => {
+  if (!value) return 'table'
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'json' || normalized === 'yaml' || normalized === 'table') return normalized
+  return 'table'
 }
 
 const formatAge = (timestamp?: string) => {
@@ -434,6 +441,39 @@ const formatAge = (timestamp?: string) => {
   return `${days}d`
 }
 
+const toCell = (value: unknown) => {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string') return value
+  return String(value)
+}
+
+type TableColumn<T> = {
+  label: string
+  value: (row: T) => string
+}
+
+const renderTable = <T>(rows: T[], columns: TableColumn<T>[]) => {
+  const widths = columns.map((column) => column.label.length)
+  const values = rows.map((row) =>
+    columns.map((column, index) => {
+      const cell = column.value(row)
+      const safe = cell ?? ''
+      const len = safe.length
+      widths[index] = Math.max(widths[index] ?? 0, len)
+      return safe
+    }),
+  )
+
+  const pad = (value: string, width: number) => value.padEnd(width, ' ')
+  const header = columns.map((column, index) => pad(column.label, widths[index] ?? 0)).join('  ')
+  console.log(header)
+
+  for (const row of values) {
+    const line = row.map((cell, index) => pad(cell, widths[index] ?? 0)).join('  ')
+    console.log(line)
+  }
+}
+
 const toRow = (resource: Record<string, unknown>) => {
   const metadata = (resource.metadata ?? {}) as Record<string, unknown>
   const status = (resource.status ?? {}) as Record<string, unknown>
@@ -443,11 +483,11 @@ const toRow = (resource: Record<string, unknown>) => {
     | undefined
   const phase = status.phase ?? ready?.status ?? ''
   return {
-    name: metadata.name ?? metadata.generateName ?? '',
-    namespace: metadata.namespace ?? '',
-    kind: resource.kind ?? '',
+    name: toCell(metadata.name ?? metadata.generateName ?? ''),
+    namespace: toCell(metadata.namespace ?? ''),
+    kind: toCell(resource.kind ?? ''),
     age: formatAge(typeof metadata.creationTimestamp === 'string' ? metadata.creationTimestamp : undefined),
-    status: typeof phase === 'string' ? phase : '',
+    status: typeof phase === 'string' ? phase : toCell(phase),
   }
 }
 
@@ -460,7 +500,17 @@ const outputResource = (resource: Record<string, unknown>, output: string) => {
     console.log(YAML.stringify(resource))
     return
   }
-  console.table([toRow(resource)])
+  const row = toRow(resource)
+  renderTable(
+    [row],
+    [
+      { label: 'NAME', value: (entry) => entry.name },
+      { label: 'NAMESPACE', value: (entry) => entry.namespace },
+      { label: 'KIND', value: (entry) => entry.kind },
+      { label: 'AGE', value: (entry) => entry.age },
+      { label: 'STATUS', value: (entry) => entry.status },
+    ],
+  )
 }
 
 const outputList = (resource: Record<string, unknown>, output: string) => {
@@ -473,7 +523,14 @@ const outputList = (resource: Record<string, unknown>, output: string) => {
     return
   }
   const items = Array.isArray(resource.items) ? (resource.items as Record<string, unknown>[]) : []
-  console.table(items.map(toRow))
+  const rows = items.map(toRow)
+  renderTable(rows, [
+    { label: 'NAME', value: (entry) => entry.name },
+    { label: 'NAMESPACE', value: (entry) => entry.namespace },
+    { label: 'KIND', value: (entry) => entry.kind },
+    { label: 'AGE', value: (entry) => entry.age },
+    { label: 'STATUS', value: (entry) => entry.status },
+  ])
 }
 
 const parseKeyValueList = (values: string[]) => {
@@ -540,10 +597,7 @@ const waitForRunCompletion = async (
       const status = (resource.status ?? {}) as Record<string, unknown>
       const phase = typeof status.phase === 'string' ? status.phase : ''
       if (['Succeeded', 'Failed', 'Cancelled'].includes(phase)) {
-        console.log(`AgentRun ${name} ${phase}`)
-        if (output !== 'table') {
-          outputResource(resource, output)
-        }
+        outputResource(resource, output)
         return 0
       }
     }
@@ -613,7 +667,12 @@ const outputStatus = (status: ControlPlaneStatus, output: string, namespace: str
     })
   }
 
-  console.table(rows)
+  renderTable(rows, [
+    { label: 'COMPONENT', value: (entry) => entry.component },
+    { label: 'NAMESPACE', value: (entry) => entry.namespace },
+    { label: 'STATUS', value: (entry) => entry.status },
+    { label: 'MESSAGE', value: (entry) => entry.message },
+  ])
 }
 
 const readFileContent = async (file: string) => {
@@ -634,7 +693,7 @@ const main = async () => {
     }
 
     const config = await loadConfig()
-    const output = parseOutput(flags.output)
+    const output = normalizeOutput(flags.output)
 
     if (command === 'config') {
       if (subcommand === 'view') {
@@ -946,12 +1005,11 @@ const main = async () => {
 
         if (response.resource_json) {
           const resource = parseJson(response.resource_json)
-          if (resource) outputResource(resource, output)
-
-          const runName = ((resource.metadata ?? {}) as { name?: string }).name
+          const runName = ((resource?.metadata ?? {}) as { name?: string }).name
           if (options.wait === 'true' && runName) {
             return await waitForRunCompletion(client, metadata, runName, namespace, output)
           }
+          if (resource) outputResource(resource, output)
         }
         return 0
       }
@@ -972,7 +1030,10 @@ const main = async () => {
         if (resource) outputResource(resource, output)
         return 0
       }
-      if (subcommand === 'get') {
+      if (subcommand === 'get' || subcommand === 'status') {
+        if (!args[0]) {
+          throw new Error('run get requires a name')
+        }
         const response = await callUnary<{ json: string }>(
           client,
           'GetAgentRun',
@@ -982,6 +1043,12 @@ const main = async () => {
         const resource = parseJson(response.json)
         if (resource) outputResource(resource, output)
         return 0
+      }
+      if (subcommand === 'wait') {
+        if (!args[0]) {
+          throw new Error('run wait requires a name')
+        }
+        return await waitForRunCompletion(client, metadata, args[0], namespace, output)
       }
       if (subcommand === 'list') {
         const response = await callUnary<{ json: string }>(client, 'ListAgentRuns', { namespace }, metadata)
