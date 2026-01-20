@@ -44,7 +44,6 @@ const parseNamespaces = () => {
   return list.length > 0 ? list : DEFAULT_NAMESPACES
 }
 
-
 const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
   const current = namespaceQueues.get(namespace) ?? Promise.resolve()
   const next = current
@@ -309,7 +308,6 @@ export const startPrimitivesReconciler = () => {
       }),
     )
   }
-
 }
 
 export const stopPrimitivesReconciler = () => {

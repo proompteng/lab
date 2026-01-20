@@ -66,7 +66,6 @@ const parseNamespaces = () => {
   return list.length > 0 ? list : DEFAULT_NAMESPACES
 }
 
-
 const resolveCrdCheckNamespace = () => {
   const namespaces = parseNamespaces()
   if (namespaces.includes('*')) return 'default'

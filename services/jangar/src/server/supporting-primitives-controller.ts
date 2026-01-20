@@ -56,7 +56,6 @@ const parseNamespaces = () => {
   return list.length > 0 ? list : DEFAULT_NAMESPACES
 }
 
-
 const runKubectl = (args: string[]) =>
   new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
     const child = spawn('kubectl', args, { stdio: ['ignore', 'pipe', 'pipe'] })

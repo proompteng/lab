@@ -140,7 +140,6 @@ const resolveNamespaces = async () => {
   return resolved
 }
 
-
 const parseConcurrency = () => ({
   perNamespace:
     Number.parseInt(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE ?? '', 10) ||
