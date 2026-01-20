@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: "8e480ce4"
-  digest: sha256:103cdef8c8d92e3ac6274c67d18312a683c3e71a7270c2d748ed7bfe3108fbba
+  tag: "c9c5c097"
+  digest: sha256:6848b2017f40e0ec7376eaad1f2fea5decfc98cc7755940dc3988f58a1e59211
   pullPolicy: IfNotPresent
 resources:
   requests:
@@ -19,3 +19,12 @@ database:
     key: url
 agentComms:
   enabled: false
+grpc:
+  enabled: true
+  port: 50051
+  servicePort: 50051
+env:
+  vars:
+    JANGAR_GRPC_ENABLED: "true"
+    JANGAR_GRPC_HOST: "0.0.0.0"
+    JANGAR_GRPC_PORT: "50051"
