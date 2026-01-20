@@ -65,9 +65,9 @@ const configureGitAskpass = async (env: Record<string, string | undefined>) => {
     const askpassPath = '/tmp/git-askpass.sh'
     const script = `#!/bin/sh
 case \"$1\" in
-  *Username*) printf '%s\\n' \"${GIT_ASKPASS_USERNAME:-x-access-token}\" ;;
-  *Password*) printf '%s\\n' \"${GIT_ASKPASS_TOKEN:-}\" ;;
-  *) printf '%s\\n' \"${GIT_ASKPASS_TOKEN:-}\" ;;
+  *Username*) printf '%s\\n' \"$GIT_ASKPASS_USERNAME\" ;;
+  *Password*) printf '%s\\n' \"$GIT_ASKPASS_TOKEN\" ;;
+  *) printf '%s\\n' \"$GIT_ASKPASS_TOKEN\" ;;
 esac
 `
     await writeFile(askpassPath, script, { mode: 0o700 })
