@@ -180,6 +180,7 @@ Rate limits and backoff:
 - Structured logs with `agentRun.uid` and `implementationSpec.uid`.
 - Metrics: reconcile duration, submit latency, success/failure counts by runtime/provider.
 - Kubernetes Events for submit/start/finish/failure.
+- Agent event streaming is push-based (subscriber emits new records to the SSE stream); no periodic polling loops.
 
 ## Configuration
 - Namespace allowlist for watch scope.

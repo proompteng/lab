@@ -3,7 +3,6 @@ import {
   AckPolicy,
   type ConsumerConfig,
   connect,
-  consumerOpts,
   DeliverPolicy,
   ErrorCode,
   type JetStreamClient,
@@ -14,6 +13,7 @@ import {
   StringCodec,
 } from 'nats'
 
+import { publishAgentMessages } from '~/server/agent-messages-bus'
 import { type AgentMessageInput, createAgentMessagesStore } from '~/server/agent-messages-store'
 import { recordAgentCommsBatch, recordAgentCommsError } from '~/server/metrics'
 
@@ -32,24 +32,26 @@ type SubscriberConfig = {
   natsPassword?: string
   streamName: string
   consumerName: string
+  pullBatchSize: number
+  pullExpiresMs: number
+  pollDelayMs: number
   reconnectDelayMs: number
   maxAckPending: number
   ackWaitMs: number
   consumerDescription: string
-  deliverSubject: string
-  filterSubjects: string[]
 }
 
 const DEFAULT_CONFIG: SubscriberConfig = {
   natsUrl: 'nats://nats.nats.svc.cluster.local:4222',
   streamName: 'agent-comms',
   consumerName: 'jangar-agent-comms',
+  pullBatchSize: 250,
+  pullExpiresMs: 1500,
+  pollDelayMs: 250,
   reconnectDelayMs: 2000,
   maxAckPending: 20000,
   ackWaitMs: 30000,
   consumerDescription: 'Jangar agent communications ingestion',
-  deliverSubject: 'jangar.agent-comms.deliver',
-  filterSubjects: ['argo.workflow.>', 'workflow_comms.agent_messages.>'],
 }
 
 const isSubscriberDisabled = () =>
@@ -229,8 +231,6 @@ const buildConsumerConfig = (config: SubscriberConfig): ConsumerConfig => ({
   max_ack_pending: config.maxAckPending,
   ack_wait: msToNanos(config.ackWaitMs),
   description: config.consumerDescription,
-  deliver_subject: config.deliverSubject,
-  ...(config.filterSubjects.length > 0 ? { filter_subjects: config.filterSubjects } : {}),
 })
 
 const isMissingConsumer = (error: unknown) => {
@@ -258,14 +258,9 @@ const shouldReconnect = (error: unknown) => {
   )
 }
 
-const normalizeFilters = (config: ConsumerConfig): string[] => {
-  if (Array.isArray(config.filter_subjects) && config.filter_subjects.length > 0) {
-    return [...config.filter_subjects]
-  }
-  if (config.filter_subject) {
-    return [config.filter_subject]
-  }
-  return []
+const isNoMessageError = (error: unknown) => {
+  if (!isNatsError(error)) return false
+  return error.code === ErrorCode.JetStream404NoMessages || error.code === ErrorCode.JetStream408RequestTimeout
 }
 
 const ensureConsumer = async (manager: JetStreamManager, config: SubscriberConfig) => {
@@ -278,11 +273,6 @@ const ensureConsumer = async (manager: JetStreamManager, config: SubscriberConfi
     if (info.config.deliver_policy !== expected.deliver_policy) mismatches.push('deliver_policy')
     if (info.config.max_ack_pending !== expected.max_ack_pending) mismatches.push('max_ack_pending')
     if (info.config.durable_name !== expected.durable_name) mismatches.push('durable_name')
-    if (info.config.ack_wait !== expected.ack_wait) mismatches.push('ack_wait')
-    if (info.config.deliver_subject !== expected.deliver_subject) mismatches.push('deliver_subject')
-    const currentFilters = normalizeFilters(info.config).sort()
-    const expectedFilters = normalizeFilters(expected).sort()
-    if (currentFilters.join('|') !== expectedFilters.join('|')) mismatches.push('filter_subjects')
 
     if (mismatches.length > 0) {
       console.warn('Agent comms consumer config mismatch', {
@@ -290,7 +280,6 @@ const ensureConsumer = async (manager: JetStreamManager, config: SubscriberConfi
         stream: config.streamName,
         mismatches,
       })
-      await manager.consumers.update(config.streamName, config.consumerName, expected)
     }
 
     return
@@ -312,70 +301,78 @@ const ensureConsumer = async (manager: JetStreamManager, config: SubscriberConfi
   }
 }
 
-const buildConsumerOpts = (config: SubscriberConfig) =>
-  consumerOpts().bind(config.streamName, config.consumerName).manualAck()
-
-const resolveSubscriptionSubject = (config: SubscriberConfig) => config.filterSubjects[0] ?? config.streamName
-
-const consumePush = async (
+const consumeBatch = async (
   js: JetStreamClient,
   sc: ReturnType<typeof StringCodec>,
   store: ReturnType<typeof createAgentMessagesStore>,
   config: SubscriberConfig,
   abort: AbortSignal,
 ) => {
-  const subscription = await js.subscribe(resolveSubscriptionSubject(config), buildConsumerOpts(config))
-  let draining = false
-  const drainSubscription = async () => {
-    if (draining) return
-    draining = true
-    try {
-      await subscription.drain()
-    } catch (error) {
-      console.warn('Failed to drain agent comms subscription', error)
-    }
-  }
-
-  const abortListener = () => {
-    void drainSubscription()
-  }
-  abort.addEventListener('abort', abortListener, { once: true })
+  const batchInputs: AgentMessageInput[] = []
+  const ackables: JsMsg[] = []
+  let stage: 'fetch' | 'insert' | 'unknown' = 'fetch'
 
   try {
-    for await (const msg of subscription) {
+    const iterator = js.fetch(config.streamName, config.consumerName, {
+      batch: config.pullBatchSize,
+      expires: config.pullExpiresMs,
+    })
+
+    for await (const msg of iterator) {
       if (abort.aborted) break
-      await handleMessage(msg, sc, store)
+      const decoded = sc.decode(msg.data)
+      const input = normalizePayload(decoded, msg.subject)
+      if (input) {
+        batchInputs.push(input)
+        ackables.push(msg)
+      } else {
+        recordAgentCommsError('decode')
+        msg.ack()
+      }
+    }
+
+    if (batchInputs.length > 0) {
+      stage = 'insert'
+      const insertStart = Date.now()
+      const inserted = await store.insertMessages(batchInputs)
+      if (inserted.length > 0) {
+        publishAgentMessages(inserted)
+      }
+      recordAgentCommsBatch(inserted.length, Date.now() - insertStart)
+      for (const msg of ackables) {
+        msg.ack()
+      }
     }
   } catch (error) {
-    recordAgentCommsError('unknown')
+    recordAgentCommsError(stage)
     throw error
-  } finally {
-    abort.removeEventListener('abort', abortListener)
-    await drainSubscription()
   }
 }
 
-const handleMessage = async (
-  msg: JsMsg,
+const consumeLoop = async (
+  js: JetStreamClient,
   sc: ReturnType<typeof StringCodec>,
   store: ReturnType<typeof createAgentMessagesStore>,
+  config: SubscriberConfig,
+  abort: AbortSignal,
 ) => {
-  const decoded = sc.decode(msg.data)
-  const input = normalizePayload(decoded, msg.subject)
-  if (!input) {
-    recordAgentCommsError('decode')
-    msg.ack()
-    return
-  }
+  while (!abort.aborted) {
+    try {
+      await consumeBatch(js, sc, store, config, abort)
+    } catch (error) {
+      if (abort.aborted) return
+      if (isNoMessageError(error)) {
+        // no-op
+      } else if (shouldReconnect(error)) {
+        throw error
+      } else {
+        console.warn('Agent comms subscriber error', error)
+      }
+    }
 
-  try {
-    const insertStart = Date.now()
-    await store.insertMessages([input])
-    recordAgentCommsBatch(1, Date.now() - insertStart)
-    msg.ack()
-  } catch (error) {
-    recordAgentCommsError('insert')
-    console.warn('Failed to insert agent comms message', error)
+    if (!abort.aborted) {
+      await sleep(config.pollDelayMs)
+    }
   }
 }
 
@@ -397,12 +394,10 @@ const runSubscriberLoop = async (config: SubscriberConfig, abort: AbortSignal, m
         const jsm = await nc.jetstreamManager()
         await ensureConsumer(jsm, config)
         markReady()
-        await consumePush(js, sc, store, config, abort)
+        await consumeLoop(js, sc, store, config, abort)
       } catch (error) {
-        if (!abort.aborted && !shouldReconnect(error)) {
+        if (!abort.aborted) {
           console.warn('Agent comms subscriber connection error', error)
-        } else if (!abort.aborted) {
-          console.warn('Agent comms subscriber reconnecting after error', error)
         }
       } finally {
         try {

@@ -41,7 +41,7 @@ export type AgentMessageInput = {
 
 export type AgentMessagesStore = {
   hasMessages: (input: { runId?: string | null; workflowUid?: string | null }) => Promise<boolean>
-  insertMessages: (messages: AgentMessageInput[]) => Promise<number>
+  insertMessages: (messages: AgentMessageInput[]) => Promise<AgentMessageRecord[]>
   listMessages: (input: ListAgentMessagesInput) => Promise<AgentMessageRecord[]>
   close: () => Promise<void>
 }
@@ -198,16 +198,24 @@ export const createAgentMessagesStore = (options: AgentMessagesStoreOptions = {}
       }))
       .filter((message) => message.content.trim().length > 0)
 
-    if (normalized.length === 0) return 0
+    if (normalized.length === 0) return []
 
-    let inserted = 0
+    const inserted: AgentMessageRecord[] = []
     for (const batch of chunk(normalized, INSERT_BATCH_SIZE)) {
-      await db
+      const rows = await db
         .insertInto(`${SCHEMA}.${TABLE}`)
         .values(batch)
         .onConflict((oc) => oc.column('dedupe_key').doNothing())
+        .returningAll()
         .execute()
-      inserted += batch.length
+      inserted.push(
+        ...rows.map((row) =>
+          mapRow({
+            ...(row as typeof row & { attrs?: Record<string, unknown> }),
+            attrs: normalizeAttrs((row as { attrs?: Record<string, unknown> }).attrs),
+          }),
+        ),
+      )
     }
 
     return inserted

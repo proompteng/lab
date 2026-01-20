@@ -258,6 +258,14 @@ rules:
       - delete
   - apiGroups: [""]
     resources:
+      - pods
+      - pods/log
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups: [""]
+    resources:
       - secrets
     verbs:
       - get
