@@ -48,14 +48,15 @@ kubectl -n agents wait --for=condition=complete job \
 scripts/agents/smoke-agents.sh
 ```
 
-This installs the chart with gRPC enabled, applies sample CRDs, submits a multi-step workflow runtime
+This installs the chart with gRPC enabled, applies sample CRs, submits a multi-step workflow runtime
 AgentRun via `agentctl`, and validates:
 - AgentRun phase transitions Pending → Running → Succeeded.
 - Workflow job creation (one Job per step) and Job completion.
 - Runtime ref is set to the workflow job runner.
 
-Override `AGENTS_NAMESPACE`, `AGENTS_RELEASE_NAME`, `AGENTS_VALUES_FILE`, or `AGENTS_GRPC_LOCAL_PORT` if needed.
-Ensure the `agentrun-sample.yaml` workload image includes `agent-runner` or set
+Override `AGENTS_NAMESPACE`, `AGENTS_RELEASE_NAME`, `AGENTS_VALUES_FILE`, `AGENTS_RUN_FILE`,
+`AGENTS_RUN_NAME`, or `AGENTS_GRPC_LOCAL_PORT` if needed.
+Ensure the `agentrun-workflow-smoke.yaml` workload image includes `agent-runner` or set
 `env.vars.JANGAR_AGENT_RUNNER_IMAGE` in your values.
 
 ## Codex reruns/system improvements (native)

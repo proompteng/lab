@@ -9,8 +9,9 @@ VALUES_FILE="${AGENTS_VALUES_FILE:-${CHART_DIR}/values-local.yaml}"
 TIMEOUT="${AGENTS_TIMEOUT:-5m}"
 GRPC_PORT="${AGENTS_GRPC_PORT:-50051}"
 GRPC_LOCAL_PORT="${AGENTS_GRPC_LOCAL_PORT:-50051}"
-AGENT_RUN_NAME="${AGENTS_RUN_NAME:-codex-run-sample}"
-WORKFLOW_STEPS_EXPECTED="${AGENTS_WORKFLOW_STEPS_EXPECTED:-2}"
+AGENT_RUN_FILE="${AGENTS_RUN_FILE:-${CHART_DIR}/examples/agentrun-workflow-smoke.yaml}"
+AGENT_RUN_NAME="${AGENTS_RUN_NAME:-codex-run-workflow-smoke}"
+WORKFLOW_STEPS_EXPECTED="${AGENTS_WORKFLOW_STEPS_EXPECTED:-}"
 
 PORT_FORWARD_PID=""
 
@@ -97,6 +98,37 @@ wait_for_jobs() {
   done
 }
 
+wait_for_agentrun() {
+  local name="$1"
+  local timeout_seconds="$2"
+  local start
+  start="$(date +%s)"
+  while true; do
+    if kubectl -n "${NAMESPACE}" get agentrun "${name}" >/dev/null 2>&1; then
+      return 0
+    fi
+    if (( $(date +%s) - start >= timeout_seconds )); then
+      echo "Timed out waiting for AgentRun ${name} to appear." >&2
+      exit 1
+    fi
+    sleep 1
+  done
+}
+
+get_expected_steps() {
+  if [[ -n "${WORKFLOW_STEPS_EXPECTED}" ]]; then
+    echo "${WORKFLOW_STEPS_EXPECTED}"
+    return 0
+  fi
+  local steps
+  steps="$(kubectl -n "${NAMESPACE}" get agentrun "${AGENT_RUN_NAME}" -o jsonpath='{.spec.workflow.steps[*].name}' 2>/dev/null || true)"
+  if [[ -z "${steps}" ]]; then
+    echo "0"
+    return 0
+  fi
+  wc -w <<<"${steps}" | tr -d ' '
+}
+
 require_command kubectl
 require_command helm
 require_command agentctl
@@ -128,10 +160,23 @@ if ! wait_for_port "${GRPC_LOCAL_PORT}" 30; then
   exit 1
 fi
 
+if [[ ! -f "${AGENT_RUN_FILE}" ]]; then
+  echo "AgentRun file not found: ${AGENT_RUN_FILE}" >&2
+  exit 1
+fi
+
 log "Submitting workflow AgentRun via agentctl..."
 AGENTCTL_SERVER="127.0.0.1:${GRPC_LOCAL_PORT}" \
 AGENTCTL_NAMESPACE="${NAMESPACE}" \
-  agentctl run apply -f "${CHART_DIR}/examples/agentrun-sample.yaml"
+  agentctl run apply -f "${AGENT_RUN_FILE}"
+
+wait_for_agentrun "${AGENT_RUN_NAME}" 60
+WORKFLOW_STEPS_EXPECTED="$(get_expected_steps)"
+if [[ "${WORKFLOW_STEPS_EXPECTED}" -lt 1 ]]; then
+  echo "Workflow steps expected must be >= 1 (got ${WORKFLOW_STEPS_EXPECTED})." >&2
+  kubectl -n "${NAMESPACE}" get agentrun "${AGENT_RUN_NAME}" -o yaml
+  exit 1
+fi
 
 log "Waiting for AgentRun phase transitions..."
 wait_for_phase "${AGENT_RUN_NAME}" "Pending" 60
@@ -148,6 +193,12 @@ wait_for_phase "${AGENT_RUN_NAME}" "Succeeded" 300
 runtime_type="$(kubectl -n "${NAMESPACE}" get agentrun "${AGENT_RUN_NAME}" -o jsonpath='{.status.runtimeRef.type}')"
 if [[ "${runtime_type}" != "workflow" ]]; then
   echo "Expected runtimeRef.type=workflow (got ${runtime_type})." >&2
+  kubectl -n "${NAMESPACE}" get agentrun "${AGENT_RUN_NAME}" -o yaml
+  exit 1
+fi
+runtime_name="$(kubectl -n "${NAMESPACE}" get agentrun "${AGENT_RUN_NAME}" -o jsonpath='{.status.runtimeRef.name}')"
+if [[ -z "${runtime_name}" ]]; then
+  echo "Expected runtimeRef.name to be set for workflow runtime." >&2
   kubectl -n "${NAMESPACE}" get agentrun "${AGENT_RUN_NAME}" -o yaml
   exit 1
 fi
