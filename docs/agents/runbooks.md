@@ -1,6 +1,6 @@
 # Runbooks (Agents)
 
-Status: Current (2026-01-19)
+Status: Current (2026-01-20)
 
 ## Install
 1. `helm install agents charts/agents -n agents --create-namespace`
@@ -61,6 +61,44 @@ Override `AGENTS_NAMESPACE`, `AGENTS_RELEASE_NAME`, `AGENTS_VALUES_FILE`, `AGENT
 `AGENTS_RUN_NAME`, or `AGENTS_GRPC_LOCAL_PORT` if needed.
 Ensure the `agentrun-workflow-smoke.yaml` workload image includes `agent-runner` or set
 `env.vars.JANGAR_AGENT_RUNNER_IMAGE` in your values.
+
+## Native workflow e2e proof (no Argo)
+This runbook validates the native workflow runtime end-to-end (AgentProvider → Agent → ImplementationSpec → AgentRun)
+and confirms that the Codex implementation step opens a PR against `proompteng/lab`.
+
+Prereqs:
+- Agents chart is installed in `agents` and Jangar is reachable.
+- A GitHub token secret exists (see below).
+
+Create the GitHub token secret once (or set `AGENTS_E2E_GH_TOKEN`):
+```bash
+kubectl -n agents create secret generic codex-github-token \
+  --from-literal=GH_TOKEN="<token>"
+```
+
+Run the native workflow script (override the issue/task as needed):
+```bash
+AGENTS_E2E_ISSUE_NUMBER=2614 \
+AGENTS_E2E_PROMPT="Add a concise runbook note in docs/agents/runbooks.md about native workflow artifacts and PR verification." \
+scripts/agents/native-workflow-e2e.sh
+```
+
+Expected outputs:
+- AgentRun reaches `Succeeded` with `status.runtimeRef.type=workflow`.
+- Output directory contains:
+  - `agentrun.json` (final status snapshot)
+  - `logs/<job>.log` (job logs)
+  - `artifacts/<job>-runner.log` and `artifacts/<job>-status.json` (agent-runner artifacts)
+
+Verify the PR was created:
+```bash
+gh pr list --repo proompteng/lab --head "codex/agents/${AGENTS_E2E_ISSUE_NUMBER}"
+```
+
+Troubleshooting:
+- AgentRun failed: `kubectl -n agents get agentrun <name> -o yaml` and inspect job logs in the output directory.
+- No PR created: confirm `codex-github-token` exists and includes `GH_TOKEN`, and the agent image has `gh` + `git`.
+- Stuck in Pending/Running: check `kubectl -n agents get job -l agents.proompteng.ai/agent-run=<name>` and controller logs.
 
 ## Codex reruns/system improvements (native)
 - Configure `JANGAR_CODEX_RERUN_ORCHESTRATION` and/or `JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION` (plus the matching
