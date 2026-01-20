@@ -8,10 +8,7 @@ spec:
     name: jangar-primitives-codex
   config:
     runtime:
-      type: argo
-      argo:
-        namespace: argo-workflows
-        serviceAccount: codex-workflow
+      type: workflow
     inputs:
       repository: proompteng/lab
       issueNumber: 2425

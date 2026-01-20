@@ -100,12 +100,12 @@ annotations:
         implementationSpecRef:
           name: codex-impl-sample
         runtime:
-          type: job
+          type: workflow
   artifacthub.io/changes: |
     - kind: added
       description: "AgentRun printer columns now include Phase and Agent for improved UX."
     - kind: changed
-      description: "AgentRun job runtime labels Jobs/ConfigMaps with traceability metadata."
+      description: "AgentRun workflow runtime labels Jobs/ConfigMaps with traceability metadata."
     - kind: changed
       description: "Controller readiness fails fast when Agents CRDs are missing."
   artifacthub.io/operator: "true"

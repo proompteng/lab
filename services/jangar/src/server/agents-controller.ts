@@ -486,12 +486,8 @@ const cancelRuntime = async (runtimeRef: RuntimeRef, namespace: string) => {
   const name = asString(runtimeRef.name) ?? ''
   const runtimeNamespace = asString(runtimeRef.namespace) ?? namespace
   if (!name) return
-  if (type === 'job') {
+  if (type === 'job' || type === 'workflow') {
     await deleteRuntimeResource('job', name, runtimeNamespace)
-    return
-  }
-  if (type === 'argo') {
-    await deleteRuntimeResource('workflow', name, runtimeNamespace)
     return
   }
   if (type === 'temporal') {
@@ -739,6 +735,21 @@ const reconcileImplementationSource = async (
     return
   }
 
+  if (!webhookEnabled) {
+    const conditions = upsertCondition(buildConditions(source), {
+      type: 'Error',
+      status: 'True',
+      reason: 'WebhookDisabled',
+      message: 'spec.webhook.enabled must be true (polling is not supported)',
+    })
+    await setStatus(kube, source, {
+      observedGeneration: asRecord(metadata)?.generation ?? 0,
+      conditions,
+      lastSyncedAt: lastSyncedAt ?? undefined,
+    })
+    return
+  }
+
   const secret = await getSecretData(kube, namespace, secretName)
   const token = secret?.[secretKey] ?? ''
   if (!token) {
@@ -934,6 +945,7 @@ const submitJobRun = async (
   memory: Record<string, unknown> | null,
   namespace: string,
   workloadImage: string,
+  runtimeType: 'job' | 'workflow',
 ) => {
   const workload = asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
   if (!workloadImage) {
@@ -1071,61 +1083,7 @@ const submitJobRun = async (
   }
 
   const applied = await kube.apply(jobResource)
-  return buildRuntimeRef('job', jobName, namespace, { uid: asString(readNested(applied, ['metadata', 'uid'])) })
-}
-
-const submitArgoRun = async (
-  kube: ReturnType<typeof createKubernetesClient>,
-  agentRun: Record<string, unknown>,
-  namespace: string,
-) => {
-  const runtimeConfig = asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
-  const workflowTemplate = asString(runtimeConfig.workflowTemplate)
-  if (!workflowTemplate) {
-    throw new Error('spec.runtime.config.workflowTemplate is required for argo runtime')
-  }
-  const workflowNamespace = asString(runtimeConfig.namespace) ?? namespace
-  const serviceAccount = asString(runtimeConfig.serviceAccount)
-
-  const parameters = resolveParameters(agentRun)
-  const argsInput = runtimeConfig.arguments
-  const argumentList: Array<{ name: string; value: string }> = []
-
-  if (argsInput && typeof argsInput === 'object' && !Array.isArray(argsInput)) {
-    for (const [key, value] of Object.entries(argsInput as Record<string, unknown>)) {
-      argumentList.push({ name: key, value: typeof value === 'string' ? value : JSON.stringify(value) })
-    }
-  }
-
-  for (const [key, value] of Object.entries(parameters)) {
-    if (!argumentList.find((item) => item.name === key)) {
-      argumentList.push({ name: key, value })
-    }
-  }
-
-  const metadata = asRecord(agentRun.metadata) ?? {}
-  const runName = asString(metadata.name) ?? 'agentrun'
-  const workflowName = makeName(runName, 'wf')
-
-  const resource = {
-    apiVersion: 'argoproj.io/v1alpha1',
-    kind: 'Workflow',
-    metadata: {
-      name: workflowName,
-      namespace: workflowNamespace,
-      labels: {
-        'agents.proompteng.ai/agent-run': runName,
-      },
-    },
-    spec: {
-      workflowTemplateRef: { name: workflowTemplate },
-      serviceAccountName: serviceAccount ?? undefined,
-      arguments: argumentList.length > 0 ? { parameters: argumentList } : undefined,
-    },
-  }
-
-  await kube.apply(resource)
-  return buildRuntimeRef('argo', workflowName, workflowNamespace)
+  return buildRuntimeRef(runtimeType, jobName, namespace, { uid: asString(readNested(applied, ['metadata', 'uid'])) })
 }
 
 const submitCustomRun = async (
@@ -1368,28 +1326,15 @@ const reconcileAgentRun = async (
       return
     }
 
-    if (runtimeType === 'job') {
+    if (runtimeType === 'job' || runtimeType === 'workflow') {
       workloadImage = resolveJobImage(workload)
       if (!workloadImage) {
         const updated = upsertCondition(conditions, {
           type: 'InvalidSpec',
           status: 'True',
           reason: 'MissingWorkloadImage',
-          message: 'spec.workload.image, JANGAR_AGENT_RUNNER_IMAGE, or JANGAR_AGENT_IMAGE is required for job runtime',
-        })
-        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
-        return
-      }
-    }
-
-    if (runtimeType === 'argo') {
-      const workflowTemplate = asString(runtimeConfig.workflowTemplate)
-      if (!workflowTemplate) {
-        const updated = upsertCondition(conditions, {
-          type: 'InvalidSpec',
-          status: 'True',
-          reason: 'MissingWorkflowTemplate',
-          message: 'spec.runtime.config.workflowTemplate is required for argo runtime',
+          message:
+            'spec.workload.image, JANGAR_AGENT_RUNNER_IMAGE, or JANGAR_AGENT_IMAGE is required for workflow runtime',
         })
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
         return
@@ -1470,7 +1415,7 @@ const reconcileAgentRun = async (
       }
     }
 
-    if (allowedServiceAccounts.length > 0 && (runtimeType === 'job' || runtimeType === 'argo')) {
+    if (allowedServiceAccounts.length > 0 && (runtimeType === 'job' || runtimeType === 'workflow')) {
       const rawServiceAccount = asString(runtimeConfig.serviceAccount)
       const effectiveServiceAccount = rawServiceAccount || 'default'
       if (!allowedServiceAccounts.includes(effectiveServiceAccount)) {
@@ -1546,7 +1491,7 @@ const reconcileAgentRun = async (
 
     let newRuntimeRef: RuntimeRef | null = null
     try {
-      if (runtimeType === 'job') {
+      if (runtimeType === 'job' || runtimeType === 'workflow') {
         newRuntimeRef = await submitJobRun(
           kube,
           agentRun,
@@ -1556,9 +1501,8 @@ const reconcileAgentRun = async (
           memory,
           namespace,
           workloadImage ?? '',
+          runtimeType,
         )
-      } else if (runtimeType === 'argo') {
-        newRuntimeRef = await submitArgoRun(kube, agentRun, namespace)
       } else if (runtimeType === 'custom') {
         newRuntimeRef = await submitCustomRun(agentRun, implResource, memory)
       } else if (runtimeType === 'temporal') {
@@ -1598,7 +1542,7 @@ const reconcileAgentRun = async (
 
   if (!runtimeRef || phase !== 'Running') return
 
-  if (runtimeRef.type === 'job') {
+  if (runtimeRef.type === 'job' || runtimeRef.type === 'workflow') {
     const job = await kube.get('job', asString(runtimeRef.name) ?? '', asString(runtimeRef.namespace) ?? namespace)
     if (!job) return
     const jobStatus = asRecord(job.status) ?? {}
@@ -1620,33 +1564,6 @@ const reconcileAgentRun = async (
         status: 'True',
         reason: 'JobFailed',
       })
-      await setStatus(kube, agentRun, {
-        observedGeneration,
-        phase: 'Failed',
-        finishedAt: nowIso(),
-        runtimeRef,
-        conditions: updated,
-      })
-    }
-  }
-
-  if (runtimeRef.type === 'argo') {
-    const workflow = await kube.get('workflow', asString(runtimeRef.name) ?? '', asString(runtimeRef.namespace) ?? '')
-    if (!workflow) return
-    const wfStatus = asRecord(workflow.status) ?? {}
-    const wfPhase = asString(wfStatus.phase) ?? ''
-    if (wfPhase.toLowerCase() === 'succeeded') {
-      const updated = upsertCondition(conditions, { type: 'Succeeded', status: 'True', reason: 'Completed' })
-      await setStatus(kube, agentRun, {
-        observedGeneration,
-        phase: 'Succeeded',
-        startedAt: asString(wfStatus.startedAt) ?? undefined,
-        finishedAt: asString(wfStatus.finishedAt) ?? nowIso(),
-        runtimeRef,
-        conditions: updated,
-      })
-    } else if (wfPhase.toLowerCase() === 'failed' || wfPhase.toLowerCase() === 'error') {
-      const updated = upsertCondition(conditions, { type: 'Failed', status: 'True', reason: 'WorkflowFailed' })
       await setStatus(kube, agentRun, {
         observedGeneration,
         phase: 'Failed',

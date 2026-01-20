@@ -32,17 +32,18 @@ kubectl apply -n agents -f charts/agents/examples/agentrun-sample.yaml
 
 The memory sample includes a placeholder Secret. Update the connection string before using it in production.
 
-For job runtime execution, ensure the workload image includes `agent-runner` or set
+For workflow runtime execution, ensure the workload image includes `agent-runner` or set
 `env.vars.JANGAR_AGENT_RUNNER_IMAGE` (or `env.vars.JANGAR_AGENT_IMAGE`) to a runner image.
 
 Optional: submit runs with `agentctl`:
 ```bash
-agentctl run submit --agent codex-agent --impl codex-impl-sample --runtime job --workload-image ghcr.io/proompteng/codex-agent:latest
+agentctl run submit --agent codex-agent --impl codex-impl-sample --runtime workflow --workload-image ghcr.io/proompteng/codex-agent:latest
 ```
 
 Optional: configure GitHub/Linear ingestion with `ImplementationSource` manifests:
 - `charts/agents/examples/implementationsource-github.yaml`
 - `charts/agents/examples/implementationsource-linear.yaml`
+Webhook signature verification uses the `auth.secretRef` secret; configure your webhook sender accordingly.
 
 Local smoke test:
 ```bash
@@ -64,10 +65,9 @@ Use `env.vars.JANGAR_MIGRATIONS=skip` to disable automatic migrations if needed.
 - Keep `service.type=ClusterIP` and use ingress/mesh externally if desired.
 - Set `rbac.clusterScoped=true` when `controller.namespaces` spans multiple namespaces or `"*"`.
 
-## Migration from Crossplane
-Crossplane-based Agents XRDs conflict with the native CRDs in this chart. Follow
-`docs/agents/crossplane-migration.md` to export claims, remove XRDs, and apply
-native CRDs in the correct order.
+## Crossplane removal
+Crossplane-based Agents XRDs are not used. Remove Crossplane and XRDs before installing
+the native chart. See `docs/agents/crossplane-migration.md`.
 
 ## Publishing (OCI)
 ```bash
@@ -98,7 +98,7 @@ helm push agents-0.6.0.tgz oci://ghcr.io/proompteng/charts
 | `envFromConfigMapRefs` | ConfigMap names to load as envFrom | `[]` |
 | `controller.enabled` | Enable Agents controller loop | `true` |
 | `controller.namespaces` | Namespaces to watch | `['<release-namespace>']` |
-| `controller.intervalSeconds` | Controller poll interval | `15` |
+| `controller.intervalSeconds` | Controller reconcile interval | `15` |
 | `controller.concurrency.perNamespace` | Max running AgentRuns per namespace | `10` |
 | `controller.concurrency.perAgent` | Max running AgentRuns per Agent | `5` |
 | `controller.concurrency.cluster` | Max running AgentRuns cluster-wide | `100` |

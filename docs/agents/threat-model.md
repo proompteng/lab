@@ -1,6 +1,6 @@
 # Threat Model (Agents)
 
-Status: Draft (2026-01-13)
+Status: Current (2026-01-19)
 
 ## Assets
 - Source code repositories and branches
@@ -11,7 +11,7 @@ Status: Draft (2026-01-13)
 ## Trust Boundaries
 - External integrations (GitHub/Linear)
 - Kubernetes API server
-- Runtime adapter endpoints (Argo/Temporal)
+- Runtime adapter endpoints (workflow/temporal/custom)
 - Agent execution containers
 
 ## Threats & Mitigations

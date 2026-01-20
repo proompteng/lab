@@ -90,13 +90,17 @@ spec:
               webhook:
                 properties:
                   enabled:
-                    default: false
+                    default: true
                     type: boolean
                 type: object
             required:
             - auth
             - provider
+            - webhook
             type: object
+            x-kubernetes-validations:
+            - message: spec.webhook.enabled must be true
+              rule: self.webhook.enabled == true
           status:
             properties:
               conditions:

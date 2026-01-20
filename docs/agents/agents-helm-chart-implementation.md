@@ -1,6 +1,6 @@
 # Agents Helm Chart Implementation Design (Next Iteration)
 
-Status: Draft (2026-01-16)
+Status: Current (2026-01-19)
 
 ## Purpose
 Define the next iteration required to make `charts/agents` a fully functional, production‑ready Helm chart that installs CRDs, deploys the Jangar control plane, and supports the full primitive lifecycle (Agent, AgentRun, AgentProvider, ImplementationSpec, ImplementationSource, Memory).
@@ -36,11 +36,12 @@ This document is implementation‑grade: it describes *what* needs to exist in t
 A fully functional chart must provide:
 - **CRDs** for all primitives, installed via `charts/agents/crds/`.
 - **Jangar deployment + service** with documented env configuration.
-- **RBAC** that matches what Jangar actually does (jobs/workflows/secrets/configmaps/CRDs).
+- **RBAC** that matches what Jangar actually does (jobs/secrets/configmaps/CRDs).
 - **Controller configuration** (namespaces, concurrency, resync interval) exposed via values.
 - **Examples** for each CRD and implementation source.
 - **CI validation** to ensure CRDs and examples are valid and up‑to‑date.
-- **Migration guidance** from Crossplane claims to native CRDs.
+- **Crossplane removal guidance** (no migration required).
+- **agentctl** packaged under `services/jangar/**` and backed by Jangar gRPC APIs.
 
 ## CRD Lifecycle
 ### Source of truth
@@ -50,7 +51,7 @@ A fully functional chart must provide:
 ### Requirements
 - `subresources.status` on all CRDs.
 - `status.conditions[]` and `status.observedGeneration` on all CRDs.
-- Keep schemas structural (`preserveUnknownFields: false`) and only mark specific subtrees as schemaless.
+- Keep schemas structural and avoid top-level `x-kubernetes-preserve-unknown-fields: false`; only mark specific subtrees as schemaless.
 - Validate max JSON size <= 256KB per CRD.
 - Provide `additionalPrinterColumns` for common status fields.
 
@@ -78,12 +79,12 @@ Jangar is the controller for all primitives and must:
 - Job should be labeled with `agents.proompteng.ai/agent-run` for tracking.
 
 ### Runtime adapters (expected to exist)
-- `job`, `argo`, `temporal`, `custom` adapters with clear error messages when configuration is missing.
+- `workflow` (built-in job runner), `temporal`, `custom` adapters with clear error messages when configuration is missing.
 
 ### RBAC alignment
 Controller behavior requires permissions to:
 - Read/write all Agents CRDs and their `status` subresources.
-- Create/update/delete Jobs and (optionally) Argo Workflows.
+- Create/update/delete Jobs for workflow runtime execution.
 - Read Secrets referenced by Agent/Memory/ImplementationSource.
 - Create/update ConfigMaps for run inputs.
 - Emit Events.

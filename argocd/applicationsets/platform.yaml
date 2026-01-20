@@ -43,7 +43,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
               - name: rook-ceph
                 path: argocd/applications/rook-ceph
                 namespace: rook-ceph

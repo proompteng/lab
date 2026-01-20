@@ -1,17 +1,19 @@
 # agentctl CLI Design
 
-Status: Draft (2026-01-13)
+Status: Current (2026-01-19)
 
 Location: `services/jangar/agentctl`
 
 ## Purpose
-`agentctl` is a thin CLI for managing Agents CRDs and submitting AgentRun workloads without requiring users to hand‑write YAML.
+`agentctl` is the Jangar CLI for managing Agents primitives and submitting AgentRuns without hand‑writing YAML.
+It talks to the Jangar controller over gRPC.
 
 ## Goals
 - CRUD for Agent, AgentRun, ImplementationSpec, ImplementationSource, Memory.
 - First‑class “run” command to submit an AgentRun from flags or a spec file.
-- Connects to the Jangar controller over gRPC (port‑forward or cluster service).
-- Human‑friendly status and logs for runs.
+- Works against any Kubernetes cluster where Jangar is deployed.
+- In‑cluster gRPC by default (port‑forward or in‑cluster usage).
+- Human‑friendly status, logs, and controller health.
 
 ## Non‑goals
 - Full Helm management (left to `helm`).
@@ -19,9 +21,9 @@ Location: `services/jangar/agentctl`
 - Managing database lifecycle or ingress.
 
 ## Architecture
-- Client talks to Jangar over gRPC (`AgentctlService`).
-- Jangar performs Kubernetes operations on behalf of the CLI.
-- All resources remain Kubernetes native; `agentctl` is a convenience layer.
+- Client talks to the Jangar gRPC API (no direct Kubernetes access).
+- Default namespace is `agents`, with explicit overrides via flags/config.
+- Jangar is the source of truth for list/get/apply/delete operations.
 
 ## Command Surface (proposed)
 ### Core
@@ -63,7 +65,10 @@ Location: `services/jangar/agentctl`
 - `agentctl run cancel <name>`
 
 ## Flags & Defaults
-- `--address` (gRPC address), `--namespace` (default: `agents`), `--token` (optional shared secret).
+- `--namespace` (default `agents`).
+- `--address` (gRPC address; default `127.0.0.1:50051` for port‑forward).
+- `--token` (optional shared secret).
+- `--tls` to enable TLS when configured (future-proofed).
 - `--output` (`yaml|json|table`).
 - `--wait` for `run submit` to block until completion.
 - `--idempotency-key` to avoid duplicate run submissions.
@@ -79,7 +84,7 @@ Location: `services/jangar/agentctl`
 - `--runtime-config key=value` maps into `spec.runtime.config` (schemaless).
 
 ## Logging & Artifacts
-- `agentctl run logs` streams from Jangar gRPC.
+- `agentctl run logs` streams from Jangar gRPC endpoints.
 
 ## Error Handling
 - Validate required fields before submitting.
@@ -99,3 +104,10 @@ Location: `services/jangar/agentctl`
 ## Decisions
 - Distribute `agentctl` as a standalone binary (GitHub releases) and npm + Homebrew packages.
 - `agentctl` depends on Jangar gRPC endpoints for all operations.
+- Uses Jangar gRPC auth (in‑cluster only for now; no kubeconfig access).
+- Secrets referenced by name only; values never printed.
+
+## Decisions
+- `agentctl` lives under `services/jangar/**` and is packaged via Bun into a single binary.
+- Ready for npm publishing and Homebrew tap packaging.
+- Jangar gRPC is the only supported transport (future TLS/auth TBD).
