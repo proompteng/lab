@@ -12,22 +12,30 @@ export const Route = createFileRoute('/agents-control-plane/implementation-sourc
   component: ImplementationSourcesListPage,
 })
 
+const readScopeTarget = (resource: PrimitiveResource) =>
+  readNestedValue(resource, ['spec', 'scope', 'repository']) ??
+  readNestedValue(resource, ['spec', 'scope', 'project']) ??
+  readNestedValue(resource, ['spec', 'scope', 'organization']) ??
+  readNestedValue(resource, ['spec', 'scope', 'team']) ??
+  readNestedValue(resource, ['spec', 'scope', 'query']) ??
+  '—'
+
 const buildSourceFields = (resource: PrimitiveResource) => [
   {
-    label: 'Type',
-    value: readNestedValue(resource, ['spec', 'type']) ?? readNestedValue(resource, ['spec', 'provider']) ?? '—',
+    label: 'Provider',
+    value: readNestedValue(resource, ['spec', 'provider']) ?? '—',
   },
   {
-    label: 'Target',
-    value: readNestedValue(resource, ['spec', 'target']) ?? readNestedValue(resource, ['spec', 'repository']) ?? '—',
+    label: 'Scope',
+    value: readScopeTarget(resource),
   },
   {
-    label: 'Cursor',
-    value: readNestedValue(resource, ['status', 'cursor']) ?? '—',
+    label: 'Auth secret',
+    value: readNestedValue(resource, ['spec', 'auth', 'secretRef', 'name']) ?? '—',
   },
   {
-    label: 'Synced',
-    value: readNestedValue(resource, ['status', 'syncedAt']) ?? '—',
+    label: 'Last sync',
+    value: readNestedValue(resource, ['status', 'lastSyncedAt']) ?? '—',
   },
 ]
 

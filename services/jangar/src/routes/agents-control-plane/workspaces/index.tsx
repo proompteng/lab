@@ -24,8 +24,8 @@ const fields = [
     value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'storageClassName']) ?? '—',
   },
   {
-    label: 'Volume mode',
-    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'volumeMode']) ?? '—',
+    label: 'TTL',
+    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'ttlSeconds']) ?? '—',
   },
 ]
 

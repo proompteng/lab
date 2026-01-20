@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { readNestedValue } from '@/components/agents-control-plane'
+import { formatTimestamp, readNestedValue } from '@/components/agents-control-plane'
 import { PrimitiveListPage } from '@/components/agents-control-plane-primitives'
 import { parseNamespaceSearch } from '@/components/agents-control-plane-search'
 import type { PrimitiveResource } from '@/data/agents-control-plane'
@@ -16,16 +16,16 @@ const fields = [
     value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'orchestrationRef', 'name']) ?? '—',
   },
   {
-    label: 'Composition',
-    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'compositionRef', 'name']) ?? '—',
-  },
-  {
     label: 'Run ID',
-    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'parameters', 'runId']) ?? '—',
+    value: (resource: PrimitiveResource) => readNestedValue(resource, ['status', 'runId']) ?? '—',
   },
   {
     label: 'Delivery ID',
     value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'deliveryId']) ?? '—',
+  },
+  {
+    label: 'Started',
+    value: (resource: PrimitiveResource) => formatTimestamp(readNestedValue(resource, ['status', 'startedAt'])),
   },
 ]
 

@@ -24,9 +24,10 @@ function ToolRunDetailRoute() {
       summaryItems={(resource, namespace) => [
         { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
         { label: 'Tool', value: readNestedValue(resource, ['spec', 'toolRef', 'name']) ?? '—' },
-        { label: 'Action', value: readNestedValue(resource, ['spec', 'parameters', 'action']) ?? '—' },
-        { label: 'Timeout', value: readNestedValue(resource, ['spec', 'timeoutSeconds']) ?? '—' },
-        { label: 'Retry limit', value: readNestedValue(resource, ['spec', 'retryPolicy', 'limit']) ?? '—' },
+        { label: 'Delivery ID', value: readNestedValue(resource, ['spec', 'deliveryId']) ?? '—' },
+        { label: 'Run ID', value: readNestedValue(resource, ['status', 'runId']) ?? '—' },
+        { label: 'Started', value: readNestedValue(resource, ['status', 'startedAt']) ?? '—' },
+        { label: 'Finished', value: readNestedValue(resource, ['status', 'finishedAt']) ?? '—' },
       ]}
     />
   )

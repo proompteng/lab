@@ -7,48 +7,78 @@ export const Route = createFileRoute('/agents-control-plane/')({
   component: AgentsControlPlanePage,
 })
 
-const cards = [
-  { to: '/agents-control-plane/agents', title: 'Agents', description: 'Agent configurations and defaults.' },
-  { to: '/agents-control-plane/agent-runs', title: 'Agent runs', description: 'Execution history and status.' },
+const sections = [
   {
-    to: '/agents-control-plane/agent-providers',
-    title: 'Agent providers',
-    description: 'Provider runtime and integration settings.',
+    label: 'Resources',
+    items: [
+      { to: '/agents-control-plane/agents', title: 'Agents', description: 'Agent configurations and defaults.' },
+      {
+        to: '/agents-control-plane/agent-providers',
+        title: 'Agent providers',
+        description: 'Provider runtime and integration settings.',
+      },
+      {
+        to: '/agents-control-plane/implementation-specs',
+        title: 'Implementation specs',
+        description: 'Normalized implementation definitions.',
+      },
+      {
+        to: '/agents-control-plane/implementation-sources',
+        title: 'Implementation sources',
+        description: 'Upstream feeds that generate specs.',
+      },
+      { to: '/agents-control-plane/tools', title: 'Tools', description: 'Tool definitions and runtime wiring.' },
+    ],
   },
   {
-    to: '/agents-control-plane/implementation-specs',
-    title: 'Implementation specs',
-    description: 'Normalized implementation definitions.',
+    label: 'Runs',
+    items: [
+      { to: '/agents-control-plane/agent-runs', title: 'Agent runs', description: 'Execution history and status.' },
+      { to: '/agents-control-plane/tool-runs', title: 'Tool runs', description: 'Execution history for tools.' },
+    ],
   },
   {
-    to: '/agents-control-plane/implementation-sources',
-    title: 'Implementation sources',
-    description: 'Upstream feeds that generate specs.',
+    label: 'Policies',
+    items: [
+      { to: '/agents-control-plane/approvals', title: 'Approvals', description: 'Approval policies and gates.' },
+      { to: '/agents-control-plane/budgets', title: 'Budgets', description: 'Budget ceilings and enforcement.' },
+      {
+        to: '/agents-control-plane/secret-bindings',
+        title: 'Secret bindings',
+        description: 'Secret access control policies.',
+      },
+    ],
   },
-  { to: '/agents-control-plane/memories', title: 'Memories', description: 'Memory backends and health.' },
-  { to: '/agents-control-plane/tools', title: 'Tools', description: 'Tool definitions and runtime wiring.' },
-  { to: '/agents-control-plane/tool-runs', title: 'Tool runs', description: 'Execution history for tools.' },
-  { to: '/agents-control-plane/approvals', title: 'Approvals', description: 'Approval policies and gates.' },
-  { to: '/agents-control-plane/budgets', title: 'Budgets', description: 'Budget ceilings and enforcement.' },
-  { to: '/agents-control-plane/signals', title: 'Signals', description: 'Signal definitions and retention.' },
   {
-    to: '/agents-control-plane/signal-deliveries',
-    title: 'Signal deliveries',
-    description: 'Delivery records and payloads.',
+    label: 'Signals',
+    items: [
+      { to: '/agents-control-plane/signals', title: 'Signals', description: 'Signal definitions and routing.' },
+      {
+        to: '/agents-control-plane/signal-deliveries',
+        title: 'Signal deliveries',
+        description: 'Delivery records and payloads.',
+      },
+    ],
   },
-  { to: '/agents-control-plane/schedules', title: 'Schedules', description: 'Recurring schedule definitions.' },
-  { to: '/agents-control-plane/artifacts', title: 'Artifacts', description: 'Artifact storage configuration.' },
-  { to: '/agents-control-plane/workspaces', title: 'Workspaces', description: 'Workspace storage definitions.' },
   {
-    to: '/agents-control-plane/secret-bindings',
-    title: 'Secret bindings',
-    description: 'Secret access control policies.',
+    label: 'Storage',
+    items: [
+      { to: '/agents-control-plane/memories', title: 'Memories', description: 'Memory backends and health.' },
+      { to: '/agents-control-plane/artifacts', title: 'Artifacts', description: 'Artifact storage configuration.' },
+      { to: '/agents-control-plane/workspaces', title: 'Workspaces', description: 'Workspace storage definitions.' },
+    ],
   },
-  { to: '/agents-control-plane/orchestrations', title: 'Orchestrations', description: 'Orchestration templates.' },
   {
-    to: '/agents-control-plane/orchestration-runs',
-    title: 'Orchestration runs',
-    description: 'Execution records for orchestrations.',
+    label: 'Orchestration',
+    items: [
+      { to: '/agents-control-plane/orchestrations', title: 'Orchestrations', description: 'Orchestration templates.' },
+      {
+        to: '/agents-control-plane/orchestration-runs',
+        title: 'Orchestration runs',
+        description: 'Execution records for orchestrations.',
+      },
+      { to: '/agents-control-plane/schedules', title: 'Schedules', description: 'Recurring schedule definitions.' },
+    ],
   },
 ]
 
@@ -61,16 +91,23 @@ function AgentsControlPlanePage() {
         <p className="text-xs text-muted-foreground">Browse core agent primitives and review their current status.</p>
       </header>
 
-      <section className="grid gap-4 sm:grid-cols-2">
-        {cards.map((card) => (
-          <div key={card.to} className="space-y-3 rounded-none border border-border bg-card p-4">
-            <div className="space-y-1">
-              <h2 className="text-sm font-semibold text-foreground">{card.title}</h2>
-              <p className="text-xs text-muted-foreground">{card.description}</p>
+      <section className="space-y-6">
+        {sections.map((section) => (
+          <div key={section.label} className="space-y-3">
+            <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">{section.label}</div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              {section.items.map((card) => (
+                <div key={card.to} className="space-y-3 rounded-none border border-border bg-card p-4">
+                  <div className="space-y-1">
+                    <h2 className="text-sm font-semibold text-foreground">{card.title}</h2>
+                    <p className="text-xs text-muted-foreground">{card.description}</p>
+                  </div>
+                  <Link to={card.to} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}>
+                    Open
+                  </Link>
+                </div>
+              ))}
             </div>
-            <Link to={card.to} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}>
-              Open
-            </Link>
           </div>
         ))}
       </section>

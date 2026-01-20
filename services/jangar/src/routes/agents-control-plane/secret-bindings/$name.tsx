@@ -48,10 +48,10 @@ function SecretBindingDetailRoute() {
         const subjects = readSpecValue(resource, 'subjects')
         return [
           { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
-          { label: 'Subject namespace', value: readNestedValue(resource, ['spec', 'namespace']) ?? '—' },
           { label: 'Allowed secrets', value: readNestedArrayValue(resource, ['spec', 'allowedSecrets']) ?? '—' },
           { label: 'Subjects', value: formatCount(subjects, 'subject') },
           { label: 'First subject', value: readFirstSubject(subjects) },
+          { label: 'Phase', value: readNestedValue(resource, ['status', 'phase']) ?? '—' },
         ]
       }}
     />

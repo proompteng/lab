@@ -8,6 +8,7 @@ import {
   EventsList,
   getMetadataValue,
   getStatusConditions,
+  readNestedArrayValue,
   readNestedValue,
   StatusBadge,
   YamlCodeBlock,
@@ -85,12 +86,13 @@ function MemoryDetailPage() {
     ? [
         { label: 'Namespace', value: getMetadataValue(resource, 'namespace') ?? searchState.namespace },
         { label: 'Type', value: readNestedValue(resource, ['spec', 'type']) ?? '—' },
-        { label: 'Provider', value: readNestedValue(resource, ['spec', 'provider']) ?? '—' },
+        { label: 'Default', value: readNestedValue(resource, ['spec', 'default']) ?? '—' },
         {
           label: 'Secret',
           value: readNestedValue(resource, ['spec', 'connection', 'secretRef', 'name']) ?? '—',
         },
-        { label: 'Phase', value: readNestedValue(resource, ['status', 'phase']) ?? '—' },
+        { label: 'Capabilities', value: readNestedArrayValue(resource, ['spec', 'capabilities']) ?? '—' },
+        { label: 'Last checked', value: readNestedValue(resource, ['status', 'lastCheckedAt']) ?? '—' },
       ]
     : []
 

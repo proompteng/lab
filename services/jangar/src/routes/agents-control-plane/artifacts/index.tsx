@@ -16,16 +16,16 @@ const fields = [
     value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'storageRef', 'name']) ?? '—',
   },
   {
-    label: 'Provider',
-    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'storageRef', 'provider']) ?? '—',
-  },
-  {
     label: 'TTL',
     value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'lifecycle', 'ttlDays']) ?? '—',
   },
   {
-    label: 'Content type',
-    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'metadata', 'contentType']) ?? '—',
+    label: 'URI',
+    value: (resource: PrimitiveResource) => readNestedValue(resource, ['status', 'uri']) ?? '—',
+  },
+  {
+    label: 'Checksum',
+    value: (resource: PrimitiveResource) => readNestedValue(resource, ['status', 'checksum']) ?? '—',
   },
 ]
 

@@ -23,6 +23,18 @@ export const Route = createFileRoute('/agents-control-plane/implementation-specs
   component: ImplementationSpecDetailPage,
 })
 
+const formatCount = (value: unknown, label: string) => {
+  const count = Array.isArray(value) ? value.length : 0
+  if (count === 0) return '—'
+  return `${count} ${label}${count === 1 ? '' : 's'}`
+}
+
+const readSpecValue = (resource: Record<string, unknown>, key: string) => {
+  const spec = resource.spec
+  if (!spec || typeof spec !== 'object' || Array.isArray(spec)) return null
+  return (spec as Record<string, unknown>)[key] ?? null
+}
+
 function ImplementationSpecDetailPage() {
   const params = Route.useParams()
   const searchState = Route.useSearch()
@@ -86,13 +98,11 @@ function ImplementationSpecDetailPage() {
         { label: 'Namespace', value: getMetadataValue(resource, 'namespace') ?? searchState.namespace },
         {
           label: 'Source',
-          value:
-            readNestedValue(resource, ['spec', 'sourceRef', 'name']) ??
-            readNestedValue(resource, ['spec', 'source', 'kind']) ??
-            '—',
+          value: readNestedValue(resource, ['spec', 'source', 'provider']) ?? '—',
         },
-        { label: 'Title', value: readNestedValue(resource, ['spec', 'title']) ?? '—' },
-        { label: 'External ID', value: readNestedValue(resource, ['spec', 'externalId']) ?? '—' },
+        { label: 'Summary', value: readNestedValue(resource, ['spec', 'summary']) ?? '—' },
+        { label: 'External ID', value: readNestedValue(resource, ['spec', 'source', 'externalId']) ?? '—' },
+        { label: 'Labels', value: formatCount(readSpecValue(resource, 'labels'), 'label') },
         { label: 'Synced at', value: readNestedValue(resource, ['status', 'syncedAt']) ?? '—' },
         { label: 'Source version', value: readNestedValue(resource, ['status', 'sourceVersion']) ?? '—' },
       ]

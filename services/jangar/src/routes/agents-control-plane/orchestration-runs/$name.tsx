@@ -24,9 +24,10 @@ function OrchestrationRunDetailRoute() {
       summaryItems={(resource, namespace) => [
         { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
         { label: 'Orchestration', value: readNestedValue(resource, ['spec', 'orchestrationRef', 'name']) ?? '—' },
-        { label: 'Composition', value: readNestedValue(resource, ['spec', 'compositionRef', 'name']) ?? '—' },
-        { label: 'Run ID', value: readNestedValue(resource, ['spec', 'parameters', 'runId']) ?? '—' },
+        { label: 'Run ID', value: readNestedValue(resource, ['status', 'runId']) ?? '—' },
         { label: 'Delivery ID', value: readNestedValue(resource, ['spec', 'deliveryId']) ?? '—' },
+        { label: 'Started', value: readNestedValue(resource, ['status', 'startedAt']) ?? '—' },
+        { label: 'Finished', value: readNestedValue(resource, ['status', 'finishedAt']) ?? '—' },
       ]}
     />
   )

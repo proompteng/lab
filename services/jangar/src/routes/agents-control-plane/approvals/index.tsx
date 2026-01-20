@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { readNestedArrayValue, readNestedValue } from '@/components/agents-control-plane'
+import { readNestedValue } from '@/components/agents-control-plane'
 import { PrimitiveListPage } from '@/components/agents-control-plane-primitives'
 import { parseNamespaceSearch } from '@/components/agents-control-plane-search'
 import type { PrimitiveResource } from '@/data/agents-control-plane'
@@ -10,22 +10,28 @@ export const Route = createFileRoute('/agents-control-plane/approvals/')({
   component: ApprovalsListRoute,
 })
 
+const formatCount = (value: unknown, label: string) => {
+  const count = Array.isArray(value) ? value.length : 0
+  if (count === 0) return '—'
+  return `${count} ${label}${count === 1 ? '' : 's'}`
+}
+
 const fields = [
   {
     label: 'Mode',
     value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'mode']) ?? '—',
   },
   {
-    label: 'Required',
-    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'requiredApprovals']) ?? '—',
+    label: 'Default decision',
+    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'defaultDecision']) ?? '—',
   },
   {
-    label: 'Approvers',
-    value: (resource: PrimitiveResource) => readNestedArrayValue(resource, ['spec', 'approvers']) ?? '—',
+    label: 'Subjects',
+    value: (resource: PrimitiveResource) => formatCount(resource.spec.subjects, 'subject'),
   },
   {
-    label: 'Timeout',
-    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'timeoutSeconds']) ?? '—',
+    label: 'Last decision',
+    value: (resource: PrimitiveResource) => readNestedValue(resource, ['status', 'lastDecisionAt']) ?? '—',
   },
 ]
 
