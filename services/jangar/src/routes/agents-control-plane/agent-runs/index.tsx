@@ -49,6 +49,8 @@ function AgentRunsListPage() {
   const navigate = Route.useNavigate()
 
   const [namespace, setNamespace] = React.useState(searchState.namespace)
+  const [runtime, setRuntime] = React.useState(searchState.runtime ?? '')
+  const [phase, setPhase] = React.useState(searchState.phase ?? '')
   const [items, setItems] = React.useState<PrimitiveResource[]>([])
   const [total, setTotal] = React.useState(0)
   const [error, setError] = React.useState<string | null>(null)
@@ -56,17 +58,26 @@ function AgentRunsListPage() {
   const [isLoading, setIsLoading] = React.useState(false)
 
   const namespaceId = React.useId()
+  const runtimeId = React.useId()
+  const phaseId = React.useId()
 
   React.useEffect(() => {
     setNamespace(searchState.namespace)
-  }, [searchState.namespace])
+    setRuntime(searchState.runtime ?? '')
+    setPhase(searchState.phase ?? '')
+  }, [searchState.namespace, searchState.phase, searchState.runtime])
 
-  const load = React.useCallback(async (value: string) => {
+  const load = React.useCallback(async (value: { namespace: string; runtime?: string; phase?: string }) => {
     setIsLoading(true)
     setError(null)
     setStatus(null)
     try {
-      const result = await fetchPrimitiveList({ kind: 'AgentRun', namespace: value })
+      const result = await fetchPrimitiveList({
+        kind: 'AgentRun',
+        namespace: value.namespace,
+        runtime: value.runtime,
+        phase: value.phase,
+      })
       if (!result.ok) {
         setItems([])
         setTotal(0)
@@ -86,12 +97,21 @@ function AgentRunsListPage() {
   }, [])
 
   React.useEffect(() => {
-    void load(searchState.namespace)
-  }, [load, searchState.namespace])
+    void load({ namespace: searchState.namespace, runtime: searchState.runtime, phase: searchState.phase })
+  }, [load, searchState.namespace, searchState.phase, searchState.runtime])
 
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    void navigate({ search: { namespace: namespace.trim() || DEFAULT_NAMESPACE } })
+    const nextNamespace = namespace.trim() || DEFAULT_NAMESPACE
+    const nextRuntime = runtime.trim()
+    const nextPhase = phase.trim()
+    void navigate({
+      search: {
+        namespace: nextNamespace,
+        ...(nextRuntime.length > 0 ? { runtime: nextRuntime } : {}),
+        ...(nextPhase.length > 0 ? { phase: nextPhase } : {}),
+      },
+    })
   }
 
   return (
@@ -108,7 +128,7 @@ function AgentRunsListPage() {
       </header>
 
       <form className="flex flex-wrap items-end gap-2" onSubmit={submit}>
-        <div className="flex flex-col gap-1 flex-1 min-w-0">
+        <div className="flex flex-col gap-1 min-w-0 flex-1">
           <label className="text-xs font-medium text-foreground" htmlFor={namespaceId}>
             Namespace
           </label>
@@ -121,10 +141,43 @@ function AgentRunsListPage() {
             autoComplete="off"
           />
         </div>
+        <div className="flex flex-col gap-1 min-w-0 flex-1">
+          <label className="text-xs font-medium text-foreground" htmlFor={runtimeId}>
+            Runtime
+          </label>
+          <Input
+            id={runtimeId}
+            name="runtime"
+            value={runtime}
+            onChange={(event) => setRuntime(event.target.value)}
+            placeholder="job"
+            autoComplete="off"
+          />
+        </div>
+        <div className="flex flex-col gap-1 min-w-0 flex-1">
+          <label className="text-xs font-medium text-foreground" htmlFor={phaseId}>
+            Phase
+          </label>
+          <Input
+            id={phaseId}
+            name="phase"
+            value={phase}
+            onChange={(event) => setPhase(event.target.value)}
+            placeholder="Succeeded"
+            autoComplete="off"
+          />
+        </div>
         <Button type="submit" disabled={isLoading}>
           Filter
         </Button>
-        <Button type="button" variant="outline" onClick={() => void load(searchState.namespace)} disabled={isLoading}>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() =>
+            void load({ namespace: searchState.namespace, runtime: searchState.runtime, phase: searchState.phase })
+          }
+          disabled={isLoading}
+        >
           Refresh
         </Button>
       </form>
