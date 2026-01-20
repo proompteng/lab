@@ -12,8 +12,8 @@ import {
 } from '@/components/agents-control-plane'
 import { parseNamespaceSearch } from '@/components/agents-control-plane-search'
 import { Button, buttonVariants } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
 import { fetchPrimitiveDetail, fetchPrimitiveEvents, type PrimitiveEventItem } from '@/data/agents-control-plane'
+import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/agents-control-plane/implementation-specs/$name')({
   validateSearch: parseNamespaceSearch,
