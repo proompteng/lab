@@ -1,0 +1,37 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: codex-native-workflow-e2e
+spec:
+  agentRef:
+    name: codex-native-workflow
+  implementationSpecRef:
+    name: codex-native-workflow-impl
+  runtime:
+    type: workflow
+    config:
+      ttlSecondsAfterFinished: 900
+  workflow:
+    steps:
+      - name: implement
+        parameters:
+          stage: implement
+  workload:
+    image: ghcr.io/proompteng/codex-agent:latest
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+  secrets:
+    - codex-github-token
+  parameters:
+    repository: proompteng/lab
+    issueNumber: "2614"
+    issueTitle: "agents: native workflow e2e proof + runbook"
+    issueUrl: "https://github.com/proompteng/lab/issues/2614"
+    base: main
+    head: codex/agents/2614
+    prompt: |
+      Add a concise runbook note in docs/agents/runbooks.md describing how to retrieve
+      native workflow AgentRun artifacts and confirm the resulting PR exists. Keep the
+      change documentation-only and scoped to the Agents runbook.

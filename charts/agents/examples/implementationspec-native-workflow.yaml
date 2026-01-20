@@ -1,0 +1,21 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: codex-native-workflow-impl
+spec:
+  source:
+    provider: manual
+    externalId: manual:native-workflow-e2e
+    url: https://example.com/agents/native-workflow-e2e
+  summary: "Add native workflow runbook note"
+  text: |
+    Add a short runbook section documenting how to verify native workflow AgentRun artifacts
+    and confirm that a Codex implementation run opened a PR in proompteng/lab.
+  acceptanceCriteria:
+    - Runbook includes artifact retrieval steps
+    - Runbook describes how to confirm the PR exists
+    - Changes are limited to documentation
+  labels:
+    - agents
+    - workflow
+    - e2e
