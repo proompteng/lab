@@ -35,8 +35,11 @@ GitOps rollout notes (native workflow runtime):
 - No Argo Workflows installation is required for native AgentRun/OrchestrationRun execution.
 - Keep `controller.enabled`, `orchestrationController.enabled`, and `supportingController.enabled` at their defaults
   unless you are intentionally disabling native runtime components.
-- To opt into a vendor adapter (e.g., Argo Workflows) for Codex reruns or system-improvement workflows, set
-  `env.vars.ARGO_SERVER_URL` and the matching `JANGAR_CODEX_*_TEMPLATE` values in `argocd/applications/agents/values.yaml`.
+- To point Codex reruns/system improvements at native orchestration, set
+  `workflowRuntime.native.rerunOrchestration` and/or `workflowRuntime.native.systemImprovementOrchestration`
+  (plus the matching `workflowRuntime.native.*Namespace` values if needed) in `argocd/applications/agents/values.yaml`.
+- To opt into a vendor adapter (e.g., Argo Workflows), set `workflowRuntime.adapters.argo.enabled=true` and
+  the matching adapter values in `argocd/applications/agents/values.yaml` (or use `env.vars.*` overrides).
 
 Optional Argo CD smoke test (only for Argo CD-based installs):
 ```bash

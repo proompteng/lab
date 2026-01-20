@@ -140,6 +140,49 @@
       },
       "additionalProperties": false
     },
+    "workflowRuntime": {
+      "type": "object",
+      "properties": {
+        "namespace": { "type": "string" },
+        "native": {
+          "type": "object",
+          "properties": {
+            "rerunOrchestration": { "type": "string" },
+            "rerunOrchestrationNamespace": { "type": "string" },
+            "systemImprovementOrchestration": { "type": "string" },
+            "systemImprovementOrchestrationNamespace": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "adapters": {
+          "type": "object",
+          "properties": {
+            "argo": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "serverUrl": { "type": "string" },
+                "rerunTemplate": { "type": "string" },
+                "rerunNamespace": { "type": "string" },
+                "systemImprovementTemplate": { "type": "string" },
+                "systemImprovementNamespace": { "type": "string" },
+                "tokenSecret": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "key": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "envFromSecretRefs": { "type": "array", "items": { "type": "string" } },
     "envFromConfigMapRefs": { "type": "array", "items": { "type": "string" } },
     "controller": {
