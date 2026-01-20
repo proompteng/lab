@@ -332,7 +332,7 @@ const ensureConsumer = async (manager: JetStreamManager, config: SubscriberConfi
 
 type MessageStream = AsyncIterable<JsMsg> & {
   stop?: (error?: Error) => void
-  close?: () => Promise<void | Error>
+  close?: () => Promise<undefined | Error>
 }
 
 const consumeStream = async (
@@ -372,8 +372,6 @@ const consumeStream = async (
         for (const msg of pendingAckables) {
           msg.ack()
         }
-      } catch (error) {
-        throw error
       } finally {
         stage = 'fetch'
       }
