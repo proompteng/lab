@@ -121,6 +121,18 @@ export const readNestedValue = (resource: Record<string, unknown>, path: string[
   return readString(cursor)
 }
 
+export const readNestedArrayValue = (resource: Record<string, unknown>, path: string[]) => {
+  let cursor: unknown = resource
+  for (const key of path) {
+    const record = readRecord(cursor)
+    if (!record) return null
+    cursor = record[key]
+  }
+  if (!Array.isArray(cursor)) return null
+  const values = cursor.map((entry) => readString(entry)).filter((entry): entry is string => Boolean(entry))
+  return values.length > 0 ? values.join(', ') : null
+}
+
 export const getStatusConditions = (resource: Record<string, unknown>): ConditionEntry[] => {
   const status = readRecord(resource.status) ?? {}
   const rawConditions = Array.isArray(status.conditions) ? status.conditions : []

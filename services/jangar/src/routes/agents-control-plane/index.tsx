@@ -26,6 +26,30 @@ const cards = [
     description: 'Upstream feeds that generate specs.',
   },
   { to: '/agents-control-plane/memories', title: 'Memories', description: 'Memory backends and health.' },
+  { to: '/agents-control-plane/tools', title: 'Tools', description: 'Tool definitions and runtime wiring.' },
+  { to: '/agents-control-plane/tool-runs', title: 'Tool runs', description: 'Execution history for tools.' },
+  { to: '/agents-control-plane/approvals', title: 'Approvals', description: 'Approval policies and gates.' },
+  { to: '/agents-control-plane/budgets', title: 'Budgets', description: 'Budget ceilings and enforcement.' },
+  { to: '/agents-control-plane/signals', title: 'Signals', description: 'Signal definitions and retention.' },
+  {
+    to: '/agents-control-plane/signal-deliveries',
+    title: 'Signal deliveries',
+    description: 'Delivery records and payloads.',
+  },
+  { to: '/agents-control-plane/schedules', title: 'Schedules', description: 'Recurring schedule definitions.' },
+  { to: '/agents-control-plane/artifacts', title: 'Artifacts', description: 'Artifact storage configuration.' },
+  { to: '/agents-control-plane/workspaces', title: 'Workspaces', description: 'Workspace storage definitions.' },
+  {
+    to: '/agents-control-plane/secret-bindings',
+    title: 'Secret bindings',
+    description: 'Secret access control policies.',
+  },
+  { to: '/agents-control-plane/orchestrations', title: 'Orchestrations', description: 'Orchestration templates.' },
+  {
+    to: '/agents-control-plane/orchestration-runs',
+    title: 'Orchestration runs',
+    description: 'Execution records for orchestrations.',
+  },
 ]
 
 function AgentsControlPlanePage() {
