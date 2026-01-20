@@ -1,6 +1,7 @@
 # agentctl release process
 
 This document describes how to build and publish `agentctl` (bundled with the Jangar service) for npm and Homebrew.
+For install/usage guidance, see `docs/agents/agentctl.md`.
 `agentctl` ships with Jangar and uses gRPC only (no direct Kubernetes access).
 
 ## Prereqs

@@ -54,21 +54,29 @@ agentctl config set --namespace agents --address 127.0.0.1:50051
 
 agentctl agent list
 agentctl agent get <name>
+agentctl agent describe <name>
+agentctl agent watch --interval 5
 agentctl agent apply -f agent.yaml
 agentctl agent delete <name>
 
 agentctl impl list
 agentctl impl create --text "..." --summary "..." --source provider=github,externalId=...,url=...
+agentctl impl describe <name>
+agentctl impl watch
 agentctl impl apply -f impl.yaml
 agentctl impl delete <name>
 
 agentctl source list
 agentctl source get <name>
+agentctl source describe <name>
+agentctl source watch
 agentctl source apply -f source.yaml
 agentctl source delete <name>
 
 agentctl memory list
 agentctl memory get <name>
+agentctl memory describe <name>
+agentctl memory watch
 agentctl memory apply -f memory.yaml
 agentctl memory delete <name>
 
@@ -76,6 +84,8 @@ agentctl run submit --agent <name> --impl <name> --runtime <type>
 agentctl run list
 agentctl run get <name>
 agentctl run status <name>
+agentctl run describe <name>
+agentctl run watch
 agentctl run wait <name>
 agentctl run logs <name> --follow
 agentctl run cancel <name>
@@ -84,6 +94,13 @@ agentctl run cancel <name>
 By default, `agentctl` targets the in-cluster service address `agents-grpc.agents.svc.cluster.local:50051` in the
 `agents` namespace. Use `--namespace`/`-n` to override the namespace and `--server` (or `--address`) for
 port-forwarded access. `--output` supports `table` (default), `json`, and `yaml`.
+
+Port-forward example:
+
+```bash
+kubectl -n agents port-forward svc/agents-grpc 50051:50051
+agentctl --server 127.0.0.1:50051 status
+```
 
 ## Build
 

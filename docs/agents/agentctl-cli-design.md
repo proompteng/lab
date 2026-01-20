@@ -41,46 +41,46 @@ style CLIs) that **never** talk to Kubernetes directly.
 - `agentctl status` / `agentctl diagnose` (control-plane health)
 
 ### Agent
-- `agentctl agent get <name>`
-- `agentctl agent list`
+- `agentctl agent get <name>` / `agentctl agent describe <name>`
+- `agentctl agent list` / `agentctl agent watch`
 - `agentctl agent apply -f <file>`
 - `agentctl agent delete <name>`
 
 ### ImplementationSpec
-- `agentctl impl get <name>`
-- `agentctl impl list`
+- `agentctl impl get <name>` / `agentctl impl describe <name>`
+- `agentctl impl list` / `agentctl impl watch`
 - `agentctl impl create --text <text> [--summary ...] [--source ...]`
 - `agentctl impl apply -f <file>`
 - `agentctl impl delete <name>`
 
 ### ImplementationSource (GitHub/Linear)
-- `agentctl source list`
-- `agentctl source get <name>`
+- `agentctl source list` / `agentctl source watch`
+- `agentctl source get <name>` / `agentctl source describe <name>`
 - `agentctl source apply -f <file>`
 - `agentctl source delete <name>`
 
 ### Memory
-- `agentctl memory list`
-- `agentctl memory get <name>`
+- `agentctl memory list` / `agentctl memory watch`
+- `agentctl memory get <name>` / `agentctl memory describe <name>`
 - `agentctl memory apply -f <file>`
 - `agentctl memory delete <name>`
 
 ### Supporting primitives
-- `agentctl tool list|get|apply|delete`
-- `agentctl schedule list|get|apply|delete`
-- `agentctl workspace list|get|apply|delete`
-- `agentctl signal list|get|apply|delete`
-- `agentctl approval list|get|apply|delete`
-- `agentctl budget list|get|apply|delete`
-- `agentctl secretbinding list|get|apply|delete`
+- `agentctl tool list|get|describe|watch|apply|delete`
+- `agentctl schedule list|get|describe|watch|apply|delete`
+- `agentctl workspace list|get|describe|watch|apply|delete`
+- `agentctl signal list|get|describe|watch|apply|delete`
+- `agentctl approval list|get|describe|watch|apply|delete`
+- `agentctl budget list|get|describe|watch|apply|delete`
+- `agentctl secretbinding list|get|describe|watch|apply|delete`
 
 ### AgentRun
 - `agentctl run submit --agent <name> --impl <name> --runtime <type> [--workload-image ...] [--cpu ...] [--memory ...] [--idempotency-key ...]`
 - `agentctl run apply -f <file>`
-- `agentctl run get <name>`
+- `agentctl run get <name>` / `agentctl run describe <name>`
 - `agentctl run status <name>` (alias for `run get`)
 - `agentctl run wait <name>` (block until terminal phase)
-- `agentctl run list`
+- `agentctl run list` / `agentctl run watch`
 - `agentctl run logs <name> [--follow]` (via Jangar gRPC)
 - `agentctl run cancel <name>`
 
@@ -164,6 +164,7 @@ grpc                     agents     healthy   127.0.0.1:50051
 - `--output` / `-o` (`yaml|json|table`, default `table`).
 - `--wait` for `run submit` to block until completion.
 - `--idempotency-key` to avoid duplicate run submissions.
+- `--interval` (seconds) for `watch` commands (default 5).
 
 ## Spec Rendering
 `agentctl run submit` builds an AgentRun manifest from flags:
