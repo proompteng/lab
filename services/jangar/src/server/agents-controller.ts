@@ -1494,7 +1494,11 @@ const submitJobRun = async (
               image: workloadImage,
               command: [binary],
               args,
-              env: [{ name: 'AGENT_RUN_SPEC', value: '/workspace/run.json' }, ...env],
+              env: [
+                { name: 'AGENT_RUN_SPEC', value: '/workspace/run.json' },
+                { name: 'AGENT_RUNNER_SPEC_PATH', value: '/workspace/run.json' },
+                ...env,
+              ],
               envFrom: envFrom.length > 0 ? envFrom : undefined,
               resources: buildJobResources(workload),
               volumeMounts: [...volumeMounts, ...configVolumeMounts],

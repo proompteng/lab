@@ -442,8 +442,10 @@ spec:
   runtime:
     type: custom
   workload:
-    image: ghcr.io/proompteng/codex-agent:latest
+    image: registry.ide-newton.ts.net/lab/codex-universal:latest
     resources:
       cpu: 2
       memory: 4Gi
 ```
+
+Replace the workload image with your own agent-runner build if you are not using the ProomptEng cluster registry.

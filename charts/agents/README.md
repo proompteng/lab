@@ -63,8 +63,11 @@ other step kinds require adapters or future controller extensions.
 
 Optional: submit runs with `agentctl`:
 ```bash
-agentctl run submit --agent codex-agent --impl codex-impl-sample --runtime workflow --workload-image ghcr.io/proompteng/codex-agent:latest
+agentctl run submit --agent codex-agent --impl codex-impl-sample --runtime workflow --workload-image registry.ide-newton.ts.net/lab/codex-universal:latest
 ```
+
+Replace the workload image with your own agent-runner build (and imagePullSecrets if required).
+If your agent-runner uses NATS for context streaming, set `NATS_URL` in the AgentProvider `envTemplate`.
 If you enable the gRPC port (`grpc.enabled=true`), you can port-forward it:
 ```bash
 kubectl -n agents port-forward svc/agents 50051:50051 &

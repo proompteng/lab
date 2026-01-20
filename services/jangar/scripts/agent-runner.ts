@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
 
@@ -52,6 +52,36 @@ const fileExists = async (path: string) => {
 
 const ensureDir = async (path: string) => {
   await mkdir(dirname(path), { recursive: true })
+}
+
+const configureGitAskpass = async (env: Record<string, string | undefined>) => {
+  const token = env.GH_TOKEN || env.GITHUB_TOKEN
+  if (!token) return
+
+  if (!env.GITHUB_TOKEN) env.GITHUB_TOKEN = token
+  if (!env.GH_TOKEN) env.GH_TOKEN = token
+
+  if (!env.GIT_ASKPASS) {
+    const askpassPath = '/tmp/git-askpass.sh'
+    const script = `#!/bin/sh
+case \"$1\" in
+  *Username*) printf '%s\\n' \"$GIT_ASKPASS_USERNAME\" ;;
+  *Password*) printf '%s\\n' \"$GIT_ASKPASS_TOKEN\" ;;
+  *) printf '%s\\n' \"$GIT_ASKPASS_TOKEN\" ;;
+esac
+`
+    await writeFile(askpassPath, script, { mode: 0o700 })
+    await chmod(askpassPath, 0o700)
+    env.GIT_ASKPASS = askpassPath
+  }
+
+  env.GIT_ASKPASS_TOKEN = token
+  if (!env.GIT_ASKPASS_USERNAME) {
+    env.GIT_ASKPASS_USERNAME = 'x-access-token'
+  }
+  if (!env.GIT_TERMINAL_PROMPT) {
+    env.GIT_TERMINAL_PROMPT = '0'
+  }
 }
 
 const decodeMaybeBase64 = (raw: string) => {
@@ -358,8 +388,11 @@ const run = async () => {
   const startTime = new Date()
   const logStream = createWriteStream(logPath, { flags: 'a' })
 
+  const env = buildEnvironment(process.env, renderedEnv)
+  await configureGitAskpass(env)
+
   const child = spawn(command, args, {
-    env: buildEnvironment(process.env, renderedEnv),
+    env,
     stdio: ['inherit', 'pipe', 'pipe'],
     cwd: process.cwd(),
   })

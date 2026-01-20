@@ -248,7 +248,7 @@ const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
   attempt: 1,
   workflowName: 'workflow-1',
   workflowUid: null,
-  workflowNamespace: 'argo',
+  workflowNamespace: 'agents',
   turnId: null,
   threadId: null,
   stage: 'implementation',
@@ -291,7 +291,7 @@ const buildPayload = () => {
       metadata: {
         name: 'workflow-1',
         uid: 'workflow-uid-1',
-        namespace: 'argo',
+        namespace: 'agents',
       },
       status: {
         phase: 'Succeeded',
@@ -329,7 +329,7 @@ describe('codex judge run-complete ingestion', () => {
         metadata: {
           name: 'workflow-1',
           uid: 'workflow-uid-1',
-          namespace: 'argo',
+          namespace: 'agents',
           labels: {
             'codex.repository': 'owner/repo',
             'codex.issue_number': '456',

@@ -22,7 +22,7 @@ spec:
         parameters:
           stage: implement
   workload:
-    image: ghcr.io/proompteng/codex-agent:latest
+    image: registry.ide-newton.ts.net/lab/codex-universal:latest
     resources:
       requests:
         cpu: 250m

@@ -7,6 +7,7 @@ spec:
   argsTemplate: []
   envTemplate:
     CODEX_LOG_LEVEL: info
+    NATS_URL: nats://nats.nats.svc.cluster.local:4222
   inputFiles:
     - path: /workspace/implementation.txt
       content: '{{implementation.text}}'
