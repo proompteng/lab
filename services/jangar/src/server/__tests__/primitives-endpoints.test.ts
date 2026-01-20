@@ -123,6 +123,7 @@ describe('primitives endpoints', () => {
     expect(response.status).toBe(403)
     const body = (await response.json()) as { error?: string }
     expect(body.error).toContain('approval policy')
+    expect(store.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'policy.denied' }))
   })
 
   it('accepts orchestration creation when approval policy is approved', async () => {
@@ -149,5 +150,6 @@ describe('primitives endpoints', () => {
     expect(response.status).toBe(201)
     const body = (await response.json()) as { ok?: boolean }
     expect(body.ok).toBe(true)
+    expect(store.createAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'policy.allowed' }))
   })
 })
