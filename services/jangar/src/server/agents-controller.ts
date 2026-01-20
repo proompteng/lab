@@ -77,6 +77,7 @@ type NamespaceState = {
   agents: Map<string, Record<string, unknown>>
   providers: Map<string, Record<string, unknown>>
   specs: Map<string, Record<string, unknown>>
+  sources: Map<string, Record<string, unknown>>
   memories: Map<string, Record<string, unknown>>
   runs: Map<string, Record<string, unknown>>
 }
@@ -612,6 +613,7 @@ const createNamespaceState = (): NamespaceState => ({
   agents: new Map(),
   providers: new Map(),
   specs: new Map(),
+  sources: new Map(),
   memories: new Map(),
   runs: new Map(),
 })
@@ -642,6 +644,7 @@ const snapshotNamespace = (state: NamespaceState) => ({
   agents: Array.from(state.agents.values()),
   providers: Array.from(state.providers.values()),
   specs: Array.from(state.specs.values()),
+  sources: Array.from(state.sources.values()),
   memories: Array.from(state.memories.values()),
   runs: Array.from(state.runs.values()),
 })
@@ -862,6 +865,79 @@ const reconcileImplementationSpec = async (
     observedGeneration: asRecord(impl.metadata)?.generation ?? 0,
     syncedAt: asString(readNested(impl, ['status', 'syncedAt'])) ?? nowIso(),
     sourceVersion: asString(readNested(impl, ['status', 'sourceVersion'])) ?? undefined,
+    conditions: updated,
+  })
+}
+
+const reconcileImplementationSource = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  source: Record<string, unknown>,
+  namespace: string,
+) => {
+  const conditions = buildConditions(source)
+  const provider = asString(readNested(source, ['spec', 'provider']))
+  const secretRef = asRecord(readNested(source, ['spec', 'auth', 'secretRef']))
+  const secretName = asString(secretRef?.name)
+  const secretKey = asString(secretRef?.key) ?? 'token'
+  const webhookEnabled = readNested(source, ['spec', 'webhook', 'enabled']) === true
+  let updated = conditions
+
+  if (!provider) {
+    updated = upsertCondition(updated, {
+      type: 'InvalidSpec',
+      status: 'True',
+      reason: 'MissingProvider',
+      message: 'spec.provider is required',
+    })
+  } else if (provider !== 'github' && provider !== 'linear') {
+    updated = upsertCondition(updated, {
+      type: 'InvalidSpec',
+      status: 'True',
+      reason: 'UnsupportedProvider',
+      message: `unsupported provider ${provider}`,
+    })
+  } else if (!secretName) {
+    updated = upsertCondition(updated, {
+      type: 'InvalidSpec',
+      status: 'True',
+      reason: 'MissingSecretRef',
+      message: 'spec.auth.secretRef.name is required',
+    })
+  } else if (!webhookEnabled) {
+    updated = upsertCondition(updated, {
+      type: 'Ready',
+      status: 'False',
+      reason: 'WebhookDisabled',
+      message: 'spec.webhook.enabled must be true for webhook-only ingestion',
+    })
+  } else {
+    const secret = await kube.get('secret', secretName, namespace)
+    if (!secret) {
+      updated = upsertCondition(updated, {
+        type: 'Unreachable',
+        status: 'True',
+        reason: 'SecretNotFound',
+        message: `secret ${secretName} not found`,
+      })
+    } else {
+      const data = asRecord(secret.data) ?? {}
+      const stringData = asRecord(secret.stringData) ?? {}
+      if (secretKey && !(secretKey in data) && !(secretKey in stringData)) {
+        updated = upsertCondition(updated, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: 'SecretKeyMissing',
+          message: `secret ${secretName} missing key ${secretKey}`,
+        })
+      } else {
+        updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'WebhookReady' })
+      }
+    }
+  }
+
+  await setStatus(kube, source, {
+    observedGeneration: asRecord(source.metadata)?.generation ?? 0,
+    lastSyncedAt: asString(readNested(source, ['status', 'lastSyncedAt'])) ?? undefined,
     conditions: updated,
   })
 }
@@ -2245,7 +2321,7 @@ const reconcileNamespaceSnapshot = async (
   state: ControllerState,
   concurrency: ReturnType<typeof parseConcurrency>,
 ) => {
-  const { agents, providers, specs, memories, runs } = snapshot
+  const { agents, providers, specs, sources, memories, runs } = snapshot
 
   for (const memory of memories) {
     await reconcileMemory(kube, memory, namespace)
@@ -2261,6 +2337,10 @@ const reconcileNamespaceSnapshot = async (
 
   for (const spec of specs) {
     await reconcileImplementationSpec(kube, spec)
+  }
+
+  for (const source of sources) {
+    await reconcileImplementationSource(kube, source, namespace)
   }
 
   const counts = buildInFlightCounts(state, namespace)
@@ -2329,12 +2409,14 @@ const seedNamespaceState = async (
   const memories = listItems(await kube.list(RESOURCE_MAP.Memory, namespace))
   const agents = listItems(await kube.list(RESOURCE_MAP.Agent, namespace))
   const specs = listItems(await kube.list(RESOURCE_MAP.ImplementationSpec, namespace))
+  const sources = listItems(await kube.list(RESOURCE_MAP.ImplementationSource, namespace))
   const providers = listItems(await kube.list(RESOURCE_MAP.AgentProvider, namespace))
   const runs = listItems(await kube.list(RESOURCE_MAP.AgentRun, namespace))
 
   for (const resource of memories) updateStateMap(nsState.memories, 'ADDED', resource)
   for (const resource of agents) updateStateMap(nsState.agents, 'ADDED', resource)
   for (const resource of specs) updateStateMap(nsState.specs, 'ADDED', resource)
+  for (const resource of sources) updateStateMap(nsState.sources, 'ADDED', resource)
   for (const resource of providers) updateStateMap(nsState.providers, 'ADDED', resource)
   for (const resource of runs) updateStateMap(nsState.runs, 'ADDED', resource)
 
@@ -2377,6 +2459,13 @@ const startNamespaceWatches = (
     const resource = asRecord(event.object)
     if (!resource) return
     updateStateMap(nsState.specs, event.type, resource)
+    enqueueFull()
+  }
+
+  const handleSourceEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
+    const resource = asRecord(event.object)
+    if (!resource) return
+    updateStateMap(nsState.sources, event.type, resource)
     enqueueFull()
   }
 
@@ -2431,6 +2520,14 @@ const startNamespaceWatches = (
       namespace,
       onEvent: handleSpecEvent,
       onError: (error) => console.warn('[jangar] implementation spec watch failed', error),
+    }),
+  )
+  watchHandles.push(
+    startResourceWatch({
+      resource: RESOURCE_MAP.ImplementationSource,
+      namespace,
+      onEvent: handleSourceEvent,
+      onError: (error) => console.warn('[jangar] implementation source watch failed', error),
     }),
   )
   watchHandles.push(
