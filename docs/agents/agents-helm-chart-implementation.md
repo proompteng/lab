@@ -99,6 +99,8 @@ Jangar is the controller for all primitives and must:
 
 ### Runtime adapters (expected to exist)
 - `workflow` (native step runner), `job`, `temporal`, `custom` adapters with clear error messages when configuration is missing.
+The Helm chart enables the native workflow runtime controllers by default; vendor adapters (for example, Argo Workflows)
+are opt-in via explicit `env.vars.ARGO_SERVER_URL` plus the matching workflow template variables.
 
 ### Orchestration runtime (native)
 - Orchestration and OrchestrationRun execute in-cluster by default with no external workflow engine.

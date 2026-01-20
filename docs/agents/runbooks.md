@@ -31,6 +31,13 @@ into the `agents` namespace using `argocd/applications/agents/values.yaml`.
 Update the values file with your Jangar image tag, database secret, and (optional) agent runner image.
 If `controller.namespaces` spans multiple namespaces or `"*"`, set `rbac.clusterScoped=true`.
 
+GitOps rollout notes (native workflow runtime):
+- No Argo Workflows installation is required for native AgentRun/OrchestrationRun execution.
+- Keep `controller.enabled`, `orchestrationController.enabled`, and `supportingController.enabled` at their defaults
+  unless you are intentionally disabling native runtime components.
+- To opt into a vendor adapter (e.g., Argo Workflows) for Codex reruns or system-improvement workflows, set
+  `env.vars.ARGO_SERVER_URL` and the matching `JANGAR_CODEX_*_TEMPLATE` values in `argocd/applications/agents/values.yaml`.
+
 Optional Argo CD smoke test (only for Argo CD-based installs):
 ```bash
 kubectl -n argocd get applications.argoproj.io agents -o yaml

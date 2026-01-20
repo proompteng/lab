@@ -64,6 +64,15 @@ exists (for example, `codex-autonomous`). To opt into an Argo adapter instead, s
 Native orchestration currently supports `AgentRun`, `ToolRun`, `SubOrchestration`, and `ApprovalGate` steps;
 other step kinds require adapters or future controller extensions.
 
+Optional vendor adapters (Argo Workflows):
+```yaml
+env:
+  vars:
+    ARGO_SERVER_URL: "http://argo-workflows-server.argo.svc.cluster.local:2746"
+    JANGAR_CODEX_RERUN_TEMPLATE: "codex-rerun"
+    JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE: "codex-system-improvement"
+```
+
 Optional: submit runs with `agentctl`:
 ```bash
 agentctl run submit --agent codex-agent --impl codex-impl-sample --runtime workflow --workload-image ghcr.io/proompteng/codex-agent:latest
