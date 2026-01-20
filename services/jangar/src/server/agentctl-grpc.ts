@@ -7,7 +7,7 @@ import * as grpc from '@grpc/grpc-js'
 import { status as GrpcStatus, ServerCredentials, type ServerUnaryCall, type ServerWritableStream } from '@grpc/grpc-js'
 import { loadSync } from '@grpc/proto-loader'
 import { postAgentRunsHandler } from '~/routes/v1/agent-runs'
-import { buildControlPlaneStatus } from '~/server/control-plane-status'
+import { buildControlPlaneStatus, type GrpcStatus as ControlPlaneGrpcStatus } from '~/server/control-plane-status'
 import { asRecord, asString } from '~/server/primitives-http'
 import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 
@@ -825,7 +825,7 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
       if (authError) return callback(authError, null)
       try {
         const namespace = normalizeNamespace(call.request?.namespace)
-        const grpcStatus = {
+        const grpcStatus: ControlPlaneGrpcStatus = {
           enabled: true,
           address,
           status: 'healthy',
