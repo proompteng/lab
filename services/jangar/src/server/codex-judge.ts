@@ -4,6 +4,7 @@ import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import * as S from '@effect/schema/Schema'
 import * as Either from 'effect/Either'
+import { publishAgentMessages } from '~/server/agent-messages-bus'
 import { createAgentMessagesStore } from '~/server/agent-messages-store'
 import { createArgoClient } from '~/server/argo-client'
 import {
@@ -1806,7 +1807,10 @@ const backfillAgentMessages = async (run: CodexRunRecord, artifacts: ResolvedArt
       dedupeKey: buildBackfillDedupeKey(run.id, message.attrs),
     }))
 
-    await agentStore.insertMessages(records)
+    const inserted = await agentStore.insertMessages(records)
+    if (inserted.length > 0) {
+      publishAgentMessages(inserted)
+    }
   } catch (error) {
     console.warn('Failed to backfill agent messages', error)
   } finally {

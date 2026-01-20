@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { Duration, Effect } from 'effect'
 
+import { subscribeAgentMessages } from '~/server/agent-messages-bus'
 import { type AgentMessageRecord, createAgentMessagesStore } from '~/server/agent-messages-store'
 import { safeJsonStringify } from '~/server/chat-text'
 import { createCodexJudgeStore } from '~/server/codex-judge-store'
@@ -15,7 +16,6 @@ export const Route = createFileRoute('/api/agents/events')({
 })
 
 const HEARTBEAT_INTERVAL_MS = 5000
-const POLL_INTERVAL_MS = 1500
 const DEFAULT_HISTORY_LIMIT = 500
 
 const jsonResponse = (payload: unknown, status = 200) => {
@@ -170,7 +170,6 @@ export const getAgentEvents = async (request: Request) => {
 
   const encoder = new TextEncoder()
   let heartbeat: ReturnType<typeof setInterval> | null = null
-  let poller: ReturnType<typeof setInterval> | null = null
   let isClosed = false
   let lastSeenAt: string | null = initialLastSeenAt
   const seenIds = new Set<string>()
@@ -213,17 +212,26 @@ export const getAgentEvents = async (request: Request) => {
         push(buildPayload(record))
       }
 
+      const matchesRecord = (record: AgentMessageRecord) => {
+        if (channel && record.channel !== channel) return false
+        if (identifiers.size === 0) return true
+        if (record.runId && identifiers.has(record.runId)) return true
+        if (record.workflowUid && identifiers.has(record.workflowUid)) return true
+        return false
+      }
+
       let resolveKeepAlive: (() => void) | null = null
       const keepAlive = new Promise<void>((resolve) => {
         resolveKeepAlive = resolve
       })
 
+      let unsubscribe: (() => void) | null = null
       cleanup = async (reason: string, error?: unknown) => {
         if (isClosed) return
         isClosed = true
         request.signal.removeEventListener('abort', handleAbort)
         if (heartbeat) clearInterval(heartbeat)
-        if (poller) clearInterval(poller)
+        if (unsubscribe) unsubscribe()
         try {
           await store.close()
         } catch (error) {
@@ -259,25 +267,12 @@ export const getAgentEvents = async (request: Request) => {
 
       void (async () => {
         initialRecords.forEach(pushRecord)
-
-        poller = setInterval(() => {
-          void (async () => {
-            try {
-              const next = await store.listMessages({
-                identifiers: identifiers.size > 0 ? Array.from(identifiers) : undefined,
-                channel,
-                since: lastSeenAt,
-                limit,
-              })
-              next.forEach(pushRecord)
-            } catch (error) {
-              if (!isClosed) {
-                recordSseError('agent-events', 'poll')
-                comment(`poll error: ${error instanceof Error ? error.message : String(error)}`)
-              }
-            }
-          })()
-        }, POLL_INTERVAL_MS)
+        unsubscribe = subscribeAgentMessages((records) => {
+          for (const record of records) {
+            if (!matchesRecord(record)) continue
+            pushRecord(record)
+          }
+        })
       })()
 
       await keepAlive
@@ -286,7 +281,7 @@ export const getAgentEvents = async (request: Request) => {
       if (isClosed) return
       isClosed = true
       if (heartbeat) clearInterval(heartbeat)
-      if (poller) clearInterval(poller)
+      if (unsubscribe) unsubscribe()
       void store.close()
       if (!connectionClosed) {
         recordSseConnection('agent-events', 'closed')

@@ -14,7 +14,14 @@ Required verbs (namespaced):
 - `update` on `*/status` for all CRDs
 - `create`, `get`, `list`, `watch`, `update`, `patch`, `delete` on runtime resources:
   - `jobs.batch` (for workflow/job runtime)
+- `create`, `get`, `list`, `watch`, `update`, `patch`, `delete` on:
+  - `cronjobs.batch` (Schedule controller)
+  - `persistentvolumeclaims` (Workspace controller)
+- `get`, `list`, `watch` on:
+  - `pods` and `pods/log` (agentctl log streaming)
 - `get` on `secrets` referenced in AgentRun allowlist
+- `create`, `get`, `list`, `watch`, `update`, `patch` on:
+  - `configmaps` (run inputs, workflow step payloads)
 
 Optional (if enabled):
 - `events` for publishing Kubernetes events
