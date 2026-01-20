@@ -107,6 +107,20 @@ if ! command -v kubeconform >/dev/null 2>&1; then
   exit 1
 fi
 
+CRD_SCHEMA_VERSION="${KUBECONFORM_K8S_VERSION:-1.27.0}"
+crd_schema_dir="$(mktemp -d)"
+trap 'rm -rf "${crd_schema_dir}"' EXIT
+crd_schema_base="https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/v${CRD_SCHEMA_VERSION}-standalone-strict"
+curl -fsSL -o "${crd_schema_dir}/_definitions.json" "${crd_schema_base}/_definitions.json"
+cat <<'JSON' >"${crd_schema_dir}/CustomResourceDefinition.json"
+{"$ref":"_definitions.json#/definitions/io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.CustomResourceDefinition"}
+JSON
+cp "${crd_schema_dir}/CustomResourceDefinition.json" "${crd_schema_dir}/customresourcedefinition.json"
+
+kubeconform --strict --summary \
+  --schema-location "${crd_schema_dir}/{{.ResourceKind}}.json" \
+  "${CHART_DIR}/crds"/*.yaml
+
 kubeconform --strict --summary --ignore-missing-schemas \
   --schema-location "${schema_dir}/{{.ResourceKind}}{{.KindSuffix}}.json" \
   --schema-location "${schema_dir}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json" \
