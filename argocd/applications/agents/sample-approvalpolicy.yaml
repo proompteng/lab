@@ -3,6 +3,11 @@ kind: ApprovalPolicy
 metadata:
   name: sample-approval-policy
   namespace: agents
+  labels:
+    proompteng.ai/sample: "true"
 spec:
   mode: manual
   defaultDecision: deny
+  subjects:
+    - kind: Orchestration
+      name: sample-orchestration
