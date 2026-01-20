@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
 
 import {
+  ControlPlaneControllersPanel,
   ControlPlaneOverviewTile,
   ControlPlaneProblems,
   controlPlaneSections,
@@ -29,7 +30,7 @@ function AgentsControlPlanePage() {
   const namespaceId = React.useId()
   const searchId = React.useId()
 
-  const { tiles, problems, isLoading, error, refresh } = useControlPlaneOverview(searchState.namespace)
+  const { tiles, problems, isLoading, error, lastUpdatedAt, refresh } = useControlPlaneOverview(searchState.namespace)
 
   React.useEffect(() => {
     setNamespace(searchState.namespace)
@@ -59,11 +60,12 @@ function AgentsControlPlanePage() {
       (acc, tile) => {
         acc.total += tile.total
         acc.ready += tile.readyCount
-        acc.degraded += tile.degradedCount
+        acc.running += tile.runningCount
+        acc.failed += tile.failedCount
         acc.unknown += tile.unknownCount
         return acc
       },
-      { total: 0, ready: 0, degraded: 0, unknown: 0 },
+      { total: 0, ready: 0, running: 0, failed: 0, unknown: 0 },
     )
   }, [tiles])
 
@@ -82,8 +84,11 @@ function AgentsControlPlanePage() {
             ArgoCD-style overview for agent primitives, health, and recent control-plane failures.
           </p>
         </div>
-        <div className="text-xs text-muted-foreground">
-          Namespace <span className="font-semibold text-foreground">{searchState.namespace}</span>
+        <div className="text-xs text-muted-foreground space-y-1">
+          <div>
+            Namespace <span className="font-semibold text-foreground">{searchState.namespace}</span>
+          </div>
+          <div>Last updated {lastUpdatedAt ? new Date(lastUpdatedAt).toLocaleString() : '—'}</div>
         </div>
       </header>
 
@@ -128,11 +133,12 @@ function AgentsControlPlanePage() {
         </div>
       ) : null}
 
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         {[
           { label: 'Total resources', value: totals.total },
           { label: 'Ready', value: totals.ready },
-          { label: 'Degraded', value: totals.degraded },
+          { label: 'Running', value: totals.running },
+          { label: 'Failed', value: totals.failed },
           { label: 'Unknown', value: totals.unknown },
         ].map((summary) => (
           <div key={summary.label} className="rounded-none border p-3 border-border bg-card">
@@ -170,6 +176,7 @@ function AgentsControlPlanePage() {
         </div>
 
         <div className="space-y-6">
+          <ControlPlaneControllersPanel tiles={tiles} />
           <ControlPlaneProblems
             problems={problems}
             namespace={searchState.namespace}
