@@ -162,6 +162,7 @@ grpc                     agents     healthy   127.0.0.1:50051
 - `--token` (optional shared secret).
 - `--tls` to enable TLS when configured (future-proofed).
 - `--output` / `-o` (`yaml|json|table`, default `table`).
+- `describe` defaults to `--output yaml` unless explicitly overridden.
 - `--wait` for `run submit` to block until completion.
 - `--idempotency-key` to avoid duplicate run submissions.
 - `--interval` (seconds) for `watch` commands (default 5).
@@ -177,7 +178,7 @@ grpc                     agents     healthy   127.0.0.1:50051
 - `--runtime-config key=value` maps into `spec.runtime.config` (schemaless).
 
 ## Logging & Artifacts
-- `agentctl run logs` streams from Jangar gRPC endpoints.
+- `agentctl run logs` and `agentctl run wait` stream from Jangar gRPC endpoints (no polling).
 
 ## Error Handling
 - Validate required fields before submitting.

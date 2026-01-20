@@ -246,8 +246,8 @@ Usage:
   agentctl run submit --agent <name> --impl <name> --runtime <type> [flags]
   agentctl run apply -f <file>
   agentctl run get <name>
-  agentctl run status <name>
   agentctl run describe <name>
+  agentctl run status <name>
   agentctl run wait <name>
   agentctl run list
   agentctl run watch
@@ -690,22 +690,33 @@ const waitForRunCompletion = async (
   namespace: string,
   output: string,
 ) => {
-  const deadline = Date.now() + 60 * 60 * 1000
-  while (Date.now() < deadline) {
-    const response = await callUnary<{ json: string }>(client, 'GetAgentRun', { name, namespace }, metadata)
-    const resource = parseJson(response.json)
-    if (resource) {
-      const phase = resolveStatusPhase(resource)
-      const normalized = phase.toLowerCase()
-      if (['succeeded', 'failed', 'cancelled', 'canceled'].includes(normalized)) {
-        outputResource(resource, output)
-        return 0
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 2000))
+  const stream = (client as unknown as Record<string, (...args: unknown[]) => grpc.ClientReadableStream<unknown>>)
+    .StreamAgentRunStatus
+  if (!stream) {
+    throw new Error('StreamAgentRunStatus not available')
   }
-  console.error('Timed out waiting for AgentRun completion')
-  return EXIT_RUNTIME
+  let latest: Record<string, unknown> | null = null
+
+  return await new Promise<number>((resolve, reject) => {
+    const call = stream.call(client, { name, namespace }, metadata)
+    call.on('data', (entry: { json?: string }) => {
+      if (!entry?.json) return
+      const resource = parseJson(entry.json)
+      if (resource) {
+        latest = resource
+      }
+    })
+    call.on('end', () => {
+      if (latest) {
+        outputResource(latest, output)
+        resolve(0)
+      } else {
+        console.error('AgentRun status stream closed without updates')
+        resolve(EXIT_RUNTIME)
+      }
+    })
+    call.on('error', (error) => reject(error))
+  })
 }
 
 const outputStatus = (status: ControlPlaneStatus, output: string, namespace: string) => {
@@ -795,6 +806,7 @@ const main = async () => {
 
     const config = await loadConfig()
     const output = normalizeOutput(flags.output)
+    const describeOutput = flags.output ? output : 'yaml'
 
     if (command === 'config') {
       if (subcommand === 'view') {
@@ -987,7 +999,7 @@ const main = async () => {
       if (subcommand === 'get' || subcommand === 'describe') {
         const response = await callUnary<{ json: string }>(client, rpc.get, { name: args[0], namespace }, metadata)
         const resource = parseJson(response.json)
-        if (resource) outputResource(resource, output)
+        if (resource) outputResource(resource, subcommand === 'describe' ? describeOutput : output)
         return 0
       }
       if (subcommand === 'list') {
@@ -1174,7 +1186,7 @@ const main = async () => {
           metadata,
         )
         const resource = parseJson(response.json)
-        if (resource) outputResource(resource, output)
+        if (resource) outputResource(resource, subcommand === 'describe' ? describeOutput : output)
         return 0
       }
       if (subcommand === 'wait') {

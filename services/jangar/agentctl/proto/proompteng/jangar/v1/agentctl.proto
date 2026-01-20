@@ -102,6 +102,7 @@ service AgentctlService {
   rpc SubmitAgentRun(SubmitAgentRunRequest) returns (SubmitAgentRunResponse);
   rpc CancelAgentRun(CancelAgentRunRequest) returns (CancelAgentRunResponse);
   rpc StreamAgentRunLogs(StreamAgentRunLogsRequest) returns (stream StreamAgentRunLogsResponse);
+  rpc StreamAgentRunStatus(StreamAgentRunStatusRequest) returns (stream StreamAgentRunStatusResponse);
 }
 
 message GetServerInfoRequest {}
@@ -862,6 +863,16 @@ message StreamAgentRunLogsRequest {
 message StreamAgentRunLogsResponse {
   string stream = 1;
   string message = 2;
+}
+
+message StreamAgentRunStatusRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message StreamAgentRunStatusResponse {
+  string json = 1;
+  string phase = 2;
 }
 
 message GetControlPlaneStatusRequest {
