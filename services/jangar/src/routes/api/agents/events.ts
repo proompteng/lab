@@ -170,6 +170,7 @@ export const getAgentEvents = async (request: Request) => {
 
   const encoder = new TextEncoder()
   let heartbeat: ReturnType<typeof setInterval> | null = null
+  let unsubscribe: (() => void) | null = null
   let isClosed = false
   let lastSeenAt: string | null = initialLastSeenAt
   const seenIds = new Set<string>()
@@ -225,7 +226,6 @@ export const getAgentEvents = async (request: Request) => {
         resolveKeepAlive = resolve
       })
 
-      let unsubscribe: (() => void) | null = null
       cleanup = async (reason: string, error?: unknown) => {
         if (isClosed) return
         isClosed = true
