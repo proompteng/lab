@@ -48,6 +48,7 @@ type AgentRunDefaults struct {
 
 type AgentStatus struct {
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+	UpdatedAt          *metav1.Time       `json:"updatedAt,omitempty"`
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
 }
 
@@ -146,6 +147,7 @@ type AgentRunStatus struct {
 	Workflow           *WorkflowStatus                 `json:"workflow,omitempty"`
 	StartedAt          *metav1.Time                    `json:"startedAt,omitempty"`
 	FinishedAt         *metav1.Time                    `json:"finishedAt,omitempty"`
+	UpdatedAt          *metav1.Time                    `json:"updatedAt,omitempty"`
 	Artifacts          []Artifact                      `json:"artifacts,omitempty"`
 	Conditions         []metav1.Condition              `json:"conditions,omitempty"`
 	ObservedGeneration int64                           `json:"observedGeneration,omitempty"`
@@ -215,6 +217,7 @@ type Artifact struct {
 
 type AgentProviderStatus struct {
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+	UpdatedAt          *metav1.Time       `json:"updatedAt,omitempty"`
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
 }
 
@@ -262,6 +265,7 @@ type ImplementationSpecStatus struct {
 	SyncedAt           *metav1.Time       `json:"syncedAt,omitempty"`
 	SourceVersion      string             `json:"sourceVersion,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+	UpdatedAt          *metav1.Time       `json:"updatedAt,omitempty"`
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
 }
 
@@ -315,6 +319,7 @@ type ImplementationScope struct {
 type ImplementationSourceStatus struct {
 	LastSyncedAt       *metav1.Time       `json:"lastSyncedAt,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+	UpdatedAt          *metav1.Time       `json:"updatedAt,omitempty"`
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
 }
 
@@ -355,6 +360,7 @@ type MemoryConnection struct {
 type MemoryStatus struct {
 	LastCheckedAt      *metav1.Time       `json:"lastCheckedAt,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+	UpdatedAt          *metav1.Time       `json:"updatedAt,omitempty"`
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
 }
 
