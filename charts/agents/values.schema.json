@@ -46,6 +46,15 @@
       },
       "additionalProperties": false
     },
+    "grpc": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "port": { "type": "integer" },
+        "servicePort": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
     "resources": {
       "type": "object",
       "properties": {

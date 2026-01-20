@@ -152,6 +152,11 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+            {{- if .Values.grpc.enabled }}
+            - name: grpc
+              containerPort: {{ .Values.grpc.port }}
+              protocol: TCP
+            {{- end }}
           {{- if .Values.livenessProbe.enabled }}
           livenessProbe:
             httpGet:

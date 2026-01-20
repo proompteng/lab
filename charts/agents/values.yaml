@@ -28,6 +28,11 @@ service:
   annotations: {}
   labels: {}
 
+grpc:
+  enabled: false
+  port: 50051
+  servicePort: 50051
+
 resources:
   requests:
     cpu: 100m

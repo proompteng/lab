@@ -39,6 +39,10 @@ Optional: submit runs with `agentctl`:
 ```bash
 agentctl run submit --agent codex-agent --impl codex-impl-sample --runtime workflow --workload-image ghcr.io/proompteng/codex-agent:latest
 ```
+If you enable the gRPC port (`grpc.enabled=true`), you can port-forward it:
+```bash
+kubectl -n agents port-forward svc/agents 50051:50051 &
+```
 
 Optional: configure GitHub/Linear ingestion with `ImplementationSource` manifests:
 - `charts/agents/examples/implementationsource-github.yaml`
@@ -87,6 +91,9 @@ helm push agents-0.6.0.tgz oci://ghcr.io/proompteng/charts
 | `service.port` | Service port | `80` |
 | `service.annotations` | Service annotations | `{}` |
 | `service.labels` | Extra Service labels | `{}` |
+| `grpc.enabled` | Expose gRPC port for agentctl | `false` |
+| `grpc.port` | Container gRPC port | `50051` |
+| `grpc.servicePort` | Service gRPC port | `50051` |
 | `serviceAccount.create` | Create service account | `true` |
 | `serviceAccount.name` | Service account name override | `""` |
 | `rbac.create` | Create RBAC | `true` |

@@ -67,6 +67,7 @@ It talks to the Jangar controller over gRPC.
 ## Flags & Defaults
 - `--namespace` (default `agents`).
 - `--address` (gRPC address; default `127.0.0.1:50051` for port‑forward).
+- In‑cluster usage targets the `agents` service `grpc` port (requires `grpc.enabled` and `JANGAR_GRPC_*` envs in Helm values).
 - `--token` (optional shared secret).
 - `--tls` to enable TLS when configured (future-proofed).
 - `--output` (`yaml|json|table`).

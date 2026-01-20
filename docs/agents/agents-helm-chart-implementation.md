@@ -36,6 +36,7 @@ This document is implementation‑grade: it describes *what* needs to exist in t
 A fully functional chart must provide:
 - **CRDs** for all primitives, installed via `charts/agents/crds/`.
 - **Jangar deployment + service** with documented env configuration.
+- **Optional gRPC service port** (ClusterIP only) for `agentctl` access within the cluster.
 - **RBAC** that matches what Jangar actually does (jobs/secrets/configmaps/CRDs).
 - **Controller configuration** (namespaces, concurrency, resync interval) exposed via values.
 - **Examples** for each CRD and implementation source.
@@ -104,6 +105,7 @@ Controller behavior requires permissions to:
 - Database configuration (URL, secret ref, CA secret).
 - Controller settings (`enabled`, `namespaces`, `intervalSeconds`, `concurrency`).
 - Agent comms configuration (NATS, optional).
+- gRPC service configuration (`grpc.enabled`, `grpc.port`, `grpc.servicePort`).
 - RBAC and service account options.
 - Resource requests/limits, probes, node selectors, tolerations, security context.
 
