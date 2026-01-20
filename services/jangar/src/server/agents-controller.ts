@@ -233,11 +233,13 @@ const normalizeConditions = (raw: unknown): Condition[] => {
     const type = asString(record.type)
     const status = asString(record.status)
     if (!type || !status) continue
+    const reason = asString(record.reason)?.trim() || 'Reconciled'
+    const message = asString(record.message) ?? ''
     output.push({
       type,
       status: status === 'True' ? 'True' : status === 'False' ? 'False' : 'Unknown',
-      reason: asString(record.reason) ?? undefined,
-      message: asString(record.message) ?? undefined,
+      reason,
+      message,
       lastTransitionTime: asString(record.lastTransitionTime) ?? nowIso(),
     })
   }
