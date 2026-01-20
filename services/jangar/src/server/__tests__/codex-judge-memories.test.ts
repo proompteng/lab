@@ -50,6 +50,8 @@ const globalState = globalThis as typeof globalThis & {
     rerunOrchestrationNamespace: string
     systemImprovementOrchestrationName: string | null
     systemImprovementOrchestrationNamespace: string
+    systemImprovementJudgePrompt: string
+    defaultJudgePrompt: string
   }
   __codexJudgeMemoryStoreMock?: {
     persist: (input: PersistMemoryInput) => Promise<{
@@ -141,6 +143,8 @@ if (!globalState.__codexJudgeConfigMock) {
     rerunOrchestrationNamespace: 'jangar',
     systemImprovementOrchestrationName: null,
     systemImprovementOrchestrationNamespace: 'jangar',
+    systemImprovementJudgePrompt: 'system improvement judge prompt',
+    defaultJudgePrompt: 'judge prompt',
   }
 }
 
@@ -235,6 +239,8 @@ const config = {
   promptTuningFailureThreshold: 3,
   promptTuningWindowHours: 24,
   promptTuningCooldownHours: 6,
+  systemImprovementJudgePrompt: 'system improvement judge prompt',
+  defaultJudgePrompt: 'judge prompt',
 }
 const memoriesStore = {
   persist: async (input: PersistMemoryInput) => {

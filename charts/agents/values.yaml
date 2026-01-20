@@ -76,7 +76,6 @@ env:
     JANGAR_MIGRATIONS: "auto"
 
 workflowRuntime:
-  namespace: ""
   native:
     rerunOrchestration: ""
     rerunOrchestrationNamespace: ""
