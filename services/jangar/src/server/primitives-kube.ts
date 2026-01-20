@@ -14,6 +14,7 @@ export type KubernetesClient = {
   ) => Promise<Record<string, unknown>>
   get: (resource: string, name: string, namespace: string) => Promise<Record<string, unknown> | null>
   list: (resource: string, namespace: string, labelSelector?: string) => Promise<Record<string, unknown>>
+  listEvents: (namespace: string, fieldSelector?: string) => Promise<Record<string, unknown>>
 }
 
 type CommandResult = {
@@ -135,6 +136,14 @@ export const createKubernetesClient = (): KubernetesClient => ({
     }
     const output = await kubectl(args, undefined, 'kubectl list')
     return parseJson(output, 'kubectl list')
+  },
+  listEvents: async (namespace, fieldSelector) => {
+    const args = ['get', 'events', '-n', namespace, '-o', 'json']
+    if (fieldSelector) {
+      args.push('--field-selector', fieldSelector)
+    }
+    const output = await kubectl(args, undefined, 'kubectl events')
+    return parseJson(output, 'kubectl events')
   },
 })
 

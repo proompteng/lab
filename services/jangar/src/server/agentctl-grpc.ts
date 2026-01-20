@@ -166,19 +166,18 @@ const readNested = (value: unknown, path: string[]) => {
   return cursor ?? null
 }
 
+const isJobRuntime = (runtimeType: string | null) => runtimeType === 'job' || runtimeType === 'workflow'
+
 const buildLogArgs = (runName: string, namespace: string, runtimeType: string | null, runtimeName: string | null) => {
-  if (runtimeType === 'job' && runtimeName) {
+  if (isJobRuntime(runtimeType) && runtimeName) {
     return ['logs', `job/${runtimeName}`, '-n', namespace]
   }
   return ['logs', '-l', `agents.proompteng.ai/agent-run=${runName}`, '-n', namespace]
 }
 
 const buildCancelArgs = (runtimeType: string | null, runtimeName: string | null, namespace: string) => {
-  if (runtimeType === 'job' && runtimeName) {
+  if (isJobRuntime(runtimeType) && runtimeName) {
     return ['delete', 'job', runtimeName, '-n', namespace]
-  }
-  if (runtimeType === 'argo' && runtimeName) {
-    return ['delete', 'workflow', runtimeName, '-n', namespace]
   }
   return null
 }
