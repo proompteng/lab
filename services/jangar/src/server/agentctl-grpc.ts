@@ -175,7 +175,15 @@ const buildLogArgs = (runName: string, namespace: string, runtimeType: string | 
   return ['logs', '-l', `agents.proompteng.ai/agent-run=${runName}`, '-n', namespace]
 }
 
-const buildCancelArgs = (runtimeType: string | null, runtimeName: string | null, namespace: string) => {
+const buildCancelArgs = (
+  runtimeType: string | null,
+  runtimeName: string | null,
+  runName: string,
+  namespace: string,
+) => {
+  if (runtimeType === 'workflow') {
+    return ['delete', 'job', '-l', `agents.proompteng.ai/agent-run=${runName}`, '-n', namespace, '--ignore-not-found']
+  }
   if (isJobRuntime(runtimeType) && runtimeName) {
     return ['delete', 'job', runtimeName, '-n', namespace]
   }
@@ -614,7 +622,7 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
           return callback({ code: GrpcStatus.NOT_FOUND, message: 'AgentRun not found' }, null)
         }
         const { runtimeType, runtimeName } = resolveAgentRunRuntime(resource)
-        const args = buildCancelArgs(runtimeType, runtimeName, namespace)
+        const args = buildCancelArgs(runtimeType, runtimeName, name, namespace)
         if (!args) {
           return callback(
             { code: GrpcStatus.FAILED_PRECONDITION, message: 'No cancellable runtime found for this AgentRun' },
