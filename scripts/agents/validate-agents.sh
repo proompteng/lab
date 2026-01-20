@@ -53,16 +53,14 @@ if ! command -v kubeconform >/dev/null 2>&1; then
 fi
 
 kubeconform --strict --summary \
-  --schema-location "file://${schema_dir}" \
-  --schema-location "file://${schema_dir}/{{.ResourceKind}}{{.KindSuffix}}.json" \
-  --schema-location "file://${schema_dir}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json" \
+  --schema-location "${schema_dir}/{{.ResourceKind}}{{.KindSuffix}}.json" \
+  --schema-location "${schema_dir}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json" \
   --schema-location default \
   "${CHART_DIR}/examples"/*.yaml
 
 kubeconform --strict --summary \
-  --schema-location "file://${schema_dir}" \
-  --schema-location "file://${schema_dir}/{{.ResourceKind}}{{.KindSuffix}}.json" \
-  --schema-location "file://${schema_dir}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json" \
+  --schema-location "${schema_dir}/{{.ResourceKind}}{{.KindSuffix}}.json" \
+  --schema-location "${schema_dir}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json" \
   --schema-location default \
   "${ROOT_DIR}/argocd/applications/agents/application.yaml"
 
