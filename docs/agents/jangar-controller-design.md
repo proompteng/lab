@@ -31,7 +31,7 @@ Inputs:
 - `spec.runtime`
 - `spec.workload`
 - `spec.memoryRef` (optional override)
-- `spec.parameters`, `spec.secrets`
+- `spec.parameters`, `spec.secrets` (secrets are exposed via `envFrom` in job/workflow pods)
 
 Steps:
 1. Validate required fields and access policy.

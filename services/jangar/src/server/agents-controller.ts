@@ -1260,6 +1260,8 @@ const submitJobRun = async (
     memory,
     Array.isArray(outputArtifacts) ? outputArtifacts : [],
   )
+  const runSecrets = parseStringList(readNested(agentRun, ['spec', 'secrets']))
+  const envFrom = runSecrets.map((name) => ({ secretRef: { name } }))
 
   const inputEntries = inputFiles
     .map((file: Record<string, unknown>) => ({
@@ -1366,6 +1368,7 @@ const submitJobRun = async (
               command: [binary],
               args,
               env: [{ name: 'AGENT_RUN_SPEC', value: '/workspace/run.json' }, ...env],
+              envFrom: envFrom.length > 0 ? envFrom : undefined,
               resources: buildJobResources(workload),
               volumeMounts: [...volumeMounts, ...configVolumeMounts],
             },
