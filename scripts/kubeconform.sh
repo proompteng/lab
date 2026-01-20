@@ -30,6 +30,9 @@ if [[ -d "$SCHEMA_DIR" ]]; then
     "--schema-location" "${SCHEMA_DIR}/{{.ResourceKind}}{{.KindSuffix}}.json"
     "--schema-location" "${SCHEMA_DIR}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json"
     "--schema-location" "${SCHEMA_DIR}/{{.Group}}/{{.ResourceAPIVersion}}/{{.ResourceKind}}.json"
+    "--schema-location" "${SCHEMA_DIR}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
+    "--schema-location" "${SCHEMA_DIR}/{{.ResourceKind}}_{{.Group}}_{{.ResourceAPIVersion}}.json"
+    "--schema-location" "${SCHEMA_DIR}/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
   )
 fi
 

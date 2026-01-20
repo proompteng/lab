@@ -42,10 +42,16 @@ for version_entry in crd.get("spec", {}).get("versions", []):
             Path(f"schemas/custom/{kind_slug}{kind_suffix}.json"),
             Path(f"schemas/custom/{kind}-{version}.json"),
             Path(f"schemas/custom/{kind_slug}-{version}.json"),
+            Path(f"schemas/custom/{kind}_{version}.json"),
+            Path(f"schemas/custom/{kind_slug}_{version}.json"),
+            Path(f"schemas/custom/{kind}_{group}_{version}.json"),
+            Path(f"schemas/custom/{kind_slug}_{group}_{version}.json"),
             Path(f"schemas/custom/{kind}.json"),
             Path(f"schemas/custom/{kind_slug}.json"),
             Path(f"schemas/custom/{group}/{version}/{kind}.json"),
             Path(f"schemas/custom/{group}/{version}/{kind_slug}.json"),
+            Path(f"schemas/custom/{group}/{kind}_{version}.json"),
+            Path(f"schemas/custom/{group}/{kind_slug}_{version}.json"),
         ]
         for out_path in out_paths:
             out_path.parent.mkdir(parents=True, exist_ok=True)
