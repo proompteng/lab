@@ -40,6 +40,8 @@ for version_entry in crd.get("spec", {}).get("versions", []):
             Path(f"schemas/custom/{group}_{version}_{kind}.json"),
             Path(f"schemas/custom/{kind}{kind_suffix}.json"),
             Path(f"schemas/custom/{kind_slug}{kind_suffix}.json"),
+            Path(f"schemas/custom/{kind}-{version}.json"),
+            Path(f"schemas/custom/{kind_slug}-{version}.json"),
             Path(f"schemas/custom/{kind}.json"),
             Path(f"schemas/custom/{kind_slug}.json"),
         ]
