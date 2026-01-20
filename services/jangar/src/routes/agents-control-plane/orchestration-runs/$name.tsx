@@ -21,8 +21,7 @@ function OrchestrationRunDetailRoute() {
       name={params.name}
       backPath="/agents-control-plane/orchestration-runs"
       searchState={searchState}
-      summaryItems={(resource, namespace) => [
-        { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
+      summaryItems={(resource, _namespace) => [
         { label: 'Orchestration', value: readNestedValue(resource, ['spec', 'orchestrationRef', 'name']) ?? '—' },
         { label: 'Run ID', value: readNestedValue(resource, ['status', 'runId']) ?? '—' },
         { label: 'Delivery ID', value: readNestedValue(resource, ['spec', 'deliveryId']) ?? '—' },

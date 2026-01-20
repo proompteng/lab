@@ -1,8 +1,9 @@
-import type { JsMsg } from 'nats'
+import { type JsMsg, StringCodec } from 'nats'
 import { describe, expect, it, vi } from 'vitest'
 
 import { __test__ } from '~/server/agent-comms-subscriber'
 import { publishAgentMessages } from '~/server/agent-messages-bus'
+import type { AgentMessageRecord } from '~/server/agent-messages-store'
 import { recordAgentCommsBatch, recordAgentCommsError } from '~/server/metrics'
 
 vi.mock('~/server/agent-messages-bus', () => ({
@@ -14,9 +15,26 @@ vi.mock('~/server/metrics', () => ({
   recordAgentCommsError: vi.fn(),
 }))
 
-type StringCodecValue = { decode: (data: Uint8Array) => string }
-
 const toBytes = (value: string) => new TextEncoder().encode(value)
+
+const buildRecord = (input: Record<string, unknown>, index: number): AgentMessageRecord => ({
+  id: `msg-${index}`,
+  workflowUid: null,
+  workflowName: null,
+  workflowNamespace: null,
+  runId: null,
+  stepId: null,
+  agentId: null,
+  role: String(input.role ?? 'assistant'),
+  kind: String(input.kind ?? 'message'),
+  timestamp: new Date().toISOString(),
+  channel: null,
+  stage: null,
+  content: String(input.content ?? ''),
+  attrs: {},
+  dedupeKey: null,
+  createdAt: new Date().toISOString(),
+})
 
 const createMessage = (payload: Record<string, unknown>, subject: string) =>
   ({
@@ -34,16 +52,22 @@ const createStream = (messages: JsMsg[]) =>
     },
     stop: vi.fn(),
     close: vi.fn(async () => {}),
-  }) as AsyncIterable<JsMsg> & { stop: () => void; close: () => Promise<undefined | Error> }
+    // biome-ignore lint/suspicious/noConfusingVoidType: align with MessageStream close signature.
+  }) as AsyncIterable<JsMsg> & { stop: () => void; close: () => Promise<void | Error> }
 
 describe('agent comms subscriber consume', () => {
   it('acks messages after insert and records batch metrics', async () => {
     const recordBatch = vi.mocked(recordAgentCommsBatch)
-    const sc = { decode: (data: Uint8Array) => new TextDecoder().decode(data) } as StringCodecValue
+    const sc = StringCodec()
     const insertMessages = vi.fn(async (inputs: unknown[]) =>
-      inputs.map((input, index) => ({ ...(input as Record<string, unknown>), id: `msg-${index}`, createdAt: null })),
+      inputs.map((input, index) => buildRecord(input as Record<string, unknown>, index)),
     )
-    const store = { insertMessages, close: vi.fn(async () => {}) }
+    const store = {
+      insertMessages,
+      hasMessages: vi.fn(async () => false),
+      listMessages: vi.fn(async () => []),
+      close: vi.fn(async () => {}),
+    }
     const abortController = new AbortController()
     const config = { pullBatchSize: 2, pullExpiresMs: 0 } as Parameters<typeof __test__.consumeStream>[3]
 
@@ -62,11 +86,16 @@ describe('agent comms subscriber consume', () => {
 
   it('acks decode failures immediately and records decode errors', async () => {
     const recordError = vi.mocked(recordAgentCommsError)
-    const sc = { decode: (data: Uint8Array) => new TextDecoder().decode(data) } as StringCodecValue
+    const sc = StringCodec()
     const insertMessages = vi.fn(async (inputs: unknown[]) =>
-      inputs.map((input, index) => ({ ...(input as Record<string, unknown>), id: `msg-${index}`, createdAt: null })),
+      inputs.map((input, index) => buildRecord(input as Record<string, unknown>, index)),
     )
-    const store = { insertMessages, close: vi.fn(async () => {}) }
+    const store = {
+      insertMessages,
+      hasMessages: vi.fn(async () => false),
+      listMessages: vi.fn(async () => []),
+      close: vi.fn(async () => {}),
+    }
     const abortController = new AbortController()
     const config = { pullBatchSize: 1, pullExpiresMs: 0 } as Parameters<typeof __test__.consumeStream>[3]
 

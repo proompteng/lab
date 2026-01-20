@@ -3,9 +3,11 @@ import * as React from 'react'
 
 import {
   deriveStatusCategory,
+  formatGenerationSummary,
   formatTimestamp,
   getMetadataValue,
   getResourceCreatedAt,
+  getResourceReconciledAt,
   getResourceUpdatedAt,
   readNestedArrayValue,
   readNestedValue,
@@ -13,6 +15,7 @@ import {
   summarizeConditions,
 } from '@/components/agents-control-plane'
 import { DEFAULT_NAMESPACE, parseNamespaceSearch } from '@/components/agents-control-plane-search'
+import { useControlPlaneStream } from '@/components/agents-control-plane-stream'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { fetchPrimitiveList, type PrimitiveResource } from '@/data/agents-control-plane'
@@ -64,6 +67,7 @@ function AgentProvidersListPage() {
   const [error, setError] = React.useState<string | null>(null)
   const [status, setStatus] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
+  const reloadTimerRef = React.useRef<number | null>(null)
 
   const namespaceId = React.useId()
 
@@ -98,6 +102,23 @@ function AgentProvidersListPage() {
   React.useEffect(() => {
     void load(searchState.namespace)
   }, [load, searchState.namespace])
+
+  const scheduleReload = React.useCallback(() => {
+    if (reloadTimerRef.current !== null) return
+    reloadTimerRef.current = window.setTimeout(() => {
+      reloadTimerRef.current = null
+      void load(searchState.namespace)
+    }, 350)
+  }, [load, searchState.namespace])
+
+  useControlPlaneStream(searchState.namespace, {
+    onEvent: (event) => {
+      if (event.type !== 'resource') return
+      if (event.kind !== 'AgentProvider') return
+      if (event.namespace !== searchState.namespace) return
+      scheduleReload()
+    },
+  })
 
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -159,6 +180,8 @@ function AgentProvidersListPage() {
             const conditionSummary = summarizeConditions(resource)
             const createdAt = getResourceCreatedAt(resource)
             const updatedAt = getResourceUpdatedAt(resource)
+            const reconciledAt = getResourceReconciledAt(resource)
+            const generationSummary = formatGenerationSummary(resource)
             const fields = buildProviderFields(resource)
             return (
               <li key={`${resourceNamespace}/${name}`} className="border-b border-border last:border-b-0">
@@ -191,6 +214,14 @@ function AgentProvidersListPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-[10px] uppercase tracking-wide">Updated</span>
                       <span className="text-foreground">{formatTimestamp(updatedAt)}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] uppercase tracking-wide">Reconciled</span>
+                      <span className="text-foreground">{formatTimestamp(reconciledAt)}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] uppercase tracking-wide">Observed gen</span>
+                      <span className="text-foreground">{generationSummary}</span>
                     </div>
                   </div>
                   <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">

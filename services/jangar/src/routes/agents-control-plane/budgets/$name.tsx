@@ -21,8 +21,7 @@ function BudgetDetailRoute() {
       name={params.name}
       backPath="/agents-control-plane/budgets"
       searchState={searchState}
-      summaryItems={(resource, namespace) => [
-        { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
+      summaryItems={(resource, _namespace) => [
         { label: 'CPU limit', value: readNestedValue(resource, ['spec', 'limits', 'cpu']) ?? '—' },
         { label: 'Memory limit', value: readNestedValue(resource, ['spec', 'limits', 'memory']) ?? '—' },
         { label: 'GPU limit', value: readNestedValue(resource, ['spec', 'limits', 'gpu']) ?? '—' },

@@ -44,10 +44,9 @@ function ApprovalDetailRoute() {
       name={params.name}
       backPath="/agents-control-plane/approvals"
       searchState={searchState}
-      summaryItems={(resource, namespace) => {
+      summaryItems={(resource, _namespace) => {
         const subjects = readSpecValue(resource, 'subjects') ?? []
         return [
-          { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
           { label: 'Mode', value: readNestedValue(resource, ['spec', 'mode']) ?? '—' },
           { label: 'Default decision', value: readNestedValue(resource, ['spec', 'defaultDecision']) ?? '—' },
           { label: 'Subjects', value: formatCount(subjects, 'subject') },

@@ -34,8 +34,7 @@ function SignalDeliveryDetailRoute() {
       name={params.name}
       backPath="/agents-control-plane/signal-deliveries"
       searchState={searchState}
-      summaryItems={(resource, namespace) => [
-        { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
+      summaryItems={(resource, _namespace) => [
         { label: 'Signal', value: readNestedValue(resource, ['spec', 'signalRef', 'name']) ?? '—' },
         { label: 'Delivery ID', value: readNestedValue(resource, ['spec', 'deliveryId']) ?? '—' },
         { label: 'Payload', value: formatObjectKeys(readSpecValue(resource, 'payload')) },

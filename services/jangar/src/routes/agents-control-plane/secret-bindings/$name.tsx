@@ -44,10 +44,9 @@ function SecretBindingDetailRoute() {
       name={params.name}
       backPath="/agents-control-plane/secret-bindings"
       searchState={searchState}
-      summaryItems={(resource, namespace) => {
+      summaryItems={(resource, _namespace) => {
         const subjects = readSpecValue(resource, 'subjects')
         return [
-          { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
           { label: 'Allowed secrets', value: readNestedArrayValue(resource, ['spec', 'allowedSecrets']) ?? '—' },
           { label: 'Subjects', value: formatCount(subjects, 'subject') },
           { label: 'First subject', value: readFirstSubject(subjects) },

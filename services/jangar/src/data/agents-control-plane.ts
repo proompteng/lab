@@ -58,6 +58,60 @@ export type PrimitiveEventsResult =
     }
   | { ok: false; message: string; status?: number; raw?: unknown }
 
+export type ControllerStatus = {
+  name: string
+  enabled: boolean
+  started: boolean
+  crds_ready: boolean
+  missing_crds: string[]
+  last_checked_at: string
+  status: 'healthy' | 'degraded' | 'disabled' | 'unknown'
+  message: string
+}
+
+export type RuntimeAdapterStatus = {
+  name: string
+  available: boolean
+  status: 'healthy' | 'configured' | 'degraded' | 'disabled' | 'unknown'
+  message: string
+  endpoint: string
+}
+
+export type DatabaseStatus = {
+  configured: boolean
+  connected: boolean
+  status: 'healthy' | 'degraded' | 'disabled'
+  message: string
+  latency_ms: number
+}
+
+export type GrpcStatus = {
+  enabled: boolean
+  address: string
+  status: 'healthy' | 'degraded' | 'disabled'
+  message: string
+}
+
+export type NamespaceStatus = {
+  namespace: string
+  status: 'healthy' | 'degraded'
+  degraded_components: string[]
+}
+
+export type ControlPlaneStatus = {
+  service: string
+  generated_at: string
+  controllers: ControllerStatus[]
+  runtime_adapters: RuntimeAdapterStatus[]
+  database: DatabaseStatus
+  grpc: GrpcStatus
+  namespaces: NamespaceStatus[]
+}
+
+export type ControlPlaneStatusResult =
+  | { ok: true; status: ControlPlaneStatus }
+  | { ok: false; message: string; status?: number; raw?: unknown }
+
 const extractErrorMessage = (payload: unknown): string | null => {
   if (!payload || typeof payload !== 'object') return null
   const record = payload as Record<string, unknown>
@@ -205,4 +259,29 @@ export const fetchPrimitiveEvents = async (params: {
   const namespace = typeof record.namespace === 'string' ? record.namespace : params.namespace
   const name = typeof record.name === 'string' ? record.name : params.name
   return { ok: true, items, kind: params.kind, namespace, name }
+}
+
+export const fetchControlPlaneStatus = async (params: {
+  namespace: string
+  signal?: AbortSignal
+}): Promise<ControlPlaneStatusResult> => {
+  const searchParams = new URLSearchParams({ namespace: params.namespace })
+  const response = await fetch(`/api/agents/control-plane/status?${searchParams.toString()}`, {
+    signal: params.signal,
+  })
+
+  const payload = await parseResponse(response)
+  if (!payload || typeof payload !== 'object') {
+    return { ok: false, message: 'Invalid response payload', status: response.status }
+  }
+  if ('ok' in payload && payload.ok === false) {
+    return {
+      ok: false,
+      message: extractErrorMessage(payload) ?? 'Request failed',
+      status: response.status,
+      raw: payload,
+    }
+  }
+
+  return { ok: true, status: payload as ControlPlaneStatus }
 }

@@ -51,11 +51,10 @@ function OrchestrationDetailRoute() {
       name={params.name}
       backPath="/agents-control-plane/orchestrations"
       searchState={searchState}
-      summaryItems={(resource, namespace) => {
+      summaryItems={(resource, _namespace) => {
         const steps = readSpecValue(resource, 'steps')
         const policies = readSpecValue(resource, 'policies')
         return [
-          { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
           { label: 'Entrypoint', value: readNestedValue(resource, ['spec', 'entrypoint']) ?? '—' },
           { label: 'Steps', value: formatCount(steps, 'step') },
           { label: 'First step', value: readFirstStep(steps) },

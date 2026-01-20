@@ -92,7 +92,7 @@ type AgentsControlNavGroup = {
   items: AppNavItem[]
 }
 
-const agentsControlOverview: AppNavItem = { to: '/agents-control-plane', label: 'Overview', icon: IconRobot }
+const agentsControlOverview: AppNavItem = { to: '/agents-control-plane', label: 'Control plane', icon: IconRobot }
 
 const agentsControlGroups: AgentsControlNavGroup[] = [
   {

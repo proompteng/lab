@@ -33,7 +33,7 @@ type MetricsState = {
   shutdown?: () => void
 }
 
-type SseStream = 'chat' | 'agent-events'
+type SseStream = 'chat' | 'agent-events' | 'control-plane'
 
 type AgentCommsErrorStage = 'fetch' | 'insert' | 'decode' | 'unknown'
 

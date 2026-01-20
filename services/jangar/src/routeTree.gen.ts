@@ -113,10 +113,11 @@ import { Route as ApiTerminalsSessionIdInputRouteImport } from './routes/api/ter
 import { Route as ApiTerminalsSessionIdDeleteRouteImport } from './routes/api/terminals/$sessionId/delete'
 import { Route as ApiCodexRunsRecentRouteImport } from './routes/api/codex/runs/recent'
 import { Route as ApiCodexRunsListRouteImport } from './routes/api/codex/runs/list'
+import { Route as ApiAgentsControlPlaneStreamRouteImport } from './routes/api/agents/control-plane/stream'
+import { Route as ApiAgentsControlPlaneStatusRouteImport } from './routes/api/agents/control-plane/status'
 import { Route as ApiAgentsControlPlaneResourcesRouteImport } from './routes/api/agents/control-plane/resources'
 import { Route as ApiAgentsControlPlaneResourceRouteImport } from './routes/api/agents/control-plane/resource'
 import { Route as ApiAgentsControlPlaneEventsRouteImport } from './routes/api/agents/control-plane/events'
-import { Route as ApiAgentsControlPlaneStatusRouteImport } from './routes/api/agents/control-plane/status'
 import { Route as GithubPullsOwnerRepoNumberRouteImport } from './routes/github/pulls/$owner/$repo/$number'
 import { Route as ApiAgentsImplementationSourcesWebhooksProviderRouteImport } from './routes/api/agents/implementation-sources/webhooks/$provider'
 import { Route as ApiGithubPullsOwnerRepoNumberRouteImport } from './routes/api/github/pulls/$owner/$repo/$number'
@@ -691,6 +692,18 @@ const ApiCodexRunsListRoute = ApiCodexRunsListRouteImport.update({
   path: '/list',
   getParentRoute: () => ApiCodexRunsRoute,
 } as any)
+const ApiAgentsControlPlaneStreamRoute =
+  ApiAgentsControlPlaneStreamRouteImport.update({
+    id: '/api/agents/control-plane/stream',
+    path: '/api/agents/control-plane/stream',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiAgentsControlPlaneStatusRoute =
+  ApiAgentsControlPlaneStatusRouteImport.update({
+    id: '/api/agents/control-plane/status',
+    path: '/api/agents/control-plane/status',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiAgentsControlPlaneResourcesRoute =
   ApiAgentsControlPlaneResourcesRouteImport.update({
     id: '/api/agents/control-plane/resources',
@@ -707,12 +720,6 @@ const ApiAgentsControlPlaneEventsRoute =
   ApiAgentsControlPlaneEventsRouteImport.update({
     id: '/api/agents/control-plane/events',
     path: '/api/agents/control-plane/events',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const ApiAgentsControlPlaneStatusRoute =
-  ApiAgentsControlPlaneStatusRouteImport.update({
-    id: '/api/agents/control-plane/status',
-    path: '/api/agents/control-plane/status',
     getParentRoute: () => rootRouteImport,
   } as any)
 const GithubPullsOwnerRepoNumberRoute =
@@ -875,9 +882,10 @@ export interface FileRoutesByFullPath {
   '/github/pulls/': typeof GithubPullsIndexRoute
   '/terminals/$sessionId/': typeof TerminalsSessionIdIndexRoute
   '/api/agents/control-plane/events': typeof ApiAgentsControlPlaneEventsRoute
-  '/api/agents/control-plane/status': typeof ApiAgentsControlPlaneStatusRoute
   '/api/agents/control-plane/resource': typeof ApiAgentsControlPlaneResourceRoute
   '/api/agents/control-plane/resources': typeof ApiAgentsControlPlaneResourcesRoute
+  '/api/agents/control-plane/status': typeof ApiAgentsControlPlaneStatusRoute
+  '/api/agents/control-plane/stream': typeof ApiAgentsControlPlaneStreamRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -994,9 +1002,10 @@ export interface FileRoutesByTo {
   '/github/pulls': typeof GithubPullsIndexRoute
   '/terminals/$sessionId': typeof TerminalsSessionIdIndexRoute
   '/api/agents/control-plane/events': typeof ApiAgentsControlPlaneEventsRoute
-  '/api/agents/control-plane/status': typeof ApiAgentsControlPlaneStatusRoute
   '/api/agents/control-plane/resource': typeof ApiAgentsControlPlaneResourceRoute
   '/api/agents/control-plane/resources': typeof ApiAgentsControlPlaneResourcesRoute
+  '/api/agents/control-plane/status': typeof ApiAgentsControlPlaneStatusRoute
+  '/api/agents/control-plane/stream': typeof ApiAgentsControlPlaneStreamRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -1116,9 +1125,10 @@ export interface FileRoutesById {
   '/github/pulls/': typeof GithubPullsIndexRoute
   '/terminals/$sessionId/': typeof TerminalsSessionIdIndexRoute
   '/api/agents/control-plane/events': typeof ApiAgentsControlPlaneEventsRoute
-  '/api/agents/control-plane/status': typeof ApiAgentsControlPlaneStatusRoute
   '/api/agents/control-plane/resource': typeof ApiAgentsControlPlaneResourceRoute
   '/api/agents/control-plane/resources': typeof ApiAgentsControlPlaneResourcesRoute
+  '/api/agents/control-plane/status': typeof ApiAgentsControlPlaneStatusRoute
+  '/api/agents/control-plane/stream': typeof ApiAgentsControlPlaneStreamRoute
   '/api/codex/runs/list': typeof ApiCodexRunsListRoute
   '/api/codex/runs/recent': typeof ApiCodexRunsRecentRoute
   '/api/terminals/$sessionId/delete': typeof ApiTerminalsSessionIdDeleteRoute
@@ -1239,9 +1249,10 @@ export interface FileRouteTypes {
     | '/github/pulls/'
     | '/terminals/$sessionId/'
     | '/api/agents/control-plane/events'
-    | '/api/agents/control-plane/status'
     | '/api/agents/control-plane/resource'
     | '/api/agents/control-plane/resources'
+    | '/api/agents/control-plane/status'
+    | '/api/agents/control-plane/stream'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -1358,9 +1369,10 @@ export interface FileRouteTypes {
     | '/github/pulls'
     | '/terminals/$sessionId'
     | '/api/agents/control-plane/events'
-    | '/api/agents/control-plane/status'
     | '/api/agents/control-plane/resource'
     | '/api/agents/control-plane/resources'
+    | '/api/agents/control-plane/status'
+    | '/api/agents/control-plane/stream'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -1479,9 +1491,10 @@ export interface FileRouteTypes {
     | '/github/pulls/'
     | '/terminals/$sessionId/'
     | '/api/agents/control-plane/events'
-    | '/api/agents/control-plane/status'
     | '/api/agents/control-plane/resource'
     | '/api/agents/control-plane/resources'
+    | '/api/agents/control-plane/status'
+    | '/api/agents/control-plane/stream'
     | '/api/codex/runs/list'
     | '/api/codex/runs/recent'
     | '/api/terminals/$sessionId/delete'
@@ -1592,9 +1605,10 @@ export interface RootRouteChildren {
   AgentsControlPlaneToolsIndexRoute: typeof AgentsControlPlaneToolsIndexRoute
   AgentsControlPlaneWorkspacesIndexRoute: typeof AgentsControlPlaneWorkspacesIndexRoute
   ApiAgentsControlPlaneEventsRoute: typeof ApiAgentsControlPlaneEventsRoute
-  ApiAgentsControlPlaneStatusRoute: typeof ApiAgentsControlPlaneStatusRoute
   ApiAgentsControlPlaneResourceRoute: typeof ApiAgentsControlPlaneResourceRoute
   ApiAgentsControlPlaneResourcesRoute: typeof ApiAgentsControlPlaneResourcesRoute
+  ApiAgentsControlPlaneStatusRoute: typeof ApiAgentsControlPlaneStatusRoute
+  ApiAgentsControlPlaneStreamRoute: typeof ApiAgentsControlPlaneStreamRoute
   ApiTorghutTaBarsRoute: typeof ApiTorghutTaBarsRoute
   ApiTorghutTaLatestRoute: typeof ApiTorghutTaLatestRoute
   ApiTorghutTaSignalsRoute: typeof ApiTorghutTaSignalsRoute
@@ -2332,6 +2346,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCodexRunsListRouteImport
       parentRoute: typeof ApiCodexRunsRoute
     }
+    '/api/agents/control-plane/stream': {
+      id: '/api/agents/control-plane/stream'
+      path: '/api/agents/control-plane/stream'
+      fullPath: '/api/agents/control-plane/stream'
+      preLoaderRoute: typeof ApiAgentsControlPlaneStreamRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/agents/control-plane/status': {
+      id: '/api/agents/control-plane/status'
+      path: '/api/agents/control-plane/status'
+      fullPath: '/api/agents/control-plane/status'
+      preLoaderRoute: typeof ApiAgentsControlPlaneStatusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/agents/control-plane/resources': {
       id: '/api/agents/control-plane/resources'
       path: '/api/agents/control-plane/resources'
@@ -2351,13 +2379,6 @@ declare module '@tanstack/react-router' {
       path: '/api/agents/control-plane/events'
       fullPath: '/api/agents/control-plane/events'
       preLoaderRoute: typeof ApiAgentsControlPlaneEventsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/agents/control-plane/status': {
-      id: '/api/agents/control-plane/status'
-      path: '/api/agents/control-plane/status'
-      fullPath: '/api/agents/control-plane/status'
-      preLoaderRoute: typeof ApiAgentsControlPlaneStatusRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/github/pulls/$owner/$repo/$number': {
@@ -2745,9 +2766,10 @@ const rootRouteChildren: RootRouteChildren = {
   AgentsControlPlaneWorkspacesIndexRoute:
     AgentsControlPlaneWorkspacesIndexRoute,
   ApiAgentsControlPlaneEventsRoute: ApiAgentsControlPlaneEventsRoute,
-  ApiAgentsControlPlaneStatusRoute: ApiAgentsControlPlaneStatusRoute,
   ApiAgentsControlPlaneResourceRoute: ApiAgentsControlPlaneResourceRoute,
   ApiAgentsControlPlaneResourcesRoute: ApiAgentsControlPlaneResourcesRoute,
+  ApiAgentsControlPlaneStatusRoute: ApiAgentsControlPlaneStatusRoute,
+  ApiAgentsControlPlaneStreamRoute: ApiAgentsControlPlaneStreamRoute,
   ApiTorghutTaBarsRoute: ApiTorghutTaBarsRoute,
   ApiTorghutTaLatestRoute: ApiTorghutTaLatestRoute,
   ApiTorghutTaSignalsRoute: ApiTorghutTaSignalsRoute,

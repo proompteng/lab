@@ -21,8 +21,7 @@ function ToolDetailRoute() {
       name={params.name}
       backPath="/agents-control-plane/tools"
       searchState={searchState}
-      summaryItems={(resource, namespace) => [
-        { label: 'Namespace', value: readNestedValue(resource, ['metadata', 'namespace']) ?? namespace },
+      summaryItems={(resource, _namespace) => [
         { label: 'Image', value: readNestedValue(resource, ['spec', 'image']) ?? '—' },
         { label: 'Command', value: readNestedArrayValue(resource, ['spec', 'command']) ?? '—' },
         { label: 'Args', value: readNestedArrayValue(resource, ['spec', 'args']) ?? '—' },
