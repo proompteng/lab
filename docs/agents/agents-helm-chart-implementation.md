@@ -64,7 +64,7 @@ A fully functional chart must provide:
 Jangar is the controller for all primitives and must:
 - Reconcile **Agent** and validate provider references.
 - Reconcile **AgentProvider** templates and expose invalid spec errors.
-- Reconcile **ImplementationSpec** and **ImplementationSource** (webhook/poll).
+- Reconcile **ImplementationSpec** and **ImplementationSource** (webhook-only).
 - Reconcile **Memory** and validate referenced Secrets.
 - Reconcile **AgentRun** and submit workloads to the configured runtime adapter.
 

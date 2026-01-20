@@ -8,8 +8,8 @@ spec:
     secretRef:
       name: linear-token
       key: token
-  poll:
-    intervalSeconds: 60
+  webhook:
+    enabled: true
   scope:
     team: ENG
     labels:

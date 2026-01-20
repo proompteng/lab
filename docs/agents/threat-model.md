@@ -29,7 +29,7 @@ Status: Draft (2026-01-13)
 - Mitigation: deny privileged pods by default; restrict service accounts.
 
 ### Integration spoofing
-- Mitigation: validate webhook signatures; rate-limit polling.
+- Mitigation: validate webhook signatures; rate-limit webhook ingestion.
 
 ### Denial of service
 - Mitigation: concurrency limits + backoff; per-namespace quotas.

@@ -97,7 +97,7 @@ It provides:
   - Validate schema, normalize plaintext `spec.text`.
   - Track provenance (`spec.source`) and update conditions when upstream changes.
 - `ImplementationSource` reconciler:
-  - Connect to GitHub/Linear (webhook or poll).
+  - Accept webhook events from GitHub/Linear only.
   - Normalize external issues to ImplementationSpec objects (create/update/delete).
   - Maintain sync cursor and emit reconciliation events.
 - `Memory` reconciler:
@@ -124,7 +124,7 @@ It provides:
 #### Observability & operations
 - Structured logs with run correlation (`agentRun.uid`, `implementationSpec.uid`).
 - Metrics: reconcile duration, run latency, success/failure counts by runtime/provider.
-- Configurable resync intervals and backoff for transient provider failures.
+- Configurable webhook retry/backoff for transient provider failures.
 
 ## CRD Redesign
 All CRDs remain under `charts/agents/crds` and are cluster-scoped definitions.
@@ -275,8 +275,8 @@ Status fields (required):
 - `status.observedGeneration`
 
 ### Integration (GitHub + Linear)
-Add an `ImplementationSource` CRD that configures sync from GitHub Issues and Linear into ImplementationSpec objects. GitHub + Linear are the first integrations to ship. This keeps Agent and AgentRun generic while still enabling provider integrations. Jangar (or a lightweight integrations sidecar) is responsible for:
-- Polling or webhook-driven ingestion from GitHub and Linear.
+Add an `ImplementationSource` CRD that configures webhook-only sync from GitHub Issues and Linear into ImplementationSpec objects. GitHub + Linear are the first integrations to ship. This keeps Agent and AgentRun generic while still enabling provider integrations. Jangar (or a lightweight integrations sidecar) is responsible for:
+- Webhook-driven ingestion from GitHub and Linear.
 - Normalizing external issues into ImplementationSpec fields.
 - Updating status/conditions on ImplementationSpec when upstream changes.
 
@@ -284,13 +284,18 @@ ImplementationSource schema (summary):
 - `spec.provider`: `github` | `linear`
 - `spec.auth.secretRef`: reference to credentials secret
 - `spec.webhook.enabled`: bool
-- `spec.poll.intervalSeconds`: integer (default 60)
 - `spec.scope`: selector for org/project/repo
 - `spec.mapping`: optional overrides for field mapping
 
 Status fields:
-- `status.conditions`: Ready | Syncing | Error
-- `status.cursor`, `status.lastSyncedAt`, `status.observedGeneration`
+- `status.conditions`: Ready | Error
+- `status.lastSyncedAt`, `status.observedGeneration`
+
+Webhook configuration:
+- Endpoint: `POST /api/agents/implementation-sources/webhooks/{provider}` where `{provider}` is `github` or `linear`.
+- Secret: reuse `spec.auth.secretRef` value as the webhook signing secret.
+- GitHub headers: `X-Hub-Signature-256` (preferred) or `X-Hub-Signature`.
+- Linear headers: `Linear-Signature` with `Linear-Event: issue`.
 
 Mermaid: integration flow
 ```mermaid
@@ -301,8 +306,8 @@ sequenceDiagram
   participant IS as ImplementationSource
   participant J as Jangar
   participant IM as ImplementationSpec
-  GH->>IS: Webhook/poll
-  LN->>IS: Webhook/poll
+  GH->>IS: Webhook event
+  LN->>IS: Webhook event
   IS->>J: Normalized issue payload
   J->>IM: Create/update ImplementationSpec
   IM-->>J: Status/conditions

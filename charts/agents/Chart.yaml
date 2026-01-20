@@ -70,8 +70,8 @@ annotations:
           secretRef:
             name: github-token
             key: token
-        poll:
-          intervalSeconds: 60
+        webhook:
+          enabled: true
         scope:
           repository: proompteng/lab
     - apiVersion: agents.proompteng.ai/v1alpha1
