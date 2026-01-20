@@ -25,6 +25,7 @@ Artifacts:
 - `services/jangar/agentctl/dist/agentctl-<os>-<arch>` (standalone binary)
 - `services/jangar/agentctl/dist/release/agentctl-<version>-<os>-<arch>.tar.gz`
 - `services/jangar/agentctl/dist/release/*.sha256`
+- `services/jangar/agentctl/dist/release/agentctl.rb` (Homebrew formula with checksums, generated when all targets are built)
 
 ## Publish npm
 
@@ -36,8 +37,10 @@ npm publish --access public
 ## Homebrew
 
 1. Upload the compiled archives from `dist/release` to a GitHub release.
-2. Update the Homebrew formula in the tap repository with the new version and checksum.
-3. The template lives at `services/jangar/agentctl/scripts/homebrew/agentctl.rb`.
+2. To generate the formula, run `bun run --filter @proompteng/agentctl build:release -- --all` (or set
+   `AGENTCTL_TARGETS=darwin-amd64,darwin-arm64,linux-amd64,linux-arm64`) so all checksums are present.
+3. Copy the generated `dist/release/agentctl.rb` into the Homebrew tap repo and commit.
+4. If needed, the template lives at `services/jangar/agentctl/scripts/homebrew/agentctl.rb`.
 
 Example checksum:
 

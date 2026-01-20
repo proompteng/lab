@@ -98,3 +98,4 @@ npm publish --access public
 ```
 
 3. Upload `dist/release` artifacts to a GitHub release and update the Homebrew formula.
+   The build writes a ready-to-commit formula at `dist/release/agentctl.rb` when all targets are built.

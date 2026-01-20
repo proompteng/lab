@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildBinaries } from './build-binaries'
-import { resolveTargets } from './targets'
+import { resolveTargets, TARGETS } from './targets'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const root = resolve(scriptDir, '..')
@@ -44,6 +44,37 @@ const buildArchive = async (version: string, label: string) => {
   await writeFile(checksumPath, `${sha256}  ${archiveName}\n`, 'utf8')
 
   console.log(`Wrote ${archiveName} and ${archiveName}.sha256`)
+
+  return sha256
+}
+
+const renderHomebrewFormula = async (version: string, checksums: Map<string, string>) => {
+  const templatePath = resolve(root, 'scripts/homebrew/agentctl.rb')
+  const outputPath = resolve(releaseDir, 'agentctl.rb')
+
+  const replacements = new Map<string, string>([
+    ['__VERSION__', version],
+    ['__SHA256_DARWIN_ARM64__', checksums.get('darwin-arm64') ?? ''],
+    ['__SHA256_DARWIN_AMD64__', checksums.get('darwin-amd64') ?? ''],
+    ['__SHA256_LINUX_ARM64__', checksums.get('linux-arm64') ?? ''],
+    ['__SHA256_LINUX_AMD64__', checksums.get('linux-amd64') ?? ''],
+  ])
+
+  let template = await readFile(templatePath, 'utf8')
+
+  for (const [token, value] of replacements) {
+    if (!value) {
+      throw new Error(`Missing checksum for ${token}`)
+    }
+    template = template.replaceAll(token, value)
+  }
+
+  if (template.includes('__VERSION__') || template.includes('__SHA256_')) {
+    throw new Error('Homebrew formula template contains unreplaced tokens')
+  }
+
+  await writeFile(outputPath, template, 'utf8')
+  console.log(`Wrote Homebrew formula to ${outputPath}`)
 }
 
 const main = async () => {
@@ -61,8 +92,21 @@ const main = async () => {
     throw new Error(`AGENTCTL_VERSION (${envVersion}) does not match package.json (${packageVersion})`)
   }
 
+  const checksums = new Map<string, string>()
+
   for (const target of targets) {
-    await buildArchive(resolvedVersion, target.label)
+    const sha256 = await buildArchive(resolvedVersion, target.label)
+    checksums.set(target.label, sha256)
+  }
+
+  const requiredLabels = TARGETS.map((target) => target.label)
+  const hasAllChecksums = requiredLabels.every((label) => checksums.has(label))
+
+  if (hasAllChecksums) {
+    await renderHomebrewFormula(resolvedVersion, checksums)
+  } else {
+    const missing = requiredLabels.filter((label) => !checksums.has(label))
+    console.log(`Skipping Homebrew formula generation; missing checksums for: ${missing.join(', ')}`)
   }
 }
 

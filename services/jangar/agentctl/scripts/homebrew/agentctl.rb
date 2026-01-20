@@ -1,7 +1,7 @@
 class Agentctl < Formula
   desc "gRPC CLI for managing agents through Jangar"
   homepage "https://github.com/proompteng/lab/tree/main/services/jangar/agentctl"
-  version "0.1.0"
+  version "__VERSION__"
 
   on_macos do
     on_arm do
