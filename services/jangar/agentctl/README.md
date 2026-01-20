@@ -67,6 +67,68 @@ agentctl memory get <name>
 agentctl memory apply -f memory.yaml
 agentctl memory delete <name>
 
+agentctl orchestration list
+agentctl orchestration get <name>
+agentctl orchestration apply -f orchestration.yaml
+agentctl orchestration delete <name>
+
+agentctl orchestration-run list
+agentctl orchestration-run get <name>
+agentctl orchestration-run submit --orchestration <name> --param key=value
+agentctl orchestration-run apply -f orchestration-run.yaml
+agentctl orchestration-run delete <name>
+
+agentctl tool list
+agentctl tool get <name>
+agentctl tool apply -f tool.yaml
+agentctl tool delete <name>
+
+agentctl tool-run list
+agentctl tool-run get <name>
+agentctl tool-run submit --tool <name> --param key=value
+agentctl tool-run apply -f tool-run.yaml
+agentctl tool-run delete <name>
+
+agentctl signal list
+agentctl signal get <name>
+agentctl signal apply -f signal.yaml
+agentctl signal delete <name>
+
+agentctl signal-delivery list
+agentctl signal-delivery get <name>
+agentctl signal-delivery apply -f signal-delivery.yaml
+agentctl signal-delivery delete <name>
+
+agentctl approval-policy list
+agentctl approval-policy get <name>
+agentctl approval-policy apply -f approval-policy.yaml
+agentctl approval-policy delete <name>
+
+agentctl budget list
+agentctl budget get <name>
+agentctl budget apply -f budget.yaml
+agentctl budget delete <name>
+
+agentctl secret-binding list
+agentctl secret-binding get <name>
+agentctl secret-binding apply -f secret-binding.yaml
+agentctl secret-binding delete <name>
+
+agentctl schedule list
+agentctl schedule get <name>
+agentctl schedule apply -f schedule.yaml
+agentctl schedule delete <name>
+
+agentctl artifact list
+agentctl artifact get <name>
+agentctl artifact apply -f artifact.yaml
+agentctl artifact delete <name>
+
+agentctl workspace list
+agentctl workspace get <name>
+agentctl workspace apply -f workspace.yaml
+agentctl workspace delete <name>
+
 agentctl run submit --agent <name> --impl <name> --runtime <type>
 agentctl run list
 agentctl run get <name>

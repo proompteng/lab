@@ -1,16 +1,17 @@
 # agentctl CLI Design
 
-Status: Current (2026-01-19)
+Status: Current (2026-01-20)
 
 Location: `services/jangar/agentctl`
 
 ## Purpose
-`agentctl` is the Jangar CLI for managing Agents primitives and submitting AgentRuns without hand‑writing YAML.
+`agentctl` is the Jangar CLI for managing Agents primitives and submitting runs without hand‑writing YAML.
 It talks to the Jangar controller over gRPC.
 
 ## Goals
-- CRUD for Agent, AgentRun, ImplementationSpec, ImplementationSource, Memory.
-- First‑class “run” command to submit an AgentRun from flags or a spec file.
+- CRUD for Agent, AgentRun, ImplementationSpec, ImplementationSource, Memory, Orchestration, OrchestrationRun, Tool,
+  ToolRun, Signal, SignalDelivery, ApprovalPolicy, Budget, SecretBinding, Schedule, Artifact, Workspace.
+- First‑class “run” commands to submit AgentRuns, OrchestrationRuns, and ToolRuns from flags or spec files.
 - Works against any Kubernetes cluster where Jangar is deployed.
 - In‑cluster gRPC by default (port‑forward or in‑cluster usage).
 - Human‑friendly status, logs, and controller health.
@@ -22,6 +23,7 @@ It talks to the Jangar controller over gRPC.
 
 ## Architecture
 - Client talks to the Jangar gRPC API (no direct Kubernetes access).
+- gRPC is the only supported transport for in-cluster usage (port-forward or in-cluster gRPC service).
 - Default namespace is `agents`, with explicit overrides via flags/config.
 - Jangar is the source of truth for list/get/apply/delete operations.
 
@@ -56,6 +58,78 @@ It talks to the Jangar controller over gRPC.
 - `agentctl memory apply -f <file>`
 - `agentctl memory delete <name>`
 
+### Orchestration
+- `agentctl orchestration list`
+- `agentctl orchestration get <name>`
+- `agentctl orchestration apply -f <file>`
+- `agentctl orchestration delete <name>`
+
+### OrchestrationRun
+- `agentctl orchestration-run submit --orchestration <name> [--param ...] [--budget ...] [--idempotency-key ...]`
+- `agentctl orchestration-run apply -f <file>`
+- `agentctl orchestration-run get <name>`
+- `agentctl orchestration-run list`
+
+### Tool
+- `agentctl tool list`
+- `agentctl tool get <name>`
+- `agentctl tool apply -f <file>`
+- `agentctl tool delete <name>`
+
+### ToolRun
+- `agentctl tool-run submit --tool <name> [--param ...] [--retry-limit ...] [--timeout-seconds ...]`
+- `agentctl tool-run apply -f <file>`
+- `agentctl tool-run get <name>`
+- `agentctl tool-run list`
+
+### Signal
+- `agentctl signal list`
+- `agentctl signal get <name>`
+- `agentctl signal apply -f <file>`
+- `agentctl signal delete <name>`
+
+### SignalDelivery
+- `agentctl signal-delivery list`
+- `agentctl signal-delivery get <name>`
+- `agentctl signal-delivery apply -f <file>`
+- `agentctl signal-delivery delete <name>`
+
+### ApprovalPolicy
+- `agentctl approval-policy list`
+- `agentctl approval-policy get <name>`
+- `agentctl approval-policy apply -f <file>`
+- `agentctl approval-policy delete <name>`
+
+### Budget
+- `agentctl budget list`
+- `agentctl budget get <name>`
+- `agentctl budget apply -f <file>`
+- `agentctl budget delete <name>`
+
+### SecretBinding
+- `agentctl secret-binding list`
+- `agentctl secret-binding get <name>`
+- `agentctl secret-binding apply -f <file>`
+- `agentctl secret-binding delete <name>`
+
+### Schedule
+- `agentctl schedule list`
+- `agentctl schedule get <name>`
+- `agentctl schedule apply -f <file>`
+- `agentctl schedule delete <name>`
+
+### Artifact
+- `agentctl artifact list`
+- `agentctl artifact get <name>`
+- `agentctl artifact apply -f <file>`
+- `agentctl artifact delete <name>`
+
+### Workspace
+- `agentctl workspace list`
+- `agentctl workspace get <name>`
+- `agentctl workspace apply -f <file>`
+- `agentctl workspace delete <name>`
+
 ### AgentRun
 - `agentctl run submit --agent <name> --impl <name> --runtime <type> [--workload-image ...] [--cpu ...] [--memory ...] [--idempotency-key ...]`
 - `agentctl run apply -f <file>`
@@ -79,6 +153,14 @@ It talks to the Jangar controller over gRPC.
 - Required: `--agent`, `--impl` (ImplementationSpec), `--runtime`.
 - Optional: `--workload-image`, `--cpu`, `--memory`, `--memory-ref`, `--param key=value`.
 - Produces `spec.implementationSpecRef`, `spec.runtime`, `spec.workload`, `spec.parameters`, `spec.idempotencyKey`.
+
+`agentctl orchestration-run submit` builds an OrchestrationRun manifest from flags:
+- Required: `--orchestration`.
+- Optional: `--param key=value`, `--budget`, `--idempotency-key`.
+
+`agentctl tool-run submit` builds a ToolRun manifest from flags:
+- Required: `--tool`.
+- Optional: `--param key=value`, `--retry-limit`, `--timeout-seconds`.
 
 ## Runtime Handling
 - `--runtime` maps to `spec.runtime.type`.

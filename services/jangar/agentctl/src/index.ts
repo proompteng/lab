@@ -81,6 +81,68 @@ Usage:
   agentctl memory apply -f <file>
   agentctl memory delete <name>
 
+  agentctl orchestration list
+  agentctl orchestration get <name>
+  agentctl orchestration apply -f <file>
+  agentctl orchestration delete <name>
+
+  agentctl orchestration-run list
+  agentctl orchestration-run get <name>
+  agentctl orchestration-run submit --orchestration <name> [flags]
+  agentctl orchestration-run apply -f <file>
+  agentctl orchestration-run delete <name>
+
+  agentctl tool list
+  agentctl tool get <name>
+  agentctl tool apply -f <file>
+  agentctl tool delete <name>
+
+  agentctl tool-run list
+  agentctl tool-run get <name>
+  agentctl tool-run submit --tool <name> [flags]
+  agentctl tool-run apply -f <file>
+  agentctl tool-run delete <name>
+
+  agentctl signal list
+  agentctl signal get <name>
+  agentctl signal apply -f <file>
+  agentctl signal delete <name>
+
+  agentctl signal-delivery list
+  agentctl signal-delivery get <name>
+  agentctl signal-delivery apply -f <file>
+  agentctl signal-delivery delete <name>
+
+  agentctl approval-policy list
+  agentctl approval-policy get <name>
+  agentctl approval-policy apply -f <file>
+  agentctl approval-policy delete <name>
+
+  agentctl budget list
+  agentctl budget get <name>
+  agentctl budget apply -f <file>
+  agentctl budget delete <name>
+
+  agentctl secret-binding list
+  agentctl secret-binding get <name>
+  agentctl secret-binding apply -f <file>
+  agentctl secret-binding delete <name>
+
+  agentctl schedule list
+  agentctl schedule get <name>
+  agentctl schedule apply -f <file>
+  agentctl schedule delete <name>
+
+  agentctl artifact list
+  agentctl artifact get <name>
+  agentctl artifact apply -f <file>
+  agentctl artifact delete <name>
+
+  agentctl workspace list
+  agentctl workspace get <name>
+  agentctl workspace apply -f <file>
+  agentctl workspace delete <name>
+
   agentctl run submit --agent <name> --impl <name> --runtime <type> [flags]
   agentctl run apply -f <file>
   agentctl run get <name>
@@ -104,6 +166,18 @@ Run submit flags:
   --runtime-config key=value
   --idempotency-key <value>
   --wait
+
+Orchestration run submit flags:
+  --orchestration <name>
+  --param key=value
+  --budget <name>
+  --idempotency-key <value>
+
+Tool run submit flags:
+  --tool <name>
+  --param key=value
+  --retry-limit <number>
+  --timeout-seconds <number>
 `.trim()
 
 const parseBoolean = (raw: string | undefined) => {
@@ -372,7 +446,7 @@ const handleCompletion = (shell: string) => {
 _agentctl_complete() {
   COMPREPLY=()
   local cur="${COMP_WORDS[COMP_CWORD]}"
-  local cmds="version config completion agent impl source memory run"
+  local cmds="version config completion agent impl source memory orchestration orchestration-run tool tool-run signal signal-delivery approval-policy budget secret-binding schedule artifact workspace run"
   COMPREPLY=( $(compgen -W "$cmds" -- "$cur") )
 }
 complete -F _agentctl_complete agentctl
@@ -380,7 +454,9 @@ complete -F _agentctl_complete agentctl
     return 0
   }
   if (shell === 'fish') {
-    console.log('complete -c agentctl -f -a "version config completion agent impl source memory run"')
+    console.log(
+      'complete -c agentctl -f -a "version config completion agent impl source memory orchestration orchestration-run tool tool-run signal signal-delivery approval-policy budget secret-binding schedule artifact workspace run"',
+    )
     return 0
   }
   console.error(`Unsupported shell: ${shell}`)
@@ -489,36 +565,202 @@ const main = async () => {
       return 0
     }
 
-    if (command === 'agent' || command === 'impl' || command === 'source' || command === 'memory') {
-      const resourceMap: Record<string, { list: string; get: string; apply: string; del: string; create?: string }> = {
-        agent: {
-          list: 'ListAgents',
-          get: 'GetAgent',
-          apply: 'ApplyAgent',
-          del: 'DeleteAgent',
-        },
-        impl: {
-          list: 'ListImplementationSpecs',
-          get: 'GetImplementationSpec',
-          apply: 'ApplyImplementationSpec',
-          del: 'DeleteImplementationSpec',
-          create: 'CreateImplementationSpec',
-        },
-        source: {
-          list: 'ListImplementationSources',
-          get: 'GetImplementationSource',
-          apply: 'ApplyImplementationSource',
-          del: 'DeleteImplementationSource',
-        },
-        memory: {
-          list: 'ListMemories',
-          get: 'GetMemory',
-          apply: 'ApplyMemory',
-          del: 'DeleteMemory',
-        },
-      }
+    const resourceMap: Record<string, { list: string; get: string; apply: string; del: string; create?: string }> = {
+      agent: {
+        list: 'ListAgents',
+        get: 'GetAgent',
+        apply: 'ApplyAgent',
+        del: 'DeleteAgent',
+      },
+      impl: {
+        list: 'ListImplementationSpecs',
+        get: 'GetImplementationSpec',
+        apply: 'ApplyImplementationSpec',
+        del: 'DeleteImplementationSpec',
+        create: 'CreateImplementationSpec',
+      },
+      source: {
+        list: 'ListImplementationSources',
+        get: 'GetImplementationSource',
+        apply: 'ApplyImplementationSource',
+        del: 'DeleteImplementationSource',
+      },
+      memory: {
+        list: 'ListMemories',
+        get: 'GetMemory',
+        apply: 'ApplyMemory',
+        del: 'DeleteMemory',
+      },
+      orchestration: {
+        list: 'ListOrchestrations',
+        get: 'GetOrchestration',
+        apply: 'ApplyOrchestration',
+        del: 'DeleteOrchestration',
+      },
+      'orchestration-run': {
+        list: 'ListOrchestrationRuns',
+        get: 'GetOrchestrationRun',
+        apply: 'ApplyOrchestrationRun',
+        del: 'DeleteOrchestrationRun',
+      },
+      tool: {
+        list: 'ListTools',
+        get: 'GetTool',
+        apply: 'ApplyTool',
+        del: 'DeleteTool',
+      },
+      'tool-run': {
+        list: 'ListToolRuns',
+        get: 'GetToolRun',
+        apply: 'ApplyToolRun',
+        del: 'DeleteToolRun',
+      },
+      signal: {
+        list: 'ListSignals',
+        get: 'GetSignal',
+        apply: 'ApplySignal',
+        del: 'DeleteSignal',
+      },
+      'signal-delivery': {
+        list: 'ListSignalDeliveries',
+        get: 'GetSignalDelivery',
+        apply: 'ApplySignalDelivery',
+        del: 'DeleteSignalDelivery',
+      },
+      'approval-policy': {
+        list: 'ListApprovalPolicies',
+        get: 'GetApprovalPolicy',
+        apply: 'ApplyApprovalPolicy',
+        del: 'DeleteApprovalPolicy',
+      },
+      budget: {
+        list: 'ListBudgets',
+        get: 'GetBudget',
+        apply: 'ApplyBudget',
+        del: 'DeleteBudget',
+      },
+      'secret-binding': {
+        list: 'ListSecretBindings',
+        get: 'GetSecretBinding',
+        apply: 'ApplySecretBinding',
+        del: 'DeleteSecretBinding',
+      },
+      schedule: {
+        list: 'ListSchedules',
+        get: 'GetSchedule',
+        apply: 'ApplySchedule',
+        del: 'DeleteSchedule',
+      },
+      artifact: {
+        list: 'ListArtifacts',
+        get: 'GetArtifact',
+        apply: 'ApplyArtifact',
+        del: 'DeleteArtifact',
+      },
+      workspace: {
+        list: 'ListWorkspaces',
+        get: 'GetWorkspace',
+        apply: 'ApplyWorkspace',
+        del: 'DeleteWorkspace',
+      },
+    }
 
-      const rpc = resourceMap[command]
+    if (command === 'orchestration-run' && subcommand === 'submit') {
+      const params: string[] = []
+      const options: Record<string, string> = {}
+      for (let i = 0; i < args.length; i += 1) {
+        const arg = args[i]
+        if (!arg) continue
+        if (arg === '--orchestration') {
+          options.orchestration = args[++i]
+          continue
+        }
+        if (arg === '--param') {
+          params.push(args[++i])
+          continue
+        }
+        if (arg === '--budget' || arg === '--budget-ref') {
+          options.budget = args[++i]
+          continue
+        }
+        if (arg === '--idempotency-key') {
+          options['idempotency-key'] = args[++i]
+        }
+      }
+      if (!options.orchestration) {
+        throw new Error('--orchestration is required')
+      }
+      const response = await callUnary<{
+        resource_json: string
+        record_json: string
+        idempotent?: boolean
+      }>(
+        client,
+        'SubmitOrchestrationRun',
+        {
+          namespace,
+          orchestration_name: options.orchestration,
+          parameters: parseKeyValueList(params),
+          idempotency_key: options['idempotency-key'] ?? '',
+          budget_ref: options.budget ?? '',
+        },
+        metadata,
+      )
+      if (response.resource_json) {
+        const resource = parseJson(response.resource_json)
+        if (resource) outputResource(resource, output)
+      }
+      return 0
+    }
+
+    if (command === 'tool-run' && subcommand === 'submit') {
+      const params: string[] = []
+      const options: Record<string, string> = {}
+      for (let i = 0; i < args.length; i += 1) {
+        const arg = args[i]
+        if (!arg) continue
+        if (arg === '--tool') {
+          options.tool = args[++i]
+          continue
+        }
+        if (arg === '--param') {
+          params.push(args[++i])
+          continue
+        }
+        if (arg === '--retry-limit' || arg === '--timeout-seconds') {
+          options[arg.slice(2)] = args[++i]
+        }
+      }
+      if (!options.tool) {
+        throw new Error('--tool is required')
+      }
+      const retryLimit = options['retry-limit'] ? Number.parseInt(options['retry-limit'], 10) : 0
+      if (options['retry-limit'] && Number.isNaN(retryLimit)) {
+        throw new Error('--retry-limit must be a number')
+      }
+      const timeoutSeconds = options['timeout-seconds'] ? Number.parseInt(options['timeout-seconds'], 10) : 0
+      if (options['timeout-seconds'] && Number.isNaN(timeoutSeconds)) {
+        throw new Error('--timeout-seconds must be a number')
+      }
+      const response = await callUnary<{ json: string }>(
+        client,
+        'SubmitToolRun',
+        {
+          namespace,
+          tool_name: options.tool,
+          parameters: parseKeyValueList(params),
+          retry_limit: retryLimit,
+          timeout_seconds: timeoutSeconds,
+        },
+        metadata,
+      )
+      const resource = parseJson(response.json)
+      if (resource) outputResource(resource, output)
+      return 0
+    }
+
+    const rpc = resourceMap[command]
+    if (rpc) {
       if (subcommand === 'get') {
         const response = await callUnary<{ json: string }>(client, rpc.get, { name: args[0], namespace }, metadata)
         const resource = parseJson(response.json)
