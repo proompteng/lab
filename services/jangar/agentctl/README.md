@@ -4,13 +4,14 @@
 
 ## Install
 
-### npm (dev)
+### npm
 
 ```bash
 npm install -g @proompteng/agentctl
+npx @proompteng/agentctl --help
 ```
 
-### Homebrew (release)
+### Homebrew
 
 ```bash
 brew install proompteng/tap/agentctl
@@ -76,8 +77,10 @@ agentctl run cancel <name>
 ## Build
 
 ```bash
-bun run build       # builds dist/agentctl.js
-bun run build:bin   # builds dist/agentctl (standalone binary)
+bun run build         # builds dist/agentctl.js
+bun run build:bin     # builds dist/agentctl-<os>-<arch> for host
+bun run build:bins    # builds all platform binaries
+bun run build:release # builds archives + checksums in dist/release
 ```
 
 ## Release (npm + Homebrew)
@@ -85,7 +88,7 @@ bun run build:bin   # builds dist/agentctl (standalone binary)
 1. Build binaries for each target platform:
 
 ```bash
-bun run build:bin
+bun run build:release
 ```
 
 2. Publish npm package:
@@ -94,4 +97,5 @@ bun run build:bin
 npm publish --access public
 ```
 
-3. Compute checksums for the binary artifacts and update the Homebrew formula in the tap repository.
+3. Upload `dist/release` artifacts to a GitHub release and update the Homebrew formula.
+   The build writes a ready-to-commit formula at `dist/release/agentctl.rb` when all targets are built.
