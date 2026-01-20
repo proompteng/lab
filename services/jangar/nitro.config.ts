@@ -9,4 +9,5 @@ export default defineNitroConfig({
   experimental: {
     websocket: websocketEnabled,
   },
+  plugins: ['~/server/plugins/agentctl-grpc'],
 })
