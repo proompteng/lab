@@ -131,7 +131,6 @@ helm push agents-0.6.0.tgz oci://ghcr.io/proompteng/charts
 | `database.caSecret.name` | Secret containing DB CA cert | `""` |
 | `envFromSecretRefs` | Secret names to load as envFrom | `[]` |
 | `envFromConfigMapRefs` | ConfigMap names to load as envFrom | `[]` |
-| `workflowRuntime.namespace` | Default workflow namespace for Codex workflows | `""` |
 | `workflowRuntime.native.rerunOrchestration` | Orchestration name for native Codex reruns | `""` |
 | `workflowRuntime.native.rerunOrchestrationNamespace` | Namespace for native Codex rerun orchestration | `""` |
 | `workflowRuntime.native.systemImprovementOrchestration` | Orchestration name for native system improvement runs | `""` |

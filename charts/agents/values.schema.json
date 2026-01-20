@@ -143,7 +143,6 @@
     "workflowRuntime": {
       "type": "object",
       "properties": {
-        "namespace": { "type": "string" },
         "native": {
           "type": "object",
           "properties": {

@@ -68,10 +68,6 @@ spec:
             - name: PGSSLROOTCERT
               value: "/etc/jangar/ca/{{ .Values.database.caSecret.key | default "ca.crt" }}"
             {{- end }}
-            {{- if .Values.workflowRuntime.namespace }}
-            - name: JANGAR_CODEX_WORKFLOW_NAMESPACE
-              value: {{ .Values.workflowRuntime.namespace | quote }}
-            {{- end }}
             {{- if .Values.workflowRuntime.native.rerunOrchestration }}
             - name: JANGAR_CODEX_RERUN_ORCHESTRATION
               value: {{ .Values.workflowRuntime.native.rerunOrchestration | quote }}
