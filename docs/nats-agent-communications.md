@@ -1,28 +1,29 @@
-# NATS for Argo Workflow agent communications (Jangar UI)
+# NATS agent communications (native workflow runtime)
 
 Owner: Platform + Jangar
 Status: Draft
 
 ## Goals
 
-- Use NATS JetStream as the **real-time bus** for Argo workflow “agent” messages.
+- Use NATS JetStream as the **real-time bus** for workflow runtime “agent” messages.
 - Persist messages so Jangar can **render full agent conversations** in the Jangar UI.
-- Keep existing Kafka-based Argo completion flow intact; NATS is for **agent comms**, not workflow completion.
+- Keep existing completion pipelines intact; NATS is for **agent comms**, not workflow completion.
 - Provide a **global “general” channel** so all workflows/agents can coordinate across runs.
 
 ## Non-goals
 
-- Replace Kafka for Argo Events workflow completion topics.
+- Replace Kafka for workflow completion topics.
 - Implement external auth/TLS on day one (document a path, don’t block rollout).
 - Expose NATS outside the cluster.
 
 ## Current stack context
 
-- NATS cluster: `argocd/applications/nats` (JetStream enabled, Longhorn PVCs).
-- NACK controller: `argocd/applications/nack` (JetStream CRDs).
+- Native workflow runtime (default): Jangar controllers + runners in
+  `services/jangar/src/server/agents-controller.ts` and
+  `services/jangar/src/server/orchestration-controller.ts`.
 - Jangar service + UI: `services/jangar` with Postgres (`jangar-db`) and Redis.
 - OpenWebUI runs separately and proxies through Jangar’s OpenAI-compatible API.
-- Codex workflow templates already emit agent/event logs as artifacts (e.g. `.codex-implementation-agent.log`,
+- Codex runtimes already emit agent/event logs as artifacts (e.g. `.codex-implementation-agent.log`,
   `.codex-research-agent.log`, `.codex-implementation-events.jsonl`). Jangar already pulls these on run-complete
   (`services/jangar/src/server/codex-judge.ts`). NATS adds **real-time** delivery; artifacts remain the fallback/backfill.
 
@@ -30,9 +31,9 @@ Status: Draft
 
 ```mermaid
 flowchart LR
-  subgraph Argo[Argo Workflows]
+  subgraph Runtime[Native Workflow Runtime]
     A1[Agent step containers]
-    A2[Workflow controller]
+    A2[Runtime controller]
   end
 
   subgraph NATS[NATS + JetStream]
@@ -60,17 +61,18 @@ Every “agent communication” is a single NATS message that can be ordered and
 
 ### Required metadata (headers or JSON fields)
 
-- `workflow_uid`: Argo `workflow.uid` (maps to `codex_judge.runs.workflow_uid`)
-- `workflow_name`: Argo `metadata.name`
-- `workflow_namespace`: Argo namespace (default `argo-workflows`)
-- `run_id`: optional Jangar run id (maps to `codex_judge.runs.id` when available; omit for non-codex runs)
-- `step_id`: Argo node id or pod name
+- `workflow_uid`: runtime workflow UID (maps to `codex_judge.runs.workflow_uid` when available)
+- `workflow_name`: runtime workflow name
+- `workflow_namespace`: runtime namespace (default `agents`)
+- `run_id`: optional Jangar run id (maps to `codex_judge.runs.id` for Codex runs)
+- `step_id`: runtime step id or pod name
 - `agent_id`: stable agent identifier (e.g. `planner`, `executor`, `reviewer`)
 - `role`: `system | user | assistant | tool`
 - `kind`: `message | tool_call | tool_result | status | error`
 - `timestamp`: RFC3339
 - `channel`: optional; set to `general` for the shared cross-workflow chat
 - `stage`: optional; can map to `codex_judge.runs.stage` when relevant
+- `runtime`: optional runtime identifier (default `native`)
 
 ### Payload
 
@@ -84,14 +86,15 @@ Every “agent communication” is a single NATS message that can be ordered and
 {
   "workflow_uid": "4f5f...",
   "workflow_name": "codex-issue-2180",
-  "workflow_namespace": "argo-workflows",
+  "workflow_namespace": "agents",
   "run_id": null,
   "step_id": "codex-agent-1",
   "agent_id": "executor",
   "role": "assistant",
   "kind": "message",
   "timestamp": "2025-12-29T01:22:10Z",
-  "content": "Applied patch to argocd/applications/nats/values.yaml"
+  "runtime": "native",
+  "content": "Applied patch to charts/agents/values.yaml"
 }
 ```
 
@@ -100,7 +103,7 @@ Every “agent communication” is a single NATS message that can be ordered and
 Use hierarchical subjects so Jangar can filter quickly.
 
 ```
-argo.workflow.<workflow_namespace>.<workflow_name>.<workflow_uid>.agent.<agent_id>.<kind>
+workflow.<workflow_namespace>.<workflow_name>.<workflow_uid>.agent.<agent_id>.<kind>
 ```
 
 ### Global “general” channel
@@ -108,19 +111,19 @@ argo.workflow.<workflow_namespace>.<workflow_name>.<workflow_uid>.agent.<agent_i
 All workflows and agents also publish/subscribe to a shared channel:
 
 ```
-argo.workflow.general.<kind>
+workflow.general.<kind>
 ```
 
 Set `channel: "general"` in the message body for easy filtering in Jangar.
 
 Examples:
 
-- `argo.workflow.argo-workflows.codex-issue-2180.4f5f.agent.executor.message`
-- `argo.workflow.argo-workflows.codex-issue-2180.4f5f.agent.executor.tool_call`
+- `workflow.agents.codex-issue-2180.4f5f.agent.executor.message`
+- `workflow.agents.codex-issue-2180.4f5f.agent.executor.tool_call`
 
 ### Why this shape
 
-- Stable prefixes for JetStream stream matching (`argo.workflow.>`)
+- Stable prefixes for JetStream stream matching (`workflow.>`)
 - Easy to filter by run, agent, or kind without parsing JSON
 
 ## JetStream resources (NACK CRDs)
@@ -128,7 +131,7 @@ Examples:
 Create a dedicated stream for agent communications:
 
 - Name: `agent-comms`
-- Subjects: `argo.workflow.>` (includes `argo.workflow.general.*`)
+- Subjects: `workflow.>` (includes `workflow.general.*`)
 - Retention: `limits`
 - MaxAge: 7 days
 - MaxBytes: 5–10Gi (tune)
@@ -142,12 +145,11 @@ Jangar uses a durable consumer:
 - DeliverPolicy: `all`
 - MaxAckPending: 20000
 
-These CRDs should live under `argocd/applications/jangar/` (so the consumer is owned by Jangar)
-while the stream can live under `argocd/applications/nats/` or a shared `argocd/applications/observability/` bundle.
+These CRDs should live under the GitOps bundle that owns the NATS and Jangar apps.
 
-## Argo workflow publishing
+## Runtime publishing (native by default)
 
-Workflow step containers publish events to NATS directly.
+Runtime step containers publish events to NATS directly.
 
 - Publish to run-specific subject **and** (if needed) the global general channel.
 
@@ -157,34 +159,32 @@ Workflow step containers publish events to NATS directly.
 Example bash step:
 
 ```bash
-nats pub "argo.workflow.${WORKFLOW_NAMESPACE}.${WORKFLOW_NAME}.${WORKFLOW_UID}.agent.${AGENT_ID}.message" \
+nats pub "workflow.${WORKFLOW_NAMESPACE}.${WORKFLOW_NAME}.${WORKFLOW_UID}.agent.${AGENT_ID}.message" \
   --header "content-type: application/json" \
   "${PAYLOAD_JSON}"
 
 # Global shared channel
-nats pub "argo.workflow.general.message" \
+nats pub "workflow.general.message" \
   --header "content-type: application/json" \
   "${PAYLOAD_JSON_GENERAL}"
 ```
 
-Notes from current workflow templates:
+Notes from current runtime templates:
 
-- Codex workflows already set `JANGAR_BASE_URL` and emit agent/event logs as artifacts
-  (`argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`,
-  `argocd/applications/argo-workflows/codex-research-workflow.yaml`).
+- Codex runtimes already set `JANGAR_BASE_URL` and emit agent/event logs as artifacts.
 - To publish in real time, either:
-  1) Add a lightweight `nats` CLI to the `codex-universal` image, or
+  1) Add a lightweight `nats` CLI to the runtime image, or
   2) Add a `natsio/nats-box` sidecar + helper script in a shared volume.
 
 Either way, standardize subject + payload construction in a small wrapper (bash or node).
 
-Recommended workflow env vars (Argo templates):
+Recommended runtime env vars:
 
-- `WORKFLOW_NAME={{workflow.name}}`
-- `WORKFLOW_UID={{workflow.uid}}`
-- `WORKFLOW_NAMESPACE={{workflow.namespace}}`
-- `STEP_ID={{pod.name}}` (or `{{tasks.<name>.name}}` depending on template)
-- `AGENT_ID=<role>` (e.g., `planner`, `executor`, `reviewer`)
+- `WORKFLOW_NAME`
+- `WORKFLOW_UID`
+- `WORKFLOW_NAMESPACE`
+- `STEP_ID`
+- `AGENT_ID`
 
 ## Jangar ingestion + UI
 
@@ -238,74 +238,19 @@ Backfill / reconciliation:
   `implementation-events`). Use these artifacts to backfill `workflow_comms.agent_messages`
   when NATS is unavailable or to seed historical runs.
 
-### UI
+## Optional adapters
 
-Add a new Jangar UI route:
+### Argo Workflows adapter (optional)
 
-- `/agents` list view: recent runs and active workflows.
-- `/agents/:runId` detail view: timeline grouped by agent.
-- `/agents/general` global cross-workflow channel timeline.
-- Filters: agent, kind, time range.
+Argo Workflows can publish the same schema if you still run Argo templates. If you adopt an
+Argo adapter (optional integration):
 
-Implementation alignment:
-
-- Routes live under `services/jangar/src/routes` and should use `createFileRoute`.
-- Add nav entry in `services/jangar/src/components/app-sidebar.tsx` under the “App” section.
-
-Rendering:
-
-- Use markdown rendering for message content.
-- Use compact chips for `tool_call` / `tool_result`.
-
-### Live updates
-
-Expose SSE endpoint:
-
-- `GET /api/agents/events?runId=...` streams new messages.
-- `GET /api/agents/events?channel=general` streams global channel.
-- UI subscribes to SSE for live updates.
-
-Implementation alignment:
-
-- Use the SSE Response pattern in `services/jangar/src/server/chat.ts` (ReadableStream with
-  `text/event-stream` headers).
-- API route should live under `services/jangar/src/routes/api/agents/events.tsx`.
-
-## Auth / security
-
-Phase 1 (current cluster):
-
-- In-cluster NATS only, no auth/TLS.
-- Trust boundary: cluster network.
-
-Phase 2 (recommended):
-
-- Enable NATS auth with creds + separate accounts:
-  - `system` account for NACK.
-  - `agents` account for Argo workflows.
-  - `jangar` account for consumer.
-
-Store creds as Kubernetes secrets in the appropriate namespaces; if needed, mirror them with
-`kubernetes-reflector` (pattern used for Kafka secrets today).
-
-## Observability
-
-- Jangar emits OTLP metrics for SSE + agent comms (`services/jangar/src/server/metrics.ts`).
-- Alerts + dashboards are wired in `argocd/applications/observability/graf-mimir-rules.yaml` and
-  `argocd/applications/observability/codex-pipeline-dashboard-configmap.yaml` (Kafka lag + JetStream pending).
-- NATS monitoring endpoints / promExporter can be enabled if deeper JetStream telemetry is needed.
-
-## Rollout plan
-
-1) **Define JetStream CRDs** (stream + consumer) via NACK.
-2) **Add Jangar ingestion** + table + API endpoints.
-3) **Add Jangar UI pages** for agent comms.
-4) **Update workflow templates** to publish to NATS.
-5) **Enable observability** and tune retention/limits.
-
-## Open questions
-
-- Should OpenWebUI embed the agent comms view, or should it remain only in Jangar UI?
-- Do we want to **link agent comms** directly to Codex run ids from Kafka completions?
-- Retention: is 7 days in JetStream enough, or should we retain longer?
-- Do we run the NATS subscriber as a **dedicated worker Deployment** or inside the Jangar web process?
+- Map Argo fields to the runtime-agnostic metadata:
+  - `workflow_uid`: `workflow.uid`
+  - `workflow_name`: `metadata.name`
+  - `workflow_namespace`: Argo namespace (often `argo-workflows`)
+  - `step_id`: Argo node id or pod name
+  - `runtime`: `argo`
+- Use the default subject prefix `workflow.` whenever possible.
+- If compatibility requires `argo.workflow.>`, configure the stream to include both prefixes and
+  include `runtime: "argo"` in payloads.

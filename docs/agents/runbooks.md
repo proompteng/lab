@@ -15,8 +15,11 @@ Status: Current (2026-01-19)
 1. `helm rollback agents <REV> -n agents`
 2. Verify status and re-run smoke test.
 
-## Argo CD Application (GitOps)
-Use the sample Application manifest in `argocd/applications/agents/application.yaml`:
+## Argo CD Application (GitOps, optional)
+If you use Argo CD for GitOps (optional), use the sample Application manifest in
+`argocd/applications/agents/application.yaml`:
+
+These commands apply only to Argo CD-based installs:
 
 ```bash
 kubectl apply -n argocd -f argocd/applications/agents/application.yaml
@@ -28,7 +31,7 @@ into the `agents` namespace using `argocd/applications/agents/values.yaml`.
 Update the values file with your Jangar image tag, database secret, and (optional) agent runner image.
 If `controller.namespaces` spans multiple namespaces or `"*"`, set `rbac.clusterScoped=true`.
 
-Argo CD smoke test:
+Optional Argo CD smoke test (only for Argo CD-based installs):
 ```bash
 kubectl -n argocd get applications.argoproj.io agents -o yaml
 kubectl -n agents get deploy,svc
@@ -63,7 +66,7 @@ Ensure the `agentrun-workflow-smoke.yaml` workload image includes `agent-runner`
 - Configure `JANGAR_CODEX_RERUN_ORCHESTRATION` and/or `JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION` (plus the matching
   `*_NAMESPACE` variables if needed).
 - Ensure the referenced Orchestration exists and watch OrchestrationRun status for progress.
-- To use the Argo adapter instead, set `ARGO_SERVER_URL` along with `JANGAR_CODEX_RERUN_TEMPLATE` and/or
+- To use the optional Argo adapter instead, set `ARGO_SERVER_URL` along with `JANGAR_CODEX_RERUN_TEMPLATE` and/or
   `JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE`.
 
 ## Jangar /health 500 (router init error)

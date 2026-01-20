@@ -1,16 +1,16 @@
-# NATS Argo Agent Comms — Execution Plan
+# NATS agent comms — Execution Plan
 
 Owner: Platform + Jangar
 Status: Draft
 
-This plan operationalizes the design in `docs/nats-argo-agent-communications.md` and the
-parallel workstreams in `docs/nats-argo-agent-communications-workstreams.md`.
+This plan operationalizes the design in `docs/nats-agent-communications.md` and the
+parallel workstreams in `docs/nats-agent-communications-workstreams.md`.
 
 ## Scope
 
 - Real-time agent comms via NATS JetStream.
 - Jangar ingestion + UI for per-run + global channel.
-- Workflow templates publish messages while running.
+- Native workflow runtime publishes messages while running.
 
 ## Success criteria
 
@@ -21,7 +21,7 @@ parallel workstreams in `docs/nats-argo-agent-communications-workstreams.md`.
   - `/agents/:runId`
   - `/agents/general`
 - **Global channel** shows cross-workflow messages in real time.
-- **Proof**: publish a message from an Argo workflow step and see it appear live in Jangar.
+- **Proof**: publish a message from a native runtime step and see it appear live in Jangar.
 
 ## Phases
 
@@ -41,10 +41,10 @@ parallel workstreams in `docs/nats-argo-agent-communications-workstreams.md`.
 - Add routes + sidebar entry.
 - Stream messages via SSE.
 
-### Phase 4 — Workflow publishing (Workstream B)
+### Phase 4 — Runtime publishing (Workstream B)
 
 - Add NATS publisher helper.
-- Wire into Codex workflow templates.
+- Wire into native runtime templates.
 
 ### Phase 5 — Backfill (Workstream E, optional)
 
@@ -60,10 +60,14 @@ parallel workstreams in `docs/nats-argo-agent-communications-workstreams.md`.
 - [ ] `workflow_comms.agent_messages` table exists and receives new rows.
 - [ ] SSE endpoint streams new messages.
 - [ ] Jangar `/agents/general` displays live updates.
-- [ ] One Argo workflow run publishes a message that appears in Jangar.
+- [ ] One native runtime run publishes a message that appears in Jangar.
 
 ## Issue tracking
 
 - Each workstream is tracked as a GitHub issue.
 - Each issue should link to PR(s) implementing the work.
 
+## Optional adapters
+
+- If using the Argo Workflows adapter, add a proof that an Argo workflow publishes using the
+  same schema and appears in Jangar.

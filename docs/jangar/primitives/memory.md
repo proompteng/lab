@@ -11,7 +11,7 @@ Jangar is the control plane for all `Memory` resources.
 ## Grounding in the current platform
 
 - Existing CNPG clusters (live): `facteur/facteur-vector-cluster`, `jangar/jangar-db`
-- Current agent event storage direction: `docs/nats-argo-agent-communications.md`
+- Current agent event storage direction: `docs/nats-agent-communications.md`
 
 ## CRDs
 

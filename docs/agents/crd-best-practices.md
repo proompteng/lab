@@ -1,11 +1,11 @@
-# CRD Best Practices (Argo + Tekton + Flyte)
+# CRD Best Practices (Workflow Engines)
 
 Status: Current (2026-01-19)
 
 ## Sources Mapped
-- Argo Workflows: generate CRDs from Go types, post-process for size, validate examples.
-- Tekton Pipelines: keep CRDs as YAML, patch schema with controller-gen, enforce size limits, conversion webhook.
-- Flyte: minimal schemaless CRDs, optional runtime creation (not adopted).
+- Workflow engines: generate CRDs from Go types, post-process for size, validate examples.
+- Pipeline systems: keep CRDs as YAML, patch schema with controller-gen, enforce size limits, conversion webhook.
+- Minimal schemaless CRDs + optional runtime creation (not adopted).
 
 ## Adopted Practices for Agents CRDs
 ### Schema & Generation
@@ -19,7 +19,7 @@ Status: Current (2026-01-19)
 
 ### Size & Stability
 - Enforce max JSON size of 256KB per CRD (Tekton).
-- If a CRD grows too large, strip descriptions or provide a minimal variant (Argo).
+- If a CRD grows too large, strip descriptions or provide a minimal variant.
 - Avoid embedding massive schemas; keep reusable types shallow.
 
 ### Status & UX
@@ -32,7 +32,7 @@ Status: Current (2026-01-19)
 
 ### Validation Strategy
 - Use CEL validations for user-facing invariants only.
-- Avoid heavy CEL on controller-managed objects (Argo).
+- Avoid heavy CEL on controller-managed objects.
 - Add doc-level contracts where schema is intentionally loose.
 
 ### Conversion & Versioning
@@ -40,7 +40,7 @@ Status: Current (2026-01-19)
 - If/when v1beta1 arrives, implement conversion webhook (Tekton model).
 
 ### CI & Examples
-- Validate sample manifests against CRDs in CI (Argo).
+- Validate sample manifests against CRDs in CI.
 - Keep examples close to CRDs and updated with each schema change.
 
 ## Explicit Non‑adoptions

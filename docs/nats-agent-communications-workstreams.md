@@ -1,4 +1,4 @@
-# NATS Argo Agent Comms — Parallel Workstreams
+# NATS agent comms — Parallel Workstreams
 
 Owner: Platform + Jangar
 Status: Draft
@@ -12,13 +12,13 @@ independently and converge on a coordinated rollout.
 
 **Scope**
 - Create NACK CRDs for:
-  - Stream: `agent-comms` (subjects `argo.workflow.>`)
+  - Stream: `agent-comms` (subjects `workflow.>`)
   - Consumer: `jangar-agent-comms` (durable, explicit acks)
-- Place stream CRD under `argocd/applications/nats/` (or shared bundle).
-- Place consumer CRD under `argocd/applications/jangar/`.
+- Place stream CRD under the GitOps bundle that owns NATS.
+- Place consumer CRD under the GitOps bundle that owns Jangar.
 
 **Deliverables**
-- YAML resources under `argocd/applications/nats/` and `argocd/applications/jangar/`.
+- YAML resources for stream + consumer.
 - README snippet or doc update referencing the CRDs.
 
 **Acceptance**
@@ -30,25 +30,23 @@ independently and converge on a coordinated rollout.
 
 ---
 
-## Workstream B — Workflow publishing
+## Workstream B — Runtime publishing
 
-**Goal:** All Argo workflows publish agent events to NATS (per-run + global channel).
+**Goal:** The native workflow runtime publishes agent events to NATS (per-run + global channel).
 
 **Scope**
-- Add NATS publish helper (sidecar or CLI in `codex-universal`).
-- Update workflow templates to publish:
+- Add NATS publish helper (sidecar or CLI in runtime image).
+- Update runtime templates to publish:
   - Run-specific subject
-  - Global `argo.workflow.general.*` channel
+  - Global `workflow.general.*` channel
 - Standardize payload schema in a shared script.
 
 **Deliverables**
-- Template changes under:
-  - `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
-  - `argocd/applications/argo-workflows/codex-research-workflow.yaml`
+- Template changes under the native runtime manifests.
 - Helper script (shell or node) in a shared location.
 
 **Acceptance**
-- New workflow run emits NATS messages during execution.
+- New runtime run emits NATS messages during execution.
 - Messages include `workflow_uid`, `workflow_name`, `workflow_namespace`, `agent_id`, `kind`, `timestamp`.
 
 **Dependencies**
@@ -132,13 +130,13 @@ independently and converge on a coordinated rollout.
 **Scope**
 - Define NATS accounts/creds:
   - `system` for NACK
-  - `agents` for workflows
+  - `agents` for runtimes
   - `jangar` for consumer
 - Store secrets in namespaces, optionally mirrored via reflector.
 
 **Deliverables**
-- Secrets + NATS config changes in `argocd/applications/nats/`.
-- Updates to workflow templates and Jangar deployment env.
+- Secrets + NATS config changes in the GitOps bundle for NATS.
+- Updates to runtime templates and Jangar deployment env.
 
 **Acceptance**
 - NATS auth on; producers/consumers connect with correct creds.
@@ -159,7 +157,7 @@ independently and converge on a coordinated rollout.
 
 **Deliverables**
 - NATS Helm values update (prom exporter).
-- Grafana dashboard/panels under `argocd/applications/observability/`.
+- Grafana dashboard/panels under the observability bundle.
 
 **Acceptance**
 - Metrics visible in Grafana; lag alerts can be defined.
@@ -181,3 +179,12 @@ independently and converge on a coordinated rollout.
 - Use `workflow_uid` + `workflow_namespace` as the stable join key across systems.
 - Keep Kafka-based run-complete flow unchanged; NATS is only for agent comms.
 - Prefer small, reversible PRs per workstream to keep GitOps rollouts safe.
+
+## Optional adapters
+
+### Argo Workflows adapter (optional)
+
+If Argo Workflows templates are still in use, mirror Workstream B with an adapter that emits the
+same schema. Prefer the `workflow.` subject prefix; only use `argo.workflow.` if compatibility
+requires it and include `runtime: "argo"` in payloads.
+
