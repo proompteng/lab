@@ -68,14 +68,14 @@ Inputs:
 - Provider config for GitHub or Linear.
 
 Steps:
-1. Authenticate and connect (webhook-only).
+1. Validate provider + auth secret + webhook enabled (webhook-only, no polling).
 2. Normalize external issue payload into ImplementationSpec.
 3. Create or update ImplementationSpec objects.
 4. Record last webhook sync and errors in status.
 
 Status:
 - `status.lastSyncedAt`
-- `status.conditions`: Ready, Error
+- `status.conditions`: Ready, InvalidSpec, Unreachable, WebhookDisabled
 
 ### Memory
 Inputs:
