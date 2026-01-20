@@ -10,12 +10,9 @@ spec:
   memoryRef:
     name: default-memory
   runtime:
-    type: workflow
+    type: job
     config:
       ttlSecondsAfterFinished: 600
-  workflow:
-    steps:
-      - name: implement
   workload:
     image: ghcr.io/proompteng/codex-agent:latest
     resources:
