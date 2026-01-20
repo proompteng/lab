@@ -313,7 +313,7 @@ const ensureConsumer = async (manager: JetStreamManager, config: SubscriberConfi
 }
 
 const buildConsumerOpts = (config: SubscriberConfig) =>
-  consumerOpts(buildConsumerConfig(config)).manualAck().bindStream(config.streamName)
+  consumerOpts().bind(config.streamName, config.consumerName).manualAck()
 
 const resolveSubscriptionSubject = (config: SubscriberConfig) => config.filterSubjects[0] ?? config.streamName
 
