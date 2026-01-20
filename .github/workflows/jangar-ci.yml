@@ -7,6 +7,8 @@ on:
       - 'packages/scripts/src/jangar/**'
       - 'argocd/applications/jangar/**'
       - '.github/workflows/jangar-ci.yml'
+    paths-ignore:
+      - 'services/jangar/agentctl/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

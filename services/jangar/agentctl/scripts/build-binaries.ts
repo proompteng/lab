@@ -43,6 +43,8 @@ export const buildBinaries = async (argv: string[]) => {
       throw new Error(`bun build failed for ${target.bunTarget} with exit code ${exitCode}`)
     }
 
+    await chmod(output, 0o755)
+
     if (target.label === hostLabel) {
       const hostBinary = resolve(distDir, 'agentctl')
       await copyFile(output, hostBinary)
