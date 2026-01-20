@@ -32,11 +32,17 @@ Artifacts:
 
 ## Validation (compiled binary)
 
-With a port-forward running (for example, `kubectl -n agents port-forward svc/agents-grpc 50052:50051`), validate the
-compiled binary:
+By default, the validation script spins up a local mock gRPC server and exercises the compiled binary:
 
 ```bash
 bun run --filter @proompteng/agentctl build:bin
+bun run --filter @proompteng/agentctl validate:bin
+```
+
+To validate against a port-forwarded in-cluster server instead:
+
+```bash
+kubectl -n agents port-forward svc/agents-grpc 50052:50051
 bun run --filter @proompteng/agentctl validate:bin -- --server 127.0.0.1:50052
 ```
 
