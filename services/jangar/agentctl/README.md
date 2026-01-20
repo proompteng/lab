@@ -78,14 +78,15 @@ agentctl run logs <name> --follow
 agentctl run cancel <name>
 ```
 
-By default, `agentctl` targets the in-cluster service address `agents.agents.svc.cluster.local:50051`.
-Use `--server` (or `--address`) for port-forwarded access.
+By default, `agentctl` targets the in-cluster service address `agents.agents.svc.cluster.local:50051` in the
+`agents` namespace. Use `--namespace`/`-n` to override the namespace and `--server` (or `--address`) for
+port-forwarded access.
 
 ## Build
 
 ```bash
 bun run build         # builds dist/agentctl.js
-bun run build:bin     # builds dist/agentctl-<os>-<arch> for host
+bun run build:bin     # builds dist/agentctl-<os>-<arch> + dist/agentctl for host
 bun run build:bins    # builds all platform binaries
 bun run build:release # builds archives + checksums in dist/release
 ```

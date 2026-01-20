@@ -23,11 +23,16 @@ Artifacts:
 
 - `services/jangar/agentctl/dist/agentctl.js` (npm launcher; dispatches to platform binary)
 - `services/jangar/agentctl/dist/agentctl-<os>-<arch>` (standalone binary)
+- `services/jangar/agentctl/dist/agentctl` (host binary helper for npm + local runs)
 - `services/jangar/agentctl/dist/release/agentctl-<version>-<os>-<arch>.tar.gz`
+- Each archive contains a single `agentctl` binary (no suffix).
 - `services/jangar/agentctl/dist/release/*.sha256`
 - `services/jangar/agentctl/dist/release/agentctl.rb` (Homebrew formula with checksums, generated when all targets are built)
 
 ## Publish npm
+
+Before publishing, confirm the npm metadata is correct in `services/jangar/agentctl/package.json`
+(`name`, `version`, and `bin` -> `dist/agentctl.js`).
 
 ```bash
 cd services/jangar/agentctl
