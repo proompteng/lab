@@ -9,6 +9,7 @@ import * as grpc from '@grpc/grpc-js'
 import { fromJSON } from '@grpc/proto-loader'
 import * as protobuf from 'protobufjs'
 import YAML from 'yaml'
+import { EMBEDDED_AGENTCTL_PROTO } from './embedded-proto'
 
 const EXIT_VALIDATION = 2
 const EXIT_RUNTIME = 4
@@ -287,11 +288,10 @@ const resolveProtoPath = () => {
 
 const loadAgentctlPackage = (): AgentctlPackage => {
   const protoPath = resolveProtoPath()
-  if (!protoPath) {
+  const protoContents = protoPath ? readFileSync(protoPath, 'utf8') : EMBEDDED_AGENTCTL_PROTO
+  if (!protoContents) {
     throw new Error('agentctl proto not found; set AGENTCTL_PROTO_PATH')
   }
-
-  const protoContents = readFileSync(protoPath, 'utf8')
   const root = protobuf.parse(protoContents, { keepCase: true }).root
   const packageDefinition = fromJSON(root.toJSON(), {
     keepCase: true,
