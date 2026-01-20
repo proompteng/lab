@@ -235,9 +235,11 @@ const resolveAdapterFromController = (controllerStatus: string, controllerMessag
 const resolveTemporalAdapter = async () => {
   try {
     const config = await loadTemporalConfig({
-      host: DEFAULT_TEMPORAL_HOST,
-      port: DEFAULT_TEMPORAL_PORT,
-      address: DEFAULT_TEMPORAL_ADDRESS,
+      defaults: {
+        host: DEFAULT_TEMPORAL_HOST,
+        port: DEFAULT_TEMPORAL_PORT,
+        address: DEFAULT_TEMPORAL_ADDRESS,
+      },
     })
     return {
       name: 'temporal',
