@@ -32,7 +32,7 @@ It talks to the Jangar controller over gRPC.
 
 ## Command Surface (proposed)
 ### Core
-- `agentctl version`
+- `agentctl version [--client]`
 - `agentctl config view|set`
 - `agentctl completion <shell>`
 
@@ -79,8 +79,9 @@ It talks to the Jangar controller over gRPC.
 - `agentctl run cancel <name>`
 
 ## Flags & Defaults
-- `--namespace` (default `agents`).
-- `--address` (gRPC address; default `127.0.0.1:50051` for port‑forward).
+- `--namespace` / `-n` (default `agents`).
+- `--server` / `--address` (gRPC address; default `agents.agents.svc.cluster.local:50051`).
+- For port‑forwarded usage, pass `--server 127.0.0.1:50051`.
 - In‑cluster usage targets the `agents` service `grpc` port (requires `grpc.enabled` and `JANGAR_GRPC_*` envs in Helm values).
 - `--token` (optional shared secret).
 - `--tls` to enable TLS when configured (future-proofed).

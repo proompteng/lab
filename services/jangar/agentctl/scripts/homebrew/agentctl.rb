@@ -26,7 +26,7 @@ class Agentctl < Formula
   end
 
   def install
-    bin.install Dir["agentctl-*"].first => "agentctl"
+    bin.install "agentctl"
   end
 
   test do
