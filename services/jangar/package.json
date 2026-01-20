@@ -15,7 +15,6 @@
     "tsc": "bunx tsc --noEmit",
     "lint": "bunx biome check --config-path ../../biome.json src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
-<<<<<<< ours
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.oxlint.json .",
     "copy:grpc-proto": "bun run scripts/copy-agentctl-proto.ts"
   },
