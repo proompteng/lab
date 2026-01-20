@@ -89,6 +89,8 @@ const parseResponse = async (response: Response) => {
 export const fetchPrimitiveList = async (params: {
   kind: AgentPrimitiveKind
   namespace: string
+  phase?: string
+  runtime?: string
   limit?: number
   signal?: AbortSignal
 }): Promise<PrimitiveListResult> => {
@@ -96,6 +98,12 @@ export const fetchPrimitiveList = async (params: {
     kind: params.kind,
     namespace: params.namespace,
   })
+  if (params.phase) {
+    searchParams.set('phase', params.phase)
+  }
+  if (params.runtime) {
+    searchParams.set('runtime', params.runtime)
+  }
   if (params.limit) {
     searchParams.set('limit', params.limit.toString())
   }
