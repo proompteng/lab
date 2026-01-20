@@ -97,9 +97,9 @@ It provides:
   - Validate schema, normalize plaintext `spec.text`.
   - Track provenance (`spec.source`) and update conditions when upstream changes.
 - `ImplementationSource` reconciler:
-  - Connect to GitHub/Linear via **webhooks only** (no polling).
+  - Accept webhook events from GitHub/Linear only (**no polling**).
   - Normalize external issues to ImplementationSpec objects (create/update/delete).
-  - Maintain sync cursor and emit reconciliation events.
+  - Record last webhook sync and errors in status; emit reconciliation events.
 - `Memory` reconciler:
   - Validate connection secrets and publish capability metadata.
   - Optionally run health checks for memory backends.
