@@ -27,6 +27,7 @@ fi
 SCHEMA_ARGS=("--schema-location" "default")
 if [[ -d "$SCHEMA_DIR" ]]; then
   SCHEMA_ARGS+=(
+    "--schema-location" "file://${SCHEMA_DIR}"
     "--schema-location" "file://${SCHEMA_DIR}/{{.ResourceKind}}{{.KindSuffix}}.json"
     "--schema-location" "file://${SCHEMA_DIR}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json"
   )
