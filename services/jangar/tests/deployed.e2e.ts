@@ -190,7 +190,7 @@ const publishGeneralMessage = async (content: string) => {
     channel: 'general',
     content,
   }
-  nc.publish('argo.workflow.general.status', sc.encode(JSON.stringify(payload)))
+  nc.publish('agents.workflow.general.status', sc.encode(JSON.stringify(payload)))
   await nc.flush()
   await nc.close()
   return { messageId, sentAt }

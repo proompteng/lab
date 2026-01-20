@@ -120,7 +120,10 @@ const safeParseJson = (value: string): unknown => {
 
 const parseSubject = (subject: string) => {
   const parts = subject.split('.')
-  if (parts.length < 3 || parts[0] !== 'argo' || parts[1] !== 'workflow') return null
+  if (parts.length < 3) return null
+  const root = parts[0]
+  if (root !== 'agents' && root !== 'argo') return null
+  if (parts[1] !== 'workflow') return null
   if (parts[2] === 'general') {
     return { channel: 'general', kind: parts[3] ?? null }
   }
