@@ -23,6 +23,19 @@ type CrdCheckState = {
   checkedAt: string
 }
 
+type ControllerHealthState = {
+  started: boolean
+  crdCheckState: CrdCheckState | null
+}
+
+const globalState = globalThis as typeof globalThis & {
+  __jangarOrchestrationControllerState?: ControllerHealthState
+}
+
+const controllerState =
+  globalState.__jangarOrchestrationControllerState ??
+  (globalState.__jangarOrchestrationControllerState = { started: false, crdCheckState: null })
+
 type Condition = {
   type: string
   status: 'True' | 'False' | 'Unknown'
@@ -42,9 +55,9 @@ type StepStatus = {
   outputs?: Record<string, unknown>
 }
 
-let started = false
+let started = controllerState.started
 let reconciling = false
-let crdCheckState: CrdCheckState | null = null
+let crdCheckState: CrdCheckState | null = controllerState.crdCheckState
 let watchHandles: Array<{ stop: () => void }> = []
 const namespaceQueues = new Map<string, Promise<void>>()
 
@@ -137,6 +150,7 @@ const checkCrds = async (): Promise<CrdCheckState> => {
     checkedAt: nowIso(),
   }
   crdCheckState = state
+  controllerState.crdCheckState = state
   if (!state.ok) {
     if (missing.length > 0) {
       console.error('[jangar] missing required Orchestration CRDs:', missing.join(', '))
@@ -152,10 +166,10 @@ const checkCrds = async (): Promise<CrdCheckState> => {
 
 export const getOrchestrationControllerHealth = () => ({
   enabled: shouldStart(),
-  started,
-  crdsReady: crdCheckState?.ok ?? null,
-  missingCrds: crdCheckState?.missing ?? [],
-  lastCheckedAt: crdCheckState?.checkedAt ?? null,
+  started: controllerState.started,
+  crdsReady: controllerState.crdCheckState?.ok ?? null,
+  missingCrds: controllerState.crdCheckState?.missing ?? [],
+  lastCheckedAt: controllerState.crdCheckState?.checkedAt ?? null,
 })
 
 const normalizeConditions = (raw: unknown): Condition[] => {
@@ -1512,6 +1526,7 @@ export const startOrchestrationController = async () => {
       startNamespaceWatches(kube, namespace)
     }
     started = true
+    controllerState.started = true
   } catch (error) {
     console.warn('[jangar] orchestration controller failed to start', error)
   }
@@ -1524,6 +1539,7 @@ export const stopOrchestrationController = () => {
   watchHandles = []
   namespaceQueues.clear()
   started = false
+  controllerState.started = false
 }
 
 export const __test__ = {

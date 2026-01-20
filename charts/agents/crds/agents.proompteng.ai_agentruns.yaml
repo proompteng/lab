@@ -404,9 +404,6 @@ spec:
               observedGeneration:
                 format: int64
                 type: integer
-              updatedAt:
-                format: date-time
-                type: string
               phase:
                 type: string
               runtimeRef:
@@ -415,6 +412,9 @@ spec:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
               startedAt:
+                format: date-time
+                type: string
+              updatedAt:
                 format: date-time
                 type: string
               workflow:

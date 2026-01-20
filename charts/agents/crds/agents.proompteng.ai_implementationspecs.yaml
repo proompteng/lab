@@ -145,12 +145,12 @@ spec:
               observedGeneration:
                 format: int64
                 type: integer
-              updatedAt:
-                format: date-time
-                type: string
               sourceVersion:
                 type: string
               syncedAt:
+                format: date-time
+                type: string
+              updatedAt:
                 format: date-time
                 type: string
             type: object

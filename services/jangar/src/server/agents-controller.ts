@@ -33,7 +33,20 @@ type CrdCheckState = {
   checkedAt: string
 }
 
-let crdCheckState: CrdCheckState | null = null
+type ControllerHealthState = {
+  started: boolean
+  crdCheckState: CrdCheckState | null
+}
+
+const globalState = globalThis as typeof globalThis & {
+  __jangarAgentsControllerState?: ControllerHealthState
+}
+
+const controllerState =
+  globalState.__jangarAgentsControllerState ??
+  (globalState.__jangarAgentsControllerState = { started: false, crdCheckState: null })
+
+let crdCheckState: CrdCheckState | null = controllerState.crdCheckState
 
 type Condition = {
   type: string
@@ -86,7 +99,7 @@ type ControllerState = {
   namespaces: Map<string, NamespaceState>
 }
 
-let started = false
+let started = controllerState.started
 let reconciling = false
 let temporalClientPromise: ReturnType<typeof createTemporalClient> | null = null
 let watchHandles: Array<{ stop: () => void }> = []
@@ -216,6 +229,7 @@ const checkCrds = async (): Promise<CrdCheckState> => {
     checkedAt: nowIso(),
   }
   crdCheckState = state
+  controllerState.crdCheckState = state
   if (!state.ok) {
     if (missing.length > 0) {
       console.error('[jangar] missing required Agents CRDs:', missing.join(', '))
@@ -233,10 +247,10 @@ const checkCrds = async (): Promise<CrdCheckState> => {
 
 export const getAgentsControllerHealth = () => ({
   enabled: shouldStart(),
-  started,
-  crdsReady: crdCheckState?.ok ?? null,
-  missingCrds: crdCheckState?.missing ?? [],
-  lastCheckedAt: crdCheckState?.checkedAt ?? null,
+  started: controllerState.started,
+  crdsReady: controllerState.crdCheckState?.ok ?? null,
+  missingCrds: controllerState.crdCheckState?.missing ?? [],
+  lastCheckedAt: controllerState.crdCheckState?.checkedAt ?? null,
 })
 
 const normalizeConditions = (raw: unknown): Condition[] => {
@@ -2685,6 +2699,7 @@ export const startAgentsController = async () => {
       startNamespaceWatches(kube, namespace, state, concurrency)
     }
     started = true
+    controllerState.started = true
   } catch (error) {
     console.error('[jangar] agents controller failed to start', error)
   }
@@ -2698,6 +2713,7 @@ export const stopAgentsController = () => {
   _controllerState = null
   namespaceQueues.clear()
   started = false
+  controllerState.started = false
 }
 
 export const __test = {
