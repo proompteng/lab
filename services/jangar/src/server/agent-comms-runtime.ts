@@ -13,5 +13,3 @@ export const ensureAgentCommsRuntime = () => {
   void startSupportingPrimitivesController()
   startPrimitivesReconciler()
 }
-
-ensureAgentCommsRuntime()
