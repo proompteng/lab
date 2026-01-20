@@ -7,6 +7,14 @@ export type AgentPrimitiveKind =
   | 'ImplementationSpec'
   | 'ImplementationSource'
   | 'Memory'
+  | 'ApprovalPolicy'
+  | 'Budget'
+  | 'SecretBinding'
+  | 'Signal'
+  | 'SignalDelivery'
+  | 'Schedule'
+  | 'Artifact'
+  | 'Workspace'
 
 type PrimitiveKindConfig = {
   kind: AgentPrimitiveKind
@@ -20,6 +28,14 @@ const PRIMITIVE_KIND_CONFIG: PrimitiveKindConfig[] = [
   { kind: 'ImplementationSpec', resource: RESOURCE_MAP.ImplementationSpec },
   { kind: 'ImplementationSource', resource: RESOURCE_MAP.ImplementationSource },
   { kind: 'Memory', resource: RESOURCE_MAP.Memory },
+  { kind: 'ApprovalPolicy', resource: RESOURCE_MAP.ApprovalPolicy },
+  { kind: 'Budget', resource: RESOURCE_MAP.Budget },
+  { kind: 'SecretBinding', resource: RESOURCE_MAP.SecretBinding },
+  { kind: 'Signal', resource: RESOURCE_MAP.Signal },
+  { kind: 'SignalDelivery', resource: RESOURCE_MAP.SignalDelivery },
+  { kind: 'Schedule', resource: RESOURCE_MAP.Schedule },
+  { kind: 'Artifact', resource: RESOURCE_MAP.Artifact },
+  { kind: 'Workspace', resource: RESOURCE_MAP.Workspace },
 ]
 
 const KIND_LOOKUP = new Map(

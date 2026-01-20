@@ -1,6 +1,7 @@
 import { startAgentCommsSubscriber } from '~/server/agent-comms-subscriber'
 import { startAgentsController } from '~/server/agents-controller'
 import { startPrimitivesReconciler } from '~/server/primitives-reconciler'
+import { startSupportingPrimitivesController } from '~/server/supporting-primitives-controller'
 
 export const ensureAgentCommsRuntime = () => {
   void startAgentCommsSubscriber().catch((error) => {
@@ -8,6 +9,7 @@ export const ensureAgentCommsRuntime = () => {
   })
   void startAgentsController()
   startPrimitivesReconciler()
+  void startSupportingPrimitivesController()
 }
 
 ensureAgentCommsRuntime()
