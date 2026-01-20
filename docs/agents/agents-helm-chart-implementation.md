@@ -129,6 +129,13 @@ Controller behavior requires permissions to:
 - RBAC and service account options.
 - Resource requests/limits, probes, node selectors, tolerations, security context.
 
+### Agent comms subject naming
+Agent comms publishes vendor-neutral NATS subjects using the following pattern:
+- `agents.workflow.<namespace>.<workflow>.<uid>.agent.<agentId>.<kind>` for workflow-scoped agent messages.
+- `agents.workflow.general.<kind>` for general agent status updates.
+
+The subscriber also accepts legacy `argo.workflow.*` subjects for backwards compatibility.
+
 ### RBAC modes
 Support two modes:
 - **Namespaced** (default): Role/RoleBinding in the release namespace. Suitable when `controller.namespaces` is unset or contains only the release namespace.
