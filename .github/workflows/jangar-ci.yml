@@ -22,4 +22,4 @@ jobs:
       lint-command: bunx biome check services/jangar packages/scripts/src/jangar argocd/applications/jangar
       oxlint-command: bun run --cwd services/jangar lint:oxlint
       oxlint-type-command: bun run --cwd services/jangar lint:oxlint:type
-      test-command: cd services/jangar && bun run test && bunx tsc --noEmit
+      test-command: cd services/jangar && bun run test && bunx tsc --noEmit --project tsconfig.paths.json
