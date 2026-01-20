@@ -114,6 +114,39 @@ bun run packages/scripts/src/jangar/deploy-service.ts
 - Usage totals are emitted only when the request includes `stream_options: { include_usage: true }`. The final SSE chunk (empty `choices` array) carries the normalized OpenAI-style `usage`, even when a turn ends with an upstream error or client abort.
 - Server-side Effect services follow `Context.Tag + Layer` patterns; see `src/server/effect-services.md`.
 
+## agentctl gRPC
+
+`agentctl` talks to Jangar over gRPC (`AgentctlService`). The gRPC server is disabled by default.
+
+Enable locally:
+
+```bash
+export JANGAR_GRPC_ENABLED=1
+export JANGAR_GRPC_HOST=127.0.0.1
+export JANGAR_GRPC_PORT=50051
+```
+
+Port-forward a deployed Jangar instance:
+
+```bash
+kubectl -n jangar port-forward svc/jangar 50051:50051
+```
+
+Optional auth (shared token):
+
+```bash
+export JANGAR_GRPC_TOKEN=... # server-side
+export AGENTCTL_TOKEN=...    # client-side
+```
+
+Environment variables:
+
+- `JANGAR_GRPC_ENABLED` (default: off)
+- `JANGAR_GRPC_HOST` (default: `127.0.0.1`)
+- `JANGAR_GRPC_PORT` (default: `50051`)
+- `JANGAR_GRPC_ADDRESS` (optional override for `host:port`)
+- `JANGAR_GRPC_TOKEN` (optional shared token)
+
 ## Terminal backend
 
 Jangar terminals are intended to run against a dedicated terminal backend deployment (`jangar-terminal` in GitOps). The main Jangar service proxies session APIs to that backend.

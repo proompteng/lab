@@ -3,9 +3,6 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "bin": {
-    "agentctl": "./src/agentctl.ts"
-  },
   "scripts": {
     "create-default-namespace": "bun run src/create-default-namespace.ts"
   },

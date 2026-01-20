@@ -2,14 +2,15 @@
 
 Status: Draft (2026-01-13)
 
+Location: `services/jangar/agentctl`
+
 ## Purpose
 `agentctl` is a thin CLI for managing Agents CRDs and submitting AgentRun workloads without requiring users to hand‑write YAML.
 
 ## Goals
 - CRUD for Agent, AgentRun, ImplementationSpec, ImplementationSource, Memory.
 - First‑class “run” command to submit an AgentRun from flags or a spec file.
-- Works against any Kubernetes cluster (minikube/kind/managed) via kubeconfig.
-- Minimal dependencies; no bespoke server required.
+- Connects to the Jangar controller over gRPC (port‑forward or cluster service).
 - Human‑friendly status and logs for runs.
 
 ## Non‑goals
@@ -18,9 +19,9 @@ Status: Draft (2026-01-13)
 - Managing database lifecycle or ingress.
 
 ## Architecture
-- Client talks directly to Kubernetes API using kubeconfig.
-- Optional Jangar API endpoint for streaming logs/artifacts (if exposed).
-- All resources are Kubernetes native; `agentctl` is a convenience layer.
+- Client talks to Jangar over gRPC (`AgentctlService`).
+- Jangar performs Kubernetes operations on behalf of the CLI.
+- All resources remain Kubernetes native; `agentctl` is a convenience layer.
 
 ## Command Surface (proposed)
 ### Core
@@ -43,11 +44,13 @@ Status: Draft (2026-01-13)
 
 ### ImplementationSource (GitHub/Linear)
 - `agentctl source list`
+- `agentctl source get <name>`
 - `agentctl source apply -f <file>`
 - `agentctl source delete <name>`
 
 ### Memory
 - `agentctl memory list`
+- `agentctl memory get <name>`
 - `agentctl memory apply -f <file>`
 - `agentctl memory delete <name>`
 
@@ -56,11 +59,11 @@ Status: Draft (2026-01-13)
 - `agentctl run apply -f <file>`
 - `agentctl run get <name>`
 - `agentctl run list`
-- `agentctl run logs <name> [--follow]` (via Jangar API or Kubernetes logs)
+- `agentctl run logs <name> [--follow]` (via Jangar gRPC)
 - `agentctl run cancel <name>`
 
 ## Flags & Defaults
-- `--context`, `--kubeconfig`, `--namespace` (default from kubeconfig).
+- `--address` (gRPC address), `--namespace` (default: `agents`), `--token` (optional shared secret).
 - `--output` (`yaml|json|table`).
 - `--wait` for `run submit` to block until completion.
 - `--idempotency-key` to avoid duplicate run submissions.
@@ -76,8 +79,7 @@ Status: Draft (2026-01-13)
 - `--runtime-config key=value` maps into `spec.runtime.config` (schemaless).
 
 ## Logging & Artifacts
-- If Jangar exposes an HTTP endpoint, `agentctl run logs` streams from Jangar.
-- Fallback: read Kubernetes workload logs (runtime‑specific).
+- `agentctl run logs` streams from Jangar gRPC.
 
 ## Error Handling
 - Validate required fields before submitting.
@@ -91,9 +93,9 @@ Status: Draft (2026-01-13)
   - `5` unknown/unhandled
 
 ## Security
-- Uses kubeconfig auth (no credentials stored).
+- Optional shared token (`authorization: Bearer <token>`) and future mTLS support.
 - Secrets referenced by name only; values never printed.
 
 ## Decisions
-- Distribute `agentctl` as a standalone binary (GitHub releases) and optional container image.
-- Artifact retrieval: `agentctl` uses Jangar API when available; otherwise only logs are supported.
+- Distribute `agentctl` as a standalone binary (GitHub releases) and npm + Homebrew packages.
+- `agentctl` depends on Jangar gRPC endpoints for all operations.

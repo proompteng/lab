@@ -1,0 +1,36 @@
+{
+  "name": "@proompteng/agentctl",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "agentctl": "./dist/agentctl.js"
+  },
+  "files": [
+    "dist",
+    "proto",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/proompteng/lab.git",
+    "directory": "services/jangar/agentctl"
+  },
+  "scripts": {
+    "sync:proto": "bun run scripts/sync-proto.ts",
+    "build": "bun run sync:proto && bun build src/index.ts --target node --outfile dist/agentctl.js --banner \"#!/usr/bin/env node\\n\"",
+    "build:bin": "bun run sync:proto && bun build src/index.ts --compile --outfile dist/agentctl",
+    "lint": "bunx biome check --config-path ../../../biome.json src scripts",
+    "prepack": "bun run build"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.12.6",
+    "@grpc/proto-loader": "^0.7.13",
+    "yaml": "^2.8.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.2",
+    "bun-types": "latest"
+  },
+  "packageManager": "bun@1.3.5"
+}
