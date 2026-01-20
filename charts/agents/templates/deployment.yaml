@@ -85,8 +85,6 @@ spec:
               value: "1"
             - name: JANGAR_AGENTS_CONTROLLER_NAMESPACES
               value: {{ include "agents.controllerNamespaces" . | quote }}
-            - name: JANGAR_AGENTS_CONTROLLER_INTERVAL_SECONDS
-              value: {{ .Values.controller.intervalSeconds | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE
               value: {{ .Values.controller.concurrency.perNamespace | default 10 | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_CONCURRENCY_AGENT
@@ -102,8 +100,6 @@ spec:
               value: "1"
             - name: JANGAR_ORCHESTRATION_CONTROLLER_NAMESPACES
               value: {{ include "agents.orchestrationNamespaces" . | quote }}
-            - name: JANGAR_ORCHESTRATION_CONTROLLER_INTERVAL_SECONDS
-              value: {{ .Values.orchestrationController.intervalSeconds | quote }}
             {{- else }}
             - name: JANGAR_ORCHESTRATION_CONTROLLER_ENABLED
               value: "0"
@@ -113,8 +109,6 @@ spec:
               value: "1"
             - name: JANGAR_SUPPORTING_CONTROLLER_NAMESPACES
               value: {{ include "agents.supportingNamespaces" . | quote }}
-            - name: JANGAR_SUPPORTING_CONTROLLER_INTERVAL_SECONDS
-              value: {{ .Values.supportingController.intervalSeconds | quote }}
             {{- else }}
             - name: JANGAR_SUPPORTING_CONTROLLER_ENABLED
               value: "0"

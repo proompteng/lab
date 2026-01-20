@@ -21,10 +21,8 @@ type OrchestrationRunStatus = {
 }
 
 const DEFAULT_NAMESPACES = ['jangar']
-const DEFAULT_INTERVAL_SECONDS = 0
 
 let started = false
-let intervalRef: NodeJS.Timeout | null = null
 let reconciling = false
 let watchHandles: Array<{ stop: () => void }> = []
 const namespaceQueues = new Map<string, Promise<void>>()
@@ -44,13 +42,6 @@ const parseNamespaces = () => {
     .map((value) => value.trim())
     .filter((value) => value.length > 0)
   return list.length > 0 ? list : DEFAULT_NAMESPACES
-}
-
-const parseIntervalSeconds = () => {
-  const raw = process.env.JANGAR_PRIMITIVES_RECONCILER_INTERVAL_SECONDS
-  const parsed = raw ? Number.parseInt(raw, 10) : NaN
-  if (Number.isFinite(parsed) && parsed >= 0) return parsed
-  return DEFAULT_INTERVAL_SECONDS
 }
 
 const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
@@ -317,13 +308,6 @@ export const startPrimitivesReconciler = () => {
       }),
     )
   }
-
-  const intervalSeconds = parseIntervalSeconds()
-  if (intervalSeconds > 0) {
-    intervalRef = setInterval(() => {
-      void reconcileOnce(kube, store, namespaces)
-    }, intervalSeconds * 1000)
-  }
 }
 
 export const stopPrimitivesReconciler = () => {
@@ -332,10 +316,6 @@ export const stopPrimitivesReconciler = () => {
   }
   watchHandles = []
   namespaceQueues.clear()
-  if (intervalRef) {
-    clearInterval(intervalRef)
-    intervalRef = null
-  }
   if (storeRef) {
     void storeRef.close()
     storeRef = null

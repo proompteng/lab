@@ -109,9 +109,10 @@ helm push agents-0.6.0.tgz oci://ghcr.io/proompteng/charts
 | `service.port` | Service port | `80` |
 | `service.annotations` | Service annotations | `{}` |
 | `service.labels` | Extra Service labels | `{}` |
-| `grpc.enabled` | Expose gRPC port for agentctl | `false` |
+| `grpc.enabled` | Expose gRPC ClusterIP service for agentctl | `false` |
 | `grpc.port` | Container gRPC port | `50051` |
 | `grpc.servicePort` | Service gRPC port | `50051` |
+| `grpc.serviceType` | gRPC Service type (cluster-only) | `ClusterIP` |
 | `serviceAccount.create` | Create service account | `true` |
 | `serviceAccount.name` | Service account name override | `""` |
 | `rbac.create` | Create RBAC | `true` |
@@ -123,16 +124,13 @@ helm push agents-0.6.0.tgz oci://ghcr.io/proompteng/charts
 | `envFromConfigMapRefs` | ConfigMap names to load as envFrom | `[]` |
 | `controller.enabled` | Enable Agents controller loop | `true` |
 | `controller.namespaces` | Namespaces to watch | `['<release-namespace>']` |
-| `controller.intervalSeconds` | Controller resync interval (0 disables periodic resync) | `0` |
 | `controller.concurrency.perNamespace` | Max running AgentRuns per namespace | `10` |
 | `controller.concurrency.perAgent` | Max running AgentRuns per Agent | `5` |
 | `controller.concurrency.cluster` | Max running AgentRuns cluster-wide | `100` |
 | `orchestrationController.enabled` | Enable Orchestration controller loop | `true` |
 | `orchestrationController.namespaces` | Namespaces to watch for OrchestrationRuns | `['<release-namespace>']` |
-| `orchestrationController.intervalSeconds` | Orchestration resync interval (0 disables periodic resync) | `0` |
 | `supportingController.enabled` | Enable supporting primitives controller | `true` |
 | `supportingController.namespaces` | Namespaces to watch for schedules/artifacts/workspaces | `['<release-namespace>']` |
-| `supportingController.intervalSeconds` | Supporting controller resync interval (0 disables periodic resync) | `0` |
 | `agentComms.enabled` | Enable NATS agent-comms subscriber | `false` |
 | `agentComms.nats.url` | NATS URL | `""` |
 | `livenessProbe.enabled` | Enable liveness probe | `true` |

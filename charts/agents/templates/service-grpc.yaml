@@ -1,0 +1,18 @@
+{{- if .Values.grpc.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agents.fullname" . }}-grpc
+  namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.grpc.serviceType | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.grpc.servicePort }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "agents.selectorLabels" . | nindent 4 }}
+{{- end }}

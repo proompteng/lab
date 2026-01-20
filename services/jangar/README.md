@@ -126,10 +126,10 @@ export JANGAR_GRPC_HOST=127.0.0.1
 export JANGAR_GRPC_PORT=50051
 ```
 
-Port-forward a deployed Jangar instance:
+Port-forward a deployed Jangar instance (gRPC service is cluster-only):
 
 ```bash
-kubectl -n jangar port-forward svc/jangar 50051:50051
+kubectl -n <namespace> port-forward svc/<release-name>-grpc 50051:50051
 ```
 
 Optional auth (shared token):

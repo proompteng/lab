@@ -15,7 +15,7 @@ const EXIT_RUNTIME = 4
 const EXIT_UNKNOWN = 5
 
 const DEFAULT_NAMESPACE = 'agents'
-const DEFAULT_ADDRESS = 'agents.agents.svc.cluster.local:50051'
+const DEFAULT_ADDRESS = 'agents-grpc.agents.svc.cluster.local:50051'
 
 type Config = {
   namespace?: string

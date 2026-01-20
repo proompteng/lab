@@ -23,6 +23,7 @@ grpc:
   enabled: true
   port: 50051
   servicePort: 50051
+  serviceType: ClusterIP
 env:
   vars:
     JANGAR_GRPC_ENABLED: "true"

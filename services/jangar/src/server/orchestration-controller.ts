@@ -4,7 +4,6 @@ import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 
 const DEFAULT_NAMESPACES = ['agents']
-const DEFAULT_INTERVAL_SECONDS = 0
 
 const REQUIRED_CRDS = [
   RESOURCE_MAP.Orchestration,
@@ -44,7 +43,6 @@ type StepStatus = {
 }
 
 let started = false
-let intervalRef: NodeJS.Timeout | null = null
 let reconciling = false
 let crdCheckState: CrdCheckState | null = null
 let watchHandles: Array<{ stop: () => void }> = []
@@ -66,13 +64,6 @@ const parseNamespaces = () => {
     .map((value) => value.trim())
     .filter((value) => value.length > 0)
   return list.length > 0 ? list : DEFAULT_NAMESPACES
-}
-
-const parseIntervalSeconds = () => {
-  const raw = process.env.JANGAR_ORCHESTRATION_CONTROLLER_INTERVAL_SECONDS
-  const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN
-  if (Number.isFinite(parsed) && parsed >= 0) return parsed
-  return DEFAULT_INTERVAL_SECONDS
 }
 
 const resolveCrdCheckNamespace = () => {
@@ -1278,12 +1269,6 @@ export const startOrchestrationController = async () => {
     for (const namespace of namespaces) {
       startNamespaceWatches(kube, namespace)
     }
-    const intervalSeconds = parseIntervalSeconds()
-    if (intervalSeconds > 0) {
-      intervalRef = setInterval(() => {
-        void reconcileAll(kube, namespaces)
-      }, intervalSeconds * 1000)
-    }
     started = true
   } catch (error) {
     console.warn('[jangar] orchestration controller failed to start', error)
@@ -1296,9 +1281,5 @@ export const stopOrchestrationController = () => {
   }
   watchHandles = []
   namespaceQueues.clear()
-  if (intervalRef) {
-    clearInterval(intervalRef)
-    intervalRef = null
-  }
   started = false
 }

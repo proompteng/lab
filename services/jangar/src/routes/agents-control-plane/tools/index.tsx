@@ -12,21 +12,16 @@ export const Route = createFileRoute('/agents-control-plane/tools/')({
 
 const fields = [
   {
-    label: 'Runtime',
-    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'runtime', 'type']) ?? '—',
-  },
-  {
     label: 'Image',
-    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'runtime', 'argo', 'image']) ?? '—',
+    value: (resource: PrimitiveResource) => readNestedValue(resource, ['spec', 'image']) ?? '—',
   },
   {
     label: 'Command',
-    value: (resource: PrimitiveResource) =>
-      readNestedArrayValue(resource, ['spec', 'runtime', 'argo', 'command']) ?? '—',
+    value: (resource: PrimitiveResource) => readNestedArrayValue(resource, ['spec', 'command']) ?? '—',
   },
   {
     label: 'Args',
-    value: (resource: PrimitiveResource) => readNestedArrayValue(resource, ['spec', 'runtime', 'argo', 'args']) ?? '—',
+    value: (resource: PrimitiveResource) => readNestedArrayValue(resource, ['spec', 'args']) ?? '—',
   },
 ]
 
