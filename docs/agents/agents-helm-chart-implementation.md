@@ -99,7 +99,8 @@ Jangar is the controller for all primitives and must:
 
 ### Runtime adapters (expected to exist)
 - `workflow` (native step runner), `job`, `temporal`, `custom` adapters with clear error messages when configuration is missing.
-The Helm chart enables the native workflow runtime controllers by default.
+The Helm chart enables the native workflow runtime controllers by default; external adapters are opt-in via explicit
+environment overrides (for example, `env.vars.*`).
 
 ### Orchestration runtime (native)
 - Orchestration and OrchestrationRun execute in-cluster by default with no external workflow engine.
@@ -143,7 +144,7 @@ Agent comms publishes vendor-neutral NATS subjects using the following pattern:
 - `workflow.<namespace>.<workflow>.<uid>.agent.<agentId>.<kind>` for workflow-scoped agent messages.
 - `workflow.general.<kind>` for general agent status updates.
 
-Legacy compatibility: `agents.workflow.*` subjects are still accepted.
+Legacy compatibility: `agents.workflow.*` subjects are still accepted alongside the `workflow.*` subject family.
 
 ### RBAC modes
 Support two modes:

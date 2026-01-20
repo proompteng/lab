@@ -70,9 +70,9 @@ Override `AGENTS_NAMESPACE`, `AGENTS_RELEASE_NAME`, `AGENTS_VALUES_FILE`, `AGENT
 Ensure the `agentrun-workflow-smoke.yaml` workload image includes `agent-runner` or set
 `env.vars.JANGAR_AGENT_RUNNER_IMAGE` in your values.
 
-## Native workflow e2e proof (no Argo)
+## Native workflow e2e proof
 This runbook validates the native workflow runtime end-to-end (AgentProvider → Agent → ImplementationSpec → AgentRun)
-without Argo and confirms that the Codex implementation step opens a PR against `proompteng/lab`.
+and confirms that the Codex implementation step opens a PR against `proompteng/lab`.
 
 Prereqs:
 - Agents chart is installed in `agents` and Jangar is reachable.
