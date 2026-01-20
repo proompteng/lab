@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: "d7d6242b"
-  digest: sha256:e80784d8b94c7de7a2c688646eec1471268438a2dbe78953264b8f19434aec56
+  tag: "f06b73ba"
+  digest: sha256:e937dfbf962e2d261e517ba55a3745b660db17e1d0a806a36f4560c60d17cd1f
   pullPolicy: IfNotPresent
 resources:
   requests:
