@@ -32,14 +32,12 @@ Update the values file with your Jangar image tag, database secret, and (optiona
 If `controller.namespaces` spans multiple namespaces or `"*"`, set `rbac.clusterScoped=true`.
 
 GitOps rollout notes (native workflow runtime):
-- No Argo Workflows installation is required for native AgentRun/OrchestrationRun execution.
+- No external workflow engine is required for native AgentRun/OrchestrationRun execution.
 - Keep `controller.enabled`, `orchestrationController.enabled`, and `supportingController.enabled` at their defaults
   unless you are intentionally disabling native runtime components.
 - To point Codex reruns/system improvements at native orchestration, set
   `workflowRuntime.native.rerunOrchestration` and/or `workflowRuntime.native.systemImprovementOrchestration`
   (plus the matching `workflowRuntime.native.*Namespace` values if needed) in `argocd/applications/agents/values.yaml`.
-- To opt into a vendor adapter (e.g., Argo Workflows), set `workflowRuntime.adapters.argo.enabled=true` and
-  the matching adapter values in `argocd/applications/agents/values.yaml` (or use `env.vars.*` overrides).
 
 Optional Argo CD smoke test (only for Argo CD-based installs):
 ```bash
@@ -122,8 +120,6 @@ Troubleshooting:
 - Configure `JANGAR_CODEX_RERUN_ORCHESTRATION` and/or `JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION` (plus the matching
   `*_NAMESPACE` variables if needed).
 - Ensure the referenced Orchestration exists and watch OrchestrationRun status for progress.
-- To use the optional Argo adapter instead, set `ARGO_SERVER_URL` along with `JANGAR_CODEX_RERUN_TEMPLATE` and/or
-  `JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE`.
 
 ## Jangar /health 500 (router init error)
 - Symptom: `/health` returns 500 with `ReferenceError: Cannot access 'aE' before initialization`.

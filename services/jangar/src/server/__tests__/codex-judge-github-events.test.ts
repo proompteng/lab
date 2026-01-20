@@ -26,7 +26,6 @@ const globalState = globalThis as typeof globalThis & {
     maxAttempts: number
     backoffScheduleMs: number[]
     facteurBaseUrl: string
-    argoServerUrl: string | null
     workflowArtifactsBucket: string
     workflowNamespace: string | null
     discordBotToken: string | null
@@ -39,12 +38,8 @@ const globalState = globalThis as typeof globalThis & {
     promptTuningCooldownHours: number
     rerunOrchestrationName: string | null
     rerunOrchestrationNamespace: string
-    rerunWorkflowTemplate: string | null
-    rerunWorkflowNamespace: string
     systemImprovementOrchestrationName: string | null
     systemImprovementOrchestrationNamespace: string
-    systemImprovementWorkflowTemplate: string | null
-    systemImprovementWorkflowNamespace: string
     systemImprovementJudgePrompt: string
     defaultJudgePrompt: string
   }
@@ -101,7 +96,6 @@ const configMock: NonNullable<typeof globalState.__codexJudgeConfigMock> = {
   maxAttempts: 3,
   backoffScheduleMs: [1000],
   facteurBaseUrl: 'http://facteur',
-  argoServerUrl: null,
   workflowArtifactsBucket: 'jangar-artifacts',
   workflowNamespace: null,
   discordBotToken: null,
@@ -114,12 +108,8 @@ const configMock: NonNullable<typeof globalState.__codexJudgeConfigMock> = {
   promptTuningCooldownHours: 6,
   rerunOrchestrationName: null,
   rerunOrchestrationNamespace: 'jangar',
-  rerunWorkflowTemplate: null,
-  rerunWorkflowNamespace: 'jangar',
   systemImprovementOrchestrationName: null,
   systemImprovementOrchestrationNamespace: 'jangar',
-  systemImprovementWorkflowTemplate: null,
-  systemImprovementWorkflowNamespace: 'jangar',
   systemImprovementJudgePrompt: 'system-improvement prompt',
   defaultJudgePrompt: 'default-judge-prompt',
 }

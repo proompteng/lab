@@ -82,17 +82,6 @@ workflowRuntime:
     rerunOrchestrationNamespace: ""
     systemImprovementOrchestration: ""
     systemImprovementOrchestrationNamespace: ""
-  adapters:
-    argo:
-      enabled: false
-      serverUrl: ""
-      rerunTemplate: ""
-      rerunNamespace: ""
-      systemImprovementTemplate: ""
-      systemImprovementNamespace: ""
-      tokenSecret:
-        name: ""
-        key: token
 
 envFromSecretRefs: []
 envFromConfigMapRefs: []
