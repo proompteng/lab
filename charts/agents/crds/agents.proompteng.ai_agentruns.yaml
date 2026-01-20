@@ -148,6 +148,10 @@ spec:
                 required:
                 - type
                 type: object
+              secrets:
+                items:
+                  type: string
+                type: array
               workflow:
                 properties:
                   steps:
@@ -211,13 +215,11 @@ spec:
                             type: string
                           maxProperties: 100
                           type: object
-                        retryBackoffSeconds:
-                          format: int32
-                          minimum: 0
-                          type: integer
                         retries:
                           format: int32
-                          minimum: 0
+                          type: integer
+                        retryBackoffSeconds:
+                          format: int32
                           type: integer
                         workload:
                           properties:
@@ -271,10 +273,6 @@ spec:
                 required:
                 - steps
                 type: object
-              secrets:
-                items:
-                  type: string
-                type: array
               workload:
                 properties:
                   image:
@@ -413,6 +411,9 @@ spec:
                   x-kubernetes-preserve-unknown-fields: true
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
+              startedAt:
+                format: date-time
+                type: string
               workflow:
                 properties:
                   lastTransitionTime:
@@ -453,14 +454,9 @@ spec:
                         startedAt:
                           format: date-time
                           type: string
-                      required:
-                      - name
                       type: object
                     type: array
                 type: object
-              startedAt:
-                format: date-time
-                type: string
             type: object
         required:
         - spec
