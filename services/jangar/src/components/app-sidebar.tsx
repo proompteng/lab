@@ -83,6 +83,18 @@ const agentsControlNav = [
   { to: '/agents-control-plane/implementation-specs', label: 'Implementation specs', icon: IconBrain },
   { to: '/agents-control-plane/implementation-sources', label: 'Implementation sources', icon: IconGitPullRequest },
   { to: '/agents-control-plane/memories', label: 'Memories', icon: IconHeart },
+  { to: '/agents-control-plane/orchestrations', label: 'Orchestrations', icon: IconRobot },
+  { to: '/agents-control-plane/orchestration-runs', label: 'Orchestration runs', icon: IconList },
+  { to: '/agents-control-plane/tools', label: 'Tools', icon: IconTerminal2 },
+  { to: '/agents-control-plane/tool-runs', label: 'Tool runs', icon: IconList },
+  { to: '/agents-control-plane/signals', label: 'Signals', icon: IconMessages },
+  { to: '/agents-control-plane/signal-deliveries', label: 'Signal deliveries', icon: IconMessages },
+  { to: '/agents-control-plane/approval-policies', label: 'Approval policies', icon: IconGitPullRequest },
+  { to: '/agents-control-plane/budgets', label: 'Budgets', icon: IconChartCandle },
+  { to: '/agents-control-plane/secret-bindings', label: 'Secret bindings', icon: IconDatabase },
+  { to: '/agents-control-plane/schedules', label: 'Schedules', icon: IconList },
+  { to: '/agents-control-plane/artifacts', label: 'Artifacts', icon: IconDatabase },
+  { to: '/agents-control-plane/workspaces', label: 'Workspaces', icon: IconHome },
 ] as const
 
 const apiNav = [

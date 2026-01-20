@@ -5,6 +5,18 @@ export type AgentPrimitiveKind =
   | 'ImplementationSpec'
   | 'ImplementationSource'
   | 'Memory'
+  | 'Orchestration'
+  | 'OrchestrationRun'
+  | 'Tool'
+  | 'ToolRun'
+  | 'Signal'
+  | 'SignalDelivery'
+  | 'ApprovalPolicy'
+  | 'Budget'
+  | 'SecretBinding'
+  | 'Schedule'
+  | 'Artifact'
+  | 'Workspace'
 
 export type PrimitiveResource = {
   apiVersion: string | null

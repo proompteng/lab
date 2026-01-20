@@ -26,6 +26,34 @@ const cards = [
     description: 'Upstream feeds that generate specs.',
   },
   { to: '/agents-control-plane/memories', title: 'Memories', description: 'Memory backends and health.' },
+  {
+    to: '/agents-control-plane/orchestrations',
+    title: 'Orchestrations',
+    description: 'Workflow definitions and policies.',
+  },
+  {
+    to: '/agents-control-plane/orchestration-runs',
+    title: 'Orchestration runs',
+    description: 'Execution records and step status.',
+  },
+  { to: '/agents-control-plane/tools', title: 'Tools', description: 'Tool definitions and runtime bindings.' },
+  { to: '/agents-control-plane/tool-runs', title: 'Tool runs', description: 'Tool execution history and outcomes.' },
+  { to: '/agents-control-plane/signals', title: 'Signals', description: 'Signal definitions and payload schemas.' },
+  {
+    to: '/agents-control-plane/signal-deliveries',
+    title: 'Signal deliveries',
+    description: 'Signal delivery events and payloads.',
+  },
+  {
+    to: '/agents-control-plane/approval-policies',
+    title: 'Approval policies',
+    description: 'Approval gates and compliance rules.',
+  },
+  { to: '/agents-control-plane/budgets', title: 'Budgets', description: 'Resource and cost ceilings.' },
+  { to: '/agents-control-plane/secret-bindings', title: 'Secret bindings', description: 'Secret access mappings.' },
+  { to: '/agents-control-plane/schedules', title: 'Schedules', description: 'Time-based triggers and automation.' },
+  { to: '/agents-control-plane/artifacts', title: 'Artifacts', description: 'Stored outputs and logs.' },
+  { to: '/agents-control-plane/workspaces', title: 'Workspaces', description: 'Workspace storage and lifecycle.' },
 ]
 
 function AgentsControlPlanePage() {
