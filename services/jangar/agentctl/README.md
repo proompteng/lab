@@ -50,7 +50,7 @@ Environment overrides:
 agentctl version
 agentctl version --client
 agentctl config view
-agentctl config set --namespace agents --server 127.0.0.1:50051
+agentctl config set --namespace agents --address 127.0.0.1:50051
 
 agentctl agent list
 agentctl agent get <name>

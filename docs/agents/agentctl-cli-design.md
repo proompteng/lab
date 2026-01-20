@@ -161,7 +161,7 @@ grpc                     agents     healthy   127.0.0.1:50051
 - In‑cluster usage targets the `agents-grpc` Service (requires `grpc.enabled` and `JANGAR_GRPC_*` envs in Helm values).
 - `--token` (optional shared secret).
 - `--tls` to enable TLS when configured (future-proofed).
-- `--output` (`yaml|json|table`, default `table`).
+- `--output` / `-o` (`yaml|json|table`, default `table`).
 - `--wait` for `run submit` to block until completion.
 - `--idempotency-key` to avoid duplicate run submissions.
 
