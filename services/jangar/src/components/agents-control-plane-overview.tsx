@@ -1,7 +1,13 @@
 import { Link } from '@tanstack/react-router'
 import * as React from 'react'
 
-import { deriveStatusLabel, formatTimestamp, getMetadataValue, StatusBadge } from '@/components/agents-control-plane'
+import {
+  deriveStatusCategory,
+  deriveStatusLabel,
+  formatTimestamp,
+  getMetadataValue,
+  StatusBadge,
+} from '@/components/agents-control-plane'
 import { buttonVariants } from '@/components/ui/button'
 import type { AgentPrimitiveKind, PrimitiveEventItem, PrimitiveResource } from '@/data/agents-control-plane'
 import { fetchPrimitiveEvents, fetchPrimitiveList } from '@/data/agents-control-plane'
@@ -16,16 +22,16 @@ type PrimitiveDefinition = {
   detailPath: string
 }
 
-type ControlPlaneHealth = 'Ready' | 'Degraded' | 'Unknown'
+type ControlPlaneHealth = 'Healthy' | 'Progressing' | 'Degraded' | 'Unknown'
 
 type PrimitiveTileData = {
   definition: PrimitiveDefinition
   total: number
   resources: PrimitiveResource[]
   readyCount: number
-  degradedCount: number
+  runningCount: number
+  failedCount: number
   unknownCount: number
-  health: ControlPlaneHealth
   error: string | null
 }
 
@@ -47,6 +53,7 @@ type OverviewState = {
   problems: ProblemEntry[]
   isLoading: boolean
   error: string | null
+  lastUpdatedAt: string | null
   refresh: () => void
 }
 
@@ -206,64 +213,28 @@ const CONTROL_PLANE_SECTIONS = Array.from(
   }, new Map<string, PrimitiveDefinition[]>()),
 ).map(([label, items]) => ({ label, items }))
 
-const normalizeStatus = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim()
-
-const isDegradedStatus = (value: string) => {
-  const normalized = normalizeStatus(value)
-  return (
-    normalized.includes('fail') ||
-    normalized.includes('error') ||
-    normalized.includes('invalid') ||
-    normalized.includes('degrad') ||
-    normalized.includes('unhealthy') ||
-    normalized.includes('not ready')
-  )
-}
-
-const isReadyStatus = (value: string) => {
-  const normalized = normalizeStatus(value)
-  return (
-    normalized.includes('ready') ||
-    normalized.includes('succeeded') ||
-    normalized.includes('success') ||
-    normalized.includes('running') ||
-    normalized.includes('completed')
-  )
-}
-
-const deriveHealth = (resources: PrimitiveResource[], error: string | null): ControlPlaneHealth => {
-  if (error) return 'Unknown'
-  if (resources.length === 0) return 'Unknown'
-  let degradedCount = 0
-  let readyCount = 0
-  for (const resource of resources) {
-    const status = deriveStatusLabel(resource)
-    if (isDegradedStatus(status)) {
-      degradedCount += 1
-    } else if (isReadyStatus(status)) {
-      readyCount += 1
-    }
-  }
-  if (degradedCount > 0) return 'Degraded'
-  if (readyCount > 0) return 'Ready'
-  return 'Unknown'
-}
-
 const summarizeResourceStatuses = (resources: PrimitiveResource[]) => {
   let readyCount = 0
-  let degradedCount = 0
+  let runningCount = 0
+  let failedCount = 0
   let unknownCount = 0
   for (const resource of resources) {
-    const status = deriveStatusLabel(resource)
-    if (isDegradedStatus(status)) {
-      degradedCount += 1
-    } else if (isReadyStatus(status)) {
-      readyCount += 1
-    } else {
-      unknownCount += 1
+    const status = deriveStatusCategory(resource)
+    if (status === 'Failed') {
+      failedCount += 1
+      continue
     }
+    if (status === 'Running') {
+      runningCount += 1
+      continue
+    }
+    if (status === 'Ready') {
+      readyCount += 1
+      continue
+    }
+    unknownCount += 1
   }
-  return { readyCount, degradedCount, unknownCount }
+  return { readyCount, runningCount, failedCount, unknownCount }
 }
 
 const buildProblemEntries = (
@@ -326,6 +297,7 @@ export const useControlPlaneOverview = (namespace: string): OverviewState => {
   const [tiles, setTiles] = React.useState<PrimitiveTileData[]>([])
   const [problems, setProblems] = React.useState<ProblemEntry[]>([])
   const [error, setError] = React.useState<string | null>(null)
+  const [lastUpdatedAt, setLastUpdatedAt] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
 
   const load = React.useCallback(
@@ -347,36 +319,37 @@ export const useControlPlaneOverview = (namespace: string): OverviewState => {
               total: 0,
               resources: [] as PrimitiveResource[],
               readyCount: 0,
-              degradedCount: 0,
+              runningCount: 0,
+              failedCount: 0,
               unknownCount: 0,
-              health: 'Unknown' as const,
               error: result.message,
             }
           }
-          const { readyCount, degradedCount, unknownCount } = summarizeResourceStatuses(result.items)
+          const { readyCount, runningCount, failedCount, unknownCount } = summarizeResourceStatuses(result.items)
           return {
             definition,
             total: result.total,
             resources: result.items,
             readyCount,
-            degradedCount,
+            runningCount,
+            failedCount,
             unknownCount,
-            health: deriveHealth(result.items, null),
             error: null,
           }
         })
 
         setTiles(nextTiles)
+        setLastUpdatedAt(new Date().toISOString())
 
         const degradedResources = nextTiles
           .flatMap((tile) =>
             tile.resources.map((resource) => ({
               definition: tile.definition,
               resource,
-              status: deriveStatusLabel(resource),
+              status: deriveStatusCategory(resource),
             })),
           )
-          .filter((entry) => isDegradedStatus(entry.status))
+          .filter((entry) => entry.status === 'Failed')
           .slice(0, 12)
 
         if (degradedResources.length === 0) {
@@ -412,7 +385,7 @@ export const useControlPlaneOverview = (namespace: string): OverviewState => {
         )
 
         const problemsToShow = collectedEvents
-          .filter((entry) => entry.type?.toLowerCase() === 'warning' || isDegradedStatus(entry.reason))
+          .filter((entry) => entry.type?.toLowerCase() === 'warning' || entry.reason.toLowerCase().includes('fail'))
           .sort(sortEvents)
           .slice(0, 5)
 
@@ -450,8 +423,18 @@ export const useControlPlaneOverview = (namespace: string): OverviewState => {
     void load(controller.signal)
   }, [load])
 
-  return { tiles, problems, isLoading, error, refresh }
+  return { tiles, problems, isLoading, error, lastUpdatedAt, refresh }
 }
+
+const deriveTileStatus = (tile: PrimitiveTileData | undefined): StatusLabel => {
+  if (!tile) return 'Unknown'
+  if (tile.failedCount > 0) return 'Failed'
+  if (tile.runningCount > 0) return 'Running'
+  if (tile.readyCount > 0) return 'Ready'
+  return 'Unknown'
+}
+
+type StatusLabel = 'Ready' | 'Running' | 'Failed' | 'Unknown'
 
 export const ControlPlaneOverviewTile = ({
   definition,
@@ -467,14 +450,13 @@ export const ControlPlaneOverviewTile = ({
   const resources = data?.resources ?? []
   const total = data?.total ?? 0
   const readyCount = data?.readyCount ?? 0
-  const degradedCount = data?.degradedCount ?? 0
+  const runningCount = data?.runningCount ?? 0
+  const failedCount = data?.failedCount ?? 0
   const unknownCount = data?.unknownCount ?? 0
-  const health = data?.health ?? 'Unknown'
+  const statusLabel = deriveTileStatus(data)
   const error = data?.error ?? null
 
-  const recentResources = resources.slice(0, 2)
-
-  const primaryResource = recentResources[0]
+  const primaryResource = resources[0]
   const primaryName = primaryResource ? getMetadataValue(primaryResource, 'name') : null
   const primaryNamespace = primaryResource ? (getMetadataValue(primaryResource, 'namespace') ?? namespace) : namespace
 
@@ -485,7 +467,7 @@ export const ControlPlaneOverviewTile = ({
           <h3 className="text-sm font-semibold text-foreground">{definition.title}</h3>
           <p className="text-xs text-muted-foreground">{definition.description}</p>
         </div>
-        <StatusBadge label={health} />
+        <StatusBadge label={statusLabel} />
       </div>
 
       <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
@@ -498,8 +480,12 @@ export const ControlPlaneOverviewTile = ({
           <div className="text-sm font-semibold text-foreground tabular-nums">{readyCount}</div>
         </div>
         <div className="space-y-0.5">
-          <div className="text-[10px] uppercase tracking-wide">Degraded</div>
-          <div className="text-sm font-semibold text-foreground tabular-nums">{degradedCount}</div>
+          <div className="text-[10px] uppercase tracking-wide">Running</div>
+          <div className="text-sm font-semibold text-foreground tabular-nums">{runningCount}</div>
+        </div>
+        <div className="space-y-0.5">
+          <div className="text-[10px] uppercase tracking-wide">Failed</div>
+          <div className="text-sm font-semibold text-foreground tabular-nums">{failedCount}</div>
         </div>
         <div className="space-y-0.5">
           <div className="text-[10px] uppercase tracking-wide">Unknown</div>
@@ -515,33 +501,6 @@ export const ControlPlaneOverviewTile = ({
 
       {isLoading && resources.length === 0 ? (
         <div className="text-xs text-muted-foreground">Loading resources...</div>
-      ) : null}
-
-      {recentResources.length > 0 ? (
-        <div className="space-y-2">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Recent</div>
-          <ul className="space-y-1">
-            {recentResources.map((resource) => {
-              const name = getMetadataValue(resource, 'name') ?? 'unknown'
-              const resourceNamespace = getMetadataValue(resource, 'namespace') ?? namespace
-              return (
-                <li key={`${definition.kind}-${resourceNamespace}-${name}`} className="flex items-center gap-2 text-xs">
-                  <span className="truncate text-foreground">{name}</span>
-                  <span className="text-muted-foreground">{resourceNamespace}</span>
-                  <StatusBadge label={deriveStatusLabel(resource)} />
-                  <Link
-                    to={definition.detailPath}
-                    params={{ name }}
-                    search={{ namespace: resourceNamespace }}
-                    className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                  >
-                    View
-                  </Link>
-                </li>
-              )
-            })}
-          </ul>
-        </div>
       ) : null}
 
       <div className="flex flex-wrap mt-auto gap-2">
@@ -566,6 +525,83 @@ export const ControlPlaneOverviewTile = ({
     </div>
   )
 }
+
+const aggregateControllerHealth = (tiles: PrimitiveTileData[], kinds: AgentPrimitiveKind[]): ControlPlaneHealth => {
+  const totals = tiles.reduce(
+    (acc, tile) => {
+      if (!kinds.includes(tile.definition.kind)) return acc
+      acc.ready += tile.readyCount
+      acc.running += tile.runningCount
+      acc.failed += tile.failedCount
+      acc.unknown += tile.unknownCount
+      return acc
+    },
+    { ready: 0, running: 0, failed: 0, unknown: 0 },
+  )
+
+  if (totals.failed > 0) return 'Degraded'
+  if (totals.running > 0) return 'Progressing'
+  if (totals.ready > 0) return 'Healthy'
+  if (totals.unknown > 0) return 'Unknown'
+  return 'Unknown'
+}
+
+const controllers = [
+  {
+    id: 'agents',
+    title: 'Agents controller',
+    description: 'Agents, providers, and run execution.',
+    kinds: ['Agent', 'AgentProvider', 'AgentRun'] as AgentPrimitiveKind[],
+  },
+  {
+    id: 'orchestration',
+    title: 'Orchestration controller',
+    description: 'Orchestrations, schedules, and runs.',
+    kinds: ['Orchestration', 'OrchestrationRun', 'Schedule'] as AgentPrimitiveKind[],
+  },
+  {
+    id: 'supporting',
+    title: 'Supporting controllers',
+    description: 'Tools, signals, storage, and policies.',
+    kinds: [
+      'Tool',
+      'ToolRun',
+      'Signal',
+      'SignalDelivery',
+      'Memory',
+      'Artifact',
+      'Workspace',
+      'ImplementationSpec',
+      'ImplementationSource',
+      'Budget',
+      'ApprovalPolicy',
+      'SecretBinding',
+    ] as AgentPrimitiveKind[],
+  },
+]
+
+export const ControlPlaneControllersPanel = ({ tiles }: { tiles: PrimitiveTileData[] }) => (
+  <section className="rounded-none border p-4 space-y-3 border-border bg-card">
+    <div>
+      <h2 className="text-sm font-semibold text-foreground">Controllers</h2>
+      <p className="text-xs text-muted-foreground">Health rollups for core control-plane controllers.</p>
+    </div>
+    <ul className="space-y-3 text-xs">
+      {controllers.map((controller) => {
+        const health = aggregateControllerHealth(tiles, controller.kinds)
+        return (
+          <li key={controller.id} className="rounded-none border p-3 border-border/60 bg-muted/30 space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <div className="font-medium text-foreground">{controller.title}</div>
+              <StatusBadge label={health} />
+            </div>
+            <div className="text-muted-foreground">{controller.description}</div>
+          </li>
+        )
+      })}
+    </ul>
+  </section>
+)
 
 export const ControlPlaneProblems = ({
   problems,

@@ -12,6 +12,8 @@ type ConditionEntry = {
   lastTransitionTime: string | null
 }
 
+export type StatusCategory = 'Ready' | 'Running' | 'Failed' | 'Unknown'
+
 const readString = (value: unknown) => {
   if (typeof value === 'string') {
     const trimmed = value.trim()
@@ -162,6 +164,17 @@ export const formatTimestamp = (value: string | null) => {
 
 const normalizeStatusLabel = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim()
 
+const statusIncludes = (value: string, checks: string[]) => checks.some((check) => value.includes(check))
+
+const isFailedStatus = (value: string) =>
+  statusIncludes(value, ['fail', 'error', 'degrad', 'invalid', 'unhealthy', 'not ready', 'crash', 'terminated'])
+
+const isRunningStatus = (value: string) =>
+  statusIncludes(value, ['running', 'progress', 'in progress', 'pending', 'queued', 'starting'])
+
+const isReadyStatus = (value: string) =>
+  statusIncludes(value, ['ready', 'succeeded', 'success', 'completed', 'available', 'healthy'])
+
 export const deriveStatusLabel = (resource: Record<string, unknown>) => {
   const status = readRecord(resource.status) ?? {}
   const phase = readString(status.phase) ?? readString(status.state) ?? readString(status.status)
@@ -181,6 +194,61 @@ export const deriveStatusLabel = (resource: Record<string, unknown>) => {
   return 'Unknown'
 }
 
+export const deriveStatusCategory = (resource: Record<string, unknown>): StatusCategory => {
+  const status = readRecord(resource.status) ?? {}
+  const phase = readString(status.phase) ?? readString(status.state) ?? readString(status.status)
+  const normalizedPhase = phase ? normalizeStatusLabel(phase) : null
+
+  const conditions = getStatusConditions(resource)
+  const readyCondition = conditions.find((condition) => normalizeStatusLabel(condition.type ?? '') === 'ready')
+  if (readyCondition?.status) {
+    if (readyCondition.status === 'True') return 'Ready'
+    if (readyCondition.status === 'False') return 'Failed'
+    if (readyCondition.status === 'Unknown') return 'Unknown'
+  }
+
+  if (normalizedPhase) {
+    if (isFailedStatus(normalizedPhase)) return 'Failed'
+    if (isRunningStatus(normalizedPhase)) return 'Running'
+    if (isReadyStatus(normalizedPhase)) return 'Ready'
+  }
+
+  const failingCondition = conditions.find((condition) => condition.status === 'False')
+  if (failingCondition) return 'Failed'
+  const passingCondition = conditions.find((condition) => condition.status === 'True')
+  if (passingCondition) return 'Ready'
+
+  return 'Unknown'
+}
+
+export const summarizeConditions = (resource: Record<string, unknown>) => {
+  const conditions = getStatusConditions(resource)
+  if (conditions.length === 0) {
+    return { summary: 'No conditions reported', lastTransitionTime: null }
+  }
+
+  const labels = conditions.map((condition) => {
+    const type = condition.type ?? 'Condition'
+    const status = condition.status ?? '—'
+    return `${type}: ${status}`
+  })
+
+  const summary =
+    labels.length > 2 ? `${labels.slice(0, 2).join(' · ')} +${labels.length - 2} more` : labels.join(' · ')
+
+  const lastTransitionTime = conditions.reduce<string | null>((latest, condition) => {
+    if (!condition.lastTransitionTime) return latest
+    if (!latest) return condition.lastTransitionTime
+    const latestTime = Date.parse(latest)
+    const nextTime = Date.parse(condition.lastTransitionTime)
+    if (!Number.isFinite(latestTime)) return condition.lastTransitionTime
+    if (!Number.isFinite(nextTime)) return latest
+    return nextTime > latestTime ? condition.lastTransitionTime : latest
+  }, null)
+
+  return { summary, lastTransitionTime }
+}
+
 const toneForStatus = (value: string) => {
   const normalized = normalizeStatusLabel(value)
   if (
@@ -192,9 +260,10 @@ const toneForStatus = (value: string) => {
     normalized.includes('not ready')
   )
     return 'danger'
-  if (normalized.includes('running') || normalized.includes('in progress')) return 'accent'
+  if (normalized.includes('running') || normalized.includes('progress')) return 'accent'
   if (normalized.includes('pending') || normalized.includes('queued')) return 'warning'
-  if (normalized.includes('ready') || normalized.includes('succeeded')) return 'success'
+  if (normalized.includes('ready') || normalized.includes('succeeded') || normalized.includes('healthy'))
+    return 'success'
   return 'muted'
 }
 

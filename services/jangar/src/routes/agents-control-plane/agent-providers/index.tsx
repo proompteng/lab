@@ -2,11 +2,13 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
 import {
-  deriveStatusLabel,
+  deriveStatusCategory,
+  formatTimestamp,
   getMetadataValue,
   readNestedArrayValue,
   readNestedValue,
   StatusBadge,
+  summarizeConditions,
 } from '@/components/agents-control-plane'
 import { DEFAULT_NAMESPACE, parseNamespaceSearch } from '@/components/agents-control-plane-search'
 import { Button } from '@/components/ui/button'
@@ -151,7 +153,8 @@ function AgentProvidersListPage() {
           {items.map((resource) => {
             const name = getMetadataValue(resource, 'name') ?? 'unknown'
             const resourceNamespace = getMetadataValue(resource, 'namespace') ?? searchState.namespace
-            const statusLabel = deriveStatusLabel(resource)
+            const statusLabel = deriveStatusCategory(resource)
+            const conditionSummary = summarizeConditions(resource)
             const fields = buildProviderFields(resource)
             return (
               <li key={`${resourceNamespace}/${name}`} className="border-b border-border last:border-b-0">
@@ -167,6 +170,16 @@ function AgentProvidersListPage() {
                       <div className="text-xs text-muted-foreground">{resourceNamespace}</div>
                     </div>
                     <StatusBadge label={statusLabel} />
+                  </div>
+                  <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] uppercase tracking-wide">Conditions</span>
+                      <span className="text-foreground">{conditionSummary.summary}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] uppercase tracking-wide">Last transition</span>
+                      <span className="text-foreground">{formatTimestamp(conditionSummary.lastTransitionTime)}</span>
+                    </div>
                   </div>
                   <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
                     {fields.map((field) => (
