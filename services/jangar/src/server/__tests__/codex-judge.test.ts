@@ -37,6 +37,8 @@ const globalState = globalThis as typeof globalThis & {
     backoffScheduleMs: number[]
     facteurBaseUrl: string
     argoServerUrl: string | null
+    workflowArtifactsBucket: string
+    workflowNamespace: string | null
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
@@ -45,8 +47,12 @@ const globalState = globalThis as typeof globalThis & {
     promptTuningFailureThreshold: number
     promptTuningWindowHours: number
     promptTuningCooldownHours: number
+    rerunOrchestrationName: string | null
+    rerunOrchestrationNamespace: string
     rerunWorkflowTemplate: string | null
     rerunWorkflowNamespace: string
+    systemImprovementOrchestrationName: string | null
+    systemImprovementOrchestrationNamespace: string
     systemImprovementWorkflowTemplate: string | null
     systemImprovementWorkflowNamespace: string
     systemImprovementJudgePrompt: string
@@ -160,6 +166,8 @@ if (!globalState.__codexJudgeConfigMock) {
     backoffScheduleMs: [0],
     facteurBaseUrl: 'http://facteur.test',
     argoServerUrl: null,
+    workflowArtifactsBucket: 'jangar-artifacts',
+    workflowNamespace: null,
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
@@ -168,10 +176,14 @@ if (!globalState.__codexJudgeConfigMock) {
     promptTuningFailureThreshold: 3,
     promptTuningWindowHours: 24,
     promptTuningCooldownHours: 6,
-    rerunWorkflowTemplate: 'codex-autonomous',
-    rerunWorkflowNamespace: 'argo-workflows',
-    systemImprovementWorkflowTemplate: 'codex-autonomous',
-    systemImprovementWorkflowNamespace: 'argo-workflows',
+    rerunOrchestrationName: null,
+    rerunOrchestrationNamespace: 'jangar',
+    rerunWorkflowTemplate: null,
+    rerunWorkflowNamespace: 'jangar',
+    systemImprovementOrchestrationName: null,
+    systemImprovementOrchestrationNamespace: 'jangar',
+    systemImprovementWorkflowTemplate: null,
+    systemImprovementWorkflowNamespace: 'jangar',
     systemImprovementJudgePrompt: 'system improvement judge prompt',
     defaultJudgePrompt: 'judge prompt',
   }
@@ -483,6 +495,8 @@ const harness = (() => {
     backoffScheduleMs: [0],
     facteurBaseUrl: 'http://facteur.test',
     argoServerUrl: null,
+    workflowArtifactsBucket: 'jangar-artifacts',
+    workflowNamespace: null,
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
@@ -491,10 +505,14 @@ const harness = (() => {
     promptTuningFailureThreshold: 3,
     promptTuningWindowHours: 24,
     promptTuningCooldownHours: 6,
+    rerunOrchestrationName: null,
+    rerunOrchestrationNamespace: 'jangar',
     rerunWorkflowTemplate: 'codex-autonomous',
-    rerunWorkflowNamespace: 'argo-workflows',
+    rerunWorkflowNamespace: 'jangar',
+    systemImprovementOrchestrationName: null,
+    systemImprovementOrchestrationNamespace: 'jangar',
     systemImprovementWorkflowTemplate: 'codex-autonomous',
-    systemImprovementWorkflowNamespace: 'argo-workflows',
+    systemImprovementWorkflowNamespace: 'jangar',
     systemImprovementJudgePrompt: 'system improvement judge prompt',
     defaultJudgePrompt: 'judge prompt',
   })

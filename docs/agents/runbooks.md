@@ -37,6 +37,8 @@ kubectl get crd | rg agents.proompteng.ai
 kubectl -n agents port-forward svc/agents 8080:80
 curl -fsS http://localhost:8080/health
 kubectl -n agents apply -f charts/agents/examples/agentrun-sample.yaml
+kubectl -n agents apply -f charts/agents/examples/orchestration-sample.yaml
+kubectl -n agents apply -f charts/agents/examples/orchestrationrun-sample.yaml
 kubectl -n agents wait --for=condition=complete job \
   -l agents.proompteng.ai/agent-run=codex-run-sample --timeout=5m
 ```
@@ -50,6 +52,13 @@ This installs the chart, applies sample CRDs, submits a workflow runtime AgentRu
 to complete. Override `AGENTS_NAMESPACE`, `AGENTS_RELEASE_NAME`, or `AGENTS_VALUES_FILE` if needed.
 Ensure the `agentrun-sample.yaml` workload image includes `agent-runner` or set
 `env.vars.JANGAR_AGENT_RUNNER_IMAGE` in your values.
+
+## Codex reruns/system improvements (native)
+- Configure `JANGAR_CODEX_RERUN_ORCHESTRATION` and/or `JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION` (plus the matching
+  `*_NAMESPACE` variables if needed).
+- Ensure the referenced Orchestration exists and watch OrchestrationRun status for progress.
+- To use the Argo adapter instead, set `ARGO_SERVER_URL` along with `JANGAR_CODEX_RERUN_TEMPLATE` and/or
+  `JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE`.
 
 ## Jangar /health 500 (router init error)
 - Symptom: `/health` returns 500 with `ReferenceError: Cannot access 'aE' before initialization`.

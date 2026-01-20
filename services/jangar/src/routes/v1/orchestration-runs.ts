@@ -1,6 +1,5 @@
-import { randomUUID } from 'node:crypto'
-
 import { createFileRoute } from '@tanstack/react-router'
+import { type SubmitOrchestrationRunDeps, submitOrchestrationRun } from '~/server/orchestration-submit'
 import {
   asRecord,
   asString,
@@ -8,11 +7,8 @@ import {
   normalizeNamespace,
   okResponse,
   parseJsonBody,
-  readNested,
   requireIdempotencyKey,
 } from '~/server/primitives-http'
-import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
-import { extractApprovalPolicies, validatePolicies } from '~/server/primitives-policy'
 import { createPrimitivesStore } from '~/server/primitives-store'
 
 export const Route = createFileRoute('/v1/orchestration-runs')({
@@ -74,114 +70,44 @@ export const getOrchestrationRunsHandler = async (
   }
 }
 
-export const postOrchestrationRunsHandler = async (
-  request: Request,
-  deps: {
-    storeFactory?: typeof createPrimitivesStore
-    kubeClient?: ReturnType<typeof createKubernetesClient>
-  } = {},
-) => {
-  const store = (deps.storeFactory ?? createPrimitivesStore)()
+export const postOrchestrationRunsHandler = async (request: Request, deps: SubmitOrchestrationRunDeps = {}) => {
   try {
     const deliveryId = requireIdempotencyKey(request)
     const payload = await parseJsonBody(request)
     const parsed = parseOrchestrationRunPayload(payload)
 
-    await store.ready
-    const existing = await store.getOrchestrationRunByDeliveryId(deliveryId)
-    if (existing) {
-      const resourceNamespace =
-        asString(readNested(existing.payload, ['resource', 'metadata', 'namespace'])) ??
-        asString(readNested(existing.payload, ['request', 'namespace'])) ??
-        parsed.namespace
-      const kube = deps.kubeClient ?? createKubernetesClient()
-      const resource = existing.externalRunId
-        ? await kube.get(RESOURCE_MAP.OrchestrationRun, existing.externalRunId, resourceNamespace)
-        : null
-      return okResponse({ ok: true, orchestrationRun: existing, resource, idempotent: true })
-    }
-
-    const kube = deps.kubeClient ?? createKubernetesClient()
-    const orchestration = await kube.get(RESOURCE_MAP.Orchestration, parsed.orchestrationRef.name, parsed.namespace)
-    if (!orchestration) {
-      return errorResponse(`orchestration ${parsed.orchestrationRef.name} not found`, 404)
-    }
-
-    const spec = (orchestration.spec ?? {}) as Record<string, unknown>
-    const steps = Array.isArray(spec.steps) ? (spec.steps as Record<string, unknown>[]) : []
-    const approvalPolicies = extractApprovalPolicies(steps)
-
-    const policy = parsed.policy ?? {}
-    const policyChecks = {
-      approvalPolicies,
-      budgetRef: asString(policy.budgetRef) ?? undefined,
-      subject: { kind: 'Orchestration', name: parsed.orchestrationRef.name, namespace: parsed.namespace },
-    }
-
-    try {
-      await validatePolicies(parsed.namespace, policyChecks, kube)
-      await store.createAuditEvent({
-        entityType: 'PolicyDecision',
-        entityId: randomUUID(),
-        eventType: 'policy.allowed',
-        payload: { deliveryId, subject: policyChecks.subject, checks: policyChecks },
-      })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      try {
-        await store.createAuditEvent({
-          entityType: 'PolicyDecision',
-          entityId: randomUUID(),
-          eventType: 'policy.denied',
-          payload: { deliveryId, subject: policyChecks.subject, checks: policyChecks, reason: message },
-        })
-      } catch {
-        // ignore audit failures
-      }
-      return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 403)
-    }
-
-    const resource: Record<string, unknown> = {
-      apiVersion: 'orchestration.proompteng.ai/v1alpha1',
-      kind: 'OrchestrationRun',
-      metadata: {
-        generateName: `${parsed.orchestrationRef.name}-`,
-        namespace: parsed.namespace,
-        labels: {
-          'jangar.proompteng.ai/delivery-id': deliveryId,
-        },
-      },
-      spec: {
-        orchestrationRef: parsed.orchestrationRef,
-        parameters: parsed.parameters ?? {},
+    const result = await submitOrchestrationRun(
+      {
         deliveryId,
+        orchestrationRef: parsed.orchestrationRef,
+        namespace: parsed.namespace,
+        parameters: parsed.parameters,
+        policy: parsed.policy,
       },
+      deps,
+    )
+
+    if (result.idempotent) {
+      return okResponse({
+        ok: true,
+        orchestrationRun: result.orchestrationRun,
+        resource: result.resource,
+        idempotent: true,
+      })
     }
 
-    const applied = await kube.apply(resource)
-    const metadata = (applied.metadata ?? {}) as Record<string, unknown>
-    const externalRunId = asString(metadata.name)
-
-    const statusPhase = asString(asRecord(applied.status)?.phase) ?? 'Pending'
-    const record = await store.createOrchestrationRun({
-      orchestrationName: parsed.orchestrationRef.name,
-      deliveryId,
-      provider: 'workflow',
-      status: statusPhase,
-      externalRunId,
-      payload: { request: payload, resource: applied, status: asRecord(applied.status) ?? {} },
-    })
-    await store.createAuditEvent({
-      entityType: 'OrchestrationRun',
-      entityId: record.id,
-      eventType: 'orchestration_run.created',
-      payload: { deliveryId, orchestration: parsed.orchestrationRef.name, namespace: parsed.namespace },
-    })
-    return okResponse({ ok: true, orchestrationRun: record, resource: applied }, 201)
+    return okResponse({ ok: true, orchestrationRun: result.orchestrationRun, resource: result.resource }, 201)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 400)
-  } finally {
-    await store.close()
+    if (message.includes('orchestration') && message.includes('not found')) {
+      return errorResponse(message, 404)
+    }
+    if (message.includes('DATABASE_URL')) {
+      return errorResponse(message, 503)
+    }
+    if (message.includes('policy') || message.includes('budget') || message.includes('approval')) {
+      return errorResponse(message, 403)
+    }
+    return errorResponse(message, 400)
   }
 }

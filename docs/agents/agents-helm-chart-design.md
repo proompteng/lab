@@ -56,7 +56,7 @@ Mermaid: chart scope overview
 ```mermaid
 graph TD
   subgraph Helm Chart: agents
-    CRDs[CRDs<br/>Agent, AgentRun, AgentProvider,<br/>ImplementationSpec, Memory]
+    CRDs[CRDs<br/>Agent, AgentRun, AgentProvider,<br/>ImplementationSpec, Memory,<br/>Orchestration, OrchestrationRun]
     Deploy[Jangar Deployment]
     Svc[ClusterIP Service]
     SA[ServiceAccount + RBAC]
@@ -84,6 +84,10 @@ It provides:
 - Runtime adapter layer (workflow/job, temporal, custom) for execution.
 - Integration layer for GitHub + Linear ingestion into ImplementationSpec.
 - Status/condition management and event emission.
+
+Default runtime stance:
+- The vanilla chart runs the native `job`/`workflow` runtimes with no external workflow engine required.
+- External adapters (Argo, Temporal) are opt-in via explicit runtime configuration or environment settings.
 
 #### Reconciliation loops (high-level)
 - `AgentRun` reconciler:

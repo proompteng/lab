@@ -120,18 +120,22 @@ const safeParseJson = (value: string): unknown => {
 
 const parseSubject = (subject: string) => {
   const parts = subject.split('.')
-  if (parts.length < 3) return null
-  const root = parts[0]
-  if (root !== 'agents' && root !== 'argo') return null
-  if (parts[1] !== 'workflow') return null
-  if (parts[2] === 'general') {
-    return { channel: 'general', kind: parts[3] ?? null }
+  if (parts.length < 2) return null
+  const prefixOffset = (() => {
+    if (parts[0] === 'workflow') return 1
+    if (parts[0] === 'argo' && parts[1] === 'workflow') return 2
+    return null
+  })()
+  if (prefixOffset === null) return null
+  const scoped = parts.slice(prefixOffset)
+  if (scoped[0] === 'general') {
+    return { channel: 'general', kind: scoped[1] ?? null }
   }
-  const agentIndex = parts.indexOf('agent')
+  const agentIndex = scoped.indexOf('agent')
   if (agentIndex === -1) return null
-  const [workflowNamespace, workflowName, workflowUid] = parts.slice(2, agentIndex)
-  const agentId = parts[agentIndex + 1] ?? null
-  const kind = parts[agentIndex + 2] ?? null
+  const [workflowNamespace, workflowName, workflowUid] = scoped.slice(0, agentIndex)
+  const agentId = scoped[agentIndex + 1] ?? null
+  const kind = scoped[agentIndex + 2] ?? null
   return {
     workflowNamespace: workflowNamespace || null,
     workflowName: workflowName || null,

@@ -9,6 +9,8 @@ export type CodexJudgeConfig = {
   backoffScheduleMs: number[]
   facteurBaseUrl: string
   argoServerUrl: string | null
+  workflowArtifactsBucket: string
+  workflowNamespace: string | null
   discordBotToken: string | null
   discordChannelId: string | null
   discordApiBaseUrl: string
@@ -17,8 +19,12 @@ export type CodexJudgeConfig = {
   promptTuningFailureThreshold: number
   promptTuningWindowHours: number
   promptTuningCooldownHours: number
+  rerunOrchestrationName: string | null
+  rerunOrchestrationNamespace: string
   rerunWorkflowTemplate: string | null
   rerunWorkflowNamespace: string
+  systemImprovementOrchestrationName: string | null
+  systemImprovementOrchestrationNamespace: string
   systemImprovementWorkflowTemplate: string | null
   systemImprovementWorkflowNamespace: string
   systemImprovementJudgePrompt: string
@@ -70,6 +76,10 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     process.env.FACTEUR_INTERNAL_URL ?? 'http://facteur-internal.facteur.svc.cluster.local'
   ).trim()
   const argoServerUrl = (process.env.ARGO_SERVER_URL ?? '').trim() || null
+  const workflowArtifactsBucket =
+    (process.env.JANGAR_CODEX_ARTIFACT_BUCKET ?? process.env.ARTIFACT_BUCKET ?? 'jangar-artifacts').trim() ||
+    'jangar-artifacts'
+  const workflowNamespace = (process.env.JANGAR_CODEX_WORKFLOW_NAMESPACE ?? '').trim() || null
   const discordBotToken = (process.env.DISCORD_BOT_TOKEN ?? '').trim() || null
   const discordChannelId = (process.env.DISCORD_SUCCESS_CHANNEL_ID ?? '').trim() || null
   const discordApiBaseUrl = (process.env.DISCORD_API_BASE_URL ?? DEFAULT_DISCORD_API_BASE).trim()
@@ -78,12 +88,35 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
   const promptTuningFailureThreshold = parseNumber(process.env.JANGAR_PROMPT_TUNING_FAILURE_THRESHOLD, 3)
   const promptTuningWindowHours = parseNumber(process.env.JANGAR_PROMPT_TUNING_WINDOW_HOURS, 24)
   const promptTuningCooldownHours = parseNumber(process.env.JANGAR_PROMPT_TUNING_COOLDOWN_HOURS, 6)
-  const rerunWorkflowTemplate = (process.env.JANGAR_CODEX_RERUN_TEMPLATE ?? 'codex-autonomous').trim() || null
-  const rerunWorkflowNamespace = (process.env.JANGAR_CODEX_RERUN_NAMESPACE ?? 'argo-workflows').trim()
-  const systemImprovementWorkflowTemplate =
-    (process.env.JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE ?? 'codex-autonomous').trim() || null
+  const rerunOrchestrationName = (process.env.JANGAR_CODEX_RERUN_ORCHESTRATION ?? '').trim() || null
+  const rerunWorkflowTemplate = (process.env.JANGAR_CODEX_RERUN_TEMPLATE ?? '').trim() || null
+  const rerunWorkflowNamespace = (
+    process.env.JANGAR_CODEX_RERUN_NAMESPACE ??
+    workflowNamespace ??
+    process.env.JANGAR_NAMESPACE ??
+    'jangar'
+  ).trim()
+  const rerunOrchestrationNamespace = (
+    process.env.JANGAR_CODEX_RERUN_ORCHESTRATION_NAMESPACE ??
+    process.env.JANGAR_CODEX_RERUN_NAMESPACE ??
+    workflowNamespace ??
+    process.env.JANGAR_NAMESPACE ??
+    'jangar'
+  ).trim()
+  const systemImprovementOrchestrationName = (process.env.JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION ?? '').trim() || null
+  const systemImprovementWorkflowTemplate = (process.env.JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE ?? '').trim() || null
   const systemImprovementWorkflowNamespace = (
-    process.env.JANGAR_SYSTEM_IMPROVEMENT_NAMESPACE ?? 'argo-workflows'
+    process.env.JANGAR_SYSTEM_IMPROVEMENT_NAMESPACE ??
+    workflowNamespace ??
+    process.env.JANGAR_NAMESPACE ??
+    'jangar'
+  ).trim()
+  const systemImprovementOrchestrationNamespace = (
+    process.env.JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE ??
+    process.env.JANGAR_SYSTEM_IMPROVEMENT_NAMESPACE ??
+    workflowNamespace ??
+    process.env.JANGAR_NAMESPACE ??
+    'jangar'
   ).trim()
   const systemImprovementJudgePrompt = (
     process.env.JANGAR_SYSTEM_IMPROVEMENT_JUDGE_PROMPT ?? DEFAULT_SYSTEM_IMPROVEMENT_JUDGE_PROMPT
@@ -101,6 +134,8 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     backoffScheduleMs: resolvedBackoff,
     facteurBaseUrl,
     argoServerUrl,
+    workflowArtifactsBucket,
+    workflowNamespace,
     discordBotToken,
     discordChannelId,
     discordApiBaseUrl,
@@ -109,8 +144,12 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     promptTuningFailureThreshold,
     promptTuningWindowHours,
     promptTuningCooldownHours,
+    rerunOrchestrationName,
+    rerunOrchestrationNamespace,
     rerunWorkflowTemplate,
     rerunWorkflowNamespace,
+    systemImprovementOrchestrationName,
+    systemImprovementOrchestrationNamespace,
     systemImprovementWorkflowTemplate,
     systemImprovementWorkflowNamespace,
     systemImprovementJudgePrompt,

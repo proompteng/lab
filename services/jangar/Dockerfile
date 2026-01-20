@@ -283,6 +283,7 @@ RUN set -eux; \
   rm -f "${ASSET}" checksums.txt; \
   kn version
 
+
 # Install CloudNativePG kubectl plugin (`kubectl cnpg ...`)
 RUN set -eux; \
   ARCH="${TARGETARCH:-$(uname -m)}"; \

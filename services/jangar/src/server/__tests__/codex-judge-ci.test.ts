@@ -30,6 +30,8 @@ const globalState = globalThis as typeof globalThis & {
     backoffScheduleMs: number[]
     facteurBaseUrl: string
     argoServerUrl: string | null
+    workflowArtifactsBucket: string
+    workflowNamespace: string | null
     discordBotToken: string | null
     discordChannelId: string | null
     discordApiBaseUrl: string
@@ -38,6 +40,10 @@ const globalState = globalThis as typeof globalThis & {
     promptTuningFailureThreshold: number
     promptTuningWindowHours: number
     promptTuningCooldownHours: number
+    rerunOrchestrationName: string | null
+    rerunOrchestrationNamespace: string
+    systemImprovementOrchestrationName: string | null
+    systemImprovementOrchestrationNamespace: string
   }
   __codexJudgeMemoryStoreMock?: { persist: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
 }
@@ -110,6 +116,8 @@ if (!globalState.__codexJudgeConfigMock) {
     backoffScheduleMs: [1000],
     facteurBaseUrl: 'http://facteur',
     argoServerUrl: null,
+    workflowArtifactsBucket: 'jangar-artifacts',
+    workflowNamespace: null,
     discordBotToken: null,
     discordChannelId: null,
     discordApiBaseUrl: 'https://discord.com/api/v10',
@@ -118,6 +126,10 @@ if (!globalState.__codexJudgeConfigMock) {
     promptTuningFailureThreshold: 3,
     promptTuningWindowHours: 24,
     promptTuningCooldownHours: 6,
+    rerunOrchestrationName: null,
+    rerunOrchestrationNamespace: 'jangar',
+    systemImprovementOrchestrationName: null,
+    systemImprovementOrchestrationNamespace: 'jangar',
   }
 }
 
@@ -162,6 +174,8 @@ const config = {
   backoffScheduleMs: [1000],
   facteurBaseUrl: 'http://facteur',
   argoServerUrl: null,
+  workflowArtifactsBucket: 'jangar-artifacts',
+  workflowNamespace: null,
   discordBotToken: null,
   discordChannelId: null,
   discordApiBaseUrl: 'https://discord.com/api/v10',
@@ -170,6 +184,10 @@ const config = {
   promptTuningFailureThreshold: 3,
   promptTuningWindowHours: 24,
   promptTuningCooldownHours: 6,
+  rerunOrchestrationName: null,
+  rerunOrchestrationNamespace: 'jangar',
+  systemImprovementOrchestrationName: null,
+  systemImprovementOrchestrationNamespace: 'jangar',
 }
 
 const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
