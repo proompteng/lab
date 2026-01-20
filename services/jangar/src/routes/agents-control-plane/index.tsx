@@ -102,7 +102,7 @@ function AgentsControlPlanePage() {
             name="namespace"
             value={namespace}
             onChange={(event) => setNamespace(event.target.value)}
-            placeholder="jangar"
+            placeholder="agents"
             autoComplete="off"
           />
         </div>
