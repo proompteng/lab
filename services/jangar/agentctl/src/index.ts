@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import * as grpc from '@grpc/grpc-js'
-import { loadSync } from '@grpc/proto-loader'
+import { fromJSON } from '@grpc/proto-loader'
+import * as protobuf from 'protobufjs'
 import YAML from 'yaml'
 
 const EXIT_VALIDATION = 2
@@ -15,7 +15,7 @@ const EXIT_RUNTIME = 4
 const EXIT_UNKNOWN = 5
 
 const DEFAULT_NAMESPACE = 'agents'
-const DEFAULT_ADDRESS = '127.0.0.1:50051'
+const DEFAULT_ADDRESS = 'agents.agents.svc.cluster.local:50051'
 
 type Config = {
   namespace?: string
@@ -42,9 +42,19 @@ const getVersion = () => {
   const env = process.env.AGENTCTL_VERSION?.trim()
   if (env) return env
   try {
-    const require = createRequire(import.meta.url)
-    const pkg = require('../package.json') as { version?: string }
-    if (pkg?.version) return pkg.version
+    const moduleDir = resolve(fileURLToPath(import.meta.url), '..')
+    const pkgCandidates = [
+      resolve(moduleDir, '..', 'package.json'),
+      resolve(dirname(process.argv[0] ?? ''), '..', 'package.json'),
+      resolve(dirname(process.execPath ?? ''), '..', 'package.json'),
+    ]
+
+    for (const candidate of pkgCandidates) {
+      if (!candidate || !existsSync(candidate)) continue
+      const raw = readFileSync(candidate, 'utf8')
+      const pkg = JSON.parse(raw) as { version?: string }
+      if (pkg?.version) return pkg.version
+    }
   } catch {
     // ignore
   }
@@ -56,8 +66,8 @@ const usage = (version: string) =>
 agentctl ${version}
 
 Usage:
-  agentctl version
-  agentctl config view|set --namespace <ns> [--address <addr>] [--token <token>]
+  agentctl version [--client]
+  agentctl config view|set --namespace <ns> [--server <addr>] [--token <token>]
   agentctl completion <shell>
 
   agentctl agent get <name>
@@ -89,11 +99,14 @@ Usage:
   agentctl run cancel <name>
 
 Global flags:
-  --namespace <ns>
-  --address <host:port>
+  --namespace, -n <ns>
+  --server, --address <host:port>
   --token <token>
-  --output <yaml|json|table>
+  --output, -o <yaml|json|table>
   --tls
+
+Version flags:
+  --client
 
 Run submit flags:
   --workload-image <image>
@@ -146,7 +159,7 @@ const parseGlobalFlags = (argv: string[]) => {
       flags.namespace = argv[++i]
       continue
     }
-    if (arg === '--address') {
+    if (arg === '--address' || arg === '--server') {
       flags.address = argv[++i]
       continue
     }
@@ -171,7 +184,12 @@ const resolveNamespace = (flags: GlobalFlags, config: Config) =>
   flags.namespace || process.env.AGENTCTL_NAMESPACE || config.namespace || DEFAULT_NAMESPACE
 
 const resolveAddress = (flags: GlobalFlags, config: Config) =>
-  flags.address || process.env.AGENTCTL_ADDRESS || process.env.JANGAR_GRPC_ADDRESS || config.address || DEFAULT_ADDRESS
+  flags.address ||
+  process.env.AGENTCTL_SERVER ||
+  process.env.AGENTCTL_ADDRESS ||
+  process.env.JANGAR_GRPC_ADDRESS ||
+  config.address ||
+  DEFAULT_ADDRESS
 
 const resolveToken = (flags: GlobalFlags, config: Config) =>
   flags.token || process.env.AGENTCTL_TOKEN || process.env.JANGAR_GRPC_TOKEN || config.token
@@ -208,7 +226,9 @@ const loadAgentctlPackage = (): AgentctlPackage => {
     throw new Error('agentctl proto not found; set AGENTCTL_PROTO_PATH')
   }
 
-  const packageDefinition = loadSync(protoPath, {
+  const protoContents = readFileSync(protoPath, 'utf8')
+  const root = protobuf.parse(protoContents, { keepCase: true }).root
+  const packageDefinition = fromJSON(root.toJSON(), {
     keepCase: true,
     longs: String,
     enums: String,
@@ -446,7 +466,7 @@ const main = async () => {
           if (args[i] === '--namespace' || args[i] === '-n') {
             next.namespace = args[++i]
           }
-          if (args[i] === '--address') {
+          if (args[i] === '--address' || args[i] === '--server') {
             next.address = args[++i]
           }
           if (args[i] === '--token') {
@@ -454,7 +474,7 @@ const main = async () => {
           }
         }
         if (!next.namespace && !next.address && !next.token) {
-          throw new Error('config set requires at least one of --namespace, --address, or --token')
+          throw new Error('config set requires at least one of --namespace, --server, or --token')
         }
         await saveConfig(next)
         console.log(`Updated ${resolveConfigPath()}`)
@@ -467,6 +487,14 @@ const main = async () => {
       return handleCompletion(shell)
     }
 
+    const versionArgs = command === 'version' ? [subcommand, ...args].filter(Boolean) : []
+    const clientOnly = versionArgs.includes('--client') || versionArgs.includes('--client-only')
+
+    if (command === 'version' && clientOnly) {
+      console.log(`agentctl ${version}`)
+      return 0
+    }
+
     const address = resolveAddress(flags, config)
     const namespace = resolveNamespace(flags, config)
     const token = resolveToken(flags, config)
@@ -475,13 +503,13 @@ const main = async () => {
     const client = await createClient(address, tlsEnabled)
 
     if (command === 'version') {
+      console.log(`agentctl ${version}`)
       const response = await callUnary<{ version: string; build_sha?: string; build_time?: string }>(
         client,
         'GetServerInfo',
         {},
         metadata,
       )
-      console.log(`agentctl ${version}`)
       console.log(`server ${response.version}`)
       if (response.build_sha) {
         console.log(`build ${response.build_sha}${response.build_time ? ` (${response.build_time})` : ''}`)
