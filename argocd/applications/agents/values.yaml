@@ -16,7 +16,7 @@ rbac:
 database:
   secretRef:
     name: jangar-db-app
-    key: url
+    key: uri
 agentComms:
   enabled: false
 grpc:
