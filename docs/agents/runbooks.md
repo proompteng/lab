@@ -70,6 +70,18 @@ Override `AGENTS_NAMESPACE`, `AGENTS_RELEASE_NAME`, `AGENTS_VALUES_FILE`, `AGENT
 Ensure the `agentrun-workflow-smoke.yaml` workload image includes `agent-runner` or set
 `env.vars.JANGAR_AGENT_RUNNER_IMAGE` in your values.
 
+## Workflow runtime validation (native)
+Confirm the workflow adapter is healthy and no Argo Workflows are required:
+```bash
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.runtime_adapters'
+kubectl api-resources --api-group=argoproj.io --no-headers || true
+kubectl -n agents get workflows.argoproj.io 2>/dev/null || true
+```
+
+Expected outcomes:
+- `runtime_adapters` contains `workflow` with `status: healthy` and a native runtime message.
+- The Argo Workflows resource check returns empty output (no CRD or no workflows).
+
 ## Native workflow e2e proof
 This runbook validates the native workflow runtime end-to-end (AgentProvider → Agent → ImplementationSpec → AgentRun)
 and confirms that the Codex implementation step opens a PR against `proompteng/lab`.

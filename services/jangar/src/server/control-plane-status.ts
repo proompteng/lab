@@ -140,9 +140,9 @@ const buildControllerStatus = (name: string, health: ControllerHealth): Controll
   }
 }
 
-const resolveAdapterFromController = (controllerStatus: string, controllerMessage: string) => {
+const resolveAdapterFromController = (controllerStatus: string, controllerMessage: string, healthyMessage = '') => {
   if (controllerStatus === 'healthy') {
-    return { available: true, status: 'healthy', message: '' }
+    return { available: true, status: 'healthy', message: healthyMessage }
   }
   if (controllerStatus === 'unknown') {
     return { available: false, status: 'unknown', message: controllerMessage || 'controller status unknown' }
@@ -226,8 +226,16 @@ export const buildControlPlaneStatus = async (
   const orchestrationController = buildControllerStatus('orchestration-controller', orchestrationHealth)
   const controllers = [agentsController, supportingController, orchestrationController]
 
-  const workflowAdapter = resolveAdapterFromController(agentsController.status, agentsController.message)
-  const jobAdapter = resolveAdapterFromController(agentsController.status, agentsController.message)
+  const workflowAdapter = resolveAdapterFromController(
+    agentsController.status,
+    agentsController.message,
+    'native workflow runtime via Kubernetes Jobs',
+  )
+  const jobAdapter = resolveAdapterFromController(
+    agentsController.status,
+    agentsController.message,
+    'job runtime via Kubernetes Jobs',
+  )
 
   const runtimeAdapters: RuntimeAdapterStatus[] = [
     {

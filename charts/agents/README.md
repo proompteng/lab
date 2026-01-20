@@ -9,6 +9,7 @@ Minimal, production‑ready bundle for the Agents control plane (Jangar) plus Ag
 - Deploys the Jangar control-plane deployment + service.
 - Minimal chart footprint (no ingress, no embedded database, no backups, no migrations job).
 - Controllers run in‑cluster and reconcile Agents, Orchestration, and supporting primitives (schedules, tools, workspaces).
+- Native workflow runtime uses Kubernetes Jobs/Pods (no Argo Workflows dependency).
 - Job runtime creates input/run spec ConfigMaps and labels Jobs for traceability.
 - Artifact Hub metadata included (Apache‑2.0 license).
 
