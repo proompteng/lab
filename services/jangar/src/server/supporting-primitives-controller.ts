@@ -567,7 +567,7 @@ const reconcileSchedule = async (
                       '-ec',
                       [
                         'DELIVERY_ID=$(cat /proc/sys/kernel/random/uuid);',
-                        `sed "s/__JANGAR_DELIVERY_ID__/\\${DELIVERY_ID}/g" /config/run.json | kubectl create -f -`,
+                        `sed "s/__JANGAR_DELIVERY_ID__/\\$${'{DELIVERY_ID}'}/g" /config/run.json | kubectl create -f -`,
                       ].join(' '),
                     ],
                     volumeMounts: [{ name: 'schedule-template', mountPath: '/config' }],

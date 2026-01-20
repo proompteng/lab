@@ -54,12 +54,12 @@ fi
 
 kubeconform --strict --summary \
   --schema-location default \
-  --schema-location "${schema_dir}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json" \
+  --schema-location "file://${schema_dir}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json" \
   "${CHART_DIR}/examples"/*.yaml
 
 kubeconform --strict --summary \
   --schema-location default \
-  --schema-location "${schema_dir}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json" \
+  --schema-location "file://${schema_dir}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json" \
   "${ROOT_DIR}/argocd/applications/agents/application.yaml"
 
 CRD_DIR="${CHART_DIR}/crds" python3 - <<'PY'
