@@ -17,6 +17,7 @@ const EXIT_UNKNOWN = 5
 
 const DEFAULT_NAMESPACE = 'agents'
 const DEFAULT_ADDRESS = 'agents-grpc.agents.svc.cluster.local:50051'
+const DEFAULT_WATCH_INTERVAL_MS = 5000
 
 type Config = {
   namespace?: string
@@ -123,88 +124,122 @@ Usage:
   agentctl diagnose [--output json|yaml|table]
 
   agentctl agent get <name>
+  agentctl agent describe <name>
   agentctl agent list
+  agentctl agent watch
   agentctl agent apply -f <file>
   agentctl agent delete <name>
 
   agentctl provider list
   agentctl provider get <name>
+  agentctl provider describe <name>
+  agentctl provider watch
   agentctl provider apply -f <file>
   agentctl provider delete <name>
 
   agentctl impl get <name>
+  agentctl impl describe <name>
   agentctl impl list
+  agentctl impl watch
   agentctl impl create --text <text> [--summary <text>] [--source provider=github,externalId=...,url=...]
   agentctl impl apply -f <file>
   agentctl impl delete <name>
 
   agentctl source list
   agentctl source get <name>
+  agentctl source describe <name>
+  agentctl source watch
   agentctl source apply -f <file>
   agentctl source delete <name>
 
   agentctl memory list
   agentctl memory get <name>
+  agentctl memory describe <name>
+  agentctl memory watch
   agentctl memory apply -f <file>
   agentctl memory delete <name>
 
   agentctl tool list
   agentctl tool get <name>
+  agentctl tool describe <name>
+  agentctl tool watch
   agentctl tool apply -f <file>
   agentctl tool delete <name>
 
   agentctl toolrun list
   agentctl toolrun get <name>
+  agentctl toolrun describe <name>
+  agentctl toolrun watch
   agentctl toolrun apply -f <file>
   agentctl toolrun delete <name>
 
   agentctl orchestration list
   agentctl orchestration get <name>
+  agentctl orchestration describe <name>
+  agentctl orchestration watch
   agentctl orchestration apply -f <file>
   agentctl orchestration delete <name>
 
   agentctl orchestrationrun list
   agentctl orchestrationrun get <name>
+  agentctl orchestrationrun describe <name>
+  agentctl orchestrationrun watch
   agentctl orchestrationrun apply -f <file>
   agentctl orchestrationrun delete <name>
 
   agentctl approval list
   agentctl approval get <name>
+  agentctl approval describe <name>
+  agentctl approval watch
   agentctl approval apply -f <file>
   agentctl approval delete <name>
 
   agentctl budget list
   agentctl budget get <name>
+  agentctl budget describe <name>
+  agentctl budget watch
   agentctl budget apply -f <file>
   agentctl budget delete <name>
 
   agentctl secretbinding list
   agentctl secretbinding get <name>
+  agentctl secretbinding describe <name>
+  agentctl secretbinding watch
   agentctl secretbinding apply -f <file>
   agentctl secretbinding delete <name>
 
   agentctl signal list
   agentctl signal get <name>
+  agentctl signal describe <name>
+  agentctl signal watch
   agentctl signal apply -f <file>
   agentctl signal delete <name>
 
   agentctl signaldelivery list
   agentctl signaldelivery get <name>
+  agentctl signaldelivery describe <name>
+  agentctl signaldelivery watch
   agentctl signaldelivery apply -f <file>
   agentctl signaldelivery delete <name>
 
   agentctl schedule list
   agentctl schedule get <name>
+  agentctl schedule describe <name>
+  agentctl schedule watch
   agentctl schedule apply -f <file>
   agentctl schedule delete <name>
 
   agentctl artifact list
   agentctl artifact get <name>
+  agentctl artifact describe <name>
+  agentctl artifact watch
   agentctl artifact apply -f <file>
   agentctl artifact delete <name>
 
   agentctl workspace list
   agentctl workspace get <name>
+  agentctl workspace describe <name>
+  agentctl workspace watch
   agentctl workspace apply -f <file>
   agentctl workspace delete <name>
 
@@ -212,8 +247,10 @@ Usage:
   agentctl run apply -f <file>
   agentctl run get <name>
   agentctl run status <name>
+  agentctl run describe <name>
   agentctl run wait <name>
   agentctl run list
+  agentctl run watch
   agentctl run logs <name> [--follow]
   agentctl run cancel <name>
 
@@ -236,6 +273,9 @@ Run submit flags:
   --runtime-config key=value
   --idempotency-key <value>
   --wait
+
+Watch flags:
+  --interval <seconds>
 `.trim()
 
 const parseBoolean = (raw: string | undefined) => {
@@ -492,6 +532,33 @@ const renderTable = <T>(rows: T[], columns: TableColumn<T>[]) => {
     const line = row.map((cell, index) => pad(cell, widths[index] ?? 0)).join('  ')
     console.log(line)
   }
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const clearScreen = () => {
+  if (process.stdout.isTTY) {
+    process.stdout.write('\x1b[2J\x1b[H')
+  }
+}
+
+const parseWatchInterval = (args: string[]) => {
+  let intervalMs = DEFAULT_WATCH_INTERVAL_MS
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]
+    if (!arg) continue
+    if (arg === '--interval') {
+      intervalMs = Math.floor(Number.parseFloat(args[++i] ?? '') * 1000)
+      continue
+    }
+    if (arg.startsWith('--interval=')) {
+      intervalMs = Math.floor(Number.parseFloat(arg.slice('--interval='.length)) * 1000)
+    }
+  }
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+    return DEFAULT_WATCH_INTERVAL_MS
+  }
+  return intervalMs
 }
 
 const resolveStatusPhase = (resource: Record<string, unknown>) => {
@@ -917,7 +984,7 @@ const main = async () => {
 
     const rpc = resourceMap[command]
     if (rpc) {
-      if (subcommand === 'get') {
+      if (subcommand === 'get' || subcommand === 'describe') {
         const response = await callUnary<{ json: string }>(client, rpc.get, { name: args[0], namespace }, metadata)
         const resource = parseJson(response.json)
         if (resource) outputResource(resource, output)
@@ -928,6 +995,26 @@ const main = async () => {
         const resource = parseJson(response.json)
         if (resource) outputList(resource, output)
         return 0
+      }
+      if (subcommand === 'watch') {
+        const intervalMs = parseWatchInterval(args)
+        let iteration = 0
+        const stop = () => process.exit(0)
+        process.on('SIGINT', stop)
+        while (true) {
+          const response = await callUnary<{ json: string }>(client, rpc.list, { namespace }, metadata)
+          const resource = parseJson(response.json)
+          if (resource) {
+            if (output === 'table') {
+              clearScreen()
+            } else if (iteration > 0) {
+              console.log('')
+            }
+            outputList(resource, output)
+            iteration += 1
+          }
+          await sleep(intervalMs)
+        }
       }
       if (subcommand === 'apply') {
         const fileIndex = args.indexOf('-f')
@@ -1076,7 +1163,7 @@ const main = async () => {
         if (resource) outputResource(resource, output)
         return 0
       }
-      if (subcommand === 'get' || subcommand === 'status') {
+      if (subcommand === 'get' || subcommand === 'status' || subcommand === 'describe') {
         if (!args[0]) {
           throw new Error('run get requires a name')
         }
@@ -1101,6 +1188,26 @@ const main = async () => {
         const resource = parseJson(response.json)
         if (resource) outputList(resource, output)
         return 0
+      }
+      if (subcommand === 'watch') {
+        const intervalMs = parseWatchInterval(args)
+        let iteration = 0
+        const stop = () => process.exit(0)
+        process.on('SIGINT', stop)
+        while (true) {
+          const response = await callUnary<{ json: string }>(client, 'ListAgentRuns', { namespace }, metadata)
+          const resource = parseJson(response.json)
+          if (resource) {
+            if (output === 'table') {
+              clearScreen()
+            } else if (iteration > 0) {
+              console.log('')
+            }
+            outputList(resource, output)
+            iteration += 1
+          }
+          await sleep(intervalMs)
+        }
       }
       if (subcommand === 'logs') {
         const stream = (client as unknown as Record<string, (...args: unknown[]) => grpc.ClientReadableStream<unknown>>)
