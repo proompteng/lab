@@ -41,4 +41,186 @@ describe('orchestration controller', () => {
     expect(progressing?.status).toBe('False')
     expect(degraded?.status).toBe('True')
   })
+
+  it('fans out steps when dependencies are satisfied', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const generateName = typeof metadata.generateName === 'string' ? metadata.generateName : ''
+      const name = typeof metadata.name === 'string' ? metadata.name : generateName ? `${generateName}unit` : 'unit'
+      return { ...resource, metadata: { ...metadata, name } }
+    })
+    const get = vi.fn(async (resource: string) => {
+      if (resource === 'orchestrations.orchestration.proompteng.ai') {
+        return {
+          apiVersion: 'orchestration.proompteng.ai/v1alpha1',
+          kind: 'Orchestration',
+          metadata: { name: 'demo-orchestration', namespace: 'agents' },
+          spec: {
+            steps: [
+              { name: 'checkpoint', kind: 'Checkpoint' },
+              {
+                name: 'run-agent',
+                kind: 'AgentRun',
+                dependsOn: ['checkpoint'],
+                agentRef: { name: 'agent-a' },
+                implementationSpecRef: { name: 'impl-a' },
+              },
+              { name: 'tool-step', kind: 'ToolRun', dependsOn: ['checkpoint'], toolRef: { name: 'tool-a' } },
+            ],
+          },
+        }
+      }
+      return null
+    })
+    const kube = { applyStatus, apply, get } as unknown as KubernetesClient
+
+    const orchestrationRun = {
+      apiVersion: 'orchestration.proompteng.ai/v1alpha1',
+      kind: 'OrchestrationRun',
+      metadata: { name: 'demo-run', namespace: 'agents', generation: 1 },
+      spec: { orchestrationRef: { name: 'demo-orchestration' } },
+    }
+
+    await __test__.reconcileOrchestrationRun(kube, orchestrationRun, 'agents')
+
+    expect(apply).toHaveBeenCalledTimes(2)
+    expect(applyStatus).toHaveBeenCalledTimes(1)
+    const payload = applyStatus.mock.calls[0]?.[0] as { status?: Record<string, unknown> }
+    const status = payload.status ?? {}
+    const stepStatuses = Array.isArray(status.stepStatuses) ? status.stepStatuses : []
+    const checkpoint = stepStatuses.find((step) => step.name === 'checkpoint')
+    const agent = stepStatuses.find((step) => step.name === 'run-agent')
+    const tool = stepStatuses.find((step) => step.name === 'tool-step')
+
+    expect(checkpoint?.phase).toBe('Succeeded')
+    expect(agent?.phase).toBe('Running')
+    expect(tool?.phase).toBe('Running')
+  })
+
+  it('sets retry metadata when a step fails with retries remaining', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string, name: string) => {
+      if (resource === 'orchestrations.orchestration.proompteng.ai') {
+        return {
+          apiVersion: 'orchestration.proompteng.ai/v1alpha1',
+          kind: 'Orchestration',
+          metadata: { name: 'retry-orchestration', namespace: 'agents' },
+          spec: {
+            steps: [
+              {
+                name: 'run-agent',
+                kind: 'AgentRun',
+                retries: 1,
+                retryBackoffSeconds: 30,
+                agentRef: { name: 'agent-a' },
+                implementationSpecRef: { name: 'impl-a' },
+              },
+            ],
+          },
+        }
+      }
+      if (resource === 'agentruns.agents.proompteng.ai' && name === 'agent-run-1') {
+        return {
+          apiVersion: 'agents.proompteng.ai/v1alpha1',
+          kind: 'AgentRun',
+          metadata: { name: 'agent-run-1', namespace: 'agents' },
+          status: { phase: 'Failed', finishedAt: '2026-01-20T00:00:10.000Z' },
+        }
+      }
+      return null
+    })
+    const kube = { applyStatus, apply, get } as unknown as KubernetesClient
+
+    const orchestrationRun = {
+      apiVersion: 'orchestration.proompteng.ai/v1alpha1',
+      kind: 'OrchestrationRun',
+      metadata: { name: 'retry-run', namespace: 'agents', generation: 1 },
+      spec: { orchestrationRef: { name: 'retry-orchestration' } },
+      status: {
+        phase: 'Running',
+        stepStatuses: [
+          {
+            name: 'run-agent',
+            kind: 'AgentRun',
+            phase: 'Running',
+            attempt: 1,
+            resourceRef: { name: 'agent-run-1', namespace: 'agents' },
+          },
+        ],
+      },
+    }
+
+    await __test__.reconcileOrchestrationRun(kube, orchestrationRun, 'agents')
+
+    const payload = applyStatus.mock.calls[0]?.[0] as { status?: Record<string, unknown> }
+    const status = payload.status ?? {}
+    const stepStatuses = Array.isArray(status.stepStatuses) ? status.stepStatuses : []
+    const step = stepStatuses.find((entry) => entry.name === 'run-agent')
+    expect(step?.phase).toBe('Retrying')
+    expect(step?.nextRetryAt).toBe('2026-01-20T00:00:30.000Z')
+  })
+
+  it('emits an event when a step fails without retries', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string, name: string) => {
+      if (resource === 'orchestrations.orchestration.proompteng.ai') {
+        return {
+          apiVersion: 'orchestration.proompteng.ai/v1alpha1',
+          kind: 'Orchestration',
+          metadata: { name: 'fail-orchestration', namespace: 'agents' },
+          spec: {
+            steps: [
+              {
+                name: 'tool-step',
+                kind: 'ToolRun',
+                toolRef: { name: 'tool-a' },
+              },
+            ],
+          },
+        }
+      }
+      if (resource === 'toolruns.tools.proompteng.ai' && name === 'tool-run-1') {
+        return {
+          apiVersion: 'tools.proompteng.ai/v1alpha1',
+          kind: 'ToolRun',
+          metadata: { name: 'tool-run-1', namespace: 'agents' },
+          status: { phase: 'Failed', finishedAt: '2026-01-20T00:00:05.000Z' },
+        }
+      }
+      return null
+    })
+    const kube = { applyStatus, apply, get } as unknown as KubernetesClient
+
+    const orchestrationRun = {
+      apiVersion: 'orchestration.proompteng.ai/v1alpha1',
+      kind: 'OrchestrationRun',
+      metadata: { name: 'fail-run', namespace: 'agents', generation: 1 },
+      spec: { orchestrationRef: { name: 'fail-orchestration' } },
+      status: {
+        phase: 'Running',
+        stepStatuses: [
+          {
+            name: 'tool-step',
+            kind: 'ToolRun',
+            phase: 'Running',
+            attempt: 1,
+            resourceRef: { name: 'tool-run-1', namespace: 'agents' },
+          },
+        ],
+      },
+    }
+
+    await __test__.reconcileOrchestrationRun(kube, orchestrationRun, 'agents')
+
+    const eventCall = apply.mock.calls.find((call) => (call[0] as Record<string, unknown>).kind === 'Event')
+    expect(eventCall).toBeTruthy()
+    const payload = applyStatus.mock.calls[0]?.[0] as { status?: Record<string, unknown> }
+    const status = payload.status ?? {}
+    const conditions = Array.isArray(status.conditions) ? status.conditions : []
+    const failed = conditions.find((condition) => condition.type === 'Failed')
+    expect(failed?.status).toBe('True')
+  })
 })

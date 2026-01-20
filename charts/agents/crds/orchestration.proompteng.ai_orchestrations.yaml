@@ -85,6 +85,12 @@ spec:
                         type: object
                         additionalProperties:
                           type: string
+                      retries:
+                        format: int32
+                        type: integer
+                      retryBackoffSeconds:
+                        format: int32
+                        type: integer
                     required:
                       - name
                       - kind

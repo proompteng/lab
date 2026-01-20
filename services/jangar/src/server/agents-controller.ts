@@ -43,11 +43,13 @@ const globalState = globalThis as typeof globalThis & {
 }
 
 const controllerState = (() => {
-  if (!globalState.__jangarAgentsControllerState) {
-    globalState.__jangarAgentsControllerState = { started: false, crdCheckState: null }
-  }
-  return globalState.__jangarAgentsControllerState
+  if (globalState.__jangarAgentsControllerState) return globalState.__jangarAgentsControllerState
+  const initial = { started: false, crdCheckState: null }
+  globalState.__jangarAgentsControllerState = initial
+  return initial
 })()
+
+let _crdCheckState: CrdCheckState | null = controllerState.crdCheckState
 
 type Condition = {
   type: string
@@ -229,6 +231,7 @@ const checkCrds = async (): Promise<CrdCheckState> => {
     missing: [...missing, ...forbidden],
     checkedAt: nowIso(),
   }
+  _crdCheckState = state
   controllerState.crdCheckState = state
   if (!state.ok) {
     if (missing.length > 0) {
