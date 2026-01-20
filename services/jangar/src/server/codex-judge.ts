@@ -6,7 +6,6 @@ import * as S from '@effect/schema/Schema'
 import * as Either from 'effect/Either'
 import { publishAgentMessages } from '~/server/agent-messages-bus'
 import { createAgentMessagesStore } from '~/server/agent-messages-store'
-import { createArgoClient } from '~/server/argo-client'
 import {
   buildBackfillDedupeKey,
   parseAgentMessagesFromEvents,
@@ -34,7 +33,6 @@ const globalOverrides = globalThis as typeof globalThis & {
   __codexJudgeGithubMock?: ReturnType<typeof createGitHubClient>
   __codexJudgeMemoryStoreMock?: ReturnType<typeof createPostgresMemoriesStore>
   __codexJudgeMemoryStoreFactory?: MemoryStoreFactory
-  __codexJudgeArgoMock?: ReturnType<typeof createArgoClient> | null
   __codexJudgeOrchestrationSubmitMock?: typeof submitOrchestrationRun
 }
 
@@ -73,16 +71,6 @@ const resolveGithub = () => {
   return cachedGithub
 }
 const getGithub = () => resolveGithub()
-let cachedArgo: ReturnType<typeof createArgoClient> | null = null
-const resolveArgo = () => {
-  if (globalOverrides.__codexJudgeArgoMock !== undefined) return globalOverrides.__codexJudgeArgoMock
-  const argoUrl = resolveConfig().argoServerUrl
-  if (!cachedArgo && argoUrl) {
-    cachedArgo = createArgoClient({ baseUrl: argoUrl })
-  }
-  return cachedArgo
-}
-const argo = resolveArgo()
 const resolveOrchestrationSubmit = () => globalOverrides.__codexJudgeOrchestrationSubmitMock ?? submitOrchestrationRun
 const getMemoryStoreFactory = () => globalOverrides.__codexJudgeMemoryStoreFactory ?? createPostgresMemoriesStore
 
@@ -97,14 +85,7 @@ const _RECONCILE_JITTER_MS = 15_000
 const _PENDING_EVALUATION_STATUSES = ['run_complete', 'waiting_for_ci', 'judging'] as const
 const _RECONCILE_DISABLED = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
 const RERUN_SUBMISSION_BACKOFF_MS = [2_000, 7_000, 15_000]
-const RERUN_WORKER_POLL_MS = 10_000
 const RERUN_WORKER_BATCH_SIZE = 10
-
-const getErrorStatus = (error: unknown) => {
-  if (!error || typeof error !== 'object') return null
-  const status = (error as { status?: unknown }).status
-  return typeof status === 'number' ? status : null
-}
 
 const safeParseJson = (value: string) => {
   try {
@@ -943,37 +924,6 @@ const updateArtifactsFromWorkflow = async (
         url: artifact.url ?? null,
         metadata: { ...(artifact.metadata ?? {}), source: 'run-complete' },
       })
-    }
-  }
-
-  if (argo && workflowNamespace) {
-    try {
-      const argoArtifacts = await argo.getWorkflowArtifacts(workflowNamespace, workflowName)
-      if (argoArtifacts?.artifacts?.length) {
-        for (const artifact of argoArtifacts.artifacts) {
-          addArtifactEntry(artifactMap, {
-            name: artifact.name,
-            key: artifact.key,
-            bucket: artifact.bucket ?? artifactBucket,
-            url: artifact.url ?? null,
-            metadata: {
-              ...artifact.metadata,
-              nodeId: artifact.nodeId ?? null,
-              source: 'argo',
-            },
-          })
-        }
-      }
-    } catch (error) {
-      const status = getErrorStatus(error)
-      if (status === 401) {
-        console.warn(
-          'Argo API unauthorized while fetching workflow artifacts. Ensure ARGO_TOKEN/ARGO_TOKEN_FILE is set and the Argo server authModes include server.',
-          { workflowName, workflowNamespace },
-        )
-      } else {
-        console.warn('Failed to fetch Argo workflow artifacts', error)
-      }
     }
   }
 
@@ -2018,13 +1968,6 @@ const extractSystemSuggestions = (evaluation?: CodexEvaluationRecord) => {
   return suggestions.filter((value) => value.trim().length > 0)
 }
 
-const resolveWorkflowUrl = (run: CodexRunRecord) => {
-  if (!config.argoServerUrl) return null
-  if (!run.workflowName || !run.workflowNamespace) return null
-  const base = config.argoServerUrl.replace(/\/+$/, '')
-  return `${base}/workflows/${run.workflowNamespace}/${run.workflowName}`
-}
-
 const buildSystemImprovementLinks = (run: CodexRunRecord) => {
   const links: string[] = []
   if (run.repository && run.issueNumber) {
@@ -2035,10 +1978,6 @@ const buildSystemImprovementLinks = (run: CodexRunRecord) => {
   }
   if (run.ciUrl) {
     links.push(`CI: ${run.ciUrl}`)
-  }
-  const workflowUrl = resolveWorkflowUrl(run)
-  if (workflowUrl) {
-    links.push(`Workflow: ${workflowUrl}`)
   }
   return links
 }
@@ -2148,46 +2087,7 @@ const maybeSubmitSystemImprovementWorkflow = async (
     }
   }
 
-  const argoClient = globalOverrides.__codexJudgeArgoMock ?? argo
-  if (!argoClient || !config.systemImprovementWorkflowTemplate) {
-    return { submitted: false, error: 'system_improvement_workflow_unconfigured' }
-  }
-
-  try {
-    await argoClient.submitWorkflowTemplate({
-      namespace: config.systemImprovementWorkflowNamespace,
-      templateName: config.systemImprovementWorkflowTemplate,
-      parameters: [
-        `repository=${run.repository}`,
-        `issue_number=${run.issueNumber}`,
-        `base=${baseRef}`,
-        `head=${branch}`,
-        `prompt=${prompt}`,
-        `judge_prompt=${config.systemImprovementJudgePrompt}`,
-      ],
-      labels: {
-        'codex.repository': run.repository,
-        'codex.issue': String(run.issueNumber),
-        'codex.parent_run': run.id,
-        'codex.type': 'system-improvement',
-      },
-      generateName: 'codex-system-improvement-',
-    })
-    return { submitted: true }
-  } catch (error) {
-    console.warn('Failed to submit system improvement workflow', error)
-    return { submitted: false, error: error instanceof Error ? error.message : String(error) }
-  }
-}
-
-let rerunWorkerStarted = false
-
-const startRerunSubmissionWorker = () => {
-  if (rerunWorkerStarted || _RECONCILE_DISABLED) return
-  rerunWorkerStarted = true
-  setInterval(() => {
-    void processRerunQueue()
-  }, RERUN_WORKER_POLL_MS)
+  return { submitted: false, error: 'system_improvement_orchestration_unconfigured' }
 }
 
 const shouldDelayRerun = (submissionAttempt: number, updatedAt: string | null) => {
@@ -2228,10 +2128,6 @@ const processRerunQueue = async () => {
       }
     }
   }
-}
-
-if (!_RECONCILE_DISABLED) {
-  startRerunSubmissionWorker()
 }
 
 type RerunSubmissionResult = { status: 'submitted' | 'skipped' | 'failed'; error?: string }
@@ -2324,55 +2220,6 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
     }
   }
 
-  const submitViaArgo = async () => {
-    if (!argo || !config.rerunWorkflowTemplate) return null
-    try {
-      const parameters = [
-        `repository=${run.repository}`,
-        `issue_number=${run.issueNumber}`,
-        `base=${baseRef}`,
-        `head=${run.branch}`,
-        `prompt=${prompt}`,
-        `judge_prompt=${config.defaultJudgePrompt}`,
-        `attempt=${attempt}`,
-        `parent_run_uid=${run.workflowUid ?? run.id}`,
-        `iteration_cycle=${iterationCycle}`,
-      ]
-      if (resumeArtifacts.resumeKey) {
-        parameters.push(`implementation_resume_key=${resumeArtifacts.resumeKey}`)
-      }
-      if (resumeArtifacts.changesKey) {
-        parameters.push(`implementation_changes_key=${resumeArtifacts.changesKey}`)
-      }
-      if (iterationsCount && iterationsCount > 0) {
-        parameters.push(`implementation_iterations=${iterationsCount}`)
-      }
-      await argo.submitWorkflowTemplate({
-        namespace: config.rerunWorkflowNamespace,
-        templateName: config.rerunWorkflowTemplate,
-        parameters,
-        labels: {
-          'codex.repository': run.repository,
-          'codex.issue': String(run.issueNumber),
-          'codex.parent_run': run.id,
-          'codex.attempt': String(attempt),
-        },
-        generateName: 'codex-rerun-',
-      })
-      await store.updateRerunSubmission({
-        id: claimed.submission.id,
-        status: 'submitted',
-        responseStatus: 201,
-        error: null,
-        submittedAt: new Date().toISOString(),
-      })
-      return { status: 'submitted' as const }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return { status: 'failed' as const, error: message }
-    }
-  }
-
   const orchestrationResult = await submitViaOrchestration()
   if (orchestrationResult?.status === 'submitted') {
     return orchestrationResult
@@ -2381,14 +2228,6 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
     orchestrationResult?.status === 'failed'
       ? `Native orchestration submission failed: ${orchestrationResult.error}`
       : undefined
-
-  const argoResult = await submitViaArgo()
-  if (argoResult?.status === 'submitted') {
-    return argoResult
-  }
-  if (argoResult?.status === 'failed') {
-    lastError = `Argo rerun submission failed: ${argoResult.error}`
-  }
 
   const { CodexTaskSchema, CodexTaskStage, CodexIterationsPolicySchema } = await import('./proto/codex_task_pb')
   const { create, toBinary } = await import('@bufbuild/protobuf')

@@ -88,35 +88,6 @@ spec:
             - name: JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE
               value: {{ .Values.workflowRuntime.native.systemImprovementOrchestrationNamespace | quote }}
             {{- end }}
-            {{- if .Values.workflowRuntime.adapters.argo.enabled }}
-            {{- if .Values.workflowRuntime.adapters.argo.serverUrl }}
-            - name: ARGO_SERVER_URL
-              value: {{ .Values.workflowRuntime.adapters.argo.serverUrl | quote }}
-            {{- end }}
-            {{- if .Values.workflowRuntime.adapters.argo.rerunTemplate }}
-            - name: JANGAR_CODEX_RERUN_TEMPLATE
-              value: {{ .Values.workflowRuntime.adapters.argo.rerunTemplate | quote }}
-            {{- end }}
-            {{- if .Values.workflowRuntime.adapters.argo.rerunNamespace }}
-            - name: JANGAR_CODEX_RERUN_NAMESPACE
-              value: {{ .Values.workflowRuntime.adapters.argo.rerunNamespace | quote }}
-            {{- end }}
-            {{- if .Values.workflowRuntime.adapters.argo.systemImprovementTemplate }}
-            - name: JANGAR_SYSTEM_IMPROVEMENT_TEMPLATE
-              value: {{ .Values.workflowRuntime.adapters.argo.systemImprovementTemplate | quote }}
-            {{- end }}
-            {{- if .Values.workflowRuntime.adapters.argo.systemImprovementNamespace }}
-            - name: JANGAR_SYSTEM_IMPROVEMENT_NAMESPACE
-              value: {{ .Values.workflowRuntime.adapters.argo.systemImprovementNamespace | quote }}
-            {{- end }}
-            {{- if .Values.workflowRuntime.adapters.argo.tokenSecret.name }}
-            - name: ARGO_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.workflowRuntime.adapters.argo.tokenSecret.name }}
-                  key: {{ .Values.workflowRuntime.adapters.argo.tokenSecret.key | default "token" }}
-            {{- end }}
-            {{- end }}
             {{- range $name, $value := .Values.env.vars }}
             - name: {{ $name }}
               value: {{ $value | quote }}

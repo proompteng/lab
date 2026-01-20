@@ -153,32 +153,6 @@
             "systemImprovementOrchestrationNamespace": { "type": "string" }
           },
           "additionalProperties": false
-        },
-        "adapters": {
-          "type": "object",
-          "properties": {
-            "argo": {
-              "type": "object",
-              "properties": {
-                "enabled": { "type": "boolean" },
-                "serverUrl": { "type": "string" },
-                "rerunTemplate": { "type": "string" },
-                "rerunNamespace": { "type": "string" },
-                "systemImprovementTemplate": { "type": "string" },
-                "systemImprovementNamespace": { "type": "string" },
-                "tokenSecret": {
-                  "type": "object",
-                  "properties": {
-                    "name": { "type": "string" },
-                    "key": { "type": "string" }
-                  },
-                  "additionalProperties": false
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "additionalProperties": false
         }
       },
       "additionalProperties": false

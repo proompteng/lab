@@ -36,7 +36,6 @@ const globalState = globalThis as typeof globalThis & {
     maxAttempts: number
     backoffScheduleMs: number[]
     facteurBaseUrl: string
-    argoServerUrl: string | null
     workflowArtifactsBucket: string
     workflowNamespace: string | null
     discordBotToken: string | null
@@ -49,18 +48,13 @@ const globalState = globalThis as typeof globalThis & {
     promptTuningCooldownHours: number
     rerunOrchestrationName: string | null
     rerunOrchestrationNamespace: string
-    rerunWorkflowTemplate: string | null
-    rerunWorkflowNamespace: string
     systemImprovementOrchestrationName: string | null
     systemImprovementOrchestrationNamespace: string
-    systemImprovementWorkflowTemplate: string | null
-    systemImprovementWorkflowNamespace: string
     systemImprovementJudgePrompt: string
     defaultJudgePrompt: string
   }
   __codexJudgeMemoryStoreMock?: { persist: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
   __codexJudgeClientMock?: CodexAppServerClient
-  __codexJudgeArgoMock?: { submitWorkflowTemplate: ReturnType<typeof vi.fn> } | null
   __codexJudgeReviewStoreMock?: {
     ready: Promise<void>
     listFiles: ReturnType<typeof vi.fn>
@@ -165,7 +159,6 @@ if (!globalState.__codexJudgeConfigMock) {
     maxAttempts: 3,
     backoffScheduleMs: [0],
     facteurBaseUrl: 'http://facteur.test',
-    argoServerUrl: null,
     workflowArtifactsBucket: 'jangar-artifacts',
     workflowNamespace: null,
     discordBotToken: null,
@@ -178,12 +171,8 @@ if (!globalState.__codexJudgeConfigMock) {
     promptTuningCooldownHours: 6,
     rerunOrchestrationName: null,
     rerunOrchestrationNamespace: 'jangar',
-    rerunWorkflowTemplate: null,
-    rerunWorkflowNamespace: 'jangar',
     systemImprovementOrchestrationName: null,
     systemImprovementOrchestrationNamespace: 'jangar',
-    systemImprovementWorkflowTemplate: null,
-    systemImprovementWorkflowNamespace: 'jangar',
     systemImprovementJudgePrompt: 'system improvement judge prompt',
     defaultJudgePrompt: 'judge prompt',
   }
@@ -193,12 +182,6 @@ if (!globalState.__codexJudgeMemoryStoreMock) {
   globalState.__codexJudgeMemoryStoreMock = {
     persist: vi.fn(),
     close: vi.fn(),
-  }
-}
-
-if (!globalState.__codexJudgeArgoMock) {
-  globalState.__codexJudgeArgoMock = {
-    submitWorkflowTemplate: vi.fn(),
   }
 }
 
@@ -479,10 +462,6 @@ const harness = (() => {
     close: vi.fn(async () => {}),
   }
 
-  const argo = {
-    submitWorkflowTemplate: vi.fn(async () => ({})),
-  }
-
   const config = requireMock(globalState.__codexJudgeConfigMock, 'config')
   Object.assign(config, {
     githubToken: null,
@@ -494,7 +473,6 @@ const harness = (() => {
     maxAttempts: 3,
     backoffScheduleMs: [0],
     facteurBaseUrl: 'http://facteur.test',
-    argoServerUrl: null,
     workflowArtifactsBucket: 'jangar-artifacts',
     workflowNamespace: null,
     discordBotToken: null,
@@ -507,12 +485,8 @@ const harness = (() => {
     promptTuningCooldownHours: 6,
     rerunOrchestrationName: null,
     rerunOrchestrationNamespace: 'jangar',
-    rerunWorkflowTemplate: 'codex-autonomous',
-    rerunWorkflowNamespace: 'jangar',
     systemImprovementOrchestrationName: null,
     systemImprovementOrchestrationNamespace: 'jangar',
-    systemImprovementWorkflowTemplate: 'codex-autonomous',
-    systemImprovementWorkflowNamespace: 'jangar',
     systemImprovementJudgePrompt: 'system improvement judge prompt',
     defaultJudgePrompt: 'judge prompt',
   })
@@ -525,13 +499,11 @@ const harness = (() => {
   const storeMock = requireMock(globalState.__codexJudgeStoreMock, 'store')
   const githubMock = requireMock(globalState.__codexJudgeGithubMock, 'github')
   const memoryStoreMock = requireMock(globalState.__codexJudgeMemoryStoreMock, 'memory store')
-  const argoMock = requireMock(globalState.__codexJudgeArgoMock, 'argo')
   const reviewStoreMock = requireMock(globalState.__codexJudgeReviewStoreMock, 'review store')
 
   Object.assign(storeMock, store)
   Object.assign(githubMock, github)
   Object.assign(memoryStoreMock, memoriesStore)
-  Object.assign(argoMock, argo)
   Object.assign(reviewStoreMock, reviewStore)
   globalState.__codexJudgeClientMock = codexClient as unknown as CodexAppServerClient
 
@@ -554,7 +526,6 @@ const harness = (() => {
     github,
     config,
     memoriesStore,
-    argo,
     reviewStore,
     reset,
     setRun,
@@ -690,8 +661,6 @@ describe('codex judge guardrails', () => {
         },
         shouldSubmit: true,
       })
-
-      globalState.__codexJudgeArgoMock?.submitWorkflowTemplate.mockRejectedValueOnce(new Error('argo down'))
 
       const privateApi = await requirePrivate()
       await privateApi.processRerunQueue()
