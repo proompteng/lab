@@ -526,18 +526,22 @@ export const ControlPlaneOverviewTile = ({
   )
 }
 
-const aggregateControllerHealth = (tiles: PrimitiveTileData[], kinds: AgentPrimitiveKind[]): ControlPlaneHealth => {
-  const totals = tiles.reduce(
+const summarizeControllerCounts = (tiles: PrimitiveTileData[], kinds: AgentPrimitiveKind[]) =>
+  tiles.reduce(
     (acc, tile) => {
       if (!kinds.includes(tile.definition.kind)) return acc
+      acc.total += tile.total
       acc.ready += tile.readyCount
       acc.running += tile.runningCount
       acc.failed += tile.failedCount
       acc.unknown += tile.unknownCount
       return acc
     },
-    { ready: 0, running: 0, failed: 0, unknown: 0 },
+    { total: 0, ready: 0, running: 0, failed: 0, unknown: 0 },
   )
+
+const aggregateControllerHealth = (tiles: PrimitiveTileData[], kinds: AgentPrimitiveKind[]): ControlPlaneHealth => {
+  const totals = summarizeControllerCounts(tiles, kinds)
 
   if (totals.failed > 0) return 'Degraded'
   if (totals.running > 0) return 'Progressing'
@@ -589,6 +593,7 @@ export const ControlPlaneControllersPanel = ({ tiles }: { tiles: PrimitiveTileDa
     <ul className="space-y-3 text-xs">
       {controllers.map((controller) => {
         const health = aggregateControllerHealth(tiles, controller.kinds)
+        const counts = summarizeControllerCounts(tiles, controller.kinds)
         return (
           <li key={controller.id} className="rounded-none border p-3 border-border/60 bg-muted/30 space-y-1">
             <div className="flex items-center justify-between gap-2">
@@ -596,6 +601,28 @@ export const ControlPlaneControllersPanel = ({ tiles }: { tiles: PrimitiveTileDa
               <StatusBadge label={health} />
             </div>
             <div className="text-muted-foreground">{controller.description}</div>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+              <div className="flex items-center justify-between">
+                <span>Total</span>
+                <span className="font-medium text-foreground tabular-nums">{counts.total}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Ready</span>
+                <span className="font-medium text-foreground tabular-nums">{counts.ready}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Running</span>
+                <span className="font-medium text-foreground tabular-nums">{counts.running}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Failed</span>
+                <span className="font-medium text-foreground tabular-nums">{counts.failed}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Unknown</span>
+                <span className="font-medium text-foreground tabular-nums">{counts.unknown}</span>
+              </div>
+            </div>
           </li>
         )
       })}
