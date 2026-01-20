@@ -202,7 +202,7 @@ Workload requirements:
 Overrides:
 - `spec.runtime`: runtime-specific configuration for this run (runtime-agnostic schema; examples may include Temporal).
 - `spec.parameters`: map of string -> string parameters for the provider.
-- `spec.secrets`: named secret refs allowed for this run.
+- `spec.secrets`: named secret refs allowed for this run (mounted via `envFrom`, keys become env vars).
 
 Status fields (required):
 - `status.phase`: Pending | Running | Succeeded | Failed | Cancelled
