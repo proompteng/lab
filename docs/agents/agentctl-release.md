@@ -59,8 +59,13 @@ bun run --filter @proompteng/agentctl validate:bin -- --server 127.0.0.1:50052
 Before publishing, confirm the npm metadata is correct in `services/jangar/agentctl/package.json`:
 
 - `name`, `version`, `description`, `license`, `repository`, and `homepage`
+- `bugs` points to the repo issues page and `publishConfig.access` is `public`
 - `bin` points to `dist/agentctl.js`
 - `files` includes `dist/` and `README.md`
+
+```bash
+bun run --filter @proompteng/agentctl validate:metadata
+```
 
 ```bash
 cd services/jangar/agentctl

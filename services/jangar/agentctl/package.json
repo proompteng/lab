@@ -36,6 +36,7 @@
     "build:release": "bun run sync:proto && bun run scripts/build-release.ts",
     "homebrew:generate": "bun run scripts/generate-homebrew.ts",
     "lint": "bunx biome check --config-path ../../../biome.json src scripts",
+    "validate:metadata": "bun run scripts/validate-npm-metadata.ts",
     "validate:bin": "bun run scripts/validate-binary.ts",
     "prepack": "bun run build && bun run build:bins"
   },
