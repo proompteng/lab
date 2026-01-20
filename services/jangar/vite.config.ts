@@ -7,7 +7,7 @@ import { nitro } from 'nitro/vite'
 import { defineConfig } from 'vite'
 import viteTsConfigPaths from 'vite-tsconfig-paths'
 
-const ssrExternals = ['kysely', 'nats', 'pg']
+const ssrExternals = ['kysely', 'nats', 'pg', 'node-pty']
 const bunShimEnabled = process.env.JANGAR_BUN_SHIM === '1'
 const bunShimPath = fileURLToPath(new URL('./src/server/bun-node-shim.ts', import.meta.url))
 
