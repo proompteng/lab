@@ -2672,6 +2672,7 @@ export const handleRerunRequest = async (payload: Record<string, unknown>) => {
   })
 
   if (submission) {
+    startRerunSubmissionWorker()
     void processRerunQueue()
   }
 
