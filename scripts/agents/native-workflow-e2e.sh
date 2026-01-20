@@ -38,7 +38,8 @@ log() {
 }
 
 indent_prompt() {
-  sed 's/^/      /' <<<"${PROMPT}"
+  local indented="${PROMPT//$'\n'/$'\n      '}"
+  printf '      %s\n' "${indented}"
 }
 
 wait_for_phase() {
