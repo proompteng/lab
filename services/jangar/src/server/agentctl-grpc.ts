@@ -22,7 +22,7 @@ type AgentctlServer = {
 type RuntimeEntry = { key: string; value: string }
 
 type AgentctlPackage = {
-  AgentctlService: grpc.ServiceDefinition
+  AgentctlService: grpc.ServiceDefinition | grpc.ServiceClientConstructor
 }
 
 type UnaryCallback = grpc.sendUnaryData<unknown>
@@ -277,7 +277,11 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
 
   const kube = createKubernetesClient()
 
-  server.addService(pkg.AgentctlService, {
+  const serviceDefinition =
+    (pkg.AgentctlService as grpc.ServiceClientConstructor & { service?: grpc.ServiceDefinition }).service ??
+    pkg.AgentctlService
+
+  server.addService(serviceDefinition as grpc.ServiceDefinition, {
     GetServerInfo: (call: UnaryCall<Record<string, never>>, callback: UnaryCallback) => {
       const authError = requireAuth(call)
       if (authError) return callback(authError, null)
