@@ -60,9 +60,11 @@ const resolveProtoPath = () => {
 
   const candidates = [
     resolve(cwd, 'proto/proompteng/jangar/v1/agentctl.proto'),
+    resolve(cwd, '.output/server/proto/proompteng/jangar/v1/agentctl.proto'),
     resolve(cwd, '../proto/proompteng/jangar/v1/agentctl.proto'),
     resolve(cwd, '../../proto/proompteng/jangar/v1/agentctl.proto'),
     resolve(cwd, 'proto/agentctl.proto'),
+    resolve(moduleDir, '../proto/proompteng/jangar/v1/agentctl.proto'),
     resolve(moduleDir, '../../../proto/proompteng/jangar/v1/agentctl.proto'),
     resolve(moduleDir, '../../../../proto/proompteng/jangar/v1/agentctl.proto'),
   ]
