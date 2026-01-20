@@ -38,8 +38,11 @@ vi.mock('~/server/primitives-kube', () => {
     },
     createKubernetesClient: () => ({
       list: vi.fn(async () => ({ items: [] })),
+      listEvents: vi.fn(async () => ({ items: [] })),
       get: vi.fn(async () => null),
       apply: vi.fn(async (resource) => resource),
+      applyStatus: vi.fn(async (resource) => resource),
+      patch: vi.fn(async (_resource, _name, _namespace, patch) => patch as Record<string, unknown>),
     }),
   }
 })
