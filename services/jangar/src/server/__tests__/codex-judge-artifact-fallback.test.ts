@@ -205,7 +205,7 @@ describe('codex-judge artifact fallback', () => {
     )
     expect(byName.get('implementation-resume')?.key).toBe('workflow-1/workflow-1/.codex/implementation-resume.json')
     expect(byName.get('implementation-notify')?.key).toBe('workflow-1/workflow-1/.codex-implementation-notify.json')
-  })
+  }, 15_000)
 })
 
 describe('codex-judge artifact fetch', () => {

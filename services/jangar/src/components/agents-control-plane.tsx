@@ -103,6 +103,46 @@ export const getMetadataValue = (resource: Record<string, unknown>, key: string)
   return readString(metadata[key])
 }
 
+const getLatestManagedFieldTime = (resource: Record<string, unknown>) => {
+  const metadata = readRecord(resource.metadata) ?? {}
+  const managedFields = Array.isArray(metadata.managedFields) ? metadata.managedFields : []
+  let latest: string | null = null
+  let latestTimestamp = Number.NEGATIVE_INFINITY
+
+  for (const entry of managedFields) {
+    if (!entry || typeof entry !== 'object') continue
+    const time = readString((entry as Record<string, unknown>).time)
+    if (!time) continue
+    const parsed = Date.parse(time)
+    if (!Number.isFinite(parsed)) {
+      if (!latest) {
+        latest = time
+      }
+      continue
+    }
+    if (parsed > latestTimestamp) {
+      latest = time
+      latestTimestamp = parsed
+    }
+  }
+
+  return latest
+}
+
+export const getResourceCreatedAt = (resource: Record<string, unknown>) =>
+  getMetadataValue(resource, 'creationTimestamp')
+
+export const getResourceUpdatedAt = (resource: Record<string, unknown>) =>
+  readNestedValue(resource, ['status', 'updatedAt']) ??
+  readNestedValue(resource, ['status', 'lastUpdatedAt']) ??
+  readNestedValue(resource, ['status', 'lastSyncedAt']) ??
+  readNestedValue(resource, ['status', 'syncedAt']) ??
+  readNestedValue(resource, ['status', 'completedAt']) ??
+  readNestedValue(resource, ['status', 'startedAt']) ??
+  readNestedValue(resource, ['metadata', 'annotations', 'agents.proompteng.ai/updatedAt']) ??
+  getLatestManagedFieldTime(resource) ??
+  getMetadataValue(resource, 'creationTimestamp')
+
 export const getSpecValue = (resource: Record<string, unknown>, key: string) => {
   const spec = readRecord(resource.spec) ?? {}
   return readString(spec[key])

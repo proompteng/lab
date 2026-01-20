@@ -5,6 +5,8 @@ import {
   deriveStatusCategory,
   formatTimestamp,
   getMetadataValue,
+  getResourceCreatedAt,
+  getResourceUpdatedAt,
   readNestedValue,
   StatusBadge,
   summarizeConditions,
@@ -115,7 +117,7 @@ function AgentRunsListPage() {
             name="namespace"
             value={namespace}
             onChange={(event) => setNamespace(event.target.value)}
-            placeholder="jangar"
+            placeholder="agents"
             autoComplete="off"
           />
         </div>
@@ -145,6 +147,8 @@ function AgentRunsListPage() {
             const resourceNamespace = getMetadataValue(resource, 'namespace') ?? searchState.namespace
             const statusLabel = deriveStatusCategory(resource)
             const conditionSummary = summarizeConditions(resource)
+            const createdAt = getResourceCreatedAt(resource)
+            const updatedAt = getResourceUpdatedAt(resource)
             const fields = buildAgentRunFields(resource)
             return (
               <li key={`${resourceNamespace}/${name}`} className="border-b border-border last:border-b-0">
@@ -169,6 +173,14 @@ function AgentRunsListPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-[10px] uppercase tracking-wide">Last transition</span>
                       <span className="text-foreground">{formatTimestamp(conditionSummary.lastTransitionTime)}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] uppercase tracking-wide">Created</span>
+                      <span className="text-foreground">{formatTimestamp(createdAt)}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] uppercase tracking-wide">Updated</span>
+                      <span className="text-foreground">{formatTimestamp(updatedAt)}</span>
                     </div>
                   </div>
                   <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
