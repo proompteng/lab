@@ -1307,11 +1307,18 @@ const createRunSpecConfigMap = async (
   runSpec: Record<string, unknown>,
   labels: Record<string, string>,
   suffix?: string,
+  agentRunnerSpec?: Record<string, unknown>,
 ) => {
   const metadata = asRecord(agentRun.metadata) ?? {}
   const uid = asString(metadata.uid)
   const runName = asString(metadata.name) ?? 'agentrun'
   const configName = makeName(runName, suffix ? `spec-${suffix}` : 'spec')
+  const data: Record<string, string> = {
+    'run.json': JSON.stringify(runSpec, null, 2),
+  }
+  if (agentRunnerSpec) {
+    data['agent-runner.json'] = JSON.stringify(agentRunnerSpec, null, 2)
+  }
   const configMap = {
     apiVersion: 'v1',
     kind: 'ConfigMap',
@@ -1332,13 +1339,27 @@ const createRunSpecConfigMap = async (
           }
         : {}),
     },
-    data: {
-      'run.json': JSON.stringify(runSpec, null, 2),
-    },
+    data,
   }
   await kube.apply(configMap)
   return configName
 }
+
+const buildAgentRunnerSpec = (
+  runSpec: Record<string, unknown>,
+  parameters: Record<string, string>,
+  providerName: string,
+) => ({
+  provider: providerName,
+  inputs: parameters,
+  payloads: {
+    eventFilePath: '/workspace/run.json',
+  },
+  artifacts: {
+    statusPath: '/workspace/.agent/status.json',
+    logPath: '/workspace/.agent/runner.log',
+  },
+})
 
 const submitJobRun = async (
   kube: ReturnType<typeof createKubernetesClient>,
@@ -1393,6 +1414,7 @@ const submitJobRun = async (
     Array.isArray(outputArtifacts) ? outputArtifacts : [],
     providerName,
   )
+  const agentRunnerSpec = providerName ? buildAgentRunnerSpec(runSpec, parameters, providerName) : null
   const runSecrets = parseStringList(readNested(agentRun, ['spec', 'secrets']))
   const envFrom = runSecrets.map((name) => ({ secretRef: { name } }))
 
@@ -1442,6 +1464,7 @@ const submitJobRun = async (
     runSpec,
     mergedLabels,
     options.nameSuffix,
+    agentRunnerSpec ?? undefined,
   )
 
   const { volumeSpecs, volumeMounts } = buildVolumeSpecs(workload)
@@ -1464,6 +1487,13 @@ const submitJobRun = async (
   const specVolumeName = makeName(specConfigName, 'vol')
   volumes.push({ name: specVolumeName, spec: { configMap: { name: specConfigName } } })
   configVolumeMounts.push({ name: specVolumeName, mountPath: '/workspace/run.json', subPath: 'run.json' })
+  if (agentRunnerSpec) {
+    configVolumeMounts.push({
+      name: specVolumeName,
+      mountPath: '/workspace/agent-runner.json',
+      subPath: 'agent-runner.json',
+    })
+  }
 
   const jobResource = {
     apiVersion: 'batch/v1',
@@ -1502,7 +1532,7 @@ const submitJobRun = async (
               args,
               env: [
                 { name: 'AGENT_RUN_SPEC', value: '/workspace/run.json' },
-                { name: 'AGENT_RUNNER_SPEC_PATH', value: '/workspace/run.json' },
+                { name: 'AGENT_RUNNER_SPEC_PATH', value: '/workspace/agent-runner.json' },
                 ...env,
               ],
               envFrom: envFrom.length > 0 ? envFrom : undefined,
