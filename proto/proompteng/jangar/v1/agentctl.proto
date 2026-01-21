@@ -7,6 +7,7 @@ option go_package = "github.com/proompteng/lab/services/jangar/internal/agentctl
 service AgentctlService {
   rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse);
   rpc GetControlPlaneStatus(GetControlPlaneStatusRequest) returns (GetControlPlaneStatusResponse);
+  rpc StreamControlPlaneStatus(GetControlPlaneStatusRequest) returns (stream GetControlPlaneStatusResponse);
 
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
   rpc GetAgent(GetAgentRequest) returns (GetAgentResponse);

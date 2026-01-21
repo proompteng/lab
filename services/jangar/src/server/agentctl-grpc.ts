@@ -15,6 +15,7 @@ import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '~/s
 const DEFAULT_NAMESPACE = 'agents'
 const DEFAULT_GRPC_PORT = 50051
 const SERVICE_NAME = 'jangar'
+const CONTROL_PLANE_STATUS_HEARTBEAT_MS = 10_000
 
 type AgentctlServer = {
   server: grpc.Server
@@ -127,6 +128,20 @@ const resolveAuthToken = (metadata: grpc.Metadata) => {
   if (!raw) return null
   if (raw.toLowerCase().startsWith('bearer ')) return raw.slice(7).trim()
   return raw.trim()
+}
+
+const buildControlPlaneSnapshot = async (namespace: string, address: string) => {
+  const grpcStatus: ControlPlaneGrpcStatus = {
+    enabled: true,
+    address,
+    status: 'healthy',
+    message: '',
+  }
+  return await buildControlPlaneStatus({
+    namespace,
+    service: SERVICE_NAME,
+    grpc: grpcStatus,
+  })
 }
 
 const requireAuth = (call: UnaryCall<unknown> | ReadableCall<unknown> | WritableCall<unknown>) => {
@@ -924,21 +939,73 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
       if (authError) return callback(authError, null)
       try {
         const namespace = normalizeNamespace(call.request?.namespace)
-        const grpcStatus: ControlPlaneGrpcStatus = {
-          enabled: true,
-          address,
-          status: 'healthy',
-          message: '',
-        }
-        const status = await buildControlPlaneStatus({
-          namespace,
-          service: SERVICE_NAME,
-          grpc: grpcStatus,
-        })
+        const status = await buildControlPlaneSnapshot(namespace, address)
         callback(null, status)
       } catch (error) {
         handleUnaryError(callback, error)
       }
+    },
+
+    StreamControlPlaneStatus: async (call: ServerWritableStream<ControlPlaneStatusRequest, unknown>) => {
+      const authError = requireAuth(call)
+      if (authError) {
+        call.destroy(Object.assign(new Error(authError.message), { code: authError.code }))
+        return
+      }
+
+      const namespace = normalizeNamespace(call.request?.namespace)
+      let ended = false
+      let heartbeat: ReturnType<typeof setInterval> | null = null
+      let lastPayload = ''
+      let lastSentAt = 0
+
+      const stop = () => {
+        if (ended) return
+        ended = true
+        if (heartbeat) {
+          clearInterval(heartbeat)
+          heartbeat = null
+        }
+        call.end()
+      }
+
+      const emitSnapshot = async (force = false) => {
+        if (ended) return
+        try {
+          const status = await buildControlPlaneSnapshot(namespace, address)
+          const payload = JSON.stringify(status)
+          const now = Date.now()
+          if (!force && payload === lastPayload && now - lastSentAt < CONTROL_PLANE_STATUS_HEARTBEAT_MS) {
+            return
+          }
+          lastPayload = payload
+          lastSentAt = now
+          call.write(status)
+        } catch (error) {
+          if (ended) return
+          ended = true
+          if (heartbeat) {
+            clearInterval(heartbeat)
+            heartbeat = null
+          }
+          const message = error instanceof Error ? error.message : String(error)
+          call.destroy(Object.assign(new Error(message), { code: GrpcStatus.INTERNAL }))
+        }
+      }
+
+      await emitSnapshot(true)
+      if (ended) return
+
+      heartbeat = setInterval(() => {
+        void emitSnapshot()
+      }, CONTROL_PLANE_STATUS_HEARTBEAT_MS)
+
+      call.on('cancelled', () => {
+        stop()
+      })
+      call.on('close', () => {
+        stop()
+      })
     },
   })
 

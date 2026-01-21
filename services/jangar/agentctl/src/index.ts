@@ -120,8 +120,8 @@ Usage:
   agentctl version [--client]
   agentctl config view|set --namespace <ns> [--server <addr>] [--address <addr>] [--token <token>]
   agentctl completion <shell>
-  agentctl status [--output json|yaml|table]
-  agentctl diagnose [--output json|yaml|table]
+  agentctl status [--output json|yaml|table] [--watch|-w]
+  agentctl diagnose [--output json|yaml|table] [--watch|-w]
 
   agentctl agent get <name>
   agentctl agent describe <name>
@@ -276,6 +276,8 @@ Run submit flags:
 
 Watch flags:
   --interval <seconds>
+Status watch flags:
+  --watch, -w
 `.trim()
 
 const parseBoolean = (raw: string | undefined) => {
@@ -561,6 +563,19 @@ const parseWatchInterval = (args: string[]) => {
   return intervalMs
 }
 
+const parseWatchFlag = (args: string[]) => {
+  let watch = false
+  const rest: string[] = []
+  for (const arg of args) {
+    if (arg === '--watch' || arg === '-w') {
+      watch = true
+    } else {
+      rest.push(arg)
+    }
+  }
+  return { watch, rest }
+}
+
 const resolveStatusPhase = (resource: Record<string, unknown>) => {
   const status = (resource.status ?? {}) as Record<string, unknown>
   const statusKeys = ['phase', 'status', 'state', 'result']
@@ -716,6 +731,55 @@ const waitForRunCompletion = async (
       }
     })
     call.on('error', (error) => reject(error))
+  })
+}
+
+const watchControlPlaneStatus = async (
+  client: grpc.Client,
+  metadata: grpc.Metadata,
+  namespace: string,
+  output: string,
+) => {
+  const stream = (client as unknown as Record<string, (...args: unknown[]) => grpc.ClientReadableStream<unknown>>)
+    .StreamControlPlaneStatus
+  if (!stream) {
+    throw new Error('StreamControlPlaneStatus not available')
+  }
+
+  let iteration = 0
+
+  return await new Promise<number>((resolve, reject) => {
+    const call = stream.call(client, { namespace }, metadata)
+    const stop = () => {
+      call.cancel()
+    }
+
+    process.on('SIGINT', stop)
+    process.on('SIGTERM', stop)
+
+    call.on('data', (status: ControlPlaneStatus) => {
+      if (output === 'table') {
+        clearScreen()
+      } else if (iteration > 0) {
+        console.log('')
+      }
+      outputStatus(status, output, namespace)
+      iteration += 1
+    })
+    call.on('end', () => {
+      process.off('SIGINT', stop)
+      process.off('SIGTERM', stop)
+      resolve(0)
+    })
+    call.on('error', (error) => {
+      process.off('SIGINT', stop)
+      process.off('SIGTERM', stop)
+      if ((error as grpc.ServiceError).code === grpc.status.CANCELLED) {
+        resolve(0)
+        return
+      }
+      reject(error)
+    })
   })
 }
 
@@ -883,6 +947,11 @@ const main = async () => {
     }
 
     if (command === 'status' || command === 'diagnose') {
+      const statusArgs = [subcommand, ...args].filter(Boolean) as string[]
+      const { watch } = parseWatchFlag(statusArgs)
+      if (watch) {
+        return await watchControlPlaneStatus(client, metadata, namespace, output)
+      }
       const response = await callUnary<ControlPlaneStatus>(client, 'GetControlPlaneStatus', { namespace }, metadata)
       outputStatus(response, output, namespace)
       return 0

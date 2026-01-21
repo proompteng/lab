@@ -51,6 +51,10 @@ agentctl version
 agentctl version --client
 agentctl config view
 agentctl config set --namespace agents --address 127.0.0.1:50051
+agentctl status
+agentctl status --watch
+agentctl diagnose
+agentctl diagnose --watch
 
 agentctl agent list
 agentctl agent get <name>
