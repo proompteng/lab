@@ -261,6 +261,9 @@ Global flags:
   --output, -o <yaml|json|table>
   --tls
 
+List flags:
+  --selector, -l <labelSelector>
+
 Version flags:
   --client
 
@@ -559,6 +562,27 @@ const parseWatchInterval = (args: string[]) => {
     return DEFAULT_WATCH_INTERVAL_MS
   }
   return intervalMs
+}
+
+const parseLabelSelector = (args: string[]) => {
+  let selector: string | undefined
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]
+    if (!arg) continue
+    if (arg === '--selector' || arg === '-l') {
+      selector = args[++i]
+      continue
+    }
+    if (arg.startsWith('--selector=')) {
+      selector = arg.slice('--selector='.length)
+      continue
+    }
+    if (arg.startsWith('-l=')) {
+      selector = arg.slice('-l='.length)
+    }
+  }
+  const trimmed = selector?.trim()
+  return trimmed && trimmed.length > 0 ? trimmed : undefined
 }
 
 const resolveStatusPhase = (resource: Record<string, unknown>) => {
@@ -1003,18 +1027,30 @@ const main = async () => {
         return 0
       }
       if (subcommand === 'list') {
-        const response = await callUnary<{ json: string }>(client, rpc.list, { namespace }, metadata)
+        const selector = parseLabelSelector(args)
+        const response = await callUnary<{ json: string }>(
+          client,
+          rpc.list,
+          { namespace, label_selector: selector ?? '' },
+          metadata,
+        )
         const resource = parseJson(response.json)
         if (resource) outputList(resource, output)
         return 0
       }
       if (subcommand === 'watch') {
+        const selector = parseLabelSelector(args)
         const intervalMs = parseWatchInterval(args)
         let iteration = 0
         const stop = () => process.exit(0)
         process.on('SIGINT', stop)
         while (true) {
-          const response = await callUnary<{ json: string }>(client, rpc.list, { namespace }, metadata)
+          const response = await callUnary<{ json: string }>(
+            client,
+            rpc.list,
+            { namespace, label_selector: selector ?? '' },
+            metadata,
+          )
           const resource = parseJson(response.json)
           if (resource) {
             if (output === 'table') {
@@ -1196,18 +1232,30 @@ const main = async () => {
         return await waitForRunCompletion(client, metadata, args[0], namespace, output)
       }
       if (subcommand === 'list') {
-        const response = await callUnary<{ json: string }>(client, 'ListAgentRuns', { namespace }, metadata)
+        const selector = parseLabelSelector(args)
+        const response = await callUnary<{ json: string }>(
+          client,
+          'ListAgentRuns',
+          { namespace, label_selector: selector ?? '' },
+          metadata,
+        )
         const resource = parseJson(response.json)
         if (resource) outputList(resource, output)
         return 0
       }
       if (subcommand === 'watch') {
+        const selector = parseLabelSelector(args)
         const intervalMs = parseWatchInterval(args)
         let iteration = 0
         const stop = () => process.exit(0)
         process.on('SIGINT', stop)
         while (true) {
-          const response = await callUnary<{ json: string }>(client, 'ListAgentRuns', { namespace }, metadata)
+          const response = await callUnary<{ json: string }>(
+            client,
+            'ListAgentRuns',
+            { namespace, label_selector: selector ?? '' },
+            metadata,
+          )
           const resource = parseJson(response.json)
           if (resource) {
             if (output === 'table') {
