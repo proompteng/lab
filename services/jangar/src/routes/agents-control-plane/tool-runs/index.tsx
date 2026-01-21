@@ -42,7 +42,7 @@ function ToolRunsListRoute() {
       detailPath="/agents-control-plane/tool-runs/$name"
       fields={fields}
       searchState={searchState}
-      onNavigate={(namespace) => void navigate({ search: { namespace } })}
+      onNavigate={(params) => void navigate({ search: params })}
     />
   )
 }

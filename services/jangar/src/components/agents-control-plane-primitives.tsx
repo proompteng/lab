@@ -47,7 +47,7 @@ type PrimitiveListPageProps = {
   detailPath: string
   fields: PrimitiveListField[]
   searchState: NamespaceSearchState
-  onNavigate: (namespace: string) => void
+  onNavigate: (params: { namespace: string; labelSelector?: string }) => void
   sectionLabel?: string
 }
 
@@ -83,6 +83,7 @@ export function PrimitiveListPage({
   sectionLabel = 'Agents',
 }: PrimitiveListPageProps) {
   const [namespace, setNamespace] = React.useState(searchState.namespace)
+  const [labelSelector, setLabelSelector] = React.useState(searchState.labelSelector ?? '')
   const [items, setItems] = React.useState<PrimitiveResource[]>([])
   const [total, setTotal] = React.useState(0)
   const [error, setError] = React.useState<string | null>(null)
@@ -91,18 +92,24 @@ export function PrimitiveListPage({
   const reloadTimerRef = React.useRef<number | null>(null)
 
   const namespaceId = React.useId()
+  const labelSelectorId = React.useId()
 
   React.useEffect(() => {
     setNamespace(searchState.namespace)
-  }, [searchState.namespace])
+    setLabelSelector(searchState.labelSelector ?? '')
+  }, [searchState.namespace, searchState.labelSelector])
 
   const load = React.useCallback(
-    async (value: string) => {
+    async (params: { namespace: string; labelSelector?: string }) => {
       setIsLoading(true)
       setError(null)
       setStatus(null)
       try {
-        const result = await fetchPrimitiveList({ kind, namespace: value })
+        const result = await fetchPrimitiveList({
+          kind,
+          namespace: params.namespace,
+          labelSelector: params.labelSelector,
+        })
         if (!result.ok) {
           setItems([])
           setTotal(0)
@@ -124,16 +131,16 @@ export function PrimitiveListPage({
   )
 
   React.useEffect(() => {
-    void load(searchState.namespace)
-  }, [load, searchState.namespace])
+    void load({ namespace: searchState.namespace, labelSelector: searchState.labelSelector })
+  }, [load, searchState.labelSelector, searchState.namespace])
 
   const scheduleReload = React.useCallback(() => {
     if (reloadTimerRef.current !== null) return
     reloadTimerRef.current = window.setTimeout(() => {
       reloadTimerRef.current = null
-      void load(searchState.namespace)
+      void load({ namespace: searchState.namespace, labelSelector: searchState.labelSelector })
     }, 350)
-  }, [load, searchState.namespace])
+  }, [load, searchState.labelSelector, searchState.namespace])
 
   useControlPlaneStream(searchState.namespace, {
     onEvent: (event) => {
@@ -146,7 +153,12 @@ export function PrimitiveListPage({
 
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    onNavigate(namespace.trim() || DEFAULT_NAMESPACE)
+    const nextNamespace = namespace.trim() || DEFAULT_NAMESPACE
+    const nextLabelSelector = labelSelector.trim()
+    onNavigate({
+      namespace: nextNamespace,
+      ...(nextLabelSelector.length > 0 ? { labelSelector: nextLabelSelector } : {}),
+    })
   }
 
   return (
@@ -176,10 +188,28 @@ export function PrimitiveListPage({
             autoComplete="off"
           />
         </div>
+        <div className="flex flex-col gap-1 min-w-0 flex-1">
+          <label className="text-xs font-medium text-foreground" htmlFor={labelSelectorId}>
+            Label selector
+          </label>
+          <Input
+            id={labelSelectorId}
+            name="labelSelector"
+            value={labelSelector}
+            onChange={(event) => setLabelSelector(event.target.value)}
+            placeholder="key=value"
+            autoComplete="off"
+          />
+        </div>
         <Button type="submit" disabled={isLoading}>
           Filter
         </Button>
-        <Button type="button" variant="outline" onClick={() => void load(searchState.namespace)} disabled={isLoading}>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => void load({ namespace: searchState.namespace, labelSelector: searchState.labelSelector })}
+          disabled={isLoading}
+        >
           Refresh
         </Button>
       </form>

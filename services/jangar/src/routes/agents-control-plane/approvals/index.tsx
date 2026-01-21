@@ -48,7 +48,7 @@ function ApprovalsListRoute() {
       detailPath="/agents-control-plane/approvals/$name"
       fields={fields}
       searchState={searchState}
-      onNavigate={(namespace) => void navigate({ search: { namespace } })}
+      onNavigate={(params) => void navigate({ search: params })}
     />
   )
 }

@@ -819,6 +819,8 @@ message DeleteWorkspaceResponse {
 message ListAgentRunsRequest {
   string namespace = 1;
   string label_selector = 2;
+  string phase = 3;
+  string runtime = 4;
 }
 
 message ListAgentRunsResponse {

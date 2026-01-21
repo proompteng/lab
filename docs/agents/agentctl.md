@@ -43,7 +43,7 @@ agentctl --server 127.0.0.1:50051 status
 
 ```bash
 agentctl status
-agentctl agent list
+agentctl agent list --selector app=my-agent
 agentctl agent describe <name>
 agentctl agent watch --interval 5
 
@@ -52,7 +52,8 @@ agentctl impl describe <name>
 
 agentctl run submit --agent <name> --impl <name> --runtime <type>
 agentctl run status <name>
-agentctl run watch
+agentctl run list --phase Succeeded --runtime native
+agentctl run watch --selector app=my-agent
 ```
 
 ## Build (Bun binary)

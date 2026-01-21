@@ -49,7 +49,7 @@ function SignalsListRoute() {
       detailPath="/agents-control-plane/signals/$name"
       fields={fields}
       searchState={searchState}
-      onNavigate={(namespace) => void navigate({ search: { namespace } })}
+      onNavigate={(params) => void navigate({ search: params })}
     />
   )
 }

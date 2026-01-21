@@ -42,7 +42,7 @@ function WorkspacesListRoute() {
       detailPath="/agents-control-plane/workspaces/$name"
       fields={fields}
       searchState={searchState}
-      onNavigate={(namespace) => void navigate({ search: { namespace } })}
+      onNavigate={(params) => void navigate({ search: params })}
     />
   )
 }

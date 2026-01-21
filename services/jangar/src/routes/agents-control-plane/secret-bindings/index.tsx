@@ -61,7 +61,7 @@ function SecretBindingsListRoute() {
       detailPath="/agents-control-plane/secret-bindings/$name"
       fields={fields}
       searchState={searchState}
-      onNavigate={(namespace) => void navigate({ search: { namespace } })}
+      onNavigate={(params) => void navigate({ search: params })}
     />
   )
 }
