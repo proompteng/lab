@@ -87,21 +87,22 @@ function AgentRunsListPage() {
           phase: params.phase,
           runtime: params.runtime,
         })
-      if (!result.ok) {
+        if (!result.ok) {
+          setItems([])
+          setTotal(0)
+          setError(result.message)
+          return
+        }
+        setItems(result.items)
+        setTotal(result.total)
+        setStatus(result.items.length === 0 ? 'No agent runs found.' : `Loaded ${result.items.length} runs.`)
+      } catch (err) {
         setItems([])
         setTotal(0)
-        setError(result.message)
-        return
+        setError(err instanceof Error ? err.message : 'Failed to load agent runs')
+      } finally {
+        setIsLoading(false)
       }
-      setItems(result.items)
-      setTotal(result.total)
-      setStatus(result.items.length === 0 ? 'No agent runs found.' : `Loaded ${result.items.length} runs.`)
-    } catch (err) {
-      setItems([])
-      setTotal(0)
-      setError(err instanceof Error ? err.message : 'Failed to load agent runs')
-    } finally {
-      setIsLoading(false)
     },
     [],
   )
