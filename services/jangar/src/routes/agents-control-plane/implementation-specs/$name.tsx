@@ -8,13 +8,14 @@ import {
   EventsList,
   getMetadataValue,
   getStatusConditions,
+  ResourceRevisionTimeline,
   readNestedValue,
   StatusBadge,
-  YamlCodeBlock,
+  YamlInspector,
 } from '@/components/agents-control-plane'
 import { buildBaseSummaryItems } from '@/components/agents-control-plane-primitives'
 import { parseNamespaceSearch } from '@/components/agents-control-plane-search'
-import { useControlPlaneStream } from '@/components/agents-control-plane-stream'
+import { useResourceRevisionTimeline } from '@/components/agents-control-plane-stream'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { fetchPrimitiveDetail, fetchPrimitiveEvents, type PrimitiveEventItem } from '@/data/agents-control-plane'
@@ -46,7 +47,14 @@ function ImplementationSpecDetailPage() {
   const [error, setError] = React.useState<string | null>(null)
   const [eventsError, setEventsError] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
-  const reloadTimerRef = React.useRef<number | null>(null)
+
+  const revisionStream = useResourceRevisionTimeline({
+    kind: 'ImplementationSpec',
+    name: params.name,
+    namespace: searchState.namespace,
+    limit: 25,
+    onResource: (nextResource) => setResource(nextResource),
+  })
 
   const load = React.useCallback(async () => {
     setIsLoading(true)
@@ -90,24 +98,6 @@ function ImplementationSpecDetailPage() {
   React.useEffect(() => {
     void load()
   }, [load])
-
-  const scheduleReload = React.useCallback(() => {
-    if (reloadTimerRef.current !== null) return
-    reloadTimerRef.current = window.setTimeout(() => {
-      reloadTimerRef.current = null
-      void load()
-    }, 350)
-  }, [load])
-
-  useControlPlaneStream(searchState.namespace, {
-    onEvent: (event) => {
-      if (event.type !== 'resource') return
-      if (event.kind !== 'ImplementationSpec') return
-      if (event.name !== params.name) return
-      if (event.namespace !== searchState.namespace) return
-      scheduleReload()
-    },
-  })
 
   const statusLabel = resource ? deriveStatusLabel(resource) : 'Unknown'
   const conditions = resource ? getStatusConditions(resource) : []
@@ -185,11 +175,23 @@ function ImplementationSpecDetailPage() {
                 </pre>
               </div>
             </section>
+            <section className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-none border border-border bg-card p-4">
+                <YamlInspector value={resource} />
+              </div>
+              <div className="space-y-3 rounded-none border border-border bg-card p-4">
+                <h2 className="text-sm font-semibold text-foreground">Revision timeline</h2>
+                <ResourceRevisionTimeline
+                  entries={revisionStream.entries}
+                  status={revisionStream.status}
+                  error={revisionStream.error}
+                />
+              </div>
+            </section>
           </TabsContent>
           <TabsContent value="yaml">
             <section className="space-y-3 rounded-none border border-border bg-card p-4">
-              <h2 className="text-sm font-semibold text-foreground">Resource YAML</h2>
-              <YamlCodeBlock value={resource} />
+              <YamlInspector value={resource} />
             </section>
           </TabsContent>
           <TabsContent value="conditions">

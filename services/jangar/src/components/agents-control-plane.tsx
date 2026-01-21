@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
-
+import * as React from 'react'
+import { Button } from '@/components/ui/button'
 import type { PrimitiveEventItem } from '@/data/agents-control-plane'
-
 import { cn } from '@/lib/utils'
 
 type ConditionEntry = {
@@ -160,6 +160,12 @@ export const getResourceObservedGeneration = (resource: Record<string, unknown>)
 export const getResourceGeneration = (resource: Record<string, unknown>) =>
   readNestedValue(resource, ['metadata', 'generation']) ??
   readNestedValue(resource, ['metadata', 'resourceVersion']) ??
+  null
+
+export const getResourcePhase = (resource: Record<string, unknown>) =>
+  readNestedValue(resource, ['status', 'phase']) ??
+  readNestedValue(resource, ['status', 'state']) ??
+  readNestedValue(resource, ['status', 'status']) ??
   null
 
 export const formatGenerationSummary = (resource: Record<string, unknown>) => {
@@ -442,6 +448,121 @@ export const YamlCodeBlock = ({ value, className }: { value: unknown; className?
     <pre className={cn('overflow-auto rounded-none border p-3 text-xs border-border bg-muted/30', className)}>
       <code className="font-mono">{yaml}</code>
     </pre>
+  )
+}
+
+export const YamlInspector = ({ value }: { value: unknown }) => {
+  const [copied, setCopied] = React.useState(false)
+  const timerRef = React.useRef<number | null>(null)
+  const yaml = stringifyYaml(value ?? {})
+
+  const handleCopy = React.useCallback(() => {
+    if (!navigator.clipboard) return
+    navigator.clipboard
+      .writeText(yaml)
+      .then(() => {
+        setCopied(true)
+        if (timerRef.current) {
+          window.clearTimeout(timerRef.current)
+        }
+        timerRef.current = window.setTimeout(() => {
+          setCopied(false)
+          timerRef.current = null
+        }, 1500)
+      })
+      .catch(() => {})
+  }, [yaml])
+
+  React.useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        window.clearTimeout(timerRef.current)
+      }
+    }
+  }, [])
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-foreground">Resource YAML</h2>
+        <Button type="button" variant="outline" size="xs" onClick={handleCopy}>
+          {copied ? 'Copied' : 'Copy'}
+        </Button>
+      </div>
+      <pre className="overflow-auto rounded-none border border-border bg-muted/30 p-3 text-xs">
+        <code className="font-mono">{yaml}</code>
+      </pre>
+    </div>
+  )
+}
+
+export type ResourceRevisionEntry = {
+  id: string
+  type: string
+  timestamp: string
+  name: string
+  namespace: string
+  phase: string | null
+}
+
+export const ResourceRevisionTimeline = ({
+  entries,
+  status,
+  error,
+  emptyLabel = 'No revisions recorded yet.',
+}: {
+  entries: ResourceRevisionEntry[]
+  status?: 'connecting' | 'open' | 'error' | 'closed'
+  error?: string | null
+  emptyLabel?: string
+}) => {
+  if (error) {
+    return <div className="text-xs text-destructive">{error}</div>
+  }
+
+  const statusLabel =
+    status === 'open'
+      ? 'Live updates enabled'
+      : status === 'connecting'
+        ? 'Connecting to live updates…'
+        : status === 'error'
+          ? 'Stream disconnected.'
+          : status === 'closed'
+            ? 'Stream closed.'
+            : null
+
+  if (entries.length === 0) {
+    return (
+      <div className="space-y-1 text-xs text-muted-foreground">
+        {statusLabel ? <div>{statusLabel}</div> : null}
+        <div>{emptyLabel}</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      {statusLabel ? <div className="text-xs text-muted-foreground">{statusLabel}</div> : null}
+      <ul className="space-y-3 text-xs">
+        {entries.map((entry) => (
+          <li key={entry.id} className="space-y-1">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-none border border-border bg-muted px-1.5 py-0.5 text-[10px] uppercase">
+                  {entry.type}
+                </span>
+                <span className="font-medium text-foreground">{entry.name}</span>
+              </div>
+              <span className="text-muted-foreground">{formatTimestamp(entry.timestamp)}</span>
+            </div>
+            <div className="text-muted-foreground">
+              <span>Namespace: {entry.namespace}</span>
+              {entry.phase ? <span> · Phase: {entry.phase}</span> : null}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }
 
