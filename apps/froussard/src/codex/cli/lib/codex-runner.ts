@@ -567,6 +567,12 @@ export const runCodexSession = async ({
     model: process.env.CODEX_MODEL?.trim() || undefined,
     jsonMode: 'json',
     dangerouslyBypassApprovalsAndSandbox: true,
+    workingDirectory: process.env.WORKTREE?.trim() || undefined,
+    sandboxMode: (process.env.CODEX_SANDBOX_MODE?.trim() || 'workspace-write') as
+      | 'workspace-write'
+      | 'workspace-readonly'
+      | 'unrestricted',
+    skipGitRepoCheck: (process.env.CODEX_SKIP_GIT_REPO_CHECK ?? '1').trim() !== '0',
     lastMessagePath: outputPath,
     eventsPath: jsonOutputPath,
     agentLogPath: agentOutputPath,
