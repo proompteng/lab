@@ -42,7 +42,7 @@ function OrchestrationRunsListRoute() {
       detailPath="/agents-control-plane/orchestration-runs/$name"
       fields={fields}
       searchState={searchState}
-      onNavigate={(namespace) => void navigate({ search: { namespace } })}
+      onNavigate={(next) => void navigate({ search: next })}
     />
   )
 }

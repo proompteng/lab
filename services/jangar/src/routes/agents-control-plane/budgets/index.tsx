@@ -42,7 +42,7 @@ function BudgetsListRoute() {
       detailPath="/agents-control-plane/budgets/$name"
       fields={fields}
       searchState={searchState}
-      onNavigate={(namespace) => void navigate({ search: { namespace } })}
+      onNavigate={(next) => void navigate({ search: next })}
     />
   )
 }

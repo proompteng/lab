@@ -62,6 +62,7 @@ function AgentProvidersListPage() {
   const navigate = Route.useNavigate()
 
   const [namespace, setNamespace] = React.useState(searchState.namespace)
+  const [labelSelector, setLabelSelector] = React.useState(searchState.labelSelector ?? '')
   const [items, setItems] = React.useState<PrimitiveResource[]>([])
   const [total, setTotal] = React.useState(0)
   const [error, setError] = React.useState<string | null>(null)
@@ -70,17 +71,19 @@ function AgentProvidersListPage() {
   const reloadTimerRef = React.useRef<number | null>(null)
 
   const namespaceId = React.useId()
+  const labelSelectorId = React.useId()
 
   React.useEffect(() => {
     setNamespace(searchState.namespace)
-  }, [searchState.namespace])
+    setLabelSelector(searchState.labelSelector ?? '')
+  }, [searchState.labelSelector, searchState.namespace])
 
-  const load = React.useCallback(async (value: string) => {
+  const load = React.useCallback(async (value: string, selector?: string) => {
     setIsLoading(true)
     setError(null)
     setStatus(null)
     try {
-      const result = await fetchPrimitiveList({ kind: 'AgentProvider', namespace: value })
+      const result = await fetchPrimitiveList({ kind: 'AgentProvider', namespace: value, labelSelector: selector })
       if (!result.ok) {
         setItems([])
         setTotal(0)
@@ -100,16 +103,16 @@ function AgentProvidersListPage() {
   }, [])
 
   React.useEffect(() => {
-    void load(searchState.namespace)
-  }, [load, searchState.namespace])
+    void load(searchState.namespace, searchState.labelSelector)
+  }, [load, searchState.labelSelector, searchState.namespace])
 
   const scheduleReload = React.useCallback(() => {
     if (reloadTimerRef.current !== null) return
     reloadTimerRef.current = window.setTimeout(() => {
       reloadTimerRef.current = null
-      void load(searchState.namespace)
+      void load(searchState.namespace, searchState.labelSelector)
     }, 350)
-  }, [load, searchState.namespace])
+  }, [load, searchState.labelSelector, searchState.namespace])
 
   useControlPlaneStream(searchState.namespace, {
     onEvent: (event) => {
@@ -122,7 +125,14 @@ function AgentProvidersListPage() {
 
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    void navigate({ search: { namespace: namespace.trim() || DEFAULT_NAMESPACE } })
+    const nextNamespace = namespace.trim() || DEFAULT_NAMESPACE
+    const selectorValue = labelSelector.trim()
+    void navigate({
+      search: {
+        namespace: nextNamespace,
+        labelSelector: selectorValue.length > 0 ? selectorValue : undefined,
+      },
+    })
   }
 
   return (
@@ -152,10 +162,28 @@ function AgentProvidersListPage() {
             autoComplete="off"
           />
         </div>
+        <div className="flex flex-col gap-1 flex-1 min-w-0">
+          <label className="text-xs font-medium text-foreground" htmlFor={labelSelectorId}>
+            Label selector
+          </label>
+          <Input
+            id={labelSelectorId}
+            name="labelSelector"
+            value={labelSelector}
+            onChange={(event) => setLabelSelector(event.target.value)}
+            placeholder="app=agent"
+            autoComplete="off"
+          />
+        </div>
         <Button type="submit" disabled={isLoading}>
           Filter
         </Button>
-        <Button type="button" variant="outline" onClick={() => void load(searchState.namespace)} disabled={isLoading}>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => void load(searchState.namespace, searchState.labelSelector)}
+          disabled={isLoading}
+        >
           Refresh
         </Button>
       </form>
@@ -188,7 +216,7 @@ function AgentProvidersListPage() {
                 <Link
                   to="/agents-control-plane/agent-providers/$name"
                   params={{ name }}
-                  search={{ namespace: resourceNamespace }}
+                  search={{ namespace: resourceNamespace, labelSelector: searchState.labelSelector }}
                   className="block space-y-3 p-4 transition hover:bg-muted/20"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">

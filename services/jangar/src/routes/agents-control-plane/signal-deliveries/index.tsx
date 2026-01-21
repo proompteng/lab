@@ -49,7 +49,7 @@ function SignalDeliveriesListRoute() {
       detailPath="/agents-control-plane/signal-deliveries/$name"
       fields={fields}
       searchState={searchState}
-      onNavigate={(namespace) => void navigate({ search: { namespace } })}
+      onNavigate={(next) => void navigate({ search: next })}
     />
   )
 }

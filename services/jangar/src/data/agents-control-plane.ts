@@ -143,6 +143,7 @@ const parseResponse = async (response: Response) => {
 export const fetchPrimitiveList = async (params: {
   kind: AgentPrimitiveKind
   namespace: string
+  labelSelector?: string
   phase?: string
   runtime?: string
   limit?: number
@@ -157,6 +158,9 @@ export const fetchPrimitiveList = async (params: {
   }
   if (params.runtime) {
     searchParams.set('runtime', params.runtime)
+  }
+  if (params.labelSelector) {
+    searchParams.set('labelSelector', params.labelSelector)
   }
   if (params.limit) {
     searchParams.set('limit', params.limit.toString())

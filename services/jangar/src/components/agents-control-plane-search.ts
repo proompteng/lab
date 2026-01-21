@@ -2,22 +2,23 @@ export const DEFAULT_NAMESPACE = 'agents'
 
 export type NamespaceSearchState = {
   namespace: string
+  labelSelector?: string
 }
 
 export type AgentRunsSearchState = {
   namespace: string
+  labelSelector?: string
   phase?: string
   runtime?: string
 }
 
 export const parseNamespaceSearch = (search: Record<string, unknown>): NamespaceSearchState => {
-  if (typeof search.namespace === 'string') {
-    const trimmed = search.namespace.trim()
-    if (trimmed.length > 0) {
-      return { namespace: trimmed }
-    }
+  const namespace = typeof search.namespace === 'string' ? search.namespace.trim() : ''
+  const labelSelector = parseOptionalFilter(search.labelSelector)
+  if (namespace.length > 0) {
+    return { namespace, ...(labelSelector ? { labelSelector } : {}) }
   }
-  return { namespace: DEFAULT_NAMESPACE }
+  return { namespace: DEFAULT_NAMESPACE, ...(labelSelector ? { labelSelector } : {}) }
 }
 
 const parseOptionalFilter = (value: unknown) => {
@@ -30,6 +31,7 @@ export const parseAgentRunsSearch = (search: Record<string, unknown>): AgentRuns
   const base = parseNamespaceSearch(search)
   return {
     namespace: base.namespace,
+    labelSelector: base.labelSelector,
     phase: parseOptionalFilter(search.phase),
     runtime: parseOptionalFilter(search.runtime),
   }

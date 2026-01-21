@@ -65,12 +65,16 @@ export const listPrimitiveResources = async (
   const limit = parseLimit(url.searchParams.get('limit'))
   const phase = parseFilter(url.searchParams.get('phase'))
   const runtime = parseFilter(url.searchParams.get('runtime'))
+  const labelSelector = parseFilter(url.searchParams.get('labelSelector'))
   const kube = deps.kubeClient ?? createKubernetesClient()
   const stream = parseStream(url.searchParams.get('stream'))
 
   try {
     if (stream) {
       const args = ['get', resolved.resource, '-n', namespace, '-o', 'json', '--watch', '--output-watch-events']
+      if (labelSelector) {
+        args.push('-l', labelSelector)
+      }
       return createKubectlWatchStream({
         request,
         args,
@@ -90,7 +94,7 @@ export const listPrimitiveResources = async (
         },
       })
     }
-    const list = await kube.list(resolved.resource, namespace)
+    const list = await kube.list(resolved.resource, namespace, labelSelector ?? undefined)
     const itemsRaw = Array.isArray(list.items) ? list.items : []
     const summaries = itemsRaw.map((item) => toSummary(asRecord(item) ?? {}))
     const filtered =
