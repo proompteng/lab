@@ -55,7 +55,8 @@ type SubmitRunRequest = {
 }
 type LogsRequest = { namespace?: string; name?: string; follow?: boolean }
 type StatusStreamRequest = { namespace?: string; name?: string }
-type ControlPlaneStatusRequest = { namespace?: string }
+type GetControlPlaneStatusRequest = { namespace?: string }
+type StreamControlPlaneStatusRequest = { namespace?: string }
 
 const resolveProtoPath = () => {
   const envPath = process.env.JANGAR_GRPC_PROTO_PATH?.trim()
@@ -934,7 +935,7 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
       })
     },
 
-    GetControlPlaneStatus: async (call: UnaryCall<ControlPlaneStatusRequest>, callback: UnaryCallback) => {
+    GetControlPlaneStatus: async (call: UnaryCall<GetControlPlaneStatusRequest>, callback: UnaryCallback) => {
       const authError = requireAuth(call)
       if (authError) return callback(authError, null)
       try {
@@ -946,7 +947,7 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
       }
     },
 
-    StreamControlPlaneStatus: async (call: ServerWritableStream<ControlPlaneStatusRequest, unknown>) => {
+    StreamControlPlaneStatus: async (call: ServerWritableStream<StreamControlPlaneStatusRequest, unknown>) => {
       const authError = requireAuth(call)
       if (authError) {
         call.destroy(Object.assign(new Error(authError.message), { code: authError.code }))
