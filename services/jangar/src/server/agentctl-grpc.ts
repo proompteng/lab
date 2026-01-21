@@ -32,7 +32,7 @@ type UnaryCall<Request> = ServerUnaryCall<Request, unknown>
 type ReadableCall<Request> = grpc.ServerReadableStream<Request, unknown>
 type WritableCall<Request> = grpc.ServerWritableStream<Request, unknown>
 
-type ListRequest = { namespace?: string; label_selector?: string }
+type ListRequest = { namespace?: string; label_selector?: string; phase?: string; runtime?: string }
 type NameRequest = { namespace?: string; name?: string }
 type ApplyRequest = { namespace?: string; manifest_yaml?: string }
 type CreateImplRequest = {
@@ -110,6 +110,12 @@ const normalizeNamespace = (value?: string | null) => {
   if (!value) return DEFAULT_NAMESPACE
   const trimmed = value.trim()
   return trimmed.length > 0 ? trimmed : DEFAULT_NAMESPACE
+}
+
+const normalizeFilter = (value?: string | null) => {
+  if (!value) return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
 }
 
 const parseEntryMap = (entries: RuntimeEntry[]) => {
@@ -225,6 +231,21 @@ const resolveAgentRunRuntime = (resource: Record<string, unknown>) => {
   const runtimeType = asString(runtimeRef?.type) ?? asString(readNested(resource, ['spec', 'runtime', 'type']))
   const runtimeName = asString(runtimeRef?.name)
   return { runtimeType, runtimeName }
+}
+
+const matchesAgentRunFilters = (resource: Record<string, unknown>, phase?: string, runtime?: string) => {
+  if (phase) {
+    const status = asRecord(resource.status) ?? {}
+    const itemPhase = asString(status.phase)
+    if (itemPhase !== phase) return false
+  }
+  if (runtime) {
+    const spec = asRecord(resource.spec) ?? {}
+    const runtimeSpec = asRecord(spec.runtime) ?? {}
+    const runtimeType = asString(runtimeSpec.type)
+    if (runtimeType !== runtime) return false
+  }
+  return true
 }
 
 const resolveStatusPhase = (resource: Record<string, unknown>) => {
@@ -644,8 +665,16 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
       if (authError) return callback(authError, null)
       try {
         const namespace = normalizeNamespace(call.request?.namespace)
+        const phase = normalizeFilter(call.request?.phase)
+        const runtime = normalizeFilter(call.request?.runtime)
         const result = await kube.list(RESOURCE_MAP.AgentRun, namespace, call.request?.label_selector || undefined)
-        callback(null, { json: JSON.stringify(result) })
+        if (phase || runtime) {
+          const items = Array.isArray(result.items) ? result.items : []
+          const filtered = items.filter((item) => matchesAgentRunFilters(asRecord(item) ?? {}, phase, runtime))
+          callback(null, { json: JSON.stringify({ ...result, items: filtered }) })
+        } else {
+          callback(null, { json: JSON.stringify(result) })
+        }
       } catch (error) {
         handleUnaryError(callback, error)
       }

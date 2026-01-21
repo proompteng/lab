@@ -42,7 +42,7 @@ function ArtifactsListRoute() {
       detailPath="/agents-control-plane/artifacts/$name"
       fields={fields}
       searchState={searchState}
-      onNavigate={(namespace) => void navigate({ search: { namespace } })}
+      onNavigate={(params) => void navigate({ search: params })}
     />
   )
 }

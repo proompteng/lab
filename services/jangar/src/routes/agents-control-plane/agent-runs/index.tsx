@@ -52,6 +52,7 @@ function AgentRunsListPage() {
   const navigate = Route.useNavigate()
 
   const [namespace, setNamespace] = React.useState(searchState.namespace)
+  const [labelSelector, setLabelSelector] = React.useState(searchState.labelSelector ?? '')
   const [phase, setPhase] = React.useState(searchState.phase ?? '')
   const [runtime, setRuntime] = React.useState(searchState.runtime ?? '')
   const [items, setItems] = React.useState<PrimitiveResource[]>([])
@@ -62,26 +63,30 @@ function AgentRunsListPage() {
   const reloadTimerRef = React.useRef<number | null>(null)
 
   const namespaceId = React.useId()
+  const labelSelectorId = React.useId()
   const phaseId = React.useId()
   const runtimeId = React.useId()
 
   React.useEffect(() => {
     setNamespace(searchState.namespace)
+    setLabelSelector(searchState.labelSelector ?? '')
     setPhase(searchState.phase ?? '')
     setRuntime(searchState.runtime ?? '')
-  }, [searchState.namespace, searchState.phase, searchState.runtime])
+  }, [searchState.labelSelector, searchState.namespace, searchState.phase, searchState.runtime])
 
-  const load = React.useCallback(async (params: { namespace: string; phase?: string; runtime?: string }) => {
-    setIsLoading(true)
-    setError(null)
-    setStatus(null)
-    try {
-      const result = await fetchPrimitiveList({
-        kind: 'AgentRun',
-        namespace: params.namespace,
-        phase: params.phase,
-        runtime: params.runtime,
-      })
+  const load = React.useCallback(
+    async (params: { namespace: string; labelSelector?: string; phase?: string; runtime?: string }) => {
+      setIsLoading(true)
+      setError(null)
+      setStatus(null)
+      try {
+        const result = await fetchPrimitiveList({
+          kind: 'AgentRun',
+          namespace: params.namespace,
+          labelSelector: params.labelSelector,
+          phase: params.phase,
+          runtime: params.runtime,
+        })
       if (!result.ok) {
         setItems([])
         setTotal(0)
@@ -97,16 +102,18 @@ function AgentRunsListPage() {
       setError(err instanceof Error ? err.message : 'Failed to load agent runs')
     } finally {
       setIsLoading(false)
-    }
-  }, [])
+    },
+    [],
+  )
 
   React.useEffect(() => {
     void load({
       namespace: searchState.namespace,
+      labelSelector: searchState.labelSelector,
       phase: searchState.phase,
       runtime: searchState.runtime,
     })
-  }, [load, searchState.namespace, searchState.phase, searchState.runtime])
+  }, [load, searchState.labelSelector, searchState.namespace, searchState.phase, searchState.runtime])
 
   const scheduleReload = React.useCallback(() => {
     if (reloadTimerRef.current !== null) return
@@ -114,11 +121,12 @@ function AgentRunsListPage() {
       reloadTimerRef.current = null
       void load({
         namespace: searchState.namespace,
+        labelSelector: searchState.labelSelector,
         phase: searchState.phase,
         runtime: searchState.runtime,
       })
     }, 350)
-  }, [load, searchState.namespace, searchState.phase, searchState.runtime])
+  }, [load, searchState.labelSelector, searchState.namespace, searchState.phase, searchState.runtime])
 
   useControlPlaneStream(searchState.namespace, {
     onEvent: (event) => {
@@ -132,11 +140,13 @@ function AgentRunsListPage() {
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const nextNamespace = namespace.trim() || DEFAULT_NAMESPACE
+    const nextLabelSelector = labelSelector.trim()
     const nextPhase = phase.trim()
     const nextRuntime = runtime.trim()
     void navigate({
       search: {
         namespace: nextNamespace,
+        labelSelector: nextLabelSelector.length > 0 ? nextLabelSelector : undefined,
         phase: nextPhase.length > 0 ? nextPhase : undefined,
         runtime: nextRuntime.length > 0 ? nextRuntime : undefined,
       },
@@ -167,6 +177,19 @@ function AgentRunsListPage() {
             value={namespace}
             onChange={(event) => setNamespace(event.target.value)}
             placeholder="agents"
+            autoComplete="off"
+          />
+        </div>
+        <div className="flex flex-col gap-1 flex-1 min-w-0">
+          <label className="text-xs font-medium text-foreground" htmlFor={labelSelectorId}>
+            Label selector
+          </label>
+          <Input
+            id={labelSelectorId}
+            name="labelSelector"
+            value={labelSelector}
+            onChange={(event) => setLabelSelector(event.target.value)}
+            placeholder="key=value"
             autoComplete="off"
           />
         </div>
@@ -203,7 +226,12 @@ function AgentRunsListPage() {
           type="button"
           variant="outline"
           onClick={() =>
-            void load({ namespace: searchState.namespace, phase: searchState.phase, runtime: searchState.runtime })
+            void load({
+              namespace: searchState.namespace,
+              labelSelector: searchState.labelSelector,
+              phase: searchState.phase,
+              runtime: searchState.runtime,
+            })
           }
           disabled={isLoading}
         >
