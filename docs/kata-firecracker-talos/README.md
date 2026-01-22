@@ -76,7 +76,7 @@ machine:
       content: |
 [plugins."io.containerd.snapshotter.v1.blockfile"]
   root_path = "/var/mnt/blockfile-scratch/containerd-blockfile"
-  scratch_file = "/var/lib/containerd/blockfile-scratch/scratch.ext4"
+  scratch_file = "/var/mnt/blockfile-scratch/containerd-blockfile/scratch"
           fs_type = "ext4"
           mount_options = []
           recreate_scratch = false
@@ -144,8 +144,8 @@ spec:
           apt-get update
           apt-get install -y --no-install-recommends e2fsprogs util-linux
 
-          ROOT=/var/lib/containerd/blockfile-scratch
-          SCRATCH=${ROOT}/scratch.ext4
+          ROOT=/var/mnt/blockfile-scratch/containerd-blockfile
+          SCRATCH=${ROOT}/scratch
           SIZE=10G
 
           mkdir -p $ROOT
@@ -160,11 +160,11 @@ spec:
           fi
       volumeMounts:
         - name: blockfile
-          mountPath: /var/lib/containerd/blockfile-scratch
+          mountPath: /var/mnt/blockfile-scratch/containerd-blockfile
   volumes:
     - name: blockfile
       hostPath:
-        path: /var/lib/containerd/blockfile-scratch
+        path: /var/mnt/blockfile-scratch/containerd-blockfile
         type: DirectoryOrCreate
 ```
 

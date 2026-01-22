@@ -246,7 +246,7 @@ Expected: the `local-path` StorageClass exists and the provisioner is Running on
 Firecracker-backed Kata containers use containerd’s **blockfile** snapshotter, which
 requires a scratch file on disk. We dedicate a **500GB** user volume named
 `blockfile-scratch`, mounted at `/var/mnt/blockfile-scratch`, while the scratch
-file itself lives under `/var/lib/containerd/blockfile-scratch` so CRI can read
+file itself lives under `/var/mnt/blockfile-scratch/containerd-blockfile` so CRI can read
 it during boot.
 
 Sources:
@@ -280,7 +280,7 @@ talosctl patch machineconfig --patch @devices/ryzen/manifests/blockfile.patch.ya
 
 ### Validate
 - `talosctl get volumemountstatuses | rg blockfile-scratch`
-- `/var/lib/containerd/blockfile-scratch/scratch.ext4` exists after the blockfile DaemonSet runs.
+- `/var/mnt/blockfile-scratch/containerd-blockfile/scratch` exists after the blockfile DaemonSet runs.
 
 ## AMD GPU (ROCm) node-level install
 
