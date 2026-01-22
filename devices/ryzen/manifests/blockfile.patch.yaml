@@ -1,9 +1,8 @@
 apiVersion: v1alpha1
 kind: UserVolumeConfig
-name: local-path-provisioner
+name: blockfile-scratch
 provisioning:
   diskSelector:
     match: disk.transport == 'nvme'
-  minSize: 1400GB
-  maxSize: 1400GB
-  grow: false
+  minSize: 500GB
+  maxSize: 500GB

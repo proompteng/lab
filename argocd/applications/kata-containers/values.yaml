@@ -17,7 +17,7 @@ shims:
       - arm64
     allowedHypervisorAnnotations: []
     containerd:
-      snapshotter: "devmapper"
+      snapshotter: "blockfile"
   qemu:
     enabled: false
   qemu-runtime-rs:
