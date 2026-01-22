@@ -5,6 +5,10 @@ resources:
   - github.com/rancher/local-path-provisioner/deploy?ref=v0.0.31
 patches:
   - target:
+      kind: Namespace
+      name: local-path-storage
+    path: patches/namespace-labels.patch.yaml
+  - target:
       kind: ConfigMap
       name: local-path-config
       namespace: local-path-storage
