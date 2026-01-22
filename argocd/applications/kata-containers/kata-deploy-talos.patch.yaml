@@ -11,8 +11,12 @@ spec:
           hostPath:
             path: /var/etc/containerd
             type: DirectoryOrCreate
+        - name: crio-conf
+          $patch: delete
       containers:
         - name: kube-kata
           volumeMounts:
             - name: containerd-conf
               mountPath: /etc/containerd/
+            - mountPath: /etc/crio/
+              $patch: delete
