@@ -15,6 +15,7 @@ Node-level patches:
 - `devices/ryzen/manifests/tailscale-extension-service.yaml` (Tailscale extension service config)
 - `devices/ryzen/manifests/amdgpu-extensions.patch.yaml` (AMD GPU extensions; fill in versions)
 - `devices/ryzen/manifests/kata-firecracker.patch.yaml` (enable blockfile + kata-fc runtime)
+- `devices/ryzen/manifests/kubelet-manifests.patch.yaml` (keep /etc/kubernetes writable for kubelet bootstrap)
 
 Related docs:
 - `devices/ryzen/docs/node-level-dependencies.md`
@@ -96,6 +97,7 @@ talosctl apply-config --insecure -n 192.168.1.194 -e 192.168.1.194 \
 #   --config-patch @devices/ryzen/manifests/tailscale-extension-service.yaml
 #   --config-patch @devices/ryzen/manifests/amdgpu-extensions.patch.yaml
 #   --config-patch @devices/ryzen/manifests/kata-firecracker.patch.yaml
+#   --config-patch @devices/ryzen/manifests/kubelet-manifests.patch.yaml
 ```
 
 ## 3) Bootstrap the cluster
