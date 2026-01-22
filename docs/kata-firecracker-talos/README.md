@@ -25,27 +25,24 @@ customization:
 Apply the schematic to a Talos installer image and upgrade the node. Extensions
 only take effect at install/upgrade time.
 
-## 1.1 Manual install (no Argo CD)
+## 1.1 GitOps scope (Argo CD)
 
-If you need to install Kata manually (no Argo CD), use the repo kustomization
-with Helm enabled. Label the node first so the chart schedules:
+On Talos we do **not** use the `kata-deploy` chart. It assumes a systemd host
+and fails on Talos. Instead, the GitOps app installs only:
+
+- Blockfile scratch DaemonSet
+- `RuntimeClass` for `kata-fc`
+
+Containerd runtime configuration is handled by Talos machine config.
+
+If you need to apply these manually (no Argo CD), run:
 
 ```bash
-kubectl --context=ryzen label node ryzen kata-deploy=enabled --overwrite
-
-mise exec helm@3 -- kustomize build --enable-helm \
-  argocd/applications/kata-containers \
-  | kubectl --context=ryzen apply -n kube-system -f -
+kubectl --context=ryzen apply -n kube-system -f \
+  argocd/applications/kata-containers/blockfile-scratch-daemonset.yaml
+kubectl --context=ryzen apply -f \
+  argocd/applications/kata-containers/runtimeclass-kata-fc.yaml
 ```
-
-Then create the blockfile scratch image (step 3 below) before enabling the
-blockfile snapshotter in Talos.
-
-Talos note: `kata-deploy` expects to write `/etc/containerd/config.toml`.
-On Talos `/etc` is read-only, so the Argo CD kustomization includes
-`argocd/applications/kata-containers/kata-deploy-talos.patch.yaml`, which maps
-the containerd config path to `/var/etc/containerd` (writable) while keeping
-the host containerd config managed by Talos.
 
 ## 2) Containerd runtime config (Talos machine config)
 
@@ -184,7 +181,9 @@ If you need custom overrides, place a new config under `/var` and point
 
 ## 5) RuntimeClass
 
-Kata typically ships a `kata-fc` RuntimeClass. Verify:
+The repo ships a `kata-fc` RuntimeClass in
+`argocd/applications/kata-containers/runtimeclass-kata-fc.yaml`.
+Verify:
 
 ```bash
 kubectl get runtimeclass
