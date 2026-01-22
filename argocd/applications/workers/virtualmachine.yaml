@@ -28,7 +28,6 @@ spec:
         kubevirt.io/domain: workers
         app.kubernetes.io/name: workers
     spec:
-      runtimeClassName: kata-fc
       domain:
         cpu:
           cores: 2
