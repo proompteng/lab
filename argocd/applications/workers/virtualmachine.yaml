@@ -63,3 +63,70 @@ spec:
           cloudInitNoCloud:
             secretRef:
               name: workers-cloud-init
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: workers-fc
+  labels:
+    app.kubernetes.io/name: workers-fc
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  running: true
+  dataVolumeTemplates:
+    - metadata:
+        name: workers-fc-rootdisk
+      spec:
+        source:
+          http:
+            url: https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img
+        pvc:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 50Gi
+          storageClassName: local-path
+  template:
+    metadata:
+      labels:
+        kubevirt.io/domain: workers-fc
+        app.kubernetes.io/name: workers-fc
+    spec:
+      runtimeClassName: kata-fc
+      domain:
+        cpu:
+          cores: 2
+        resources:
+          requests:
+            memory: 4Gi
+        devices:
+          disks:
+            - name: rootdisk
+              disk:
+                bus: virtio
+              bootOrder: 1
+            - name: datadisk
+              disk:
+                bus: virtio
+            - name: cloudinitdisk
+              disk:
+                bus: virtio
+          interfaces:
+            - name: default
+              masquerade: {}
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: rootdisk
+          dataVolume:
+            name: workers-fc-rootdisk
+        - name: datadisk
+          persistentVolumeClaim:
+            claimName: workers-fc-data
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            secretRef:
+              name: workers-fc-cloud-init

@@ -8,9 +8,10 @@ plus the existing Talos/KubeVirt docs in this repo.
 
 Node-level patches:
 - `devices/ryzen/manifests/ephemeral-volume.patch.yaml` (limit system disk to 100GiB)
-- `devices/ryzen/manifests/local-path.patch.yaml` (user volume for local-path, grows to free space)
+- `devices/ryzen/manifests/blockfile.patch.yaml` (user volume for blockfile scratch, 500GB)
+- `devices/ryzen/manifests/local-path.patch.yaml` (user volume for local-path, fixed 1400GB)
 - `devices/ryzen/manifests/allow-scheduling-controlplane.patch.yaml` (allow workloads on single-node controlplane)
-- `devices/ryzen/manifests/hostname.patch.yaml` (set Talos hostname to `ryzen`)
+- `devices/ryzen/manifests/hostname.patch.yaml` (set Talos hostname to `ryzen`, optional if the generated config already sets it)
 - `devices/ryzen/manifests/tailscale-extension-service.yaml` (Tailscale extension service config)
 - `devices/ryzen/manifests/amdgpu-extensions.patch.yaml` (AMD GPU extensions; fill in versions)
 - `devices/ryzen/manifests/kata-firecracker.patch.yaml` (enable blockfile + kata-fc runtime)
@@ -55,12 +56,19 @@ The EPHEMERAL volume is capped at 100GiB with this patch:
 
 ### 2.2 User volume for local-path
 
-The local-path provisioner uses a 1.5TB minimum user volume on the same NVMe
-disk and grows to consume remaining free space:
+The local-path provisioner uses a fixed 1.4TB (1400GB) user volume on the NVMe disk,
+leaving space for the 500GB blockfile volume and the 100GiB system/EPHEMERAL partition
+plus GPT/boot overhead:
 
 - `devices/ryzen/manifests/local-path.patch.yaml`
 
-### 2.3 Optional patches
+### 2.3 User volume for blockfile scratch
+
+Firecracker blockfile scratch uses a dedicated 500GB user volume:
+
+- `devices/ryzen/manifests/blockfile.patch.yaml`
+
+### 2.4 Optional patches
 
 - `devices/ryzen/manifests/allow-scheduling-controlplane.patch.yaml` (single-node)
 - `devices/ryzen/manifests/hostname.patch.yaml`
@@ -68,17 +76,18 @@ disk and grows to consume remaining free space:
 - `devices/ryzen/manifests/amdgpu-extensions.patch.yaml`
 - `devices/ryzen/manifests/kata-firecracker.patch.yaml` (reboot required)
 
-### 2.4 Apply config with patches
+### 2.5 Apply config with patches
 
 Use config patches so the generated files stay clean and reproducible:
 
 ```bash
 export TALOSCONFIG=$PWD/devices/ryzen/talosconfig
 
-# Controlplane (single-node example)
-talosctl apply-config -n 192.168.1.194 \
+# First install from maintenance mode (USB boot)
+talosctl apply-config --insecure -n 192.168.1.194 -e 192.168.1.194 \
   -f devices/ryzen/controlplane.yaml \
   --config-patch @devices/ryzen/manifests/ephemeral-volume.patch.yaml \
+  --config-patch @devices/ryzen/manifests/blockfile.patch.yaml \
   --config-patch @devices/ryzen/manifests/local-path.patch.yaml
 
 # Optional patches you can add at install time:
@@ -97,7 +106,17 @@ For a brand new controlplane, run the bootstrap step once:
 talosctl bootstrap -n 192.168.1.194
 ```
 
-Wait for Kubernetes API to become available and set kubeconfig as needed.
+Wait for Kubernetes API to become available, then merge kubeconfig.
+
+```bash
+talosctl kubeconfig -n 192.168.1.194 -e 192.168.1.194 --force --context ryzen ~/.kube/config
+```
+
+Capture the live Talos config for audit/repro:
+
+```bash
+talosctl -n 192.168.1.194 -e 192.168.1.194 get machineconfig -o yaml > devices/ryzen/node-machineconfig.yaml
+```
 
 ## 4) KubeVirt + Firecracker
 

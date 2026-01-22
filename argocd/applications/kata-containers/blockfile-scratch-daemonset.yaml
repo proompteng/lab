@@ -17,7 +17,7 @@ spec:
       hostNetwork: true
       hostPID: true
       nodeSelector:
-        katacontainers.io/kata-runtime: "true"
+        kata-deploy: "enabled"
       tolerations:
         - operator: Exists
       initContainers:
@@ -35,7 +35,7 @@ spec:
               apt-get update
               apt-get install -y --no-install-recommends e2fsprogs util-linux
 
-              ROOT=/host/var/lib/containerd/blockfile
+              ROOT=/host/var/lib/containerd/blockfile-scratch
               SCRATCH=${ROOT}/scratch.ext4
               SIZE=10G
 
@@ -50,8 +50,8 @@ spec:
                 fi
               fi
           volumeMounts:
-            - name: host-containerd
-              mountPath: /host/var/lib/containerd
+            - name: host-blockfile
+              mountPath: /host/var/lib/containerd/blockfile-scratch
       containers:
         - name: hold
           image: busybox:1.36
@@ -64,10 +64,10 @@ spec:
               cpu: 50m
               memory: 64Mi
           volumeMounts:
-            - name: host-containerd
-              mountPath: /host/var/lib/containerd
+            - name: host-blockfile
+              mountPath: /host/var/lib/containerd/blockfile-scratch
       volumes:
-        - name: host-containerd
+        - name: host-blockfile
           hostPath:
-            path: /var/lib/containerd
+            path: /var/lib/containerd/blockfile-scratch
             type: DirectoryOrCreate

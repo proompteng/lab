@@ -11,12 +11,8 @@ helmCharts:
     namespace: kube-system
     valuesFile: values.yaml
 patches:
-  - target:
+  - path: kata-deploy-talos.patch.yaml
+    target:
       kind: DaemonSet
       name: kata-deploy
       namespace: kube-system
-    patch: |-
-      - op: remove
-        path: /spec/template/spec/volumes/0
-      - op: remove
-        path: /spec/template/spec/containers/0/volumeMounts/0

@@ -173,7 +173,7 @@ Deleting `virt-controller-pdb` unblocked the drain during the upgrade. Recreate 
 ## Local-path storage (Talos user volume)
 
 ### Overview
-Talos uses **user volumes** to carve dedicated storage out of the system disk. For the Ryzen node, we allocate **1.5TB** to a user volume named `local-path-provisioner`, which Talos mounts at `/var/mnt/local-path-provisioner`. The Local Path Provisioner is then configured to use that mount point for PVs.
+Talos uses **user volumes** to carve dedicated storage out of the system disk. For the Ryzen node, we allocate a **fixed 1.35TB (1350GB)** user volume named `local-path-provisioner`, which Talos mounts at `/var/mnt/local-path-provisioner`. The Local Path Provisioner is then configured to use that mount point for PVs. The size is capped to leave room for the 500GB blockfile volume plus the 100GiB system/EPHEMERAL partition on the same NVMe.
 
 Sources:
 - Talos local storage guide (user volumes + mount path): https://www.talos.dev/latest/kubernetes-guides/configuration/local-storage/
@@ -183,7 +183,7 @@ Sources:
 - User volume config: `devices/ryzen/manifests/local-path.patch.yaml`
 - Local-path-provisioner config map patch: `argocd/applications/local-path/patches/local-path-config.patch.yaml`
 
-### User volume manifest (1.5TB)
+### User volume manifest (1.35TB fixed)
 
 ```yaml
 apiVersion: v1alpha1
@@ -192,8 +192,9 @@ name: local-path-provisioner
 provisioning:
   diskSelector:
     match: disk.transport == 'nvme' || disk.transport == 'sata'
-  minSize: 1500GB
-  maxSize: 1500GB
+  minSize: 1350GB
+  maxSize: 1350GB
+  grow: false
 ```
 
 ### Apply to the Ryzen Talos node
@@ -201,6 +202,16 @@ provisioning:
 ```bash
 export TALOSCONFIG=~/.talos/config
 talosctl patch machineconfig --patch @devices/ryzen/manifests/local-path.patch.yaml
+```
+
+### Resizing note (single NVMe)
+The Ryzen node has only one NVMe disk, so `local-path-provisioner` and `blockfile-scratch` share it. Talos will **not** shrink an existing partition. If you change sizes after the first install, wipe the old partition label so Talos can re-create it:
+
+```bash
+talosctl reset -n 192.168.1.194 \
+  --wipe-mode system-disk \
+  --system-labels-to-wipe u-local-path-provisioner \
+  --reboot --graceful=false
 ```
 
 ### Configure local-path-provisioner
@@ -226,6 +237,50 @@ kubectl -n local-path-storage get pods
 ```
 
 Expected: the `local-path` StorageClass exists and the provisioner is Running on the Ryzen node, using the `/var/mnt/local-path-provisioner` path.
+
+---
+
+## Blockfile scratch (Talos user volume)
+
+### Overview
+Firecracker-backed Kata containers use containerd’s **blockfile** snapshotter, which
+requires a scratch file on disk. We dedicate a **500GB** user volume named
+`blockfile-scratch`, mounted at `/var/mnt/blockfile-scratch`, while the scratch
+file itself lives under `/var/lib/containerd/blockfile-scratch` so CRI can read
+it during boot.
+
+Sources:
+- Talos local storage guide (user volumes + mount path): https://www.talos.dev/latest/kubernetes-guides/configuration/local-storage/
+- Talos system volumes (disk layout and sizing): https://www.talos.dev/latest/learn-more/system-volumes/
+
+### Repo source-of-truth
+- User volume config: `devices/ryzen/manifests/blockfile.patch.yaml`
+- Containerd blockfile config: `devices/ryzen/manifests/kata-firecracker.patch.yaml`
+- Scratch creation DaemonSet: `argocd/applications/kata-containers/blockfile-scratch-daemonset.yaml`
+
+### User volume manifest (500GB)
+
+```yaml
+apiVersion: v1alpha1
+kind: UserVolumeConfig
+name: blockfile-scratch
+provisioning:
+  diskSelector:
+    match: disk.serial == '50026B73844BB6D7'
+  minSize: 500GB
+  maxSize: 500GB
+```
+
+### Apply to the Ryzen Talos node
+
+```bash
+export TALOSCONFIG=~/.talos/config
+talosctl patch machineconfig --patch @devices/ryzen/manifests/blockfile.patch.yaml
+```
+
+### Validate
+- `talosctl get volumemountstatuses | rg blockfile-scratch`
+- `/var/lib/containerd/blockfile-scratch/scratch.ext4` exists after the blockfile DaemonSet runs.
 
 ## AMD GPU (ROCm) node-level install
 

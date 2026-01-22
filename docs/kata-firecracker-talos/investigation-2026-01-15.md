@@ -171,8 +171,8 @@ In `/etc/cri/conf.d/20-customization.part`:
 
 ```
 [plugins."io.containerd.snapshotter.v1.blockfile"]
-  root_path = "/var/lib/containerd/io.containerd.snapshotter.v1.blockfile"
-  scratch_file = "/var/lib/containerd/blockfile/scratch.ext4"
+  root_path = "/var/mnt/blockfile-scratch/containerd-blockfile"
+  scratch_file = "/var/lib/containerd/blockfile-scratch/scratch.ext4"
   fs_type = "ext4"
   mount_options = []
   recreate_scratch = false
@@ -198,11 +198,11 @@ In `/etc/cri/conf.d/20-customization.part`:
 
 ### 3) Create scratch file (ext4)
 
-Create `/var/lib/containerd/blockfile/scratch.ext4` and format it with ext4:
+Create `/var/lib/containerd/blockfile-scratch/scratch.ext4` and format it with ext4:
 
 ```
-truncate -s 10G /var/lib/containerd/blockfile/scratch.ext4
-mkfs.ext4 -F /var/lib/containerd/blockfile/scratch.ext4
+truncate -s 10G /var/lib/containerd/blockfile-scratch/scratch.ext4
+mkfs.ext4 -F /var/lib/containerd/blockfile-scratch/scratch.ext4
 ```
 
 ### 4) Reboot Talos

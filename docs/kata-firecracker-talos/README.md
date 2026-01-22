@@ -25,6 +25,22 @@ customization:
 Apply the schematic to a Talos installer image and upgrade the node. Extensions
 only take effect at install/upgrade time.
 
+## 1.1 Manual install (no Argo CD)
+
+If you need to install Kata manually (no Argo CD), use the repo kustomization
+with Helm enabled. Label the node first so the chart schedules:
+
+```bash
+kubectl --context=ryzen label node ryzen kata-deploy=enabled --overwrite
+
+mise exec helm@3 -- kustomize build --enable-helm \
+  argocd/applications/kata-containers \
+  | kubectl --context=ryzen apply -n kube-system -f -
+```
+
+Then create the blockfile scratch image (step 3 below) before enabling the
+blockfile snapshotter in Talos.
+
 ## 2) Containerd runtime config (Talos machine config)
 
 Firecracker needs a block-device rootfs. On Talos, the fastest path is the
@@ -55,9 +71,9 @@ machine:
       op: create
       permissions: 0o644
       content: |
-        [plugins."io.containerd.snapshotter.v1.blockfile"]
-          root_path = "/var/lib/containerd/io.containerd.snapshotter.v1.blockfile"
-          scratch_file = "/var/lib/containerd/blockfile/scratch.ext4"
+[plugins."io.containerd.snapshotter.v1.blockfile"]
+  root_path = "/var/mnt/blockfile-scratch/containerd-blockfile"
+  scratch_file = "/var/lib/containerd/blockfile-scratch/scratch.ext4"
           fs_type = "ext4"
           mount_options = []
           recreate_scratch = false
@@ -87,6 +103,10 @@ The blockfile snapshotter requires a pre-created scratch file (formatted ext4
 or xfs). Create it under `/var` so it persists across reboots.
 
 GitOps manifest (DaemonSet): `argocd/applications/kata-containers/blockfile-scratch-daemonset.yaml`
+
+Important: create the scratch file **before** enabling the blockfile snapshotter in
+Talos. If the snapshotter starts without the scratch file, `cri` fails and
+etcd/kubelet cannot pull images.
 
 ```mermaid
 flowchart TD
@@ -121,7 +141,7 @@ spec:
           apt-get update
           apt-get install -y --no-install-recommends e2fsprogs util-linux
 
-          ROOT=/var/lib/containerd/blockfile
+          ROOT=/var/lib/containerd/blockfile-scratch
           SCRATCH=${ROOT}/scratch.ext4
           SIZE=10G
 
@@ -136,12 +156,13 @@ spec:
             fi
           fi
       volumeMounts:
-        - name: containerd
-          mountPath: /var/lib/containerd
+        - name: blockfile
+          mountPath: /var/lib/containerd/blockfile-scratch
   volumes:
-    - name: containerd
+    - name: blockfile
       hostPath:
-        path: /var/lib/containerd
+        path: /var/lib/containerd/blockfile-scratch
+        type: DirectoryOrCreate
 ```
 
 ## 4) Firecracker config file (optional overrides)
