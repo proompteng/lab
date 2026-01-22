@@ -5,9 +5,18 @@ approval_policy = "never"
 sandbox_mode = "danger-full-access"
 
 [features]
+undo = true
 web_search_request = true
+web_search_cached = true
+enable_request_compression = true
+apply_patch_freeform = true
 unified_exec = true
-streamable_shell = true
+shell_snapshot = true
+steer = true
+collab = true
+child_agents_md = true
+collaboration_modes = true
+responses_websockets = true
 
 [shell_environment_policy]
 ignore_default_excludes = true

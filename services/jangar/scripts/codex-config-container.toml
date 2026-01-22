@@ -8,14 +8,18 @@ approval_policy = "never"
 sandbox_mode = "danger-full-access"
 
 [features]
+undo = true
 web_search_request = true
-unified_exec = true
-streamable_shell = true
+web_search_cached = true
+enable_request_compression = true
 apply_patch_freeform = true
-rmcp_client = true
+unified_exec = true
 shell_snapshot = true
-skills = true
-remote_compaction = true
+steer = true
+collab = true
+child_agents_md = true
+collaboration_modes = true
+responses_websockets = true
 
 [mcp_servers.memories]
 url = "http://127.0.0.1:8080/mcp"
