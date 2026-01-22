@@ -5,4 +5,4 @@ provisioning:
   diskSelector:
     match: disk.transport == 'nvme' || disk.transport == 'sata'
   minSize: 1500GB
-  maxSize: 1500GB
+  grow: true

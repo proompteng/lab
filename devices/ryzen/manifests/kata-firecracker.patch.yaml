@@ -1,0 +1,47 @@
+machine:
+  files:
+    - path: /etc/cri/containerd.toml
+      op: overwrite
+      permissions: 0o644
+      content: |
+        version = 3
+
+        disabled_plugins = [
+            "io.containerd.differ.v1.erofs",
+            "io.containerd.internal.v1.tracing",
+            "io.containerd.snapshotter.v1.erofs",
+            "io.containerd.ttrpc.v1.otelttrpc",
+            "io.containerd.tracing.processor.v1.otlp",
+        ]
+
+        imports = [
+            "/etc/cri/conf.d/cri.toml",
+        ]
+    - path: /etc/cri/conf.d/20-customization.part
+      op: overwrite
+      permissions: 0o644
+      content: |
+        [plugins."io.containerd.snapshotter.v1.blockfile"]
+          root_path = "/var/lib/containerd/io.containerd.snapshotter.v1.blockfile"
+          scratch_file = "/var/lib/containerd/blockfile/scratch.ext4"
+          fs_type = "ext4"
+          mount_options = []
+          recreate_scratch = false
+
+        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc"]
+          snapshotter = "blockfile"
+          runtime_type = "io.containerd.kata-fc.v2"
+          runtime_path = "/opt/kata/bin/containerd-shim-kata-v2"
+          privileged_without_host_devices = true
+          pod_annotations = ["io.katacontainers.*"]
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc".options]
+            ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-fc.toml"
+
+        [plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc"]
+          snapshotter = "blockfile"
+          runtime_type = "io.containerd.kata-fc.v2"
+          runtime_path = "/opt/kata/bin/containerd-shim-kata-v2"
+          privileged_without_host_devices = true
+          pod_annotations = ["io.katacontainers.*"]
+          [plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc".options]
+            ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-fc.toml"
