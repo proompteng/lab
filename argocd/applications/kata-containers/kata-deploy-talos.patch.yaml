@@ -8,9 +8,11 @@ spec:
     spec:
       volumes:
         - name: containerd-conf
-          $patch: delete
+          hostPath:
+            path: /var/etc/containerd
+            type: DirectoryOrCreate
       containers:
         - name: kube-kata
           volumeMounts:
             - name: containerd-conf
-              $patch: delete
+              mountPath: /etc/containerd/

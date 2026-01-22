@@ -41,6 +41,12 @@ mise exec helm@3 -- kustomize build --enable-helm \
 Then create the blockfile scratch image (step 3 below) before enabling the
 blockfile snapshotter in Talos.
 
+Talos note: `kata-deploy` expects to write `/etc/containerd/config.toml`.
+On Talos `/etc` is read-only, so the Argo CD kustomization includes
+`argocd/applications/kata-containers/kata-deploy-talos.patch.yaml`, which maps
+the containerd config path to `/var/etc/containerd` (writable) while keeping
+the host containerd config managed by Talos.
+
 ## 2) Containerd runtime config (Talos machine config)
 
 Firecracker needs a block-device rootfs. On Talos, the fastest path is the
