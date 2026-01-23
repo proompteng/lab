@@ -17,7 +17,7 @@ steer = true
 collab = true
 child_agents_md = true
 collaboration_modes = true
-responses_websockets = true
+responses_websockets = false
 
 [shell_environment_policy]
 ignore_default_excludes = true
