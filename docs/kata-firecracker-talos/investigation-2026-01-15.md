@@ -11,13 +11,13 @@ Run Kata Containers with Firecracker (runtimeClass `kata-fc`) on the ryzen Talos
 - OS: Talos v1.12.1
 - Kubernetes: v1.35.0
 - containerd: v2.1.6
-- Kata system extension present (paths under `/opt/kata/...`)
+- Kata system extension present (paths under `/usr/local/...`)
 - RuntimeClass: `kata-fc`
 
 Key binaries found:
-- `/opt/kata/bin/firecracker`
-- `/opt/kata/bin/containerd-shim-kata-v2`
-- `/opt/kata/share/defaults/kata-containers/configuration-fc.toml`
+- `/usr/local/bin/firecracker`
+- `/usr/local/bin/containerd-shim-kata-v2`
+- `/usr/local/share/kata-containers/configuration.toml`
 
 ## Summary of Findings
 1) **Firecracker requires a block-backed rootfs**, which in containerd is typically provided via the **devmapper snapshotter**.
@@ -77,19 +77,19 @@ Talos file (`/etc/cri/conf.d/20-customization.part`):
 ```
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc"]
   runtime_type = "io.containerd.kata-fc.v2"
-  runtime_path = "/opt/kata/bin/containerd-shim-kata-v2"
+  runtime_path = "/usr/local/bin/containerd-shim-kata-v2"
   privileged_without_host_devices = true
   pod_annotations = ["io.katacontainers.*"]
   [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc".options]
-    ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-fc.toml"
+    ConfigPath = "/usr/local/share/kata-containers/configuration.toml"
 
 [plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc"]
   runtime_type = "io.containerd.kata-fc.v2"
-  runtime_path = "/opt/kata/bin/containerd-shim-kata-v2"
+  runtime_path = "/usr/local/bin/containerd-shim-kata-v2"
   privileged_without_host_devices = true
   pod_annotations = ["io.katacontainers.*"]
   [plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc".options]
-    ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-fc.toml"
+    ConfigPath = "/usr/local/share/kata-containers/configuration.toml"
 ```
 
 Result: timeout errors replaced by rootfs mount ENOENT errors. Firecracker still never starts.
@@ -172,7 +172,7 @@ In `/etc/cri/conf.d/20-customization.part`:
 ```
 [plugins."io.containerd.snapshotter.v1.blockfile"]
   root_path = "/var/mnt/blockfile-scratch/containerd-blockfile"
-  scratch_file = "/var/mnt/blockfile-scratch/containerd-blockfile/scratch"
+  scratch_file = "/var/blockfile-scratch/scratch"
   fs_type = "ext4"
   mount_options = []
   recreate_scratch = false
@@ -180,29 +180,29 @@ In `/etc/cri/conf.d/20-customization.part`:
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc"]
   snapshotter = "blockfile"
   runtime_type = "io.containerd.kata-fc.v2"
-  runtime_path = "/opt/kata/bin/containerd-shim-kata-v2"
+  runtime_path = "/usr/local/bin/containerd-shim-kata-v2"
   privileged_without_host_devices = true
   pod_annotations = ["io.katacontainers.*"]
   [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc".options]
-    ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-fc.toml"
+    ConfigPath = "/usr/local/share/kata-containers/configuration.toml"
 
 [plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc"]
   snapshotter = "blockfile"
   runtime_type = "io.containerd.kata-fc.v2"
-  runtime_path = "/opt/kata/bin/containerd-shim-kata-v2"
+  runtime_path = "/usr/local/bin/containerd-shim-kata-v2"
   privileged_without_host_devices = true
   pod_annotations = ["io.katacontainers.*"]
   [plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc".options]
-    ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-fc.toml"
+    ConfigPath = "/usr/local/share/kata-containers/configuration.toml"
 ```
 
 ### 3) Create scratch file (ext4)
 
-Create `/var/mnt/blockfile-scratch/containerd-blockfile/scratch` and format it with ext4:
+Create `/var/blockfile-scratch/scratch` and format it with ext4:
 
 ```
-truncate -s 10G /var/mnt/blockfile-scratch/containerd-blockfile/scratch
-mkfs.ext4 -F /var/mnt/blockfile-scratch/containerd-blockfile/scratch
+truncate -s 10G /var/blockfile-scratch/scratch
+mkfs.ext4 -F /var/blockfile-scratch/scratch
 ```
 
 ### 4) Reboot Talos
@@ -252,7 +252,7 @@ Linux kata-fc-test 6.12.47 #1 SMP Fri Dec  5 12:15:04 UTC 2025 x86_64 GNU/Linux
   - https://flintlock.liquidmetal.dev/docs/getting-started/containerd/
 
 ## What Works
-- Kata binaries are present (`/opt/kata/bin/firecracker`, `containerd-shim-kata-v2`).
+- Kata binaries are present (`/usr/local/bin/firecracker`, `containerd-shim-kata-v2`).
 - RuntimeClass `kata-fc` exists.
 - KVM/vsock device nodes exist (`/dev/kvm`, `/dev/vhost-vsock`).
 - Blockfile snapshotter is enabled and loaded.

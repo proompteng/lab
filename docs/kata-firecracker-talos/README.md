@@ -7,6 +7,11 @@ machine config and live under `/var`.
 ## Prereqs
 
 - Talos system extensions for `kata-containers` and `glibc`.
+- The kata extension ships `containerd-shim-kata-v2` under `/usr/local/bin` and
+  a default config at `/usr/local/share/kata-containers/configuration.toml`.
+- Firecracker VMM is **not** bundled in the stock extension; to use Firecracker,
+  add a custom extension that includes `/usr/local/bin/firecracker` and point
+  `ConfigPath` at a Firecracker config under `/var`.
 - KVM + vsock available on the host (`/dev/kvm`, `/dev/vhost-vsock`).
 - Containerd runtime config injected via `/etc/cri/conf.d/20-customization.part`.
 
@@ -44,63 +49,7 @@ kubectl --context=ryzen apply -f \
   argocd/applications/kata-containers/runtimeclass-kata-fc.yaml
 ```
 
-## 2) Containerd runtime config (Talos machine config)
-
-Firecracker needs a block-device rootfs. On Talos, the fastest path is the
-`blockfile` snapshotter, but Talos ships it **disabled** by default. You must
-remove it from `disabled_plugins` and configure it for the `kata-fc` runtime.
-
-```yaml
-machine:
-  files:
-    - path: /etc/cri/containerd.toml
-      op: overwrite
-      permissions: 0o644
-      content: |
-        version = 3
-
-        disabled_plugins = [
-            "io.containerd.differ.v1.erofs",
-            "io.containerd.internal.v1.tracing",
-            "io.containerd.snapshotter.v1.erofs",
-            "io.containerd.ttrpc.v1.otelttrpc",
-            "io.containerd.tracing.processor.v1.otlp",
-        ]
-
-        imports = [
-            "/etc/cri/conf.d/cri.toml",
-        ]
-    - path: /etc/cri/conf.d/20-customization.part
-      op: create
-      permissions: 0o644
-      content: |
-[plugins."io.containerd.snapshotter.v1.blockfile"]
-  root_path = "/var/mnt/blockfile-scratch/containerd-blockfile"
-  scratch_file = "/var/mnt/blockfile-scratch/containerd-blockfile/scratch"
-          fs_type = "ext4"
-          mount_options = []
-          recreate_scratch = false
-
-        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc"]
-          snapshotter = "blockfile"
-          runtime_type = "io.containerd.kata-fc.v2"
-          runtime_path = "/opt/kata/bin/containerd-shim-kata-v2"
-          privileged_without_host_devices = true
-          pod_annotations = ["io.katacontainers.*"]
-          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc".options]
-            ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-fc.toml"
-
-        [plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc"]
-          snapshotter = "blockfile"
-          runtime_type = "io.containerd.kata-fc.v2"
-          runtime_path = "/opt/kata/bin/containerd-shim-kata-v2"
-          privileged_without_host_devices = true
-          pod_annotations = ["io.katacontainers.*"]
-          [plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc".options]
-            ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-fc.toml"
-```
-
-## 3) Create the blockfile scratch image (required)
+## 2) Create the blockfile scratch image (required, before enabling blockfile)
 
 The blockfile snapshotter requires a pre-created scratch file (formatted ext4
 or xfs). Create it under `/var` so it persists across reboots.
@@ -144,7 +93,7 @@ spec:
           apt-get update
           apt-get install -y --no-install-recommends e2fsprogs util-linux
 
-          ROOT=/var/mnt/blockfile-scratch/containerd-blockfile
+          ROOT=/var/blockfile-scratch
           SCRATCH=${ROOT}/scratch
           SIZE=10G
 
@@ -158,26 +107,75 @@ spec:
               mkfs.ext4 -F $SCRATCH
             fi
           fi
-      volumeMounts:
-        - name: blockfile
-          mountPath: /var/mnt/blockfile-scratch/containerd-blockfile
-  volumes:
-    - name: blockfile
-      hostPath:
-        path: /var/mnt/blockfile-scratch/containerd-blockfile
-        type: DirectoryOrCreate
+```
+
+## 3) Containerd runtime config (Talos machine config, after scratch exists)
+
+Firecracker needs a block-device rootfs. On Talos, the fastest path is the
+`blockfile` snapshotter, but Talos ships it **disabled** by default. You must
+remove it from `disabled_plugins` and configure it for the `kata-fc` runtime.
+
+```yaml
+machine:
+  files:
+    - path: /etc/cri/containerd.toml
+      op: overwrite
+      permissions: 0o644
+      content: |
+        version = 3
+
+        disabled_plugins = [
+            "io.containerd.differ.v1.erofs",
+            "io.containerd.internal.v1.tracing",
+            "io.containerd.snapshotter.v1.erofs",
+            "io.containerd.ttrpc.v1.otelttrpc",
+            "io.containerd.tracing.processor.v1.otlp",
+        ]
+
+        imports = [
+            "/etc/cri/conf.d/cri.toml",
+        ]
+    - path: /etc/cri/conf.d/20-customization.part
+      op: overwrite
+      permissions: 0o644
+      content: |
+        [plugins."io.containerd.snapshotter.v1.blockfile"]
+          root_path = "/var/mnt/blockfile-scratch/containerd-blockfile"
+          scratch_file = "/var/blockfile-scratch/scratch"
+          fs_type = "ext4"
+          mount_options = []
+          recreate_scratch = false
+
+        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc"]
+          snapshotter = "blockfile"
+          runtime_type = "io.containerd.kata-fc.v2"
+          runtime_path = "/usr/local/bin/containerd-shim-kata-v2"
+          privileged_without_host_devices = true
+          pod_annotations = ["io.katacontainers.*"]
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc".options]
+            ConfigPath = "/usr/local/share/kata-containers/configuration.toml"
+
+        [plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc"]
+          snapshotter = "blockfile"
+          runtime_type = "io.containerd.kata-fc.v2"
+          runtime_path = "/usr/local/bin/containerd-shim-kata-v2"
+          privileged_without_host_devices = true
+          pod_annotations = ["io.katacontainers.*"]
+          [plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc".options]
+            ConfigPath = "/usr/local/share/kata-containers/configuration.toml"
 ```
 
 ## 4) Firecracker config file (optional overrides)
 
-Talos ships a default `configuration-fc.toml` under:
+Talos ships a default Kata configuration under:
 
 ```
-/opt/kata/share/defaults/kata-containers/configuration-fc.toml
+/usr/local/share/kata-containers/configuration.toml
 ```
 
-If you need custom overrides, place a new config under `/var` and point
-`ConfigPath` to it. Avoid `shared_fs` for Firecracker; it needs block devices.
+If you need Firecracker-specific overrides, place a new config under `/var` and
+point `ConfigPath` to it. Avoid `shared_fs` for Firecracker; it needs block
+devices.
 
 ## 5) RuntimeClass
 

@@ -1,3 +1,4 @@
 apiVersion: v1alpha1
 kind: HostnameConfig
 hostname: ryzen
+auto: off

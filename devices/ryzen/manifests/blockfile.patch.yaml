@@ -6,3 +6,4 @@ provisioning:
     match: disk.transport == 'nvme'
   minSize: 500GB
   maxSize: 500GB
+  grow: false
