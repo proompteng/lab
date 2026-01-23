@@ -114,7 +114,7 @@ exists, or containerd will fail to load CRI and the node will never become Ready
 1) Bring up the cluster without the kata/firecracker patch and register the cluster
 in Argo CD so the `kata-containers` app can create the scratch file.
 
-2) Verify `/var/blockfile-scratch/scratch` exists on the node.
+2) Verify `/var/mnt/blockfile-scratch/containerd-blockfile/scratch` exists on the node.
 
 3) Re-apply the config with the kata/firecracker patch (reboot required):
 

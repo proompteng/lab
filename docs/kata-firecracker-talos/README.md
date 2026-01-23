@@ -93,7 +93,7 @@ spec:
           apt-get update
           apt-get install -y --no-install-recommends e2fsprogs util-linux
 
-          ROOT=/var/blockfile-scratch
+          ROOT=/var/mnt/blockfile-scratch/containerd-blockfile
           SCRATCH=${ROOT}/scratch
           SIZE=10G
 
@@ -141,7 +141,7 @@ machine:
       content: |
         [plugins."io.containerd.snapshotter.v1.blockfile"]
           root_path = "/var/mnt/blockfile-scratch/containerd-blockfile"
-          scratch_file = "/var/blockfile-scratch/scratch"
+          scratch_file = "/var/mnt/blockfile-scratch/containerd-blockfile/scratch"
           fs_type = "ext4"
           mount_options = []
           recreate_scratch = false
