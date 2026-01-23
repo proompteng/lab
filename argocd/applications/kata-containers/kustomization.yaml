@@ -3,4 +3,5 @@ kind: Kustomization
 namespace: kube-system
 resources:
   - blockfile-scratch-daemonset.yaml
+  - pause-image-reset-job.yaml
   - runtimeclass-kata-fc.yaml

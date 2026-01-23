@@ -169,6 +169,10 @@ Add this to `/etc/cri/conf.d/20-customization.part` (via `machine.files`):
   mount_options = []
   recreate_scratch = false
 
+[plugins."io.containerd.cri.v1.images"]
+  discard_unpacked_layers = false
+  use_local_image_pull = false
+
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc"]
   snapshotter = "blockfile"
   runtime_type = "io.containerd.kata-fc.v2"
@@ -256,7 +260,7 @@ io.containerd.snapshotter.v1              blockfile                linux/amd64  
 ## Step 5: Fix pause image if needed
 
 If you hit `content digest ... not found` for `registry.k8s.io/pause:3.10`,
-re-pull it using host certs:
+delete the broken content digest and re-pull it using host certs:
 
 ```yaml
 apiVersion: v1
@@ -285,21 +289,18 @@ spec:
           apt-get update
           apt-get install -y --no-install-recommends containerd
           ctr -a /host/run/containerd/containerd.sock -n k8s.io images rm registry.k8s.io/pause:3.10 || true
+          ctr -a /host/run/containerd/containerd.sock -n k8s.io content rm sha256:61d9e957431bdf7a34f31cbcb23fe7966ab9da5c1df35138b1e752af15b69669 || true
           ctr -a /host/run/containerd/containerd.sock -n k8s.io images pull registry.k8s.io/pause:3.10
+          ctr -a /host/run/containerd/containerd.sock -n k8s.io images rm docker.io/library/ubuntu:24.04 || true
+          ctr -a /host/run/containerd/containerd.sock -n k8s.io content rm sha256:a3629ac5b9f4680dc2032439ff2354e73b06aecc2e68f0035a2d7c001c8b4114 || true
+          ctr -a /host/run/containerd/containerd.sock -n k8s.io images pull docker.io/library/ubuntu:24.04
       volumeMounts:
         - name: host-run
           mountPath: /host/run
-        - name: host-certs
-          mountPath: /etc/ssl/certs
-          readOnly: true
   volumes:
     - name: host-run
       hostPath:
         path: /run
-        type: Directory
-    - name: host-certs
-      hostPath:
-        path: /etc/ssl/certs
         type: Directory
 ```
 

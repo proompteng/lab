@@ -148,6 +148,20 @@ talosctl image pull -n 192.168.1.194 -e 192.168.1.194 --namespace cri \
 kubectl --context ryzen -n workers delete pod workers-fc --ignore-not-found=true
 ```
 
+### 2.6.2 Reset the pause image cache (content digest not found)
+
+If pod sandbox creation still fails with `content digest ... not found`, use the
+one-shot Job in the kata-containers app to delete the broken content digests and
+re-pull the pause + ubuntu images with `ctr`.
+
+Manifest: `argocd/applications/kata-containers/pause-image-reset-job.yaml`
+
+Apply with Argo CD (manual sync):
+
+```bash
+argocd app sync argocd/kata-containers-ryzen
+```
+
 ## 2.7 Install kata + glibc extensions (Image Factory)
 
 Kata requires Talos system extensions. The current Ryzen image is pinned in:
