@@ -89,6 +89,9 @@ Generate a local patch (gitignored) with:
 bun run packages/scripts/src/tailscale/generate-ryzen-extension-service.ts
 ```
 
+To ensure Talos resolves tailnet hostnames (including `registry.ide-newton.ts.net`) add
+`devices/ryzen/manifests/tailscale-dns.patch.yaml` when applying config.
+
 ### Auth key guidance
 Use a **tagged, pre-approved** auth key for servers to avoid interactive approvals and to scope permissions via ACLs. Tailscale’s auth key docs explain key types, tags, and expiry behavior. The key prefix doc clarifies the `tskey-auth` prefix for auth keys.
 - https://tailscale.com/kb/1085/auth-keys
@@ -108,21 +111,16 @@ bun run packages/scripts/src/tailscale/generate-ryzen-extension-service.ts
 This is the exact workflow used to enable node-level Tailscale on the Ryzen Talos node.
 
 #### 1) Build a new Image Factory schematic (add tailscale)
-Keep existing extensions and add `siderolabs/tailscale`:
+Keep existing extensions and add `siderolabs/tailscale` (tracked in the repo):
 
 ```yaml
-customization:
-  systemExtensions:
-    officialExtensions:
-      - siderolabs/kata-containers
-      - siderolabs/glibc
-      - siderolabs/tailscale
+devices/ryzen/manifests/ryzen-tailscale-schematic.yaml
 ```
 
 Create the schematic and capture its ID:
 
 ```bash
-curl -sS -X POST --data-binary @/tmp/ryzen-tailscale-schematic.yaml https://factory.talos.dev/schematics | jq -r .id
+curl -sS -X POST --data-binary @devices/ryzen/manifests/ryzen-tailscale-schematic.yaml https://factory.talos.dev/schematics | jq -r .id
 ```
 
 #### 2) Patch machine config (image + ExtensionServiceConfig)
@@ -284,6 +282,8 @@ Sources:
 - User volume config: `devices/ryzen/manifests/blockfile.patch.yaml`
 - Containerd blockfile config: `devices/ryzen/manifests/kata-firecracker.patch.yaml`
 - Scratch creation DaemonSet: `argocd/applications/kata-containers/blockfile-scratch-daemonset.yaml`
+  - The `hold` container intentionally does not mount the host path so Talos can
+    cleanly unmount the user volume during reconciles.
 
 ### Runtime paths (Talos kata-containers extension)
 The official `siderolabs/kata-containers` extension installs binaries under

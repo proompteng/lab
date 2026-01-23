@@ -1,0 +1,6 @@
+customization:
+  systemExtensions:
+    officialExtensions:
+      - siderolabs/kata-containers
+      - siderolabs/glibc
+      - siderolabs/tailscale

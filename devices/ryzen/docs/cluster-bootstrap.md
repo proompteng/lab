@@ -15,8 +15,10 @@ Node-level patches:
 - `devices/ryzen/manifests/node-labels.patch.yaml` (labels for kata + kubevirt scheduling)
 - `devices/ryzen/manifests/tailscale-extension-service.template.yaml` (Tailscale extension service template)
 - `devices/ryzen/manifests/tailscale-extension-service.yaml` (generated from template; gitignored)
+- `devices/ryzen/manifests/tailscale-dns.patch.yaml` (prefer MagicDNS for tailnet hostnames)
+- `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml` (Image Factory schematic for tailscale extension)
 - `devices/ryzen/manifests/amdgpu-extensions.patch.yaml` (AMD GPU extensions; fill in versions)
-- `devices/ryzen/manifests/installer-image.patch.yaml` (Talos Image Factory installer with kata + glibc)
+- `devices/ryzen/manifests/installer-image.patch.yaml` (Talos Image Factory installer with kata + glibc + tailscale)
 - `devices/ryzen/manifests/kata-firecracker.patch.yaml` (enable blockfile + kata-fc runtime **after** scratch file exists)
 - `devices/ryzen/manifests/kubelet-manifests.patch.yaml` (keep /etc/kubernetes writable for kubelet bootstrap)
 
@@ -79,6 +81,7 @@ Firecracker blockfile scratch uses a dedicated 500GB user volume:
 - `devices/ryzen/manifests/hostname.patch.yaml`
 - `devices/ryzen/manifests/node-labels.patch.yaml`
 - `devices/ryzen/manifests/tailscale-extension-service.yaml` (generate via `bun run packages/scripts/src/tailscale/generate-ryzen-extension-service.ts`)
+- `devices/ryzen/manifests/tailscale-dns.patch.yaml`
 - `devices/ryzen/manifests/amdgpu-extensions.patch.yaml`
 - `devices/ryzen/manifests/installer-image.patch.yaml`
 - `devices/ryzen/manifests/kata-firecracker.patch.yaml` (apply **after** scratch file exists; reboot required)
