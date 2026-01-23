@@ -27,7 +27,7 @@ machine:
       content: |
         [plugins."io.containerd.snapshotter.v1.blockfile"]
           root_path = "/var/mnt/blockfile-scratch/containerd-blockfile"
-          scratch_file = "/var/blockfile-scratch/scratch"
+          scratch_file = "/var/mnt/blockfile-scratch/containerd-blockfile/scratch"
           fs_type = "ext4"
           mount_options = []
           recreate_scratch = false

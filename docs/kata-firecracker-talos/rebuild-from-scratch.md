@@ -93,7 +93,7 @@ spec:
           apt-get update
           apt-get install -y --no-install-recommends e2fsprogs util-linux
 
-          ROOT=/host/var/blockfile-scratch
+          ROOT=/host/var/mnt/blockfile-scratch/containerd-blockfile
           SCRATCH=${ROOT}/scratch
           SIZE=10G
 
@@ -112,11 +112,11 @@ spec:
           dumpe2fs -h ${SCRATCH} | head -n 10
       volumeMounts:
         - name: host-blockfile
-              mountPath: /host/var/blockfile-scratch
+              mountPath: /host/var/mnt/blockfile-scratch
   volumes:
     - name: host-blockfile
       hostPath:
-        path: /var/blockfile-scratch
+        path: /var/mnt/blockfile-scratch
         type: DirectoryOrCreate
 ```
 
@@ -164,7 +164,7 @@ Add this to `/etc/cri/conf.d/20-customization.part` (via `machine.files`):
 ```toml
 [plugins."io.containerd.snapshotter.v1.blockfile"]
   root_path = "/var/mnt/blockfile-scratch/containerd-blockfile"
-  scratch_file = "/var/blockfile-scratch/scratch"
+  scratch_file = "/var/mnt/blockfile-scratch/containerd-blockfile/scratch"
   fs_type = "ext4"
   mount_options = []
   recreate_scratch = false
