@@ -14,6 +14,8 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 | Script | Description | Required CLIs | Example |
 | --- | --- | --- | --- |
 | `src/codex/notify-to-loki.ts` | Sends Codex notify payloads (including full assistant text) to Loki via the push API. | `bun` | `bun run packages/scripts/src/codex/notify-to-loki.ts --stdin` |
+| `src/codex/copy-auth-to-kubevirt-vm.ts` | Copies local Codex auth.json into a KubeVirt VM via virtctl + SSH. | `virtctl`, `ssh` | `bun run packages/scripts/src/codex/copy-auth-to-kubevirt-vm.ts` |
+| `src/workers/build-image.ts` | Builds and pushes the workers codex tools image. | `docker` | `bun run packages/scripts/src/workers/build-image.ts [tag]` |
 | `src/bonjour/build-image.ts` | Builds and pushes the Bonjour Docker image. | `docker` | `bun run packages/scripts/src/bonjour/build-image.ts [tag]` |
 | `src/bonjour/deploy-service.ts` | Builds the Bonjour image, updates the Argo CD ApplicationSet entry, and applies the updated manifest. | `docker`, `kubectl` | `bun run packages/scripts/src/bonjour/deploy-service.ts` |
 | `src/jangar/build-image.ts` | Builds and pushes the `lab/jangar` Bun worker image using the jangar Dockerfile. | `docker` | `bun run packages/scripts/src/jangar/build-image.ts` |

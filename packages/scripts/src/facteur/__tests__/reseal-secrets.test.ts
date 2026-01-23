@@ -23,6 +23,6 @@ describe('facteur reseal-secrets helpers', () => {
     }) as typeof Bun.spawn
 
     const { __private } = await import('../reseal-secrets')
-    await expect(__private.capture(['echo', 'captured'])).resolves.toBe('captured')
+    return expect(__private.capture(['echo', 'captured'])).resolves.toBe('captured')
   })
 })

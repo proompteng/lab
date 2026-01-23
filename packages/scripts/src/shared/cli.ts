@@ -1,11 +1,26 @@
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const fatal = (message: string, error?: unknown): never => {
+const formatUnknownError = (error: unknown) => {
   if (error instanceof Error) {
-    console.error(`${message}\n${error.message}`)
-  } else if (error) {
-    console.error(`${message}\n${String(error)}`)
+    return error.message
+  }
+  if (typeof error === 'string') {
+    return error
+  }
+  if (error === undefined || error === null) {
+    return 'Unknown error'
+  }
+  try {
+    return JSON.stringify(error) ?? 'Unknown error'
+  } catch {
+    return 'Unknown error'
+  }
+}
+
+export const fatal = (message: string, error?: unknown): never => {
+  if (error !== undefined) {
+    console.error(`${message}\n${formatUnknownError(error)}`)
   } else {
     console.error(message)
   }

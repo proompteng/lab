@@ -24,7 +24,7 @@ export const main = async () => {
   const digest = repoDigest.includes('@') ? repoDigest.split('@')[1] : repoDigest
   console.log(`Image digest: ${repoDigest}`)
 
-  await updateManifests({ tag, digest, rolloutTimestamp: new Date().toISOString() })
+  updateManifests({ tag, digest, rolloutTimestamp: new Date().toISOString() })
 
   const kustomizePath = resolve(repoRoot, process.env.REESTR_KUSTOMIZE_PATH ?? 'argocd/applications/registry')
   await run('kubectl', ['apply', '-k', kustomizePath])

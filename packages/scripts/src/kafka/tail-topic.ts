@@ -82,16 +82,40 @@ const parseArgs = (argv: string[]) => {
   return out
 }
 
+const formatArgValue = (value: unknown): string => {
+  if (value === undefined) return 'undefined'
+  if (value === null) return 'null'
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') return String(value)
+  try {
+    return JSON.stringify(value) ?? 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
 const parseIntArg = (value: unknown, fallback: number, name: string) => {
   if (value === undefined) return fallback
   const parsed = Number(value)
   if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
-    fatal(`Invalid --${name}: ${String(value)}`)
+    fatal(`Invalid --${name}: ${formatArgValue(value)}`)
   }
   return parsed
 }
 
 const decodeSecretData = (encoded: string) => Buffer.from(encoded, 'base64').toString('utf8')
+
+const formatValue = (value: unknown): string => {
+  if (value === null || value === undefined) return '?'
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'bigint' || typeof value === 'boolean') return String(value)
+  if (value instanceof Date) return value.toISOString()
+  try {
+    return JSON.stringify(value) ?? '?'
+  } catch {
+    return '?'
+  }
+}
 
 const execCapture = async (
   command: string,
@@ -105,9 +129,9 @@ const execCapture = async (
     env: options.env ? { ...process.env, ...options.env } : process.env,
   })
 
-  if (options.stdin) {
-    subprocess.stdin.write(options.stdin)
-    subprocess.stdin.end()
+  if (options.stdin !== undefined) {
+    void subprocess.stdin.write(options.stdin)
+    void subprocess.stdin.end()
   }
 
   const stdout = await new Response(subprocess.stdout).text()
@@ -153,30 +177,30 @@ const toSummary = (line: string) => {
     const eventTs = env.eventTs ?? '?'
 
     if (channel === 'trades') {
-      const price = payload.p
-      const size = payload.s
-      return `${eventTs} ${symbol} trade p=${price ?? '?'} s=${size ?? '?'}`
+      const price = formatValue(payload.p)
+      const size = formatValue(payload.s)
+      return `${eventTs} ${symbol} trade p=${price} s=${size}`
     }
 
     if (channel === 'quotes') {
-      const bid = payload.bp
-      const ask = payload.ap
-      return `${eventTs} ${symbol} quote bp=${bid ?? '?'} ap=${ask ?? '?'}`
+      const bid = formatValue(payload.bp)
+      const ask = formatValue(payload.ap)
+      return `${eventTs} ${symbol} quote bp=${bid} ap=${ask}`
     }
 
     if (channel === 'bars' || channel === 'updatedBars') {
-      const o = payload.o
-      const h = payload.h
-      const l = payload.l
-      const c = payload.c
-      const v = payload.v
-      return `${eventTs} ${symbol} ${channel} o=${o ?? '?'} h=${h ?? '?'} l=${l ?? '?'} c=${c ?? '?'} v=${v ?? '?'}`
+      const o = formatValue(payload.o)
+      const h = formatValue(payload.h)
+      const l = formatValue(payload.l)
+      const c = formatValue(payload.c)
+      const v = formatValue(payload.v)
+      return `${eventTs} ${symbol} ${channel} o=${o} h=${h} l=${l} c=${c} v=${v}`
     }
 
     if (channel === 'status') {
-      const code = payload.statusCode ?? payload.sc
-      const msg = payload.statusMessage ?? payload.sm
-      return `${eventTs} ${symbol} status code=${code ?? '?'} msg=${msg ?? '?'}`
+      const code = formatValue(payload.statusCode ?? payload.sc)
+      const msg = formatValue(payload.statusMessage ?? payload.sm)
+      return `${eventTs} ${symbol} status code=${code} msg=${msg}`
     }
 
     return `${eventTs} ${symbol} ${channel} (unhandled payload)`

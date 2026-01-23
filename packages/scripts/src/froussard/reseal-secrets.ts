@@ -13,9 +13,9 @@ const capture = async (cmd: string[], input?: string): Promise<string> => {
   })
 
   if (input) {
-    proc.stdin?.write(input)
+    void proc.stdin?.write(input)
   }
-  proc.stdin?.end()
+  void proc.stdin?.end()
 
   const [exitCode, stdout, stderr] = await Promise.all([
     proc.exited,

@@ -28,7 +28,7 @@ const capture = async (cmd: string[], env?: Record<string, string | undefined>):
     env: buildEnv(env),
   })
 
-  subprocess.stdin?.end()
+  void subprocess.stdin?.end()
 
   const [exitCode, stdout, stderr] = await Promise.all([
     subprocess.exited,

@@ -171,7 +171,7 @@ const parseArgs = (args: string[]): PruneOptions => {
 const encodePath = (value: string) => value.split('/').map(encodeURIComponent).join('/')
 
 const mapLimit = async <T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>) => {
-  const results: R[] = new Array(items.length)
+  const results = Array.from({ length: items.length }) as R[]
   let cursor = 0
 
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {

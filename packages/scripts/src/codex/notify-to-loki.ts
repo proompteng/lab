@@ -83,7 +83,7 @@ export const buildStreams = (payload: NotifyPayload, options: BuildStreamsOption
     level: 'INFO',
     hostname,
     source: 'codex-notify',
-    ...(extraLabels ?? {}),
+    ...extraLabels,
   }
 
   const values: [string, string][] = [[nowNs.toString(), JSON.stringify(event)]]

@@ -8,7 +8,7 @@ spec:
   runtimeClassName: kata-fc
   containers:
     - name: workers-fc
-      image: ubuntu:24.04
+      image: registry.ide-newton.ts.net/lab/workers:latest
       command:
         - bash
         - -lc

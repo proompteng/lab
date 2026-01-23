@@ -11,7 +11,5 @@ describe('shared cli utilities', () => {
     expect(repoRoot).toBe(process.cwd())
   })
 
-  it('run executes commands successfully', async () => {
-    await expect(run('bash', ['-lc', 'exit 0'])).resolves.toBeUndefined()
-  })
+  it('run executes commands successfully', () => expect(run('bash', ['-lc', 'exit 0'])).resolves.toBeUndefined())
 })

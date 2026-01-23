@@ -22,7 +22,7 @@ export const main = async () => {
   const repoDigest = inspectImageDigest(image)
   console.log(`Image digest: ${repoDigest}`)
 
-  await updateManifests({ tag, rolloutTimestamp: new Date().toISOString() })
+  updateManifests({ tag, rolloutTimestamp: new Date().toISOString() })
 
   const kustomizePath = resolve(repoRoot, process.env.BUMBA_KUSTOMIZE_PATH ?? 'argocd/applications/bumba')
   await run('kubectl', ['apply', '-k', kustomizePath])
