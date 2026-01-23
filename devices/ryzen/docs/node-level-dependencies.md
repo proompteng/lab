@@ -75,12 +75,19 @@ apiVersion: v1alpha1
 kind: ExtensionServiceConfig
 name: tailscale
 environment:
-  - TS_AUTHKEY=tskey-auth-REDACTED
+  - TS_AUTHKEY=${TAILSCALE_AUTHKEY}
   - TS_HOSTNAME=ryzen
   - TS_ROUTES=10.96.0.0/12,10.244.0.0/16
 ```
 
 > The routes above are examples; match your cluster CIDRs.
+
+Template source-of-truth: `devices/ryzen/manifests/tailscale-extension-service.template.yaml`.
+Generate a local patch (gitignored) with:
+
+```bash
+bun run packages/scripts/src/tailscale/generate-ryzen-extension-service.ts
+```
 
 ### Auth key guidance
 Use a **tagged, pre-approved** auth key for servers to avoid interactive approvals and to scope permissions via ACLs. Tailscale’s auth key docs explain key types, tags, and expiry behavior. The key prefix doc clarifies the `tskey-auth` prefix for auth keys.
@@ -90,6 +97,12 @@ Use a **tagged, pre-approved** auth key for servers to avoid interactive approva
 ### Apply config to Talos
 ExtensionServiceConfig documents are applied to Talos machine config (for example via `talosctl patch mc`). DeepWiki’s extension overview shows applying the config via patch and verifying it with `talosctl`.
 - https://deepwiki.com/siderolabs/extensions/3.4-networking-extensions
+
+For the Ryzen node, generate the patch file first:
+
+```bash
+bun run packages/scripts/src/tailscale/generate-ryzen-extension-service.ts
+```
 
 ### Ryzen reproducible setup (Talos v1.12.1)
 This is the exact workflow used to enable node-level Tailscale on the Ryzen Talos node.

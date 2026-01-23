@@ -42,6 +42,7 @@ devices/ryzen/controlplane.yaml
 devices/ryzen/worker.yaml
 devices/ryzen/talosconfig
 devices/ryzen/node-machineconfig.yaml
+devices/ryzen/manifests/tailscale-extension-service.yaml
 **/charts/*.tgz
 **/generated/*
 **/_generated/

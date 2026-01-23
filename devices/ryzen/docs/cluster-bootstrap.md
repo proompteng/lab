@@ -13,7 +13,8 @@ Node-level patches:
 - `devices/ryzen/manifests/allow-scheduling-controlplane.patch.yaml` (allow workloads on single-node controlplane)
 - `devices/ryzen/manifests/hostname.patch.yaml` (set Talos hostname to `ryzen`, optional if the generated config already sets it)
 - `devices/ryzen/manifests/node-labels.patch.yaml` (labels for kata + kubevirt scheduling)
-- `devices/ryzen/manifests/tailscale-extension-service.yaml` (Tailscale extension service config)
+- `devices/ryzen/manifests/tailscale-extension-service.template.yaml` (Tailscale extension service template)
+- `devices/ryzen/manifests/tailscale-extension-service.yaml` (generated from template; gitignored)
 - `devices/ryzen/manifests/amdgpu-extensions.patch.yaml` (AMD GPU extensions; fill in versions)
 - `devices/ryzen/manifests/installer-image.patch.yaml` (Talos Image Factory installer with kata + glibc)
 - `devices/ryzen/manifests/kata-firecracker.patch.yaml` (enable blockfile + kata-fc runtime **after** scratch file exists)
@@ -77,10 +78,26 @@ Firecracker blockfile scratch uses a dedicated 500GB user volume:
 - `devices/ryzen/manifests/allow-scheduling-controlplane.patch.yaml` (single-node)
 - `devices/ryzen/manifests/hostname.patch.yaml`
 - `devices/ryzen/manifests/node-labels.patch.yaml`
-- `devices/ryzen/manifests/tailscale-extension-service.yaml`
+- `devices/ryzen/manifests/tailscale-extension-service.yaml` (generate via `bun run packages/scripts/src/tailscale/generate-ryzen-extension-service.ts`)
 - `devices/ryzen/manifests/amdgpu-extensions.patch.yaml`
 - `devices/ryzen/manifests/installer-image.patch.yaml`
 - `devices/ryzen/manifests/kata-firecracker.patch.yaml` (apply **after** scratch file exists; reboot required)
+
+### 2.4.1 Generate the Tailscale extension service patch
+
+The Tailscale auth key is stored in 1Password and should not be committed. Generate
+the patch from the template (output is gitignored):
+
+```bash
+bun run packages/scripts/src/tailscale/generate-ryzen-extension-service.ts
+```
+
+To override the 1Password path:
+
+```bash
+RYZEN_TAILSCALE_AUTHKEY_OP_PATH='op://infra/tailscale auth key/authkey' \\
+  bun run packages/scripts/src/tailscale/generate-ryzen-extension-service.ts
+```
 
 ### 2.5 Apply config with patches
 
