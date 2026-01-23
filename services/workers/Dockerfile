@@ -17,10 +17,10 @@ RUN set -eux; \
     curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh" | bash; \
     bash -lc "source ${NVM_DIR}/nvm.sh \
       && nvm install ${NODE_VERSION} \
-      && nvm alias default ${NODE_VERSION} \
-      && ln -sf \"$(command -v node)\" /usr/local/bin/node \
-      && ln -sf \"$(command -v npm)\" /usr/local/bin/npm \
-      && ln -sf \"$(command -v npx)\" /usr/local/bin/npx"; \
+      && nvm alias default ${NODE_VERSION}"; \
+    ln -sf "/root/.nvm/versions/node/v${NODE_VERSION}/bin/node" /usr/local/bin/node; \
+    ln -sf "/root/.nvm/versions/node/v${NODE_VERSION}/bin/npm" /usr/local/bin/npm; \
+    ln -sf "/root/.nvm/versions/node/v${NODE_VERSION}/bin/npx" /usr/local/bin/npx; \
     bun add -g @openai/codex; \
     ln -sf /root/.bun/bin/bun /usr/local/bin/bun; \
     ln -sf /root/.bun/bin/codex /usr/local/bin/codex
