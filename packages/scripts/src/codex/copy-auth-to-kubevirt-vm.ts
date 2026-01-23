@@ -171,8 +171,8 @@ const main = async () => {
     stdout: 'inherit',
     stderr: 'inherit',
   })
-  subprocess.stdin?.write(authBytes)
-  subprocess.stdin?.end()
+  void subprocess.stdin?.write(authBytes)
+  void subprocess.stdin?.end()
 
   const exitCode = await subprocess.exited
   if (exitCode !== 0) {

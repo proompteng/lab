@@ -147,7 +147,7 @@ const ensureWorktreeCommit = async (repoRoot: string, worktreePath: string, comm
 
   try {
     await resetWorktree(worktreePath, commit)
-  } catch (_error) {
+  } catch {
     await fetchRepo(repoRoot)
     await resetWorktree(worktreePath, commit)
   }

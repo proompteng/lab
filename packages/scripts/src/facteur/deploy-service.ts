@@ -21,7 +21,7 @@ export const main = async () => {
   const repoDigest = inspectImageDigest(image)
   console.log(`Image digest: ${repoDigest}`)
 
-  await updateManifests({ tag, rolloutTimestamp: new Date().toISOString() })
+  updateManifests({ tag, rolloutTimestamp: new Date().toISOString() })
 
   const overlay = resolve(
     repoRoot,
