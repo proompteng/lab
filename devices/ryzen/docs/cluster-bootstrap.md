@@ -131,6 +131,23 @@ talosctl apply-config -n 192.168.1.194 -e 192.168.1.194 \
   --mode=reboot
 ```
 
+### 2.6.1 Pin the pause image (containerd v2)
+
+Talos uses containerd v2 with the CRI v1 image configuration. Pin the pause
+image so CRI pulls it early and keeps it stable during snapshotter changes.
+The pin lives in `devices/ryzen/manifests/kata-firecracker.patch.yaml` under
+`io.containerd.cri.v1.images.pinned_images`.
+
+If you hit `content digest ... not found` errors for `pause:3.10`, re-pull it
+in the **CRI** namespace, then delete the failing pod:
+
+```bash
+talosctl image pull -n 192.168.1.194 -e 192.168.1.194 --namespace cri \
+  registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+
+kubectl --context ryzen -n workers delete pod workers-fc --ignore-not-found=true
+```
+
 ## 2.7 Install kata + glibc extensions (Image Factory)
 
 Kata requires Talos system extensions. The current Ryzen image is pinned in:

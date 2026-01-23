@@ -32,6 +32,9 @@ machine:
           mount_options = []
           recreate_scratch = false
 
+        [plugins."io.containerd.cri.v1.images".pinned_images]
+          sandbox = "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a"
+
         [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc"]
           snapshotter = "blockfile"
           runtime_type = "io.containerd.kata-fc.v2"
