@@ -9,12 +9,14 @@ plus the existing Talos/KubeVirt docs in this repo.
 Node-level patches:
 - `devices/ryzen/manifests/ephemeral-volume.patch.yaml` (limit system disk to 100GiB)
 - `devices/ryzen/manifests/blockfile.patch.yaml` (user volume for blockfile scratch, 500GB)
-- `devices/ryzen/manifests/local-path.patch.yaml` (user volume for local-path, fixed 1400GB)
+- `devices/ryzen/manifests/local-path.patch.yaml` (user volume for local-path, fixed 1435GB)
 - `devices/ryzen/manifests/allow-scheduling-controlplane.patch.yaml` (allow workloads on single-node controlplane)
 - `devices/ryzen/manifests/hostname.patch.yaml` (set Talos hostname to `ryzen`, optional if the generated config already sets it)
+- `devices/ryzen/manifests/node-labels.patch.yaml` (labels for kata + kubevirt scheduling)
 - `devices/ryzen/manifests/tailscale-extension-service.yaml` (Tailscale extension service config)
 - `devices/ryzen/manifests/amdgpu-extensions.patch.yaml` (AMD GPU extensions; fill in versions)
-- `devices/ryzen/manifests/kata-firecracker.patch.yaml` (enable blockfile + kata-fc runtime)
+- `devices/ryzen/manifests/installer-image.patch.yaml` (Talos Image Factory installer with kata + glibc)
+- `devices/ryzen/manifests/kata-firecracker.patch.yaml` (enable blockfile + kata-fc runtime **after** scratch file exists)
 - `devices/ryzen/manifests/kubelet-manifests.patch.yaml` (keep /etc/kubernetes writable for kubelet bootstrap)
 
 Related docs:
@@ -57,9 +59,10 @@ The EPHEMERAL volume is capped at 100GiB with this patch:
 
 ### 2.2 User volume for local-path
 
-The local-path provisioner uses a fixed 1.4TB (1400GB) user volume on the NVMe disk,
+The local-path provisioner uses a fixed 1.435TB (1435GB) user volume on the NVMe disk,
 leaving space for the 500GB blockfile volume and the 100GiB system/EPHEMERAL partition
-plus GPT/boot overhead:
+plus GPT/boot overhead. This size is computed from the current disk size
+(`2048408248320` bytes) and leaves ~5GB of headroom for GPT/EFI/META/STATE:
 
 - `devices/ryzen/manifests/local-path.patch.yaml`
 
@@ -73,9 +76,11 @@ Firecracker blockfile scratch uses a dedicated 500GB user volume:
 
 - `devices/ryzen/manifests/allow-scheduling-controlplane.patch.yaml` (single-node)
 - `devices/ryzen/manifests/hostname.patch.yaml`
+- `devices/ryzen/manifests/node-labels.patch.yaml`
 - `devices/ryzen/manifests/tailscale-extension-service.yaml`
 - `devices/ryzen/manifests/amdgpu-extensions.patch.yaml`
-- `devices/ryzen/manifests/kata-firecracker.patch.yaml` (reboot required)
+- `devices/ryzen/manifests/installer-image.patch.yaml`
+- `devices/ryzen/manifests/kata-firecracker.patch.yaml` (apply **after** scratch file exists; reboot required)
 
 ### 2.5 Apply config with patches
 
@@ -94,10 +99,54 @@ talosctl apply-config --insecure -n 192.168.1.194 -e 192.168.1.194 \
 # Optional patches you can add at install time:
 #   --config-patch @devices/ryzen/manifests/allow-scheduling-controlplane.patch.yaml
 #   --config-patch @devices/ryzen/manifests/hostname.patch.yaml
+#   --config-patch @devices/ryzen/manifests/node-labels.patch.yaml
 #   --config-patch @devices/ryzen/manifests/tailscale-extension-service.yaml
 #   --config-patch @devices/ryzen/manifests/amdgpu-extensions.patch.yaml
-#   --config-patch @devices/ryzen/manifests/kata-firecracker.patch.yaml
+#   --config-patch @devices/ryzen/manifests/installer-image.patch.yaml
 #   --config-patch @devices/ryzen/manifests/kubelet-manifests.patch.yaml
+```
+
+## 2.6 Enable Kata + Firecracker (after scratch file exists)
+
+Do **not** enable `kata-firecracker.patch.yaml` until the blockfile scratch file
+exists, or containerd will fail to load CRI and the node will never become Ready.
+
+1) Bring up the cluster without the kata/firecracker patch and register the cluster
+in Argo CD so the `kata-containers` app can create the scratch file.
+
+2) Verify `/var/blockfile-scratch/scratch` exists on the node.
+
+3) Re-apply the config with the kata/firecracker patch (reboot required):
+
+```bash
+talosctl apply-config -n 192.168.1.194 -e 192.168.1.194 \
+  -f devices/ryzen/controlplane.yaml \
+  --config-patch @devices/ryzen/manifests/ephemeral-volume.patch.yaml \
+  --config-patch @devices/ryzen/manifests/blockfile.patch.yaml \
+  --config-patch @devices/ryzen/manifests/local-path.patch.yaml \
+  --config-patch @devices/ryzen/manifests/allow-scheduling-controlplane.patch.yaml \
+  --config-patch @devices/ryzen/manifests/hostname.patch.yaml \
+  --config-patch @devices/ryzen/manifests/kata-firecracker.patch.yaml \
+  --config-patch @devices/ryzen/manifests/kubelet-manifests.patch.yaml \
+  --mode=reboot
+```
+
+## 2.7 Install kata + glibc extensions (Image Factory)
+
+Kata requires Talos system extensions. The current Ryzen image is pinned in:
+- `devices/ryzen/manifests/installer-image.patch.yaml`
+
+Apply the patch (no reboot), then upgrade to activate extensions:
+
+```bash
+talosctl patch mc -n 192.168.1.194 -e 192.168.1.194 \
+  --patch @devices/ryzen/manifests/installer-image.patch.yaml \
+  --mode=no-reboot
+
+talosctl upgrade -n 192.168.1.194 -e 192.168.1.194 \
+  --image factory.talos.dev/metal-installer/34373fc18f4c01525d9421119e41b72fc83885c640f798c0ee723a38decd6e9b:v1.12.1
+
+talosctl get extensions -n 192.168.1.194
 ```
 
 ## 3) Bootstrap the cluster
@@ -112,6 +161,20 @@ Wait for Kubernetes API to become available, then merge kubeconfig.
 
 ```bash
 talosctl kubeconfig -n 192.168.1.194 -e 192.168.1.194 --force --context ryzen ~/.kube/config
+```
+
+### 3.1 Kubeconfig context name (ensure it is `ryzen`)
+
+The Talos-generated kubeconfig can create the context as `admin@ryzen`.
+We want the context name to be exactly `ryzen`.
+
+```bash
+# If Talos created admin@ryzen, rename it to ryzen
+kubectl config rename-context admin@ryzen ryzen || true
+
+# Ensure the active context is ryzen
+kubectl config use-context ryzen
+kubectl config get-contexts
 ```
 
 Capture the live Talos config for audit/repro:

@@ -12,11 +12,11 @@ Firecracker needs a **block-backed rootfs**. On Talos, the fastest working path
 is the **containerd blockfile snapshotter** (not devmapper). Talos ships
 `blockfile`, but disables it by default, so we must:
 
-1. Remove `io.containerd.snapshotter.v1.blockfile` from `disabled_plugins` in
+1. Create the scratch ext4 image under `/var`.
+2. Remove `io.containerd.snapshotter.v1.blockfile` from `disabled_plugins` in
    `/etc/cri/containerd.toml`.
-2. Configure blockfile snapshotter + `kata-fc` runtime in
+3. Configure blockfile snapshotter + `kata-fc` runtime in
    `/etc/cri/conf.d/20-customization.part`.
-3. Create the scratch ext4 image under `/var`.
 4. Reboot the node so containerd reloads config.
 5. Run a test pod and verify Firecracker processes exist.
 
@@ -47,83 +47,13 @@ customization:
 Upgrade node with the resulting installer image (extensions only load at
 install/upgrade time).
 
-## Step 2: Update Talos machine config
+Note: the stock kata extension ships `containerd-shim-kata-v2` and
+`configuration.toml` under `/usr/local`, but **does not** bundle the Firecracker
+VMM. To run Firecracker, include a custom extension that adds
+`/usr/local/bin/firecracker` and a Firecracker config under `/var`, then update
+`ConfigPath`.
 
-### 2.1 Overwrite `/etc/cri/containerd.toml`
-
-Talos disables blockfile in `disabled_plugins`. Remove it by overwriting the
-base CRI containerd config.
-
-Add this to `machine.files` in your Talos config (both controlplane + worker):
-
-```yaml
-- path: /etc/cri/containerd.toml
-  op: overwrite
-  permissions: 0o644
-  content: |
-    version = 3
-
-    disabled_plugins = [
-        "io.containerd.differ.v1.erofs",
-        "io.containerd.internal.v1.tracing",
-        "io.containerd.snapshotter.v1.erofs",
-        "io.containerd.ttrpc.v1.otelttrpc",
-        "io.containerd.tracing.processor.v1.otlp",
-    ]
-
-    imports = [
-        "/etc/cri/conf.d/cri.toml",
-    ]
-```
-
-### 2.2 Configure blockfile + kata-fc runtime
-
-Add this to `/etc/cri/conf.d/20-customization.part` (via `machine.files`):
-
-```toml
-[plugins."io.containerd.snapshotter.v1.blockfile"]
-  root_path = "/var/mnt/blockfile-scratch/containerd-blockfile"
-  scratch_file = "/var/mnt/blockfile-scratch/containerd-blockfile/scratch"
-  fs_type = "ext4"
-  mount_options = []
-  recreate_scratch = false
-
-[plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc"]
-  snapshotter = "blockfile"
-  runtime_type = "io.containerd.kata-fc.v2"
-  runtime_path = "/opt/kata/bin/containerd-shim-kata-v2"
-  privileged_without_host_devices = true
-  pod_annotations = ["io.katacontainers.*"]
-  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc".options]
-    ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-fc.toml"
-
-[plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc"]
-  snapshotter = "blockfile"
-  runtime_type = "io.containerd.kata-fc.v2"
-  runtime_path = "/opt/kata/bin/containerd-shim-kata-v2"
-  privileged_without_host_devices = true
-  pod_annotations = ["io.katacontainers.*"]
-  [plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc".options]
-    ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-fc.toml"
-```
-
-### 2.3 Apply Talos config and reboot
-
-```bash
-talosctl --talosconfig /Users/gregkonush/github.com/devices/ryzen/talosconfig \
-  apply-config -n 192.168.1.194 -f /Users/gregkonush/github.com/devices/ryzen/controlplane.yaml
-
-talosctl --talosconfig /Users/gregkonush/github.com/devices/ryzen/talosconfig \
-  reboot -n 192.168.1.194
-```
-
-Wait for the node to return Ready:
-
-```bash
-kubectl --context=ryzen get nodes -o wide
-```
-
-## Step 3: Create the blockfile scratch image
+## Step 2: Create the blockfile scratch image
 
 The blockfile snapshotter requires a pre-created ext4/xfs scratch image.
 Create it under `/var` so it survives reboots.
@@ -163,7 +93,7 @@ spec:
           apt-get update
           apt-get install -y --no-install-recommends e2fsprogs util-linux
 
-          ROOT=/host/var/mnt/blockfile-scratch/containerd-blockfile
+          ROOT=/host/var/blockfile-scratch
           SCRATCH=${ROOT}/scratch
           SIZE=10G
 
@@ -182,11 +112,11 @@ spec:
           dumpe2fs -h ${SCRATCH} | head -n 10
       volumeMounts:
         - name: host-blockfile
-          mountPath: /host/var/mnt/blockfile-scratch/containerd-blockfile
+              mountPath: /host/var/blockfile-scratch
   volumes:
     - name: host-blockfile
       hostPath:
-        path: /var/mnt/blockfile-scratch/containerd-blockfile
+        path: /var/blockfile-scratch
         type: DirectoryOrCreate
 ```
 
@@ -196,6 +126,82 @@ Apply and verify:
 kubectl --context=ryzen apply -f blockfile-scratch-init.yaml
 kubectl --context=ryzen -n kube-system get pod blockfile-scratch-init -o wide
 kubectl --context=ryzen -n kube-system logs blockfile-scratch-init
+```
+
+## Step 3: Update Talos machine config (after scratch exists)
+
+### 3.1 Overwrite `/etc/cri/containerd.toml`
+
+Talos disables blockfile in `disabled_plugins`. Remove it by overwriting the
+base CRI containerd config.
+
+Add this to `machine.files` in your Talos config (both controlplane + worker):
+
+```yaml
+- path: /etc/cri/containerd.toml
+  op: overwrite
+  permissions: 0o644
+  content: |
+    version = 3
+
+    disabled_plugins = [
+        "io.containerd.differ.v1.erofs",
+        "io.containerd.internal.v1.tracing",
+        "io.containerd.snapshotter.v1.erofs",
+        "io.containerd.ttrpc.v1.otelttrpc",
+        "io.containerd.tracing.processor.v1.otlp",
+    ]
+
+    imports = [
+        "/etc/cri/conf.d/cri.toml",
+    ]
+```
+
+### 3.2 Configure blockfile + kata-fc runtime
+
+Add this to `/etc/cri/conf.d/20-customization.part` (via `machine.files`):
+
+```toml
+[plugins."io.containerd.snapshotter.v1.blockfile"]
+  root_path = "/var/mnt/blockfile-scratch/containerd-blockfile"
+  scratch_file = "/var/blockfile-scratch/scratch"
+  fs_type = "ext4"
+  mount_options = []
+  recreate_scratch = false
+
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc"]
+  snapshotter = "blockfile"
+  runtime_type = "io.containerd.kata-fc.v2"
+  runtime_path = "/usr/local/bin/containerd-shim-kata-v2"
+  privileged_without_host_devices = true
+  pod_annotations = ["io.katacontainers.*"]
+  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc".options]
+    ConfigPath = "/usr/local/share/kata-containers/configuration.toml"
+
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc"]
+  snapshotter = "blockfile"
+  runtime_type = "io.containerd.kata-fc.v2"
+  runtime_path = "/usr/local/bin/containerd-shim-kata-v2"
+  privileged_without_host_devices = true
+  pod_annotations = ["io.katacontainers.*"]
+  [plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc".options]
+    ConfigPath = "/usr/local/share/kata-containers/configuration.toml"
+```
+
+### 3.3 Apply Talos config and reboot
+
+```bash
+talosctl --talosconfig /Users/gregkonush/github.com/devices/ryzen/talosconfig \
+  apply-config -n 192.168.1.194 -f /Users/gregkonush/github.com/devices/ryzen/controlplane.yaml
+
+talosctl --talosconfig /Users/gregkonush/github.com/devices/ryzen/talosconfig \
+  reboot -n 192.168.1.194
+```
+
+Wait for the node to return Ready:
+
+```bash
+kubectl --context=ryzen get nodes -o wide
 ```
 
 ## Step 4: Verify blockfile snapshotter is loaded

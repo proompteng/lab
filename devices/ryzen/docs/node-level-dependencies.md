@@ -173,7 +173,7 @@ Deleting `virt-controller-pdb` unblocked the drain during the upgrade. Recreate 
 ## Local-path storage (Talos user volume)
 
 ### Overview
-Talos uses **user volumes** to carve dedicated storage out of the system disk. For the Ryzen node, we allocate a **fixed 1.35TB (1350GB)** user volume named `local-path-provisioner`, which Talos mounts at `/var/mnt/local-path-provisioner`. The Local Path Provisioner is then configured to use that mount point for PVs. The size is capped to leave room for the 500GB blockfile volume plus the 100GiB system/EPHEMERAL partition on the same NVMe.
+Talos uses **user volumes** to carve dedicated storage out of the system disk. For the Ryzen node, we allocate a **fixed 1.405TB (1405GB)** user volume named `local-path-provisioner`, which Talos mounts at `/var/mnt/local-path-provisioner`. The Local Path Provisioner is then configured to use that mount point for PVs. The size is capped to leave room for the 500GB blockfile volume plus the 100GiB system/EPHEMERAL partition on the same NVMe.
 
 Sources:
 - Talos local storage guide (user volumes + mount path): https://www.talos.dev/latest/kubernetes-guides/configuration/local-storage/
@@ -183,7 +183,7 @@ Sources:
 - User volume config: `devices/ryzen/manifests/local-path.patch.yaml`
 - Local-path-provisioner config map patch: `argocd/applications/local-path/patches/local-path-config.patch.yaml`
 
-### User volume manifest (1.35TB fixed)
+### User volume manifest (1.405TB fixed)
 
 ```yaml
 apiVersion: v1alpha1
@@ -192,9 +192,18 @@ name: local-path-provisioner
 provisioning:
   diskSelector:
     match: disk.transport == 'nvme' || disk.transport == 'sata'
-  minSize: 1350GB
-  maxSize: 1350GB
+  minSize: 1405GB
+  maxSize: 1405GB
   grow: false
+```
+
+Sizing note for the 2TB NVMe: we measured the raw disk size via
+`talosctl get disks` and `/proc/partitions`. After the 2GB boot partition,
+META (1MB), STATE (100MB), EPHEMERAL (100GiB), and blockfile (500GB), the
+remaining usable space is ~1405GB. If the disk model changes, recalc:
+
+```
+local-path = disk_size - boot - META - STATE - EPHEMERAL - blockfile
 ```
 
 ### Apply to the Ryzen Talos node
@@ -246,8 +255,12 @@ Expected: the `local-path` StorageClass exists and the provisioner is Running on
 Firecracker-backed Kata containers use containerd’s **blockfile** snapshotter, which
 requires a scratch file on disk. We dedicate a **500GB** user volume named
 `blockfile-scratch`, mounted at `/var/mnt/blockfile-scratch`, while the scratch
-file itself lives under `/var/mnt/blockfile-scratch/containerd-blockfile` so CRI can read
-it during boot.
+file itself lives under `/var/blockfile-scratch` so CRI can read it during boot
+without waiting for the user volume mount.
+
+Important: **do not enable the blockfile snapshotter until the scratch file exists**.
+If containerd starts with blockfile enabled and the scratch file missing, CRI fails
+to load and the node never becomes Ready.
 
 Sources:
 - Talos local storage guide (user volumes + mount path): https://www.talos.dev/latest/kubernetes-guides/configuration/local-storage/
@@ -258,6 +271,16 @@ Sources:
 - Containerd blockfile config: `devices/ryzen/manifests/kata-firecracker.patch.yaml`
 - Scratch creation DaemonSet: `argocd/applications/kata-containers/blockfile-scratch-daemonset.yaml`
 
+### Runtime paths (Talos kata-containers extension)
+The official `siderolabs/kata-containers` extension installs binaries under
+`/usr/local`:
+- `containerd-shim-kata-v2`: `/usr/local/bin/containerd-shim-kata-v2`
+- default config: `/usr/local/share/kata-containers/configuration.toml`
+
+Firecracker binaries are **not** bundled in the stock extension; if you need a
+Firecracker VMM, ship it via a custom Talos extension and point `ConfigPath` to
+your Firecracker config under `/var`.
+
 ### User volume manifest (500GB)
 
 ```yaml
@@ -266,7 +289,7 @@ kind: UserVolumeConfig
 name: blockfile-scratch
 provisioning:
   diskSelector:
-    match: disk.serial == '50026B73844BB6D7'
+    match: disk.transport == 'nvme'
   minSize: 500GB
   maxSize: 500GB
 ```
@@ -280,7 +303,14 @@ talosctl patch machineconfig --patch @devices/ryzen/manifests/blockfile.patch.ya
 
 ### Validate
 - `talosctl get volumemountstatuses | rg blockfile-scratch`
-- `/var/mnt/blockfile-scratch/containerd-blockfile/scratch` exists after the blockfile DaemonSet runs.
+- `/var/blockfile-scratch/scratch` exists after the blockfile DaemonSet runs.
+
+### Enable kata/firecracker after scratch exists
+
+1) Register the cluster in Argo CD so the `kata-containers` app applies the
+   blockfile scratch DaemonSet.
+2) Confirm the scratch file exists on the node.
+3) Apply `devices/ryzen/manifests/kata-firecracker.patch.yaml` with a reboot.
 
 ## AMD GPU (ROCm) node-level install
 

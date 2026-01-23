@@ -35,11 +35,13 @@ spec:
               apt-get update
               apt-get install -y --no-install-recommends e2fsprogs util-linux
 
-              ROOT=/host/var/mnt/blockfile-scratch/containerd-blockfile
-              SCRATCH=${ROOT}/scratch
+              ROOT_SCRATCH=/host/var/blockfile-scratch
+              SCRATCH=${ROOT_SCRATCH}/scratch
+              ROOT_BLOCKFILE=/host/var/mnt/blockfile-scratch/containerd-blockfile
               SIZE=10G
 
-              mkdir -p ${ROOT}
+              mkdir -p ${ROOT_SCRATCH}
+              mkdir -p ${ROOT_BLOCKFILE}/snapshots
 
               if [ ! -f "${SCRATCH}" ]; then
                 truncate -s ${SIZE} ${SCRATCH}
@@ -51,6 +53,8 @@ spec:
               fi
           volumeMounts:
             - name: host-blockfile-root
+              mountPath: /host/var/blockfile-scratch
+            - name: host-blockfile-volume
               mountPath: /host/var/mnt/blockfile-scratch
       containers:
         - name: hold
@@ -65,9 +69,15 @@ spec:
               memory: 64Mi
           volumeMounts:
             - name: host-blockfile-root
+              mountPath: /host/var/blockfile-scratch
+            - name: host-blockfile-volume
               mountPath: /host/var/mnt/blockfile-scratch
       volumes:
         - name: host-blockfile-root
+          hostPath:
+            path: /var/blockfile-scratch
+            type: DirectoryOrCreate
+        - name: host-blockfile-volume
           hostPath:
             path: /var/mnt/blockfile-scratch
             type: DirectoryOrCreate

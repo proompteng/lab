@@ -2,4 +2,8 @@ apiVersion: v1alpha1
 kind: VolumeConfig
 name: EPHEMERAL
 provisioning:
-  maxSize: 100GiB
+  diskSelector:
+    match: disk.transport == 'nvme'
+  minSize: 100GB
+  maxSize: 100GB
+  grow: false
