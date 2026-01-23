@@ -146,6 +146,10 @@ machine:
           mount_options = []
           recreate_scratch = false
 
+        [plugins."io.containerd.cri.v1.images"]
+          discard_unpacked_layers = false
+          use_local_image_pull = false
+
         [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc"]
           snapshotter = "blockfile"
           runtime_type = "io.containerd.kata-fc.v2"
@@ -222,7 +226,20 @@ spec:
           type: RuntimeDefault
 ```
 
-## 7) Example manifests (Firecracker workloads)
+## 7) Troubleshooting: pause image content digest not found
+
+If pod sandbox creation fails with `content digest ... not found` for
+`registry.k8s.io/pause:3.10` or `ubuntu:24.04`, run the one-shot Job in the
+kata-containers app. It uses `ctr` against the host containerd socket to delete
+broken content digests and re-pull the pause + ubuntu images.
+
+Manifest: `argocd/applications/kata-containers/pause-image-reset-job.yaml`
+
+```bash
+argocd app sync argocd/kata-containers-ryzen
+```
+
+## 8) Example manifests (Firecracker workloads)
 
 ### Minimal Pod (Firecracker / kata-fc)
 
@@ -290,6 +307,12 @@ spec:
 If `ctr plugins ls` only shows `native` and `overlayfs`, Talos still has
 `io.containerd.snapshotter.v1.blockfile` disabled. Ensure you overwrote
 `/etc/cri/containerd.toml` and removed it from `disabled_plugins`, then reboot.
+
+### pod sandbox fails with pause image "content digest ... not found"
+
+This is usually triggered by `discard_unpacked_layers = true` or
+`use_local_image_pull = true` in the CRI images config. Disable both so CRI
+re-fetches missing blobs, then reboot Talos so containerd reloads its config.
 
 ### snapshotter devmapper was not found
 
