@@ -33,7 +33,7 @@ const fetchLandingOverride = async (): Promise<Partial<LandingContent> | null> =
   if (!cmsUrl) return null
 
   const url = new URL('/api/globals/landing', cmsUrl)
-  const { isEnabled } = draftMode()
+  const { isEnabled } = await draftMode()
 
   if (isEnabled) {
     url.searchParams.set('draft', 'true')
