@@ -150,3 +150,15 @@ Then sync the kata-containers app via Argo CD.
 - [ ] Talos upgrade completed.
 - [ ] `kata-fc` runtime config points at Firecracker config.
 - [ ] Test pod starts and Firecracker process/socket present.
+
+## External validation (upstream docs)
+
+This plan is aligned with upstream guidance:
+
+- Talos system extensions are only activated during **install/upgrade**, which is
+  why Firecracker must be delivered via a custom extension and applied via an
+  upgrade. citeturn0search2
+- Image Factory schematics are the supported way to include system extensions in
+  installer images, and custom extension images are explicitly supported. citeturn0search0turn0search4
+- Firecracker requires **block-backed** storage; using a blockfile snapshotter on
+  Talos satisfies that requirement. citeturn0search5
