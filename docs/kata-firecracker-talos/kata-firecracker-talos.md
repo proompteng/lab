@@ -12,28 +12,48 @@ overrides must live under `/var`.
   a default config at `/usr/local/share/kata-containers/configuration.toml`.
 - Firecracker VMM is **not** bundled in the stock extension; for production use,
   build a **custom Talos system extension** that includes
-  `/usr/local/bin/firecracker` (and `jailer`) and ships a Firecracker-oriented
-  `configuration.toml`.
+  `/usr/local/bin/firecracker` (and `jailer`) and ships an updated
+  `/usr/local/share/kata-containers/configuration.toml`.
+- For Talos kata-containers (Go runtime), `block_device_driver` must be
+  `virtio-mmio` (validated by the runtime). Using `virtio-blk-mmio` fails
+  validation.
 - KVM + vsock available on the host (`/dev/kvm`, `/dev/vhost-vsock`).
 - Containerd runtime config injected via `/etc/cri/conf.d/20-customization.part`.
 
 ## 1) Build/upgrade Talos with system extensions
 
-Use Talos Image Factory and add system extensions in your schematic:
+Extensions only take effect at install/upgrade time. For Firecracker, use the
+local extension package and build a **custom installer** with the Talos `imager`
+container (Image Factory does not accept custom extension images).
 
-```yaml
-customization:
-  systemExtensions:
-    officialExtensions:
-      - siderolabs/kata-containers
-      - siderolabs/glibc
-    # Add a custom Firecracker extension image (see "Production Firecracker" below)
-    # extensionImages:
-    #   - ghcr.io/<org>/talos-firecracker:<tag-or-digest>
+Example (amd64):
+
+```bash
+docker run --rm --entrypoint imager \
+  -v /tmp/imager-out:/out \
+  ghcr.io/siderolabs/imager:v1.12.1 \
+  metal \
+  --platform metal \
+  --arch amd64 \
+  --base-installer-image factory.talos.dev/metal-installer/<current-schematic>:v1.12.1 \
+  --system-extension-image ghcr.io/siderolabs/kata-containers:3.24.0 \
+  --system-extension-image ghcr.io/siderolabs/glibc:2.41 \
+  --system-extension-image ghcr.io/siderolabs/tailscale:1.92.3 \
+  --system-extension-image registry.ide-newton.ts.net/lab/firecracker:v1.12.1 \
+  --output /out \
+  --output-kind installer
 ```
 
-Apply the schematic to a Talos installer image and upgrade the node. Extensions
-only take effect at install/upgrade time.
+Decompress and push the installer tarball to the internal registry:
+
+```bash
+zstd -d /tmp/imager-out/installer-amd64.tar.zst -o /tmp/imager-out/installer-amd64.tar
+crane push /tmp/imager-out/installer-amd64.tar registry.ide-newton.ts.net/lab/metal-installer-firecracker:v1.12.1
+```
+
+Then upgrade the node with the new installer image. The Firecracker extension
+should be applied **after** the initial Cloud Hypervisor install (i.e., once the
+official `kata-containers` extension is already active).
 
 ## 1.1 GitOps scope (Argo CD)
 
@@ -182,10 +202,10 @@ Talos ships a default Kata configuration under:
 /usr/local/share/kata-containers/configuration.toml
 ```
 
-For production, prefer a Firecracker config shipped by a system extension and
-point `ConfigPath` to it. If you need a **temporary** override for testing,
-place a new config under `/var` and point `ConfigPath` to it. Avoid `shared_fs`
-for Firecracker; it needs block devices.
+For production, use the extension-provided config at
+`/usr/local/share/kata-containers/configuration.toml`. If you need a
+**temporary** override for testing, place a new config under `/var` and point
+`ConfigPath` to it. Avoid `shared_fs` for Firecracker; it needs block devices.
 
 ## Production Firecracker on Talos (custom extension)
 
@@ -195,27 +215,25 @@ To run Firecracker in production, create a custom system extension that bundles
 
 Full plan: `docs/kata-firecracker-talos/production-firecracker-plan.md`.
 
-Reference implementation details live in the upstream extensions repo:
+Reference implementation details live in the local extension package:
 
-- `~/github.com/extensions/container-runtime/kata-containers/pkg.yaml`
-  - Shows how the official extension copies `cloud-hypervisor` into
-    `/usr/local/bin` and installs the default config.
+- `packages/talos-extensions/firecracker`
 
 ### Recommended build outline
 
-1) Create a new extension (e.g. `container-runtime/firecracker`) that:
+1) Create a new extension (`packages/talos-extensions/firecracker`) that:
    - Downloads Firecracker release binaries for the target arch.
    - Installs `firecracker` and `jailer` into `/usr/local/bin`.
    - Installs a Firecracker config into
-     `/usr/local/share/kata-containers/configuration.toml` **or** a dedicated
-     path you control (then update `ConfigPath` accordingly).
+     `/usr/local/share/kata-containers/configuration.toml` and points
+     `ConfigPath` to it.
 
 2) Build and publish the extension image (pin the digest).
 
-3) Update the Talos Image Factory schematic to include:
-   - `siderolabs/kata-containers`
-   - `siderolabs/glibc`
-   - `<your firecracker extension image>`
+3) Build a custom installer image with `imager` that includes:
+   - `ghcr.io/siderolabs/kata-containers:<version>`
+   - `ghcr.io/siderolabs/glibc:<version>`
+   - `registry.ide-newton.ts.net/lab/firecracker:<version>`
 
 4) Upgrade the node(s) using the new installer image (extensions only load at
    install/upgrade time).

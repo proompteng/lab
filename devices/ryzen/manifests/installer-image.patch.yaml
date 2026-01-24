@@ -1,3 +1,3 @@
 machine:
   install:
-    image: factory.talos.dev/metal-installer/a170f9697ee0797c93bbad6325090bd12f32bc1d182be51b613da194b1767ae9:v1.12.1
+    image: registry.ide-newton.ts.net/lab/metal-installer-firecracker@sha256:7503774575bc1fb58d701a0fa7983dbcdf4fbe3e571fc918efa09cd52d483821

@@ -18,7 +18,8 @@ Node-level patches:
 - `devices/ryzen/manifests/tailscale-dns.patch.yaml` (prefer MagicDNS for tailnet hostnames)
 - `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml` (Image Factory schematic for tailscale extension)
 - `devices/ryzen/manifests/amdgpu-extensions.patch.yaml` (AMD GPU extensions; fill in versions)
-- `devices/ryzen/manifests/installer-image.patch.yaml` (Talos Image Factory installer with kata + glibc + tailscale)
+- `devices/ryzen/manifests/installer-image.vanilla.patch.yaml` (factory installer for first boot without tailnet access)
+- `devices/ryzen/manifests/installer-image.patch.yaml` (custom installer in internal registry; requires tailscale)
 - `devices/ryzen/manifests/kata-firecracker.patch.yaml` (enable blockfile + kata-fc runtime **after** scratch file exists)
 - `devices/ryzen/manifests/kubelet-manifests.patch.yaml` (keep /etc/kubernetes writable for kubelet bootstrap)
 
@@ -83,7 +84,8 @@ Firecracker blockfile scratch uses a dedicated 500GB user volume:
 - `devices/ryzen/manifests/tailscale-extension-service.yaml` (generate via `bun run packages/scripts/src/tailscale/generate-ryzen-extension-service.ts`)
 - `devices/ryzen/manifests/tailscale-dns.patch.yaml`
 - `devices/ryzen/manifests/amdgpu-extensions.patch.yaml`
-- `devices/ryzen/manifests/installer-image.patch.yaml`
+- `devices/ryzen/manifests/installer-image.vanilla.patch.yaml` (first install)
+- `devices/ryzen/manifests/installer-image.patch.yaml` (after tailscale)
 - `devices/ryzen/manifests/kata-firecracker.patch.yaml` (apply **after** scratch file exists; reboot required)
 
 ### 2.4.1 Generate the Tailscale extension service patch
@@ -122,6 +124,7 @@ talosctl apply-config --insecure -n 192.168.1.194 -e 192.168.1.194 \
 #   --config-patch @devices/ryzen/manifests/node-labels.patch.yaml
 #   --config-patch @devices/ryzen/manifests/tailscale-extension-service.yaml
 #   --config-patch @devices/ryzen/manifests/amdgpu-extensions.patch.yaml
+#   --config-patch @devices/ryzen/manifests/installer-image.vanilla.patch.yaml
 #   --config-patch @devices/ryzen/manifests/installer-image.patch.yaml
 #   --config-patch @devices/ryzen/manifests/kubelet-manifests.patch.yaml
 ```
@@ -184,10 +187,26 @@ argocd app sync argocd/kata-containers-ryzen
 
 ## 2.7 Install kata + glibc extensions (Image Factory)
 
-Kata requires Talos system extensions. The current Ryzen image is pinned in:
+Kata requires Talos system extensions. Use the **vanilla** installer to get
+tailscale online first, then switch to the **modified** installer in the
+internal registry:
+- `devices/ryzen/manifests/installer-image.vanilla.patch.yaml`
 - `devices/ryzen/manifests/installer-image.patch.yaml`
 
-Apply the patch (no reboot), then upgrade to activate extensions:
+Apply the **vanilla** patch (no reboot), then upgrade to activate extensions:
+
+```bash
+talosctl patch mc -n 192.168.1.194 -e 192.168.1.194 \
+  --patch @devices/ryzen/manifests/installer-image.vanilla.patch.yaml \
+  --mode=no-reboot
+
+talosctl upgrade -n 192.168.1.194 -e 192.168.1.194 \
+  --image factory.talos.dev/metal-installer/34373fc18f4c01525d9421119e41b72fc83885c640f798c0ee723a38decd6e9b:v1.12.1
+
+talosctl get extensions -n 192.168.1.194
+```
+
+Once tailscale is up, switch to the **modified** installer (custom extensions):
 
 ```bash
 talosctl patch mc -n 192.168.1.194 -e 192.168.1.194 \
@@ -195,9 +214,7 @@ talosctl patch mc -n 192.168.1.194 -e 192.168.1.194 \
   --mode=no-reboot
 
 talosctl upgrade -n 192.168.1.194 -e 192.168.1.194 \
-  --image factory.talos.dev/metal-installer/34373fc18f4c01525d9421119e41b72fc83885c640f798c0ee723a38decd6e9b:v1.12.1
-
-talosctl get extensions -n 192.168.1.194
+  --image registry.ide-newton.ts.net/lab/metal-installer-firecracker@sha256:7503774575bc1fb58d701a0fa7983dbcdf4fbe3e571fc918efa09cd52d483821
 ```
 
 ## 3) Bootstrap the cluster
