@@ -24,7 +24,7 @@ Node-level patches:
 
 Related docs:
 - `devices/ryzen/docs/node-level-dependencies.md`
-- `docs/kata-firecracker-talos/README.md`
+- `docs/kata-firecracker-talos/kata-firecracker-talos.md`
 - `docs/kata-firecracker-talos/rebuild-from-scratch.md`
 - `docs/kubevirt/workers-ryzen.md`
 
@@ -239,7 +239,7 @@ talosctl -n 192.168.1.194 -e 192.168.1.194 get machineconfig -o yaml > devices/r
 KubeVirt is installed via Argo CD and Firecracker is enabled through
 Talos + Kata configuration. Use these runbooks for the full procedure:
 
-- `docs/kata-firecracker-talos/README.md`
+- `docs/kata-firecracker-talos/kata-firecracker-talos.md`
 - `docs/kata-firecracker-talos/rebuild-from-scratch.md`
 
 The KubeVirt workers VM setup is documented here:

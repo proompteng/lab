@@ -270,7 +270,7 @@ Linux kata-fc-test 6.12.47 #1 SMP Fri Dec  5 12:15:04 UTC 2025 x86_64 GNU/Linux
 - Talos config changes live in:
   - `/Users/gregkonush/github.com/devices/ryzen/controlplane.yaml`
   - `/Users/gregkonush/github.com/devices/ryzen/worker.yaml`
-- Doc: `docs/kata-firecracker-talos/README.md`
+- Doc: `docs/kata-firecracker-talos/kata-firecracker-talos.md`
 
 ## Cleanup Performed
 - Removed helper pods:
