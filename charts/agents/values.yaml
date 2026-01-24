@@ -5,6 +5,13 @@ namespaceOverride: ""
 
 replicaCount: 1
 
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: null
+
 image:
   repository: ghcr.io/proompteng/jangar
   tag: latest

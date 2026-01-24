@@ -114,6 +114,11 @@ helm push agents-0.6.0.tgz oci://ghcr.io/proompteng/charts
 | Key | Description | Default |
 | --- | ----------- | ------- |
 | `replicaCount` | Control-plane replicas | `1` |
+| `autoscaling.enabled` | Enable HorizontalPodAutoscaler | `false` |
+| `autoscaling.minReplicas` | Minimum replicas for autoscaling | `1` |
+| `autoscaling.maxReplicas` | Maximum replicas for autoscaling | `3` |
+| `autoscaling.targetCPUUtilizationPercentage` | Target CPU utilization percentage | `80` |
+| `autoscaling.targetMemoryUtilizationPercentage` | Target memory utilization percentage | `null` |
 | `image.repository` | Jangar image repo | `ghcr.io/proompteng/jangar` |
 | `image.tag` | Jangar image tag | `latest` |
 | `image.digest` | Optional image digest pin | `""` |

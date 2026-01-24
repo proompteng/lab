@@ -197,7 +197,7 @@ A release is considered “fully functional” when:
 
 ## Open Questions
 - Should the chart support an optional CRD install guard (e.g., pre‑install job) for clusters that skip `crds/`? Current best practice says no, but some GitOps tools may need explicit handling.
-- Do we need to package optional “extras” (PDB/HPA/NetworkPolicy) as a separate chart or overlay?
+- Do we need to package optional “extras” (PDB/NetworkPolicy) as a separate chart or overlay? Autoscaling is now part of the base chart.
 
 ## References
 - `docs/agents/agents-helm-chart-design.md`
