@@ -2,7 +2,7 @@
 
 # Set variables
 IMAGE_NAME="registry.ide-newton.ts.net/lab/proompteng"
-DOCKERFILE="apps/proompteng/Dockerfile"
+DOCKERFILE="apps/landing/Dockerfile"
 CONTEXT_PATH="."
 
 # Check if a tag is provided as an argument

@@ -35,7 +35,7 @@ jobs:
         with:
           filters: |
             proompteng:
-              - 'apps/proompteng/**'
+              - 'apps/landing/**'
             docs:
               - 'apps/docs/**'
             kitty-krew:
@@ -79,7 +79,7 @@ jobs:
     uses: ./.github/workflows/docker-build-common.yaml
     with:
       image_name: proompteng
-      dockerfile: ./apps/proompteng/Dockerfile
+      dockerfile: ./apps/landing/Dockerfile
       context: .
       new_tag: ${{ needs.version.outputs.new_tag }}
 

@@ -29,7 +29,7 @@ jobs:
         with:
           filters: |
             proompteng:
-              - 'apps/proompteng/**'
+              - 'apps/landing/**'
             bonjour:
               - 'services/bonjour/**'
             docs:
@@ -110,10 +110,10 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: |
-            ${{ github.workspace }}/apps/proompteng/.next/cache
-          key: ${{ runner.os }}-nextjs-proompteng-${{ hashFiles('**/bun.lock') }}-${{ hashFiles('apps/proompteng/**/*.[jt]s?(x)', 'packages/**/*.[jt]s?(x)') }}
+            ${{ github.workspace }}/apps/landing/.next/cache
+          key: ${{ runner.os }}-nextjs-landing-${{ hashFiles('**/bun.lock') }}-${{ hashFiles('apps/landing/**/*.[jt]s?(x)', 'packages/**/*.[jt]s?(x)') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-proompteng-${{ hashFiles('**/bun.lock') }}-
+            ${{ runner.os }}-nextjs-landing-${{ hashFiles('**/bun.lock') }}-
 
       - uses: actions/setup-node@v6
         with:
@@ -134,13 +134,13 @@ jobs:
 
       - name: Oxlint (non-blocking)
         continue-on-error: true
-        run: bun run --cwd apps/proompteng lint:oxlint
+        run: bun run --cwd apps/landing lint:oxlint
 
       - name: Oxlint (type-aware, non-blocking)
         continue-on-error: true
-        run: bun run --cwd apps/proompteng lint:oxlint:type
+        run: bun run --cwd apps/landing lint:oxlint:type
 
-      - run: bun run --filter proompteng build
+      - run: bun run --filter landing build
 
   bonjour:
     needs: check_changed_files
