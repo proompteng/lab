@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cms
+  namespace: cms
+spec:
+  selector:
+    matchLabels:
+      app: cms
+  template:
+    metadata:
+      labels:
+        app: cms
+    spec:
+      containers:
+        - name: cms
+          image: registry.ide-newton.ts.net/lab/cms
+          resources:
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: NEXT_TELEMETRY_DISABLED
+              value: "1"
+            - name: PORT
+              value: "3000"
+            - name: PAYLOAD_PUBLIC_SERVER_URL
+              value: https://cms.proompteng.ai
+            - name: LANDING_SITE_URL
+              value: https://proompteng.ai
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: cms-env
+                  key: DATABASE_URL
+            - name: PAYLOAD_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: cms-env
+                  key: PAYLOAD_SECRET

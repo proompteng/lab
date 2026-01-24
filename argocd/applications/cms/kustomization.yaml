@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - service.yaml
+  - ingressroute.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/cms
+    newTag: main
+    newName: registry.ide-newton.ts.net/lab/cms

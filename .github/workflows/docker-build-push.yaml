@@ -19,6 +19,7 @@ jobs:
       contents: read
     outputs:
       proompteng: ${{ steps.filter.outputs.proompteng }}
+      cms: ${{ steps.filter.outputs.cms }}
       docs: ${{ steps.filter.outputs.docs }}
       kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
       reviseur: ${{ steps.filter.outputs.reviseur }}
@@ -36,6 +37,8 @@ jobs:
           filters: |
             proompteng:
               - 'apps/landing/**'
+            cms:
+              - 'apps/cms/**'
             docs:
               - 'apps/docs/**'
             kitty-krew:
@@ -93,6 +96,16 @@ jobs:
       context: .
       new_tag: ${{ needs.version.outputs.new_tag }}
 
+  build-cms:
+    needs: [changes, version]
+    if: ${{ needs.changes.outputs.cms == 'true' }}
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: cms
+      dockerfile: ./apps/cms/Dockerfile
+      context: .
+      new_tag: ${{ needs.version.outputs.new_tag }}
+
   build-kitty-krew:
     needs: [changes, version]
     if: ${{ needs.changes.outputs.kitty-krew == 'true' }}
@@ -142,6 +155,7 @@ jobs:
       [
         version,
         build-proompteng,
+        build-cms,
         build-docs,
         build-kitty-krew,
         build-reviseur,
