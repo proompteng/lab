@@ -9,6 +9,7 @@ Status: Current (2026-01-19)
 - Runtime adapter contract: submit/status/cancel inputs and error codes.
 - Agent-runner spec contract: required fields, workspace layout, artifact paths.
 - Control-plane status endpoint (gRPC + `/api/agents/control-plane/status`) for controller/runtime/database health.
+- gRPC is optional in production (agentctl works via Kubernetes API; gRPC is additive).
 
 ## Reliability & Scaling
 - SLOs: availability, submission latency, reconcile delay, failure rate.

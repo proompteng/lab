@@ -11,6 +11,7 @@ Minimal, production‑ready bundle for the Agents control plane (Jangar) plus Ag
 - Controllers run in‑cluster and reconcile Agents, Orchestration, and supporting primitives (schedules, tools, workspaces).
 - Native workflow runtime uses Kubernetes Jobs/Pods (no Argo Workflows dependency).
 - Job runtime creates input/run spec ConfigMaps and labels Jobs for traceability.
+- Optional gRPC service for agentctl and control-plane status.
 - Artifact Hub metadata included (Apache‑2.0 license).
 
 ## Quickstart (kind/minikube)
@@ -62,18 +63,19 @@ Orchestration exists (for example, `codex-autonomous`).
 Native orchestration currently supports `AgentRun`, `ToolRun`, `SubOrchestration`, and `ApprovalGate` steps;
 other step kinds require adapters or future controller extensions.
 
-Optional: submit runs with `agentctl`:
+Optional: submit runs with `agentctl` (kube mode by default):
 ```bash
 agentctl run submit --agent codex-agent --impl codex-impl-sample --runtime workflow --workload-image registry.ide-newton.ts.net/lab/codex-universal:latest
 ```
 
 Replace the workload image with your own agent-runner build (and imagePullSecrets if required).
 If your agent-runner uses NATS for context streaming, set `NATS_URL` in the AgentProvider `envTemplate`.
-If you enable the gRPC port (`grpc.enabled=true`), you can port-forward it:
+gRPC is optional; if enabled, you can port-forward it:
 ```bash
 kubectl -n agents port-forward svc/agents 50051:50051 &
 ```
 Keep the gRPC service ClusterIP-only and expose it externally only via a controlled gateway or mesh.
+To require a shared token, set `env.vars.JANGAR_GRPC_TOKEN` in your values and configure `agentctl` with the same token.
 
 Optional: configure GitHub/Linear ingestion with `ImplementationSource` manifests:
 - `charts/agents/examples/implementationsource-github.yaml`
@@ -99,6 +101,7 @@ Use `env.vars.JANGAR_MIGRATIONS=skip` to disable automatic migrations if needed.
 - Pin Jangar image digests in `values-prod.yaml`.
 - Keep `service.type=ClusterIP` and use ingress/mesh externally if desired.
 - Set `rbac.clusterScoped=true` when `controller.namespaces` spans multiple namespaces or `"*"`.
+- Consider enabling `podDisruptionBudget` and `networkPolicy` for availability and traffic control.
 
 ## Crossplane
 Crossplane is not supported by Agents. Uninstall it before installing the native chart so the
@@ -127,7 +130,7 @@ helm push agents-0.6.0.tgz oci://ghcr.io/proompteng/charts
 | `service.port` | Service port | `80` |
 | `service.annotations` | Service annotations | `{}` |
 | `service.labels` | Extra Service labels | `{}` |
-| `grpc.enabled` | Expose gRPC ClusterIP service for agentctl | `false` |
+| `grpc.enabled` | Expose gRPC ClusterIP service for agentctl (optional) | `true` |
 | `grpc.port` | Container gRPC port | `50051` |
 | `grpc.servicePort` | Service gRPC port | `50051` |
 | `grpc.serviceType` | gRPC Service type (cluster-only) | `ClusterIP` |
@@ -159,4 +162,13 @@ helm push agents-0.6.0.tgz oci://ghcr.io/proompteng/charts
 | `readinessProbe.enabled` | Enable readiness probe | `true` |
 | `logging.level` | Log level for Jangar | `info` |
 
-See `values.yaml`, `values-local.yaml`, `values-dev.yaml`, and `values-prod.yaml` for full options.
+See `values.yaml`, `values-local.yaml`, `values-dev.yaml`, `values-ci.yaml`, and `values-prod.yaml` for full options.
+| `podDisruptionBudget.enabled` | Enable PodDisruptionBudget | `false` |
+| `podDisruptionBudget.minAvailable` | Minimum available pods | `1` |
+| `podDisruptionBudget.maxUnavailable` | Maximum unavailable pods | `""` |
+| `podDisruptionBudget.annotations` | Extra PDB annotations | `{}` |
+| `networkPolicy.enabled` | Enable NetworkPolicy (empty rules deny traffic) | `false` |
+| `networkPolicy.policyTypes` | Policy types when NetworkPolicy is enabled | `["Ingress","Egress"]` |
+| `networkPolicy.ingress` | NetworkPolicy ingress rules | `[]` |
+| `networkPolicy.egress` | NetworkPolicy egress rules | `[]` |
+| `networkPolicy.annotations` | NetworkPolicy annotations | `{}` |

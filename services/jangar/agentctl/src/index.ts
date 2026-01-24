@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -7,6 +8,15 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import * as grpc from '@grpc/grpc-js'
 import { fromJSON } from '@grpc/proto-loader'
+import {
+  AppsV1Api,
+  ApiextensionsV1Api,
+  BatchV1Api,
+  CoreV1Api,
+  CustomObjectsApi,
+  KubeConfig,
+  Log,
+} from '@kubernetes/client-node'
 import * as protobuf from 'protobufjs'
 import YAML from 'yaml'
 import { EMBEDDED_AGENTCTL_PROTO } from './embedded-proto'
@@ -18,12 +28,34 @@ const EXIT_UNKNOWN = 5
 const DEFAULT_NAMESPACE = 'agents'
 const DEFAULT_ADDRESS = 'agents-grpc.agents.svc.cluster.local:50051'
 const DEFAULT_WATCH_INTERVAL_MS = 5000
+const REQUIRED_CRDS = [
+  'agents.agents.proompteng.ai',
+  'agentruns.agents.proompteng.ai',
+  'agentproviders.agents.proompteng.ai',
+  'implementationspecs.agents.proompteng.ai',
+  'implementationsources.agents.proompteng.ai',
+  'memories.agents.proompteng.ai',
+  'orchestrations.orchestration.proompteng.ai',
+  'orchestrationruns.orchestration.proompteng.ai',
+  'approvalpolicies.approvals.proompteng.ai',
+  'budgets.budgets.proompteng.ai',
+  'secretbindings.security.proompteng.ai',
+  'signals.signals.proompteng.ai',
+  'signaldeliveries.signals.proompteng.ai',
+  'tools.tools.proompteng.ai',
+  'toolruns.tools.proompteng.ai',
+  'schedules.schedules.proompteng.ai',
+  'artifacts.artifacts.proompteng.ai',
+  'workspaces.workspaces.proompteng.ai',
+]
 
 type Config = {
   namespace?: string
   address?: string
   token?: string
   tls?: boolean
+  kubeconfig?: string
+  context?: string
 }
 
 type GlobalFlags = {
@@ -32,6 +64,34 @@ type GlobalFlags = {
   token?: string
   output?: string
   tls?: boolean
+  kube?: boolean
+  grpc?: boolean
+  kubeconfig?: string
+  context?: string
+}
+
+type TransportMode = 'grpc' | 'kube'
+
+type KubeOptions = {
+  kubeconfig?: string
+  context?: string
+}
+
+type KubeClients = {
+  kubeConfig: KubeConfig
+  core: CoreV1Api
+  custom: CustomObjectsApi
+  apps: AppsV1Api
+  batch: BatchV1Api
+  crd: ApiextensionsV1Api
+  log: Log
+}
+
+type ResourceSpec = {
+  kind: string
+  group: string
+  version: string
+  plural: string
 }
 
 type RuntimeEntry = { key: string; value: string }
@@ -87,6 +147,231 @@ type NamespaceHealth = {
 
 type AgentctlPackage = {
   AgentctlService: grpc.ServiceClientConstructor
+}
+
+const RESOURCE_SPECS: Record<string, ResourceSpec> = {
+  agent: {
+    kind: 'Agent',
+    group: 'agents.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'agents',
+  },
+  provider: {
+    kind: 'AgentProvider',
+    group: 'agents.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'agentproviders',
+  },
+  impl: {
+    kind: 'ImplementationSpec',
+    group: 'agents.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'implementationspecs',
+  },
+  source: {
+    kind: 'ImplementationSource',
+    group: 'agents.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'implementationsources',
+  },
+  memory: {
+    kind: 'Memory',
+    group: 'agents.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'memories',
+  },
+  tool: {
+    kind: 'Tool',
+    group: 'tools.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'tools',
+  },
+  toolrun: {
+    kind: 'ToolRun',
+    group: 'tools.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'toolruns',
+  },
+  orchestration: {
+    kind: 'Orchestration',
+    group: 'orchestration.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'orchestrations',
+  },
+  orchestrationrun: {
+    kind: 'OrchestrationRun',
+    group: 'orchestration.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'orchestrationruns',
+  },
+  approval: {
+    kind: 'ApprovalPolicy',
+    group: 'approvals.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'approvalpolicies',
+  },
+  budget: {
+    kind: 'Budget',
+    group: 'budgets.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'budgets',
+  },
+  secretbinding: {
+    kind: 'SecretBinding',
+    group: 'security.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'secretbindings',
+  },
+  signal: {
+    kind: 'Signal',
+    group: 'signals.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'signals',
+  },
+  signaldelivery: {
+    kind: 'SignalDelivery',
+    group: 'signals.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'signaldeliveries',
+  },
+  schedule: {
+    kind: 'Schedule',
+    group: 'schedules.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'schedules',
+  },
+  artifact: {
+    kind: 'Artifact',
+    group: 'artifacts.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'artifacts',
+  },
+  workspace: {
+    kind: 'Workspace',
+    group: 'workspaces.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'workspaces',
+  },
+}
+
+const AGENT_RUN_SPEC: ResourceSpec = {
+  kind: 'AgentRun',
+  group: 'agents.proompteng.ai',
+  version: 'v1alpha1',
+  plural: 'agentruns',
+}
+
+const KIND_SPECS = Object.values(RESOURCE_SPECS).reduce<Record<string, ResourceSpec>>((acc, spec) => {
+  acc[spec.kind.toLowerCase()] = spec
+  return acc
+}, {})
+
+KIND_SPECS[AGENT_RUN_SPEC.kind.toLowerCase()] = AGENT_RUN_SPEC
+
+const RPC_RESOURCE_MAP: Record<string, { list: string; get: string; apply: string; del: string; create?: string }> = {
+  agent: {
+    list: 'ListAgents',
+    get: 'GetAgent',
+    apply: 'ApplyAgent',
+    del: 'DeleteAgent',
+  },
+  provider: {
+    list: 'ListAgentProviders',
+    get: 'GetAgentProvider',
+    apply: 'ApplyAgentProvider',
+    del: 'DeleteAgentProvider',
+  },
+  impl: {
+    list: 'ListImplementationSpecs',
+    get: 'GetImplementationSpec',
+    apply: 'ApplyImplementationSpec',
+    del: 'DeleteImplementationSpec',
+    create: 'CreateImplementationSpec',
+  },
+  source: {
+    list: 'ListImplementationSources',
+    get: 'GetImplementationSource',
+    apply: 'ApplyImplementationSource',
+    del: 'DeleteImplementationSource',
+  },
+  memory: {
+    list: 'ListMemories',
+    get: 'GetMemory',
+    apply: 'ApplyMemory',
+    del: 'DeleteMemory',
+  },
+  tool: {
+    list: 'ListTools',
+    get: 'GetTool',
+    apply: 'ApplyTool',
+    del: 'DeleteTool',
+  },
+  toolrun: {
+    list: 'ListToolRuns',
+    get: 'GetToolRun',
+    apply: 'ApplyToolRun',
+    del: 'DeleteToolRun',
+  },
+  orchestration: {
+    list: 'ListOrchestrations',
+    get: 'GetOrchestration',
+    apply: 'ApplyOrchestration',
+    del: 'DeleteOrchestration',
+  },
+  orchestrationrun: {
+    list: 'ListOrchestrationRuns',
+    get: 'GetOrchestrationRun',
+    apply: 'ApplyOrchestrationRun',
+    del: 'DeleteOrchestrationRun',
+  },
+  approval: {
+    list: 'ListApprovalPolicies',
+    get: 'GetApprovalPolicy',
+    apply: 'ApplyApprovalPolicy',
+    del: 'DeleteApprovalPolicy',
+  },
+  budget: {
+    list: 'ListBudgets',
+    get: 'GetBudget',
+    apply: 'ApplyBudget',
+    del: 'DeleteBudget',
+  },
+  secretbinding: {
+    list: 'ListSecretBindings',
+    get: 'GetSecretBinding',
+    apply: 'ApplySecretBinding',
+    del: 'DeleteSecretBinding',
+  },
+  signal: {
+    list: 'ListSignals',
+    get: 'GetSignal',
+    apply: 'ApplySignal',
+    del: 'DeleteSignal',
+  },
+  signaldelivery: {
+    list: 'ListSignalDeliveries',
+    get: 'GetSignalDelivery',
+    apply: 'ApplySignalDelivery',
+    del: 'DeleteSignalDelivery',
+  },
+  schedule: {
+    list: 'ListSchedules',
+    get: 'GetSchedule',
+    apply: 'ApplySchedule',
+    del: 'DeleteSchedule',
+  },
+  artifact: {
+    list: 'ListArtifacts',
+    get: 'GetArtifact',
+    apply: 'ApplyArtifact',
+    del: 'DeleteArtifact',
+  },
+  workspace: {
+    list: 'ListWorkspaces',
+    get: 'GetWorkspace',
+    apply: 'ApplyWorkspace',
+    del: 'DeleteWorkspace',
+  },
 }
 
 const getVersion = () => {
@@ -257,6 +542,10 @@ Usage:
 Global flags:
   --namespace, -n <ns>
   --server, --address <host:port>
+  --kube
+  --grpc
+  --kubeconfig <path>
+  --context <name>
   --token <token>
   --output, -o <yaml|json|table>
   --tls
@@ -362,6 +651,30 @@ const parseGlobalFlags = (argv: string[]) => {
       flags.tls = true
       continue
     }
+    if (arg === '--kube') {
+      flags.kube = true
+      continue
+    }
+    if (arg === '--grpc') {
+      flags.grpc = true
+      continue
+    }
+    if (arg === '--kubeconfig') {
+      flags.kubeconfig = argv[++i]
+      continue
+    }
+    if (arg.startsWith('--kubeconfig=')) {
+      flags.kubeconfig = arg.slice('--kubeconfig='.length)
+      continue
+    }
+    if (arg === '--context') {
+      flags.context = argv[++i]
+      continue
+    }
+    if (arg.startsWith('--context=')) {
+      flags.context = arg.slice('--context='.length)
+      continue
+    }
     rest.push(arg)
   }
   return { flags, rest }
@@ -370,13 +683,30 @@ const parseGlobalFlags = (argv: string[]) => {
 const resolveNamespace = (flags: GlobalFlags, config: Config) =>
   flags.namespace || process.env.AGENTCTL_NAMESPACE || config.namespace || DEFAULT_NAMESPACE
 
-const resolveAddress = (flags: GlobalFlags, config: Config) =>
+const resolveExplicitAddress = (flags: GlobalFlags, config: Config) =>
   flags.address ||
   process.env.AGENTCTL_SERVER ||
   process.env.AGENTCTL_ADDRESS ||
   process.env.JANGAR_GRPC_ADDRESS ||
   config.address ||
-  DEFAULT_ADDRESS
+  ''
+
+const resolveMode = (flags: GlobalFlags, config: Config): TransportMode => {
+  if (flags.kube) return 'kube'
+  if (flags.grpc) return 'grpc'
+  const envMode = process.env.AGENTCTL_MODE?.trim().toLowerCase()
+  if (envMode === 'kube' || envMode === 'grpc') return envMode
+  const explicitAddress = resolveExplicitAddress(flags, config)
+  if (explicitAddress) return 'grpc'
+  return 'kube'
+}
+
+const resolveAddress = (flags: GlobalFlags, config: Config, mode: TransportMode) => {
+  const explicit = resolveExplicitAddress(flags, config)
+  if (explicit) return explicit
+  if (mode === 'grpc') return DEFAULT_ADDRESS
+  return ''
+}
 
 const resolveToken = (flags: GlobalFlags, config: Config) =>
   flags.token || process.env.AGENTCTL_TOKEN || process.env.JANGAR_GRPC_TOKEN || config.token
@@ -387,6 +717,12 @@ const resolveTls = (flags: GlobalFlags, config: Config) => {
   if (env !== undefined) return env
   return config.tls ?? false
 }
+
+const resolveKubeconfig = (flags: GlobalFlags, config: Config) =>
+  flags.kubeconfig || process.env.AGENTCTL_KUBECONFIG || config.kubeconfig
+
+const resolveKubeContext = (flags: GlobalFlags, config: Config) =>
+  flags.context || process.env.AGENTCTL_CONTEXT || config.context
 
 const resolveProtoPath = () => {
   const envPath = process.env.AGENTCTL_PROTO_PATH?.trim()
@@ -485,6 +821,315 @@ const callUnary = <Response>(
 const parseJson = (value: string) => {
   if (!value) return null
   return JSON.parse(value) as Record<string, unknown>
+}
+
+const parseYamlDocuments = (content: string) =>
+  YAML.parseAllDocuments(content)
+    .map((doc) => doc.toJSON() as Record<string, unknown>)
+    .filter((doc) => doc && Object.keys(doc).length > 0)
+
+const loadKubeConfig = (options: KubeOptions) => {
+  const kubeConfig = new KubeConfig()
+  if (options.kubeconfig) {
+    if (!existsSync(options.kubeconfig)) {
+      throw new Error(`kubeconfig not found: ${options.kubeconfig}`)
+    }
+    kubeConfig.loadFromFile(options.kubeconfig)
+  } else {
+    kubeConfig.loadFromDefault()
+  }
+  if (options.context) {
+    kubeConfig.setCurrentContext(options.context)
+  }
+  return kubeConfig
+}
+
+const createKubeClients = (options: KubeOptions): KubeClients => {
+  const kubeConfig = loadKubeConfig(options)
+  return {
+    kubeConfig,
+    core: kubeConfig.makeApiClient(CoreV1Api),
+    custom: kubeConfig.makeApiClient(CustomObjectsApi),
+    apps: kubeConfig.makeApiClient(AppsV1Api),
+    batch: kubeConfig.makeApiClient(BatchV1Api),
+    crd: kubeConfig.makeApiClient(ApiextensionsV1Api),
+    log: new Log(kubeConfig),
+  }
+}
+
+const unwrapResponse = <T>(response: T | { body: T }) =>
+  (typeof response === 'object' && response !== null && 'body' in response
+    ? (response as { body: T }).body
+    : response) as T
+
+const isNotFoundError = (error: unknown) => {
+  if (!error || typeof error !== 'object') return false
+  if ('statusCode' in error && (error as { statusCode?: number }).statusCode === 404) return true
+  if (
+    'body' in error &&
+    typeof (error as { body?: { code?: number; reason?: string } }).body === 'object' &&
+    (error as { body?: { code?: number; reason?: string } }).body?.code === 404
+  ) {
+    return true
+  }
+  if (
+    'body' in error &&
+    typeof (error as { body?: { reason?: string } }).body === 'object' &&
+    (error as { body?: { reason?: string } }).body?.reason === 'NotFound'
+  ) {
+    return true
+  }
+  if ('message' in error && typeof (error as { message?: string }).message === 'string') {
+    const message = (error as { message: string }).message.toLowerCase()
+    return message.includes('notfound') || message.includes('not found')
+  }
+  return false
+}
+
+const listCustomObjects = async (
+  clients: KubeClients,
+  spec: ResourceSpec,
+  namespace: string,
+  labelSelector?: string,
+) => {
+  const response = await clients.custom.listNamespacedCustomObject({
+    group: spec.group,
+    version: spec.version,
+    namespace,
+    plural: spec.plural,
+    labelSelector,
+  })
+  return unwrapResponse(response) as Record<string, unknown>
+}
+
+const getCustomObjectOptional = async (clients: KubeClients, spec: ResourceSpec, name: string, namespace: string) => {
+  try {
+    const response = await clients.custom.getNamespacedCustomObject({
+      group: spec.group,
+      version: spec.version,
+      namespace,
+      plural: spec.plural,
+      name,
+    })
+    return unwrapResponse(response) as Record<string, unknown>
+  } catch (error) {
+    if (isNotFoundError(error)) return null
+    throw error
+  }
+}
+
+const createCustomObject = async (
+  clients: KubeClients,
+  spec: ResourceSpec,
+  namespace: string,
+  body: Record<string, unknown>,
+) => {
+  const response = await clients.custom.createNamespacedCustomObject({
+    group: spec.group,
+    version: spec.version,
+    namespace,
+    plural: spec.plural,
+    body,
+  })
+  return unwrapResponse(response) as Record<string, unknown>
+}
+
+const replaceCustomObject = async (
+  clients: KubeClients,
+  spec: ResourceSpec,
+  namespace: string,
+  name: string,
+  body: Record<string, unknown>,
+) => {
+  const response = await clients.custom.replaceNamespacedCustomObject({
+    group: spec.group,
+    version: spec.version,
+    namespace,
+    plural: spec.plural,
+    name,
+    body,
+  })
+  return unwrapResponse(response) as Record<string, unknown>
+}
+
+const deleteCustomObject = async (clients: KubeClients, spec: ResourceSpec, namespace: string, name: string) => {
+  try {
+    const response = await clients.custom.deleteNamespacedCustomObject({
+      group: spec.group,
+      version: spec.version,
+      namespace,
+      plural: spec.plural,
+      name,
+    })
+    return unwrapResponse(response) as Record<string, unknown>
+  } catch (error) {
+    if (isNotFoundError(error)) return null
+    throw error
+  }
+}
+
+const resolveSpecFromManifest = (resource: Record<string, unknown>) => {
+  const kind = typeof resource.kind === 'string' ? resource.kind : ''
+  const apiVersion = typeof resource.apiVersion === 'string' ? resource.apiVersion : ''
+  if (!kind || !apiVersion) {
+    throw new Error('manifest must include apiVersion and kind')
+  }
+  if (!apiVersion.includes('/')) {
+    throw new Error(`unsupported apiVersion: ${apiVersion}`)
+  }
+  const [group, version] = apiVersion.split('/', 2)
+  const baseSpec = KIND_SPECS[kind.toLowerCase()]
+  if (!baseSpec) {
+    throw new Error(`unsupported kind: ${kind}`)
+  }
+  if (baseSpec.group !== group) {
+    throw new Error(`unsupported group for ${kind}: ${group}`)
+  }
+  return { ...baseSpec, version }
+}
+
+const applyManifest = async (clients: KubeClients, manifest: string, namespace: string) => {
+  const documents = parseYamlDocuments(manifest)
+  const applied: Record<string, unknown>[] = []
+
+  for (const doc of documents) {
+    const spec = resolveSpecFromManifest(doc)
+    const metadata = (doc.metadata ?? {}) as Record<string, unknown>
+    const name = typeof metadata.name === 'string' ? metadata.name : ''
+    const generateName = typeof metadata.generateName === 'string' ? metadata.generateName : ''
+    const resolvedNamespace = (metadata.namespace as string | undefined) || namespace
+    metadata.namespace = resolvedNamespace
+    doc.metadata = metadata
+
+    if (name) {
+      const existing = await getCustomObjectOptional(clients, spec, name, resolvedNamespace)
+      if (existing) {
+        const existingMeta = (existing.metadata ?? {}) as Record<string, unknown>
+        if (existingMeta.resourceVersion) {
+          metadata.resourceVersion = existingMeta.resourceVersion
+        }
+        applied.push(await replaceCustomObject(clients, spec, resolvedNamespace, name, doc))
+      } else {
+        applied.push(await createCustomObject(clients, spec, resolvedNamespace, doc))
+      }
+      continue
+    }
+
+    if (!generateName) {
+      throw new Error('manifest metadata.name or metadata.generateName is required')
+    }
+    applied.push(await createCustomObject(clients, spec, resolvedNamespace, doc))
+  }
+
+  return applied
+}
+
+const readNestedValue = (value: unknown, path: string[]) => {
+  let cursor: unknown = value
+  for (const key of path) {
+    if (!cursor || typeof cursor !== 'object' || Array.isArray(cursor)) return null
+    cursor = (cursor as Record<string, unknown>)[key]
+  }
+  return cursor ?? null
+}
+
+const resolveAgentRunRuntime = (resource: Record<string, unknown>) => {
+  const runtimeRef = readNestedValue(resource, ['status', 'runtimeRef'])
+  const runtimeType =
+    (readNestedValue(runtimeRef, ['type']) as string | null) ??
+    (readNestedValue(resource, ['spec', 'runtime', 'type']) as string | null)
+  const runtimeName = readNestedValue(runtimeRef, ['name']) as string | null
+  return { runtimeType, runtimeName }
+}
+
+const isJobRuntime = (runtimeType: string | null) => runtimeType === 'job' || runtimeType === 'workflow'
+
+const runLabelSelector = (runName: string) => `agents.proompteng.ai/agent-run=${runName}`
+
+const listPodsForSelector = async (clients: KubeClients, namespace: string, selector: string) => {
+  const response = await clients.core.listNamespacedPod({ namespace, labelSelector: selector })
+  const body = unwrapResponse(response) as { items?: Record<string, unknown>[] }
+  return Array.isArray(body.items) ? body.items : []
+}
+
+const pickPodForRun = async (
+  clients: KubeClients,
+  namespace: string,
+  selector: string,
+): Promise<Record<string, unknown> | null> => {
+  const items = await listPodsForSelector(clients, namespace, selector)
+  if (items.length === 0) return null
+  const running = items.find((pod) => readNestedValue(pod, ['status', 'phase']) === 'Running')
+  return running ?? items[0] ?? null
+}
+
+const resolvePodContainerName = (pod: Record<string, unknown>) => {
+  const containers = readNestedValue(pod, ['spec', 'containers'])
+  if (!Array.isArray(containers) || containers.length === 0) return undefined
+  const first = containers[0] as Record<string, unknown>
+  return typeof first?.name === 'string' ? first.name : undefined
+}
+
+const streamPodLogs = async (
+  clients: KubeClients,
+  namespace: string,
+  podName: string,
+  container: string | undefined,
+  follow: boolean,
+) => {
+  if (!follow) {
+    const response = await clients.core.readNamespacedPodLog({
+      name: podName,
+      namespace,
+      container,
+      follow: false,
+    })
+    const body = unwrapResponse(response) as string
+    process.stdout.write(body ?? '')
+    return
+  }
+
+  const logClient = clients.log as unknown as {
+    log: (...args: unknown[]) => Promise<void>
+  }
+  if (typeof logClient.log !== 'function') {
+    const fallback = await clients.core.readNamespacedPodLog({
+      name: podName,
+      namespace,
+      container,
+      follow: false,
+    })
+    const body = unwrapResponse(fallback) as string
+    process.stdout.write(body ?? '')
+    return
+  }
+
+  try {
+    await logClient.log(namespace, podName, container ?? '', process.stdout, { follow: true })
+  } catch (error) {
+    const fallback = await clients.core.readNamespacedPodLog({
+      name: podName,
+      namespace,
+      container,
+      follow: false,
+    })
+    const body = unwrapResponse(fallback) as string
+    process.stdout.write(body ?? '')
+  }
+}
+
+const deleteJobByName = async (clients: KubeClients, namespace: string, name: string) => {
+  try {
+    await clients.batch.deleteNamespacedJob({ name, namespace })
+    return true
+  } catch (error) {
+    if (isNotFoundError(error)) return false
+    throw error
+  }
+}
+
+const deleteJobsBySelector = async (clients: KubeClients, namespace: string, selector: string) => {
+  await clients.batch.deleteCollectionNamespacedJob({ namespace, labelSelector: selector })
 }
 
 const normalizeOutput = (value: string | undefined) => {
@@ -698,6 +1343,25 @@ const outputList = (resource: Record<string, unknown>, output: string) => {
   ])
 }
 
+const outputResources = (resources: Record<string, unknown>[], output: string) => {
+  if (output === 'json') {
+    console.log(JSON.stringify(resources, null, 2))
+    return
+  }
+  if (output === 'yaml') {
+    console.log(YAML.stringify(resources))
+    return
+  }
+  const rows = resources.map(toRow)
+  renderTable(rows, [
+    { label: 'NAME', value: (entry) => entry.name },
+    { label: 'NAMESPACE', value: (entry) => entry.namespace },
+    { label: 'KIND', value: (entry) => entry.kind },
+    { label: 'AGE', value: (entry) => entry.age },
+    { label: 'STATUS', value: (entry) => entry.status },
+  ])
+}
+
 const parseKeyValueList = (values: string[]) => {
   const output: RuntimeEntry[] = []
   for (const item of values) {
@@ -851,6 +1515,173 @@ const outputStatus = (status: ControlPlaneStatus, output: string, namespace: str
   ])
 }
 
+const resolveAgentRunPhase = (resource: Record<string, unknown>) => {
+  const phase = readNestedValue(resource, ['status', 'phase'])
+  if (typeof phase === 'string' && phase.trim()) return phase
+  const conditions = readNestedValue(resource, ['status', 'conditions'])
+  if (Array.isArray(conditions)) {
+    const ready = conditions.find((entry) => readNestedValue(entry, ['type']) === 'Ready')
+    const readyStatus = readNestedValue(ready, ['status'])
+    if (typeof readyStatus === 'string') return readyStatus
+  }
+  return ''
+}
+
+const isTerminalPhase = (phase: string) => {
+  const normalized = phase.trim().toLowerCase()
+  return (
+    normalized === 'succeeded' || normalized === 'failed' || normalized === 'cancelled' || normalized === 'canceled'
+  )
+}
+
+const matchesAgentRunFilters = (resource: Record<string, unknown>, phase?: string, runtime?: string) => {
+  if (phase) {
+    const itemPhase = resolveAgentRunPhase(resource)
+    if (itemPhase !== phase) return false
+  }
+  if (runtime) {
+    const runtimeType = readNestedValue(resource, ['spec', 'runtime', 'type'])
+    if (runtimeType !== runtime) return false
+  }
+  return true
+}
+
+const filterAgentRunsList = (list: Record<string, unknown>, phase?: string, runtime?: string) => {
+  if (!phase && !runtime) return list
+  const items = Array.isArray(list.items) ? list.items : []
+  const filtered = items.filter((item) => matchesAgentRunFilters(item as Record<string, unknown>, phase, runtime))
+  return { ...list, items: filtered }
+}
+
+const waitForRunCompletionKube = async (clients: KubeClients, name: string, namespace: string, output: string) => {
+  while (true) {
+    const resource = await getCustomObjectOptional(clients, AGENT_RUN_SPEC, name, namespace)
+    if (!resource) {
+      throw new Error('AgentRun not found')
+    }
+    const phase = resolveAgentRunPhase(resource)
+    if (phase && isTerminalPhase(phase)) {
+      outputResource(resource, output)
+      return 0
+    }
+    await sleep(2000)
+  }
+}
+
+const outputStatusKube = async (clients: KubeClients, namespace: string, output: string) => {
+  const generatedAt = new Date().toISOString()
+  let namespaceStatus = 'unknown'
+  let namespaceMessage = ''
+  try {
+    await clients.core.readNamespace({ name: namespace })
+    namespaceStatus = 'healthy'
+  } catch (error) {
+    namespaceStatus = 'missing'
+    namespaceMessage = error instanceof Error ? error.message : String(error)
+  }
+
+  let deploymentStatus = 'unknown'
+  let deploymentMessage = ''
+  let deploymentName = 'agents'
+  try {
+    const response = await clients.apps.listNamespacedDeployment({
+      namespace,
+      labelSelector: 'app.kubernetes.io/name=agents',
+    })
+    const body = unwrapResponse(response) as { items?: Record<string, unknown>[] }
+    const items = Array.isArray(body.items) ? body.items : []
+    const deployment = (items[0] ?? null) as Record<string, unknown> | null
+    if (!deployment) {
+      deploymentStatus = 'missing'
+    } else {
+      deploymentName = (readNestedValue(deployment, ['metadata', 'name']) as string) || deploymentName
+      const desired = Number(readNestedValue(deployment, ['spec', 'replicas']) ?? 0)
+      const ready = Number(readNestedValue(deployment, ['status', 'readyReplicas']) ?? 0)
+      const available = Number(readNestedValue(deployment, ['status', 'availableReplicas']) ?? 0)
+      const image = readNestedValue(deployment, ['spec', 'template', 'spec', 'containers', 0, 'image'])
+      const healthy = desired > 0 ? ready >= desired : ready > 0
+      deploymentStatus = healthy ? 'healthy' : 'degraded'
+      deploymentMessage = `ready ${ready}/${desired}`
+      if (available) deploymentMessage = `${deploymentMessage} available ${available}`
+      if (typeof image === 'string' && image) deploymentMessage = `${deploymentMessage} image ${image}`
+    }
+  } catch (error) {
+    deploymentStatus = 'unknown'
+    deploymentMessage = error instanceof Error ? error.message : String(error)
+  }
+
+  let missingCrds: string[] = []
+  try {
+    const response = await clients.crd.listCustomResourceDefinition()
+    const body = unwrapResponse(response) as { items?: Record<string, unknown>[] }
+    const items = Array.isArray(body.items) ? body.items : []
+    const found = new Set(
+      items
+        .map((item) => readNestedValue(item, ['metadata', 'name']))
+        .filter((value): value is string => typeof value === 'string'),
+    )
+    missingCrds = REQUIRED_CRDS.filter((name) => !found.has(name))
+  } catch (error) {
+    missingCrds = [...REQUIRED_CRDS]
+  }
+
+  const statusPayload = {
+    mode: 'kube',
+    generated_at: generatedAt,
+    namespace,
+    deployment: {
+      name: deploymentName,
+      status: deploymentStatus,
+      message: deploymentMessage,
+    },
+    crds: {
+      status: missingCrds.length === 0 ? 'healthy' : 'degraded',
+      missing: missingCrds,
+    },
+    namespace_status: {
+      status: namespaceStatus,
+      message: namespaceMessage,
+    },
+  }
+
+  if (output === 'json') {
+    console.log(JSON.stringify(statusPayload, null, 2))
+    return
+  }
+  if (output === 'yaml') {
+    console.log(YAML.stringify(statusPayload))
+    return
+  }
+
+  const rows = [
+    {
+      component: 'namespace',
+      namespace,
+      status: namespaceStatus,
+      message: namespaceMessage,
+    },
+    {
+      component: `deployment/${deploymentName}`,
+      namespace,
+      status: deploymentStatus,
+      message: deploymentMessage,
+    },
+    {
+      component: 'crds',
+      namespace,
+      status: missingCrds.length === 0 ? 'healthy' : 'degraded',
+      message: missingCrds.length === 0 ? 'all present' : `missing: ${missingCrds.join(', ')}`,
+    },
+  ]
+
+  renderTable(rows, [
+    { label: 'COMPONENT', value: (entry) => entry.component },
+    { label: 'NAMESPACE', value: (entry) => entry.namespace },
+    { label: 'STATUS', value: (entry) => entry.status },
+    { label: 'MESSAGE', value: (entry) => entry.message },
+  ])
+}
+
 const readFileContent = async (file: string) => {
   const content = await readFile(file, 'utf8')
   if (!content.trim()) throw new Error(`File ${file} is empty`)
@@ -901,9 +1732,23 @@ const main = async () => {
           if (args[i]?.startsWith('--token=')) {
             next.token = args[i].slice('--token='.length)
           }
+          if (args[i] === '--kubeconfig') {
+            next.kubeconfig = args[++i]
+          }
+          if (args[i]?.startsWith('--kubeconfig=')) {
+            next.kubeconfig = args[i].slice('--kubeconfig='.length)
+          }
+          if (args[i] === '--context') {
+            next.context = args[++i]
+          }
+          if (args[i]?.startsWith('--context=')) {
+            next.context = args[i].slice('--context='.length)
+          }
         }
-        if (!next.namespace && !next.address && !next.token) {
-          throw new Error('config set requires at least one of --namespace, --server, or --token')
+        if (!next.namespace && !next.address && !next.token && !next.kubeconfig && !next.context) {
+          throw new Error(
+            'config set requires at least one of --namespace, --server, --token, --kubeconfig, or --context',
+          )
         }
         await saveConfig(next)
         console.log(`Updated ${resolveConfigPath()}`)
@@ -924,8 +1769,351 @@ const main = async () => {
       return 0
     }
 
-    const address = resolveAddress(flags, config)
     const namespace = resolveNamespace(flags, config)
+    const mode = resolveMode(flags, config)
+
+    if (mode === 'kube') {
+      const kubeOptions: KubeOptions = {
+        kubeconfig: resolveKubeconfig(flags, config),
+        context: resolveKubeContext(flags, config),
+      }
+      const clients = createKubeClients(kubeOptions)
+
+      if (command === 'version') {
+        console.log(`agentctl ${version}`)
+        try {
+          const response = await clients.apps.listNamespacedDeployment({
+            namespace,
+            labelSelector: 'app.kubernetes.io/name=agents',
+          })
+          const body = unwrapResponse(response) as { items?: Record<string, unknown>[] }
+          const items = Array.isArray(body.items) ? body.items : []
+          const deployment = (items[0] ?? null) as Record<string, unknown> | null
+          const image = deployment
+            ? readNestedValue(deployment, ['spec', 'template', 'spec', 'containers', 0, 'image'])
+            : null
+          if (typeof image === 'string' && image) {
+            console.log(`server image ${image}`)
+          } else {
+            console.log('server info unavailable (kube mode)')
+          }
+        } catch {
+          console.log('server info unavailable (kube mode)')
+        }
+        return 0
+      }
+
+      if (command === 'status' || command === 'diagnose') {
+        await outputStatusKube(clients, namespace, output)
+        return 0
+      }
+
+      const spec = RESOURCE_SPECS[command]
+      if (spec) {
+        if (subcommand === 'get' || subcommand === 'describe' || subcommand === 'status') {
+          const name = args[0]
+          if (!name) {
+            throw new Error('name is required')
+          }
+          const resource = await getCustomObjectOptional(clients, spec, name, namespace)
+          if (!resource) {
+            throw new Error(`${command} ${name} not found`)
+          }
+          outputResource(resource, subcommand === 'describe' ? describeOutput : output)
+          return 0
+        }
+        if (subcommand === 'list') {
+          const labelSelector = parseLabelSelector(args)
+          const resource = await listCustomObjects(clients, spec, namespace, labelSelector)
+          outputList(resource, output)
+          return 0
+        }
+        if (subcommand === 'watch') {
+          const intervalMs = parseWatchInterval(args)
+          let iteration = 0
+          const stop = () => process.exit(0)
+          process.on('SIGINT', stop)
+          while (true) {
+            const labelSelector = parseLabelSelector(args)
+            const resource = await listCustomObjects(clients, spec, namespace, labelSelector)
+            if (output === 'table') {
+              clearScreen()
+            } else if (iteration > 0) {
+              console.log('')
+            }
+            outputList(resource, output)
+            iteration += 1
+            await sleep(intervalMs)
+          }
+        }
+        if (subcommand === 'apply') {
+          const fileIndex = args.indexOf('-f')
+          const file = fileIndex >= 0 ? args[fileIndex + 1] : undefined
+          if (!file) {
+            throw new Error('apply requires -f <file>')
+          }
+          const manifest = await readFileContent(file)
+          const resources = await applyManifest(clients, manifest, namespace)
+          outputResources(resources, output)
+          return 0
+        }
+        if (subcommand === 'delete') {
+          const name = args[0]
+          if (!name) {
+            throw new Error('name is required')
+          }
+          const result = await deleteCustomObject(clients, spec, namespace, name)
+          if (!result) {
+            throw new Error(`${command} ${name} not found`)
+          }
+          console.log('deleted')
+          return 0
+        }
+        if (command === 'impl' && subcommand === 'create') {
+          let text = ''
+          let summary: string | undefined
+          let source: Record<string, string> | undefined
+          for (let i = 0; i < args.length; i += 1) {
+            if (args[i] === '--text') text = args[++i]
+            if (args[i] === '--summary') summary = args[++i]
+            if (args[i] === '--source') source = parseSource(args[++i])
+          }
+          if (!text) {
+            throw new Error('--text is required')
+          }
+          const manifest: Record<string, unknown> = {
+            apiVersion: `${spec.group}/${spec.version}`,
+            kind: spec.kind,
+            metadata: { generateName: 'impl-', namespace },
+            spec: {
+              text,
+              ...(summary ? { summary } : {}),
+              ...(source?.provider
+                ? {
+                    source: {
+                      provider: source.provider,
+                      ...(source.externalId ? { externalId: source.externalId } : {}),
+                      ...(source.url ? { url: source.url } : {}),
+                    },
+                  }
+                : {}),
+            },
+          }
+          const resource = await createCustomObject(clients, spec, namespace, manifest)
+          outputResource(resource, output)
+          return 0
+        }
+      }
+
+      if (command === 'run') {
+        if (subcommand === 'submit') {
+          const params: Record<string, string[]> = { param: [], runtimeConfig: [] }
+          const options: Record<string, string> = {}
+
+          for (let i = 0; i < args.length; i += 1) {
+            const arg = args[i]
+            if (!arg) continue
+            if (arg === '--agent' || arg === '--impl' || arg === '--runtime' || arg === '--workload-image') {
+              options[arg.slice(2)] = args[++i]
+              continue
+            }
+            if (arg === '--cpu' || arg === '--memory' || arg === '--idempotency-key' || arg === '--memory-ref') {
+              options[arg.slice(2)] = args[++i]
+              continue
+            }
+            if (arg === '--param') {
+              params.param.push(args[++i])
+              continue
+            }
+            if (arg === '--runtime-config') {
+              params.runtimeConfig.push(args[++i])
+              continue
+            }
+            if (arg === '--wait') {
+              options.wait = 'true'
+            }
+          }
+
+          if (!options.agent || !options.impl || !options.runtime) {
+            throw new Error('--agent, --impl, and --runtime are required')
+          }
+
+          const runtimeConfig = parseKeyValueList(params.runtimeConfig)
+          const parameters = parseKeyValueList(params.param)
+          const deliveryId = options['idempotency-key'] || randomUUID()
+          const runSpec: Record<string, unknown> = {
+            agentRef: { name: options.agent },
+            implementationSpecRef: { name: options.impl },
+            runtime: {
+              type: options.runtime,
+              ...(runtimeConfig.length > 0 ? { config: runtimeConfig } : {}),
+            },
+            ...(parameters.length > 0 ? { parameters } : {}),
+          }
+
+          if (options['memory-ref']) {
+            runSpec.memoryRef = { name: options['memory-ref'] }
+          }
+
+          if (options.runtime === 'workflow') {
+            runSpec.workflow = { steps: [{ name: 'implement' }] }
+          }
+
+          if (options['workload-image'] || options.cpu || options.memory) {
+            const workload: Record<string, unknown> = {}
+            if (options['workload-image']) {
+              workload.image = options['workload-image']
+            }
+            if (options.cpu || options.memory) {
+              workload.resources = { requests: {} as Record<string, string> }
+              if (options.cpu) (workload.resources as { requests: Record<string, string> }).requests.cpu = options.cpu
+              if (options.memory)
+                (workload.resources as { requests: Record<string, string> }).requests.memory = options.memory
+            }
+            runSpec.workload = workload
+          }
+
+          const manifest: Record<string, unknown> = {
+            apiVersion: `${AGENT_RUN_SPEC.group}/${AGENT_RUN_SPEC.version}`,
+            kind: AGENT_RUN_SPEC.kind,
+            metadata: {
+              generateName: `${options.agent}-`,
+              namespace,
+              labels: {
+                'jangar.proompteng.ai/delivery-id': deliveryId,
+              },
+            },
+            spec: runSpec,
+          }
+
+          const resource = await createCustomObject(clients, AGENT_RUN_SPEC, namespace, manifest)
+          outputResource(resource, output)
+          if (options.wait === 'true') {
+            const runName = readNestedValue(resource, ['metadata', 'name'])
+            if (typeof runName !== 'string' || !runName) {
+              throw new Error('AgentRun name not available for wait')
+            }
+            return await waitForRunCompletionKube(clients, runName, namespace, output)
+          }
+          return 0
+        }
+        if (subcommand === 'apply') {
+          const fileIndex = args.indexOf('-f')
+          const file = fileIndex >= 0 ? args[fileIndex + 1] : undefined
+          if (!file) {
+            throw new Error('apply requires -f <file>')
+          }
+          const manifest = await readFileContent(file)
+          const resources = await applyManifest(clients, manifest, namespace)
+          outputResources(resources, output)
+          return 0
+        }
+        if (subcommand === 'get' || subcommand === 'describe' || subcommand === 'status') {
+          const name = args[0]
+          if (!name) {
+            throw new Error('name is required')
+          }
+          const resource = await getCustomObjectOptional(clients, AGENT_RUN_SPEC, name, namespace)
+          if (!resource) {
+            throw new Error('AgentRun not found')
+          }
+          outputResource(resource, subcommand === 'describe' ? describeOutput : output)
+          return 0
+        }
+        if (subcommand === 'list') {
+          const filters = parseRunListFilters(args)
+          const resource = await listCustomObjects(clients, AGENT_RUN_SPEC, namespace, filters.labelSelector)
+          outputList(filterAgentRunsList(resource, filters.phase, filters.runtime), output)
+          return 0
+        }
+        if (subcommand === 'watch') {
+          const intervalMs = parseWatchInterval(args)
+          let iteration = 0
+          const stop = () => process.exit(0)
+          process.on('SIGINT', stop)
+          while (true) {
+            const filters = parseRunListFilters(args)
+            const resource = await listCustomObjects(clients, AGENT_RUN_SPEC, namespace, filters.labelSelector)
+            if (output === 'table') {
+              clearScreen()
+            } else if (iteration > 0) {
+              console.log('')
+            }
+            outputList(filterAgentRunsList(resource, filters.phase, filters.runtime), output)
+            iteration += 1
+            await sleep(intervalMs)
+          }
+        }
+        if (subcommand === 'wait') {
+          const name = args[0]
+          if (!name) {
+            throw new Error('name is required')
+          }
+          return await waitForRunCompletionKube(clients, name, namespace, output)
+        }
+        if (subcommand === 'logs') {
+          const name = args[0]
+          if (!name) {
+            throw new Error('name is required')
+          }
+          const follow = args.includes('--follow')
+          const resource = await getCustomObjectOptional(clients, AGENT_RUN_SPEC, name, namespace)
+          if (!resource) {
+            throw new Error('AgentRun not found')
+          }
+          const { runtimeType, runtimeName } = resolveAgentRunRuntime(resource)
+          const selector = isJobRuntime(runtimeType) && runtimeName ? `job-name=${runtimeName}` : runLabelSelector(name)
+          const pod = await pickPodForRun(clients, namespace, selector)
+          if (!pod) {
+            throw new Error('No pods found for AgentRun')
+          }
+          const podName = readNestedValue(pod, ['metadata', 'name'])
+          if (typeof podName !== 'string' || !podName) {
+            throw new Error('Pod name not available for logs')
+          }
+          const containerName = resolvePodContainerName(pod)
+          await streamPodLogs(clients, namespace, podName, containerName, follow)
+          return 0
+        }
+        if (subcommand === 'cancel') {
+          const name = args[0]
+          if (!name) {
+            throw new Error('name is required')
+          }
+          const resource = await getCustomObjectOptional(clients, AGENT_RUN_SPEC, name, namespace)
+          if (!resource) {
+            throw new Error('AgentRun not found')
+          }
+          const { runtimeType, runtimeName } = resolveAgentRunRuntime(resource)
+          if (runtimeType === 'workflow') {
+            await deleteJobsBySelector(clients, namespace, runLabelSelector(name))
+            console.log('cancelled')
+            return 0
+          }
+          if (isJobRuntime(runtimeType) && runtimeName) {
+            const deleted = await deleteJobByName(clients, namespace, runtimeName)
+            if (!deleted) {
+              console.log('job not found')
+            } else {
+              console.log('cancelled')
+            }
+            return 0
+          }
+          if (isJobRuntime(runtimeType)) {
+            await deleteJobsBySelector(clients, namespace, runLabelSelector(name))
+            console.log('cancelled')
+            return 0
+          }
+          throw new Error('No cancellable runtime found for this AgentRun')
+        }
+      }
+
+      console.error('Unknown command')
+      console.log(usage(version))
+      return EXIT_VALIDATION
+    }
+
+    const address = resolveAddress(flags, config, mode)
     const token = resolveToken(flags, config)
     const tlsEnabled = resolveTls(flags, config)
     const metadata = createMetadata(token)
@@ -952,113 +2140,7 @@ const main = async () => {
       return 0
     }
 
-    const resourceMap: Record<string, { list: string; get: string; apply: string; del: string; create?: string }> = {
-      agent: {
-        list: 'ListAgents',
-        get: 'GetAgent',
-        apply: 'ApplyAgent',
-        del: 'DeleteAgent',
-      },
-      provider: {
-        list: 'ListAgentProviders',
-        get: 'GetAgentProvider',
-        apply: 'ApplyAgentProvider',
-        del: 'DeleteAgentProvider',
-      },
-      impl: {
-        list: 'ListImplementationSpecs',
-        get: 'GetImplementationSpec',
-        apply: 'ApplyImplementationSpec',
-        del: 'DeleteImplementationSpec',
-        create: 'CreateImplementationSpec',
-      },
-      source: {
-        list: 'ListImplementationSources',
-        get: 'GetImplementationSource',
-        apply: 'ApplyImplementationSource',
-        del: 'DeleteImplementationSource',
-      },
-      memory: {
-        list: 'ListMemories',
-        get: 'GetMemory',
-        apply: 'ApplyMemory',
-        del: 'DeleteMemory',
-      },
-      tool: {
-        list: 'ListTools',
-        get: 'GetTool',
-        apply: 'ApplyTool',
-        del: 'DeleteTool',
-      },
-      toolrun: {
-        list: 'ListToolRuns',
-        get: 'GetToolRun',
-        apply: 'ApplyToolRun',
-        del: 'DeleteToolRun',
-      },
-      orchestration: {
-        list: 'ListOrchestrations',
-        get: 'GetOrchestration',
-        apply: 'ApplyOrchestration',
-        del: 'DeleteOrchestration',
-      },
-      orchestrationrun: {
-        list: 'ListOrchestrationRuns',
-        get: 'GetOrchestrationRun',
-        apply: 'ApplyOrchestrationRun',
-        del: 'DeleteOrchestrationRun',
-      },
-      approval: {
-        list: 'ListApprovalPolicies',
-        get: 'GetApprovalPolicy',
-        apply: 'ApplyApprovalPolicy',
-        del: 'DeleteApprovalPolicy',
-      },
-      budget: {
-        list: 'ListBudgets',
-        get: 'GetBudget',
-        apply: 'ApplyBudget',
-        del: 'DeleteBudget',
-      },
-      secretbinding: {
-        list: 'ListSecretBindings',
-        get: 'GetSecretBinding',
-        apply: 'ApplySecretBinding',
-        del: 'DeleteSecretBinding',
-      },
-      signal: {
-        list: 'ListSignals',
-        get: 'GetSignal',
-        apply: 'ApplySignal',
-        del: 'DeleteSignal',
-      },
-      signaldelivery: {
-        list: 'ListSignalDeliveries',
-        get: 'GetSignalDelivery',
-        apply: 'ApplySignalDelivery',
-        del: 'DeleteSignalDelivery',
-      },
-      schedule: {
-        list: 'ListSchedules',
-        get: 'GetSchedule',
-        apply: 'ApplySchedule',
-        del: 'DeleteSchedule',
-      },
-      artifact: {
-        list: 'ListArtifacts',
-        get: 'GetArtifact',
-        apply: 'ApplyArtifact',
-        del: 'DeleteArtifact',
-      },
-      workspace: {
-        list: 'ListWorkspaces',
-        get: 'GetWorkspace',
-        apply: 'ApplyWorkspace',
-        del: 'DeleteWorkspace',
-      },
-    }
-
-    const rpc = resourceMap[command]
+    const rpc = RPC_RESOURCE_MAP[command]
     if (rpc) {
       if (subcommand === 'get' || subcommand === 'describe') {
         const response = await callUnary<{ json: string }>(client, rpc.get, { name: args[0], namespace }, metadata)

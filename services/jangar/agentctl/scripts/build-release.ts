@@ -3,7 +3,6 @@ import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildBinaries } from './build-binaries'
 import { renderHomebrewFormula } from './homebrew/render-homebrew'
 import { parseTargetsArgs, resolveTargets, TARGETS } from './targets'
 
@@ -25,12 +24,11 @@ const loadPackageVersion = async () => {
 const normalizeVersion = (value: string) => (value.startsWith('v') ? value.slice(1) : value)
 
 const buildArchive = async (version: string, label: string) => {
-  const binaryName = `agentctl-${label}`
   const archiveName = `agentctl-${version}-${label}.tar.gz`
   const archivePath = resolve(releaseDir, archiveName)
   const tempDir = await mkdtemp(resolve(tmpdir(), 'agentctl-release-'))
   const stagedBinary = resolve(tempDir, 'agentctl')
-  const sourceBinary = resolve(distDir, binaryName)
+  const sourceBinary = resolve(distDir, 'agentctl.js')
 
   try {
     await copyFile(sourceBinary, stagedBinary)
@@ -44,7 +42,7 @@ const buildArchive = async (version: string, label: string) => {
 
     const exitCode = await proc.exited
     if (exitCode !== 0) {
-      throw new Error(`tar failed for ${binaryName} with exit code ${exitCode}`)
+      throw new Error(`tar failed for ${archiveName} with exit code ${exitCode}`)
     }
 
     const data = await readFile(archivePath)
@@ -68,7 +66,15 @@ const main = async () => {
   const argvForTargets = hasExplicitTargets ? argv : ['--all', ...argv]
   const targets = resolveTargets(argvForTargets, envTargets)
 
-  await buildBinaries(argvForTargets)
+  const buildProc = Bun.spawn(['bun', 'run', 'build'], {
+    cwd: root,
+    stderr: 'inherit',
+    stdout: 'inherit',
+  })
+  const buildExit = await buildProc.exited
+  if (buildExit !== 0) {
+    throw new Error(`bun run build failed with exit code ${buildExit}`)
+  }
   await mkdir(releaseDir, { recursive: true })
 
   const packageVersion = await loadPackageVersion()

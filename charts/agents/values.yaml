@@ -36,7 +36,7 @@ service:
   labels: {}
 
 grpc:
-  enabled: false
+  enabled: true
   port: 50051
   servicePort: 50051
   serviceType: ClusterIP
@@ -72,6 +72,21 @@ readinessProbe:
   periodSeconds: 10
   timeoutSeconds: 2
   failureThreshold: 6
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+  maxUnavailable: ""
+  annotations: {}
+
+networkPolicy:
+  enabled: false
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress: []
+  annotations: {}
 
 env:
   extra: []

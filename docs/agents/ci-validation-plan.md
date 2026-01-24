@@ -3,7 +3,7 @@
 Status: Current (2026-01-19)
 
 ## CRD Validation
-- Generate CRDs from Go types and verify:
+- Generate **Agents** CRDs from Go types and verify:
   - Structural schema
   - JSON size <= 256KB
   - `subresources.status` present
@@ -17,7 +17,14 @@ Status: Current (2026-01-19)
 - Check rendered manifests for disallowed resources (ingress, embedded DB).
 
 ## Integration Tests
-- kind/minikube smoke test:
+- in-cluster smoke test (ARC runners):
+  - Install chart into a dedicated namespace
+  - Provide a database URL (for example, `AGENTS_DB_BOOTSTRAP=true` in `scripts/agents/smoke-agents.sh`)
+  - Apply Agent/ImplementationSpec/AgentRun
+  - Verify AgentRun completion and status
+  - Use `scripts/agents/smoke-agents.sh` with a deterministic smoke provider.
+  - Requires `argocd/applications/agents-ci` RBAC for the ARC runner service account.
+- kind/minikube smoke test (local):
   - Install chart
   - Apply Agent/ImplementationSpec/AgentRun
   - Verify AgentRun completion and status

@@ -5,17 +5,17 @@ Status: Current (2026-01-20)
 Location: `services/jangar/agentctl` (ships with the Jangar service; **not** a separate product or service).
 
 ## Purpose
-`agentctl` is the Jangar CLI for managing Agents primitives and submitting AgentRuns without hand‑writing YAML.
-It ships with the Jangar service and is a thin wrapper around Jangar’s gRPC endpoints (like `kubectl`/`argocd`/`virtctl`
-style CLIs) that **never** talk to Kubernetes directly.
+`agentctl` is the CLI for managing Agents primitives and submitting AgentRuns without hand‑writing YAML.
+It ships with the Jangar service and is a thin wrapper around Kubernetes APIs (like `kubectl`/`argocd`/`virtctl`
+style CLIs). gRPC is supported as an optional transport when you want to target Jangar directly.
 
 ## Goals
 - CRUD for Agent, AgentRun, ImplementationSpec, ImplementationSource, Memory.
 - CRUD for supporting primitives (Tool, Schedule, Workspace, Signal, ApprovalPolicy, Budget, SecretBinding).
 - First‑class “run” command to submit an AgentRun from flags or a spec file.
-- Works against any Kubernetes cluster where Jangar is deployed, as long as the Jangar gRPC endpoint is reachable.
-- In‑cluster gRPC by default (port‑forward or in‑cluster usage).
-- Packaged via Bun into a single binary and distributed via npm and Homebrew.
+- Works against any Kubernetes cluster where Jangar is deployed by using the current kube context.
+- Optional gRPC mode for direct Jangar access (port‑forward, in‑cluster, or gateway).
+- Packaged as a Node-bundled CLI (single JS file) with optional Bun binaries; distributed via npm and Homebrew.
 - Human‑friendly status, logs, and controller health.
 
 ## Non‑goals
@@ -24,12 +24,14 @@ style CLIs) that **never** talk to Kubernetes directly.
 - Managing database lifecycle or ingress.
 
 ## Architecture
-- Client talks to the Jangar gRPC API (no direct Kubernetes access).
+- Client talks to the Kubernetes API directly by default.
+- gRPC transport is available for compatibility and future remote access.
 - Default namespace is `agents`, with explicit overrides via flags/config.
 - CLI is bundled and versioned with the Jangar service, even though it is published independently.
 - Jangar is the source of truth for list/get/apply/delete operations.
 
-### gRPC connectivity (current + future)
+### gRPC connectivity (optional)
+- **Optional:** gRPC can be enabled on the Jangar chart to serve agentctl and health endpoints.
 - **Current:** in-cluster gRPC only; external access via `kubectl port-forward` or an in-cluster client.
 - **Future-proofing:** TLS/mTLS support, optional auth tokens, and a dedicated Ingress/gateway can be layered without changing CLI commands.
 
@@ -81,12 +83,13 @@ style CLIs) that **never** talk to Kubernetes directly.
 - `agentctl run status <name>` (alias for `run get`)
 - `agentctl run wait <name>` (block until terminal phase)
 - `agentctl run list` / `agentctl run watch`
-- `agentctl run logs <name> [--follow]` (via Jangar gRPC)
+- `agentctl run logs <name> [--follow]` (Kubernetes pods in kube mode; gRPC optional)
 - `agentctl run cancel <name>`
 
 ### Status / Diagnose
-`agentctl status` and `agentctl diagnose` call the Jangar control-plane status endpoint and present a summary table
-by component and namespace. Use `--output json` for machine parsing.
+`agentctl status` and `agentctl diagnose` present control-plane health. In kube mode they inspect the namespace,
+deployment, and CRDs directly; in gRPC mode they call the Jangar control-plane status endpoint. Use `--output json`
+for machine parsing.
 
 Example table (left-aligned, kubectl-style headers):
 
@@ -156,9 +159,12 @@ grpc                     agents     healthy   127.0.0.1:50051
 
 ## Flags & Defaults
 - `--namespace` / `-n` (default `agents`).
+- `--kube` (default) to force Kubernetes API mode.
+- `--kubeconfig` / `AGENTCTL_KUBECONFIG` to select a kubeconfig file.
+- `--context` / `AGENTCTL_CONTEXT` to select a kube context.
+- `--grpc` to force gRPC mode.
 - `--server` / `--address` (gRPC address; default `agents-grpc.agents.svc.cluster.local:50051`).
 - For port‑forwarded usage, pass `--server 127.0.0.1:50051`.
-- In‑cluster usage targets the `agents-grpc` Service (requires `grpc.enabled` and `JANGAR_GRPC_*` envs in Helm values).
 - `--token` (optional shared secret).
 - `--tls` to enable TLS when configured (future-proofed).
 - `--output` / `-o` (`yaml|json|table`, default `table`).
@@ -178,7 +184,7 @@ grpc                     agents     healthy   127.0.0.1:50051
 - `--runtime-config key=value` maps into `spec.runtime.config` (schemaless).
 
 ## Logging & Artifacts
-- `agentctl run logs` and `agentctl run wait` stream from Jangar gRPC endpoints (no polling).
+- `agentctl run logs` streams from Kubernetes pods in kube mode and from Jangar gRPC in gRPC mode.
 
 ## Error Handling
 - Validate required fields before submitting.
@@ -196,12 +202,7 @@ grpc                     agents     healthy   127.0.0.1:50051
 - Secrets referenced by name only; values never printed.
 
 ## Decisions
-- Distribute `agentctl` as a standalone binary (GitHub releases) and npm + Homebrew packages.
-- `agentctl` depends on Jangar gRPC endpoints for all operations.
-- Uses Jangar gRPC auth (in‑cluster only for now; no kubeconfig access).
+- Distribute `agentctl` as a standalone CLI (Node bundle in releases) and npm + Homebrew packages.
+- Default transport is Kubernetes API; gRPC is optional for direct Jangar access.
+- `agentctl` lives under `services/jangar/**` and is bundled for Node; optional Bun binaries can be published for convenience.
 - Secrets referenced by name only; values never printed.
-
-## Decisions
-- `agentctl` lives under `services/jangar/**` and is packaged via Bun into a single binary.
-- Ready for npm publishing and Homebrew tap packaging.
-- Jangar gRPC is the only supported transport (future TLS/auth TBD).

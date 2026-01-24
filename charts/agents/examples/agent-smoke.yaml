@@ -1,0 +1,7 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: Agent
+metadata:
+  name: smoke-agent
+spec:
+  providerRef:
+    name: smoke-runner

@@ -2,7 +2,7 @@
 
 This document describes how to build and publish `agentctl` (bundled with the Jangar service) for npm and Homebrew.
 For install/usage guidance, see `docs/agents/agentctl.md`.
-`agentctl` ships with Jangar and uses gRPC only (no direct Kubernetes access).
+`agentctl` ships with Jangar and defaults to Kubernetes API access (gRPC optional).
 
 ## Prereqs
 
@@ -12,8 +12,8 @@ For install/usage guidance, see `docs/agents/agentctl.md`.
 
 ## Build artifacts
 
-`agentctl` is packaged as Bun single binaries for each target (macOS/Linux, amd64/arm64) plus an npm launcher
-that dispatches to the correct compiled binary.
+`agentctl` is packaged as a Node-bundled CLI (single JS file with a Node shebang) plus optional Bun-compiled
+binaries for environments that want a standalone executable.
 
 From the repo root:
 
@@ -26,22 +26,20 @@ bun run --filter @proompteng/agentctl build:release
 
 Artifacts:
 
-- `services/jangar/agentctl/dist/agentctl.js` (npm launcher; dispatches to platform binary)
-- `services/jangar/agentctl/dist/agentctl-<os>-<arch>` (standalone Bun-compiled binary)
-- `services/jangar/agentctl/dist/agentctl` (host binary helper for npm + local runs)
+- `services/jangar/agentctl/dist/agentctl.js` (Node-bundled CLI; installable via npm and used in release archives)
+- `services/jangar/agentctl/dist/agentctl-<os>-<arch>` (optional Bun-compiled binary)
+- `services/jangar/agentctl/dist/agentctl` (host binary helper for local runs when `build:bin` is used)
 - `services/jangar/agentctl/dist/release/agentctl-<version>-<os>-<arch>.tar.gz`
-- Each archive contains a single `agentctl` binary (no suffix).
+- Each archive contains a single `agentctl` executable (Node-bundled JS with shebang).
 - `services/jangar/agentctl/dist/release/*.sha256`
 - `services/jangar/agentctl/dist/release/agentctl.rb` (Homebrew formula with checksums, generated when all targets are built)
-- Compiled binaries use Bun's CJS output format plus `--compile-autoload-package-json` so `@grpc/grpc-js` can read its
-  embedded package metadata when running as a standalone binary.
 
 `build:release` builds all targets by default. To limit targets (e.g., per-OS builds in CI), set
 `AGENTCTL_TARGETS=darwin-amd64,darwin-arm64,linux-amd64,linux-arm64` or pass `--targets`.
 
 ## Validation (compiled binary)
 
-By default, the validation script spins up a local mock gRPC server and exercises the compiled binary:
+The validation script spins up a local mock gRPC server and exercises the optional compiled binary:
 
 ```bash
 bun run --filter @proompteng/agentctl build:bin
@@ -53,6 +51,11 @@ To validate against a port-forwarded in-cluster server instead:
 ```bash
 kubectl -n agents port-forward svc/agents-grpc 50052:50051
 bun run --filter @proompteng/agentctl validate:bin -- --server 127.0.0.1:50052
+```
+
+To validate against a kube context instead (optional binary):
+```bash
+AGENTCTL_KUBECONFIG=~/.kube/config bun run --filter @proompteng/agentctl validate:bin -- --kube
 ```
 
 ## Publish npm
@@ -70,20 +73,20 @@ bun run --filter @proompteng/agentctl validate:metadata
 
 ```bash
 cd services/jangar/agentctl
-npm run prepack # builds launcher + all platform binaries
-npm pack --dry-run # optional sanity check: ensures dist/ contains launcher + binaries
+npm run prepack # builds Node CLI + all platform binaries
+npm pack --dry-run # optional sanity check: ensures dist/ contains CLI + binaries
 npm publish --access public
 ```
 
 ## Homebrew
 
-1. Upload the compiled archives from `dist/release` to a GitHub release.
+1. Upload the release archives from `dist/release` to a GitHub release.
 2. To generate the formula, run `bun run --filter @proompteng/agentctl build:release` (or set
    `AGENTCTL_TARGETS=darwin-amd64,darwin-arm64,linux-amd64,linux-arm64`) so all checksums are present.
 3. If you built artifacts on multiple machines, combine them and run
    `bun run --filter @proompteng/agentctl homebrew:generate -- --input dist/release`
    to generate `agentctl.rb` with verified checksums.
-4. Copy the generated `dist/release/agentctl.rb` into the Homebrew tap repo and commit.
+4. Copy the generated `dist/release/agentctl.rb` into the Homebrew tap repo and commit (formula depends on `node`).
 4. If needed, the template lives at `services/jangar/agentctl/scripts/homebrew/agentctl.rb`.
 
 Example checksum:

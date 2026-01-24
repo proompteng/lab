@@ -39,6 +39,9 @@ GitOps rollout notes (native workflow runtime):
   `workflowRuntime.native.rerunOrchestration` and/or `workflowRuntime.native.systemImprovementOrchestration`
   (plus the matching `workflowRuntime.native.*Namespace` values if needed) in `argocd/applications/agents/values.yaml`.
 
+CI runners use `argocd/applications/agents-ci` to provision the `agents-ci` namespace and RBAC for ARC
+so GitHub Actions can execute smoke tests against the chart.
+
 Optional Argo CD smoke test (only for Argo CD-based installs):
 ```bash
 kubectl -n argocd get applications.argoproj.io agents -o yaml
@@ -59,14 +62,16 @@ kubectl -n agents wait --for=condition=complete job \
 scripts/agents/smoke-agents.sh
 ```
 
-This installs the chart with gRPC enabled, applies sample CRs, submits a multi-step workflow runtime
-AgentRun via `agentctl`, and validates:
+This installs the chart, applies deterministic smoke CRs, submits a multi-step workflow runtime
+AgentRun via `agentctl` (kube mode), and validates:
 - AgentRun phase transitions Pending → Running → Succeeded.
 - Workflow job creation (one Job per step) and Job completion.
 - Runtime ref is set to the workflow job runner.
 
 Override `AGENTS_NAMESPACE`, `AGENTS_RELEASE_NAME`, `AGENTS_VALUES_FILE`, `AGENTS_RUN_FILE`,
-`AGENTS_RUN_NAME`, or `AGENTS_GRPC_LOCAL_PORT` if needed.
+`AGENTS_RUN_NAME`, `AGENTS_CREATE_NAMESPACE`, or `AGENTCTL_BIN` if needed.
+If you do not have an external database handy, set `AGENTS_DB_BOOTSTRAP=true` to spin up a local
+Postgres in-cluster and wire `database.url` automatically (or provide `AGENTS_DB_URL` yourself).
 Ensure the `agentrun-workflow-smoke.yaml` workload image includes `agent-runner` or set
 `env.vars.JANGAR_AGENT_RUNNER_IMAGE` in your values.
 
@@ -87,6 +92,11 @@ This runbook validates the native workflow runtime end-to-end (AgentProvider →
 and confirms that the Codex implementation step opens a PR against `proompteng/lab`.
 
 Prereqs:
+- `codex-github-token` secret in the target namespace (GH token with repo permissions).
+- OpenAI key available via `AGENTS_E2E_OPENAI_KEY` or an existing `codex-openai-key` secret
+  (the script will create/update it when the env var is set).
+
+Prereqs:
 - Agents chart is installed in `agents` and Jangar is reachable.
 - A GitHub token secret exists (see below).
 
@@ -99,7 +109,7 @@ kubectl -n agents create secret generic codex-github-token \
 Run the native workflow script (override the issue/task as needed):
 ```bash
 AGENTS_E2E_ISSUE_NUMBER=2614 \
-AGENTS_E2E_PROMPT="Add a short \"Verification checklist\" subsection under the Native workflow e2e proof runbook that lists AgentRun success, artifact output, and PR verification steps." \
+AGENTS_E2E_PROMPT="Add optional autoscaling support to the Agents Helm chart (HPA + values schema + README)." \
 scripts/agents/native-workflow-e2e.sh
 ```
 

@@ -1,7 +1,7 @@
 {
   "name": "@proompteng/agentctl",
   "version": "0.1.0",
-  "description": "gRPC CLI for managing agents through Jangar",
+  "description": "CLI for managing Agents via Kubernetes or Jangar gRPC",
   "license": "MIT",
   "type": "module",
   "homepage": "https://github.com/proompteng/lab/tree/main/services/jangar/agentctl",
@@ -10,7 +10,9 @@
     "cli",
     "agents",
     "jangar",
-    "grpc"
+    "grpc",
+    "kubernetes",
+    "kube"
   ],
   "bin": {
     "agentctl": "./dist/agentctl.js"
@@ -30,7 +32,7 @@
   },
   "scripts": {
     "sync:proto": "bun run scripts/sync-proto.ts",
-    "build": "bun run sync:proto && bun build src/launcher.ts --target node --outfile dist/agentctl.js && bun run scripts/add-shebang.ts dist/agentctl.js",
+    "build": "bun run sync:proto && bun build src/index.ts --target node --outfile dist/agentctl.js && bun run scripts/add-shebang.ts dist/agentctl.js",
     "build:bin": "bun run sync:proto && bun run scripts/build-binaries.ts",
     "build:bins": "bun run sync:proto && bun run scripts/build-binaries.ts --all",
     "build:release": "bun run sync:proto && bun run scripts/build-release.ts",
@@ -43,6 +45,7 @@
   "dependencies": {
     "@grpc/grpc-js": "^1.12.6",
     "@grpc/proto-loader": "^0.7.13",
+    "@kubernetes/client-node": "^1.0.0",
     "protobufjs": "^7.5.4",
     "yaml": "^2.8.2"
   },

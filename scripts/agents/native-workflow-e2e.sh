@@ -14,13 +14,16 @@ IMPLEMENTATION_FILE="${EXAMPLES_DIR}/implementationspec-native-workflow.yaml"
 AGENT_RUN_NAME="${AGENTS_E2E_RUN_NAME:-codex-native-workflow-e2e}"
 REPOSITORY="${AGENTS_E2E_REPO:-proompteng/lab}"
 ISSUE_NUMBER="${AGENTS_E2E_ISSUE_NUMBER:-2614}"
-ISSUE_TITLE="${AGENTS_E2E_ISSUE_TITLE:-agents: native workflow e2e proof + runbook}"
+ISSUE_TITLE="${AGENTS_E2E_ISSUE_TITLE:-agents chart: autoscaling support}"
 ISSUE_URL="${AGENTS_E2E_ISSUE_URL:-https://github.com/${REPOSITORY}/issues/${ISSUE_NUMBER}}"
 BASE_BRANCH="${AGENTS_E2E_BASE:-main}"
 HEAD_BRANCH="${AGENTS_E2E_HEAD:-codex/agents/${ISSUE_NUMBER}}"
-PROMPT="${AGENTS_E2E_PROMPT:-Add a short \"Verification checklist\" subsection under the Native workflow e2e proof runbook in docs/agents/runbooks.md that lists steps to confirm AgentRun success, artifact output location, and PR verification. Keep the change documentation-only.}"
+PROMPT="${AGENTS_E2E_PROMPT:-Add optional autoscaling support to the Agents Helm chart. Implement a HorizontalPodAutoscaler template gated by autoscaling.enabled, wire values for min/max replicas and CPU/memory targets, and update values.schema.json + README to document the new settings. Keep changes scoped to charts/agents/** and docs/agents where necessary.}"
 WORKLOAD_IMAGE="${AGENTS_E2E_WORKLOAD_IMAGE:-registry.ide-newton.ts.net/lab/codex-universal:latest}"
 SECRET_NAME="${AGENTS_E2E_SECRET_NAME:-codex-github-token}"
+OPENAI_SECRET_NAME="${AGENTS_E2E_OPENAI_SECRET_NAME:-codex-openai-key}"
+OPENAI_KEY="${AGENTS_E2E_OPENAI_KEY:-${OPENAI_API_KEY:-}}"
+SECRETS="${AGENTS_E2E_SECRETS:-}"
 GH_TOKEN="${AGENTS_E2E_GH_TOKEN:-}"
 
 OUTPUT_DIR="${AGENTS_E2E_OUTPUT_DIR:-/tmp/agents-native-workflow-e2e-$(date +%Y%m%d-%H%M%S)}"
@@ -96,6 +99,20 @@ elif ! kubectl -n "${NAMESPACE}" get secret "${SECRET_NAME}" >/dev/null 2>&1; th
   exit 1
 fi
 
+if [[ -n "${OPENAI_KEY}" ]]; then
+  log "Applying OpenAI key secret ${OPENAI_SECRET_NAME}..."
+  kubectl -n "${NAMESPACE}" create secret generic "${OPENAI_SECRET_NAME}" \
+    --from-literal=OPENAI_API_KEY="${OPENAI_KEY}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+fi
+
+if [[ -z "${SECRETS}" ]]; then
+  SECRETS="${SECRET_NAME}"
+  if [[ -n "${OPENAI_KEY}" ]]; then
+    SECRETS="${SECRETS},${OPENAI_SECRET_NAME}"
+  fi
+fi
+
 log "Applying AgentProvider, Agent, and ImplementationSpec..."
 kubectl -n "${NAMESPACE}" apply -f "${AGENT_PROVIDER_FILE}"
 kubectl -n "${NAMESPACE}" apply -f "${AGENT_FILE}"
@@ -131,7 +148,7 @@ spec:
         cpu: 250m
         memory: 512Mi
   secrets:
-    - ${SECRET_NAME}
+$(printf '%s\n' "${SECRETS}" | tr ',' '\n' | sed 's/^/    - /')
   parameters:
     repository: ${REPOSITORY}
     issueNumber: "${ISSUE_NUMBER}"

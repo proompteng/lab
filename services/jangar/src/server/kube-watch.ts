@@ -158,7 +158,9 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
     })
     child.on('close', (code) => {
       if (stopped) return
-      onError?.(new Error(`${logPrefix} ${resource} (${namespace}) closed with code ${code ?? 'unknown'}`))
+      if (code !== 0) {
+        onError?.(new Error(`${logPrefix} ${resource} (${namespace}) closed with code ${code ?? 'unknown'}`))
+      }
       scheduleRestart()
     })
   }

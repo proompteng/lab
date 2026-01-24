@@ -34,7 +34,7 @@ Additional verbs for namespace discovery when using `"*"`:
 - `get`, `list`, `watch` on `namespaces`
 
 ## agentctl (user)
-Uses Jangar gRPC endpoints; no direct Kubernetes access.
+Uses Kubernetes API by default (kubeconfig + context). Optional gRPC mode uses Jangar endpoints.
 
 ## Runtime Adapter Service Accounts
 If adapters run outside Jangar:

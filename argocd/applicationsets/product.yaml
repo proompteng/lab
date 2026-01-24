@@ -92,6 +92,13 @@ spec:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: manual
                 enabled: true
+              - name: agents-ci
+                path: argocd/applications/agents-ci
+                namespace: agents-ci
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: auto
+                enabled: true
               - name: bumba
                 path: argocd/applications/bumba
                 namespace: jangar

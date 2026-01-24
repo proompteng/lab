@@ -1,8 +1,9 @@
 class Agentctl < Formula
-  desc "gRPC CLI for managing agents through Jangar"
+  desc "CLI for managing Agents through Kubernetes or Jangar gRPC"
   homepage "https://github.com/proompteng/lab/tree/main/services/jangar/agentctl"
   version "__VERSION__"
   license "MIT"
+  depends_on "node"
 
   on_macos do
     on_arm do

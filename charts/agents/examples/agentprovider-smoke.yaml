@@ -1,0 +1,9 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: smoke-runner
+spec:
+  binary: /bin/sh
+  argsTemplate:
+    - -c
+    - echo "stage={{inputs.stage}}" && exit 0
