@@ -69,6 +69,8 @@ https://docs.siderolabs.com/talos/v1.11/configure-your-talos-cluster/hardware-an
 5. Install ROCm GPU Operator or AMD GPU device plugin in Kubernetes.
 6. Validate GPU availability from workloads or runtime logs.
 
+See `devices/ryzen/docs/amdgpu-device-plugin.md` for the pinned device plugin manifests and verification steps.
+
 ## Reproducible install (Talos v1.12.1, Ryzen node)
 
 Talos boot assets must include the AMD GPU extensions and Strix Halo kernel args. The

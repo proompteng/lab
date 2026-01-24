@@ -366,6 +366,9 @@ If you’re not using the full operator or want explicit control, the AMD GPU de
 - https://instinct.docs.amd.com/projects/k8s-device-plugin/en/latest/
 - https://github.com/ROCm/k8s-device-plugin
 
+Ryzen-specific install (pinned manifests + verification steps):
+- `devices/ryzen/docs/amdgpu-device-plugin.md`
+
 ### Validate GPU visibility
 From the Talos guide and AMD docs:
 - Verify extensions are active: `talosctl get extensions`
