@@ -75,12 +75,22 @@ apiVersion: v1alpha1
 kind: ExtensionServiceConfig
 name: tailscale
 environment:
-  - TS_AUTHKEY=tskey-auth-REDACTED
+  - TS_AUTHKEY=${TAILSCALE_AUTHKEY}
   - TS_HOSTNAME=ryzen
   - TS_ROUTES=10.96.0.0/12,10.244.0.0/16
 ```
 
 > The routes above are examples; match your cluster CIDRs.
+
+Template source-of-truth: `devices/ryzen/manifests/tailscale-extension-service.template.yaml`.
+Generate a local patch (gitignored) with:
+
+```bash
+bun run packages/scripts/src/tailscale/generate-ryzen-extension-service.ts
+```
+
+To ensure Talos resolves tailnet hostnames (including `registry.ide-newton.ts.net`) add
+`devices/ryzen/manifests/tailscale-dns.patch.yaml` when applying config.
 
 ### Auth key guidance
 Use a **tagged, pre-approved** auth key for servers to avoid interactive approvals and to scope permissions via ACLs. Tailscale’s auth key docs explain key types, tags, and expiry behavior. The key prefix doc clarifies the `tskey-auth` prefix for auth keys.
@@ -91,25 +101,26 @@ Use a **tagged, pre-approved** auth key for servers to avoid interactive approva
 ExtensionServiceConfig documents are applied to Talos machine config (for example via `talosctl patch mc`). DeepWiki’s extension overview shows applying the config via patch and verifying it with `talosctl`.
 - https://deepwiki.com/siderolabs/extensions/3.4-networking-extensions
 
+For the Ryzen node, generate the patch file first:
+
+```bash
+bun run packages/scripts/src/tailscale/generate-ryzen-extension-service.ts
+```
+
 ### Ryzen reproducible setup (Talos v1.12.1)
 This is the exact workflow used to enable node-level Tailscale on the Ryzen Talos node.
 
 #### 1) Build a new Image Factory schematic (add tailscale)
-Keep existing extensions and add `siderolabs/tailscale`:
+Keep existing extensions and add `siderolabs/tailscale` (tracked in the repo):
 
 ```yaml
-customization:
-  systemExtensions:
-    officialExtensions:
-      - siderolabs/kata-containers
-      - siderolabs/glibc
-      - siderolabs/tailscale
+devices/ryzen/manifests/ryzen-tailscale-schematic.yaml
 ```
 
 Create the schematic and capture its ID:
 
 ```bash
-curl -sS -X POST --data-binary @/tmp/ryzen-tailscale-schematic.yaml https://factory.talos.dev/schematics | jq -r .id
+curl -sS -X POST --data-binary @devices/ryzen/manifests/ryzen-tailscale-schematic.yaml https://factory.talos.dev/schematics | jq -r .id
 ```
 
 #### 2) Patch machine config (image + ExtensionServiceConfig)
@@ -271,6 +282,8 @@ Sources:
 - User volume config: `devices/ryzen/manifests/blockfile.patch.yaml`
 - Containerd blockfile config: `devices/ryzen/manifests/kata-firecracker.patch.yaml`
 - Scratch creation DaemonSet: `argocd/applications/kata-containers/blockfile-scratch-daemonset.yaml`
+  - The `hold` container intentionally does not mount the host path so Talos can
+    cleanly unmount the user volume during reconciles.
 
 ### Runtime paths (Talos kata-containers extension)
 The official `siderolabs/kata-containers` extension installs binaries under

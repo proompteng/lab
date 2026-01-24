@@ -63,9 +63,6 @@ spec:
             limits:
               cpu: 50m
               memory: 64Mi
-          volumeMounts:
-            - name: host-blockfile-volume
-              mountPath: /host/var/mnt/blockfile-scratch
       volumes:
         - name: host-blockfile-volume
           hostPath:

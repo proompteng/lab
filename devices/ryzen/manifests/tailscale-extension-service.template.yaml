@@ -2,6 +2,7 @@ apiVersion: v1alpha1
 kind: ExtensionServiceConfig
 name: tailscale
 environment:
-  - TS_AUTHKEY=tskey-auth-REDACTED
+  - TS_AUTHKEY=${TAILSCALE_AUTHKEY}
   - TS_HOSTNAME=ryzen
   - TS_ROUTES=10.96.0.0/12,10.244.0.0/16
+  - TS_ACCEPT_DNS=true
