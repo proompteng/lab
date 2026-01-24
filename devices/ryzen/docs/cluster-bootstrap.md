@@ -129,6 +129,11 @@ talosctl apply-config --insecure -n 192.168.1.194 -e 192.168.1.194 \
 Note: apply `kubelet-manifests.patch.yaml` at install time (maintenance mode).
 Applying it later can leave `/etc/kubernetes` read-only and the kubelet bootstrap
 will fail with `bootstrap-kubeconfig: read-only file system`.
+
+If the node cannot reach `registry.ide-newton.ts.net`, omit the
+`installer-image.patch.yaml` on the first install so Talos can boot. Apply the
+installer image later via `talosctl patch mc` + `talosctl upgrade` after network
+is stable.
 ```
 
 ## 2.6 Enable Kata + Firecracker (after scratch file exists)

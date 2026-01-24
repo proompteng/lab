@@ -31,6 +31,8 @@ Goal: Restore Talos boot + enable native Firecracker runtime (`kata-fc`) alongsi
    talosctl apply-config --insecure -n 192.168.1.194 \
      -f /tmp/ryzen-machineconfig-pre-kata.yaml --mode=reboot
    ```
+   If registry access is failing, omit `devices/ryzen/manifests/installer-image.patch.yaml`
+   on the initial install and apply it later via `talosctl patch mc` + `talosctl upgrade`.
 2) Boot cluster, install Argo CD, and sync `argocd/kata-containers-ryzen` so the
    blockfile scratch file is created.
 3) Verify `/var/mnt/blockfile-scratch/containerd-blockfile/scratch` exists.
