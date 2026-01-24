@@ -3,17 +3,14 @@
 import { resolve } from 'node:path'
 import process from 'node:process'
 
-import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
+import { ensureCli, repoRoot, run } from '../shared/cli'
 
 type Options = {
   namespace: string
   appName: string
   manifestPath: string
   apply: boolean
-  sync: boolean
-  wait: boolean
-  timeoutSeconds: number
-  useCore: boolean
+  showStatus: boolean
 }
 
 const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
@@ -59,32 +56,8 @@ const parseArgs = (argv: string[]): Partial<Options> => {
       options.apply = false
       continue
     }
-    if (arg === '--no-sync') {
-      options.sync = false
-      continue
-    }
-    if (arg === '--no-wait') {
-      options.wait = false
-      continue
-    }
-    if (arg === '--timeout') {
-      const value = Number.parseInt(argv[i + 1] ?? '', 10)
-      if (!Number.isNaN(value)) {
-        options.timeoutSeconds = value
-      }
-      i += 1
-      continue
-    }
-    if (arg.startsWith('--timeout=')) {
-      const value = Number.parseInt(arg.slice('--timeout='.length), 10)
-      if (!Number.isNaN(value)) {
-        options.timeoutSeconds = value
-      }
-      continue
-    }
-    if (arg === '--no-core') {
-      options.useCore = false
-      continue
+    if (arg === '--no-status') {
+      options.showStatus = false
     }
   }
   return options
@@ -102,17 +75,7 @@ const resolveOptions = (): Options => {
     appName,
     manifestPath: resolve(repoRoot, manifestPath),
     apply: args.apply ?? parseBoolean(process.env.ARGOCD_APPLY, true),
-    sync: args.sync ?? parseBoolean(process.env.ARGOCD_SYNC, true),
-    wait: args.wait ?? parseBoolean(process.env.ARGOCD_WAIT, true),
-    timeoutSeconds: args.timeoutSeconds ?? Number.parseInt(process.env.ARGOCD_TIMEOUT ?? '300', 10),
-    useCore: args.useCore ?? parseBoolean(process.env.ARGOCD_CORE, true),
-  }
-}
-
-const ensureArgocd = (options: Options) => {
-  if (!options.sync && !options.wait) return
-  if (!Bun.which('argocd')) {
-    fatal('argocd CLI is required for sync/wait (set ARGOCD_SYNC=false or ARGOCD_WAIT=false to skip).')
+    showStatus: args.showStatus ?? parseBoolean(process.env.ARGOCD_SHOW_STATUS, true),
   }
 }
 
@@ -124,20 +87,8 @@ const main = async () => {
     await run('kubectl', ['-n', options.namespace, 'apply', '-f', options.manifestPath])
   }
 
-  await run('kubectl', ['-n', options.namespace, 'get', 'application', options.appName])
-
-  ensureArgocd(options)
-
-  if (options.sync) {
-    const args = ['app', 'sync', options.appName]
-    if (options.useCore) args.push('--core')
-    await run('argocd', args)
-  }
-
-  if (options.wait) {
-    const args = ['app', 'wait', options.appName, '--health', '--timeout', String(options.timeoutSeconds)]
-    if (options.useCore) args.push('--core')
-    await run('argocd', args)
+  if (options.showStatus) {
+    await run('kubectl', ['-n', options.namespace, 'get', 'application', options.appName])
   }
 }
 
