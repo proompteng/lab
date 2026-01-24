@@ -1,0 +1,85 @@
+[hypervisor.firecracker]
+path = "/usr/local/bin/firecracker"
+kernel = "/usr/local/share/kata-containers/vmlinux.container"
+image = "/usr/local/share/kata-containers/kata-containers.img"
+
+# rootfs filesystem type:
+#   - ext4 (default)
+#   - xfs
+#   - erofs
+rootfs_type = "ext4"
+
+# List of valid annotation names for the hypervisor
+# Each member of the list is a regular expression, which is the base name
+# of the annotation, e.g. "path" for io.katacontainers.config.hypervisor.path"
+enable_annotations = ["kernel_params"]
+
+# List of valid annotations values for the hypervisor
+# Each member of the list is a path pattern as described by glob(3).
+# The default if not set is empty (all annotations rejected.)
+# Your distribution recommends: ["/usr/local/bin/firecracker"]
+valid_hypervisor_paths = ["/usr/local/bin/firecracker"]
+
+# Path for the jailer specific to firecracker
+# If the jailer path is not set kata will launch firecracker
+# without a jail. If the jailer is set firecracker will be
+# launched in a jailed environment created by the jailer.
+jailer_path = "/usr/local/bin/jailer"
+
+# List of valid jailer path values for the hypervisor
+# Each member of the list can be a regular expression
+# The default if not set is empty (all annotations rejected.)
+valid_jailer_paths = ["/usr/local/bin/jailer"]
+
+# Optional space-separated list of options to pass to the guest kernel.
+# WARNING: - any parameter specified here will take priority over the default
+# parameter value of the same name used to start the virtual machine.
+kernel_params = "cgroup_no_v1=all systemd.unified_cgroup_hierarchy=1"
+
+# Default number of vCPUs per SB/VM:
+# unspecified or 0                --> will be set to 1
+# < 0                             --> will be set to the actual number of physical cores
+# > 0 <= number of physical cores --> will be set to the specified number
+# > number of physical cores      --> will be set to the actual number of physical cores
+default_vcpus = 1
+
+# Default maximum number of vCPUs per SB/VM:
+# unspecified or == 0             --> will be set to the actual number of physical cores or to the maximum number
+#                                     of vCPUs supported by KVM if that number is exceeded
+# > 0 <= number of physical cores --> will be set to the specified number
+# > number of physical cores      --> will be set to the actual number of physical cores or to the maximum number
+#                                     of vCPUs supported by KVM if that number is exceeded
+# WARNING: Depending of the architecture, the maximum number of vCPUs supported by KVM is used when
+# the actual number of physical cores is greater than it.
+# WARNING: Be aware that this value impacts the virtual machine's memory footprint and CPU
+# the hotplug functionality.
+# NOTICE: on arm platform with gicv2 interrupt controller, set it to 8.
+default_maxvcpus = 0
+
+# Default memory size in MiB for SB/VM.
+# If unspecified then it will be set 2048 MiB.
+default_memory = 2048
+
+# Default maximum memory in MiB per SB / VM
+# unspecified or == 0           --> will be set to the actual amount of physical RAM
+# > 0 <= amount of physical RAM --> will be set to the specified number
+# > amount of physical RAM      --> will be set to the actual amount of physical RAM
+default_maxmemory = 0
+
+# Shared file system type:
+#   - virtio-fs
+#   - virtio-fs-nydus
+#   - none
+shared_fs = "none"
+
+# Block storage driver to be used for the hypervisor in case the container
+# rootfs is backed by a block device. This is virtio-scsi, virtio-blk
+# or nvdimm.
+block_device_driver = "virtio-blk"
+
+# Disable the customizations done in the runtime when it detects
+# that it is running on top a VMM.
+disable_nesting_checks = false
+
+# Default entropy source.
+entropy_source= "/dev/urandom"

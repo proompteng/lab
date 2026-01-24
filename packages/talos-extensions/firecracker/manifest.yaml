@@ -1,0 +1,10 @@
+version: v1alpha1
+metadata:
+  name: firecracker
+  version: "v1.12.1"
+  author: proompteng
+  description: |
+    [extra] Firecracker VMM binaries and Kata configuration.
+  compatibility:
+    talos:
+      version: ">= v1.12.0"
