@@ -22,6 +22,7 @@ If you use Argo CD for GitOps (optional), use the sample Application manifest in
 These commands apply only to Argo CD-based installs:
 
 ```bash
+bun run packages/scripts/src/agents/deploy-argocd.ts
 kubectl apply -n argocd -f argocd/applications/agents/application.yaml
 kubectl -n argocd get applications.argoproj.io agents
 ```
