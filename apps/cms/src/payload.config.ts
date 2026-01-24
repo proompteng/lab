@@ -24,7 +24,7 @@ export default buildConfig({
   collections: [Users, Media],
   globals: [Landing],
   editor: lexicalEditor(),
-  secret: process.env.PAYLOAD_SECRET ?? '',
+  secret: process.env.PAYLOAD_SECRET ?? 'dev-secret',
   serverURL: process.env.PAYLOAD_PUBLIC_SERVER_URL ?? 'http://localhost:3001',
   cors: [landingSiteUrl],
   csrf: [landingSiteUrl],
