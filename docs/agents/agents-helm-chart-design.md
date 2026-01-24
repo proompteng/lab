@@ -50,7 +50,7 @@ Resources to remove from the base chart:
 - Embedded Postgres StatefulSet + Service + PVC.
 - Migrations Job + SQL ConfigMap + `files/sql`.
 - Backup CronJob + backup PVC.
-- Optional HPA/PDB/NetworkPolicy (move to an optional "extras" overlay or separate chart if still desired).
+- Optional PDB/NetworkPolicy (keep as an optional "extras" overlay or separate chart if still desired).
 
 Mermaid: chart scope overview
 ```mermaid
@@ -392,7 +392,7 @@ See:
 
 ## Decisions
 - Minimum supported Kubernetes version: 1.25+ (CRD v1, no PSP, aligns with modern clusters).
-- Optional extras: keep out of the core chart; manage via a separate `agents-extras` chart or external policy tooling.
+- Optional extras (PDB/NetworkPolicy): keep out of the core chart; manage via a separate `agents-extras` chart or external policy tooling.
 - ImplementationSpec is namespaced for multi-tenant safety.
 
 ## Appendix: Example CRD Usage (Conceptual)
