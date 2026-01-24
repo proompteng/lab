@@ -93,6 +93,11 @@ docker run --rm --entrypoint imager \
   --system-extension-image ghcr.io/siderolabs/glibc:2.41 \
   --system-extension-image ghcr.io/siderolabs/tailscale:1.92.3 \
   --system-extension-image registry.ide-newton.ts.net/lab/firecracker:v1.12.1 \
+  --system-extension-image ghcr.io/siderolabs/amdgpu:20251125-v1.12.1@sha256:b73aba10ac51cd0d74a6c45210ccee3f6b7d2d97f9b3151d0563b11aa0727599 \
+  --system-extension-image ghcr.io/siderolabs/amd-ucode:20251125@sha256:aa2c684933d28cf10ef785f0d94f91d6d098e164374114648867cf81c2b585fe \
+  --extra-kernel-arg amd_iommu=off \
+  --extra-kernel-arg amdgpu.gttsize=131072 \
+  --extra-kernel-arg ttm.pages_limit=33554432 \
   --output /out \
   --output-kind installer
 ```
@@ -239,8 +244,8 @@ crane push /tmp/imager-out/installer-amd64.tar registry.ide-newton.ts.net/lab/me
 crane digest registry.ide-newton.ts.net/lab/metal-installer-firecracker:v1.12.1
 ```
 
-Resulting digest:
-`registry.ide-newton.ts.net/lab/metal-installer-firecracker@sha256:7503774575bc1fb58d701a0fa7983dbcdf4fbe3e571fc918efa09cd52d483821`
+Resulting digest (2026-01-24):
+`registry.ide-newton.ts.net/lab/metal-installer-firecracker@sha256:9dd4342c5996367e35bd7748b5712ff02a5b942c0781b7e32f5d8fb35b6a6239`
 
 ### Machine config patch + upgrade (LAN IP)
 
@@ -257,7 +262,7 @@ Upgrade using LAN IP:
 ```bash
 talosctl --endpoints 192.168.1.194 --nodes 192.168.1.194 \
   upgrade \
-  --image registry.ide-newton.ts.net/lab/metal-installer-firecracker@sha256:7503774575bc1fb58d701a0fa7983dbcdf4fbe3e571fc918efa09cd52d483821
+  --image registry.ide-newton.ts.net/lab/metal-installer-firecracker@sha256:9dd4342c5996367e35bd7748b5712ff02a5b942c0781b7e32f5d8fb35b6a6239
 ```
 
 Health check (LAN IP):

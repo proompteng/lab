@@ -16,14 +16,14 @@ Node-level patches:
 - `devices/ryzen/manifests/tailscale-extension-service.template.yaml` (Tailscale extension service template)
 - `devices/ryzen/manifests/tailscale-extension-service.yaml` (generated from template; gitignored)
 - `devices/ryzen/manifests/tailscale-dns.patch.yaml` (prefer MagicDNS for tailnet hostnames)
-- `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml` (Image Factory schematic for tailscale extension)
-- `devices/ryzen/manifests/amdgpu-extensions.patch.yaml` (AMD GPU extensions; fill in versions)
+- `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml` (Image Factory schematic: tailscale + kata + AMD GPU + kernel args)
 - `devices/ryzen/manifests/installer-image.vanilla.patch.yaml` (factory installer for first boot without tailnet access)
 - `devices/ryzen/manifests/installer-image.patch.yaml` (custom installer in internal registry; requires tailscale)
 - `devices/ryzen/manifests/kata-firecracker.patch.yaml` (enable blockfile + kata-fc runtime **after** scratch file exists)
 - `devices/ryzen/manifests/kubelet-manifests.patch.yaml` (keep /etc/kubernetes writable for kubelet bootstrap)
 
 Related docs:
+- `devices/ryzen/docs/amdgpu-device-plugin.md`
 - `devices/ryzen/docs/bosgame-m5-talos-drivers.md`
 - `devices/ryzen/docs/node-level-dependencies.md`
 - `docs/kata-firecracker-talos/kata-firecracker-talos.md`
@@ -84,10 +84,12 @@ Firecracker blockfile scratch uses a dedicated 500GB user volume:
 - `devices/ryzen/manifests/node-labels.patch.yaml`
 - `devices/ryzen/manifests/tailscale-extension-service.yaml` (generate via `bun run packages/scripts/src/tailscale/generate-ryzen-extension-service.ts`)
 - `devices/ryzen/manifests/tailscale-dns.patch.yaml`
-- `devices/ryzen/manifests/amdgpu-extensions.patch.yaml`
 - `devices/ryzen/manifests/installer-image.vanilla.patch.yaml` (first install)
 - `devices/ryzen/manifests/installer-image.patch.yaml` (after tailscale)
 - `devices/ryzen/manifests/kata-firecracker.patch.yaml` (apply **after** scratch file exists; reboot required)
+
+Image Factory schematic (boot assets, not a config patch):
+- `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml` (tailscale + kata + AMD GPU + kernel args)
 
 ### 2.4.1 Generate the Tailscale extension service patch
 
@@ -124,7 +126,6 @@ talosctl apply-config --insecure -n 192.168.1.194 -e 192.168.1.194 \
 #   --config-patch @devices/ryzen/manifests/hostname.patch.yaml
 #   --config-patch @devices/ryzen/manifests/node-labels.patch.yaml
 #   --config-patch @devices/ryzen/manifests/tailscale-extension-service.yaml
-#   --config-patch @devices/ryzen/manifests/amdgpu-extensions.patch.yaml
 #   --config-patch @devices/ryzen/manifests/installer-image.vanilla.patch.yaml
 #   --config-patch @devices/ryzen/manifests/installer-image.patch.yaml
 #   --config-patch @devices/ryzen/manifests/kubelet-manifests.patch.yaml
@@ -209,13 +210,19 @@ talosctl get extensions -n 192.168.1.194
 
 Once tailscale is up, switch to the **modified** installer (custom extensions):
 
+Note: `machine.install.extensions` is deprecated. The custom installer image
+should embed all required extensions and kernel args (including AMD GPU support
+for Ryzen AI Max+ 395). See:
+- `devices/ryzen/docs/bosgame-m5-talos-drivers.md`
+- `docs/kata-firecracker-talos/production-firecracker-plan.md`
+
 ```bash
 talosctl patch mc -n 192.168.1.194 -e 192.168.1.194 \
   --patch @devices/ryzen/manifests/installer-image.patch.yaml \
   --mode=no-reboot
 
 talosctl upgrade -n 192.168.1.194 -e 192.168.1.194 \
-  --image registry.ide-newton.ts.net/lab/metal-installer-firecracker@sha256:7503774575bc1fb58d701a0fa7983dbcdf4fbe3e571fc918efa09cd52d483821
+  --image registry.ide-newton.ts.net/lab/metal-installer-firecracker@sha256:9dd4342c5996367e35bd7748b5712ff02a5b942c0781b7e32f5d8fb35b6a6239
 ```
 
 ## 3) Bootstrap the cluster
