@@ -19,6 +19,7 @@ Node-level patches:
 - `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml` (Image Factory schematic for tailscale extension)
 - `devices/ryzen/manifests/amdgpu-extensions.patch.yaml` (AMD GPU extensions; fill in versions)
 - `devices/ryzen/manifests/installer-image.patch.yaml` (Talos Image Factory installer with kata + glibc + tailscale)
+- `devices/ryzen/installer-firecracker/Dockerfile` (custom installer layer with Firecracker + kata-fc config)
 - `devices/ryzen/manifests/kata-firecracker.patch.yaml` (enable blockfile + kata-fc runtime **after** scratch file exists)
 - `devices/ryzen/manifests/kubelet-manifests.patch.yaml` (keep /etc/kubernetes writable for kubelet bootstrap)
 
@@ -124,6 +125,10 @@ talosctl apply-config --insecure -n 192.168.1.194 -e 192.168.1.194 \
 #   --config-patch @devices/ryzen/manifests/amdgpu-extensions.patch.yaml
 #   --config-patch @devices/ryzen/manifests/installer-image.patch.yaml
 #   --config-patch @devices/ryzen/manifests/kubelet-manifests.patch.yaml
+
+Note: apply `kubelet-manifests.patch.yaml` at install time (maintenance mode).
+Applying it later can leave `/etc/kubernetes` read-only and the kubelet bootstrap
+will fail with `bootstrap-kubeconfig: read-only file system`.
 ```
 
 ## 2.6 Enable Kata + Firecracker (after scratch file exists)
@@ -136,7 +141,7 @@ in Argo CD so the `kata-containers` app can create the scratch file.
 
 2) Verify `/var/mnt/blockfile-scratch/containerd-blockfile/scratch` exists on the node.
 
-3) Re-apply the config with the kata/firecracker patch (reboot required):
+3) Re-apply the config with the kata/firecracker patch (reboot required).
 
 ```bash
 talosctl apply-config -n 192.168.1.194 -e 192.168.1.194 \
@@ -182,12 +187,57 @@ Apply with Argo CD (manual sync):
 argocd app sync argocd/kata-containers-ryzen
 ```
 
-## 2.7 Install kata + glibc extensions (Image Factory)
+### 2.6.3 Fix duplicate CRI file specs (boot sequence fails)
 
-Kata requires Talos system extensions. The current Ryzen image is pinned in:
+If Talos logs show:
+
+```
+resource EtcFileSpecs.files.talos.dev(files/cri/conf.d/20-customization.part@undefined) already exists
+```
+
+you have duplicate `machine.files` entries (usually from reapplying the same
+patch). Export the current machine config, dedupe `machine.files`, and reapply:
+
+```bash
+talosctl -n 192.168.1.194 get machineconfig -o json | jq -r '.spec' > /tmp/ryzen-machineconfig.yaml
+python - <<'PY'
+import yaml
+path = '/tmp/ryzen-machineconfig.yaml'
+docs = list(yaml.safe_load_all(open(path)))
+for doc in docs:
+    if not isinstance(doc, dict):
+        continue
+    machine = doc.get('machine')
+    if not machine or 'files' not in machine:
+        continue
+    files = machine.get('files') or []
+    seen = {}
+    for i, entry in enumerate(files):
+        if isinstance(entry, dict) and 'path' in entry:
+            seen[entry['path']] = i
+    machine['files'] = [files[i] for i in sorted(seen.values())]
+with open(path, 'w') as f:
+    yaml.safe_dump_all(docs, f, sort_keys=False)
+PY
+talosctl apply-config -n 192.168.1.194 -e 192.168.1.194 -f /tmp/ryzen-machineconfig.yaml
+```
+
+## 2.7 Install kata + glibc + Firecracker (custom installer + system extension)
+
+Kata + Tailscale are bundled via Image Factory. Firecracker is layered on top
+via a custom system extension and installer build:
+
+1) Build and push the custom installer:
+
+```bash
+bun run packages/scripts/src/talos/build-firecracker-installer.ts [tag-suffix]
+```
+
+2) Update the install image in:
+
 - `devices/ryzen/manifests/installer-image.patch.yaml`
 
-Apply the patch (no reboot), then upgrade to activate extensions:
+3) Apply the patch (no reboot), then upgrade to activate extensions:
 
 ```bash
 talosctl patch mc -n 192.168.1.194 -e 192.168.1.194 \
@@ -195,7 +245,7 @@ talosctl patch mc -n 192.168.1.194 -e 192.168.1.194 \
   --mode=no-reboot
 
 talosctl upgrade -n 192.168.1.194 -e 192.168.1.194 \
-  --image factory.talos.dev/metal-installer/34373fc18f4c01525d9421119e41b72fc83885c640f798c0ee723a38decd6e9b:v1.12.1
+  --image <image-from-installer-image.patch.yaml>
 
 talosctl get extensions -n 192.168.1.194
 ```

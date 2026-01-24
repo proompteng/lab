@@ -43,7 +43,7 @@ Talos system extensions are only activated during **install or upgrade**. The re
 - https://www.talos.dev/latest/talos-guides/configuration/system-extensions/
 
 ### 3) Apply and upgrade
-Update the Talos machine config to reference the new installer image and (if needed) specify `.machine.install.extensions`. Then perform a Talos upgrade using the updated machine config. Re-using the same Talos version is valid if only extensions changed.
+Update the Talos machine config to reference the new installer image, then perform a Talos upgrade using the updated machine config. Re-using the same Talos version is valid if only extensions changed.
 - https://www.talos.dev/latest/talos-guides/configuration/system-extensions/
 
 ### 4) Verify extensions are active
@@ -285,15 +285,23 @@ Sources:
   - The `hold` container intentionally does not mount the host path so Talos can
     cleanly unmount the user volume during reconciles.
 
-### Runtime paths (Talos kata-containers extension)
+### Runtime paths (Talos extensions)
 The official `siderolabs/kata-containers` extension installs binaries under
 `/usr/local`:
 - `containerd-shim-kata-v2`: `/usr/local/bin/containerd-shim-kata-v2`
 - default config: `/usr/local/share/kata-containers/configuration.toml`
 
-Firecracker binaries are **not** bundled in the stock extension; if you need a
-Firecracker VMM, ship it via a custom Talos extension and point `ConfigPath` to
-your Firecracker config under `/var`.
+The custom Firecracker system extension adds:
+- Firecracker shim wrapper (unused on Talos; no `/bin/sh`): `/usr/local/bin/containerd-shim-kata-fc-v2`
+- Firecracker config: `/usr/local/share/kata-containers/configuration-fc.toml`
+- Firecracker binaries: `/usr/local/bin/firecracker`, `/usr/local/bin/jailer`
+
+Firecracker binaries are **not** bundled in the stock extension; we layer them
+via the custom extension in `devices/ryzen/extensions/firecracker`.
+
+We point containerd at `/usr/local/bin/containerd-shim-kata-v2` and pass the
+Firecracker config via `ConfigPath`. The config intentionally leaves
+`jailer_path` empty while using blockfile rootfs.
 
 ### User volume manifest (500GB)
 

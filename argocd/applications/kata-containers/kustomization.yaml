@@ -5,3 +5,4 @@ resources:
   - blockfile-scratch-daemonset.yaml
   - pause-image-reset-job.yaml
   - runtimeclass-kata-fc.yaml
+  - runtimeclass-kata-clh.yaml

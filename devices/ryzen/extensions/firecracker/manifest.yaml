@@ -1,0 +1,10 @@
+version: v1alpha1
+metadata:
+  name: firecracker
+  version: "1.12.1"
+  author: Proompteng
+  description: |
+    [extra] Firecracker VMM binaries and Kata config for kata-fc on Talos.
+  compatibility:
+    talos:
+      version: ">= v1.12.1"

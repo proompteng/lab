@@ -1,3 +1,8 @@
 machine:
   kubelet:
     disableManifestsDirectory: false
+  files:
+    - path: /etc/kubernetes/.keep
+      op: overwrite
+      permissions: 0o644
+      content: ""

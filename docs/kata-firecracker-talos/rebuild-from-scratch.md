@@ -48,9 +48,10 @@ Upgrade node with the resulting installer image (extensions only load at
 install/upgrade time).
 
 Note: the stock kata extension ships `containerd-shim-kata-v2` and
-`configuration.toml` under `/usr/local`, but **does not** bundle the Firecracker
-VMM. To run Firecracker, include a custom extension that adds
-`/usr/local/bin/firecracker` and a Firecracker config under `/var`, then update
+`configuration-*.toml` under `/usr/local`, but **does not** bundle the
+Firecracker VMM. To run Firecracker, include a custom extension that adds
+`/usr/local/bin/firecracker` and a Firecracker config under
+`/usr/local/share/kata-containers/configuration-fc.toml`, then update
 `ConfigPath`.
 
 ## Step 2: Create the blockfile scratch image
@@ -130,6 +131,10 @@ kubectl --context=ryzen -n kube-system logs blockfile-scratch-init
 
 ## Step 3: Update Talos machine config (after scratch exists)
 
+Include the kubelet manifests patch when applying config in maintenance mode
+so `/etc/kubernetes` is writable during bootstrap. Without it, Talos cannot
+write `bootstrap-kubeconfig` and kubelet never starts.
+
 ### 3.1 Overwrite `/etc/cri/containerd.toml`
 
 Talos disables blockfile in `disabled_plugins`. Remove it by overwriting the
@@ -180,7 +185,7 @@ Add this to `/etc/cri/conf.d/20-customization.part` (via `machine.files`):
   privileged_without_host_devices = true
   pod_annotations = ["io.katacontainers.*"]
   [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc".options]
-    ConfigPath = "/usr/local/share/kata-containers/configuration.toml"
+    ConfigPath = "/usr/local/share/kata-containers/configuration-fc.toml"
 
 [plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc"]
   snapshotter = "blockfile"
@@ -189,7 +194,7 @@ Add this to `/etc/cri/conf.d/20-customization.part` (via `machine.files`):
   privileged_without_host_devices = true
   pod_annotations = ["io.katacontainers.*"]
   [plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc".options]
-    ConfigPath = "/usr/local/share/kata-containers/configuration.toml"
+    ConfigPath = "/usr/local/share/kata-containers/configuration-fc.toml"
 ```
 
 ### 3.3 Apply Talos config and reboot

@@ -8,10 +8,10 @@ machine config and live under `/var`.
 
 - Talos system extensions for `kata-containers` and `glibc`.
 - The kata extension ships `containerd-shim-kata-v2` under `/usr/local/bin` and
-  a default config at `/usr/local/share/kata-containers/configuration.toml`.
-- Firecracker VMM is **not** bundled in the stock extension; to use Firecracker,
-  add a custom extension that includes `/usr/local/bin/firecracker` and point
-  `ConfigPath` at a Firecracker config under `/var`.
+  a default config at `/usr/local/share/kata-containers/configuration-fc.toml` for Firecracker.
+- Firecracker VMM is **not** bundled in the stock extension; we ship it as a
+  custom Talos **system extension** and include that extension in a custom
+  installer image. See `devices/ryzen/extensions/firecracker`.
 - KVM + vsock available on the host (`/dev/kvm`, `/dev/vhost-vsock`).
 - Containerd runtime config injected via `/etc/cri/conf.d/20-customization.part`.
 
@@ -29,6 +29,24 @@ customization:
 
 Apply the schematic to a Talos installer image and upgrade the node. Extensions
 only take effect at install/upgrade time.
+
+### 1.1 Custom installer with Firecracker (system extension)
+
+The repo includes a Firecracker **system extension** (manifest + rootfs) that
+adds the Firecracker binaries, `configuration-fc.toml`, and the shim wrapper:
+
+- Extension Dockerfile: `devices/ryzen/extensions/firecracker/Dockerfile`
+- Extension manifest: `devices/ryzen/extensions/firecracker/manifest.yaml`
+- Extension rootfs: `devices/ryzen/extensions/firecracker/rootfs/...`
+
+Build and push the extension + installer (via `imager`):
+
+```bash
+bun run packages/scripts/src/talos/build-firecracker-installer.ts [tag-suffix]
+```
+
+Update `devices/ryzen/manifests/installer-image.patch.yaml` with the new tag and
+upgrade the node.
 
 ## 1.1 GitOps scope (Argo CD)
 
@@ -157,7 +175,7 @@ machine:
           privileged_without_host_devices = true
           pod_annotations = ["io.katacontainers.*"]
           [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."kata-fc".options]
-            ConfigPath = "/usr/local/share/kata-containers/configuration.toml"
+            ConfigPath = "/usr/local/share/kata-containers/configuration-fc.toml"
 
         [plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc"]
           snapshotter = "blockfile"
@@ -166,25 +184,41 @@ machine:
           privileged_without_host_devices = true
           pod_annotations = ["io.katacontainers.*"]
           [plugins."io.containerd.cri.v1.runtime".containerd.runtimes."kata-fc".options]
-            ConfigPath = "/usr/local/share/kata-containers/configuration.toml"
+            ConfigPath = "/usr/local/share/kata-containers/configuration-fc.toml"
 ```
+
+Note: Talos does not ship `/bin/sh`, so the `containerd-shim-kata-fc-v2`
+wrapper script is unusable. We point containerd directly at
+`containerd-shim-kata-v2` and pass the Firecracker config via `ConfigPath`.
 
 ## 4) Firecracker config file (optional overrides)
 
 Talos ships a default Kata configuration under:
 
 ```
-/usr/local/share/kata-containers/configuration.toml
+/usr/local/share/kata-containers/configuration-fc.toml
 ```
 
 If you need Firecracker-specific overrides, place a new config under `/var` and
 point `ConfigPath` to it. Avoid `shared_fs` for Firecracker; it needs block
 devices.
 
+We intentionally leave `jailer_path` empty in the Firecracker config while using
+block device-based rootfs (blockfile snapshotter), because the Firecracker jailer
+has known issues with bind-mounting block devices. If we need jailer isolation
+later, revisit the storage strategy first.
+
+For now we also set `internetworking_model = "none"` and `disable_new_netns = true`
+to keep the Firecracker VM bring-up minimal on Talos. If we need pod networking
+inside the VM later, switch back to `tcfilter` once the host networking tools
+and kernel capabilities are verified.
+
 ## 5) RuntimeClass
 
 The repo ships a `kata-fc` RuntimeClass in
 `argocd/applications/kata-containers/runtimeclass-kata-fc.yaml`.
+Cloud Hypervisor workloads can use `kata-clh` (runtimeClass backed by
+`/usr/local/share/kata-containers/configuration-clh.toml`).
 Verify:
 
 ```bash
@@ -199,6 +233,14 @@ kind: RuntimeClass
 metadata:
   name: kata-fc
 handler: kata-fc
+```
+
+```yaml
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: kata-clh
+handler: kata-clh
 ```
 
 ## 6) Test pod
@@ -327,8 +369,7 @@ means Firecracker cannot mount a block-backed rootfs and will fail. Options:
 
 If `ConfigPath` is ignored, Kata falls back to default paths:
 
-- `/etc/kata-containers/configuration.toml`
-- `/usr/share/defaults/kata-containers/configuration.toml`
+- `/usr/local/share/kata-containers/configuration-fc.toml`
 
 In Talos, keep custom files under `/var` and make sure `ConfigPath` points
 there.
