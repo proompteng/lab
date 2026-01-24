@@ -24,6 +24,7 @@ Node-level patches:
 - `devices/ryzen/manifests/kubelet-manifests.patch.yaml` (keep /etc/kubernetes writable for kubelet bootstrap)
 
 Related docs:
+- `devices/ryzen/docs/bosgame-m5-talos-drivers.md`
 - `devices/ryzen/docs/node-level-dependencies.md`
 - `docs/kata-firecracker-talos/kata-firecracker-talos.md`
 - `docs/kata-firecracker-talos/rebuild-from-scratch.md`
