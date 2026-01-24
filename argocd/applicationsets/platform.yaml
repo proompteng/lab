@@ -473,6 +473,8 @@ spec:
           namespace: workers
           name: workers
           jqPathExpressions:
+            - .metadata.annotations
+            - .metadata.finalizers
             - .spec.template.spec.architecture
             - .spec.template.spec.domain.firmware
             - .spec.template.spec.domain.machine
