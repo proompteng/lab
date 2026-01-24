@@ -333,21 +333,29 @@ Talos AMD GPU support requires **OS-level enablement** plus a **Kubernetes opera
 - https://docs.siderolabs.com/talos/v1.11/configure-your-talos-cluster/hardware-and-drivers/amd-gpu
 
 ### OS-level enablement (Talos extensions)
-The Talos AMD GPU guide instructs you to enable AMD GPU support by installing the `siderolabs/amdgpu` and `siderolabs/amd-ucode` system extensions.
+The Talos AMD GPU guide instructs you to enable AMD GPU support by installing the `siderolabs/amdgpu` and `siderolabs/amd-ucode` system extensions. It also calls out extra kernel arguments for AMD AI 395+ (Strix Halo) systems. Embed these via boot assets (Image Factory schematic or imager); `machine.install.extensions` is deprecated.
 - https://docs.siderolabs.com/talos/v1.11/configure-your-talos-cluster/hardware-and-drivers/amd-gpu
 
-Example extension list (add alongside existing extensions):
+Example Image Factory schematic (Ryzen AI Max+ 395 / Strix Halo):
 
 ```yaml
-machine:
-  install:
-    extensions:
-      - image: ghcr.io/siderolabs/amdgpu:<version-or-digest>
-      - image: ghcr.io/siderolabs/amd-ucode:<version-or-digest>
+customization:
+  extraKernelArgs:
+    - amd_iommu=off
+    - amdgpu.gttsize=131072
+    - ttm.pages_limit=33554432
+  systemExtensions:
+    officialExtensions:
+      - siderolabs/amdgpu
+      - siderolabs/amd-ucode
 ```
 
-Use the extensions catalog or image-digest lookup approach from the extensions repo to pin an exact digest for your Talos version.
+Use the extensions catalog or image-digest lookup approach from the extensions repo to pin an exact digest for your Talos version if you prefer image digests.
 - https://github.com/siderolabs/extensions
+
+Reproducible build notes for the Ryzen node live in:
+- `devices/ryzen/docs/bosgame-m5-talos-drivers.md`
+- `docs/kata-firecracker-talos/production-firecracker-plan.md`
 
 ### Kubernetes layer: ROCm GPU Operator
 The Talos AMD GPU guide recommends deploying the ROCm GPU Operator to surface GPU resources to workloads. It includes Helm install steps and verification commands.
