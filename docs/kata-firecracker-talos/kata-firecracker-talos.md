@@ -14,6 +14,9 @@ overrides must live under `/var`.
   build a **custom Talos system extension** that includes
   `/usr/local/bin/firecracker` (and `jailer`) and ships an updated
   `/usr/local/share/kata-containers/configuration.toml`.
+- For Talos kata-containers (Go runtime), `block_device_driver` must be
+  `virtio-mmio` (validated by the runtime). Using `virtio-blk-mmio` fails
+  validation.
 - KVM + vsock available on the host (`/dev/kvm`, `/dev/vhost-vsock`).
 - Containerd runtime config injected via `/etc/cri/conf.d/20-customization.part`.
 

@@ -56,6 +56,9 @@ Notes:
   `kata-containers/versions.yaml`.
 - Keep `ConfigPath` pointing at
   `/usr/local/share/kata-containers/configuration.toml` (existing manifests).
+- Ensure the Firecracker config matches the runtime actually shipped on Talos.
+  The Talos kata-containers extension (3.24.0) validates **`virtio-mmio`**
+  (Go runtime). Using `virtio-blk-mmio` causes a hard validation error.
 - Keep the official `kata-containers` extension for the kata runtime + guest
   assets; the Firecracker extension adds only the VMM bits.
 
@@ -173,12 +176,140 @@ Then sync the kata-containers app via Argo CD.
 
 ## Change checklist (production)
 
-- [ ] Firecracker extension image built and published.
-- [ ] Custom installer image built via `imager` and pushed to internal registry.
-- [ ] `devices/ryzen/manifests/installer-image.patch.yaml` updated to new digest.
-- [ ] Talos upgrade completed.
-- [ ] `kata-fc` runtime config points at Firecracker config.
-- [ ] Test pod starts and Firecracker process/socket present.
+- [x] Firecracker extension image built and published.
+- [x] Custom installer image built via `imager` and pushed to internal registry.
+- [x] `devices/ryzen/manifests/installer-image.patch.yaml` updated to new digest.
+- [x] Talos upgrade completed.
+- [x] `kata-fc` runtime config points at Firecracker config.
+- [x] Test pod starts and Firecracker process/socket present.
+
+## Implementation log (2026-01-24, ryzen)
+
+This section captures **exact commands and digests** used so the install is
+reproducible.
+
+### Firecracker extension rebuild (block driver fix)
+
+Updated config to use the driver accepted by the Talos kata runtime:
+`block_device_driver = "virtio-mmio"` in
+`packages/talos-extensions/firecracker/configuration.toml`.
+
+Build + push (amd64):
+
+```bash
+docker buildx build \
+  --platform=linux/amd64 \
+  -t registry.ide-newton.ts.net/lab/firecracker:v1.12.1 \
+  --push \
+  packages/talos-extensions/firecracker
+crane digest registry.ide-newton.ts.net/lab/firecracker:v1.12.1
+```
+
+Resulting digest:
+`registry.ide-newton.ts.net/lab/firecracker@sha256:49e5254bb5c5f574fbf3abe9317c80fef2e85085e2a1627928833e27f483791f`
+
+Why: the Talos kubelet reported:
+`Invalid hypervisor block storage driver virtio-blk-mmio` (supported: `virtio-mmio`, `virtio-blk`, etc.).
+This is enforced by the Go runtime in kata-containers, so we switched to `virtio-mmio`.
+
+### Custom installer rebuild (imager)
+
+```bash
+mkdir -p /tmp/imager-out
+docker run --rm --entrypoint imager \
+  -v /tmp/imager-out:/out \
+  ghcr.io/siderolabs/imager:v1.12.1 \
+  metal \
+  --platform metal \
+  --arch amd64 \
+  --base-installer-image factory.talos.dev/metal-installer/34373fc18f4c01525d9421119e41b72fc83885c640f798c0ee723a38decd6e9b:v1.12.1 \
+  --system-extension-image ghcr.io/siderolabs/kata-containers:3.24.0 \
+  --system-extension-image ghcr.io/siderolabs/glibc:2.41 \
+  --system-extension-image ghcr.io/siderolabs/tailscale:1.92.3 \
+  --system-extension-image registry.ide-newton.ts.net/lab/firecracker:v1.12.1 \
+  --output /out \
+  --output-kind installer
+
+zstd -d /tmp/imager-out/installer-amd64.tar.zst -o /tmp/imager-out/installer-amd64.tar
+crane push /tmp/imager-out/installer-amd64.tar registry.ide-newton.ts.net/lab/metal-installer-firecracker:v1.12.1
+crane digest registry.ide-newton.ts.net/lab/metal-installer-firecracker:v1.12.1
+```
+
+Resulting digest:
+`registry.ide-newton.ts.net/lab/metal-installer-firecracker@sha256:7503774575bc1fb58d701a0fa7983dbcdf4fbe3e571fc918efa09cd52d483821`
+
+### Machine config patch + upgrade (LAN IP)
+
+Patch install image:
+
+```bash
+talosctl --endpoints 192.168.1.194 --nodes 192.168.1.194 \
+  patch machineconfig \
+  --patch @devices/ryzen/manifests/installer-image.patch.yaml
+```
+
+Upgrade using LAN IP:
+
+```bash
+talosctl --endpoints 192.168.1.194 --nodes 192.168.1.194 \
+  upgrade \
+  --image registry.ide-newton.ts.net/lab/metal-installer-firecracker@sha256:7503774575bc1fb58d701a0fa7983dbcdf4fbe3e571fc918efa09cd52d483821
+```
+
+Health check (LAN IP):
+
+```bash
+talosctl --endpoints 192.168.1.194 --nodes 192.168.1.194 health
+```
+
+Drain unblock:
+
+```bash
+kubectl -n kubevirt delete pdb virt-controller-pdb
+```
+
+### Runtime validation result
+
+- `kata-fc-test` pod reached `Running`.
+- `talosctl ps` showed active `/firecracker --id ...` processes.
+
+
+### Validation (kata-fc)
+
+Pod manifest (PodSecurity compliant):
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kata-fc-test
+  namespace: default
+spec:
+  runtimeClassName: kata-fc
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: busybox
+      image: busybox:1.36
+      command: ["sh", "-c", "echo kata-fc-ok && sleep 3600"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+```
+
+Verify:
+
+```bash
+kubectl -n default get pod kata-fc-test -o wide
+talosctl --endpoints 192.168.1.194 --nodes 192.168.1.194 ps | rg -i firecracker
+```
 
 ## References (local clones)
 
