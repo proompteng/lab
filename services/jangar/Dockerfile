@@ -59,6 +59,9 @@ RUN --mount=type=cache,target=/var/cache/apt \
   git \
   gnupg \
   jq \
+  python3 \
+  python3-pip \
+  python3-venv \
   ripgrep \
   tmux \
   tini \
