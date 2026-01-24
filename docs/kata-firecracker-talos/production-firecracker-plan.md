@@ -128,6 +128,10 @@ reload its configuration.
 
 ### 5) Upgrade node(s)
 
+- If this is a **fresh install without tailnet access**, use the vanilla
+  installer first (`devices/ryzen/manifests/installer-image.vanilla.patch.yaml`),
+  bring up tailscale, then switch to the modified installer in
+  `devices/ryzen/manifests/installer-image.patch.yaml`.
 - Update `devices/ryzen/manifests/installer-image.patch.yaml` to point at the
   new internal installer image digest.
 - Upgrade the node(s) with the new installer image.

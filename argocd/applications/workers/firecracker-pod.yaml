@@ -8,7 +8,7 @@ spec:
   runtimeClassName: kata-fc
   containers:
     - name: workers-fc
-      image: registry.ide-newton.ts.net/lab/workers:latest
+      image: registry.ide-newton.ts.net/lab/workers@sha256:3c13ee44cfe06fba406c3c11074f78f037676e17740f4aa944468c218ef9fee3
       command:
         - bash
         - -lc
