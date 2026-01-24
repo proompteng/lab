@@ -475,6 +475,8 @@ spec:
           jqPathExpressions:
             - .metadata.annotations
             - .metadata.finalizers
+            - .spec.dataVolumeTemplates[].metadata.creationTimestamp
+            - .spec.template.metadata.creationTimestamp
             - .spec.template.spec.architecture
             - .spec.template.spec.domain.firmware
             - .spec.template.spec.domain.machine
