@@ -1,16 +1,8 @@
 import '@xterm/xterm/css/xterm.css'
 
-import { CanvasAddon } from '@xterm/addon-canvas'
-import { ClipboardAddon } from '@xterm/addon-clipboard'
-import { FitAddon } from '@xterm/addon-fit'
-import { ImageAddon } from '@xterm/addon-image'
-import { LigaturesAddon } from '@xterm/addon-ligatures'
-import { SearchAddon } from '@xterm/addon-search'
-import { SerializeAddon } from '@xterm/addon-serialize'
-import { Unicode11Addon } from '@xterm/addon-unicode11'
-import { WebLinksAddon } from '@xterm/addon-web-links'
-import { WebglAddon } from '@xterm/addon-webgl'
-import { Terminal } from '@xterm/xterm'
+import type { FitAddon } from '@xterm/addon-fit'
+import type { SearchAddon } from '@xterm/addon-search'
+import type { Terminal } from '@xterm/xterm'
 import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -84,6 +76,7 @@ export function TerminalView({
   const [error, setError] = React.useState<string | null>(null)
   const [searchOpen, setSearchOpen] = React.useState(false)
   const [searchValue, setSearchValue] = React.useState('')
+  const [terminalReady, setTerminalReady] = React.useState(false)
 
   React.useEffect(() => {
     reconnectTokenRef.current = ''
@@ -124,202 +117,249 @@ export function TerminalView({
   }, [sessionId, reconnectToken])
 
   React.useEffect(() => {
-    if (!containerRef.current) return
+    let disposed = false
+    let cleanup: (() => void) | undefined
 
-    const terminal = new Terminal({
-      allowProposedApi: true,
-      allowTransparency: true,
-      fontFamily: TERMINAL_FONT_FAMILY,
-      fontSize: 14,
-      theme: { background: 'rgba(0,0,0,0)' },
-      cursorBlink: true,
-      scrollback: 5000,
-    })
+    const init = async () => {
+      if (!containerRef.current) return
 
-    const fitAddon = new FitAddon()
-    fitRef.current = fitAddon
-    terminal.loadAddon(fitAddon)
+      const [
+        { Terminal },
+        { CanvasAddon },
+        { ClipboardAddon },
+        { FitAddon },
+        { ImageAddon },
+        { SearchAddon },
+        { SerializeAddon },
+        { Unicode11Addon },
+        { WebLinksAddon },
+        { WebglAddon },
+        { LigaturesAddon },
+      ] = await Promise.all([
+        import('@xterm/xterm'),
+        import('@xterm/addon-canvas'),
+        import('@xterm/addon-clipboard'),
+        import('@xterm/addon-fit'),
+        import('@xterm/addon-image'),
+        import('@xterm/addon-search'),
+        import('@xterm/addon-serialize'),
+        import('@xterm/addon-unicode11'),
+        import('@xterm/addon-web-links'),
+        import('@xterm/addon-webgl'),
+        import('@xterm/addon-ligatures/lib/addon-ligatures.mjs'),
+      ])
 
-    const unicodeAddon = new Unicode11Addon()
-    terminal.loadAddon(unicodeAddon)
-    terminal.unicode.activeVersion = '11'
+      if (disposed || !containerRef.current) return
 
-    const clipboardAddon = new ClipboardAddon()
-    terminal.loadAddon(clipboardAddon)
+      const terminal = new Terminal({
+        allowProposedApi: true,
+        allowTransparency: true,
+        fontFamily: TERMINAL_FONT_FAMILY,
+        fontSize: 14,
+        theme: { background: 'rgba(0,0,0,0)' },
+        cursorBlink: true,
+        scrollback: 5000,
+      })
 
-    const searchAddon = new SearchAddon()
-    terminal.loadAddon(searchAddon)
-    searchRef.current = searchAddon
+      const fitAddon = new FitAddon()
+      fitRef.current = fitAddon
+      terminal.loadAddon(fitAddon)
 
-    terminal.loadAddon(new SerializeAddon())
+      const unicodeAddon = new Unicode11Addon()
+      terminal.loadAddon(unicodeAddon)
+      terminal.unicode.activeVersion = '11'
 
-    const rendererPreference = (() => {
-      const params = new URLSearchParams(window.location.search)
-      const query = params.get('renderer')?.toLowerCase()
-      const stored = window.localStorage.getItem('jangar-terminal-renderer')
-      if (query) return { value: query, fromQuery: true }
-      if (stored) return { value: stored, fromQuery: false }
-      return { value: 'canvas', fromQuery: false }
-    })()
+      const clipboardAddon = new ClipboardAddon()
+      terminal.loadAddon(clipboardAddon)
 
-    const needsCanvasRenderer = rendererPreference.value === 'dom'
-    if (needsCanvasRenderer && !rendererPreference.fromQuery) {
-      window.localStorage.setItem('jangar-terminal-renderer', 'canvas')
-    }
+      const searchAddon = new SearchAddon()
+      terminal.loadAddon(searchAddon)
+      searchRef.current = searchAddon
 
-    const renderer = needsCanvasRenderer ? 'canvas' : rendererPreference.value
+      terminal.loadAddon(new SerializeAddon())
 
-    if (renderer === 'webgl') {
-      try {
-        terminal.loadAddon(new WebglAddon())
-      } catch {
+      const rendererPreference = (() => {
+        const params = new URLSearchParams(window.location.search)
+        const query = params.get('renderer')?.toLowerCase()
+        const stored = window.localStorage.getItem('jangar-terminal-renderer')
+        if (query) return { value: query, fromQuery: true }
+        if (stored) return { value: stored, fromQuery: false }
+        return { value: 'canvas', fromQuery: false }
+      })()
+
+      const needsCanvasRenderer = rendererPreference.value === 'dom'
+      if (needsCanvasRenderer && !rendererPreference.fromQuery) {
+        window.localStorage.setItem('jangar-terminal-renderer', 'canvas')
+      }
+
+      const renderer = needsCanvasRenderer ? 'canvas' : rendererPreference.value
+
+      if (renderer === 'webgl') {
+        try {
+          terminal.loadAddon(new WebglAddon())
+        } catch {
+          terminal.loadAddon(new CanvasAddon())
+        }
+      } else if (renderer === 'canvas') {
         terminal.loadAddon(new CanvasAddon())
       }
-    } else if (renderer === 'canvas') {
-      terminal.loadAddon(new CanvasAddon())
-    }
 
-    terminal.attachCustomKeyEventHandler((event) => {
-      const isMac = navigator.platform.match('Mac')
-      const ctrlKey = isMac ? event.metaKey : event.ctrlKey
-      if (event.shiftKey && event.key === 'Enter') {
-        if (event.type === 'keydown') {
-          if (socketRef.current?.readyState === WebSocket.OPEN) {
-            socketRef.current.send(encoderRef.current.encode('\x1b\r'))
+      terminal.attachCustomKeyEventHandler((event) => {
+        const isMac = navigator.platform.match('Mac')
+        const ctrlKey = isMac ? event.metaKey : event.ctrlKey
+        if (event.shiftKey && event.key === 'Enter') {
+          if (event.type === 'keydown') {
+            if (socketRef.current?.readyState === WebSocket.OPEN) {
+              socketRef.current.send(encoderRef.current.encode('\x1b\r'))
+            }
           }
+          return false
         }
-        return false
-      }
-      if (ctrlKey && event.shiftKey && event.key.toLowerCase() === 'c') {
-        if (event.type === 'keydown') {
-          const selection = terminal.getSelection()
-          if (selection) {
-            navigator.clipboard?.writeText(selection).catch(() => {})
+        if (ctrlKey && event.shiftKey && event.key.toLowerCase() === 'c') {
+          if (event.type === 'keydown') {
+            const selection = terminal.getSelection()
+            if (selection) {
+              navigator.clipboard?.writeText(selection).catch(() => {})
+            }
           }
+          return false
         }
-        return false
-      }
-      if (ctrlKey && event.shiftKey && event.key.toLowerCase() === 'v') {
-        if (event.type === 'keydown') {
-          navigator.clipboard
-            ?.readText()
-            .then((text) => {
-              if (text) {
-                terminal.paste(text)
-              }
-            })
-            .catch(() => {})
-        }
-        return false
-      }
-      if (ctrlKey && event.key.toLowerCase() === 'f') {
-        if (event.type === 'keydown') {
-          setSearchOpen(true)
-        }
-        return false
-      }
-      return true
-    })
-
-    terminal.onSelectionChange(() => {
-      const selection = terminal.getSelection()
-      if (selection) {
-        navigator.clipboard?.writeText(selection).catch(() => {})
-      }
-    })
-
-    terminal.open(containerRef.current)
-
-    try {
-      terminal.loadAddon(
-        new LigaturesAddon({
-          fontFeatureSettings: '"calt" on, "liga" on',
-        }),
-      )
-    } catch {
-      // ignore
-    }
-
-    try {
-      terminal.loadAddon(new ImageAddon())
-    } catch {
-      // ignore
-    }
-    containerRef.current.style.fontFamily = TERMINAL_FONT_FAMILY
-    fitAddon.fit()
-    fitAddon.fit()
-    try {
-      terminal.loadAddon(
-        new WebLinksAddon((_event, uri) => {
-          window.open(uri, '_blank', 'noopener,noreferrer')
-        }),
-      )
-    } catch (err) {
-      console.warn('[terminal] failed to load WebLinks addon', err)
-    }
-    if ('fonts' in document) {
-      void document.fonts
-        .load(`14px ${TERMINAL_FONT_FAMILY}`)
-        .then(() => {
-          if (containerRef.current) {
-            containerRef.current.style.fontFamily = TERMINAL_FONT_FAMILY
+        if (ctrlKey && event.shiftKey && event.key.toLowerCase() === 'v') {
+          if (event.type === 'keydown') {
+            navigator.clipboard
+              ?.readText()
+              .then((text) => {
+                if (text) {
+                  terminal.paste(text)
+                }
+              })
+              .catch(() => {})
           }
-          terminal.options.fontFamily = TERMINAL_FONT_FAMILY
-          fitAddon.fit()
-          terminal.refresh(0, terminal.rows - 1)
-        })
-        .catch(() => {})
-    }
-    if (containerRef.current) {
-      containerRef.current.dataset.termCols = String(terminal.cols)
-      containerRef.current.dataset.termRows = String(terminal.rows)
-    }
-    const container = containerRef.current
-    const focusTerminal = () => terminal.focus()
-    if (container) {
-      container.addEventListener('pointerdown', focusTerminal)
-      container.addEventListener('focus', focusTerminal)
-    }
-    terminalRef.current = terminal
+          return false
+        }
+        if (ctrlKey && event.key.toLowerCase() === 'f') {
+          if (event.type === 'keydown') {
+            setSearchOpen(true)
+          }
+          return false
+        }
+        return true
+      })
 
-    terminal.onData((data) => {
-      if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return
-      const payload = encoderRef.current.encode(data)
-      socketRef.current.send(payload)
-    })
+      terminal.onSelectionChange(() => {
+        const selection = terminal.getSelection()
+        if (selection) {
+          navigator.clipboard?.writeText(selection).catch(() => {})
+        }
+      })
 
-    const resizeObserver = new ResizeObserver(() => {
+      terminal.open(containerRef.current)
+
+      try {
+        terminal.loadAddon(
+          new LigaturesAddon({
+            fontFeatureSettings: '"calt" on, "liga" on',
+          }),
+        )
+      } catch {
+        // ignore
+      }
+
+      try {
+        terminal.loadAddon(new ImageAddon())
+      } catch {
+        // ignore
+      }
+      containerRef.current.style.fontFamily = TERMINAL_FONT_FAMILY
       fitAddon.fit()
-      const cols = terminal.cols
-      const rows = terminal.rows
-      if (containerRef.current) {
-        containerRef.current.dataset.termCols = String(cols)
-        containerRef.current.dataset.termRows = String(rows)
+      fitAddon.fit()
+      try {
+        terminal.loadAddon(
+          new WebLinksAddon((_event, uri) => {
+            window.open(uri, '_blank', 'noopener,noreferrer')
+          }),
+        )
+      } catch (err) {
+        console.warn('[terminal] failed to load WebLinks addon', err)
       }
-      if (cols > 0 && rows > 0) {
-        const payload = JSON.stringify({ type: 'resize', cols, rows })
-        if (socketRef.current?.readyState === WebSocket.OPEN) {
-          socketRef.current.send(payload)
+      if ('fonts' in document) {
+        void document.fonts
+          .load(`14px ${TERMINAL_FONT_FAMILY}`)
+          .then(() => {
+            if (containerRef.current) {
+              containerRef.current.style.fontFamily = TERMINAL_FONT_FAMILY
+            }
+            terminal.options.fontFamily = TERMINAL_FONT_FAMILY
+            fitAddon.fit()
+            terminal.refresh(0, terminal.rows - 1)
+          })
+          .catch(() => {})
+      }
+      if (containerRef.current) {
+        containerRef.current.dataset.termCols = String(terminal.cols)
+        containerRef.current.dataset.termRows = String(terminal.rows)
+      }
+      const container = containerRef.current
+      const focusTerminal = () => terminal.focus()
+      if (container) {
+        container.addEventListener('pointerdown', focusTerminal)
+        container.addEventListener('focus', focusTerminal)
+      }
+      terminalRef.current = terminal
+
+      terminal.onData((data) => {
+        if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return
+        const payload = encoderRef.current.encode(data)
+        socketRef.current.send(payload)
+      })
+
+      const resizeObserver = new ResizeObserver(() => {
+        fitAddon.fit()
+        const cols = terminal.cols
+        const rows = terminal.rows
+        if (containerRef.current) {
+          containerRef.current.dataset.termCols = String(cols)
+          containerRef.current.dataset.termRows = String(rows)
+        }
+        if (cols > 0 && rows > 0) {
+          const payload = JSON.stringify({ type: 'resize', cols, rows })
+          if (socketRef.current?.readyState === WebSocket.OPEN) {
+            socketRef.current.send(payload)
+          }
+        }
+      })
+      resizeObserver.observe(containerRef.current)
+      resizeObserverRef.current = resizeObserver
+      if (!disposed) {
+        setTerminalReady(true)
+      }
+
+      cleanup = () => {
+        if (container) {
+          container.removeEventListener('pointerdown', focusTerminal)
+          container.removeEventListener('focus', focusTerminal)
+        }
+        resizeObserver.disconnect()
+        terminal.dispose()
+        terminalRef.current = null
+        fitRef.current = null
+        searchRef.current = null
+        if (!disposed) {
+          setTerminalReady(false)
         }
       }
-    })
-    resizeObserver.observe(containerRef.current)
-    resizeObserverRef.current = resizeObserver
+    }
+
+    void init()
 
     return () => {
-      if (container) {
-        container.removeEventListener('pointerdown', focusTerminal)
-        container.removeEventListener('focus', focusTerminal)
-      }
-      resizeObserver.disconnect()
-      terminal.dispose()
-      terminalRef.current = null
-      fitRef.current = null
-      searchRef.current = null
+      disposed = true
+      cleanup?.()
     }
   }, [])
 
   React.useEffect(() => {
+    if (!terminalReady) return
     let disposed = false
 
     const connect = () => {
@@ -443,7 +483,7 @@ export function TerminalView({
       socketRef.current?.close()
       socketRef.current = null
     }
-  }, [sessionId, terminalUrl, reconnectToken])
+  }, [sessionId, terminalUrl, reconnectToken, terminalReady])
 
   const isConnecting = status === 'connecting'
 

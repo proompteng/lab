@@ -64,10 +64,10 @@ const configureGitAskpass = async (env: Record<string, string | undefined>) => {
   if (!env.GIT_ASKPASS) {
     const askpassPath = '/tmp/git-askpass.sh'
     const script = `#!/bin/sh
-case \"$1\" in
-  *Username*) printf '%s\\n' \"$GIT_ASKPASS_USERNAME\" ;;
-  *Password*) printf '%s\\n' \"$GIT_ASKPASS_TOKEN\" ;;
-  *) printf '%s\\n' \"$GIT_ASKPASS_TOKEN\" ;;
+case "$1" in
+  *Username*) printf '%s\\n' "$GIT_ASKPASS_USERNAME" ;;
+  *Password*) printf '%s\\n' "$GIT_ASKPASS_TOKEN" ;;
+  *) printf '%s\\n' "$GIT_ASKPASS_TOKEN" ;;
 esac
 `
     await writeFile(askpassPath, script, { mode: 0o700 })
@@ -320,7 +320,7 @@ const run = async () => {
   const providerSpec = await loadProviderSpec(providerName, spec.providerSpec)
 
   const inputs = spec.inputs ?? {}
-  const payloads = { ...(spec.payloads ?? {}) }
+  const payloads = { ...spec.payloads }
   const observability = spec.observability ?? {}
   const artifacts = spec.artifacts ?? {}
   const envOverrides = spec.env ?? {}

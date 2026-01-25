@@ -1217,6 +1217,7 @@ const reconcileOrchestrationRun = async (
     if (!stepName) continue
 
     const current = statusIndex.get(stepName) ?? { name: stepName, kind: stepKind, phase: 'Pending', attempt: 0 }
+    const currentAttempt = current.attempt ?? 0
     const dependsOn = resolveDependsOn(step)
     const canStart = depsSatisfied(dependsOn, statusIndex)
     const retryConfig = resolveRetryConfig(step)
@@ -1229,7 +1230,7 @@ const reconcileOrchestrationRun = async (
     }
 
     if (current.phase === 'Failed') {
-      if (current.attempt < retryConfig.maxAttempts) {
+      if (currentAttempt < retryConfig.maxAttempts) {
         const retryAt =
           retryConfig.retryBackoffSeconds > 0
             ? new Date(now + retryConfig.retryBackoffSeconds * 1000).toISOString()
@@ -1364,7 +1365,7 @@ const reconcileOrchestrationRun = async (
 
       if (stepKind === 'AgentRun') {
         if (!current.resourceRef) {
-          const attempt = (current.attempt ?? 0) + 1
+          const attempt = currentAttempt + 1
           if (attempt > retryConfig.maxAttempts) {
             const failed = setStepPhase(current, 'Failed', 'Retry limit exceeded')
             failed.finishedAt = nowIso()
@@ -1396,7 +1397,7 @@ const reconcileOrchestrationRun = async (
             if (!agentRun) {
               const failed = setStepPhase(current, 'Failed', 'agent run not found')
               failed.finishedAt = nowIso()
-              if (current.attempt < retryConfig.maxAttempts) {
+              if (currentAttempt < retryConfig.maxAttempts) {
                 const retryAt =
                   retryConfig.retryBackoffSeconds > 0
                     ? new Date(now + retryConfig.retryBackoffSeconds * 1000).toISOString()
@@ -1430,7 +1431,7 @@ const reconcileOrchestrationRun = async (
               } else if (agentPhase === 'Failed' || agentPhase === 'Cancelled') {
                 const failed = setStepPhase(current, 'Failed', `agent run ${agentPhase.toLowerCase()}`)
                 failed.finishedAt = asString(readNested(agentRun, ['status', 'finishedAt'])) ?? nowIso()
-                if (current.attempt < retryConfig.maxAttempts) {
+                if (currentAttempt < retryConfig.maxAttempts) {
                   const retryAt =
                     retryConfig.retryBackoffSeconds > 0
                       ? new Date(now + retryConfig.retryBackoffSeconds * 1000).toISOString()
@@ -1477,7 +1478,7 @@ const reconcileOrchestrationRun = async (
 
       if (stepKind === 'ToolRun') {
         if (!current.resourceRef) {
-          const attempt = (current.attempt ?? 0) + 1
+          const attempt = currentAttempt + 1
           if (attempt > retryConfig.maxAttempts) {
             const failed = setStepPhase(current, 'Failed', 'Retry limit exceeded')
             failed.finishedAt = nowIso()
@@ -1509,7 +1510,7 @@ const reconcileOrchestrationRun = async (
             if (!toolRun) {
               const failed = setStepPhase(current, 'Failed', 'tool run not found')
               failed.finishedAt = nowIso()
-              if (current.attempt < retryConfig.maxAttempts) {
+              if (currentAttempt < retryConfig.maxAttempts) {
                 const retryAt =
                   retryConfig.retryBackoffSeconds > 0
                     ? new Date(now + retryConfig.retryBackoffSeconds * 1000).toISOString()
@@ -1543,7 +1544,7 @@ const reconcileOrchestrationRun = async (
               } else if (toolPhase === 'Failed' || toolPhase === 'Cancelled') {
                 const failed = setStepPhase(current, 'Failed', `tool run ${toolPhase.toLowerCase()}`)
                 failed.finishedAt = asString(readNested(toolRun, ['status', 'finishedAt'])) ?? nowIso()
-                if (current.attempt < retryConfig.maxAttempts) {
+                if (currentAttempt < retryConfig.maxAttempts) {
                   const retryAt =
                     retryConfig.retryBackoffSeconds > 0
                       ? new Date(now + retryConfig.retryBackoffSeconds * 1000).toISOString()
@@ -1590,7 +1591,7 @@ const reconcileOrchestrationRun = async (
 
       if (stepKind === 'SubOrchestration') {
         if (!current.resourceRef) {
-          const attempt = (current.attempt ?? 0) + 1
+          const attempt = currentAttempt + 1
           if (attempt > retryConfig.maxAttempts) {
             const failed = setStepPhase(current, 'Failed', 'Retry limit exceeded')
             failed.finishedAt = nowIso()
@@ -1622,7 +1623,7 @@ const reconcileOrchestrationRun = async (
             if (!subRun) {
               const failed = setStepPhase(current, 'Failed', 'sub orchestration run not found')
               failed.finishedAt = nowIso()
-              if (current.attempt < retryConfig.maxAttempts) {
+              if (currentAttempt < retryConfig.maxAttempts) {
                 const retryAt =
                   retryConfig.retryBackoffSeconds > 0
                     ? new Date(now + retryConfig.retryBackoffSeconds * 1000).toISOString()
@@ -1656,7 +1657,7 @@ const reconcileOrchestrationRun = async (
               } else if (subPhase === 'Failed' || subPhase === 'Cancelled') {
                 const failed = setStepPhase(current, 'Failed', `sub orchestration ${subPhase.toLowerCase()}`)
                 failed.finishedAt = asString(readNested(subRun, ['status', 'finishedAt'])) ?? nowIso()
-                if (current.attempt < retryConfig.maxAttempts) {
+                if (currentAttempt < retryConfig.maxAttempts) {
                   const retryAt =
                     retryConfig.retryBackoffSeconds > 0
                       ? new Date(now + retryConfig.retryBackoffSeconds * 1000).toISOString()

@@ -249,7 +249,7 @@ const matchesAgentRunFilters = (resource: Record<string, unknown>, phase?: strin
 }
 
 const resolveStatusPhase = (resource: Record<string, unknown>) => {
-  const status = asRecord(resource.status)
+  const status = asRecord(resource.status) ?? {}
   const keys = ['phase', 'status', 'state', 'result']
   for (const key of keys) {
     const value = asString(status[key])
@@ -258,8 +258,8 @@ const resolveStatusPhase = (resource: Record<string, unknown>) => {
     }
   }
   const conditions = Array.isArray(status.conditions) ? status.conditions : []
-  const ready = conditions.find((entry) => asString(asRecord(entry).type) === 'Ready')
-  const readyStatus = asString(asRecord(ready).status)
+  const ready = conditions.find((entry) => asString(asRecord(entry)?.type) === 'Ready')
+  const readyStatus = asString(asRecord(ready)?.status)
   return readyStatus ?? ''
 }
 

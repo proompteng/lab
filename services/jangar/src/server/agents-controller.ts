@@ -811,7 +811,7 @@ const buildRuntimeRef = (
   type,
   name,
   namespace,
-  ...(extra ?? {}),
+  ...extra,
 })
 
 const deleteRuntimeResource = async (kind: string, name: string, namespace: string) => {
@@ -1346,7 +1346,7 @@ const createRunSpecConfigMap = async (
 }
 
 const buildAgentRunnerSpec = (
-  runSpec: Record<string, unknown>,
+  _runSpec: Record<string, unknown>,
   parameters: Record<string, string>,
   providerName: string,
 ) => ({
@@ -1448,7 +1448,7 @@ const submitJobRun = async (
     labels['agents.proompteng.ai/implementation'] = normalizeLabelValue(implName)
   }
 
-  const mergedLabels = { ...labels, ...(options.labels ?? {}) }
+  const mergedLabels = { ...labels, ...options.labels }
   const inputsConfig = await createInputFilesConfigMap(
     kube,
     namespace,

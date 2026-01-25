@@ -68,7 +68,7 @@ const buildRequest = (url: string, payload: Record<string, unknown>, headers?: R
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      ...(headers ?? {}),
+      ...headers,
     },
     body: JSON.stringify(payload),
   })

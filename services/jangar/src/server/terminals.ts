@@ -359,7 +359,7 @@ const recordSessionStatus = async (
   const existingMetadata = existing?.metadata ?? {}
   const mergedMetadata = {
     ...existingMetadata,
-    ...(details.metadata ?? {}),
+    ...details.metadata,
   }
   if (!getMetadataValue(mergedMetadata, 'reconnectToken')) {
     mergedMetadata.reconnectToken = getMetadataValue(existingMetadata, 'reconnectToken') ?? randomUUID()

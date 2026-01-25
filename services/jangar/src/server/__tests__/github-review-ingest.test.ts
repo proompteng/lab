@@ -62,6 +62,14 @@ const requireHandler = async () => {
   return module.ingestGithubReviewEvent
 }
 
+const requireStore = () => {
+  const store = globalState.__githubReviewStoreMock
+  if (!store) {
+    throw new Error('Expected github review store mock to be initialized')
+  }
+  return store
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   globalState.__githubReviewStoreMock = buildStore()
@@ -83,8 +91,7 @@ afterEach(() => {
 describe('github review ingest', () => {
   it('upserts pull request state on pull_request events', async () => {
     const handler = await requireHandler()
-    const store = globalState.__githubReviewStoreMock
-    expect(store).toBeDefined()
+    const store = requireStore()
 
     const payload: GithubWebhookEvent = {
       event: 'pull_request',
@@ -108,13 +115,13 @@ describe('github review ingest', () => {
 
     const result = await handler(payload)
     expect(result.ok).toBe(true)
-    expect(store?.recordEvent).toHaveBeenCalled()
-    expect(store?.upsertPrState).toHaveBeenCalled()
+    expect(store.recordEvent).toHaveBeenCalled()
+    expect(store.upsertPrState).toHaveBeenCalled()
   })
 
   it('stores review threads and comments from review comment events', async () => {
     const handler = await requireHandler()
-    const store = globalState.__githubReviewStoreMock
+    const store = requireStore()
 
     const payload: GithubWebhookEvent = {
       event: 'pull_request_review_comment',
@@ -141,15 +148,15 @@ describe('github review ingest', () => {
 
     await handler(payload)
 
-    expect(store?.upsertReviewThread).toHaveBeenCalled()
-    expect(store?.upsertReviewComment).toHaveBeenCalled()
-    expect(store?.updateUnresolvedThreadCount).toHaveBeenCalled()
+    expect(store.upsertReviewThread).toHaveBeenCalled()
+    expect(store.upsertReviewComment).toHaveBeenCalled()
+    expect(store.updateUnresolvedThreadCount).toHaveBeenCalled()
   })
 
   it('skips duplicate delivery ids', async () => {
     const handler = await requireHandler()
-    const store = globalState.__githubReviewStoreMock
-    ;(store?.recordEvent as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ inserted: false })
+    const store = requireStore()
+    ;(store.recordEvent as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ inserted: false })
 
     const payload: GithubWebhookEvent = {
       event: 'pull_request',

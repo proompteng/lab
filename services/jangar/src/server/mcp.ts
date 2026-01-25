@@ -35,7 +35,7 @@ const jsonResponse = (payload: unknown, init: ResponseInit = {}) =>
     ...init,
     headers: {
       'content-type': 'application/json',
-      ...(init.headers ?? {}),
+      ...init.headers,
     },
   })
 
@@ -50,7 +50,7 @@ const withMcpSessionHeaders = (request: Request, init: ResponseInit = {}): Respo
   return {
     ...init,
     headers: {
-      ...(init.headers ?? {}),
+      ...init.headers,
       [MCP_SESSION_HEADER]: sessionId,
     },
   }

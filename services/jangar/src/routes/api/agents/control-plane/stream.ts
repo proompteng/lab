@@ -194,7 +194,7 @@ export const streamControlPlaneEvents = async (request: Request) => {
         if (closed) return
         try {
           controller.enqueue(encoder.encode(value))
-        } catch (_error) {
+        } catch {
           recordSseError('control-plane', 'enqueue')
           if (!closed) {
             closed = true

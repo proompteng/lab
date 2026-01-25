@@ -62,7 +62,7 @@ const buildConnectionString = (secret: Record<string, unknown>, preferredKey?: s
 
 const generateFallbackEmbedding = (text: string, dimension: number) => {
   const hash = createHash('sha256').update(text).digest()
-  const vector = new Array<number>(dimension)
+  const vector = Array.from({ length: dimension }, () => 0)
   for (let i = 0; i < dimension; i += 1) {
     const idx = i % hash.length
     const value = (hash[idx] ?? 0) / 255

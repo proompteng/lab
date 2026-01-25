@@ -48,7 +48,7 @@ describe('bumba worktree refresh', () => {
         rawArgs && typeof rawArgs === 'object' && 'cmd' in rawArgs
           ? (rawArgs as BunSpawnOptions & { cmd?: string[] | string })
           : undefined
-      const resolvedOptions = { ...baseOptions, ...(options ?? {}) }
+      const resolvedOptions = { ...baseOptions, ...options }
       const rawCmd = baseOptions?.cmd ?? rawArgs
       const command = Array.isArray(rawCmd) ? rawCmd : typeof rawCmd === 'string' ? [rawCmd] : []
       const result = spawnSync(command[0] ?? '', command.slice(1), {

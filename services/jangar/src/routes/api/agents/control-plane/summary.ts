@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { type AgentPrimitiveKind, resolvePrimitiveKind } from '~/server/primitives-control-plane'
 import { asRecord, asString, normalizeNamespace, okResponse } from '~/server/primitives-http'
-import { createKubernetesClient } from '~/server/primitives-kube'
+import { createKubernetesClient, type KubernetesClient } from '~/server/primitives-kube'
 
 export const Route = createFileRoute('/api/agents/control-plane/summary')({
   server: {
@@ -63,7 +63,7 @@ const countRunPhases = (items: unknown[]): Record<RunPhase, number> => {
 
 export const getControlPlaneSummary = async (
   request: Request,
-  deps: { kubeClient?: ReturnType<typeof createKubernetesClient> } = {},
+  deps: { kubeClient?: Pick<KubernetesClient, 'list'> } = {},
 ) => {
   const url = new URL(request.url)
   const namespace = normalizeNamespace(url.searchParams.get('namespace'), 'agents')
