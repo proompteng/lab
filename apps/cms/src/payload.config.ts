@@ -13,6 +13,14 @@ import Landing from './globals/landing'
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
 const landingSiteUrl = process.env.LANDING_SITE_URL ?? 'http://localhost:3000'
+const serverUrl = process.env.PAYLOAD_PUBLIC_SERVER_URL ?? 'http://localhost:3001'
+const payloadSecret = process.env.PAYLOAD_SECRET
+
+if (!payloadSecret) {
+  throw new Error('PAYLOAD_SECRET is required to start the CMS.')
+}
+
+const allowedOrigins = Array.from(new Set([landingSiteUrl, serverUrl]))
 
 export default buildConfig({
   admin: {
@@ -24,10 +32,10 @@ export default buildConfig({
   collections: [Users, Media],
   globals: [Landing],
   editor: lexicalEditor(),
-  secret: process.env.PAYLOAD_SECRET ?? 'dev-secret',
-  serverURL: process.env.PAYLOAD_PUBLIC_SERVER_URL ?? 'http://localhost:3001',
-  cors: [landingSiteUrl],
-  csrf: [landingSiteUrl],
+  secret: payloadSecret,
+  serverURL: serverUrl,
+  cors: allowedOrigins,
+  csrf: allowedOrigins,
   typescript: {
     outputFile: path.resolve(dirname, 'payload-types.ts'),
   },

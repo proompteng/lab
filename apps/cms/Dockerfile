@@ -19,6 +19,7 @@ RUN bun install --frozen-lockfile --ignore-scripts
 FROM deps AS builder
 WORKDIR /app
 ENV HUSKY=0
+ENV PAYLOAD_SECRET=build-secret
 COPY . .
 RUN bun install --filter cms --frozen-lockfile
 RUN bun run build:cms

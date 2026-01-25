@@ -149,6 +149,8 @@ jobs:
     needs: check_changed_files
     if: ${{ needs.check_changed_files.outputs.cms == 'true' }}
     runs-on: arc-arm64
+    env:
+      PAYLOAD_SECRET: ci-build-secret
     steps:
       - uses: actions/checkout@v5
 
