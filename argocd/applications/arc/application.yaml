@@ -64,11 +64,11 @@ spec:
                   resources:
                     requests:
                       cpu: "4"
-                      memory: "16Gi"
+                      memory: "8Gi"
                       ephemeral-storage: "40Gi"
                     limits:
                       cpu: "8"
-                      memory: "32Gi"
+                      memory: "16Gi"
                       ephemeral-storage: "80Gi"
                   env:
                     - name: ACTIONS_RUNNER_CONTAINER_HOOKS
@@ -95,11 +95,11 @@ spec:
                   resources:
                     requests:
                       cpu: "1"
-                      memory: "4Gi"
+                      memory: "2Gi"
                       ephemeral-storage: "30Gi"
                     limits:
                       cpu: "2"
-                      memory: "8Gi"
+                      memory: "4Gi"
                       ephemeral-storage: "50Gi"
                   env:
                     - name: DOCKER_GROUP_GID
