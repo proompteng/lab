@@ -1,0 +1,43 @@
+name: agents-sync
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'charts/agents/**'
+      - '.github/workflows/agents-sync.yml'
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install git-filter-repo
+        run: python3 -m pip install --no-cache-dir git-filter-repo
+
+      - name: Split charts/agents into dedicated repo
+        env:
+          AGENTS_SPLIT_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
+        run: |
+          if [ -z "${AGENTS_SPLIT_TOKEN}" ]; then
+            echo "AGENTS_SPLIT_TOKEN is not set" >&2
+            exit 1
+          fi
+
+          tmpdir="$(mktemp -d)"
+          git clone --no-local . "${tmpdir}/agents-split"
+          cd "${tmpdir}/agents-split"
+
+          git filter-repo --path charts/agents --path-rename charts/agents/:
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add origin "https://x-access-token:${AGENTS_SPLIT_TOKEN}@github.com/proompteng/agents.git"
+          git push -u origin HEAD:main

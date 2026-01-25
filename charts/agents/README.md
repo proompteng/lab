@@ -1,26 +1,17 @@
 # Agents Helm Chart
 
-Minimal, production‑ready bundle for the Agents control plane (Jangar) plus Agents CRDs.
+Production Helm chart for the Agents control plane (Jangar) plus the full Agents CRD suite.
 
-## Features
-- Ships v1alpha1 CRDs: Agent, AgentRun, AgentProvider, ImplementationSpec, ImplementationSource, Memory,
-  Orchestration, OrchestrationRun, ApprovalPolicy, Budget, SecretBinding, Signal, SignalDelivery, Tool, ToolRun,
-  Schedule, Artifact, Workspace.
-- Deploys the Jangar control-plane deployment + service.
-- Minimal chart footprint (no ingress, no embedded database, no backups, no migrations job).
-- Controllers run in‑cluster and reconcile Agents, Orchestration, and supporting primitives (schedules, tools, workspaces).
-- Native workflow runtime uses Kubernetes Jobs/Pods (no Argo Workflows dependency).
-- Job runtime creates input/run spec ConfigMaps and labels Jobs for traceability.
-- Optional gRPC service for agentctl and control-plane status.
-- Artifact Hub metadata included (Apache‑2.0 license).
+Run AI workflows natively in Kubernetes with operator-driven orchestration, Jobs/Pods runtime, and first-class CRDs for agents, tools, approvals, schedules, artifacts, and workspaces.
 
-## Quickstart (kind/minikube)
+## Try it now (5 minutes)
 ```bash
 # From repo root
 helm lint charts/agents
 helm template charts/agents --values charts/agents/values-local.yaml
 helm install agents charts/agents --namespace agents --create-namespace \
   --values charts/agents/values-local.yaml
+
 kubectl -n agents port-forward svc/agents 8080:80 &
 curl -sf http://127.0.0.1:8080/health
 ```
@@ -37,138 +28,129 @@ kubectl apply -n agents -f charts/agents/examples/orchestration-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/orchestrationrun-sample.yaml
 ```
 
-Optional supporting primitives:
-```bash
-kubectl apply -n agents -f charts/agents/examples/approvalpolicy-sample.yaml
-kubectl apply -n agents -f charts/agents/examples/budget-sample.yaml
-kubectl apply -n agents -f charts/agents/examples/secretbinding-sample.yaml
-kubectl apply -n agents -f charts/agents/examples/signal-sample.yaml
-kubectl apply -n agents -f charts/agents/examples/signaldelivery-sample.yaml
-kubectl apply -n agents -f charts/agents/examples/toolrun-sample.yaml
-kubectl apply -n agents -f charts/agents/examples/schedule-sample.yaml
-kubectl apply -n agents -f charts/agents/examples/artifact-sample.yaml
-kubectl apply -n agents -f charts/agents/examples/workspace-sample.yaml
+## Why teams use this chart
+- **Operator-native orchestration**: run workflows with Kubernetes Jobs/Pods (no external workflow engine required).
+- **Batteries-included CRDs**: agents, tools, orchestration, approvals, schedules, artifacts, workspaces, and more.
+- **Small blast radius**: no ingress, no bundled database, no migrations job baked in.
+- **Production-minded defaults**: RBAC, optional PDBs, network policy, HPA toggles, gRPC service option.
+- **Artifact Hub ready**: metadata, images, CRD docs, and examples included.
+
+## What this chart installs
+- Jangar control-plane Deployment + Service
+- Controllers and CRDs for:
+  - Agents (Agent, AgentRun, AgentProvider)
+  - Orchestration (Orchestration, OrchestrationRun)
+  - Tools (Tool, ToolRun)
+  - Signals (Signal, SignalDelivery)
+  - Schedules (Schedule)
+  - Artifacts (Artifact)
+  - Workspaces (Workspace)
+  - Supporting primitives (ApprovalPolicy, Budget, SecretBinding, ImplementationSpec, ImplementationSource, Memory)
+
+## Architecture (at a glance)
+- **Control plane**: Jangar reconciles CRDs and schedules runtime Jobs/Pods.
+- **Runtime**: Agents and tools run as Jobs/Pods with input/run spec ConfigMaps.
+- **Storage**: Agent memory configured per Memory CRD and its Secret.
+- **Security**: RBAC, namespace scoping, optional network policy.
+
+## Requirements
+- Kubernetes 1.25+
+- Helm 3.12+
+- Postgres-compatible database connection string for Jangar
+
+## Configuration essentials
+### Database
+Provide one of:
+- `database.url` (inline)
+- `database.secretRef` (existing Secret)
+- `database.createSecret.enabled=true` with `database.url`
+
+Agent memory backends are configured separately via the `Memory` CRD.
+
+### Controller scope
+- Single namespace: default
+- Multi-namespace: set `controller.namespaces` and `rbac.clusterScoped=true`
+
+### gRPC service (optional)
+Enable gRPC for agentctl or in-cluster clients:
+- `grpc.enabled=true`
+- Set `env.vars.JANGAR_GRPC_TOKEN` to require a shared token
+
+### Migrations
+Automatic migrations are enabled by default. To skip:
+- `env.vars.JANGAR_MIGRATIONS=skip`
+
+## Example production values
+```yaml
+image:
+  repository: ghcr.io/proompteng/jangar
+  tag: 0.9.0
+
+database:
+  secretRef:
+    name: jangar-postgres
+    key: url
+
+controller:
+  namespaces:
+    - agents
+
+rbac:
+  clusterScoped: false
+
+grpc:
+  enabled: true
+
+podDisruptionBudget:
+  enabled: true
+
+networkPolicy:
+  enabled: true
 ```
 
-The memory sample includes a placeholder Secret. Update the connection string before using it in production.
-
-For workflow runtime execution, ensure the workload image includes `agent-runner` or set
-`env.vars.JANGAR_AGENT_RUNNER_IMAGE` (or `env.vars.JANGAR_AGENT_IMAGE`) to a runner image.
-
-Native orchestration runs are handled in-cluster and do not require external workflow engines. For Codex reruns or
-system-improvement workflows, use the native OrchestrationRun path by setting
-`workflowRuntime.native.rerunOrchestration` and/or `workflowRuntime.native.systemImprovementOrchestration`
-(override namespaces with the matching `workflowRuntime.native.*Namespace` values). Ensure the referenced
-Orchestration exists (for example, `codex-autonomous`).
-Native orchestration currently supports `AgentRun`, `ToolRun`, `SubOrchestration`, and `ApprovalGate` steps;
-other step kinds require adapters or future controller extensions.
-
-Optional: submit runs with `agentctl` (kube mode by default):
+## agentctl (optional)
+Submit runs with agentctl (kube mode by default):
 ```bash
-agentctl run submit --agent codex-agent --impl codex-impl-sample --runtime workflow --workload-image registry.ide-newton.ts.net/lab/codex-universal:latest
+agentctl run submit \
+  --agent codex-agent \
+  --impl codex-impl-sample \
+  --runtime workflow \
+  --workload-image registry.ide-newton.ts.net/lab/codex-universal:latest
 ```
 
-Replace the workload image with your own agent-runner build (and imagePullSecrets if required).
+Replace the workload image with your own agent-runner build.
 If your agent-runner uses NATS for context streaming, set `NATS_URL` in the AgentProvider `envTemplate`.
-gRPC is optional; if enabled, you can port-forward it:
-```bash
-kubectl -n agents port-forward svc/agents 50051:50051 &
-```
-Keep the gRPC service ClusterIP-only and expose it externally only via a controlled gateway or mesh.
-To require a shared token, set `env.vars.JANGAR_GRPC_TOKEN` in your values and configure `agentctl` with the same token.
 
-Optional: configure GitHub/Linear ingestion with `ImplementationSource` manifests:
-- `charts/agents/examples/implementationsource-github.yaml`
-- `charts/agents/examples/implementationsource-linear.yaml`
-Webhook signature verification uses the `auth.secretRef` secret; configure your webhook sender accordingly.
+## Native orchestration
+Native orchestration runs in-cluster and supports:
+- `AgentRun`
+- `ToolRun`
+- `SubOrchestration`
+- `ApprovalGate`
 
-Local smoke test:
-```bash
-packages/scripts/src/agents/smoke-agents.ts
-```
+Enable reruns or system-improvement flows using:
+- `workflowRuntime.native.rerunOrchestration`
+- `workflowRuntime.native.systemImprovementOrchestration`
 
-## Database configuration
-Jangar requires a database connection string. Supply one of:
-- `database.url` (inline), or
-- `database.secretRef` (existing Secret), or
-- `database.createSecret.enabled=true` with `database.url`.
-
-Agent memory backends are configured separately via the `Memory` CRD and its referenced Secret.
-Use `env.vars.JANGAR_MIGRATIONS=skip` to disable automatic migrations if needed.
-
-## Production notes
-- Use a dedicated Postgres/managed DB and set `database.secretRef`.
-- Pin Jangar image digests in `values-prod.yaml`.
-- Keep `service.type=ClusterIP` and use ingress/mesh externally if desired.
-- Set `rbac.clusterScoped=true` when `controller.namespaces` spans multiple namespaces or `"*"`.
-- Consider enabling `podDisruptionBudget` and `networkPolicy` for availability and traffic control.
+## Security notes
+- Keep `service.type=ClusterIP` and expose via a gateway/mesh if needed.
+- Use `database.secretRef` and dedicated DB credentials per environment.
+- Scope controllers to specific namespaces unless you need cluster-wide control.
+- Prefer image digests in production (`values-prod.yaml`).
 
 ## Crossplane
-Crossplane is not supported by Agents. Uninstall it before installing the native chart so the
-native CRDs remain the only definitions.
+Crossplane is not supported by Agents. Uninstall it before installing this chart so the CRDs do not conflict.
 
 ## Publishing (OCI)
 ```bash
-helm package charts/agents
-helm push agents-0.6.0.tgz oci://ghcr.io/proompteng/charts
+bun packages/scripts/src/agents/publish-chart.ts
 ```
 
 ## Values
-| Key | Description | Default |
-| --- | ----------- | ------- |
-| `replicaCount` | Control-plane replicas | `1` |
-| `autoscaling.enabled` | Enable HorizontalPodAutoscaler | `false` |
-| `autoscaling.minReplicas` | Minimum replicas for autoscaling | `1` |
-| `autoscaling.maxReplicas` | Maximum replicas for autoscaling | `3` |
-| `autoscaling.targetCPUUtilizationPercentage` | Target CPU utilization percentage | `80` |
-| `autoscaling.targetMemoryUtilizationPercentage` | Target memory utilization percentage | `null` |
-| `image.repository` | Jangar image repo | `ghcr.io/proompteng/jangar` |
-| `image.tag` | Jangar image tag | `latest` |
-| `image.digest` | Optional image digest pin | `""` |
-| `image.pullSecrets` | Image pull secret names | `[]` |
-| `service.type` | Service type | `ClusterIP` |
-| `service.port` | Service port | `80` |
-| `service.annotations` | Service annotations | `{}` |
-| `service.labels` | Extra Service labels | `{}` |
-| `grpc.enabled` | Expose gRPC ClusterIP service for agentctl (optional) | `true` |
-| `grpc.port` | Container gRPC port | `50051` |
-| `grpc.servicePort` | Service gRPC port | `50051` |
-| `grpc.serviceType` | gRPC Service type (cluster-only) | `ClusterIP` |
-| `serviceAccount.create` | Create service account | `true` |
-| `serviceAccount.name` | Service account name override | `""` |
-| `rbac.create` | Create RBAC | `true` |
-| `rbac.clusterScoped` | Use ClusterRole/ClusterRoleBinding for multi-namespace reconciliation | `false` |
-| `database.url` | Database URL for Jangar | `""` |
-| `database.secretRef.name` | Secret containing database URL | `""` |
-| `database.caSecret.name` | Secret containing DB CA cert | `""` |
-| `envFromSecretRefs` | Secret names to load as envFrom | `[]` |
-| `envFromConfigMapRefs` | ConfigMap names to load as envFrom | `[]` |
-| `workflowRuntime.native.rerunOrchestration` | Orchestration name for native Codex reruns | `""` |
-| `workflowRuntime.native.rerunOrchestrationNamespace` | Namespace for native Codex rerun orchestration | `""` |
-| `workflowRuntime.native.systemImprovementOrchestration` | Orchestration name for native system improvement runs | `""` |
-| `workflowRuntime.native.systemImprovementOrchestrationNamespace` | Namespace for native system improvement orchestration | `""` |
-| `controller.enabled` | Enable Agents controller loop | `true` |
-| `controller.namespaces` | Namespaces to watch | `['<release-namespace>']` |
-| `controller.concurrency.perNamespace` | Max running AgentRuns per namespace | `10` |
-| `controller.concurrency.perAgent` | Max running AgentRuns per Agent | `5` |
-| `controller.concurrency.cluster` | Max running AgentRuns cluster-wide | `100` |
-| `orchestrationController.enabled` | Enable Orchestration controller loop | `true` |
-| `orchestrationController.namespaces` | Namespaces to watch for OrchestrationRuns | `['<release-namespace>']` |
-| `supportingController.enabled` | Enable supporting primitives controller | `true` |
-| `supportingController.namespaces` | Namespaces to watch for schedules/artifacts/workspaces | `['<release-namespace>']` |
-| `agentComms.enabled` | Enable NATS agent-comms subscriber | `false` |
-| `agentComms.nats.url` | NATS URL | `""` |
-| `livenessProbe.enabled` | Enable liveness probe | `true` |
-| `readinessProbe.enabled` | Enable readiness probe | `true` |
-| `logging.level` | Log level for Jangar | `info` |
+See `values.yaml` and `values.schema.json` for full configuration.
 
-See `values.yaml`, `values-local.yaml`, `values-dev.yaml`, `values-ci.yaml`, and `values-prod.yaml` for full options.
-| `podDisruptionBudget.enabled` | Enable PodDisruptionBudget | `false` |
-| `podDisruptionBudget.minAvailable` | Minimum available pods | `1` |
-| `podDisruptionBudget.maxUnavailable` | Maximum unavailable pods | `""` |
-| `podDisruptionBudget.annotations` | Extra PDB annotations | `{}` |
-| `networkPolicy.enabled` | Enable NetworkPolicy (empty rules deny traffic) | `false` |
-| `networkPolicy.policyTypes` | Policy types when NetworkPolicy is enabled | `["Ingress","Egress"]` |
-| `networkPolicy.ingress` | NetworkPolicy ingress rules | `[]` |
-| `networkPolicy.egress` | NetworkPolicy egress rules | `[]` |
-| `networkPolicy.annotations` | NetworkPolicy annotations | `{}` |
+## Support
+Open issues or discussions in the repo if you want:
+- new CRDs
+- additional runtime adapters
+- better tooling around agentctl or observability
