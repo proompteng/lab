@@ -912,9 +912,9 @@ const getCustomObjectOptional = async (clients: KubeClients, spec: ResourceSpec,
       name,
     })
     return unwrapResponse(response) as Record<string, unknown>
-  } catch {
-    if (isNotFoundError(_error)) return null
-    throw _error
+  } catch (error) {
+    if (isNotFoundError(error)) return null
+    throw error
   }
 }
 
@@ -962,9 +962,9 @@ const deleteCustomObject = async (clients: KubeClients, spec: ResourceSpec, name
       name,
     })
     return unwrapResponse(response) as Record<string, unknown>
-  } catch {
-    if (isNotFoundError(_error)) return null
-    throw _error
+  } catch (error) {
+    if (isNotFoundError(error)) return null
+    throw error
   }
 }
 
@@ -1122,9 +1122,9 @@ const deleteJobByName = async (clients: KubeClients, namespace: string, name: st
   try {
     await clients.batch.deleteNamespacedJob({ name, namespace })
     return true
-  } catch {
-    if (isNotFoundError(_error)) return false
-    throw _error
+  } catch (error) {
+    if (isNotFoundError(error)) return false
+    throw error
   }
 }
 
