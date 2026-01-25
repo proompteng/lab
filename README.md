@@ -16,9 +16,9 @@ A multi-language monorepo for experimenting with conversational tooling, data pi
    ```bash
    bun install
    ```
-3. **Launch the primary web app**
+3. **Launch the landing web app**
    ```bash
-   bun run dev:proompteng
+   bun run dev:landing
    ```
 4. **Start the Convex backend locally** (in another terminal)
    ```bash
@@ -37,7 +37,7 @@ A multi-language monorepo for experimenting with conversational tooling, data pi
 
 | Path | Description |
 | ---- | ----------- |
-| `apps/` | Next.js/Turbopack frontends (e.g. `proompteng`, `reviseur`, `alchimie`) with co-located fixtures and tests. |
+| `apps/` | Frontends and UX surfaces (e.g. `landing`, `app`, `docs`) with co-located fixtures and tests. |
 | `packages/backend` | Convex backend project (`convex dev`, codegen, model seeding). |
 | `packages/atelier`, `packages/cloutt` | Shared TypeScript utilities and infrastructure tooling. |
 | `services/` | Go microservices (`miel`, `prt`, `eclair`) with adjacent tests and Dockerfiles. |
@@ -53,8 +53,8 @@ A multi-language monorepo for experimenting with conversational tooling, data pi
 ## Development Workflows
 
 ### Frontend
-- Lint & format: `bun run lint:proompteng`, `bun run format`
-- Build & smoke test: `bun run build:proompteng` then `bun run start:proompteng`
+- Lint & format: `bun run lint:landing`, `bun run format`
+- Build & smoke test: `bun run build:landing` then `bun run start:landing`
 - Shared Biome config lives at `biome.json`
 
 ### Convex Backend

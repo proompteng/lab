@@ -19,6 +19,8 @@ jobs:
       contents: read
     outputs:
       proompteng: ${{ steps.filter.outputs.proompteng }}
+      app: ${{ steps.filter.outputs.app }}
+      cms: ${{ steps.filter.outputs.cms }}
       docs: ${{ steps.filter.outputs.docs }}
       kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
       reviseur: ${{ steps.filter.outputs.reviseur }}
@@ -35,7 +37,11 @@ jobs:
         with:
           filters: |
             proompteng:
-              - 'apps/proompteng/**'
+              - 'apps/landing/**'
+            app:
+              - 'apps/app/**'
+            cms:
+              - 'apps/cms/**'
             docs:
               - 'apps/docs/**'
             kitty-krew:
@@ -79,7 +85,17 @@ jobs:
     uses: ./.github/workflows/docker-build-common.yaml
     with:
       image_name: proompteng
-      dockerfile: ./apps/proompteng/Dockerfile
+      dockerfile: ./apps/landing/Dockerfile
+      context: .
+      new_tag: ${{ needs.version.outputs.new_tag }}
+
+  build-app:
+    needs: [changes, version]
+    if: ${{ needs.changes.outputs.app == 'true' }}
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: app
+      dockerfile: ./apps/app/Dockerfile
       context: .
       new_tag: ${{ needs.version.outputs.new_tag }}
 
@@ -90,6 +106,16 @@ jobs:
     with:
       image_name: docs
       dockerfile: ./apps/docs/Dockerfile
+      context: .
+      new_tag: ${{ needs.version.outputs.new_tag }}
+
+  build-cms:
+    needs: [changes, version]
+    if: ${{ needs.changes.outputs.cms == 'true' }}
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: cms
+      dockerfile: ./apps/cms/Dockerfile
       context: .
       new_tag: ${{ needs.version.outputs.new_tag }}
 
@@ -142,6 +168,8 @@ jobs:
       [
         version,
         build-proompteng,
+        build-app,
+        build-cms,
         build-docs,
         build-kitty-krew,
         build-reviseur,

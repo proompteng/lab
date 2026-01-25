@@ -48,6 +48,13 @@ extraVolumes:
               - key: password
                 path: convex-db-app/password
         - secret:
+            name: cms-db-app
+            items:
+              - key: uri
+                path: cms-db-app/uri
+              - key: password
+                path: cms-db-app/password
+        - secret:
             name: jangar-db-app
             items:
               - key: uri
@@ -118,6 +125,7 @@ extraInitContainers: |
             {'secret': 'keycloak-db-app', 'name': 'keycloak-db'},
             {'secret': 'coder-cluster-app', 'name': 'coder-cluster'},
             {'secret': 'convex-db-app', 'name': 'convex-db'},
+            {'secret': 'cms-db-app', 'name': 'cms-db'},
             {'secret': 'jangar-db-app', 'name': 'jangar-db'},
             {'secret': 'golink-db-app', 'name': 'golink-db'},
             {'secret': 'facteur-vector-cluster-app', 'name': 'facteur-vector-cluster'},

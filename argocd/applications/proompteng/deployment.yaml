@@ -27,3 +27,5 @@ spec:
           env:
             - name: NEXT_PUBLIC_CONVEX_URL
               value: https://convex.proompteng.ai
+            - name: LANDING_CMS_URL
+              value: https://cms.proompteng.ai

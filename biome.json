@@ -26,7 +26,7 @@
       "!**/bun.lock",
       "!**/routeTree.gen.ts",
       "!**/src/app/routeTree.gen.ts",
-      "!apps/proompteng/src/components/ui",
+      "!apps/landing/src/components/ui",
       "!apps/reestr/src/components/ui",
       "!services/jangar/src/components/ui",
       "!src/components/ui",
