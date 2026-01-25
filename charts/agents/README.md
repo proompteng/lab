@@ -126,7 +126,6 @@ Native orchestration runs in-cluster and supports:
 - `AgentRun`
 - `ToolRun`
 - `SubOrchestration`
-- `ApprovalGate`
 
 Enable reruns or system-improvement flows using:
 - `workflowRuntime.native.rerunOrchestration`
@@ -137,9 +136,6 @@ Enable reruns or system-improvement flows using:
 - Use `database.secretRef` and dedicated DB credentials per environment.
 - Scope controllers to specific namespaces unless you need cluster-wide control.
 - Prefer image digests in production (`values-prod.yaml`).
-
-## Crossplane
-Crossplane is not supported by Agents. Uninstall it before installing this chart so the CRDs do not conflict.
 
 ## Publishing (OCI)
 ```bash
