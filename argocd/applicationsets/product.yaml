@@ -24,6 +24,14 @@ spec:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
                 enabled: true
+              - name: app
+                path: argocd/applications/app
+                namespace: app
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "5"
+                automation: auto
+                enabled: true
               - name: cms
                 path: argocd/applications/cms
                 namespace: cms

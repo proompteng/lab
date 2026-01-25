@@ -1,0 +1,15 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: app
+  namespace: app
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`app.proompteng.ai`)
+      kind: Rule
+      services:
+        - name: app
+          port: 3000
+  tls: {}

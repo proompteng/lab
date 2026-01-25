@@ -48,6 +48,7 @@
     "build:facteur": "bun run packages/scripts/src/facteur/build-image.ts",
     "build:oirat": "bun run packages/scripts/src/oirat/build-image.ts",
     "bonjour:deploy": "bun run packages/scripts/src/bonjour/deploy-service.ts",
+    "app:deploy": "bun run packages/scripts/src/app/deploy-service.ts",
     "cms:deploy": "bun run packages/scripts/src/cms/deploy-service.ts",
     "facteur:reseal": "bun run packages/scripts/src/facteur/reseal-secrets.ts",
     "froussard:reseal": "bun run packages/scripts/src/froussard/reseal-secrets.ts",
