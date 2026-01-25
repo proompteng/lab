@@ -8,9 +8,18 @@ const websocketEnabled = ['1', 'true', 'yes', 'on'].includes(
 const rootDir = dirname(fileURLToPath(import.meta.url))
 const agentsRuntimePlugin = resolve(rootDir, 'server/plugins/agents-runtime')
 const agentctlPlugin = resolve(rootDir, 'server/plugins/agentctl-grpc')
+const staticHandler = resolve(rootDir, 'server/handlers/static')
 
 export default defineNitroConfig({
   preset: 'bun',
+  serveStatic: false,
+  handlers: [
+    {
+      route: '/**',
+      middleware: true,
+      handler: staticHandler,
+    },
+  ],
   experimental: {
     websocket: websocketEnabled,
   },
