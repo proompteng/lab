@@ -30,6 +30,9 @@ jobs:
           AGENTCTL_TARGETS: darwin-amd64,darwin-arm64
         run: bun run --filter @proompteng/agentctl build:release
 
+      - name: Build host binary
+        run: bun run --filter @proompteng/agentctl build:bin
+
       - name: Validate host binary (mock gRPC)
         run: bun run --filter @proompteng/agentctl validate:bin -- --mock
 
@@ -59,6 +62,9 @@ jobs:
           AGENTCTL_VERSION: ${{ github.ref_name }}
           AGENTCTL_TARGETS: linux-amd64,linux-arm64
         run: bun run --filter @proompteng/agentctl build:release
+
+      - name: Build host binary
+        run: bun run --filter @proompteng/agentctl build:bin
 
       - name: Validate host binary (mock gRPC)
         run: bun run --filter @proompteng/agentctl validate:bin -- --mock
