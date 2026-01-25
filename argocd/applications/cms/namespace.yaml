@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: cms
-  labels:
-    app.kubernetes.io/name: cms
-    app.kubernetes.io/managed-by: argocd
