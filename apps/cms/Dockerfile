@@ -14,6 +14,7 @@ COPY scripts/run-husky-install.mjs ./scripts/run-husky-install.mjs
 COPY --parents apps/*/package.json ./
 COPY --parents packages/*/package.json ./
 COPY --parents services/*/package.json ./
+COPY --parents services/jangar/agentctl/package.json ./
 RUN bun install --frozen-lockfile --ignore-scripts
 
 FROM deps AS builder
