@@ -84,7 +84,7 @@ Webhook signature verification uses the `auth.secretRef` secret; configure your 
 
 Local smoke test:
 ```bash
-scripts/agents/smoke-agents.sh
+packages/scripts/src/agents/smoke-agents.ts
 ```
 
 ## Database configuration

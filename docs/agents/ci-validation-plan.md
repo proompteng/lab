@@ -19,16 +19,16 @@ Status: Current (2026-01-19)
 ## Integration Tests
 - in-cluster smoke test (ARC runners):
   - Install chart into a dedicated namespace
-  - Provide a database URL (for example, `AGENTS_DB_BOOTSTRAP=true` in `scripts/agents/smoke-agents.sh`)
+  - Provide a database URL (for example, `AGENTS_DB_BOOTSTRAP=true` in `packages/scripts/src/agents/smoke-agents.ts`)
   - Apply Agent/ImplementationSpec/AgentRun
   - Verify AgentRun completion and status
-  - Use `scripts/agents/smoke-agents.sh` with a deterministic smoke provider.
+  - Use `packages/scripts/src/agents/smoke-agents.ts` with a deterministic smoke provider.
   - Requires `argocd/applications/agents-ci` RBAC for the ARC runner service account.
 - kind/minikube smoke test (local):
   - Install chart
   - Apply Agent/ImplementationSpec/AgentRun
   - Verify AgentRun completion and status
-  - Use `scripts/agents/smoke-agents.sh` for a repeatable local flow.
+  - Use `packages/scripts/src/agents/smoke-agents.ts` for a repeatable local flow.
 - GitHub + Linear mock webhook sync tests (webhook-only).
 
 ## Performance

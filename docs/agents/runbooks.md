@@ -60,7 +60,7 @@ kubectl -n agents wait --for=condition=complete job \
 
 ## Smoke test (kind/minikube)
 ```bash
-scripts/agents/smoke-agents.sh
+packages/scripts/src/agents/smoke-agents.ts
 ```
 
 This installs the chart, applies deterministic smoke CRs, submits a multi-step workflow runtime

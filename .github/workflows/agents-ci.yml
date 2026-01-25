@@ -112,7 +112,7 @@ jobs:
           AGENTS_CREATE_NAMESPACE: "false"
           AGENTS_DB_BOOTSTRAP: "true"
           AGENTCTL_BIN: services/jangar/agentctl/dist/agentctl
-        run: scripts/agents/smoke-agents.sh
+        run: bun run packages/scripts/src/agents/smoke-agents.ts
 
       - name: Cleanup agents integration release
         if: always()
