@@ -137,7 +137,12 @@ require_command "${AGENTCTL_BIN}"
 
 if [[ "${DB_BOOTSTRAP}" == "true" ]]; then
   if ! kubectl get namespace "${NAMESPACE}" >/dev/null 2>&1; then
-    kubectl create namespace "${NAMESPACE}"
+    if [[ "${CREATE_NAMESPACE}" == "true" ]]; then
+      kubectl create namespace "${NAMESPACE}"
+    else
+      echo "Namespace ${NAMESPACE} does not exist and AGENTS_CREATE_NAMESPACE=false." >&2
+      exit 1
+    fi
   fi
   if [[ -z "${DB_PASSWORD}" ]]; then
     if command -v python3 >/dev/null 2>&1; then
