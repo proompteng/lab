@@ -2,6 +2,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import process from 'node:process'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
@@ -189,6 +190,9 @@ const main = async () => {
   const dbHost = process.env.AGENTS_DB_HOST ?? `${releaseName}-postgres`
   const dbPort = process.env.AGENTS_DB_PORT ?? '5432'
   const agentctlBin = process.env.AGENTCTL_BIN ?? 'agentctl'
+  const kubeconfigPath =
+    process.env.AGENTCTL_KUBECONFIG ?? process.env.KUBECONFIG ?? resolve(homedir(), '.kube', 'config')
+  const caFile = process.env.KUBE_CA_FILE ?? '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
 
   const agentctlCommand = agentctlBin.endsWith('.js') ? ['node', agentctlBin] : [agentctlBin]
   const agentctlExecutable = agentctlCommand[0]
@@ -322,8 +326,16 @@ spec:
   await run('kubectl', ['-n', namespace, 'delete', 'agentrun', agentRunName, '--ignore-not-found'])
 
   log('Submitting workflow AgentRun via agentctl...')
+  const agentctlEnv: Record<string, string | undefined> = {
+    AGENTCTL_NAMESPACE: namespace,
+    AGENTCTL_MODE: 'kube',
+    AGENTCTL_KUBECONFIG: kubeconfigPath,
+  }
+  if (existsSync(caFile)) {
+    agentctlEnv.NODE_EXTRA_CA_CERTS = caFile
+  }
   await run(agentctlCommand[0], [...agentctlCommand.slice(1), '--kube', 'run', 'apply', '-f', agentRunFile], {
-    env: { AGENTCTL_NAMESPACE: namespace, AGENTCTL_MODE: 'kube' },
+    env: agentctlEnv,
   })
 
   await waitForAgentRun(namespace, agentRunName, 60_000)
