@@ -1,16 +1,23 @@
 #!/usr/bin/env bun
 
-import { resolve } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import process from 'node:process'
-
-import { ensureCli, repoRoot, run } from '../shared/cli'
+import YAML from 'yaml'
+import { buildImage } from '../jangar/build-image'
+import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
+import { inspectImageDigest } from '../shared/docker'
+import { execGit } from '../shared/git'
 
 type Options = {
-  namespace: string
-  appName: string
-  manifestPath: string
+  kustomizePath: string
+  valuesPath: string
+  registry: string
+  repository: string
+  tag: string
   apply: boolean
-  showStatus: boolean
 }
 
 const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
@@ -25,39 +32,53 @@ const parseArgs = (argv: string[]): Partial<Options> => {
   const options: Partial<Options> = {}
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
-    if (arg === '--namespace') {
-      options.namespace = argv[i + 1]
+    if (arg === '--kustomize-path') {
+      options.kustomizePath = argv[i + 1]
       i += 1
       continue
     }
-    if (arg.startsWith('--namespace=')) {
-      options.namespace = arg.slice('--namespace='.length)
+    if (arg.startsWith('--kustomize-path=')) {
+      options.kustomizePath = arg.slice('--kustomize-path='.length)
       continue
     }
-    if (arg === '--app') {
-      options.appName = argv[i + 1]
+    if (arg === '--values') {
+      options.valuesPath = argv[i + 1]
       i += 1
       continue
     }
-    if (arg.startsWith('--app=')) {
-      options.appName = arg.slice('--app='.length)
+    if (arg.startsWith('--values=')) {
+      options.valuesPath = arg.slice('--values='.length)
       continue
     }
-    if (arg === '--manifest') {
-      options.manifestPath = argv[i + 1]
+    if (arg === '--registry') {
+      options.registry = argv[i + 1]
       i += 1
       continue
     }
-    if (arg.startsWith('--manifest=')) {
-      options.manifestPath = arg.slice('--manifest='.length)
+    if (arg.startsWith('--registry=')) {
+      options.registry = arg.slice('--registry='.length)
+      continue
+    }
+    if (arg === '--repository') {
+      options.repository = argv[i + 1]
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--repository=')) {
+      options.repository = arg.slice('--repository='.length)
+      continue
+    }
+    if (arg === '--tag') {
+      options.tag = argv[i + 1]
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--tag=')) {
+      options.tag = arg.slice('--tag='.length)
       continue
     }
     if (arg === '--no-apply') {
       options.apply = false
-      continue
-    }
-    if (arg === '--no-status') {
-      options.showStatus = false
     }
   }
   return options
@@ -65,42 +86,202 @@ const parseArgs = (argv: string[]): Partial<Options> => {
 
 const resolveOptions = (): Options => {
   const args = parseArgs(process.argv.slice(2))
-  const namespace = args.namespace ?? process.env.ARGOCD_NAMESPACE ?? 'argocd'
-  const appName = args.appName ?? process.env.ARGOCD_APP_NAME ?? 'agents'
-  const manifestPath =
-    args.manifestPath ?? process.env.ARGOCD_APP_MANIFEST ?? 'argocd/applications/agents/application.yaml'
+  const registry = args.registry ?? process.env.JANGAR_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
+  const repository = args.repository ?? process.env.JANGAR_IMAGE_REPOSITORY ?? 'lab/jangar'
+  const tag = args.tag ?? process.env.JANGAR_IMAGE_TAG ?? execGit(['rev-parse', '--short', 'HEAD'])
 
   return {
-    namespace,
-    appName,
-    manifestPath: resolve(repoRoot, manifestPath),
-    apply: args.apply ?? parseBoolean(process.env.ARGOCD_APPLY, true),
-    showStatus: args.showStatus ?? parseBoolean(process.env.ARGOCD_SHOW_STATUS, true),
+    kustomizePath: resolve(
+      repoRoot,
+      args.kustomizePath ?? process.env.AGENTS_KUSTOMIZE_PATH ?? 'argocd/applications/agents',
+    ),
+    valuesPath: resolve(
+      repoRoot,
+      args.valuesPath ?? process.env.AGENTS_VALUES_PATH ?? 'argocd/applications/agents/values.yaml',
+    ),
+    registry,
+    repository,
+    tag,
+    apply: args.apply ?? parseBoolean(process.env.AGENTS_APPLY, true),
+  }
+}
+
+const capture = async (cmd: string[], env?: Record<string, string | undefined>): Promise<string> => {
+  const subprocess = Bun.spawn(cmd, {
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: buildEnv(env),
+  })
+
+  void subprocess.stdin?.end()
+
+  const [exitCode, stdout, stderr] = await Promise.all([
+    subprocess.exited,
+    new Response(subprocess.stdout).text(),
+    new Response(subprocess.stderr).text(),
+  ])
+
+  if (exitCode !== 0) {
+    fatal(`Command failed (${exitCode}): ${cmd.join(' ')}`, stderr)
+  }
+
+  return stdout.trim()
+}
+
+const buildEnv = (env?: Record<string, string | undefined>) =>
+  Object.fromEntries(
+    Object.entries(env ? { ...process.env, ...env } : process.env).filter(([, value]) => value !== undefined),
+  ) as Record<string, string>
+
+const fetchHelmV3 = (): { binary: string; tempDir: string } => {
+  const version = process.env.HELM_V3_VERSION ?? 'v3.15.4'
+  const arch = process.arch === 'arm64' ? 'arm64' : 'amd64'
+  const os = process.platform === 'darwin' ? 'darwin' : 'linux'
+  const url = `https://get.helm.sh/helm-${version}-${os}-${arch}.tar.gz`
+
+  const tmpDir = mkdtempSync(join(tmpdir(), 'helm-v3-'))
+  const archivePath = join(tmpDir, 'helm.tgz')
+  const download = spawnSync('curl', ['-fsSL', url, '-o', archivePath])
+  if (download.status !== 0) {
+    fatal(`Failed to download helm ${version} from ${url}`, download.stderr?.toString())
+  }
+
+  const extract = spawnSync('tar', ['-xzf', archivePath, '-C', tmpDir])
+  if (extract.status !== 0) {
+    fatal(`Failed to extract helm archive ${archivePath}`, extract.stderr?.toString())
+  }
+
+  const binaryPath = join(tmpDir, `${os}-${arch}`, 'helm')
+  return { binary: binaryPath, tempDir: tmpDir }
+}
+
+const resolveHelmBinary = (): { binary: string; tempDir?: string; shim?: string } => {
+  const envBin = process.env.HELM_BIN
+  if (envBin) return { binary: envBin }
+
+  const helmPath = Bun.which('helm')
+  if (helmPath) {
+    const version = spawnSync(helmPath, ['version', '--short'], { encoding: 'utf8' })
+    const output = typeof version.stdout === 'string' ? version.stdout.trim() : ''
+    if (output.startsWith('v3.')) {
+      return { binary: helmPath }
+    }
+  }
+
+  const misePath = Bun.which('mise')
+  if (misePath) {
+    const version = (process.env.HELM_V3_VERSION ?? 'v3.15.4').replace(/^v/, '')
+    const helmDir = mkdtempSync(join(tmpdir(), 'helm-mise-shim-'))
+    const shimPath = join(helmDir, 'helm')
+    const script = `#!/usr/bin/env bash\nset -euo pipefail\nexec ${misePath} x helm@${version} -- helm "$@"\n`
+    writeFileSync(shimPath, script, { mode: 0o755 })
+    return { binary: shimPath, tempDir: helmDir, shim: 'mise' }
+  }
+
+  return fetchHelmV3()
+}
+
+const writeHelmShim = (): { helmDir: string; helmBinary: string; cleanup: () => void } => {
+  const helmResolved = resolveHelmBinary()
+  if (helmResolved.shim === 'mise') {
+    return {
+      helmDir: helmResolved.tempDir ?? tmpdir(),
+      helmBinary: helmResolved.binary,
+      cleanup: () => helmResolved.tempDir && rmSync(helmResolved.tempDir, { recursive: true, force: true }),
+    }
+  }
+
+  const helmBinary = helmResolved.binary
+  const helmDir = mkdtempSync(join(tmpdir(), 'helm-shim-'))
+  const shimPath = join(helmDir, 'helm')
+  const script = `#!/usr/bin/env bash
+set -euo pipefail
+args=()
+for a in "$@"; do
+  if [[ "$a" == "-c" ]]; then
+    continue
+  fi
+  args+=("$a")
+done
+exec ${helmBinary} "${'${'}args[@]}"
+`
+  writeFileSync(shimPath, script, { mode: 0o755 })
+  const cleanup = () => {
+    rmSync(helmDir, { recursive: true, force: true })
+    if (helmResolved.tempDir) {
+      rmSync(helmResolved.tempDir, { recursive: true, force: true })
+    }
+  }
+  return { helmDir, helmBinary: shimPath, cleanup }
+}
+
+const updateValuesFile = (valuesPath: string, imageRepository: string, tag: string, digest: string) => {
+  const raw = readFileSync(valuesPath, 'utf8')
+  const doc = YAML.parse(raw) ?? {}
+
+  doc.image ??= {}
+  doc.image.repository = imageRepository
+  doc.image.tag = tag
+  doc.image.digest = digest
+
+  writeFileSync(valuesPath, YAML.stringify(doc, { lineWidth: 120 }))
+  console.log(`Updated ${valuesPath} with ${imageRepository}:${tag}@${digest}`)
+}
+
+const renderAndApply = async (kustomizePath: string) => {
+  ensureCli('kubectl')
+  const { helmDir, helmBinary, cleanup } = writeHelmShim()
+  const kubectl = Bun.which('kubectl')
+  if (!kubectl) {
+    fatal('Missing kubectl: install kubectl to render kustomize manifests')
+  }
+  const renderEnv = { PATH: `${helmDir}:${process.env.PATH ?? ''}`, HELM_BIN: helmBinary }
+  const rendered = await capture([kubectl, 'kustomize', kustomizePath, '--enable-helm'], renderEnv)
+  const tmpDir = mkdtempSync(`${tmpdir()}/agents-render-`)
+  const tmpPath = resolve(tmpDir, 'manifests.yaml')
+  try {
+    writeFileSync(tmpPath, rendered)
+    await run('kubectl', ['apply', '-f', tmpPath])
+  } finally {
+    cleanup()
+    try {
+      rmSync(tmpPath, { force: true })
+      rmSync(tmpDir, { recursive: true, force: true })
+    } catch {
+      // ignore cleanup errors
+    }
   }
 }
 
 const main = async () => {
   const options = resolveOptions()
-  ensureCli('kubectl')
+  ensureCli('docker')
+  ensureCli('curl')
+  ensureCli('tar')
+
+  const imageName = `${options.registry}/${options.repository}`
+  const image = `${imageName}:${options.tag}`
+
+  await buildImage({ registry: options.registry, repository: options.repository, tag: options.tag })
+
+  const repoDigest = inspectImageDigest(image)
+  const digest = repoDigest.includes('@') ? repoDigest.split('@')[1] : repoDigest
+
+  updateValuesFile(options.valuesPath, imageName, options.tag, digest)
 
   if (options.apply) {
-    await run('kubectl', ['-n', options.namespace, 'apply', '-f', options.manifestPath])
-  }
-
-  if (options.showStatus) {
-    await run('kubectl', ['-n', options.namespace, 'get', 'application', options.appName])
+    await renderAndApply(options.kustomizePath)
   }
 }
 
 if (import.meta.main) {
-  main().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error))
-    process.exit(1)
-  })
+  main().catch((error) => fatal('Failed to build and deploy agents', error))
 }
 
 export const __private = {
   parseArgs,
   parseBoolean,
   resolveOptions,
+  updateValuesFile,
 }
