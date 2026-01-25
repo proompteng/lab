@@ -30,7 +30,7 @@ jobs:
         with:
           version: v3.14.4
 
-      - name: Split charts/agents into dedicated repo and publish chart
+      - name: Split charts/agents into charts repo and publish chart
         env:
           AGENTS_SPLIT_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
         run: |
@@ -43,15 +43,15 @@ jobs:
           git clone --no-local . "${tmpdir}/agents-split"
           cd "${tmpdir}/agents-split"
 
-          git filter-repo --path charts/agents --path-rename charts/agents/:
+          git filter-repo --path charts/agents
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git remote add origin "https://x-access-token:${AGENTS_SPLIT_TOKEN}@github.com/proompteng/agents.git"
+          git remote add origin "https://x-access-token:${AGENTS_SPLIT_TOKEN}@github.com/proompteng/charts.git"
           git fetch origin main
           git push --force-with-lease=main -u origin HEAD:main
 
-          helm package . --destination "${tmpdir}/chart-packages"
+          helm package charts/agents --destination "${tmpdir}/chart-packages"
           echo "${AGENTS_SPLIT_TOKEN}" | helm registry login ghcr.io -u proompteng --password-stdin
-          helm push "${tmpdir}/chart-packages/"*.tgz oci://ghcr.io/proompteng/agents
+          helm push "${tmpdir}/chart-packages/"*.tgz oci://ghcr.io/proompteng/charts

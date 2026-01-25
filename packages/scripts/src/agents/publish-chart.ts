@@ -6,12 +6,13 @@ import { join, resolve } from 'node:path'
 
 const rootDir = resolve(import.meta.dir, '..', '..', '..', '..')
 const outputDir = resolve(rootDir, '.chart-packages')
-const chartRepoUrl = 'https://github.com/proompteng/agents.git'
+const chartRepoUrl = 'https://github.com/proompteng/charts.git'
 
 const chartWorkDir = await Bun.makeTempDir({ dir: tmpdir() })
-const chartDir = join(chartWorkDir, 'agents')
+const chartRepoDir = join(chartWorkDir, 'charts')
+const chartDir = join(chartRepoDir, 'charts', 'agents')
 
-const cloneResult = Bun.spawnSync(['git', 'clone', '--depth', '1', chartRepoUrl, chartDir])
+const cloneResult = Bun.spawnSync(['git', 'clone', '--depth', '1', chartRepoUrl, chartRepoDir])
 if (cloneResult.exitCode !== 0) {
   const stderr = new TextDecoder().decode(cloneResult.stderr)
   throw new Error(`git clone failed: ${stderr || 'unknown error'}`)
@@ -54,11 +55,11 @@ if (!packagePath.endsWith(`-${chartVersion}.tgz`)) {
   throw new Error(`Packaged chart version does not match Chart.yaml (${chartVersion}).`)
 }
 
-const pushResult = Bun.spawnSync(['helm', 'push', packagePath, 'oci://ghcr.io/proompteng/agents'])
+const pushResult = Bun.spawnSync(['helm', 'push', packagePath, 'oci://ghcr.io/proompteng/charts'])
 
 if (pushResult.exitCode !== 0) {
   const stderr = new TextDecoder().decode(pushResult.stderr)
   throw new Error(`helm push failed: ${stderr || 'unknown error'}`)
 }
 
-console.log(`Published ${packagePath} to ghcr.io/proompteng/agents`)
+console.log(`Published ${packagePath} to ghcr.io/proompteng/charts`)

@@ -1,9 +1,9 @@
 apiVersion: v2
 name: agents
 description: Minimal Agents control plane (Jangar) with CRDs
-home: https://github.com/proompteng/agents
+home: https://github.com/proompteng/charts/tree/main/charts/agents
 sources:
-  - https://github.com/proompteng/agents
+  - https://github.com/proompteng/charts/tree/main/charts/agents
 kubeVersion: ">=1.25.0-0"
 type: application
 version: 0.9.1
@@ -21,9 +21,9 @@ annotations:
   artifacthub.io/license: Apache-2.0
   artifacthub.io/links: |
     - name: Source
-      url: https://github.com/proompteng/agents
+      url: https://github.com/proompteng/charts/tree/main/charts/agents
     - name: Documentation
-      url: https://github.com/proompteng/agents/blob/main/README.md
+      url: https://github.com/proompteng/charts/blob/main/charts/agents/README.md
   artifacthub.io/keywords: agents,jangar,codex,control-plane
   artifacthub.io/images: |
     - name: jangar
