@@ -7,11 +7,11 @@
 
 ## Secrets
 
-Create a `cms-env` secret in the `cms` namespace with just the Payload secret:
+`secret.yaml` contains the `cms-env` SealedSecret with `PAYLOAD_SECRET`.
+To rotate it, run:
 
 ```bash
-kubectl -n cms create secret generic cms-env \
-  --from-literal=PAYLOAD_SECRET='...'
+./scripts/seal-generic-secret.sh cms cms-env argocd/applications/cms/secret.yaml PAYLOAD_SECRET='<new-secret>'
 ```
 
 ## Notes
