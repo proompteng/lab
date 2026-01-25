@@ -33,6 +33,7 @@ render_and_check() {
 
 render_and_check "${CHART_DIR}/values-dev.yaml"
 render_and_check "${CHART_DIR}/values-local.yaml"
+render_and_check "${CHART_DIR}/values-ci.yaml"
 render_and_check "${CHART_DIR}/values-prod.yaml"
 
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_agents.yaml" agents.proompteng.ai v1alpha1 Agent
@@ -112,10 +113,22 @@ crd_schema_dir="$(mktemp -d)"
 trap 'rm -rf "${crd_schema_dir}"' EXIT
 crd_schema_base="https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/v${CRD_SCHEMA_VERSION}-standalone-strict"
 curl -fsSL -o "${crd_schema_dir}/_definitions.json" "${crd_schema_base}/_definitions.json"
-cat <<'JSON' >"${crd_schema_dir}/CustomResourceDefinition.json"
-{"$ref":"_definitions.json#/definitions/io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.CustomResourceDefinition"}
-JSON
-cp "${crd_schema_dir}/CustomResourceDefinition.json" "${crd_schema_dir}/customresourcedefinition.json"
+python3 - "${crd_schema_dir}" <<'PY'
+import json
+import pathlib
+import sys
+
+base = pathlib.Path(sys.argv[1])
+definitions = json.loads((base / "_definitions.json").read_text()).get("definitions", {})
+schema = {
+    "$schema": "http://json-schema.org/schema#",
+    "definitions": definitions,
+    "$ref": "#/definitions/io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.CustomResourceDefinition",
+}
+payload = json.dumps(schema)
+for name in ("CustomResourceDefinition.json", "customresourcedefinition.json"):
+    (base / name).write_text(payload)
+PY
 
 kubeconform --strict --summary \
   --schema-location "${crd_schema_dir}/{{.ResourceKind}}.json" \

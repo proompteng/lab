@@ -1,14 +1,12 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: codex-run-workflow-smoke
+  name: agents-workflow-smoke
 spec:
   agentRef:
-    name: codex-agent
+    name: smoke-agent
   implementationSpecRef:
-    name: codex-impl-sample
-  memoryRef:
-    name: default-memory
+    name: smoke-impl
   runtime:
     type: workflow
     config:
@@ -22,11 +20,11 @@ spec:
         parameters:
           stage: implement
   workload:
-    image: registry.ide-newton.ts.net/lab/codex-universal:latest
+    image: busybox:1.36
     resources:
       requests:
-        cpu: 250m
-        memory: 512Mi
+        cpu: 50m
+        memory: 64Mi
   parameters:
     task: "Workflow smoke validation"
     priority: "medium"

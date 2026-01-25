@@ -11,5 +11,5 @@ Next steps:
    kubectl -n {{ .Release.Namespace }} apply -f charts/agents/examples/agentrun-sample.yaml
 3. Port-forward to access Jangar:
    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "agents.fullname" . }} 8080:{{ .Values.service.port }}
-4. (Optional) Port-forward gRPC for agentctl:
+4. Port-forward gRPC for agentctl (optional when gRPC is enabled):
    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "agents.fullname" . }}-grpc {{ .Values.grpc.servicePort }}:{{ .Values.grpc.servicePort }}

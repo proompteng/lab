@@ -35,19 +35,21 @@ This document is implementation‑grade: it describes *what* needs to exist in t
 A fully functional chart must provide:
 - **CRDs** for all primitives, installed via `charts/agents/crds/`.
 - **Jangar deployment + service** with documented env configuration.
-- **Optional gRPC service port** (ClusterIP only) for `agentctl` access within the cluster.
+- **gRPC service port** (ClusterIP only) for optional `agentctl` access within the cluster.
 - **RBAC** that matches what Jangar actually does (jobs/secrets/configmaps/CRDs).
 - **Controller configuration** (namespaces, concurrency, resync interval) exposed via values.
 - **Examples** for each CRD and implementation source.
 - **CI validation** to ensure CRDs and examples are valid and up‑to‑date.
 - **Crossplane unsupported**: ensure Crossplane is uninstalled so native CRDs are the only definitions.
-- **agentctl** packaged under `services/jangar/**`, shipped with the Jangar service, and backed by Jangar gRPC APIs (no direct Kubernetes access). Built as a Bun single-binary for npm + Homebrew distribution.
+- **agentctl** packaged under `services/jangar/**`, shipped with the Jangar service, and backed by Kubernetes APIs (gRPC optional). Distributed as a Node-bundled CLI with optional Bun binaries for convenience.
 - **Supporting primitives controller** for schedules, artifacts, and workspaces with native Kubernetes resources.
 
 ## CRD Lifecycle
 ### Source of truth
-- Go types in `services/jangar/api/agents/v1alpha1/types.go` are the schema source.
-- CRDs are generated from these types via `controller-gen`, then committed to `charts/agents/crds/`.
+- Go types in `services/jangar/api/agents/v1alpha1/types.go` are the schema source **for Agents primitives**.
+- Agents CRDs are generated from these types via `controller-gen`, then committed to `charts/agents/crds/`.
+- Non-agent primitives (orchestration/tools/schedules/etc.) are currently maintained as static YAML in
+  `charts/agents/crds/` until dedicated Go API packages are added.
 
 ### Requirements
 - `subresources.status` on all CRDs.
@@ -135,9 +137,10 @@ Controller behavior requires permissions to:
 - Supporting controller settings (`enabled`, `namespaces`).
 - Agent comms configuration (NATS, optional).
 - gRPC service configuration (`grpc.enabled`, `grpc.port`, `grpc.servicePort`, `grpc.serviceType`).
-- gRPC service is exposed as a dedicated ClusterIP Service (`<release>-grpc`) for in-cluster access only.
+- gRPC service is exposed as a dedicated ClusterIP Service (`<release>-grpc`) for in-cluster access only when enabled.
 - RBAC and service account options.
 - Resource requests/limits, probes, node selectors, tolerations, security context.
+- Optional pod disruption budget and network policy settings.
 
 ### Agent comms subject naming
 Agent comms publishes vendor-neutral NATS subjects using the following pattern:
@@ -197,7 +200,6 @@ A release is considered “fully functional” when:
 
 ## Open Questions
 - Should the chart support an optional CRD install guard (e.g., pre‑install job) for clusters that skip `crds/`? Current best practice says no, but some GitOps tools may need explicit handling.
-- Do we need to package optional “extras” (PDB/NetworkPolicy) as a separate chart or overlay? Autoscaling is now part of the base chart.
 
 ## References
 - `docs/agents/agents-helm-chart-design.md`

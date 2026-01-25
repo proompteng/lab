@@ -32,6 +32,8 @@ spec:
     base: main
     head: codex/agents/2614
     prompt: |
-      Add a short "Verification checklist" subsection under the Native workflow e2e proof
-      runbook in docs/agents/runbooks.md that lists steps to confirm AgentRun success,
-      artifact output location, and PR verification. Keep the change documentation-only.
+      Identify and implement a meaningful improvement to the Agents Helm chart. Prefer
+      changes that touch templates plus values.yaml and values.schema.json (for example,
+      missing validations, optional settings, or security hardening). Keep scope to
+      charts/agents/** and docs/agents/**. Avoid doc-only updates. Deliver a real
+      feature or hardening change with supporting tests/examples if needed.

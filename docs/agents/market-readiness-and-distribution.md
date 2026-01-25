@@ -15,7 +15,7 @@ Status: Current (2026-01-19)
     - `artifacthub.io/links`
     - `artifacthub.io/containsSecurityUpdates` (when applicable)
     - `artifacthub.io/operator`
-- Add `artifacthub-repo.yml` at the chart repository root (or OCI metadata layer if publishing via OCI).
+- Add `artifacthub-pkg.yml` in `charts/agents/` (and `artifacthub-repo.yml` at repo root if publishing an index repo).
 
 ### CRDs & Examples
 - CRDs shipped in `charts/agents/crds/` (static YAML).

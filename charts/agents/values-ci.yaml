@@ -1,0 +1,34 @@
+replicaCount: 1
+
+image:
+  repository: registry.ide-newton.ts.net/lab/jangar
+  tag: "2516da73"
+  digest: sha256:ae58f187c0cd4c8b15e706593993aa9bb19c3036e6ee317ed4981f3a1b168d37
+  pullPolicy: IfNotPresent
+
+grpc:
+  enabled: false
+
+env:
+  vars:
+    JANGAR_MIGRATIONS: "skip"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+controller:
+  namespaces:
+    - agents-ci
+
+orchestrationController:
+  namespaces:
+    - agents-ci
+
+supportingController:
+  namespaces:
+    - agents-ci
+
+agentComms:
+  enabled: false

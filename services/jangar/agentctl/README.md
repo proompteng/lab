@@ -1,7 +1,7 @@
 # agentctl
 
-`agentctl` is a gRPC CLI for managing Agents primitives through the Jangar controller. It ships with the Jangar
-service and never calls Kubernetes directly; all operations go through the Jangar gRPC API.
+`agentctl` is the CLI for managing Agents primitives through the Jangar controller. It defaults to Kubernetes
+API access using the current kube context; gRPC is optional for direct Jangar access.
 
 ## Install
 
@@ -18,6 +18,10 @@ npx @proompteng/agentctl --help
 brew install proompteng/tap/agentctl
 ```
 
+## Modes
+- **Kube mode (default):** uses kubeconfig + context and talks to the Kubernetes API directly.
+- **gRPC mode (optional):** uses the Jangar gRPC endpoint.
+
 ## Configuration
 
 The CLI reads configuration from `~/.config/agentctl/config.json` (or `$XDG_CONFIG_HOME/agentctl/config.json`).
@@ -28,7 +32,9 @@ Supported fields:
 {
   "address": "agents-grpc.agents.svc.cluster.local:50051",
   "namespace": "agents",
-  "token": "optional-shared-token"
+  "token": "optional-shared-token",
+  "kubeconfig": "/path/to/kubeconfig",
+  "context": "my-context"
 }
 ```
 
@@ -39,8 +45,9 @@ Environment overrides:
 - `AGENTCTL_NAMESPACE`
 - `AGENTCTL_TOKEN`
 - `AGENTCTL_TLS` (`1` to enable TLS)
+- `AGENTCTL_KUBECONFIG`
+- `AGENTCTL_CONTEXT`
 - `JANGAR_GRPC_ADDRESS` (server-side default if set)
-- `AGENTCTL_BINARY` (override path to the bundled binary)
 - `AGENTCTL_CA_CERT` (path to CA cert, optional)
 - `AGENTCTL_CLIENT_CERT` / `AGENTCTL_CLIENT_KEY` (mTLS, optional)
 
@@ -51,6 +58,7 @@ agentctl version
 agentctl version --client
 agentctl config view
 agentctl config set --namespace agents --address 127.0.0.1:50051
+agentctl --grpc --server 127.0.0.1:50051 status
 
 agentctl agent list
 agentctl agent get <name>

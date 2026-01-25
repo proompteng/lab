@@ -7,16 +7,18 @@ spec:
     provider: manual
     externalId: manual:native-workflow-e2e
     url: https://example.com/agents/native-workflow-e2e
-  summary: "Add native workflow verification checklist"
+  summary: "Add autoscaling support to Agents chart"
   text: |
-    Add a short "Verification checklist" subsection under the Native workflow e2e proof
-    runbook that lists concrete steps to confirm the AgentRun succeeded, artifacts exist,
-    and the Codex PR is visible. Keep the change documentation-only and scoped to the runbook.
+    Add optional autoscaling support to the Agents Helm chart. Implement a HorizontalPodAutoscaler
+    template gated by `autoscaling.enabled`, wire values for min/max replicas and CPU/memory targets,
+    and update values.schema.json + README to document the new settings. Keep changes scoped to
+    `charts/agents/**` and docs/agents where necessary.
   acceptanceCriteria:
-    - Runbook includes a "Verification checklist" under native workflow e2e proof
-    - Checklist mentions AgentRun status, artifact output location, and PR verification command
-    - Changes are limited to documentation
+    - Chart renders an HPA when autoscaling.enabled=true
+    - Values schema covers autoscaling fields with sensible defaults
+    - README includes autoscaling settings in the values table
   labels:
     - agents
     - workflow
     - e2e
+    - chart

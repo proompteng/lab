@@ -8,6 +8,38 @@ spec:
   envTemplate:
     CODEX_LOG_LEVEL: info
     NATS_URL: nats://nats.nats.svc.cluster.local:4222
+  inputFiles:
+    - path: /root/.codex/config.toml
+      content: |
+        model = "gpt-5.2-codex"
+        model_reasoning_summary = "detailed"
+        model_reasoning_effort = "medium"
+        model_verbosity = "medium"
+        approval_policy = "never"
+        sandbox_mode = "danger-full-access"
+
+        [features]
+        undo = true
+        web_search_request = true
+        web_search_cached = true
+        enable_request_compression = true
+        apply_patch_freeform = true
+        unified_exec = true
+        shell_snapshot = true
+        steer = true
+        collab = true
+        child_agents_md = true
+        collaboration_modes = true
+        responses_websockets = false
+
+        [shell_environment_policy]
+        ignore_default_excludes = true
+
+        [projects."/workspace/lab"]
+        trust_level = "trusted"
+
+        [projects."/root"]
+        trust_level = "trusted"
   outputArtifacts:
     - name: runner-log
       path: /workspace/.agent/runner.log

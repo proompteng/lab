@@ -976,7 +976,6 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
       console.error('[jangar] agentctl grpc failed to bind', error)
       return
     }
-    server.start()
     console.info(`[jangar] agentctl grpc listening on ${address}`)
   })
 

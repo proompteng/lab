@@ -1,0 +1,17 @@
+version: 0.9.0
+name: agents
+displayName: Agents Control Plane (Jangar)
+description: Minimal Agents control plane with CRDs and native workflow runtime.
+license: Apache-2.0
+homeURL: https://github.com/proompteng/lab
+repository:
+  name: proompteng/lab
+  url: https://github.com/proompteng/lab
+keywords:
+  - agents
+  - jangar
+  - control-plane
+  - codex
+maintainers:
+  - name: ProomptEng
+    email: eng@proompt.com
