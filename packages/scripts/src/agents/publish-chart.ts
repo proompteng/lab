@@ -54,11 +54,11 @@ if (!packagePath.endsWith(`-${chartVersion}.tgz`)) {
   throw new Error(`Packaged chart version does not match Chart.yaml (${chartVersion}).`)
 }
 
-const pushResult = Bun.spawnSync(['helm', 'push', packagePath, 'oci://ghcr.io/proompteng/charts'])
+const pushResult = Bun.spawnSync(['helm', 'push', packagePath, 'oci://ghcr.io/proompteng/agents'])
 
 if (pushResult.exitCode !== 0) {
   const stderr = new TextDecoder().decode(pushResult.stderr)
   throw new Error(`helm push failed: ${stderr || 'unknown error'}`)
 }
 
-console.log(`Published ${packagePath} to ghcr.io/proompteng/charts`)
+console.log(`Published ${packagePath} to ghcr.io/proompteng/agents`)

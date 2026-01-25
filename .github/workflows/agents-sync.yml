@@ -49,4 +49,4 @@ jobs:
 
           helm package . --destination "${tmpdir}/chart-packages"
           echo "${AGENTS_SPLIT_TOKEN}" | helm registry login ghcr.io -u proompteng --password-stdin
-          helm push "${tmpdir}/chart-packages/"*.tgz oci://ghcr.io/proompteng/charts
+          helm push "${tmpdir}/chart-packages/"*.tgz oci://ghcr.io/proompteng/agents
