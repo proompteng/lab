@@ -913,8 +913,8 @@ const getCustomObjectOptional = async (clients: KubeClients, spec: ResourceSpec,
     })
     return unwrapResponse(response) as Record<string, unknown>
   } catch (_error) {
-    if (isNotFoundError(error)) return null
-    throw error
+    if (isNotFoundError(_error)) return null
+    throw _error
   }
 }
 
@@ -963,8 +963,8 @@ const deleteCustomObject = async (clients: KubeClients, spec: ResourceSpec, name
     })
     return unwrapResponse(response) as Record<string, unknown>
   } catch (_error) {
-    if (isNotFoundError(error)) return null
-    throw error
+    if (isNotFoundError(_error)) return null
+    throw _error
   }
 }
 
@@ -1123,8 +1123,8 @@ const deleteJobByName = async (clients: KubeClients, namespace: string, name: st
     await clients.batch.deleteNamespacedJob({ name, namespace })
     return true
   } catch (_error) {
-    if (isNotFoundError(error)) return false
-    throw error
+    if (isNotFoundError(_error)) return false
+    throw _error
   }
 }
 
@@ -1586,7 +1586,7 @@ const outputStatusKube = async (clients: KubeClients, namespace: string, output:
     namespaceStatus = 'healthy'
   } catch (_error) {
     namespaceStatus = 'missing'
-    namespaceMessage = error instanceof Error ? error.message : String(error)
+    namespaceMessage = _error instanceof Error ? _error.message : String(_error)
   }
 
   let deploymentStatus = 'unknown'
@@ -1616,7 +1616,7 @@ const outputStatusKube = async (clients: KubeClients, namespace: string, output:
     }
   } catch (_error) {
     deploymentStatus = 'unknown'
-    deploymentMessage = error instanceof Error ? error.message : String(error)
+    deploymentMessage = _error instanceof Error ? _error.message : String(_error)
   }
 
   let missingCrds: string[] = []
