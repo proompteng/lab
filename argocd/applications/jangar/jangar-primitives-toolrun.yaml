@@ -8,6 +8,3 @@ spec:
     name: jangar-primitives-tool
   parameters:
     action: toolrun
-  retryPolicy:
-    limit: 1
-  timeoutSeconds: 300
