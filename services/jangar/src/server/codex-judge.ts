@@ -85,6 +85,7 @@ const _RECONCILE_JITTER_MS = 15_000
 const _PENDING_EVALUATION_STATUSES = ['run_complete', 'waiting_for_ci', 'judging'] as const
 const _RECONCILE_DISABLED = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
 const RERUN_SUBMISSION_BACKOFF_MS = [2_000, 7_000, 15_000]
+const RERUN_WORKER_POLL_MS = 10_000
 const RERUN_WORKER_BATCH_SIZE = 10
 
 const safeParseJson = (value: string) => {
@@ -921,7 +922,7 @@ const updateArtifactsFromWorkflow = async (
         key: artifact.key,
         bucket: artifact.bucket ?? artifactBucket,
         url: artifact.url ?? null,
-        metadata: { ...(artifact.metadata ?? {}), source: 'run-complete' },
+        metadata: { ...artifact.metadata, source: 'run-complete' },
       })
     }
   }

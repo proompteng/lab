@@ -128,7 +128,7 @@ export const createClickHouseClient = (config: ClickHouseConfig): ClickHouseClie
       let parsed: { data?: T[] }
       try {
         parsed = JSON.parse(bodyText) as { data?: T[] }
-      } catch (_error) {
+      } catch {
         throw new Error('ClickHouse response was not valid JSON')
       }
 

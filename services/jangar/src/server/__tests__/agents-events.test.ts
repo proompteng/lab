@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getAgentEvents } from './events'
+import { getAgentEvents } from '~/routes/api/agents/events'
 
 const listMessagesMock = vi.fn()
 const closeMock = vi.fn(async () => {})

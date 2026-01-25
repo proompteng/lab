@@ -119,7 +119,7 @@ function GithubPullsPage() {
   const authorParam = authorParamRaw?.trim() ?? ''
   const limitParam = parseSearchNumber(searchParams.get('limit') ?? undefined)
   const hasRepositoryParam = repositoryParam.length > 0
-  const hasAuthorParam = authorParamRaw !== null
+  const hasAuthorParam = authorParamRaw !== null && authorParam.length > 0
   const hasAuthorFilter = authorParam.length > 0
   const hasLimitParam = limitParam !== null
   const cursorHistory = parseCursorHistory(searchState.cursorHistory)

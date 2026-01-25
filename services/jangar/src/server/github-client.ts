@@ -324,7 +324,7 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
       ...init,
       headers: {
         ...headers,
-        ...(init.headers ?? {}),
+        ...init.headers,
       },
     })
   }
@@ -334,7 +334,7 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
       ...init,
       headers: {
         ...headers,
-        ...(init.headers ?? {}),
+        ...init.headers,
       },
     })
   }

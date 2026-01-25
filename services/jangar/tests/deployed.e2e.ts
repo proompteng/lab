@@ -94,10 +94,10 @@ const readTerminalSize = async (page: import('@playwright/test').Page) =>
   })
 
 const parseSttySizeFromOutput = (output: string, marker: string) => {
-  // biome-ignore lint/complexity/useRegexLiterals: regex literals cannot contain control characters.
-  const ansiPattern = new RegExp('\\u001b\\[[0-9;?]*[A-Za-z]', 'g')
-  // biome-ignore lint/complexity/useRegexLiterals: regex literals cannot contain control characters.
-  const carriageReturnPattern = new RegExp('\\r', 'g')
+  const escapeChar = String.fromCharCode(27)
+  const carriageReturn = String.fromCharCode(13)
+  const ansiPattern = new RegExp(`${escapeChar}\\[[0-9;?]*[A-Za-z]`, 'g')
+  const carriageReturnPattern = new RegExp(carriageReturn, 'g')
   const normalized = output.replace(ansiPattern, '').replace(carriageReturnPattern, '')
   for (const line of normalized.split('\n')) {
     const trimmed = line.trim()

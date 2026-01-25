@@ -912,7 +912,7 @@ const getCustomObjectOptional = async (clients: KubeClients, spec: ResourceSpec,
       name,
     })
     return unwrapResponse(response) as Record<string, unknown>
-  } catch (_error) {
+  } catch {
     if (isNotFoundError(_error)) return null
     throw _error
   }
@@ -962,7 +962,7 @@ const deleteCustomObject = async (clients: KubeClients, spec: ResourceSpec, name
       name,
     })
     return unwrapResponse(response) as Record<string, unknown>
-  } catch (_error) {
+  } catch {
     if (isNotFoundError(_error)) return null
     throw _error
   }
@@ -1106,7 +1106,7 @@ const streamPodLogs = async (
 
   try {
     await logClient.log(namespace, podName, container ?? '', process.stdout, { follow: true })
-  } catch (_error) {
+  } catch {
     const fallback = await clients.core.readNamespacedPodLog({
       name: podName,
       namespace,
@@ -1122,7 +1122,7 @@ const deleteJobByName = async (clients: KubeClients, namespace: string, name: st
   try {
     await clients.batch.deleteNamespacedJob({ name, namespace })
     return true
-  } catch (_error) {
+  } catch {
     if (isNotFoundError(_error)) return false
     throw _error
   }
@@ -1584,7 +1584,7 @@ const outputStatusKube = async (clients: KubeClients, namespace: string, output:
   try {
     await clients.core.readNamespace({ name: namespace })
     namespaceStatus = 'healthy'
-  } catch (_error) {
+  } catch {
     namespaceStatus = 'missing'
     namespaceMessage = _error instanceof Error ? _error.message : String(_error)
   }
@@ -1630,7 +1630,7 @@ const outputStatusKube = async (clients: KubeClients, namespace: string, output:
         .filter((value): value is string => typeof value === 'string'),
     )
     missingCrds = REQUIRED_CRDS.filter((name) => !found.has(name))
-  } catch (_error) {
+  } catch {
     missingCrds = [...REQUIRED_CRDS]
   }
 

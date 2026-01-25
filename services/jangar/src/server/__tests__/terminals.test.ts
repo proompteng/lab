@@ -24,7 +24,7 @@ const store = {
   updateTerminalSessionRecord: vi.fn(async (_id: string, updates: Record<string, unknown>) => ({
     ...record,
     ...updates,
-    metadata: { ...record.metadata, ...((updates.metadata as Record<string, unknown>) ?? {}) },
+    metadata: { ...record.metadata, ...(updates.metadata as Record<string, unknown>) },
   })),
   listTerminalSessionRecords: vi.fn(async () => [record]),
   upsertTerminalSessionRecord: vi.fn(async () => record),

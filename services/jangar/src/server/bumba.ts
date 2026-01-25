@@ -188,7 +188,7 @@ const resolveRepoRootForCommit = async (filePath: string, commit?: string | null
   const ensureCommit = async (targetCommit: string) => {
     try {
       await resetWorktree(worktreePath, targetCommit)
-    } catch (_error) {
+    } catch {
       await fetchRepo(baseRepoRoot)
       await resetWorktree(worktreePath, targetCommit)
     }
@@ -266,7 +266,7 @@ const resolveRepoRootForRepository = async (commit?: string | null) => {
 
   try {
     await resetWorktree(worktreePath, normalizedCommit)
-  } catch (_error) {
+  } catch {
     await fetchRepo(baseRepoRoot)
     await resetWorktree(worktreePath, normalizedCommit)
   }

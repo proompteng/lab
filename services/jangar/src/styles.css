@@ -46,6 +46,7 @@
   --chart-3: oklch(0.67 0.26 322);
   --chart-4: oklch(0.59 0.26 323);
   --chart-5: oklch(0.52 0.23 324);
+  --build-id: "2026-01-25";
   --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.141 0.005 285.823);
@@ -81,6 +82,7 @@
   --chart-3: oklch(0.67 0.26 322);
   --chart-4: oklch(0.59 0.26 323);
   --chart-5: oklch(0.52 0.23 324);
+  --build-id: "2026-01-25";
   --sidebar: oklch(0.21 0.006 285.885);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.75 0.21 322);

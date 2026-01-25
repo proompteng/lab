@@ -42,6 +42,10 @@ const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void
       cpSync(agentctlSource, resolve(dir, 'full/services/jangar/agentctl'), { recursive: true })
       cpSync(agentctlSource, resolve(dir, 'json/services/jangar/agentctl'), { recursive: true })
     }
+    const outputSource = resolve(repoRoot, 'services/jangar/.output')
+    if (existsSync(outputSource)) {
+      cpSync(outputSource, resolve(dir, 'full/services/jangar/.output'), { recursive: true })
+    }
     return { dir, cleanup }
   } catch (error) {
     cleanup()

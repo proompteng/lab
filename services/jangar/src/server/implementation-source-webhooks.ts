@@ -543,7 +543,7 @@ export const postImplementationSourceWebhookHandler = async (
   let payload: Record<string, unknown>
   try {
     payload = JSON.parse(rawBody) as Record<string, unknown>
-  } catch (_error) {
+  } catch {
     return errorResponse('Invalid JSON payload', 400)
   }
 
