@@ -21,7 +21,12 @@ jobs:
       - name: Install git-filter-repo
         run: python3 -m pip install --no-cache-dir git-filter-repo
 
-      - name: Split charts/agents into dedicated repo
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Split charts/agents into dedicated repo and publish chart
         env:
           AGENTS_SPLIT_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
         run: |
@@ -41,3 +46,7 @@ jobs:
 
           git remote add origin "https://x-access-token:${AGENTS_SPLIT_TOKEN}@github.com/proompteng/agents.git"
           git push -u origin HEAD:main
+
+          helm package . --destination "${tmpdir}/chart-packages"
+          echo "${AGENTS_SPLIT_TOKEN}" | helm registry login ghcr.io -u proompteng --password-stdin
+          helm push "${tmpdir}/chart-packages/"*.tgz oci://ghcr.io/proompteng/charts
