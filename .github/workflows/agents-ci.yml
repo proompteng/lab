@@ -96,7 +96,7 @@ jobs:
       - name: Configure in-cluster kubeconfig
         env:
           KUBE_NAMESPACE: agents-ci
-        run: scripts/agents/setup-kubeconfig.sh
+        run: bun run packages/scripts/src/agents/setup-kubeconfig.ts
 
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts

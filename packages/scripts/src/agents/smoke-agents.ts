@@ -36,8 +36,6 @@ const parseDurationMs = (value: string | undefined, fallbackMs: number): number 
   }
 }
 
-const now = () => new Date().toISOString()
-
 const log = (message: string) => {
   const time = new Date()
   const stamp = time.toTimeString().slice(0, 8)
@@ -324,8 +322,8 @@ spec:
   await run('kubectl', ['-n', namespace, 'delete', 'agentrun', agentRunName, '--ignore-not-found'])
 
   log('Submitting workflow AgentRun via agentctl...')
-  await run(agentctlCommand[0], [...agentctlCommand.slice(1), 'run', 'apply', '-f', agentRunFile], {
-    env: { AGENTCTL_NAMESPACE: namespace },
+  await run(agentctlCommand[0], [...agentctlCommand.slice(1), '--kube', 'run', 'apply', '-f', agentRunFile], {
+    env: { AGENTCTL_NAMESPACE: namespace, AGENTCTL_MODE: 'kube' },
   })
 
   await waitForAgentRun(namespace, agentRunName, 60_000)
