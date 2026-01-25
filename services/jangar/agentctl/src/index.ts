@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url'
 import * as grpc from '@grpc/grpc-js'
 import { fromJSON } from '@grpc/proto-loader'
 import {
-  AppsV1Api,
   ApiextensionsV1Api,
+  AppsV1Api,
   BatchV1Api,
   CoreV1Api,
   CustomObjectsApi,
@@ -912,7 +912,7 @@ const getCustomObjectOptional = async (clients: KubeClients, spec: ResourceSpec,
       name,
     })
     return unwrapResponse(response) as Record<string, unknown>
-  } catch (error) {
+  } catch (_error) {
     if (isNotFoundError(error)) return null
     throw error
   }
@@ -962,7 +962,7 @@ const deleteCustomObject = async (clients: KubeClients, spec: ResourceSpec, name
       name,
     })
     return unwrapResponse(response) as Record<string, unknown>
-  } catch (error) {
+  } catch (_error) {
     if (isNotFoundError(error)) return null
     throw error
   }
@@ -1106,7 +1106,7 @@ const streamPodLogs = async (
 
   try {
     await logClient.log(namespace, podName, container ?? '', process.stdout, { follow: true })
-  } catch (error) {
+  } catch (_error) {
     const fallback = await clients.core.readNamespacedPodLog({
       name: podName,
       namespace,
@@ -1122,7 +1122,7 @@ const deleteJobByName = async (clients: KubeClients, namespace: string, name: st
   try {
     await clients.batch.deleteNamespacedJob({ name, namespace })
     return true
-  } catch (error) {
+  } catch (_error) {
     if (isNotFoundError(error)) return false
     throw error
   }
@@ -1372,6 +1372,15 @@ const parseKeyValueList = (values: string[]) => {
   return output
 }
 
+const toKeyValueMap = (entries: RuntimeEntry[]) => {
+  const output: Record<string, string> = {}
+  for (const entry of entries) {
+    if (!entry.key) continue
+    output[entry.key] = entry.value
+  }
+  return output
+}
+
 const parseSource = (raw?: string) => {
   if (!raw) return undefined
   const fields = raw.split(',').map((entry) => entry.trim())
@@ -1575,7 +1584,7 @@ const outputStatusKube = async (clients: KubeClients, namespace: string, output:
   try {
     await clients.core.readNamespace({ name: namespace })
     namespaceStatus = 'healthy'
-  } catch (error) {
+  } catch (_error) {
     namespaceStatus = 'missing'
     namespaceMessage = error instanceof Error ? error.message : String(error)
   }
@@ -1605,7 +1614,7 @@ const outputStatusKube = async (clients: KubeClients, namespace: string, output:
       if (available) deploymentMessage = `${deploymentMessage} available ${available}`
       if (typeof image === 'string' && image) deploymentMessage = `${deploymentMessage} image ${image}`
     }
-  } catch (error) {
+  } catch (_error) {
     deploymentStatus = 'unknown'
     deploymentMessage = error instanceof Error ? error.message : String(error)
   }
@@ -1621,7 +1630,7 @@ const outputStatusKube = async (clients: KubeClients, namespace: string, output:
         .filter((value): value is string => typeof value === 'string'),
     )
     missingCrds = REQUIRED_CRDS.filter((name) => !found.has(name))
-  } catch (error) {
+  } catch (_error) {
     missingCrds = [...REQUIRED_CRDS]
   }
 
@@ -1938,17 +1947,17 @@ const main = async () => {
             throw new Error('--agent, --impl, and --runtime are required')
           }
 
-          const runtimeConfig = parseKeyValueList(params.runtimeConfig)
-          const parameters = parseKeyValueList(params.param)
+          const runtimeConfig = toKeyValueMap(parseKeyValueList(params.runtimeConfig))
+          const parameters = toKeyValueMap(parseKeyValueList(params.param))
           const deliveryId = options['idempotency-key'] || randomUUID()
           const runSpec: Record<string, unknown> = {
             agentRef: { name: options.agent },
             implementationSpecRef: { name: options.impl },
             runtime: {
               type: options.runtime,
-              ...(runtimeConfig.length > 0 ? { config: runtimeConfig } : {}),
+              ...(Object.keys(runtimeConfig).length > 0 ? { config: runtimeConfig } : {}),
             },
-            ...(parameters.length > 0 ? { parameters } : {}),
+            ...(Object.keys(parameters).length > 0 ? { parameters } : {}),
           }
 
           if (options['memory-ref']) {
@@ -2291,8 +2300,8 @@ const main = async () => {
             agent_name: options.agent,
             implementation_name: options.impl,
             runtime_type: options.runtime,
-            runtime_config: parseKeyValueList(params.runtimeConfig),
-            parameters: parseKeyValueList(params.param),
+            runtime_config: toKeyValueMap(parseKeyValueList(params.runtimeConfig)),
+            parameters: toKeyValueMap(parseKeyValueList(params.param)),
             idempotency_key: options['idempotency-key'] ?? '',
             workload: {
               image: options['workload-image'] ?? '',
