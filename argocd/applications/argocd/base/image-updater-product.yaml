@@ -26,6 +26,19 @@ spec:
           manifestTargets:
             kustomize:
               name: registry.ide-newton.ts.net/lab/proompteng
+    - namePattern: cms
+      writeBackConfig:
+        method: git:secret:argocd/image-updater-git-ssh
+        gitConfig:
+          repository: git@github.com:proompteng/lab.git
+          branch: main:release/{{.SHA256}}
+          writeBackTarget: kustomization:/argocd/applications/cms
+      images:
+        - alias: cms
+          imageName: registry.ide-newton.ts.net/lab/cms:0.x
+          manifestTargets:
+            kustomize:
+              name: registry.ide-newton.ts.net/lab/cms
     - namePattern: docs
       writeBackConfig:
         method: git:secret:argocd/image-updater-git-ssh

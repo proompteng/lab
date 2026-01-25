@@ -1,17 +1,16 @@
 # CMS
 
+## Database
+
+`postgres-cluster.yaml` provisions the `cms-db` CNPG cluster (5Gi volume). CNPG emits the application secret
+`cms-db-app` (key `uri`) which the deployment uses for `DATABASE_URL` and is reflected into `pgadmin`.
+
 ## Secrets
 
-Create a `cms-env` secret in the `cms` namespace with these keys:
-
-- `DATABASE_URL`
-- `PAYLOAD_SECRET`
-
-Example (apply via your preferred secret management flow):
+Create a `cms-env` secret in the `cms` namespace with just the Payload secret:
 
 ```bash
 kubectl -n cms create secret generic cms-env \
-  --from-literal=DATABASE_URL='postgres://...' \
   --from-literal=PAYLOAD_SECRET='...'
 ```
 

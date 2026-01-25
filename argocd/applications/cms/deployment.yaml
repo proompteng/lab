@@ -38,8 +38,8 @@ spec:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: cms-env
-                  key: DATABASE_URL
+                  name: cms-db-app
+                  key: uri
             - name: PAYLOAD_SECRET
               valueFrom:
                 secretKeyRef:

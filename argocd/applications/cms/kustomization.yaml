@@ -4,6 +4,7 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingressroute.yaml
+  - postgres-cluster.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/cms
     newTag: main
