@@ -136,14 +136,24 @@ require_command helm
 require_command "${AGENTCTL_BIN}"
 
 if [[ "${DB_BOOTSTRAP}" == "true" ]]; then
-  if ! kubectl get namespace "${NAMESPACE}" >/dev/null 2>&1; then
-    if [[ "${CREATE_NAMESPACE}" == "true" ]]; then
+  namespace_check_output="$(mktemp)"
+  if ! kubectl get namespace "${NAMESPACE}" >/dev/null 2>"${namespace_check_output}"; then
+    if grep -Ei "forbidden|cannot" "${namespace_check_output}" >/dev/null 2>&1; then
+      if [[ "${CREATE_NAMESPACE}" == "true" ]]; then
+        echo "Insufficient permissions to verify or create namespace ${NAMESPACE}." >&2
+        rm -f "${namespace_check_output}"
+        exit 1
+      fi
+      log "Skipping namespace existence check for ${NAMESPACE} due to RBAC."
+    elif [[ "${CREATE_NAMESPACE}" == "true" ]]; then
       kubectl create namespace "${NAMESPACE}"
     else
       echo "Namespace ${NAMESPACE} does not exist and AGENTS_CREATE_NAMESPACE=false." >&2
+      rm -f "${namespace_check_output}"
       exit 1
     fi
   fi
+  rm -f "${namespace_check_output}"
   if [[ -z "${DB_PASSWORD}" ]]; then
     if command -v python3 >/dev/null 2>&1; then
       DB_PASSWORD="$(python3 - <<'PY'
