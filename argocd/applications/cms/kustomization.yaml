@@ -1,11 +1,12 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
+  - cms-env-sealedsecret.yaml
   - deployment.yaml
   - service.yaml
   - ingressroute.yaml
   - postgres-cluster.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/cms
-    newTag: "990e15e01"
+    newTag: "51a823260"
     newName: registry.ide-newton.ts.net/lab/cms

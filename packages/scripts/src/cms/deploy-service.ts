@@ -22,6 +22,7 @@ export const main = async () => {
   console.log(`Image digest: ${repoDigest}`)
 
   updateManifests({ tag })
+  console.log('Remember to commit and push the updated manifests after deployment.')
 
   const kustomizePath = resolve(repoRoot, process.env.CMS_KUSTOMIZE_PATH ?? 'argocd/applications/cms')
   await run('kubectl', ['apply', '-k', kustomizePath])
