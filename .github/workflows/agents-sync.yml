@@ -45,7 +45,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git remote add origin "https://x-access-token:${AGENTS_SPLIT_TOKEN}@github.com/proompteng/agents.git"
-          git push -u origin HEAD:main
+          git push --force-with-lease -u origin HEAD:main
 
           helm package . --destination "${tmpdir}/chart-packages"
           echo "${AGENTS_SPLIT_TOKEN}" | helm registry login ghcr.io -u proompteng --password-stdin
