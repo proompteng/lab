@@ -7,6 +7,13 @@ import * as S from '@effect/schema/Schema'
 import type { CodexAppServerClient } from '@proompteng/codex'
 import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
 import {
+  LOCK_RETRY_ATTEMPTS,
+  LOCK_RETRY_DELAY_MS,
+  LOCK_STALE_MS,
+  runGitWithLockRecovery,
+} from '~/server/git-lock-recovery'
+import { withWorktreeLock } from '~/server/git-worktree-lock'
+import {
   ChatCompletionEncoder,
   type ChatCompletionEncoderService,
   chatCompletionEncoderLive,
@@ -143,6 +150,21 @@ const resolveCodexCwd = (worktreePath?: string) => worktreePath ?? resolveCodexB
 
 const resolveWorktreeRoot = () => join(resolveCodexBaseCwd(), WORKTREE_DIR_NAME)
 
+const runGitWithRecovery = async (
+  args: string[],
+  cwd: string,
+  options: { worktreeName?: string; worktreePath?: string; label?: string },
+) =>
+  runGitWithLockRecovery((gitArgs, gitCwd) => runGitCommand(gitCwd, gitArgs), args, cwd, {
+    repoRoot: resolveCodexBaseCwd(),
+    worktreeName: options.worktreeName ?? null,
+    worktreePath: options.worktreePath ?? null,
+    label: options.label,
+    staleMs: LOCK_STALE_MS,
+    attempts: LOCK_RETRY_ATTEMPTS,
+    delayMs: LOCK_RETRY_DELAY_MS,
+  })
+
 const readExistingWorktreeNames = async (worktreeRoot: string) => {
   const entries = await readdir(worktreeRoot, { withFileTypes: true })
   return new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name))
@@ -177,7 +199,13 @@ const createGitWorktree = async (repoRoot: string, worktreePath: string, worktre
     : ['worktree', 'add', '-b', worktreeName, worktreePath, 'HEAD']
   const startedAt = Date.now()
   console.info('[chat] worktree git add start', { worktreeName, worktreePath, branchExists })
-  const result = await runGitCommand(repoRoot, args)
+  const result = await withWorktreeLock(() =>
+    runGitWithRecovery(args, repoRoot, {
+      worktreeName,
+      worktreePath,
+      label: 'git worktree add',
+    }),
+  )
   console.info('[chat] worktree git add done', {
     worktreeName,
     worktreePath,

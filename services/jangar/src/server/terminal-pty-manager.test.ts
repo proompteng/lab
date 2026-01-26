@@ -2,10 +2,10 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('node-pty', () => ({
-  spawn: () => {
+const spawnMock = vi.hoisted(() =>
+  vi.fn(() => {
     const dataListeners = new Set<(data: string) => void>()
     const exitListeners = new Set<(event: { exitCode: number | null; signal: number | null }) => void>()
     return {
@@ -23,7 +23,11 @@ vi.mock('node-pty', () => ({
         exitListeners.add(listener)
       },
     }
-  },
+  }),
+)
+
+vi.mock('node-pty', () => ({
+  spawn: spawnMock,
 }))
 
 import { getTerminalPtyManager, resetTerminalPtyManager } from './terminal-pty-manager'
@@ -44,6 +48,76 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 4000) => {
 }
 
 describe('TerminalPtyManager', () => {
+  it('starts an interactive shell when using script fallback', async () => {
+    resetTerminalPtyManager()
+    const originalBun = (globalThis as { Bun?: unknown }).Bun
+    const originalPtyMode = process.env.JANGAR_PTY_MODE
+    const originalScriptBin = process.env.SCRIPT_BIN
+
+    const bunSpawn = vi.fn(() => ({
+      stdin: { write: vi.fn() },
+      stdout: null,
+      stderr: null,
+      pid: 123,
+      exited: Promise.resolve(0),
+      kill: vi.fn(),
+    }))
+
+    ;(globalThis as { Bun?: unknown }).Bun = { spawn: bunSpawn }
+    process.env.JANGAR_PTY_MODE = 'script'
+    process.env.SCRIPT_BIN = '/usr/bin/script'
+
+    const manager = getTerminalPtyManager({ idleTimeoutMs: 0 })
+    const worktreePath = await mkdtemp(join(tmpdir(), 'jangar-terminal-test-'))
+    const sessionId = `jangar-terminal-test-${Date.now()}`
+    manager.startSession({ sessionId, worktreePath, worktreeName: 'test' })
+
+    expect(bunSpawn).toHaveBeenCalled()
+    const calls = bunSpawn.mock.calls as unknown as Array<[string[]]>
+    const args = calls[0]?.[0] ?? []
+    expect(Array.isArray(args)).toBe(true)
+    expect(args.join(' ')).toContain('-l -i')
+
+    resetTerminalPtyManager()
+    ;(globalThis as { Bun?: unknown }).Bun = originalBun
+    if (originalPtyMode === undefined) {
+      delete process.env.JANGAR_PTY_MODE
+    } else {
+      process.env.JANGAR_PTY_MODE = originalPtyMode
+    }
+    if (originalScriptBin === undefined) {
+      delete process.env.SCRIPT_BIN
+    } else {
+      process.env.SCRIPT_BIN = originalScriptBin
+    }
+  })
+
+  it('starts an interactive shell when using native PTY', async () => {
+    resetTerminalPtyManager()
+    const originalPtyMode = process.env.JANGAR_PTY_MODE
+    process.env.JANGAR_PTY_MODE = 'native'
+    spawnMock.mockClear()
+
+    try {
+      const manager = getTerminalPtyManager({ idleTimeoutMs: 0 })
+      const worktreePath = await mkdtemp(join(tmpdir(), 'jangar-terminal-test-'))
+      const sessionId = `jangar-terminal-test-${Date.now()}`
+      manager.startSession({ sessionId, worktreePath, worktreeName: 'test' })
+
+      expect(spawnMock).toHaveBeenCalled()
+      const call = spawnMock.mock.calls[0] as unknown as [string, string[]] | undefined
+      const args = call?.[1] ?? []
+      expect(args).toEqual(['-l', '-i'])
+    } finally {
+      resetTerminalPtyManager()
+      if (originalPtyMode === undefined) {
+        delete process.env.JANGAR_PTY_MODE
+      } else {
+        process.env.JANGAR_PTY_MODE = originalPtyMode
+      }
+    }
+  })
+
   it('replays buffered output on reconnect', async () => {
     resetTerminalPtyManager()
     const manager = getTerminalPtyManager({ bufferBytes: 256 * 1024, idleTimeoutMs: 0 })

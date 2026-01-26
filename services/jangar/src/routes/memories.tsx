@@ -3,7 +3,6 @@ import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { serverFns } from '../data/memories'
 
 export const Route = createFileRoute('/memories')({
   component: MemoriesPage,
@@ -28,10 +27,25 @@ function MemoriesPage() {
 
     setIsSearching(true)
     try {
-      const result = await serverFns.retrieveNotes({
-        data: { namespace: namespace.trim() || 'default', query: trimmedQuery, limit: 10 },
+      const params = new URLSearchParams({
+        namespace: namespace.trim() || 'default',
+        query: trimmedQuery,
+        limit: '10',
       })
-      setResults(result)
+      const response = await fetch(`/api/memories?${params.toString()}`)
+      const payload = (await response.json().catch(() => null)) as {
+        ok?: boolean
+        memories?: unknown[]
+        error?: string
+        message?: string
+      } | null
+      if (!response.ok || !payload || payload.ok !== true) {
+        const message = payload?.error ?? payload?.message ?? 'Unable to query right now. Please try again.'
+        setResults(null)
+        setError(message)
+        return
+      }
+      setResults(payload)
     } catch {
       setError('Unable to query right now. Please try again.')
     } finally {

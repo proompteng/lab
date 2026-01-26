@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2026-01-25T19:24:57.861Z"
+    deploy.knative.dev/rollout: "2026-01-26T10:31:56.728Z"
 spec:
   replicas: 1
   strategy:
@@ -90,6 +90,14 @@ spec:
               value: codex,codex[bot],chatgpt-codex-connector,chatgpt-codex-connector[bot],gregkonush
             - name: JANGAR_CI_EVENT_STREAM_ENABLED
               value: "true"
+            - name: JANGAR_WEBSOCKETS_ENABLED
+              value: "true"
+            - name: JANGAR_GIT_LOCK_RETRY_ATTEMPTS
+              value: "6"
+            - name: JANGAR_GIT_LOCK_RETRY_DELAY_MS
+              value: "1000"
+            - name: JANGAR_GIT_PR_LOCK_STALE_MS
+              value: "5000"
             - name: JANGAR_GITHUB_MIN_REQUEST_SPACING_MS
               value: "1000"
             - name: JANGAR_GITHUB_REPOS_ALLOWED

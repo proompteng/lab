@@ -6,6 +6,6 @@ metadata:
 spec:
   limits:
     cpu: "36"
-    dollars: 50
+    dollars: "50"
     memory: 128Gi
-    tokens: 100000
+    tokens: "100000"

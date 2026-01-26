@@ -12,7 +12,7 @@
     "test:e2e": "playwright test --config playwright.config.ts",
     "test:ui": "bunx playwright test",
     "test:ui:update": "bunx playwright test --update-snapshots",
-    "tsc": "bunx tsc --noEmit",
+    "tsc": "bunx tsc --noEmit -p tsconfig.app.json",
     "lint": "bunx biome check --config-path ../../biome.json src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.oxlint.json .",

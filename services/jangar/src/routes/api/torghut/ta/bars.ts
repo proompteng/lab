@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
+import type { ClickHouseClient } from '~/server/clickhouse'
 import { resolveClickHouseClient } from '~/server/clickhouse'
-import { parseTaRangeParams } from '~/server/torghut-ta'
+import { computeFallbackRange, parseTaRangeParams } from '~/server/torghut-ta'
 
 export const Route = createFileRoute('/api/torghut/ta/bars')({
   server: {
@@ -23,6 +24,23 @@ const jsonResponse = (payload: unknown, status = 200) => {
 
 const errorResponse = (message: string, status = 500) => jsonResponse({ ok: false, message, error: message }, status)
 
+const buildRangePayload = (requested: { from: string; to: string }, effective?: { from: string; to: string }) => ({
+  requested,
+  effective: effective ?? requested,
+  fallback: Boolean(effective && (effective.from !== requested.from || effective.to !== requested.to)),
+})
+
+const getLatestEventTs = async (client: ClickHouseClient, symbol: string) => {
+  const latestQuery = `
+    SELECT max(event_ts) as latest
+    FROM ta_microbars
+    WHERE symbol = {symbol:String}
+  `
+  const result = await client.queryJson(latestQuery, { symbol })
+  const latest = result[0] as Record<string, unknown> | undefined
+  return typeof latest?.latest === 'string' ? latest.latest : null
+}
+
 export const getBarsHandler = async (request: Request) => {
   const url = new URL(request.url)
   const parsed = parseTaRangeParams(url)
@@ -44,14 +62,31 @@ export const getBarsHandler = async (request: Request) => {
   `
 
   try {
-    const items = await clientResult.client.queryJson(query, {
-      symbol,
-      from,
-      to,
-      limit,
-    })
+    const items = await clientResult.client.queryJson(query, { symbol, from, to, limit })
+    if (items.length > 0) {
+      return jsonResponse({ ok: true, symbol, items, range: buildRangePayload({ from, to }) })
+    }
 
-    return jsonResponse({ ok: true, symbol, items })
+    const latest = await getLatestEventTs(clientResult.client, symbol)
+    const fallbackRange = latest ? computeFallbackRange({ from, to, latest }) : null
+    if (fallbackRange) {
+      const fallbackItems = await clientResult.client.queryJson(query, {
+        symbol,
+        from: fallbackRange.from,
+        to: fallbackRange.to,
+        limit,
+      })
+      if (fallbackItems.length > 0) {
+        return jsonResponse({
+          ok: true,
+          symbol,
+          items: fallbackItems,
+          range: buildRangePayload({ from, to }, fallbackRange),
+        })
+      }
+    }
+
+    return jsonResponse({ ok: true, symbol, items, range: buildRangePayload({ from, to }) })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'ClickHouse query failed'
     return errorResponse(message, 500)

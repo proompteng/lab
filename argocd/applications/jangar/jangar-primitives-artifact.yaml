@@ -6,9 +6,5 @@ metadata:
 spec:
   storageRef:
     name: jangar-artifacts
-    namespace: jangar
-    provider: minio
   lifecycle:
     ttlDays: 7
-  metadata:
-    contentType: text/plain

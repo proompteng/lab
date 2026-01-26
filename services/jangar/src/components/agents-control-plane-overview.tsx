@@ -8,7 +8,6 @@ import {
   getMetadataValue,
   StatusBadge,
 } from '@/components/agents-control-plane'
-import { useControlPlaneStream } from '@/components/agents-control-plane-stream'
 import { buttonVariants } from '@/components/ui/button'
 import type { AgentPrimitiveKind, PrimitiveEventItem, PrimitiveResource } from '@/data/agents-control-plane'
 import { fetchPrimitiveEvents, fetchPrimitiveList } from '@/data/agents-control-plane'
@@ -300,7 +299,6 @@ export const useControlPlaneOverview = (namespace: string): OverviewState => {
   const [error, setError] = React.useState<string | null>(null)
   const [lastUpdatedAt, setLastUpdatedAt] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
-  const reloadTimerRef = React.useRef<number | null>(null)
 
   const load = React.useCallback(
     async (signal?: AbortSignal) => {
@@ -419,23 +417,6 @@ export const useControlPlaneOverview = (namespace: string): OverviewState => {
     void load(controller.signal)
     return () => controller.abort()
   }, [load])
-
-  const scheduleReload = React.useCallback(() => {
-    if (reloadTimerRef.current !== null) return
-    reloadTimerRef.current = window.setTimeout(() => {
-      reloadTimerRef.current = null
-      const controller = new AbortController()
-      void load(controller.signal)
-    }, 500)
-  }, [load])
-
-  useControlPlaneStream(namespace, {
-    onEvent: (event) => {
-      if (event.type !== 'resource') return
-      if (event.namespace !== namespace) return
-      scheduleReload()
-    },
-  })
 
   const refresh = React.useCallback(() => {
     const controller = new AbortController()

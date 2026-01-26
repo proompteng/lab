@@ -10,3 +10,10 @@ declare module '@xterm/addon-ligatures/lib/addon-ligatures.mjs' {
 declare module 'nitro/runtime' {
   export const defineNitroPlugin: (plugin: (nitroApp?: unknown) => void) => unknown
 }
+
+declare module 'virtual:tanstack-start-server-entry' {
+  const entry: {
+    fetch: (request: Request) => Promise<Response>
+  }
+  export default entry
+}

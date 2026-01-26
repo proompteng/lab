@@ -20,7 +20,6 @@ import {
   YamlCodeBlock,
 } from '@/components/agents-control-plane'
 import { DEFAULT_NAMESPACE, type NamespaceSearchState } from '@/components/agents-control-plane-search'
-import { useControlPlaneStream } from '@/components/agents-control-plane-stream'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -89,7 +88,6 @@ export function PrimitiveListPage({
   const [error, setError] = React.useState<string | null>(null)
   const [status, setStatus] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
-  const reloadTimerRef = React.useRef<number | null>(null)
 
   const namespaceId = React.useId()
   const labelSelectorId = React.useId()
@@ -133,23 +131,6 @@ export function PrimitiveListPage({
   React.useEffect(() => {
     void load({ namespace: searchState.namespace, labelSelector: searchState.labelSelector })
   }, [load, searchState.labelSelector, searchState.namespace])
-
-  const scheduleReload = React.useCallback(() => {
-    if (reloadTimerRef.current !== null) return
-    reloadTimerRef.current = window.setTimeout(() => {
-      reloadTimerRef.current = null
-      void load({ namespace: searchState.namespace, labelSelector: searchState.labelSelector })
-    }, 350)
-  }, [load, searchState.labelSelector, searchState.namespace])
-
-  useControlPlaneStream(searchState.namespace, {
-    onEvent: (event) => {
-      if (event.type !== 'resource') return
-      if (event.kind !== kind) return
-      if (event.namespace !== searchState.namespace) return
-      scheduleReload()
-    },
-  })
 
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -309,7 +290,6 @@ export function PrimitiveDetailPage({
   const [error, setError] = React.useState<string | null>(null)
   const [eventsError, setEventsError] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
-  const reloadTimerRef = React.useRef<number | null>(null)
 
   const load = React.useCallback(async () => {
     setIsLoading(true)
@@ -353,24 +333,6 @@ export function PrimitiveDetailPage({
   React.useEffect(() => {
     void load()
   }, [load])
-
-  const scheduleReload = React.useCallback(() => {
-    if (reloadTimerRef.current !== null) return
-    reloadTimerRef.current = window.setTimeout(() => {
-      reloadTimerRef.current = null
-      void load()
-    }, 350)
-  }, [load])
-
-  useControlPlaneStream(searchState.namespace, {
-    onEvent: (event) => {
-      if (event.type !== 'resource') return
-      if (event.kind !== kind) return
-      if (event.name !== name) return
-      if (event.namespace !== searchState.namespace) return
-      scheduleReload()
-    },
-  })
 
   const statusLabel = resource ? deriveStatusLabel(resource) : 'Unknown'
   const conditions = resource ? getStatusConditions(resource) : []

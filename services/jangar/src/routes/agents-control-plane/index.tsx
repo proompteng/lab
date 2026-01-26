@@ -125,7 +125,15 @@ function AgentsControlPlanePage() {
         <Button type="submit" disabled={isLoading}>
           Filter
         </Button>
-        <Button type="button" variant="outline" onClick={refresh} disabled={isLoading}>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            refresh()
+            controlPlaneStatus.refresh()
+          }}
+          disabled={isLoading || controlPlaneStatus.isLoading}
+        >
           Refresh
         </Button>
       </form>

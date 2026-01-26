@@ -8,6 +8,7 @@ spec:
   steps:
     - name: echo
       kind: ToolRun
-      toolRef: jangar-primitives-tool
+      toolRef:
+        name: jangar-primitives-tool
       with:
         action: sub-orchestration

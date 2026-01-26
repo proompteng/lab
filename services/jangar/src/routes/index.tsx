@@ -2,7 +2,6 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
-import { serverFns } from '../data/memories'
 
 export const Route = createFileRoute('/')({ component: Home })
 
@@ -15,13 +14,20 @@ function Home() {
     setIsLoading(true)
     setError(null)
     try {
-      const result = await serverFns.countMemories({ data: {} })
-      if (!result.ok) {
-        setError(result.message)
+      const response = await fetch('/api/memories/count')
+      const payload = (await response.json().catch(() => null)) as {
+        ok?: boolean
+        count?: number
+        error?: string
+        message?: string
+      } | null
+      if (!response.ok || !payload || payload.ok !== true || typeof payload.count !== 'number') {
+        const message = payload?.error ?? payload?.message ?? 'Unable to load memory count right now.'
+        setError(message)
         setCount(null)
         return
       }
-      setCount(result.count)
+      setCount(payload.count)
     } catch {
       setError('Unable to load memory count right now.')
       setCount(null)

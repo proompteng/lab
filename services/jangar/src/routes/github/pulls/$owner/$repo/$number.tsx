@@ -129,6 +129,30 @@ function GithubPullDetailPage() {
   const [deleteBranch, setDeleteBranch] = React.useState(true)
   const [selectedFilePath, setSelectedFilePath] = React.useState<string | null>(null)
   const fileTree = React.useMemo(() => buildFileTree(files), [files])
+  const autoRefreshRef = React.useRef(false)
+  const autoRefreshKey = `${owner}/${repo}#${prNumber}`
+  const lastAutoRefreshKeyRef = React.useRef(autoRefreshKey)
+
+  const pollForFiles = React.useCallback(
+    async (options: { attempts?: number; delayMs?: number } = {}) => {
+      if (!Number.isFinite(prNumber)) return 0
+      const attempts = options.attempts ?? 12
+      const delayMs = options.delayMs ?? 2000
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        const filesRes = await fetchGithubPullFiles(owner, repo, prNumber)
+        if (filesRes.ok && filesRes.files.length > 0) {
+          setFiles(filesRes.files)
+          return filesRes.files.length
+        }
+        if (filesRes.ok && !filesRes.refreshing && attempt > 1) {
+          break
+        }
+        await new Promise((resolve) => setTimeout(resolve, delayMs))
+      }
+      return 0
+    },
+    [owner, repo, prNumber],
+  )
 
   const loadAll = React.useCallback(async () => {
     if (!Number.isFinite(prNumber)) {
@@ -156,7 +180,12 @@ function GithubPullDetailPage() {
         fetchGithubPullChecks(owner, repo, prNumber),
         fetchGithubPullJudgeRuns(owner, repo, prNumber),
       ])
-      if (filesRes.ok) setFiles(filesRes.files)
+      if (filesRes.ok) {
+        setFiles(filesRes.files)
+        if (filesRes.files.length === 0 && filesRes.refreshing) {
+          void pollForFiles({ attempts: 12 })
+        }
+      }
       if (threadsRes.ok) setThreads(threadsRes.threads)
       if (checksRes.ok) setChecksByCommit(checksRes.commits)
       if (judgeRes.ok) setJudgeRuns(judgeRes.runs)
@@ -168,11 +197,17 @@ function GithubPullDetailPage() {
     } finally {
       setLoading(false)
     }
-  }, [owner, repo, prNumber])
+  }, [owner, pollForFiles, prNumber, repo])
 
   React.useEffect(() => {
     void loadAll()
   }, [loadAll])
+
+  React.useEffect(() => {
+    if (lastAutoRefreshKeyRef.current === autoRefreshKey) return
+    lastAutoRefreshKeyRef.current = autoRefreshKey
+    autoRefreshRef.current = false
+  }, [autoRefreshKey])
 
   React.useEffect(() => {
     if (files.length === 0) {
@@ -272,21 +307,39 @@ function GithubPullDetailPage() {
     await loadAll()
   }
 
-  const refreshFiles = async () => {
-    if (!Number.isFinite(prNumber)) return
-    setRefreshingFiles(true)
-    setStatus(null)
-    setError(null)
-    const response = await refreshGithubPullFiles(owner, repo, prNumber)
-    if (!response.ok) {
-      setError(response.error)
+  const refreshFiles = React.useCallback(
+    async (options: { auto?: boolean } = {}) => {
+      if (!Number.isFinite(prNumber)) return
+      setRefreshingFiles(true)
+      setStatus(null)
+      setError(null)
+      const response = await refreshGithubPullFiles(owner, repo, prNumber)
+      if (!response.ok) {
+        setError(response.error)
+        setRefreshingFiles(false)
+        return
+      }
+      if (options.auto) {
+        const refreshedCount = await pollForFiles({ attempts: 12 })
+        if (refreshedCount > 0) {
+          setStatus(`Refreshed worktree snapshot (${refreshedCount} files).`)
+        } else {
+          setStatus('Queued worktree snapshot refresh.')
+        }
+      } else {
+        await loadAll()
+        setStatus(`Refreshed worktree snapshot (${response.fileCount} files).`)
+      }
       setRefreshingFiles(false)
-      return
-    }
-    await loadAll()
-    setStatus(`Refreshed worktree snapshot (${response.fileCount} files).`)
-    setRefreshingFiles(false)
-  }
+    },
+    [loadAll, owner, pollForFiles, prNumber, repo],
+  )
+
+  React.useEffect(() => {
+    if (loading || files.length > 0 || autoRefreshRef.current) return
+    autoRefreshRef.current = true
+    void refreshFiles({ auto: true })
+  }, [files.length, loading, refreshFiles])
 
   const reviewBadge = review?.decision
     ? badgeClass(
