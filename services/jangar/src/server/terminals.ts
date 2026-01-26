@@ -251,8 +251,9 @@ const isCleanReusableWorktree = async (worktreePath: string) => {
   })
   if (inside.exitCode !== 0) return false
 
-  const statusResult = await runGit(['status', '--porcelain', '--untracked-files=no'], worktreePath, {
+  const statusResult = await runGit(['status', '--porcelain'], worktreePath, {
     timeoutMs: FETCH_TIMEOUT_MS,
+    label: 'git worktree status',
   })
   if (statusResult.exitCode !== 0) return false
   return statusResult.stdout.trim().length === 0

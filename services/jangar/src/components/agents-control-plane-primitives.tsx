@@ -20,6 +20,7 @@ import {
   YamlCodeBlock,
 } from '@/components/agents-control-plane'
 import { DEFAULT_NAMESPACE, type NamespaceSearchState } from '@/components/agents-control-plane-search'
+import { useControlPlaneReload, useControlPlaneStream } from '@/components/agents-control-plane-stream'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -126,6 +127,24 @@ export function PrimitiveListPage({
       }
     },
     [emptyLabel, kind, title],
+  )
+
+  const scheduleReload = useControlPlaneReload(
+    () => void load({ namespace: searchState.namespace, labelSelector: searchState.labelSelector }),
+    { minIntervalMs: 5_000 },
+  )
+
+  useControlPlaneStream(
+    searchState.namespace,
+    {
+      onEvent: (event) => {
+        if (event.type !== 'resource') return
+        if (event.kind !== kind) return
+        if (event.namespace !== searchState.namespace) return
+        scheduleReload()
+      },
+    },
+    { emitState: false },
   )
 
   React.useEffect(() => {
@@ -329,6 +348,22 @@ export function PrimitiveDetailPage({
       setIsLoading(false)
     }
   }, [errorLabel, kind, name, searchState.namespace, title])
+
+  const scheduleReload = useControlPlaneReload(() => void load(), { minIntervalMs: 5_000 })
+
+  useControlPlaneStream(
+    searchState.namespace,
+    {
+      onEvent: (event) => {
+        if (event.type !== 'resource') return
+        if (event.kind !== kind) return
+        if (event.namespace !== searchState.namespace) return
+        if (event.name && event.name !== name) return
+        scheduleReload()
+      },
+    },
+    { emitState: false },
+  )
 
   React.useEffect(() => {
     void load()
