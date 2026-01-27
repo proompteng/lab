@@ -39,7 +39,7 @@ const toJsonMemoryRecord = (record: MemoryRecord): MemoryRecordJson => ({
   metadata: record.metadata as JsonObject,
 })
 
-const persistNoteServer = createServerFn({ method: 'POST' })
+export const persistNote = createServerFn({ method: 'POST' })
   .inputValidator((input) => (input ?? {}) as PersistNoteInput)
   .handler(async ({ data }): Promise<PersistNoteResult> => {
     const payload = data as Record<string, unknown>
@@ -59,7 +59,7 @@ const persistNoteServer = createServerFn({ method: 'POST' })
     return { ok: true, memory: toJsonMemoryRecord(memoryResult.right) }
   })
 
-const retrieveNotesServer = createServerFn({ method: 'POST' })
+export const retrieveNotes = createServerFn({ method: 'POST' })
   .inputValidator((input) => (input ?? {}) as RetrieveNotesInput)
   .handler(async ({ data }): Promise<RetrieveNotesResult> => {
     const payload = data as Record<string, unknown>
@@ -79,7 +79,7 @@ const retrieveNotesServer = createServerFn({ method: 'POST' })
     return { ok: true, memories: memoriesResult.right.map(toJsonMemoryRecord) }
   })
 
-const countMemoriesServer = createServerFn({ method: 'POST' })
+export const countMemories = createServerFn({ method: 'POST' })
   .inputValidator((input) => (input ?? {}) as CountMemoriesInput)
   .handler(async ({ data }): Promise<CountMemoriesResult> => {
     const payload = data as Partial<CountMemoriesInput>
@@ -97,9 +97,3 @@ const countMemoriesServer = createServerFn({ method: 'POST' })
     if (countResult._tag === 'Left') return { ok: false, message: countResult.left.message }
     return { ok: true, count: countResult.right }
   })
-
-export const serverFns = {
-  persistNote: persistNoteServer,
-  retrieveNotes: retrieveNotesServer,
-  countMemories: countMemoriesServer,
-}

@@ -5,6 +5,13 @@ import { mkdir, rm } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  LOCK_RETRY_ATTEMPTS,
+  LOCK_RETRY_DELAY_MS,
+  LOCK_STALE_MS,
+  runGitWithLockRecovery,
+} from '~/server/git-lock-recovery'
+import { withWorktreeLock } from '~/server/git-worktree-lock'
+import {
   fetchTerminalBackend,
   fetchTerminalBackendJson,
   isTerminalBackendProxyEnabled,
@@ -25,16 +32,18 @@ const DEFAULT_BASE_REF = process.env.JANGAR_TERMINAL_BASE_REF?.trim() || 'origin
 const FALLBACK_BASE_REF = 'main'
 const MAX_WORKTREE_ATTEMPTS = 6
 const SESSION_ID_PATTERN = /^jangar-terminal-[a-z0-9-]+$/
-const MAIN_FETCH_ENABLED = (process.env.JANGAR_TERMINAL_FETCH_MAIN ?? 'true') !== 'false'
-const FETCH_TIMEOUT_MS = 30_000
-const WORKTREE_TIMEOUT_MS = 60_000
-const DEFAULT_BUFFER_BYTES = 4 * 1024 * 1024
-const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000
-
 const parseNumber = (value: string | undefined, fallback: number) => {
   const parsed = Number.parseInt(value ?? '', 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
+
+const MAIN_FETCH_ENABLED = (process.env.JANGAR_TERMINAL_FETCH_MAIN ?? 'true') !== 'false'
+const FETCH_TIMEOUT_MS = 30_000
+const WORKTREE_TIMEOUT_MS = parseNumber(process.env.JANGAR_TERMINAL_WORKTREE_TIMEOUT_MS, 180_000)
+const REUSE_REFRESH_TIMEOUT_MS = 15_000
+const DEFER_WORKTREE_CHECKOUT = (process.env.JANGAR_TERMINAL_DEFER_CHECKOUT ?? 'true') !== 'false'
+const DEFAULT_BUFFER_BYTES = 4 * 1024 * 1024
+const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000
 
 const bufferBytes = parseNumber(process.env.JANGAR_TERMINAL_BUFFER_BYTES, DEFAULT_BUFFER_BYTES)
 const idleTimeoutMs = parseNumber(process.env.JANGAR_TERMINAL_IDLE_TIMEOUT_MS, DEFAULT_IDLE_TIMEOUT_MS)
@@ -50,9 +59,50 @@ const resolveCodexBaseCwd = () => {
 
 const resolveWorktreeRoot = () => join(resolveCodexBaseCwd(), WORKTREE_DIR_NAME)
 
-const readProcessText = async (stream: ReadableStream | null) => {
+const runGitWithRecovery = async (
+  args: string[],
+  cwd: string,
+  options: CommandOptions & { worktreeName?: string; worktreePath?: string },
+) =>
+  runGitWithLockRecovery((gitArgs, gitCwd) => runGit(gitArgs, gitCwd, options), args, cwd, {
+    repoRoot: resolveCodexBaseCwd(),
+    worktreeName: options.worktreeName ?? null,
+    worktreePath: options.worktreePath ?? null,
+    label: options.label,
+    staleMs: LOCK_STALE_MS,
+    attempts: LOCK_RETRY_ATTEMPTS,
+    delayMs: LOCK_RETRY_DELAY_MS,
+  })
+
+const readProcessText = async (stream: ReadableStream<Uint8Array> | null, signal?: AbortSignal) => {
   if (!stream) return ''
-  return new Response(stream).text()
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  let result = ''
+  const onAbort = () => {
+    void reader.cancel()
+  }
+  if (signal) {
+    if (signal.aborted) {
+      onAbort()
+    } else {
+      signal.addEventListener('abort', onAbort, { once: true })
+    }
+  }
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      if (!value || value.length === 0) continue
+      result += decoder.decode(value, { stream: true })
+    }
+  } catch {
+    // ignore
+  } finally {
+    if (signal) signal.removeEventListener('abort', onAbort)
+    result += decoder.decode()
+  }
+  return result
 }
 
 type CommandResult = {
@@ -79,19 +129,35 @@ const runCommand = async (args: string[], options: CommandOptions = {}): Promise
     })
     let timedOut = false
     let timeout: ReturnType<typeof setTimeout> | null = null
+    const abortController = new AbortController()
+    const stdoutPromise = readProcessText(process.stdout, abortController.signal)
+    const stderrPromise = readProcessText(process.stderr, abortController.signal)
+    const exitPromise = process.exited.then((exitCode) => {
+      abortController.abort()
+      return exitCode ?? 1
+    })
+
+    let exitCode: number | null
     if (options.timeoutMs && Number.isFinite(options.timeoutMs)) {
-      timeout = setTimeout(() => {
-        timedOut = true
-        try {
-          process.kill()
-        } catch {
-          // ignore
-        }
-      }, options.timeoutMs)
+      exitCode = await Promise.race([
+        exitPromise,
+        new Promise<number | null>((resolve) => {
+          timeout = setTimeout(() => {
+            timedOut = true
+            try {
+              process.kill('SIGKILL')
+            } catch {
+              // ignore
+            }
+            abortController.abort()
+            resolve(null)
+          }, options.timeoutMs)
+        }),
+      ])
+    } else {
+      exitCode = await exitPromise
     }
-    const stdoutPromise = readProcessText(process.stdout)
-    const stderrPromise = readProcessText(process.stderr)
-    const exitCode = await process.exited
+
     if (timeout) clearTimeout(timeout)
     const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise])
     if (timedOut) {
@@ -154,6 +220,75 @@ const buildSessionId = (worktreeName: string) => `${SESSION_PREFIX}${worktreeNam
 
 const buildWorktreePath = (worktreeName: string) => join(resolveWorktreeRoot(), worktreeName)
 
+const queueWorktreeCheckout = (
+  worktreePath: string,
+  baseRef: string,
+  sessionId?: string,
+  worktreeName?: string | null,
+) => {
+  if (!DEFER_WORKTREE_CHECKOUT) return
+  queueMicrotask(() => {
+    void withWorktreeLock(async () => {
+      const result = await runGitWithRecovery(['checkout', '--detach', '--force', baseRef], worktreePath, {
+        timeoutMs: WORKTREE_TIMEOUT_MS,
+        label: 'git checkout',
+        worktreeName: worktreeName ?? undefined,
+        worktreePath,
+      })
+      if (result.exitCode === 0) return
+      console.warn('[terminals] deferred checkout failed', {
+        sessionId,
+        stderr: result.stderr.trim(),
+      })
+    })
+  })
+}
+
+const isCleanReusableWorktree = async (worktreePath: string) => {
+  const inside = await runGit(['rev-parse', '--is-inside-work-tree'], worktreePath, {
+    timeoutMs: FETCH_TIMEOUT_MS,
+    label: 'git worktree probe',
+  })
+  if (inside.exitCode !== 0) return false
+
+  const statusResult = await runGit(['status', '--porcelain'], worktreePath, {
+    timeoutMs: FETCH_TIMEOUT_MS,
+    label: 'git worktree status',
+  })
+  if (statusResult.exitCode !== 0) return false
+  return statusResult.stdout.trim().length === 0
+}
+
+const findReusableSession = async (): Promise<PlannedSession | null> => {
+  const records = await listTerminalSessionRecords()
+  const manager = getManager()
+  const candidates = records.filter((record) => {
+    if (record.status !== 'closed' && record.status !== 'error') return false
+    if (!record.worktreeName || !record.worktreePath) return false
+    if (!isSafeWorktreePath(record.worktreePath, record.worktreeName)) return false
+    if (!existsSync(record.worktreePath)) return false
+    if (manager?.getSession(record.id)) return false
+    return true
+  })
+  if (candidates.length === 0) return null
+
+  for (const record of candidates) {
+    if (!record.worktreePath || !record.worktreeName) continue
+    const worktreePath = record.worktreePath
+    const worktreeName = record.worktreeName
+    const reusable = await isCleanReusableWorktree(worktreePath)
+    if (!reusable) continue
+    return {
+      sessionId: record.id,
+      worktreeName,
+      worktreePath,
+      reuseExisting: true,
+    }
+  }
+
+  return null
+}
+
 const ensureBaseRef = async (repoRoot: string) => {
   const [primary, fallback] = await Promise.all([
     runGit(['rev-parse', '--verify', DEFAULT_BASE_REF], repoRoot, { timeoutMs: FETCH_TIMEOUT_MS }),
@@ -187,21 +322,36 @@ const ensureBaseRef = async (repoRoot: string) => {
   throw new Error(`Unable to resolve base ref: ${DEFAULT_BASE_REF}`)
 }
 
-const createWorktreeAtPath = async (worktreeName: string, worktreePath: string, baseRef: string, repoRoot: string) => {
-  const result = await runGit(['worktree', 'add', '--detach', '--force', worktreePath, baseRef], repoRoot, {
-    timeoutMs: WORKTREE_TIMEOUT_MS,
-    label: 'git worktree add',
+const createWorktreeAtPath = async (worktreeName: string, worktreePath: string, baseRef: string, repoRoot: string) =>
+  withWorktreeLock(async () => {
+    const args = ['worktree', 'add', '--detach', '--force']
+    if (DEFER_WORKTREE_CHECKOUT) {
+      args.push('--no-checkout')
+    }
+    args.push(worktreePath, baseRef)
+    const result = await runGitWithRecovery(args, repoRoot, {
+      timeoutMs: WORKTREE_TIMEOUT_MS,
+      label: 'git worktree add',
+      worktreeName,
+      worktreePath,
+    })
+    if (result.exitCode !== 0) {
+      const detail = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n')
+      await runGitWithRecovery(['worktree', 'remove', '--force', worktreePath], repoRoot, {
+        timeoutMs: WORKTREE_TIMEOUT_MS,
+        label: 'git worktree remove',
+        worktreeName,
+        worktreePath,
+      }).catch(() => {})
+      await rm(worktreePath, { recursive: true, force: true }).catch(() => {})
+      throw new Error(detail || 'Unable to create worktree')
+    }
+
+    await runGit(['config', 'user.name', 'Jangar Terminal'], worktreePath)
+    await runGit(['config', 'user.email', 'terminal@jangar.local'], worktreePath)
+
+    return { worktreeName, worktreePath }
   })
-  if (result.exitCode !== 0) {
-    const detail = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n')
-    throw new Error(detail || 'Unable to create worktree')
-  }
-
-  await runGit(['config', 'user.name', 'Jangar Terminal'], worktreePath)
-  await runGit(['config', 'user.email', 'terminal@jangar.local'], worktreePath)
-
-  return { worktreeName, worktreePath }
-}
 
 const createFreshWorktree = async () => {
   const repoRoot = resolveCodexBaseCwd()
@@ -279,6 +429,8 @@ type PlannedSession = {
   sessionId: string
   worktreeName: string
   worktreePath: string
+  reuseExisting?: boolean
+  baseRef?: string
 }
 
 const getMetadataValue = (metadata: Record<string, unknown> | null | undefined, key: string) => {
@@ -380,6 +532,8 @@ const recordSessionStatus = async (
       sessionId,
       status: record.status,
       worktreePath: record.worktreePath,
+      errorMessage: record.errorMessage,
+      closedAt: record.closedAt,
     })
   }
   return record
@@ -405,13 +559,37 @@ const resolveBackendMetadata = () => ({
   backendId: getManager()?.getInstanceId() ?? null,
 })
 
-const provisionTerminalSession = async ({ sessionId, worktreeName, worktreePath }: PlannedSession) => {
+const provisionTerminalSession = async ({
+  sessionId,
+  worktreeName,
+  worktreePath,
+  reuseExisting,
+  baseRef: plannedBaseRef,
+}: PlannedSession) => {
   try {
     const repoRoot = resolveCodexBaseCwd()
-    const baseRef = await ensureBaseRef(repoRoot)
+    const baseRef = plannedBaseRef ?? (await ensureBaseRef(repoRoot))
     await mkdir(resolveWorktreeRoot(), { recursive: true })
-    await createWorktreeAtPath(worktreeName, worktreePath, baseRef, repoRoot)
+    if (!reuseExisting || !existsSync(worktreePath)) {
+      await createWorktreeAtPath(worktreeName, worktreePath, baseRef, repoRoot)
+    } else if (!DEFER_WORKTREE_CHECKOUT) {
+      const refreshResult = await withWorktreeLock(() =>
+        runGitWithRecovery(['checkout', '--detach', '--force', baseRef], worktreePath, {
+          timeoutMs: REUSE_REFRESH_TIMEOUT_MS,
+          label: 'git checkout',
+          worktreeName,
+          worktreePath,
+        }),
+      )
+      if (refreshResult.exitCode !== 0) {
+        console.warn('[terminals] worktree refresh failed', {
+          sessionId,
+          stderr: refreshResult.stderr.trim(),
+        })
+      }
+    }
     getManager()?.startSession({ sessionId, worktreePath, worktreeName })
+    queueWorktreeCheckout(worktreePath, baseRef, sessionId, worktreeName)
     await recordSessionStatus(sessionId, 'ready', {
       worktreeName,
       worktreePath,
@@ -435,6 +613,7 @@ const createTerminalSessionImmediate = async (): Promise<TerminalSession> => {
   const { worktreeName, worktreePath, baseRef } = await createFreshWorktree()
   const sessionId = buildSessionId(worktreeName)
   getManager()?.startSession({ sessionId, worktreePath, worktreeName })
+  queueWorktreeCheckout(worktreePath, baseRef, sessionId, worktreeName)
   const record = await recordSessionStatus(sessionId, 'ready', {
     worktreeName,
     worktreePath,
@@ -482,10 +661,14 @@ export const createTerminalSession = async (): Promise<TerminalSession> => {
     return payload.session
   }
 
-  const planned = await allocateTerminalSession()
+  const reusable = await findReusableSession()
+  const planned = reusable ?? (await allocateTerminalSession())
   const record = await recordSessionStatus(planned.sessionId, 'creating', {
     worktreeName: planned.worktreeName,
     worktreePath: planned.worktreePath,
+    errorMessage: null,
+    readyAt: null,
+    closedAt: null,
   })
 
   if (!record) {
@@ -549,25 +732,55 @@ export const listTerminalSessions = async (options: { includeClosed?: boolean } 
       status = updated?.status ?? status
     }
     if (!active && status === 'ready' && getManager()) {
-      const rebuilt = getManager()?.startSession({
-        sessionId: record.id,
-        worktreePath: record.worktreePath ?? resolveCodexBaseCwd(),
-        worktreeName: record.worktreeName ?? undefined,
-      })
-      if (!rebuilt) {
+      const fallbackPath = record.worktreePath ?? resolveCodexBaseCwd()
+      if (!existsSync(fallbackPath)) {
         const updated = await updateTerminalSessionRecord(record.id, {
           status: 'closed',
           worktreeName: record.worktreeName,
           worktreePath: record.worktreePath,
           tmuxSocket: record.tmuxSocket,
-          errorMessage: record.errorMessage ?? 'terminal session missing',
+          errorMessage: record.errorMessage ?? `worktree missing: ${fallbackPath}`,
           readyAt: record.readyAt,
           closedAt: record.closedAt ?? new Date().toISOString(),
           metadata: record.metadata,
         })
         status = updated?.status ?? status
       } else {
-        status = 'ready'
+        try {
+          const rebuilt = getManager()?.startSession({
+            sessionId: record.id,
+            worktreePath: fallbackPath,
+            worktreeName: record.worktreeName ?? undefined,
+          })
+          if (!rebuilt) {
+            const updated = await updateTerminalSessionRecord(record.id, {
+              status: 'closed',
+              worktreeName: record.worktreeName,
+              worktreePath: record.worktreePath,
+              tmuxSocket: record.tmuxSocket,
+              errorMessage: record.errorMessage ?? 'terminal session missing',
+              readyAt: record.readyAt,
+              closedAt: record.closedAt ?? new Date().toISOString(),
+              metadata: record.metadata,
+            })
+            status = updated?.status ?? status
+          } else {
+            status = 'ready'
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'terminal session missing'
+          const updated = await updateTerminalSessionRecord(record.id, {
+            status: 'closed',
+            worktreeName: record.worktreeName,
+            worktreePath: record.worktreePath,
+            tmuxSocket: record.tmuxSocket,
+            errorMessage: record.errorMessage ?? message,
+            readyAt: record.readyAt,
+            closedAt: record.closedAt ?? new Date().toISOString(),
+            metadata: record.metadata,
+          })
+          status = updated?.status ?? status
+        }
       }
     }
 

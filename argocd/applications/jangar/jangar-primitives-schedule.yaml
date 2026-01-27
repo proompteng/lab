@@ -10,5 +10,3 @@ spec:
     apiVersion: argoproj.io/v1alpha1
     kind: WorkflowTemplate
     name: jangar-primitives-echo
-  parameters:
-    message: scheduled ping

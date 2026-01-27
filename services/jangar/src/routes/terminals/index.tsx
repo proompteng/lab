@@ -327,7 +327,13 @@ function TerminalsIndexPage() {
                         Session id: {session.id}
                       </div>
                       {session.status === 'error' && session.errorMessage ? (
-                        <div className="text-xs text-destructive">{session.errorMessage}</div>
+                        <div
+                          className="text-xs text-destructive truncate-log"
+                          style={{ '--truncate-lines': 3 } as React.CSSProperties}
+                          title={session.errorMessage}
+                        >
+                          {session.errorMessage}
+                        </div>
                       ) : null}
                     </div>
                     <div

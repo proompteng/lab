@@ -54,6 +54,7 @@ RUN --mount=type=cache,target=/var/cache/apt \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
   apt-get install -y --no-install-recommends \
   build-essential \
+  bsdutils \
   ca-certificates \
   curl \
   git \

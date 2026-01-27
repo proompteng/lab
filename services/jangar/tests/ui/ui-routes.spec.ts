@@ -223,6 +223,32 @@ const githubPullFilesResponse = {
     },
   ],
 }
+const githubPullChecksResponse = {
+  ok: true,
+  commits: [
+    {
+      commitSha: 'abc123',
+      status: 'success',
+      detailsUrl: null,
+      totalCount: 1,
+      successCount: 1,
+      failureCount: 0,
+      pendingCount: 0,
+      runs: [],
+      updatedAt: '2024-01-02T00:00:00.000Z',
+    },
+  ],
+}
+const githubPullJudgeRunsResponse = {
+  ok: true,
+  runs: [],
+}
+const githubPullRefreshFilesResponse = {
+  ok: true,
+  commitSha: 'abc123',
+  baseSha: 'def456',
+  fileCount: 1,
+}
 const githubPullThreadsResponse = {
   ok: true,
   threads: [
@@ -281,6 +307,9 @@ test.beforeEach(async ({ page }) => {
       githubPullsSearchResponseValue,
       githubPullDetailResponseValue,
       githubPullFilesResponseValue,
+      githubPullChecksResponseValue,
+      githubPullJudgeRunsResponseValue,
+      githubPullRefreshFilesResponseValue,
       githubPullThreadsResponseValue,
     }) => {
       const originalFetch = window.fetch.bind(window)
@@ -295,18 +324,8 @@ test.beforeEach(async ({ page }) => {
             headers: { 'content-type': 'application/json' },
           })
 
-        if (pathname.includes('/_serverFn')) {
-          const rawBody =
-            typeof init?.body === 'string'
-              ? init.body
-              : init?.body instanceof URLSearchParams
-                ? init.body.toString()
-                : undefined
-          const isCount =
-            rawUrl.includes('countMemories') || (typeof rawBody === 'string' && rawBody.includes('countMemories'))
-          const body = JSON.stringify(isCount ? { ok: true, count: memoryCountValue } : { ok: true, memories: [] })
-          return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } })
-        }
+        if (pathname === '/api/memories/count') return jsonResponse({ ok: true, count: memoryCountValue })
+        if (pathname === '/api/memories') return jsonResponse({ ok: true, memories: [] })
 
         if (pathname === '/api/torghut/symbols') {
           if ((init?.method ?? 'GET').toUpperCase() === 'GET') {
@@ -330,6 +349,12 @@ test.beforeEach(async ({ page }) => {
         }
         if (pathname === '/api/github/pulls/proompteng/lab/42') return jsonResponse(githubPullDetailResponseValue)
         if (pathname === '/api/github/pulls/proompteng/lab/42/files') return jsonResponse(githubPullFilesResponseValue)
+        if (pathname === '/api/github/pulls/proompteng/lab/42/checks')
+          return jsonResponse(githubPullChecksResponseValue)
+        if (pathname === '/api/github/pulls/proompteng/lab/42/judge-runs')
+          return jsonResponse(githubPullJudgeRunsResponseValue)
+        if (pathname === '/api/github/pulls/proompteng/lab/42/refresh-files')
+          return jsonResponse(githubPullRefreshFilesResponseValue)
         if (pathname === '/api/github/pulls/proompteng/lab/42/threads')
           return jsonResponse(githubPullThreadsResponseValue)
 
@@ -349,6 +374,9 @@ test.beforeEach(async ({ page }) => {
       githubPullsSearchResponseValue: githubPullsSearchResponse,
       githubPullDetailResponseValue: githubPullDetailResponse,
       githubPullFilesResponseValue: githubPullFilesResponse,
+      githubPullChecksResponseValue: githubPullChecksResponse,
+      githubPullJudgeRunsResponseValue: githubPullJudgeRunsResponse,
+      githubPullRefreshFilesResponseValue: githubPullRefreshFilesResponse,
       githubPullThreadsResponseValue: githubPullThreadsResponse,
     },
   )

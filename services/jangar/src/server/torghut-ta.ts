@@ -48,7 +48,19 @@ const parseDateInput = (value: string | null, field: string) => {
   return date
 }
 
-const formatClickHouseDateTime64 = (value: Date) => value.toISOString().replace(/Z$/, '')
+export const formatClickHouseDateTime64 = (value: Date) => value.toISOString().replace(/Z$/, '')
+
+export const parseClickHouseDateTime64 = (value: string | null | undefined) => {
+  if (!value) return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const normalized = trimmed.includes('T') ? trimmed : trimmed.replace(' ', 'T')
+  const hasZone = /[zZ]|[+-]\d{2}:?\d{2}$/.test(normalized)
+  const withZone = hasZone ? normalized : `${normalized}Z`
+  const parsed = new Date(withZone)
+  if (Number.isNaN(parsed.getTime())) return null
+  return parsed
+}
 
 const parseLimit = (value: string | null, fallback: number) => {
   if (!value) return fallback
@@ -112,5 +124,25 @@ export const parseTaLatestParams = (url: URL): ValidationResult<{ symbol: string
       ok: false,
       message: error instanceof Error ? error.message : 'Invalid query parameters',
     }
+  }
+}
+
+export const computeFallbackRange = (params: {
+  from: string
+  to: string
+  latest: string
+}): { from: string; to: string } | null => {
+  const fromDate = parseClickHouseDateTime64(params.from)
+  const toDate = parseClickHouseDateTime64(params.to)
+  const latestDate = parseClickHouseDateTime64(params.latest)
+  if (!fromDate || !toDate || !latestDate) return null
+  const windowMs = toDate.getTime() - fromDate.getTime()
+  if (windowMs <= 0) return null
+  const latestMs = latestDate.getTime()
+  if (latestMs >= fromDate.getTime() && latestMs <= toDate.getTime()) return null
+  const fallbackFrom = new Date(latestMs - windowMs)
+  return {
+    from: formatClickHouseDateTime64(fallbackFrom),
+    to: formatClickHouseDateTime64(latestDate),
   }
 }

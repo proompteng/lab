@@ -70,6 +70,7 @@ import { Route as TerminalsSessionIdFullscreenRouteImport } from './routes/termi
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
 import { Route as ApiTorghutSymbolsRouteImport } from './routes/api/torghut/symbols'
 import { Route as ApiTerminalsSessionIdRouteImport } from './routes/api/terminals/$sessionId'
+import { Route as ApiMemoriesCountRouteImport } from './routes/api/memories/count'
 import { Route as ApiGithubPullsRouteImport } from './routes/api/github/pulls'
 import { Route as ApiCodexRunsRouteImport } from './routes/api/codex/runs'
 import { Route as ApiCodexRunCompleteRouteImport } from './routes/api/codex/run-complete'
@@ -455,6 +456,11 @@ const ApiTerminalsSessionIdRoute = ApiTerminalsSessionIdRouteImport.update({
   path: '/$sessionId',
   getParentRoute: () => ApiTerminalsRoute,
 } as any)
+const ApiMemoriesCountRoute = ApiMemoriesCountRouteImport.update({
+  id: '/count',
+  path: '/count',
+  getParentRoute: () => ApiMemoriesRoute,
+} as any)
 const ApiGithubPullsRoute = ApiGithubPullsRouteImport.update({
   id: '/api/github/pulls',
   path: '/api/github/pulls',
@@ -805,7 +811,7 @@ export interface FileRoutesByFullPath {
   '/agents/general': typeof AgentsGeneralRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
-  '/api/memories': typeof ApiMemoriesRoute
+  '/api/memories': typeof ApiMemoriesRouteWithChildren
   '/api/models': typeof ApiModelsRoute
   '/api/search': typeof ApiSearchRoute
   '/api/terminals': typeof ApiTerminalsRouteWithChildren
@@ -858,6 +864,7 @@ export interface FileRoutesByFullPath {
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
+  '/api/memories/count': typeof ApiMemoriesCountRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
@@ -928,7 +935,7 @@ export interface FileRoutesByTo {
   '/agents/general': typeof AgentsGeneralRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
-  '/api/memories': typeof ApiMemoriesRoute
+  '/api/memories': typeof ApiMemoriesRouteWithChildren
   '/api/models': typeof ApiModelsRoute
   '/api/search': typeof ApiSearchRoute
   '/api/terminals': typeof ApiTerminalsRouteWithChildren
@@ -979,6 +986,7 @@ export interface FileRoutesByTo {
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
+  '/api/memories/count': typeof ApiMemoriesCountRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
@@ -1050,7 +1058,7 @@ export interface FileRoutesById {
   '/agents/general': typeof AgentsGeneralRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
-  '/api/memories': typeof ApiMemoriesRoute
+  '/api/memories': typeof ApiMemoriesRouteWithChildren
   '/api/models': typeof ApiModelsRoute
   '/api/search': typeof ApiSearchRoute
   '/api/terminals': typeof ApiTerminalsRouteWithChildren
@@ -1103,6 +1111,7 @@ export interface FileRoutesById {
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
+  '/api/memories/count': typeof ApiMemoriesCountRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
@@ -1228,6 +1237,7 @@ export interface FileRouteTypes {
     | '/api/codex/run-complete'
     | '/api/codex/runs'
     | '/api/github/pulls'
+    | '/api/memories/count'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
@@ -1349,6 +1359,7 @@ export interface FileRouteTypes {
     | '/api/codex/run-complete'
     | '/api/codex/runs'
     | '/api/github/pulls'
+    | '/api/memories/count'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
@@ -1472,6 +1483,7 @@ export interface FileRouteTypes {
     | '/api/codex/run-complete'
     | '/api/codex/runs'
     | '/api/github/pulls'
+    | '/api/memories/count'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
@@ -1543,7 +1555,7 @@ export interface RootRouteChildren {
   AgentsGeneralRoute: typeof AgentsGeneralRoute
   ApiEnrichRoute: typeof ApiEnrichRoute
   ApiHealthRoute: typeof ApiHealthRoute
-  ApiMemoriesRoute: typeof ApiMemoriesRoute
+  ApiMemoriesRoute: typeof ApiMemoriesRouteWithChildren
   ApiModelsRoute: typeof ApiModelsRoute
   ApiSearchRoute: typeof ApiSearchRoute
   ApiTerminalsRoute: typeof ApiTerminalsRouteWithChildren
@@ -2059,6 +2071,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTerminalsSessionIdRouteImport
       parentRoute: typeof ApiTerminalsRoute
     }
+    '/api/memories/count': {
+      id: '/api/memories/count'
+      path: '/count'
+      fullPath: '/api/memories/count'
+      preLoaderRoute: typeof ApiMemoriesCountRouteImport
+      parentRoute: typeof ApiMemoriesRoute
+    }
     '/api/github/pulls': {
       id: '/api/github/pulls'
       path: '/api/github/pulls'
@@ -2482,6 +2501,18 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface ApiMemoriesRouteChildren {
+  ApiMemoriesCountRoute: typeof ApiMemoriesCountRoute
+}
+
+const ApiMemoriesRouteChildren: ApiMemoriesRouteChildren = {
+  ApiMemoriesCountRoute: ApiMemoriesCountRoute,
+}
+
+const ApiMemoriesRouteWithChildren = ApiMemoriesRoute._addFileChildren(
+  ApiMemoriesRouteChildren,
+)
+
 interface ApiTerminalsSessionIdRouteChildren {
   ApiTerminalsSessionIdDeleteRoute: typeof ApiTerminalsSessionIdDeleteRoute
   ApiTerminalsSessionIdInputRoute: typeof ApiTerminalsSessionIdInputRoute
@@ -2697,7 +2728,7 @@ const rootRouteChildren: RootRouteChildren = {
   AgentsGeneralRoute: AgentsGeneralRoute,
   ApiEnrichRoute: ApiEnrichRoute,
   ApiHealthRoute: ApiHealthRoute,
-  ApiMemoriesRoute: ApiMemoriesRoute,
+  ApiMemoriesRoute: ApiMemoriesRouteWithChildren,
   ApiModelsRoute: ApiModelsRoute,
   ApiSearchRoute: ApiSearchRoute,
   ApiTerminalsRoute: ApiTerminalsRouteWithChildren,

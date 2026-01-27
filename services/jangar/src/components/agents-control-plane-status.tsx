@@ -1,7 +1,6 @@
 import * as React from 'react'
 
 import { formatTimestamp, StatusBadge } from '@/components/agents-control-plane'
-import { useControlPlaneStream } from '@/components/agents-control-plane-stream'
 import type { ControlPlaneStatus } from '@/data/agents-control-plane'
 import { fetchControlPlaneStatus } from '@/data/agents-control-plane'
 
@@ -10,6 +9,7 @@ export type ControlPlaneStatusState = {
   error: string | null
   isLoading: boolean
   lastUpdatedAt: string | null
+  refresh: () => void
 }
 
 export const useControlPlaneStatus = (namespace: string): ControlPlaneStatusState => {
@@ -48,16 +48,12 @@ export const useControlPlaneStatus = (namespace: string): ControlPlaneStatusStat
     return () => controller.abort()
   }, [load])
 
-  useControlPlaneStream(namespace, {
-    onEvent: (event) => {
-      if (event.type !== 'status') return
-      if (event.namespace !== namespace) return
-      setStatus(event.status)
-      setLastUpdatedAt(event.status.generated_at)
-    },
-  })
+  const refresh = React.useCallback(() => {
+    const controller = new AbortController()
+    void load(controller.signal)
+  }, [load])
 
-  return { status, error, isLoading, lastUpdatedAt }
+  return { status, error, isLoading, lastUpdatedAt, refresh }
 }
 
 const renderSummaryValue = (value: string | number | boolean | null) => {

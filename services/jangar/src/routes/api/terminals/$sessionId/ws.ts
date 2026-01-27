@@ -30,9 +30,9 @@ type WebSocketPeer = {
 }
 
 type WebSocketMessage = {
-  json: () => unknown
-  text: () => string
-  arrayBuffer?: () => ArrayBuffer | SharedArrayBuffer
+  json: () => unknown | Promise<unknown>
+  text: () => string | Promise<string>
+  arrayBuffer?: () => ArrayBuffer | SharedArrayBuffer | Promise<ArrayBuffer | SharedArrayBuffer>
 }
 
 type WebSocketUpgradeRequest = {
@@ -78,22 +78,52 @@ const resolveAttachParams = (url: string) => {
 const websocketHooks = defineWebSocket({
   async upgrade(request: WebSocketUpgradeRequest) {
     if (isTerminalBackendProxyEnabled()) {
+      console.warn('[terminals] ws upgrade rejected', {
+        reason: 'backend-proxy-enabled',
+      })
       return new Response('Terminal backend proxy enabled; connect to the terminal backend URL.', { status: 409 })
     }
     const { sessionId, reconnectToken, sessionToken, since, cols, rows } = resolveAttachParams(request.url)
     if (!sessionId || !reconnectToken) {
+      console.warn('[terminals] ws upgrade rejected', {
+        reason: 'missing-session-or-token',
+        sessionId,
+      })
       return new Response('Invalid terminal session id or reconnect token.', { status: 400 })
     }
 
     const session = await getTerminalSession(sessionId)
-    if (!session) return new Response('Session not found.', { status: 404 })
-    if (session.status !== 'ready') return new Response(`Session not ready (${session.status}).`, { status: 409 })
+    if (!session) {
+      console.warn('[terminals] ws upgrade rejected', {
+        reason: 'session-not-found',
+        sessionId,
+      })
+      return new Response('Session not found.', { status: 404 })
+    }
+    if (session.status !== 'ready') {
+      console.warn('[terminals] ws upgrade rejected', {
+        reason: 'session-not-ready',
+        sessionId,
+        status: session.status,
+      })
+      return new Response(`Session not ready (${session.status}).`, { status: 409 })
+    }
     if (session.reconnectToken && (!sessionToken || sessionToken !== session.reconnectToken)) {
+      console.warn('[terminals] ws upgrade rejected', {
+        reason: 'invalid-reconnect-token',
+        sessionId,
+      })
       return new Response('Invalid terminal reconnect token.', { status: 401 })
     }
 
     const exists = await ensureTerminalSessionExists(sessionId)
-    if (!exists) return new Response('Session not ready.', { status: 409 })
+    if (!exists) {
+      console.warn('[terminals] ws upgrade rejected', {
+        reason: 'runtime-missing',
+        sessionId,
+      })
+      return new Response('Session not ready.', { status: 409 })
+    }
 
     request.context = request.context ?? {}
     request.context.sessionId = sessionId
@@ -102,6 +132,12 @@ const websocketHooks = defineWebSocket({
     request.context.since = since
     request.context.cols = cols
     request.context.rows = rows
+    console.info('[terminals] ws upgrade accepted', {
+      sessionId,
+      since,
+      cols,
+      rows,
+    })
     return
   },
 
@@ -141,6 +177,11 @@ const websocketHooks = defineWebSocket({
         rows,
       })
       peerState.set(peer, { sessionId, token })
+      console.info('[terminals] ws client attached', {
+        sessionId,
+        cols,
+        rows,
+      })
     } catch (error) {
       jsonMessage(peer, {
         type: 'error',
@@ -150,13 +191,13 @@ const websocketHooks = defineWebSocket({
     }
   },
 
-  message(peer: WebSocketPeer, message: WebSocketMessage) {
+  async message(peer: WebSocketPeer, message: WebSocketMessage) {
     const state = peerState.get(peer)
     if (!state) return
 
     let textPayload: string | null = null
     try {
-      textPayload = message.text()
+      textPayload = await Promise.resolve(message.text())
     } catch {
       textPayload = null
     }
@@ -190,10 +231,15 @@ const websocketHooks = defineWebSocket({
       }
 
       if (message.arrayBuffer) {
-        const buffer = new Uint8Array(message.arrayBuffer())
-        if (buffer.length > 0) {
-          const manager = getTerminalPtyManager()
-          manager.handleInput(state.sessionId, buffer)
+        try {
+          const arrayBuffer = await Promise.resolve(message.arrayBuffer())
+          const buffer = new Uint8Array(arrayBuffer)
+          if (buffer.length > 0) {
+            const manager = getTerminalPtyManager()
+            manager.handleInput(state.sessionId, buffer)
+          }
+        } catch {
+          // ignore
         }
         return
       }
@@ -206,10 +252,15 @@ const websocketHooks = defineWebSocket({
     }
 
     if (message.arrayBuffer) {
-      const buffer = new Uint8Array(message.arrayBuffer())
-      if (buffer.length > 0) {
-        const manager = getTerminalPtyManager()
-        manager.handleInput(state.sessionId, buffer)
+      try {
+        const arrayBuffer = await Promise.resolve(message.arrayBuffer())
+        const buffer = new Uint8Array(arrayBuffer)
+        if (buffer.length > 0) {
+          const manager = getTerminalPtyManager()
+          manager.handleInput(state.sessionId, buffer)
+        }
+      } catch {
+        // ignore
       }
       return
     }

@@ -234,9 +234,9 @@ test.describe('deployed jangar e2e', () => {
 
   test('worktree snapshot renders a hierarchical file tree', async ({ page }) => {
     await page.goto('/github/pulls/proompteng/lab/2311')
-    await page.getByRole('button', { name: 'Files' }).click()
+    await page.getByRole('tab', { name: 'Files' }).click()
     const tree = page.getByRole('tree', { name: 'Worktree files' })
-    await expect(tree).toBeVisible()
+    await expect(tree).toBeVisible({ timeout: 20_000 })
 
     const directoryItem = tree.locator('[role="treeitem"][aria-expanded]').first()
     await expect(directoryItem).toBeVisible()

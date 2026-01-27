@@ -14,7 +14,6 @@ import {
 } from '@/components/agents-control-plane'
 import { buildBaseSummaryItems } from '@/components/agents-control-plane-primitives'
 import { parseNamespaceSearch } from '@/components/agents-control-plane-search'
-import { useControlPlaneStream } from '@/components/agents-control-plane-stream'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { fetchPrimitiveDetail, fetchPrimitiveEvents, type PrimitiveEventItem } from '@/data/agents-control-plane'
@@ -34,7 +33,6 @@ function AgentDetailPage() {
   const [error, setError] = React.useState<string | null>(null)
   const [eventsError, setEventsError] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
-  const reloadTimerRef = React.useRef<number | null>(null)
 
   const load = React.useCallback(async () => {
     setIsLoading(true)
@@ -78,24 +76,6 @@ function AgentDetailPage() {
   React.useEffect(() => {
     void load()
   }, [load])
-
-  const scheduleReload = React.useCallback(() => {
-    if (reloadTimerRef.current !== null) return
-    reloadTimerRef.current = window.setTimeout(() => {
-      reloadTimerRef.current = null
-      void load()
-    }, 350)
-  }, [load])
-
-  useControlPlaneStream(searchState.namespace, {
-    onEvent: (event) => {
-      if (event.type !== 'resource') return
-      if (event.kind !== 'Agent') return
-      if (event.name !== params.name) return
-      if (event.namespace !== searchState.namespace) return
-      scheduleReload()
-    },
-  })
 
   const statusLabel = resource ? deriveStatusLabel(resource) : 'Unknown'
   const conditions = resource ? getStatusConditions(resource) : []

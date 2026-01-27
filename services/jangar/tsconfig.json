@@ -4,14 +4,7 @@
     "jsx": "react-jsx",
     "noEmit": true,
     "strict": true,
-    "strictNullChecks": true,
-    "baseUrl": "./src",
-    "paths": {
-      "@/*": ["./*"],
-      "~/*": ["./*"],
-      "@proompteng/codex": ["../../../packages/codex/src/index.ts"],
-      "@proompteng/codex/*": ["../../../packages/codex/src/*"]
-    }
+    "strictNullChecks": true
   },
   "include": ["./src/**/*", "./server/**/*", "./nitro.config.ts"]
 }

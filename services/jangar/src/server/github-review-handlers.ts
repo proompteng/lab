@@ -1,9 +1,11 @@
 import { mergePullRequest, resolvePullRequestThread, submitPullRequestReview } from '~/server/github-review-actions'
 import { isGithubRepoAllowed, loadGithubReviewConfig } from '~/server/github-review-config'
 import { createGithubReviewStore } from '~/server/github-review-store'
-import { refreshWorktreeSnapshot } from '~/server/github-worktree-snapshot'
+import { refreshWorktreeSnapshot, type WorktreeSnapshotResult } from '~/server/github-worktree-snapshot'
 
 const DEFAULT_REPOSITORY = 'proompteng/lab'
+const WORKTREE_REFRESH_TIMEOUT_MS = 4_000
+const refreshInFlight = new Map<string, Promise<WorktreeSnapshotResult>>()
 
 const jsonResponse = (payload: unknown, status = 200) => {
   const body = JSON.stringify(payload)
@@ -31,6 +33,28 @@ const parseLimit = (value: string | null, fallback: number) => {
 
 const GITHUB_LOGIN_PATTERN = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i
 
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const queueWorktreeRefresh = (input: { repository: string; prNumber: number; headRef: string; baseRef: string }) => {
+  const key = `${input.repository}#${input.prNumber}`
+  const existing = refreshInFlight.get(key)
+  if (existing) return existing
+  const task = refreshWorktreeSnapshot(input)
+    .catch((error) => {
+      console.warn('[github-review] worktree snapshot refresh failed', {
+        repository: input.repository,
+        prNumber: input.prNumber,
+        error: String(error),
+      })
+      throw error
+    })
+    .finally(() => {
+      refreshInFlight.delete(key)
+    })
+  refreshInFlight.set(key, task)
+  return task
+}
+
 const resolveActor = (request: Request) => {
   const candidates = ['x-jangar-actor', 'x-forwarded-user', 'x-auth-request-user', 'x-remote-user', 'x-github-user']
   for (const header of candidates) {
@@ -56,22 +80,14 @@ const maybeAutoRefreshFiles = async (
   if (!input.headRef || !input.baseRef) return false
   const existing = await store.getPrWorktree({ repository: input.repository, prNumber: input.prNumber })
   if (existing?.headSha && input.headSha && existing.headSha === input.headSha) return false
-  try {
-    await refreshWorktreeSnapshot({
-      repository: input.repository,
-      prNumber: input.prNumber,
-      headRef: input.headRef,
-      baseRef: input.baseRef,
-    })
-    return true
-  } catch (error) {
-    console.warn('[github-review] worktree snapshot refresh failed', {
-      repository: input.repository,
-      prNumber: input.prNumber,
-      error: String(error),
-    })
-  }
-  return false
+  const task = queueWorktreeRefresh({
+    repository: input.repository,
+    prNumber: input.prNumber,
+    headRef: input.headRef,
+    baseRef: input.baseRef,
+  })
+  void task.catch(() => {})
+  return true
 }
 
 export const getPullsHandler = async (request: Request, createStore = createGithubReviewStore) => {
@@ -189,32 +205,23 @@ export const getPullFilesHandler = async (
 
     const worktree = await store.getPrWorktree({ repository, prNumber })
     const commitSha = worktree?.headSha ?? pull.pull.headSha
-    let files = await store.listFiles({
+    const files = await store.listFiles({
       repository,
       prNumber,
       commitSha,
       source: 'worktree',
     })
-    if (files.length === 0) {
-      const refreshed = await maybeAutoRefreshFiles(store, {
-        repository,
-        prNumber,
-        headRef: pull.pull.headRef ?? null,
-        baseRef: pull.pull.baseRef ?? null,
-        headSha: pull.pull.headSha ?? null,
-      })
-      if (refreshed) {
-        const refreshedWorktree = await store.getPrWorktree({ repository, prNumber })
-        const refreshedCommit = refreshedWorktree?.headSha ?? pull.pull.headSha
-        files = await store.listFiles({
-          repository,
-          prNumber,
-          commitSha: refreshedCommit,
-          source: 'worktree',
-        })
-      }
-    }
-    return jsonResponse({ ok: true, files })
+    const refreshing =
+      files.length === 0
+        ? await maybeAutoRefreshFiles(store, {
+            repository,
+            prNumber,
+            headRef: pull.pull.headRef ?? null,
+            baseRef: pull.pull.baseRef ?? null,
+            headSha: pull.pull.headSha ?? null,
+          })
+        : false
+    return jsonResponse({ ok: true, files, refreshing })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to load pull request files'
     return jsonResponse({ ok: false, error: message }, 500)
@@ -249,19 +256,28 @@ export const refreshPullFilesHandler = async (
       return jsonResponse({ ok: false, error: 'Missing base/head ref for pull request' }, 400)
     }
 
-    const snapshot = await refreshWorktreeSnapshot({
+    const refreshTask = queueWorktreeRefresh({
       repository,
       prNumber,
       headRef: pull.pull.headRef,
       baseRef: pull.pull.baseRef,
     })
+    const outcome = await Promise.race([
+      refreshTask.then((snapshot) => ({ status: 'done' as const, snapshot })),
+      delay(WORKTREE_REFRESH_TIMEOUT_MS).then(() => ({ status: 'timeout' as const })),
+    ])
+
+    if (outcome.status === 'timeout') {
+      void refreshTask.catch(() => {})
+      return jsonResponse({ ok: true, status: 'refreshing' }, 202)
+    }
 
     return jsonResponse({
       ok: true,
-      commitSha: snapshot.commitSha,
-      baseSha: snapshot.baseSha,
-      fileCount: snapshot.fileCount,
-      worktreePath: snapshot.worktreePath,
+      commitSha: outcome.snapshot.commitSha,
+      baseSha: outcome.snapshot.baseSha,
+      fileCount: outcome.snapshot.fileCount,
+      worktreePath: outcome.snapshot.worktreePath,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to refresh pull request files'

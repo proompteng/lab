@@ -15,7 +15,6 @@ import {
   summarizeConditions,
 } from '@/components/agents-control-plane'
 import { DEFAULT_NAMESPACE, parseNamespaceSearch } from '@/components/agents-control-plane-search'
-import { useControlPlaneStream } from '@/components/agents-control-plane-stream'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { fetchPrimitiveList, type PrimitiveResource } from '@/data/agents-control-plane'
@@ -55,7 +54,6 @@ function MemoriesListPage() {
   const [error, setError] = React.useState<string | null>(null)
   const [status, setStatus] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
-  const reloadTimerRef = React.useRef<number | null>(null)
 
   const namespaceId = React.useId()
   const labelSelectorId = React.useId()
@@ -96,23 +94,6 @@ function MemoriesListPage() {
   React.useEffect(() => {
     void load({ namespace: searchState.namespace, labelSelector: searchState.labelSelector })
   }, [load, searchState.labelSelector, searchState.namespace])
-
-  const scheduleReload = React.useCallback(() => {
-    if (reloadTimerRef.current !== null) return
-    reloadTimerRef.current = window.setTimeout(() => {
-      reloadTimerRef.current = null
-      void load({ namespace: searchState.namespace, labelSelector: searchState.labelSelector })
-    }, 350)
-  }, [load, searchState.labelSelector, searchState.namespace])
-
-  useControlPlaneStream(searchState.namespace, {
-    onEvent: (event) => {
-      if (event.type !== 'resource') return
-      if (event.kind !== 'Memory') return
-      if (event.namespace !== searchState.namespace) return
-      scheduleReload()
-    },
-  })
 
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()

@@ -50,10 +50,8 @@ test.beforeEach(async ({ page }) => {
         const resolvedUrl = new URL(rawUrl, window.location.origin)
         const pathname = resolvedUrl.pathname
 
-        if (pathname.includes('/_serverFn')) {
-          const body = JSON.stringify({ ok: true, memories: [], count: 0 })
-          return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } })
-        }
+        if (pathname === '/api/memories/count') return jsonResponse({ ok: true, count: 0 })
+        if (pathname === '/api/memories') return jsonResponse({ ok: true, memories: [] })
 
         if (pathname === '/api/search') {
           recordCall(pathname, resolvedUrl.toString())

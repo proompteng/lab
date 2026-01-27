@@ -6,7 +6,6 @@ metadata:
 spec:
   signalRef:
     name: jangar-primitives-signal
-    namespace: jangar
   deliveryId: jangar-primitives-delivery
   payload:
     message: signal delivered

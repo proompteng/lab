@@ -181,3 +181,13 @@
 .xterm .xterm-viewport::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+.truncate-log {
+  --truncate-lines: 6;
+  display: -webkit-box;
+  -webkit-line-clamp: var(--truncate-lines);
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

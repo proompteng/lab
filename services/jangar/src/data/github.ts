@@ -189,12 +189,13 @@ export const fetchGithubPullFiles = async (owner: string, repo: string, number: 
   const payload = (await response.json().catch(() => null)) as {
     ok: boolean
     files?: GithubPrFile[]
+    refreshing?: boolean
     error?: string
   } | null
   if (!response.ok || !payload || !payload.ok) {
     return { ok: false, error: payload?.error ?? 'Failed to load pull request files' } as const
   }
-  return { ok: true, files: payload.files ?? [] } as const
+  return { ok: true, files: payload.files ?? [], refreshing: Boolean(payload.refreshing) } as const
 }
 
 export const fetchGithubPullThreads = async (owner: string, repo: string, number: number) => {

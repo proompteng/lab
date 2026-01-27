@@ -295,7 +295,11 @@ function TerminalSessionPage() {
             />
           </div>
         ) : session?.status === 'error' ? (
-          <div className="rounded-none border border-destructive/40 bg-destructive/10 p-4 text-xs text-destructive">
+          <div
+            className="rounded-none border border-destructive/40 bg-destructive/10 p-4 text-xs text-destructive truncate-log"
+            style={{ '--truncate-lines': 10 } as React.CSSProperties}
+            title={session.errorMessage ?? undefined}
+          >
             {session.errorMessage ?? 'Terminal session failed to start. Refresh to retry.'}
           </div>
         ) : session?.status === 'closed' ? (

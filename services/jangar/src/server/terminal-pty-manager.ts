@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { readFile, readlink } from 'node:fs/promises'
 import { hostname } from 'node:os'
 
@@ -82,6 +83,7 @@ type TerminalRuntime = {
   worktreeName: string | null
   worktreePath: string
   pty: PtyAdapter
+  ptyMode: PtyAdapter['mode']
   buffer: OutputBuffer
   connections: Map<string, TerminalConnection>
   idleTimer: ReturnType<typeof setTimeout> | null
@@ -92,6 +94,7 @@ type TerminalRuntime = {
 type PtyExitEvent = { exitCode: number | null; signal: number | null }
 
 type PtyAdapter = {
+  mode: 'native' | 'script'
   write: (data: string) => void
   resize: (cols: number, rows: number) => void
   kill: () => void
@@ -108,11 +111,21 @@ type SpawnPtyOptions = {
 
 const isBunRuntime = Boolean((globalThis as { Bun?: typeof Bun }).Bun)
 
+const resolveScriptBinary = () => {
+  if (process.env.SCRIPT_BIN && process.env.SCRIPT_BIN.length > 0) {
+    return process.env.SCRIPT_BIN
+  }
+  if (existsSync('/usr/bin/script')) return '/usr/bin/script'
+  if (existsSync('/bin/script')) return '/bin/script'
+  return 'script'
+}
+
 const spawnScriptPty = (shell: string, options: SpawnPtyOptions): PtyAdapter => {
   const bunRuntime = (globalThis as { Bun?: typeof Bun }).Bun
   if (!bunRuntime) {
     throw new Error('Bun runtime is required for script-based PTY fallback.')
   }
+  const scriptBinary = resolveScriptBinary()
 
   const env = {
     ...options.env,
@@ -120,7 +133,7 @@ const spawnScriptPty = (shell: string, options: SpawnPtyOptions): PtyAdapter => 
     LINES: String(options.rows),
   }
 
-  const proc = bunRuntime.spawn(['script', '-qfc', `${shell} -l`, '/dev/null'], {
+  const proc = bunRuntime.spawn([scriptBinary, '-qfc', `${shell} -l -i`, '/dev/null'], {
     cwd: options.cwd,
     env,
     stdin: 'pipe',
@@ -226,6 +239,7 @@ const spawnScriptPty = (shell: string, options: SpawnPtyOptions): PtyAdapter => 
   }, 100)
 
   return {
+    mode: 'script',
     write: (data) => {
       if (!proc.stdin) return
       try {
@@ -251,11 +265,8 @@ const spawnScriptPty = (shell: string, options: SpawnPtyOptions): PtyAdapter => 
   }
 }
 
-const spawnPty = (shell: string, options: SpawnPtyOptions): PtyAdapter => {
-  if (isBunRuntime) {
-    return spawnScriptPty(shell, options)
-  }
-  const pty = spawn(shell, ['-l'], {
+const spawnNativePty = (shell: string, options: SpawnPtyOptions): PtyAdapter => {
+  const pty = spawn(shell, ['-l', '-i'], {
     name: 'xterm-256color',
     cwd: options.cwd,
     env: options.env,
@@ -263,6 +274,7 @@ const spawnPty = (shell: string, options: SpawnPtyOptions): PtyAdapter => {
     rows: options.rows,
   })
   return {
+    mode: 'native',
     write: (data) => pty.write(data),
     resize: (cols, rows) => pty.resize(cols, rows),
     kill: () => pty.kill(),
@@ -275,6 +287,18 @@ const spawnPty = (shell: string, options: SpawnPtyOptions): PtyAdapter => {
       })
     },
   }
+}
+
+const resolvePtyMode = () => (process.env.JANGAR_PTY_MODE ?? '').toLowerCase()
+
+const spawnPty = (shell: string, options: SpawnPtyOptions): PtyAdapter => {
+  const mode = resolvePtyMode()
+  if (mode === 'script') return spawnScriptPty(shell, options)
+  if (mode === 'native') return spawnNativePty(shell, options)
+  if (isBunRuntime) {
+    return spawnScriptPty(shell, options)
+  }
+  return spawnNativePty(shell, options)
 }
 
 export type TerminalManagerOptions = {
@@ -341,6 +365,7 @@ export class TerminalPtyManager {
       worktreeName: input.worktreeName ?? null,
       worktreePath: input.worktreePath,
       pty,
+      ptyMode: pty.mode,
       buffer: new OutputBuffer(this.bufferBytes),
       connections: new Map(),
       idleTimer: null,
@@ -348,6 +373,12 @@ export class TerminalPtyManager {
       closed: false,
     }
     this.sessions.set(input.sessionId, runtime)
+    console.info('[terminals] pty session started', {
+      sessionId: input.sessionId,
+      mode: runtime.ptyMode,
+      shell,
+      worktreePath: input.worktreePath,
+    })
     this.bindRuntime(runtime)
     return runtime
   }
@@ -468,6 +499,13 @@ export class TerminalPtyManager {
     })
     session.pty.onExit((event) => {
       if (session.closed) return
+      console.info('[terminals] pty session exited', {
+        sessionId: session.id,
+        mode: session.ptyMode,
+        exitCode: event.exitCode ?? null,
+        signal: event.signal ?? null,
+        lastActivityAt: new Date(session.lastActivityAt).toISOString(),
+      })
       session.closed = true
       this.cancelIdleTimer(session)
       for (const connection of session.connections.values()) {

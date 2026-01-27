@@ -16,6 +16,14 @@ config.define_string('db_local_port', usage='Local port for remote Postgres (def
 config.define_string('redis_local_port', usage='Local port for remote Redis (default: 16379)')
 config.define_string('nats_local_port', usage='Local port for remote NATS (default: 14222)')
 config.define_string('clickhouse_local_port', usage='Local port for remote ClickHouse (default: 18123)')
+config.define_string(
+    'github_repos_allowed',
+    usage='Comma-separated GitHub repos allowed for review endpoints (default: from in-cluster jangar Deployment, else proompteng/lab)',
+)
+config.define_string(
+    'clickhouse_database',
+    usage='ClickHouse database name (default: from in-cluster jangar Deployment, else torghut)',
+)
 
 # Embeddings (memories/atlas)
 config.define_string(
@@ -83,6 +91,8 @@ print('')
 cluster_openai_api_base_url = _deployment_env('jangar', 'jangar', 'OPENAI_API_BASE_URL')
 cluster_openai_embedding_model = _deployment_env('jangar', 'jangar', 'OPENAI_EMBEDDING_MODEL')
 cluster_openai_embedding_dimension = _deployment_env('jangar', 'jangar', 'OPENAI_EMBEDDING_DIMENSION')
+cluster_github_repos_allowed = _deployment_env('jangar', 'jangar', 'JANGAR_GITHUB_REPOS_ALLOWED')
+cluster_clickhouse_database = _deployment_env('jangar', 'jangar', 'CH_DATABASE')
 
 openai_api_base_url = str(
         cfg.get(
@@ -103,6 +113,18 @@ openai_embedding_dimension = str(
         )
 ).strip()
 openai_api_key = str(cfg.get('openai_api_key', '')).strip()
+github_repos_allowed = str(
+        cfg.get(
+                'github_repos_allowed',
+                cluster_github_repos_allowed if cluster_github_repos_allowed else 'proompteng/lab',
+        )
+).strip()
+clickhouse_database = str(
+        cfg.get(
+                'clickhouse_database',
+                cluster_clickhouse_database if cluster_clickhouse_database else 'torghut',
+        )
+).strip()
 
 def _openai_model_exists(api_base_url, model):
         py = """import json, os, sys
@@ -304,6 +326,8 @@ jangar_env = {
     'NODE_ENV': 'development',
     'PORT': str(jangar_port),
     'UI_PORT': str(jangar_port),
+    'JANGAR_WEBSOCKETS_ENABLED': 'true',
+    'JANGAR_SKIP_MIGRATIONS': '1',
     # Jangar defaults to require; keep it explicit.
     'PGSSLMODE': 'require',
     # Default to self-hosted embeddings matching existing DB schema: vector(1024).
@@ -311,6 +335,8 @@ jangar_env = {
     'OPENAI_EMBEDDING_MODEL': openai_embedding_model,
     'OPENAI_EMBEDDING_DIMENSION': openai_embedding_dimension,
 }
+if github_repos_allowed:
+    jangar_env['JANGAR_GITHUB_REPOS_ALLOWED'] = github_repos_allowed
 
 if openai_api_key:
     jangar_env['OPENAI_API_KEY'] = openai_api_key
@@ -338,7 +364,7 @@ if enable_nats:
 if enable_clickhouse:
     jangar_env['CH_HOST'] = '127.0.0.1'
     jangar_env['CH_PORT'] = str(clickhouse_local_port)
-    jangar_env['CH_DATABASE'] = 'default'
+    jangar_env['CH_DATABASE'] = clickhouse_database
     jangar_env['CH_SECURE'] = 'false'
     ch_user = _secret_key('jangar', 'jangar-clickhouse-auth', 'username')
     ch_password = _secret_key('jangar', 'jangar-clickhouse-auth', 'password')
