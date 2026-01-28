@@ -236,6 +236,15 @@
             "schedulerName": { "type": "string" }
           },
           "additionalProperties": false
+        },
+        "authSecret": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "key": { "type": "string" },
+            "mountPath": { "type": "string" }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

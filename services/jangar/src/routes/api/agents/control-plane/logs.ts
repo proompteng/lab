@@ -23,9 +23,7 @@ const parseTailLines = (value: string | null) => {
 
 const readContainerNames = (spec: Record<string, unknown>, key: 'containers' | 'initContainers') => {
   const entries = Array.isArray(spec[key]) ? spec[key] : []
-  return entries
-    .map((entry) => asString(asRecord(entry)?.name))
-    .filter((name): name is string => Boolean(name))
+  return entries.map((entry) => asString(asRecord(entry)?.name)).filter((name): name is string => Boolean(name))
 }
 
 const readPod = (item: Record<string, unknown>): AgentRunPod | null => {
@@ -78,9 +76,7 @@ export const getAgentRunLogs = async (
   try {
     const list = await kube.list('pods', namespace, `agents.proompteng.ai/agent-run=${name}`)
     const items = Array.isArray(list.items) ? list.items : []
-    const pods = items
-      .map((item) => readPod(asRecord(item) ?? {}))
-      .filter((pod): pod is AgentRunPod => Boolean(pod))
+    const pods = items.map((item) => readPod(asRecord(item) ?? {})).filter((pod): pod is AgentRunPod => Boolean(pod))
 
     if (pods.length === 0) {
       return okResponse({
@@ -108,7 +104,7 @@ export const getAgentRunLogs = async (
     const containerName =
       containerParam && containers.some((entry) => entry.name === containerParam)
         ? containerParam
-        : containers.find((entry) => entry.type === 'main')?.name ?? containers[0]?.name ?? null
+        : (containers.find((entry) => entry.type === 'main')?.name ?? containers[0]?.name ?? null)
 
     if (!containerName) {
       return errorResponse('container not found', 404, { name, namespace, pod: selectedPod.name })

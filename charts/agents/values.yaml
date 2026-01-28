@@ -133,6 +133,10 @@ controller:
     imagePullSecrets: []
     priorityClassName: ""
     schedulerName: ""
+  authSecret:
+    name: ""
+    key: "auth.json"
+    mountPath: "/root/.codex/auth.json"
 
 orchestrationController:
   enabled: true

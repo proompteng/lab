@@ -699,6 +699,22 @@ const parseEnvArray = (name: string) => {
   return Array.isArray(parsed) ? parsed : null
 }
 
+type AuthSecretConfig = {
+  name: string
+  key: string
+  mountPath: string
+}
+
+const resolveCodexAuthSecret = (): AuthSecretConfig | null => {
+  const name = (process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_SECRET_NAME ?? '').trim()
+  if (!name) return null
+  const key = (process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_SECRET_KEY ?? 'auth.json').trim() || 'auth.json'
+  const mountPath =
+    (process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_MOUNT_PATH ?? '/root/.codex/auth.json').trim() ||
+    '/root/.codex/auth.json'
+  return { name, key, mountPath }
+}
+
 const validateParameters = (params: Record<string, unknown>) => {
   const entries = Object.entries(params)
   if (entries.length > PARAMETERS_MAX_ENTRIES) {
@@ -1547,6 +1563,32 @@ const submitJobRun = async (
     })
   }
 
+  const authSecret = resolveCodexAuthSecret()
+  if (authSecret) {
+    const authVolumeName = makeName(authSecret.name, 'codex-auth')
+    volumes.push({
+      name: authVolumeName,
+      spec: {
+        secret: {
+          secretName: authSecret.name,
+          items: [{ key: authSecret.key, path: authSecret.key }],
+        },
+      },
+    })
+    const existingEnv = env.find((entry) => entry.name === 'CODEX_AUTH')
+    if (existingEnv) {
+      existingEnv.value = authSecret.mountPath
+    } else {
+      env.push({ name: 'CODEX_AUTH', value: authSecret.mountPath })
+    }
+    configVolumeMounts.push({
+      name: authVolumeName,
+      mountPath: authSecret.mountPath,
+      subPath: authSecret.key,
+      readOnly: true,
+    })
+  }
+
   const jobPodSpec: Record<string, unknown> = {
     serviceAccountName: serviceAccount ?? undefined,
     restartPolicy: 'Never',
@@ -1850,6 +1892,24 @@ const loadWorkflowDependencies = async (
         ok: false as const,
         reason: 'SecretNotAllowed',
         message: `memory secret ${memorySecretName} is not included in spec.secrets`,
+      }
+    }
+  }
+
+  const authSecret = resolveCodexAuthSecret()
+  if (authSecret) {
+    if (allowedSecrets.length > 0 && !allowedSecrets.includes(authSecret.name)) {
+      return {
+        ok: false as const,
+        reason: 'SecretNotAllowed',
+        message: `auth secret ${authSecret.name} is not allowlisted by the Agent`,
+      }
+    }
+    if (runSecrets.length > 0 && !runSecrets.includes(authSecret.name)) {
+      return {
+        ok: false as const,
+        reason: 'SecretNotAllowed',
+        message: `auth secret ${authSecret.name} is not included in spec.secrets`,
       }
     }
   }
@@ -2464,6 +2524,32 @@ const reconcileAgentRun = async (
         })
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
         return
+      }
+    }
+
+    if (runtimeType === 'job') {
+      const authSecret = resolveCodexAuthSecret()
+      if (authSecret) {
+        if (allowedSecrets.length > 0 && !allowedSecrets.includes(authSecret.name)) {
+          const updated = upsertCondition(conditions, {
+            type: 'InvalidSpec',
+            status: 'True',
+            reason: 'SecretNotAllowed',
+            message: `auth secret ${authSecret.name} is not allowlisted by the Agent`,
+          })
+          await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+          return
+        }
+        if (runSecrets.length > 0 && !runSecrets.includes(authSecret.name)) {
+          const updated = upsertCondition(conditions, {
+            type: 'InvalidSpec',
+            status: 'True',
+            reason: 'SecretNotAllowed',
+            message: `auth secret ${authSecret.name} is not included in spec.secrets`,
+          })
+          await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+          return
+        }
       }
     }
 

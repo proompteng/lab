@@ -287,6 +287,140 @@ describe('agents controller reconcileAgentRun', () => {
     expect(jobLabels?.['agents.proompteng.ai/provider']).toBe('provider-1')
   })
 
+  it('mounts codex auth secret into job runtime', async () => {
+    const previousName = process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_SECRET_NAME
+    const previousKey = process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_SECRET_KEY
+    const previousMountPath = process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_MOUNT_PATH
+    process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_SECRET_NAME = 'codex-auth'
+    process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_SECRET_KEY = 'auth.json'
+    process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_MOUNT_PATH = '/root/.codex/auth.json'
+
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      return { ...resource, metadata: { ...metadata, uid } }
+    })
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun()
+
+    try {
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+    } finally {
+      if (previousName === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_SECRET_NAME
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_SECRET_NAME = previousName
+      }
+      if (previousKey === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_SECRET_KEY
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_SECRET_KEY = previousKey
+      }
+      if (previousMountPath === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_MOUNT_PATH
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_MOUNT_PATH = previousMountPath
+      }
+    }
+
+    const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
+    const job = appliedResources.find((resource) => resource.kind === 'Job') as Record<string, unknown> | undefined
+    expect(job).toBeTruthy()
+
+    const podSpec = (job?.spec as Record<string, unknown> | undefined)?.template as Record<string, unknown> | undefined
+    const containerSpec = (podSpec?.spec as Record<string, unknown> | undefined)?.containers as
+      | Record<string, unknown>[]
+      | undefined
+    const container = containerSpec?.[0]
+    const env = (container?.env as Record<string, unknown>[] | undefined) ?? []
+    const envEntry = env.find((entry) => entry.name === 'CODEX_AUTH') as Record<string, unknown> | undefined
+    expect(envEntry?.value).toBe('/root/.codex/auth.json')
+
+    const volumes = (podSpec?.spec as Record<string, unknown> | undefined)?.volumes as
+      | Record<string, unknown>[]
+      | undefined
+    const authVolume = volumes?.find((volume) => {
+      const secret = (volume.secret ?? {}) as Record<string, unknown>
+      return secret.secretName === 'codex-auth'
+    })
+    expect(authVolume).toBeTruthy()
+
+    const mounts = (container?.volumeMounts as Record<string, unknown>[] | undefined) ?? []
+    const authMount = mounts.find((mount) => mount.mountPath === '/root/.codex/auth.json') as
+      | Record<string, unknown>
+      | undefined
+    expect(authMount?.subPath).toBe('auth.json')
+  })
+
+  it('marks AgentRun failed when auth secret is not allowlisted', async () => {
+    const previousName = process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_SECRET_NAME
+    process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_SECRET_NAME = 'codex-auth'
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, security: { allowedSecrets: ['alpha'] } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun()
+
+    try {
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+    } finally {
+      if (previousName === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_SECRET_NAME
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_CODEX_AUTH_SECRET_NAME = previousName
+      }
+    }
+
+    const status = getLastStatus(kube)
+    const condition = findCondition(status, 'InvalidSpec')
+    expect(condition?.reason).toBe('SecretNotAllowed')
+  })
+
   it('advances workflow steps and completes', async () => {
     const jobStatuses = new Map<string, Record<string, unknown>>()
     const apply = vi.fn(async (resource: Record<string, unknown>) => {

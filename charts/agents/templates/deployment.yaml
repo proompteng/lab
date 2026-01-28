@@ -135,6 +135,14 @@ spec:
             - name: JANGAR_AGENT_RUNNER_SCHEDULER_NAME
               value: {{ .Values.controller.defaultWorkload.schedulerName | quote }}
             {{- end }}
+            {{- if .Values.controller.authSecret.name }}
+            - name: JANGAR_AGENT_RUNNER_CODEX_AUTH_SECRET_NAME
+              value: {{ .Values.controller.authSecret.name | quote }}
+            - name: JANGAR_AGENT_RUNNER_CODEX_AUTH_SECRET_KEY
+              value: {{ .Values.controller.authSecret.key | default "auth.json" | quote }}
+            - name: JANGAR_AGENT_RUNNER_CODEX_AUTH_MOUNT_PATH
+              value: {{ .Values.controller.authSecret.mountPath | default "/root/.codex/auth.json" | quote }}
+            {{- end }}
             {{- if .Values.kubernetesApi.host }}
             - name: KUBERNETES_SERVICE_HOST
               value: {{ .Values.kubernetesApi.host | quote }}
