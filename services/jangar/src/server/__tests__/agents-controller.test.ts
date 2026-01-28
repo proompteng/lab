@@ -485,9 +485,7 @@ describe('agents controller reconcileAgentRun', () => {
       const codexEnv = env.find((entry) => entry.name === 'CODEX_AUTH') as Record<string, unknown> | undefined
       expect(codexEnv?.value).toBe('/root/.codex/auth.json')
 
-      const authVolume = volumes.find((volume) => volume.name === 'run-1-auth') as
-        | Record<string, unknown>
-        | undefined
+      const authVolume = volumes.find((volume) => volume.name === 'run-1-auth') as Record<string, unknown> | undefined
       const authSecret = (authVolume?.secret as Record<string, unknown> | undefined) ?? {}
       expect(authSecret.secretName).toBe('codex-auth')
       const items = (authSecret.items as Record<string, unknown>[] | undefined) ?? []
@@ -845,6 +843,59 @@ describe('agents controller reconcileAgentRun', () => {
     const thirdSteps = (thirdWorkflow.steps as Record<string, unknown>[]) ?? []
     expect(thirdSteps[0]?.attempt).toBe(2)
     expect(thirdSteps[0]?.phase).toBe('Running')
+  })
+
+  it('deletes completed AgentRun after retention window', async () => {
+    const deleteMock = vi.fn(async () => ({}))
+    const kube = buildKube({ delete: deleteMock })
+    const finishedAt = new Date(Date.now() - 120_000).toISOString()
+    const agentRun = buildAgentRun()
+    agentRun.spec = { ...(agentRun.spec as Record<string, unknown>), ttlSecondsAfterFinished: 30 }
+    agentRun.status = { phase: 'Succeeded', finishedAt }
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    expect(deleteMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents')
+  })
+
+  it('uses controller retention default when spec override is missing', async () => {
+    const previousRetention = process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
+
+    try {
+      const deleteMock = vi.fn(async () => ({}))
+      const kube = buildKube({ delete: deleteMock })
+      const finishedAt = new Date(Date.now() - 120_000).toISOString()
+      const agentRun = buildAgentRun({
+        status: { phase: 'Failed', finishedAt },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      expect(deleteMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents')
+    } finally {
+      if (previousRetention === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+      }
+    }
   })
 })
 

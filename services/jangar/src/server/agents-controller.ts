@@ -11,7 +11,7 @@ const DEFAULT_CONCURRENCY = {
   perAgent: 5,
   cluster: 100,
 }
-const DEFAULT_AGENTRUN_RETENTION_SECONDS = 0
+const DEFAULT_AGENTRUN_RETENTION_SECONDS = 30 * 24 * 60 * 60
 const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
 const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
@@ -723,9 +723,7 @@ const resolveAuthSecretConfig = (): AuthSecretConfig | null => {
 }
 
 const buildAuthSecretPath = (config: AuthSecretConfig) => {
-  const normalizedMountPath = config.mountPath.endsWith('/')
-    ? config.mountPath.slice(0, -1)
-    : config.mountPath
+  const normalizedMountPath = config.mountPath.endsWith('/') ? config.mountPath.slice(0, -1) : config.mountPath
   return `${normalizedMountPath}/${config.key}`
 }
 
@@ -2306,6 +2304,7 @@ const reconcileAgentRun = async (
   const spec = asRecord(agentRun.spec) ?? {}
   const status = asRecord(agentRun.status) ?? {}
   const phase = asString(status.phase) ?? 'Pending'
+  const finishedAt = asString(status.finishedAt)
   const agentName = asString(readNested(spec, ['agentRef', 'name']))
   const finalizer = 'agents.proompteng.ai/runtime-cleanup'
   const finalizers = Array.isArray(metadata.finalizers)
@@ -2345,18 +2344,15 @@ const reconcileAgentRun = async (
     return
   }
 
-  if (phase === 'Succeeded' || phase === 'Failed') {
+  if (phase === 'Succeeded' || phase === 'Failed' || phase === 'Cancelled') {
     const retentionSeconds = resolveAgentRunRetentionSeconds(spec)
-    if (retentionSeconds > 0) {
-      const finishedAt = asString(status.finishedAt)
-      if (finishedAt) {
-        const finishedAtMs = Date.parse(finishedAt)
-        if (!Number.isNaN(finishedAtMs)) {
-          const expiresAtMs = finishedAtMs + retentionSeconds * 1000
-          if (Date.now() >= expiresAtMs) {
-            await kube.delete(RESOURCE_MAP.AgentRun, name, namespace)
-            return
-          }
+    if (finishedAt) {
+      const finishedAtMs = Date.parse(finishedAt)
+      if (!Number.isNaN(finishedAtMs)) {
+        const expiresAtMs = finishedAtMs + retentionSeconds * 1000
+        if (Date.now() >= expiresAtMs) {
+          await kube.delete(RESOURCE_MAP.AgentRun, name, namespace)
+          return
         }
       }
     }

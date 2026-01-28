@@ -63,10 +63,9 @@ describe('control plane logs route', () => {
   })
 
   it('requires name and namespace', async () => {
-    const response = await getAgentRunLogs(
-      new Request('http://localhost/api/agents/control-plane/logs?name=run-1'),
-      { kubeClient: { list: vi.fn(), logs: vi.fn() } },
-    )
+    const response = await getAgentRunLogs(new Request('http://localhost/api/agents/control-plane/logs?name=run-1'), {
+      kubeClient: { list: vi.fn(), logs: vi.fn() },
+    })
 
     expect(response.status).toBe(400)
     const payload = (await response.json()) as Record<string, unknown>

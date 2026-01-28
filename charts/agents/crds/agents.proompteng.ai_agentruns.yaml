@@ -154,7 +154,6 @@ spec:
                 type: array
               ttlSecondsAfterFinished:
                 format: int32
-                minimum: 0
                 type: integer
               workflow:
                 properties:
