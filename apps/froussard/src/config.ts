@@ -8,6 +8,9 @@ const requireEnv = (env: NodeJS.ProcessEnv, name: string): string => {
   return value
 }
 
+const DEFAULT_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000
+const DEFAULT_IDEMPOTENCY_MAX_ENTRIES = 10_000
+
 export interface AppConfig {
   idempotency: {
     ttlMs: number
@@ -72,8 +75,15 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
   }
 
   const atlasBaseUrl = requireEnv(env, 'JANGAR_BASE_URL').replace(/\/+$/, '')
-  const idempotencyTtlMs = parseNonNegativeInt(env.FROUSSARD_WEBHOOK_IDEMPOTENCY_TTL_MS, 10 * 60 * 1000)
-  const idempotencyMaxEntries = parseNonNegativeInt(env.FROUSSARD_WEBHOOK_IDEMPOTENCY_MAX_ENTRIES, 10_000)
+  const idempotencyTtlSecondsRaw = env.FROUSSARD_WEBHOOK_IDEMPOTENCY_TTL_SECONDS
+  const idempotencyTtlMs =
+    typeof idempotencyTtlSecondsRaw === 'string' && idempotencyTtlSecondsRaw.trim() !== ''
+      ? parseNonNegativeInt(idempotencyTtlSecondsRaw, DEFAULT_IDEMPOTENCY_TTL_MS / 1000) * 1000
+      : parseNonNegativeInt(env.FROUSSARD_WEBHOOK_IDEMPOTENCY_TTL_MS, DEFAULT_IDEMPOTENCY_TTL_MS)
+  const idempotencyMaxEntries = parseNonNegativeInt(
+    env.FROUSSARD_WEBHOOK_IDEMPOTENCY_MAX_ENTRIES,
+    DEFAULT_IDEMPOTENCY_MAX_ENTRIES,
+  )
 
   return {
     idempotency: {

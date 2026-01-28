@@ -389,7 +389,7 @@ export const createGithubWebhookHandler = ({
     }
 
     if (idempotencyStore.isDuplicate(`github:${deliveryId}`)) {
-      logger.info({ deliveryId, eventName, action: actionHeader ?? null }, 'duplicate github delivery ignored')
+      logger.warn({ deliveryId, eventName, action: actionHeader ?? null }, 'duplicate github webhook delivery ignored')
       return new Response(
         JSON.stringify({
           status: 'duplicate',
@@ -397,10 +397,7 @@ export const createGithubWebhookHandler = ({
           event: eventName,
           action: actionHeader ?? null,
         }),
-        {
-          status: 202,
-          headers: { 'Content-Type': 'application/json' },
-        },
+        { status: 202, headers: { 'Content-Type': 'application/json' } },
       )
     }
 

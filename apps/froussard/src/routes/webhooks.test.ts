@@ -667,6 +667,43 @@ describe('createWebhookHandler', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('ignores duplicate github deliveries before publishing', async () => {
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+    const payload = {
+      action: 'opened',
+      issue: {
+        number: 1,
+        title: 'Test issue',
+        body: 'Body',
+        user: { login: 'USER' },
+        html_url: 'https://example.com',
+      },
+      repository: { default_branch: 'main' },
+      sender: { login: 'USER' },
+    }
+
+    const headers = {
+      'x-github-event': 'issues',
+      'x-github-delivery': 'delivery-dup',
+      'x-hub-signature-256': 'sig',
+      'content-type': 'application/json',
+    }
+
+    const response = await handler(buildRequest(payload, headers), 'github')
+    expect(response.status).toBe(202)
+    expect(publishedMessages).toHaveLength(2)
+    expect(githubServiceMock.postIssueReaction).toHaveBeenCalledTimes(1)
+
+    const duplicateResponse = await handler(buildRequest(payload, headers), 'github')
+    expect(duplicateResponse.status).toBe(202)
+    await expect(duplicateResponse.json()).resolves.toMatchObject({
+      status: 'duplicate',
+      deliveryId: 'delivery-dup',
+    })
+    expect(publishedMessages).toHaveLength(2)
+    expect(githubServiceMock.postIssueReaction).toHaveBeenCalledTimes(1)
+  })
+
   it('publishes implementation message when trigger comment is received', async () => {
     const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
     const payload = {
@@ -1202,10 +1239,12 @@ describe('createWebhookHandler', () => {
 
     expect(first.status).toBe(200)
     expect(second.status).toBe(200)
-    const duplicateBody = await second.json()
-    expect(duplicateBody).toMatchObject({
+    await expect(second.json()).resolves.toEqual({
       type: 4,
-      data: { content: 'Interaction already received.', flags: 64 },
+      data: {
+        content: 'Duplicate interaction ignored.',
+        flags: 64,
+      },
     })
 
     expect(mockToPlanModalEvent).toHaveBeenCalledTimes(1)

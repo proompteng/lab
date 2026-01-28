@@ -1,10 +1,6 @@
 import type { DiscordResponseConfig } from '@/discord-commands'
 
 export interface WebhookConfig {
-  idempotency: {
-    ttlMs: number
-    maxEntries: number
-  }
   atlas: {
     baseUrl: string
     apiKey: string | null
@@ -31,5 +27,9 @@ export interface WebhookConfig {
   discord: {
     publicKey: string
     response: DiscordResponseConfig
+  }
+  idempotency: {
+    ttlMs: number
+    maxEntries: number
   }
 }
