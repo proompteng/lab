@@ -355,7 +355,12 @@ const triggerAtlasEnrichment = async (options: {
   }
 }
 
-export const createGithubWebhookHandler = ({ runtime, webhooks, config, idempotencyStore }: GithubWebhookDependencies) => {
+export const createGithubWebhookHandler = ({
+  runtime,
+  webhooks,
+  config,
+  idempotencyStore,
+}: GithubWebhookDependencies) => {
   const githubService = runtime.runSync(
     Effect.gen(function* (_) {
       return yield* GithubService
