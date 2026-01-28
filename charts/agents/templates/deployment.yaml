@@ -86,6 +86,22 @@ spec:
             - name: JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE
               value: {{ .Values.workflowRuntime.native.systemImprovementOrchestrationNamespace | quote }}
             {{- end }}
+            {{- if and .Values.runtime.agentRunnerImage (not (hasKey .Values.env.vars "JANGAR_AGENT_RUNNER_IMAGE")) }}
+            - name: JANGAR_AGENT_RUNNER_IMAGE
+              value: {{ .Values.runtime.agentRunnerImage | quote }}
+            {{- end }}
+            {{- if and .Values.runtime.agentImage (not (hasKey .Values.env.vars "JANGAR_AGENT_IMAGE")) }}
+            - name: JANGAR_AGENT_IMAGE
+              value: {{ .Values.runtime.agentImage | quote }}
+            {{- end }}
+            {{- if and .Values.runtime.scheduleRunnerImage (not (hasKey .Values.env.vars "JANGAR_SCHEDULE_RUNNER_IMAGE")) }}
+            - name: JANGAR_SCHEDULE_RUNNER_IMAGE
+              value: {{ .Values.runtime.scheduleRunnerImage | quote }}
+            {{- end }}
+            {{- if and .Values.runtime.scheduleServiceAccount (not (hasKey .Values.env.vars "JANGAR_SCHEDULE_SERVICE_ACCOUNT")) }}
+            - name: JANGAR_SCHEDULE_SERVICE_ACCOUNT
+              value: {{ .Values.runtime.scheduleServiceAccount | quote }}
+            {{- end }}
             {{- range $name, $value := .Values.env.vars }}
             - name: {{ $name }}
               value: {{ $value | quote }}
@@ -172,6 +188,10 @@ spec:
             - name: NATS_PASSWORD
               value: {{ .Values.agentComms.nats.password | quote }}
             {{- end }}
+            {{- end }}
+            {{- if and (gt (len .Values.agentComms.subjects) 0) (not (hasKey .Values.env.vars "JANGAR_AGENT_COMMS_SUBJECTS")) }}
+            - name: JANGAR_AGENT_COMMS_SUBJECTS
+              value: {{ join "," .Values.agentComms.subjects | quote }}
             {{- end }}
             {{- else }}
             - name: JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED

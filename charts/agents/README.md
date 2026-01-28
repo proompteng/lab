@@ -80,6 +80,17 @@ Enable gRPC for agentctl or in-cluster clients:
 Automatic migrations are enabled by default. To skip:
 - `env.vars.JANGAR_MIGRATIONS=skip`
 
+### AgentRun runner defaults (optional)
+Set defaults for AgentRun and Schedule workload images when the CRD does not specify one:
+- `runtime.agentRunnerImage` → `JANGAR_AGENT_RUNNER_IMAGE`
+- `runtime.agentImage` → `JANGAR_AGENT_IMAGE`
+- `runtime.scheduleRunnerImage` → `JANGAR_SCHEDULE_RUNNER_IMAGE`
+- `runtime.scheduleServiceAccount` → `JANGAR_SCHEDULE_SERVICE_ACCOUNT`
+
+### Agent comms subjects (optional)
+Override the default NATS subject filters (comma-separated) used by the agent comms subscriber:
+- `agentComms.subjects`
+
 ## Example production values
 ```yaml
 image:
