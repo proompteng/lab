@@ -1,3 +1,8 @@
+{{- if or .Values.kubernetesApi.host .Values.kubernetesApi.port }}
+{{- if not (and .Values.kubernetesApi.host .Values.kubernetesApi.port) }}
+{{- fail "kubernetesApi.host and kubernetesApi.port must be set together" -}}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

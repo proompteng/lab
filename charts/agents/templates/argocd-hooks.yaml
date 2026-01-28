@@ -1,8 +1,23 @@
 {{- if .Values.argocdHooks.enabled -}}
 {{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
 {{- $serviceAccount := .Values.argocdHooks.serviceAccountName | default (include "agents.serviceAccountName" .) -}}
-{{- $smokeName := dig "metadata" "name" "" .Values.argocdHooks.smoke.agentRun -}}
+{{- $smokeAgentRun := deepCopy .Values.argocdHooks.smoke.agentRun -}}
+{{- $smokeName := dig "metadata" "name" "" $smokeAgentRun -}}
 {{- $labelSelector := .Values.argocdHooks.smoke.labelSelector | default (printf "agents.proompteng.ai/agent-run=%s" $smokeName) -}}
+{{- if and .Values.argocdHooks.postSync.enabled (gt (len $smokeAgentRun) 0) (not $smokeName) -}}
+{{- fail "argocdHooks.postSync.enabled requires argocdHooks.smoke.agentRun.metadata.name" -}}
+{{- end }}
+{{- if gt (len $smokeAgentRun) 0 -}}
+{{- $_ := set $smokeAgentRun "apiVersion" (default "agents.proompteng.ai/v1" (get $smokeAgentRun "apiVersion")) -}}
+{{- $_ := set $smokeAgentRun "kind" (default "AgentRun" (get $smokeAgentRun "kind")) -}}
+{{- end }}
+{{- if $smokeName -}}
+{{- $metadata := (get $smokeAgentRun "metadata") | default (dict) -}}
+{{- $labels := (get $metadata "labels") | default (dict) -}}
+{{- $_ := set $labels "agents.proompteng.ai/agent-run" $smokeName -}}
+{{- $_ := set $metadata "labels" $labels -}}
+{{- $_ := set $smokeAgentRun "metadata" $metadata -}}
+{{- end }}
 {{- if and .Values.argocdHooks.preSync.enabled (or $smokeName .Values.argocdHooks.smoke.labelSelector) -}}
 apiVersion: batch/v1
 kind: Job
@@ -38,11 +53,12 @@ spec:
               kubectl -n "{{ $namespace }}" delete agentruns.agents.proompteng.ai "{{ $smokeName }}" --ignore-not-found
               {{- end }}
               {{- if $labelSelector }}
+              kubectl -n "{{ $namespace }}" delete agentruns.agents.proompteng.ai -l "{{ $labelSelector }}" --ignore-not-found
               kubectl -n "{{ $namespace }}" delete jobs -l "{{ $labelSelector }}" --ignore-not-found
               kubectl -n "{{ $namespace }}" delete configmaps -l "{{ $labelSelector }}" --ignore-not-found
               {{- end }}
 {{- end }}
-{{- if and .Values.argocdHooks.postSync.enabled $smokeName (gt (len .Values.argocdHooks.smoke.agentRun) 0) -}}
+{{- if and .Values.argocdHooks.postSync.enabled $smokeName (gt (len $smokeAgentRun) 0) -}}
 ---
 apiVersion: batch/v1
 kind: Job
@@ -75,12 +91,13 @@ spec:
             - |
               set -euo pipefail
               cat <<'EOF' | kubectl -n "{{ $namespace }}" apply -f -
-{{- toYaml .Values.argocdHooks.smoke.agentRun | nindent 14 }}
+{{- toYaml $smokeAgentRun | nindent 14 }}
               EOF
               kubectl -n "{{ $namespace }}" wait --for=condition=Succeeded "agentruns.agents.proompteng.ai/{{ $smokeName }}" --timeout={{ .Values.argocdHooks.postSync.waitTimeout }}
               {{- if .Values.argocdHooks.postSync.cleanup }}
               kubectl -n "{{ $namespace }}" delete agentruns.agents.proompteng.ai "{{ $smokeName }}" --ignore-not-found
               {{- if $labelSelector }}
+              kubectl -n "{{ $namespace }}" delete agentruns.agents.proompteng.ai -l "{{ $labelSelector }}" --ignore-not-found
               kubectl -n "{{ $namespace }}" delete jobs -l "{{ $labelSelector }}" --ignore-not-found
               kubectl -n "{{ $namespace }}" delete configmaps -l "{{ $labelSelector }}" --ignore-not-found
               {{- end }}

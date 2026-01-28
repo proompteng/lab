@@ -49,6 +49,7 @@
           "type": "object",
           "properties": {
             "create": { "type": "boolean" },
+            "rules": { "type": "array", "items": { "type": "object" } },
             "extraRules": { "type": "array", "items": { "type": "object" } }
           },
           "additionalProperties": false
@@ -388,5 +389,135 @@
       },
       "additionalProperties": false
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["runnerServiceAccount"],
+        "properties": {
+          "runnerServiceAccount": {
+            "required": ["rbac"],
+            "properties": {
+              "rbac": {
+                "required": ["create"],
+                "properties": {
+                  "create": { "const": true }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "runnerServiceAccount": {
+            "anyOf": [
+              {
+                "required": ["name"],
+                "properties": {
+                  "name": { "type": "string", "minLength": 1 }
+                }
+              },
+              {
+                "required": ["create"],
+                "properties": {
+                  "create": { "const": true }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["kubernetesApi"],
+        "properties": {
+          "kubernetesApi": {
+            "required": ["host"],
+            "properties": {
+              "host": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "kubernetesApi": {
+            "required": ["port"],
+            "properties": {
+              "port": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["kubernetesApi"],
+        "properties": {
+          "kubernetesApi": {
+            "required": ["port"],
+            "properties": {
+              "port": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "kubernetesApi": {
+            "required": ["host"],
+            "properties": {
+              "host": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["argocdHooks"],
+        "properties": {
+          "argocdHooks": {
+            "required": ["enabled", "postSync"],
+            "properties": {
+              "enabled": { "const": true },
+              "postSync": {
+                "required": ["enabled"],
+                "properties": {
+                  "enabled": { "const": true }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "argocdHooks": {
+            "required": ["smoke"],
+            "properties": {
+              "smoke": {
+                "required": ["agentRun"],
+                "properties": {
+                  "agentRun": {
+                    "required": ["metadata"],
+                    "properties": {
+                      "metadata": {
+                        "required": ["name"],
+                        "properties": {
+                          "name": { "type": "string", "minLength": 1 }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
