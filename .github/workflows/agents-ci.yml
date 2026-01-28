@@ -32,6 +32,9 @@ jobs:
         with:
           version: v3.14.4
 
+      - name: Install kustomize
+        uses: imranismail/setup-kustomize@v2
+
       - name: Install kubeconform
         run: |
           KUBECONFORM_VERSION="v0.7.0"
@@ -54,6 +57,8 @@ jobs:
           kubeconform -v
 
       - name: Validate Agents chart and CRDs
+        env:
+          AGENTS_VALIDATE_KUSTOMIZE: "1"
         run: scripts/agents/validate-agents.sh
 
   integration:

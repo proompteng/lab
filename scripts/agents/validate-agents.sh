@@ -154,6 +154,10 @@ kubeconform --strict --summary --ignore-missing-schemas \
   --schema-location default \
   "${ROOT_DIR}/argocd/applications/agents/application.yaml"
 
+if [[ "${AGENTS_VALIDATE_KUSTOMIZE:-0}" == "1" ]]; then
+  kustomize build --enable-helm "${ROOT_DIR}/argocd/applications/agents" >/dev/null
+fi
+
 CRD_DIR="${CHART_DIR}/crds" python3 - <<'PY'
 import json
 import os
