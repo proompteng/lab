@@ -2346,7 +2346,7 @@ const reconcileAgentRun = async (
 
   if (phase === 'Succeeded' || phase === 'Failed' || phase === 'Cancelled') {
     const retentionSeconds = resolveAgentRunRetentionSeconds(spec)
-    if (finishedAt) {
+    if (retentionSeconds > 0 && finishedAt) {
       const finishedAtMs = Date.parse(finishedAt)
       if (!Number.isNaN(finishedAtMs)) {
         const expiresAtMs = finishedAtMs + retentionSeconds * 1000
