@@ -691,6 +691,9 @@ const parseEnvList = (name: string) => {
     .filter((value) => value.length > 0)
 }
 
+const resolveRunnerServiceAccount = (runtimeConfig: Record<string, unknown>) =>
+  asString(runtimeConfig.serviceAccount) ?? asString(process.env.JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT)
+
 type AuthSecretConfig = {
   name: string
   key: string
@@ -1498,8 +1501,7 @@ const submitJobRun = async (
     .filter((file) => file.path && file.content)
 
   const runtimeConfig = options.runtimeConfig ?? asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
-  const serviceAccount =
-    asString(runtimeConfig.serviceAccount) ?? asString(process.env.JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT)
+  const serviceAccount = resolveRunnerServiceAccount(runtimeConfig)
   const nodeSelector = asRecord(runtimeConfig.nodeSelector) ?? parseEnvRecord('JANGAR_AGENT_RUNNER_NODE_SELECTOR')
   const tolerations =
     (Array.isArray(runtimeConfig.tolerations) ? runtimeConfig.tolerations : null) ??
@@ -1945,7 +1947,7 @@ const loadWorkflowDependencies = async (
   }
 
   if (allowedServiceAccounts.length > 0) {
-    const rawServiceAccount = asString(runtimeConfig.serviceAccount)
+    const rawServiceAccount = resolveRunnerServiceAccount(runtimeConfig)
     const effectiveServiceAccount = rawServiceAccount || 'default'
     if (!allowedServiceAccounts.includes(effectiveServiceAccount)) {
       return {
@@ -2485,7 +2487,7 @@ const reconcileAgentRun = async (
     }
 
     if (allowedServiceAccounts.length > 0 && (runtimeType === 'job' || runtimeType === 'workflow')) {
-      const rawServiceAccount = asString(runtimeConfig.serviceAccount)
+      const rawServiceAccount = resolveRunnerServiceAccount(runtimeConfig)
       const effectiveServiceAccount = rawServiceAccount || 'default'
       if (!allowedServiceAccounts.includes(effectiveServiceAccount)) {
         const updated = upsertCondition(conditions, {
