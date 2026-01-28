@@ -11,7 +11,7 @@ const DEFAULT_CONCURRENCY = {
   perAgent: 5,
   cluster: 100,
 }
-const DEFAULT_AGENTRUN_RETENTION_SECONDS = 30 * 24 * 60 * 60
+const DEFAULT_AGENTRUN_RETENTION_SECONDS = 0
 const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
 const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
@@ -2321,21 +2321,6 @@ const reconcileAgentRun = async (
   const workload = asRecord(readNested(spec, ['workload'])) ?? {}
   let workloadImage: string | null = null
 
-  if (!deleting && (phase === 'Succeeded' || phase === 'Failed')) {
-    const finishedAt = asString(status.finishedAt)
-    if (finishedAt) {
-      const finishedAtMs = Date.parse(finishedAt)
-      if (!Number.isNaN(finishedAtMs)) {
-        const retentionSeconds = resolveAgentRunRetentionSeconds(spec)
-        const expiresAtMs = finishedAtMs + retentionSeconds * 1000
-        if (Date.now() >= expiresAtMs) {
-          await kube.delete(RESOURCE_MAP.AgentRun, name, namespace)
-          return
-        }
-      }
-    }
-  }
-
   if (deleting) {
     if (hasFinalizer) {
       const runtimeRef = parseRuntimeRef(status.runtimeRef)
@@ -2358,6 +2343,23 @@ const reconcileAgentRun = async (
       metadata: { finalizers: [...finalizers, finalizer] },
     })
     return
+  }
+
+  if (phase === 'Succeeded' || phase === 'Failed') {
+    const retentionSeconds = resolveAgentRunRetentionSeconds(spec)
+    if (retentionSeconds > 0) {
+      const finishedAt = asString(status.finishedAt)
+      if (finishedAt) {
+        const finishedAtMs = Date.parse(finishedAt)
+        if (!Number.isNaN(finishedAtMs)) {
+          const expiresAtMs = finishedAtMs + retentionSeconds * 1000
+          if (Date.now() >= expiresAtMs) {
+            await kube.delete(RESOURCE_MAP.AgentRun, name, namespace)
+            return
+          }
+        }
+      }
+    }
   }
 
   const runtimeRef = parseRuntimeRef(status.runtimeRef)
