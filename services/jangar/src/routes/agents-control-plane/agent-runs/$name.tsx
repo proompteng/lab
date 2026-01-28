@@ -16,8 +16,22 @@ import {
 import { buildBaseSummaryItems } from '@/components/agents-control-plane-primitives'
 import { parseNamespaceSearch } from '@/components/agents-control-plane-search'
 import { Button, buttonVariants } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { fetchPrimitiveDetail, fetchPrimitiveEvents, type PrimitiveEventItem } from '@/data/agents-control-plane'
+import {
+  fetchAgentRunLogs,
+  fetchPrimitiveDetail,
+  fetchPrimitiveEvents,
+  type AgentRunLogPod,
+  type PrimitiveEventItem,
+} from '@/data/agents-control-plane'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/agents-control-plane/agent-runs/$name')({
@@ -135,6 +149,47 @@ function AgentRunDetailPage() {
   const [error, setError] = React.useState<string | null>(null)
   const [eventsError, setEventsError] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
+  const [activeTab, setActiveTab] = React.useState('summary')
+
+  const [logPods, setLogPods] = React.useState<AgentRunLogPod[]>([])
+  const [logPod, setLogPod] = React.useState<string | null>(null)
+  const [logContainer, setLogContainer] = React.useState<string | null>(null)
+  const [logText, setLogText] = React.useState('')
+  const [tailLines, setTailLines] = React.useState('200')
+  const [logsError, setLogsError] = React.useState<string | null>(null)
+  const [isLogsLoading, setIsLogsLoading] = React.useState(false)
+
+  const loadLogs = React.useCallback(async () => {
+    setIsLogsLoading(true)
+    setLogsError(null)
+    try {
+      const parsedTail = Number.parseInt(tailLines, 10)
+      const result = await fetchAgentRunLogs({
+        name: params.name,
+        namespace: searchState.namespace,
+        pod: logPod,
+        container: logContainer,
+        tailLines: Number.isFinite(parsedTail) ? parsedTail : null,
+      })
+      if (!result.ok) {
+        setLogText('')
+        setLogsError(result.message)
+        return
+      }
+      setLogPods(result.pods)
+      setLogText(result.logs)
+      setLogPod(result.pod)
+      setLogContainer(result.container)
+      if (typeof result.tailLines === 'number') {
+        setTailLines(result.tailLines.toString())
+      }
+    } catch (err) {
+      setLogText('')
+      setLogsError(err instanceof Error ? err.message : 'Failed to load logs')
+    } finally {
+      setIsLogsLoading(false)
+    }
+  }, [logContainer, logPod, params.name, searchState.namespace, tailLines])
 
   const load = React.useCallback(async () => {
     setIsLoading(true)
@@ -179,6 +234,20 @@ function AgentRunDetailPage() {
     void load()
   }, [load])
 
+  React.useEffect(() => {
+    if (!resource || activeTab !== 'logs') return
+    void loadLogs()
+  }, [activeTab, loadLogs, resource])
+
+  React.useEffect(() => {
+    setLogPods([])
+    setLogPod(null)
+    setLogContainer(null)
+    setLogText('')
+    setTailLines('200')
+    setLogsError(null)
+  }, [params.name, searchState.namespace])
+
   const statusLabel = resource ? deriveStatusLabel(resource) : 'Unknown'
   const conditions = resource ? getStatusConditions(resource) : []
   const spec = resource && typeof resource.spec === 'object' ? resource.spec : {}
@@ -213,6 +282,10 @@ function AgentRunDetailPage() {
       ]
     : []
 
+  const selectedLogPod = logPod ? logPods.find((pod) => pod.name === logPod) : null
+  const containers = selectedLogPod?.containers ?? []
+  const hasPods = logPods.length > 0
+
   return (
     <main className="mx-auto w-full max-w-6xl space-y-6 p-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -243,12 +316,13 @@ function AgentRunDetailPage() {
       ) : null}
 
       {resource ? (
-        <Tabs defaultValue="summary" className="space-y-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList variant="line" className="w-full justify-start">
             <TabsTrigger value="summary">Summary</TabsTrigger>
             <TabsTrigger value="yaml">YAML</TabsTrigger>
             <TabsTrigger value="conditions">Conditions</TabsTrigger>
             <TabsTrigger value="events">Events</TabsTrigger>
+            <TabsTrigger value="logs">Logs</TabsTrigger>
           </TabsList>
           <TabsContent value="summary" className="space-y-4">
             <section className="space-y-4 rounded-none border border-border bg-card p-4">
@@ -379,6 +453,91 @@ function AgentRunDetailPage() {
             <section className="space-y-3 rounded-none border border-border bg-card p-4">
               <h2 className="text-sm font-semibold text-foreground">Events</h2>
               <EventsList events={events} error={eventsError} />
+            </section>
+          </TabsContent>
+          <TabsContent value="logs">
+            <section className="space-y-4 rounded-none border border-border bg-card p-4">
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="flex flex-col gap-1 flex-1 min-w-0">
+                  <label className="text-xs font-medium text-foreground">Pod</label>
+                  <Select
+                    value={logPod ?? ''}
+                    onValueChange={(value) => {
+                      setLogPod(value || null)
+                      const nextPod = logPods.find((pod) => pod.name === value)
+                      const nextContainer = nextPod?.containers.find((entry) => entry.type === 'main')?.name
+                      setLogContainer(nextContainer ?? nextPod?.containers[0]?.name ?? null)
+                    }}
+                    disabled={!hasPods}
+                  >
+                    <SelectTrigger className="w-full" aria-label="Pod">
+                      <SelectValue placeholder={hasPods ? 'Select pod' : 'No pods found'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {logPods.map((pod) => (
+                        <SelectItem key={pod.name} value={pod.name}>
+                          {pod.name}
+                          {pod.phase ? <span className="text-muted-foreground">({pod.phase})</span> : null}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-1 flex-1 min-w-0">
+                  <label className="text-xs font-medium text-foreground">Container</label>
+                  <Select
+                    value={logContainer ?? ''}
+                    onValueChange={(value) => setLogContainer(value || null)}
+                    disabled={containers.length === 0}
+                  >
+                    <SelectTrigger className="w-full" aria-label="Container">
+                      <SelectValue placeholder={containers.length > 0 ? 'Select container' : 'No containers'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {containers.map((entry) => (
+                        <SelectItem key={entry.name} value={entry.name}>
+                          {entry.name}
+                          {entry.type === 'init' ? <span className="text-muted-foreground">(init)</span> : null}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-1 flex-1 min-w-0">
+                  <label className="text-xs font-medium text-foreground" htmlFor="tailLines">
+                    Tail lines
+                  </label>
+                  <Input
+                    id="tailLines"
+                    name="tailLines"
+                    type="number"
+                    min={1}
+                    max={5000}
+                    value={tailLines}
+                    onChange={(event) => setTailLines(event.target.value)}
+                    placeholder="200"
+                    autoComplete="off"
+                  />
+                </div>
+                <Button onClick={() => void loadLogs()} disabled={isLogsLoading}>
+                  Refresh logs
+                </Button>
+              </div>
+
+              {logsError ? (
+                <div className="rounded-none border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+                  {logsError}
+                </div>
+              ) : null}
+
+              <div className="space-y-2">
+                <div className="text-xs text-muted-foreground">
+                  {logPod ? `Showing logs from ${logPod}` : 'Select a pod to view logs.'}
+                </div>
+                <div className="rounded-none border border-border bg-muted/40 p-3 text-xs font-mono text-foreground whitespace-pre-wrap">
+                  {isLogsLoading ? 'Loading logs...' : logText || 'No logs available yet.'}
+                </div>
+              </div>
             </section>
           </TabsContent>
         </Tabs>

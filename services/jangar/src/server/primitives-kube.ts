@@ -15,6 +15,12 @@ export type KubernetesClient = {
   get: (resource: string, name: string, namespace: string) => Promise<Record<string, unknown> | null>
   list: (resource: string, namespace: string, labelSelector?: string) => Promise<Record<string, unknown>>
   listEvents: (namespace: string, fieldSelector?: string) => Promise<Record<string, unknown>>
+  logs: (params: {
+    pod: string
+    namespace: string
+    container?: string | null
+    tailLines?: number | null
+  }) => Promise<string>
 }
 
 type CommandResult = {
@@ -144,6 +150,16 @@ export const createKubernetesClient = (): KubernetesClient => ({
     }
     const output = await kubectl(args, undefined, 'kubectl events')
     return parseJson(output, 'kubectl events')
+  },
+  logs: async ({ pod, namespace, container, tailLines }) => {
+    const args = ['logs', pod, '-n', namespace]
+    if (container) {
+      args.push('-c', container)
+    }
+    if (tailLines && Number.isFinite(tailLines)) {
+      args.push('--tail', Math.max(1, Math.floor(tailLines)).toString())
+    }
+    return kubectl(args, undefined, 'kubectl logs')
   },
 })
 
