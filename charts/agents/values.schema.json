@@ -229,6 +229,7 @@
             "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
             "tolerations": { "type": "array", "items": { "type": "object" } },
             "affinity": { "type": "object" },
+            "topologySpreadConstraints": { "type": "array", "items": { "type": "object" } },
             "podSecurityContext": { "type": "object" },
             "imagePullSecrets": { "type": "array", "items": { "type": "string" } },
             "priorityClassName": { "type": "string" },

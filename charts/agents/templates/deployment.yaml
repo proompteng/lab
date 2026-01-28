@@ -111,6 +111,10 @@ spec:
             - name: JANGAR_AGENT_RUNNER_TOLERATIONS
               value: {{ .Values.controller.defaultWorkload.tolerations | toJson | quote }}
             {{- end }}
+            {{- if and .Values.controller.defaultWorkload.topologySpreadConstraints (gt (len .Values.controller.defaultWorkload.topologySpreadConstraints) 0) }}
+            - name: JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS
+              value: {{ .Values.controller.defaultWorkload.topologySpreadConstraints | toJson | quote }}
+            {{- end }}
             {{- if and .Values.controller.defaultWorkload.affinity (gt (len .Values.controller.defaultWorkload.affinity) 0) }}
             - name: JANGAR_AGENT_RUNNER_AFFINITY
               value: {{ .Values.controller.defaultWorkload.affinity | toJson | quote }}
