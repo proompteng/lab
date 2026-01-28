@@ -125,6 +125,10 @@ describe('createWebhookHandler', () => {
   }
 
   const baseConfig: WebhookConfig = {
+    idempotency: {
+      ttlMs: 60_000,
+      maxEntries: 200,
+    },
     atlas: {
       baseUrl: 'http://jangar',
       apiKey: null,
@@ -159,6 +163,10 @@ describe('createWebhookHandler', () => {
 
   const provideRuntime = () => {
     const appConfig: AppConfig = {
+      idempotency: {
+        ttlMs: baseConfig.idempotency.ttlMs,
+        maxEntries: baseConfig.idempotency.maxEntries,
+      },
       githubWebhookSecret: 'secret',
       atlas: {
         baseUrl: baseConfig.atlas.baseUrl,
@@ -516,6 +524,7 @@ describe('createWebhookHandler', () => {
     const config: WebhookConfig = {
       ...baseConfig,
       ...(configOverride ?? {}),
+      idempotency: { ...baseConfig.idempotency, ...(configOverride?.idempotency ?? {}) },
       atlas: { ...baseConfig.atlas, ...(configOverride?.atlas ?? {}) },
       codebase: { ...baseConfig.codebase, ...(configOverride?.codebase ?? {}) },
       github: { ...baseConfig.github, ...(configOverride?.github ?? {}) },
@@ -565,6 +574,41 @@ describe('createWebhookHandler', () => {
     const response = await handler(buildRequest({}, {}), 'github')
     expect(response.status).toBe(401)
     expect(publishedMessages).toHaveLength(0)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('ignores duplicate GitHub deliveries', async () => {
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+    const payload = {
+      action: 'opened',
+      issue: {
+        number: 3,
+        title: 'Duplicate issue',
+        body: 'Body',
+        user: { login: 'USER' },
+        html_url: 'https://example.com',
+      },
+      repository: { default_branch: 'main' },
+      sender: { login: 'USER' },
+    }
+
+    const headers = {
+      'x-github-event': 'issues',
+      'x-github-delivery': 'delivery-dup-123',
+      'x-hub-signature-256': 'sig',
+      'content-type': 'application/json',
+    }
+
+    const first = await handler(buildRequest(payload, headers), 'github')
+    const second = await handler(buildRequest(payload, headers), 'github')
+
+    expect(first.status).toBe(202)
+    expect(second.status).toBe(202)
+    const duplicateBody = await second.json()
+    expect(duplicateBody).toMatchObject({ status: 'duplicate', deliveryId: 'delivery-dup-123' })
+
+    expect(publishedMessages).toHaveLength(2)
+    expect(githubServiceMock.postIssueReaction).toHaveBeenCalledTimes(1)
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -1136,6 +1180,36 @@ describe('createWebhookHandler', () => {
         flags: 64,
       },
     })
+  })
+
+  it('ignores duplicate Discord interactions', async () => {
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+
+    const interactionPayload = {
+      type: 5,
+      id: 'interaction-dup-1',
+      token: 'modal-token',
+      data: { custom_id: 'plan:command-1', components: [] },
+    }
+
+    const headers = {
+      'x-signature-ed25519': 'sig',
+      'x-signature-timestamp': 'timestamp',
+    }
+
+    const first = await handler(buildDiscordRequest(interactionPayload, headers), 'discord')
+    const second = await handler(buildDiscordRequest(interactionPayload, headers), 'discord')
+
+    expect(first.status).toBe(200)
+    expect(second.status).toBe(200)
+    const duplicateBody = await second.json()
+    expect(duplicateBody).toMatchObject({
+      type: 4,
+      data: { content: 'Interaction already received.', flags: 64 },
+    })
+
+    expect(mockToPlanModalEvent).toHaveBeenCalledTimes(1)
+    expect(publishedMessages).toHaveLength(1)
   })
 
   it('responds to Discord ping interactions', async () => {

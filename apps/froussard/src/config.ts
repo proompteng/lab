@@ -9,6 +9,10 @@ const requireEnv = (env: NodeJS.ProcessEnv, name: string): string => {
 }
 
 export interface AppConfig {
+  idempotency: {
+    ttlMs: number
+    maxEntries: number
+  }
   githubWebhookSecret: string
   atlas: {
     baseUrl: string
@@ -50,6 +54,17 @@ export interface AppConfig {
   }
 }
 
+const parseNonNegativeInt = (value: string | undefined, fallback: number): number => {
+  if (typeof value !== 'string') {
+    return fallback
+  }
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isFinite(parsed) || Number.isNaN(parsed) || parsed < 0) {
+    return fallback
+  }
+  return parsed
+}
+
 export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
   const brokers = parseBrokerList(requireEnv(env, 'KAFKA_BROKERS'))
   if (brokers.length === 0) {
@@ -57,8 +72,14 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
   }
 
   const atlasBaseUrl = requireEnv(env, 'JANGAR_BASE_URL').replace(/\/+$/, '')
+  const idempotencyTtlMs = parseNonNegativeInt(env.FROUSSARD_WEBHOOK_IDEMPOTENCY_TTL_MS, 10 * 60 * 1000)
+  const idempotencyMaxEntries = parseNonNegativeInt(env.FROUSSARD_WEBHOOK_IDEMPOTENCY_MAX_ENTRIES, 10_000)
 
   return {
+    idempotency: {
+      ttlMs: idempotencyTtlMs,
+      maxEntries: idempotencyMaxEntries,
+    },
     githubWebhookSecret: requireEnv(env, 'GITHUB_WEBHOOK_SECRET'),
     atlas: {
       baseUrl: atlasBaseUrl,

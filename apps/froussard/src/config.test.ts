@@ -19,6 +19,8 @@ describe('loadConfig', () => {
   it('parses brokers and returns defaults', () => {
     const config = loadConfig(baseEnv)
 
+    expect(config.idempotency.ttlMs).toBe(10 * 60 * 1000)
+    expect(config.idempotency.maxEntries).toBe(10_000)
     expect(config.kafka.brokers).toEqual(['broker1:9092', 'broker2:9093'])
     expect(config.kafka.topics.codexStructured).toBe('github.issues.codex.tasks')
     expect(config.kafka.topics.codexJudge).toBe('github.webhook.codex.judge')
@@ -41,9 +43,13 @@ describe('loadConfig', () => {
       CODEX_IMPLEMENTATION_TRIGGER: 'run it',
       GITHUB_ACK_REACTION: 'eyes',
       DISCORD_DEFAULT_EPHEMERAL: 'false',
+      FROUSSARD_WEBHOOK_IDEMPOTENCY_TTL_MS: '30000',
+      FROUSSARD_WEBHOOK_IDEMPOTENCY_MAX_ENTRIES: '250',
     }
 
     const config = loadConfig(env)
+    expect(config.idempotency.ttlMs).toBe(30000)
+    expect(config.idempotency.maxEntries).toBe(250)
     expect(config.codebase.baseBranch).toBe('develop')
     expect(config.codebase.branchPrefix).toBe('custom/')
     expect(config.codex.triggerLogins).toEqual(['user-one', 'user-two'])
