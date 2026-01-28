@@ -17,6 +17,8 @@ const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PO
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
 const PARAMETERS_MAX_ENTRIES = 100
 const PARAMETERS_MAX_VALUE_BYTES = 2048
+const DEFAULT_AUTH_SECRET_KEY = 'auth.json'
+const DEFAULT_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
 
 const REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -679,6 +681,59 @@ const resolveParameters = (agentRun: Record<string, unknown>) => {
 
 const parseStringList = (value: unknown) =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+
+const parseEnvList = (name: string) => {
+  const raw = process.env[name]
+  if (!raw) return []
+  return raw
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+}
+
+const resolveRunnerServiceAccount = (runtimeConfig: Record<string, unknown>) =>
+  asString(runtimeConfig.serviceAccount) ?? asString(process.env.JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT)
+
+type AuthSecretConfig = {
+  name: string
+  key: string
+  mountPath: string
+}
+
+const resolveAuthSecretConfig = (): AuthSecretConfig | null => {
+  const name = asString(process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME)?.trim()
+  if (!name) return null
+  const key = asString(process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_KEY)?.trim() || DEFAULT_AUTH_SECRET_KEY
+  const mountPath =
+    asString(process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH)?.trim() || DEFAULT_AUTH_SECRET_MOUNT_PATH
+  return { name, key, mountPath }
+}
+
+const buildAuthSecretPath = (config: AuthSecretConfig) => {
+  const normalizedMountPath = config.mountPath.endsWith('/')
+    ? config.mountPath.slice(0, -1)
+    : config.mountPath
+  return `${normalizedMountPath}/${config.key}`
+}
+
+const collectBlockedSecrets = (secrets: string[]) => {
+  const blocked = parseEnvList('JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS')
+  if (blocked.length === 0) return []
+  const blockedSet = new Set(blocked)
+  return Array.from(new Set(secrets.filter((secret) => blockedSet.has(secret))))
+}
+
+const validateAuthSecretPolicy = (allowedSecrets: string[], authSecret: AuthSecretConfig | null) => {
+  if (!authSecret) return { ok: true as const }
+  if (allowedSecrets.length > 0 && !allowedSecrets.includes(authSecret.name)) {
+    return {
+      ok: false as const,
+      reason: 'SecretNotAllowed',
+      message: `auth secret ${authSecret.name} is not allowlisted by the Agent`,
+    }
+  }
+  return { ok: true as const }
+}
 
 const parseJsonEnv = (name: string) => {
   const raw = process.env[name]
@@ -1436,6 +1491,7 @@ const submitJobRun = async (
   const agentRunnerSpec = providerName ? buildAgentRunnerSpec(runSpec, parameters, providerName) : null
   const runSecrets = parseStringList(readNested(agentRun, ['spec', 'secrets']))
   const envFrom = runSecrets.map((name) => ({ secretRef: { name } }))
+  const authSecret = resolveAuthSecretConfig()
 
   const inputEntries = inputFiles
     .map((file: Record<string, unknown>) => ({
@@ -1445,8 +1501,7 @@ const submitJobRun = async (
     .filter((file) => file.path && file.content)
 
   const runtimeConfig = options.runtimeConfig ?? asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
-  const serviceAccount =
-    asString(runtimeConfig.serviceAccount) ?? asString(process.env.JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT)
+  const serviceAccount = resolveRunnerServiceAccount(runtimeConfig)
   const nodeSelector = asRecord(runtimeConfig.nodeSelector) ?? parseEnvRecord('JANGAR_AGENT_RUNNER_NODE_SELECTOR')
   const tolerations =
     (Array.isArray(runtimeConfig.tolerations) ? runtimeConfig.tolerations : null) ??
@@ -1547,6 +1602,24 @@ const submitJobRun = async (
     })
   }
 
+  if (authSecret) {
+    const authVolumeName = makeName(runName, options.nameSuffix ? `auth-${options.nameSuffix}` : 'auth')
+    volumes.push({
+      name: authVolumeName,
+      spec: {
+        secret: {
+          secretName: authSecret.name,
+          items: [{ key: authSecret.key, path: authSecret.key }],
+        },
+      },
+    })
+    configVolumeMounts.push({
+      name: authVolumeName,
+      mountPath: authSecret.mountPath,
+      readOnly: true,
+    })
+  }
+
   const jobPodSpec: Record<string, unknown> = {
     serviceAccountName: serviceAccount ?? undefined,
     restartPolicy: 'Never',
@@ -1559,6 +1632,7 @@ const submitJobRun = async (
         env: [
           { name: 'AGENT_RUN_SPEC', value: '/workspace/run.json' },
           { name: 'AGENT_RUNNER_SPEC_PATH', value: '/workspace/agent-runner.json' },
+          ...(authSecret ? [{ name: 'CODEX_AUTH', value: buildAuthSecretPath(authSecret) }] : []),
           ...env,
         ],
         envFrom: envFrom.length > 0 ? envFrom : undefined,
@@ -1824,6 +1898,7 @@ const loadWorkflowDependencies = async (
   const allowedSecrets = parseStringList(security.allowedSecrets)
   const allowedServiceAccounts = parseStringList(security.allowedServiceAccounts)
   const runSecrets = parseStringList(spec.secrets)
+  const authSecret = resolveAuthSecretConfig()
 
   if (allowedSecrets.length > 0) {
     const forbidden = runSecrets.filter((secret) => !allowedSecrets.includes(secret))
@@ -1837,6 +1912,23 @@ const loadWorkflowDependencies = async (
   }
 
   const memorySecretName = asString(readNested(memory, ['spec', 'connection', 'secretRef', 'name']))
+  const blockedSecrets = collectBlockedSecrets([
+    ...runSecrets,
+    ...(memorySecretName ? [memorySecretName] : []),
+    ...(authSecret ? [authSecret.name] : []),
+  ])
+  if (blockedSecrets.length > 0) {
+    return {
+      ok: false as const,
+      reason: 'SecretBlocked',
+      message: `secrets blocked by controller policy: ${blockedSecrets.join(', ')}`,
+    }
+  }
+
+  const authSecretPolicy = validateAuthSecretPolicy(allowedSecrets, authSecret)
+  if (!authSecretPolicy.ok) {
+    return authSecretPolicy
+  }
   if (memorySecretName) {
     if (allowedSecrets.length > 0 && !allowedSecrets.includes(memorySecretName)) {
       return {
@@ -1855,7 +1947,7 @@ const loadWorkflowDependencies = async (
   }
 
   if (allowedServiceAccounts.length > 0) {
-    const rawServiceAccount = asString(runtimeConfig.serviceAccount)
+    const rawServiceAccount = resolveRunnerServiceAccount(runtimeConfig)
     const effectiveServiceAccount = rawServiceAccount || 'default'
     if (!allowedServiceAccounts.includes(effectiveServiceAccount)) {
       return {
@@ -2378,6 +2470,7 @@ const reconcileAgentRun = async (
     const allowedSecrets = parseStringList(security.allowedSecrets)
     const allowedServiceAccounts = parseStringList(security.allowedServiceAccounts)
     const runSecrets = parseStringList(spec.secrets)
+    const authSecret = resolveAuthSecretConfig()
 
     if (allowedSecrets.length > 0) {
       const forbidden = runSecrets.filter((secret) => !allowedSecrets.includes(secret))
@@ -2394,7 +2487,7 @@ const reconcileAgentRun = async (
     }
 
     if (allowedServiceAccounts.length > 0 && (runtimeType === 'job' || runtimeType === 'workflow')) {
-      const rawServiceAccount = asString(runtimeConfig.serviceAccount)
+      const rawServiceAccount = resolveRunnerServiceAccount(runtimeConfig)
       const effectiveServiceAccount = rawServiceAccount || 'default'
       if (!allowedServiceAccounts.includes(effectiveServiceAccount)) {
         const updated = upsertCondition(conditions, {
@@ -2444,6 +2537,33 @@ const reconcileAgentRun = async (
       return
     }
     const memorySecretName = asString(readNested(memory, ['spec', 'connection', 'secretRef', 'name']))
+    const blockedSecrets = collectBlockedSecrets([
+      ...runSecrets,
+      ...(memorySecretName ? [memorySecretName] : []),
+      ...(authSecret ? [authSecret.name] : []),
+    ])
+    if (blockedSecrets.length > 0) {
+      const updated = upsertCondition(conditions, {
+        type: 'InvalidSpec',
+        status: 'True',
+        reason: 'SecretBlocked',
+        message: `secrets blocked by controller policy: ${blockedSecrets.join(', ')}`,
+      })
+      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      return
+    }
+
+    const authSecretPolicy = validateAuthSecretPolicy(allowedSecrets, authSecret)
+    if (!authSecretPolicy.ok) {
+      const updated = upsertCondition(conditions, {
+        type: 'InvalidSpec',
+        status: 'True',
+        reason: authSecretPolicy.reason,
+        message: authSecretPolicy.message,
+      })
+      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      return
+    }
     if (memorySecretName) {
       if (allowedSecrets.length > 0 && !allowedSecrets.includes(memorySecretName)) {
         const updated = upsertCondition(conditions, {
