@@ -1451,6 +1451,9 @@ const submitJobRun = async (
   const tolerations =
     (Array.isArray(runtimeConfig.tolerations) ? runtimeConfig.tolerations : null) ??
     parseEnvArray('JANGAR_AGENT_RUNNER_TOLERATIONS')
+  const topologySpreadConstraints =
+    (Array.isArray(runtimeConfig.topologySpreadConstraints) ? runtimeConfig.topologySpreadConstraints : null) ??
+    parseEnvArray('JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS')
   const affinity = asRecord(runtimeConfig.affinity) ?? parseEnvRecord('JANGAR_AGENT_RUNNER_AFFINITY')
   const podSecurityContext =
     asRecord(runtimeConfig.podSecurityContext) ?? parseEnvRecord('JANGAR_AGENT_RUNNER_POD_SECURITY_CONTEXT')
@@ -1571,6 +1574,9 @@ const submitJobRun = async (
   }
   if (tolerations && tolerations.length > 0) {
     jobPodSpec.tolerations = tolerations
+  }
+  if (topologySpreadConstraints && topologySpreadConstraints.length > 0) {
+    jobPodSpec.topologySpreadConstraints = topologySpreadConstraints
   }
   if (affinity && Object.keys(affinity).length > 0) {
     jobPodSpec.affinity = affinity
