@@ -17,6 +17,8 @@ const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PO
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
 const PARAMETERS_MAX_ENTRIES = 100
 const PARAMETERS_MAX_VALUE_BYTES = 2048
+const DEFAULT_AUTH_SECRET_KEY = 'auth.json'
+const DEFAULT_AUTH_SECRET_MOUNT_PATH = '/var/run/secrets/codex/auth.json'
 
 const REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -60,6 +62,14 @@ type Condition = {
 }
 
 type RuntimeRef = Record<string, unknown>
+
+type AuthSecretConfig = {
+  name: string
+  key: string
+  mountPath: string
+  filePath: string
+  mountAsFile: boolean
+}
 
 type WorkflowStepSpec = {
   name: string
@@ -680,6 +690,15 @@ const resolveParameters = (agentRun: Record<string, unknown>) => {
 const parseStringList = (value: unknown) =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 
+const parseEnvList = (name: string) => {
+  const raw = process.env[name]
+  if (!raw) return []
+  return raw
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+}
+
 const parseJsonEnv = (name: string) => {
   const raw = process.env[name]
   if (!raw) return null
@@ -750,6 +769,26 @@ const resolveMemory = (
     return memories.find((memory) => asString(readNested(memory, ['metadata', 'name'])) === agentRef) ?? null
   }
   return selectDefaultMemory(memories)
+}
+
+const resolveAuthSecretConfig = (): AuthSecretConfig | null => {
+  const name = (process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME ?? '').trim()
+  if (!name) return null
+  const key = (process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_KEY ?? DEFAULT_AUTH_SECRET_KEY).trim()
+  const mountPath = (process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH ?? DEFAULT_AUTH_SECRET_MOUNT_PATH)
+    .trim()
+    .replace(/\/+$/, '')
+  const normalizedKey = key || DEFAULT_AUTH_SECRET_KEY
+  const normalizedMountPath = mountPath || DEFAULT_AUTH_SECRET_MOUNT_PATH
+  const mountAsFile = normalizedMountPath.endsWith('.json')
+  const filePath = mountAsFile ? normalizedMountPath : `${normalizedMountPath}/${normalizedKey}`
+  return {
+    name,
+    key: normalizedKey,
+    mountPath: normalizedMountPath,
+    filePath,
+    mountAsFile,
+  }
 }
 
 const createNamespaceState = (): NamespaceState => ({
@@ -1420,6 +1459,7 @@ const submitJobRun = async (
     name: key,
     value: renderTemplate(String(value), context),
   }))
+  const hasCodexAuthEnv = env.some((entry) => entry.name === 'CODEX_AUTH')
   if (providerName) {
     env.push({ name: 'AGENT_PROVIDER', value: providerName })
   }
@@ -1436,6 +1476,7 @@ const submitJobRun = async (
   const agentRunnerSpec = providerName ? buildAgentRunnerSpec(runSpec, parameters, providerName) : null
   const runSecrets = parseStringList(readNested(agentRun, ['spec', 'secrets']))
   const envFrom = runSecrets.map((name) => ({ secretRef: { name } }))
+  const authSecret = resolveAuthSecretConfig()
 
   const inputEntries = inputFiles
     .map((file: Record<string, unknown>) => ({
@@ -1523,6 +1564,7 @@ const submitJobRun = async (
 
   const configVolumeMounts = [] as Record<string, unknown>[]
   const volumes = [...volumeSpecs]
+  const authVolumeName = authSecret ? makeName(runName, 'auth') : null
 
   if (inputsConfig) {
     const volumeName = makeName(inputsConfig.name, 'vol')
@@ -1547,6 +1589,26 @@ const submitJobRun = async (
     })
   }
 
+  if (authSecret && authVolumeName) {
+    volumes.push({ name: authVolumeName, spec: { secret: { secretName: authSecret.name } } })
+    if (authSecret.mountAsFile) {
+      volumeMounts.push({
+        name: authVolumeName,
+        mountPath: authSecret.mountPath,
+        subPath: authSecret.key,
+        readOnly: true,
+      })
+    } else {
+      volumeMounts.push({
+        name: authVolumeName,
+        mountPath: authSecret.mountPath,
+        readOnly: true,
+      })
+    }
+  }
+
+  const authEnv = authSecret && !hasCodexAuthEnv ? [{ name: 'CODEX_AUTH', value: authSecret.filePath }] : []
+
   const jobPodSpec: Record<string, unknown> = {
     serviceAccountName: serviceAccount ?? undefined,
     restartPolicy: 'Never',
@@ -1559,6 +1621,7 @@ const submitJobRun = async (
         env: [
           { name: 'AGENT_RUN_SPEC', value: '/workspace/run.json' },
           { name: 'AGENT_RUNNER_SPEC_PATH', value: '/workspace/agent-runner.json' },
+          ...(authEnv.length > 0 ? authEnv : []),
           ...env,
         ],
         envFrom: envFrom.length > 0 ? envFrom : undefined,
@@ -1824,6 +1887,8 @@ const loadWorkflowDependencies = async (
   const allowedSecrets = parseStringList(security.allowedSecrets)
   const allowedServiceAccounts = parseStringList(security.allowedServiceAccounts)
   const runSecrets = parseStringList(spec.secrets)
+  const authSecret = resolveAuthSecretConfig()
+  const blockedSecrets = parseEnvList('JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS')
 
   if (allowedSecrets.length > 0) {
     const forbidden = runSecrets.filter((secret) => !allowedSecrets.includes(secret))
@@ -1850,6 +1915,28 @@ const loadWorkflowDependencies = async (
         ok: false as const,
         reason: 'SecretNotAllowed',
         message: `memory secret ${memorySecretName} is not included in spec.secrets`,
+      }
+    }
+  }
+
+  if (authSecret?.name && allowedSecrets.length > 0 && !allowedSecrets.includes(authSecret.name)) {
+    return {
+      ok: false as const,
+      reason: 'SecretNotAllowed',
+      message: `auth secret ${authSecret.name} is not allowlisted by the Agent`,
+    }
+  }
+
+  if (blockedSecrets.length > 0) {
+    const secretCandidates = [...runSecrets]
+    if (memorySecretName) secretCandidates.push(memorySecretName)
+    if (authSecret?.name) secretCandidates.push(authSecret.name)
+    const blocked = secretCandidates.filter((secret) => blockedSecrets.includes(secret))
+    if (blocked.length > 0) {
+      return {
+        ok: false as const,
+        reason: 'SecretBlocked',
+        message: `blocked secrets requested: ${blocked.join(', ')}`,
       }
     }
   }
@@ -2378,6 +2465,8 @@ const reconcileAgentRun = async (
     const allowedSecrets = parseStringList(security.allowedSecrets)
     const allowedServiceAccounts = parseStringList(security.allowedServiceAccounts)
     const runSecrets = parseStringList(spec.secrets)
+    const authSecret = resolveAuthSecretConfig()
+    const blockedSecrets = parseEnvList('JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS')
 
     if (allowedSecrets.length > 0) {
       const forbidden = runSecrets.filter((secret) => !allowedSecrets.includes(secret))
@@ -2461,6 +2550,34 @@ const reconcileAgentRun = async (
           status: 'True',
           reason: 'SecretNotAllowed',
           message: `memory secret ${memorySecretName} is not included in spec.secrets`,
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+    }
+
+    if (authSecret?.name && allowedSecrets.length > 0 && !allowedSecrets.includes(authSecret.name)) {
+      const updated = upsertCondition(conditions, {
+        type: 'InvalidSpec',
+        status: 'True',
+        reason: 'SecretNotAllowed',
+        message: `auth secret ${authSecret.name} is not allowlisted by the Agent`,
+      })
+      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      return
+    }
+
+    if (blockedSecrets.length > 0) {
+      const secretCandidates = [...runSecrets]
+      if (memorySecretName) secretCandidates.push(memorySecretName)
+      if (authSecret?.name) secretCandidates.push(authSecret.name)
+      const blocked = secretCandidates.filter((secret) => blockedSecrets.includes(secret))
+      if (blocked.length > 0) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: 'SecretBlocked',
+          message: `blocked secrets requested: ${blocked.join(', ')}`,
         })
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
         return

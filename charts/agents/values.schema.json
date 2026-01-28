@@ -213,6 +213,15 @@
       "properties": {
         "enabled": { "type": "boolean" },
         "namespaces": { "type": "array", "items": { "type": "string" } },
+        "authSecret": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "key": { "type": "string" },
+            "mountPath": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
         "concurrency": {
           "type": "object",
           "properties": {

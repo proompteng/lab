@@ -119,6 +119,10 @@ envFromConfigMapRefs: []
 controller:
   enabled: true
   namespaces: []
+  authSecret:
+    name: ""
+    key: auth.json
+    mountPath: /var/run/secrets/codex/auth.json
   concurrency:
     perNamespace: 10
     perAgent: 5
