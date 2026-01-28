@@ -4,6 +4,7 @@ import { logger } from '@/logger'
 
 import { createDiscordWebhookHandler } from './discord'
 import { createGithubWebhookHandler } from './github'
+import { createIdempotencyStore } from './idempotency-store'
 import type { WebhookConfig } from './types'
 
 export type { WebhookConfig } from './types'
@@ -15,8 +16,9 @@ interface WebhookDependencies {
 }
 
 export const createWebhookHandler = ({ runtime, webhooks, config }: WebhookDependencies) => {
-  const discordHandler = createDiscordWebhookHandler({ runtime, config })
-  const githubHandler = createGithubWebhookHandler({ runtime, webhooks, config })
+  const idempotencyStore = createIdempotencyStore(config.idempotency)
+  const discordHandler = createDiscordWebhookHandler({ runtime, config, idempotencyStore })
+  const githubHandler = createGithubWebhookHandler({ runtime, webhooks, config, idempotencyStore })
 
   return async (request: Request, provider: string): Promise<Response> => {
     logger.info({ provider }, 'webhook request received')

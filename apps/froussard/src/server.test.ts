@@ -11,6 +11,10 @@ vi.mock('@/effect/config', () => {
   class AppConfigService extends Effect.Tag('@test/AppConfig')<AppConfigService, AppConfig>() {}
 
   const config: AppConfig = {
+    idempotency: {
+      ttlMs: 60_000,
+      maxEntries: 200,
+    },
     githubWebhookSecret: 'secret',
     atlas: {
       baseUrl: 'http://jangar',

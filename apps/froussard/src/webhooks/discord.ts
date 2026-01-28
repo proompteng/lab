@@ -12,6 +12,7 @@ import type { AppRuntime } from '@/effect/runtime'
 import { logger } from '@/logger'
 import { CommandEventSchema as FacteurCommandEventSchema } from '@/proto/proompteng/facteur/v1/contract_pb'
 
+import type { IdempotencyStore } from './idempotency-store'
 import type { WebhookConfig } from './types'
 import { publishKafkaMessage } from './utils'
 
@@ -26,10 +27,11 @@ const EPHEMERAL_FLAG = 1 << 6
 export interface DiscordWebhookDependencies {
   runtime: AppRuntime
   config: WebhookConfig
+  idempotencyStore: IdempotencyStore
 }
 
 export const createDiscordWebhookHandler =
-  ({ runtime, config }: DiscordWebhookDependencies) =>
+  ({ runtime, config, idempotencyStore }: DiscordWebhookDependencies) =>
   async (body: Uint8Array, headers: Headers): Promise<Response> => {
     if (!(await verifyDiscordRequest(body, headers, config.discord.publicKey))) {
       logger.error({ headers: Array.from(headers.keys()) }, 'discord signature verification failed')
@@ -46,10 +48,22 @@ export const createDiscordWebhookHandler =
       return new Response('Invalid JSON body', { status: 400 })
     }
 
-    const typedInteraction = interaction as { type?: number }
+    const typedInteraction = interaction as { type?: number; id?: unknown }
 
     if (typedInteraction.type === INTERACTION_TYPE.PING) {
       return jsonResponse({ type: INTERACTION_TYPE.PING })
+    }
+
+    const interactionId = typeof typedInteraction.id === 'string' ? typedInteraction.id : undefined
+    if (interactionId && idempotencyStore.isDuplicate(`discord:${interactionId}`)) {
+      logger.info({ interactionId }, 'duplicate discord interaction ignored')
+      return jsonResponse({
+        type: 4,
+        data: {
+          content: 'Interaction already received.',
+          ...(config.discord.response.ephemeral ? { flags: EPHEMERAL_FLAG } : {}),
+        },
+      })
     }
 
     if (typedInteraction.type === INTERACTION_TYPE.APPLICATION_COMMAND) {
