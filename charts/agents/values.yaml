@@ -56,6 +56,20 @@ resources:
     memory: 256Mi
   limits: {}
 
+resourceQuota:
+  enabled: false
+  hard: {}
+  scopes: []
+  scopeSelector: {}
+  annotations: {}
+  labels: {}
+
+limitRange:
+  enabled: false
+  limits: []
+  annotations: {}
+  labels: {}
+
 podAnnotations: {}
 podLabels: {}
 
