@@ -1,0 +1,89 @@
+{{- if .Values.argocdHooks.enabled -}}
+{{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
+{{- $serviceAccount := .Values.argocdHooks.serviceAccountName | default (include "agents.serviceAccountName" .) -}}
+{{- $smokeName := dig "metadata" "name" "" .Values.argocdHooks.smoke.agentRun -}}
+{{- $labelSelector := .Values.argocdHooks.smoke.labelSelector | default (printf "agents.proompteng.ai/agent-run=%s" $smokeName) -}}
+{{- if and .Values.argocdHooks.preSync.enabled (or $smokeName .Values.argocdHooks.smoke.labelSelector) -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "agents.fullname" . }}-smoke-cleanup
+  namespace: {{ $namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: {{ .Values.argocdHooks.syncWaves.preSync | quote }}
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+spec:
+  ttlSecondsAfterFinished: {{ .Values.argocdHooks.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "agents.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $serviceAccount }}
+      restartPolicy: Never
+      containers:
+        - name: cleanup
+          image: "{{ .Values.argocdHooks.image.repository }}:{{ .Values.argocdHooks.image.tag }}"
+          imagePullPolicy: {{ .Values.argocdHooks.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+          args:
+            - |
+              set -euo pipefail
+              {{- if $smokeName }}
+              kubectl -n "{{ $namespace }}" delete agentruns.agents.proompteng.ai "{{ $smokeName }}" --ignore-not-found
+              {{- end }}
+              {{- if $labelSelector }}
+              kubectl -n "{{ $namespace }}" delete jobs -l "{{ $labelSelector }}" --ignore-not-found
+              kubectl -n "{{ $namespace }}" delete configmaps -l "{{ $labelSelector }}" --ignore-not-found
+              {{- end }}
+{{- end }}
+{{- if and .Values.argocdHooks.postSync.enabled $smokeName (gt (len .Values.argocdHooks.smoke.agentRun) 0) -}}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "agents.fullname" . }}-smoke-run
+  namespace: {{ $namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/sync-wave: {{ .Values.argocdHooks.syncWaves.postSync | quote }}
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+spec:
+  ttlSecondsAfterFinished: {{ .Values.argocdHooks.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "agents.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $serviceAccount }}
+      restartPolicy: Never
+      containers:
+        - name: smoke
+          image: "{{ .Values.argocdHooks.image.repository }}:{{ .Values.argocdHooks.image.tag }}"
+          imagePullPolicy: {{ .Values.argocdHooks.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+          args:
+            - |
+              set -euo pipefail
+              cat <<'EOF' | kubectl -n "{{ $namespace }}" apply -f -
+{{- toYaml .Values.argocdHooks.smoke.agentRun | nindent 14 }}
+              EOF
+              kubectl -n "{{ $namespace }}" wait --for=condition=Succeeded "agentruns.agents.proompteng.ai/{{ $smokeName }}" --timeout={{ .Values.argocdHooks.postSync.waitTimeout }}
+              {{- if .Values.argocdHooks.postSync.cleanup }}
+              kubectl -n "{{ $namespace }}" delete agentruns.agents.proompteng.ai "{{ $smokeName }}" --ignore-not-found
+              {{- if $labelSelector }}
+              kubectl -n "{{ $namespace }}" delete jobs -l "{{ $labelSelector }}" --ignore-not-found
+              kubectl -n "{{ $namespace }}" delete configmaps -l "{{ $labelSelector }}" --ignore-not-found
+              {{- end }}
+              {{- end }}
+{{- end }}
+{{- end }}

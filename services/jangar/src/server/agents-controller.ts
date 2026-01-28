@@ -680,6 +680,25 @@ const resolveParameters = (agentRun: Record<string, unknown>) => {
 const parseStringList = (value: unknown) =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 
+const parseJsonEnv = (name: string) => {
+  const raw = process.env[name]
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as unknown
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn(`[jangar] invalid ${name} JSON: ${message}`)
+    return null
+  }
+}
+
+const parseEnvRecord = (name: string) => asRecord(parseJsonEnv(name))
+
+const parseEnvArray = (name: string) => {
+  const parsed = parseJsonEnv(name)
+  return Array.isArray(parsed) ? parsed : null
+}
+
 const validateParameters = (params: Record<string, unknown>) => {
   const entries = Object.entries(params)
   if (entries.length > PARAMETERS_MAX_ENTRIES) {
@@ -1426,7 +1445,37 @@ const submitJobRun = async (
     .filter((file) => file.path && file.content)
 
   const runtimeConfig = options.runtimeConfig ?? asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
-  const serviceAccount = asString(runtimeConfig.serviceAccount)
+  const serviceAccount =
+    asString(runtimeConfig.serviceAccount) ?? asString(process.env.JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT)
+  const nodeSelector = asRecord(runtimeConfig.nodeSelector) ?? parseEnvRecord('JANGAR_AGENT_RUNNER_NODE_SELECTOR')
+  const tolerations =
+    (Array.isArray(runtimeConfig.tolerations) ? runtimeConfig.tolerations : null) ??
+    parseEnvArray('JANGAR_AGENT_RUNNER_TOLERATIONS')
+  const affinity = asRecord(runtimeConfig.affinity) ?? parseEnvRecord('JANGAR_AGENT_RUNNER_AFFINITY')
+  const podSecurityContext =
+    asRecord(runtimeConfig.podSecurityContext) ?? parseEnvRecord('JANGAR_AGENT_RUNNER_POD_SECURITY_CONTEXT')
+  const priorityClassName =
+    asString(runtimeConfig.priorityClassName) ?? asString(process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS)
+  const schedulerName =
+    asString(runtimeConfig.schedulerName) ?? asString(process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME)
+  const imagePullSecrets = (() => {
+    const candidates = Array.isArray(runtimeConfig.imagePullSecrets)
+      ? runtimeConfig.imagePullSecrets
+      : parseEnvArray('JANGAR_AGENT_RUNNER_IMAGE_PULL_SECRETS')
+    if (!candidates) return null
+    const resolved = candidates
+      .map((entry) => {
+        if (typeof entry === 'string') {
+          const trimmed = entry.trim()
+          return trimmed ? { name: trimmed } : null
+        }
+        const record = asRecord(entry)
+        const name = record ? asString(record.name) : null
+        return name ? { name } : null
+      })
+      .filter((entry): entry is { name: string } => Boolean(entry))
+    return resolved.length > 0 ? resolved : null
+  })()
   const ttlSeconds = runtimeConfig.ttlSecondsAfterFinished
 
   const metadata = asRecord(agentRun.metadata) ?? {}
@@ -1495,6 +1544,50 @@ const submitJobRun = async (
     })
   }
 
+  const jobPodSpec: Record<string, unknown> = {
+    serviceAccountName: serviceAccount ?? undefined,
+    restartPolicy: 'Never',
+    containers: [
+      {
+        name: 'agent-runner',
+        image: workloadImage,
+        command: [binary],
+        args,
+        env: [
+          { name: 'AGENT_RUN_SPEC', value: '/workspace/run.json' },
+          { name: 'AGENT_RUNNER_SPEC_PATH', value: '/workspace/agent-runner.json' },
+          ...env,
+        ],
+        envFrom: envFrom.length > 0 ? envFrom : undefined,
+        resources: buildJobResources(workload),
+        volumeMounts: [...volumeMounts, ...configVolumeMounts],
+      },
+    ],
+    volumes: volumes.map((volume) => ({ name: volume.name, ...volume.spec })),
+  }
+
+  if (nodeSelector && Object.keys(nodeSelector).length > 0) {
+    jobPodSpec.nodeSelector = nodeSelector
+  }
+  if (tolerations && tolerations.length > 0) {
+    jobPodSpec.tolerations = tolerations
+  }
+  if (affinity && Object.keys(affinity).length > 0) {
+    jobPodSpec.affinity = affinity
+  }
+  if (podSecurityContext && Object.keys(podSecurityContext).length > 0) {
+    jobPodSpec.securityContext = podSecurityContext
+  }
+  if (imagePullSecrets && imagePullSecrets.length > 0) {
+    jobPodSpec.imagePullSecrets = imagePullSecrets
+  }
+  if (priorityClassName) {
+    jobPodSpec.priorityClassName = priorityClassName
+  }
+  if (schedulerName) {
+    jobPodSpec.schedulerName = schedulerName
+  }
+
   const jobResource = {
     apiVersion: 'batch/v1',
     kind: 'Job',
@@ -1521,27 +1614,7 @@ const submitJobRun = async (
         metadata: {
           labels: mergedLabels,
         },
-        spec: {
-          serviceAccountName: serviceAccount ?? undefined,
-          restartPolicy: 'Never',
-          containers: [
-            {
-              name: 'agent-runner',
-              image: workloadImage,
-              command: [binary],
-              args,
-              env: [
-                { name: 'AGENT_RUN_SPEC', value: '/workspace/run.json' },
-                { name: 'AGENT_RUNNER_SPEC_PATH', value: '/workspace/agent-runner.json' },
-                ...env,
-              ],
-              envFrom: envFrom.length > 0 ? envFrom : undefined,
-              resources: buildJobResources(workload),
-              volumeMounts: [...volumeMounts, ...configVolumeMounts],
-            },
-          ],
-          volumes: volumes.map((volume) => ({ name: volume.name, ...volume.spec })),
-        },
+        spec: jobPodSpec,
       },
     },
   }
