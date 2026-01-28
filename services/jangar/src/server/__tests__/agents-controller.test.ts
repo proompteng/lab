@@ -287,6 +287,68 @@ describe('agents controller reconcileAgentRun', () => {
     expect(jobLabels?.['agents.proompteng.ai/provider']).toBe('provider-1')
   })
 
+  it('applies topology spread constraints from runtime config', async () => {
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      return { ...resource, metadata: { ...metadata, uid } }
+    })
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'provider-1' },
+            spec: {
+              binary: '/usr/local/bin/agent-runner',
+            },
+          }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+    const topologySpreadConstraints = [
+      {
+        maxSkew: 1,
+        topologyKey: 'topology.kubernetes.io/zone',
+        whenUnsatisfiable: 'ScheduleAnyway',
+        labelSelector: { matchLabels: { 'agents.proompteng.ai/agent-run': 'run-1' } },
+      },
+    ]
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: { topologySpreadConstraints } },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+      },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
+    const job = appliedResources.find((resource) => resource.kind === 'Job')
+    const jobSpec = (job?.spec ?? {}) as Record<string, unknown>
+    const template = (jobSpec.template ?? {}) as Record<string, unknown>
+    const podSpec = (template.spec ?? {}) as Record<string, unknown>
+
+    expect(podSpec.topologySpreadConstraints).toEqual(topologySpreadConstraints)
+  })
+
   it('advances workflow steps and completes', async () => {
     const jobStatuses = new Map<string, Record<string, unknown>>()
     const apply = vi.fn(async (resource: Record<string, unknown>) => {

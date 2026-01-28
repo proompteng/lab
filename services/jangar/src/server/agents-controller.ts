@@ -1452,6 +1452,9 @@ const submitJobRun = async (
     (Array.isArray(runtimeConfig.tolerations) ? runtimeConfig.tolerations : null) ??
     parseEnvArray('JANGAR_AGENT_RUNNER_TOLERATIONS')
   const affinity = asRecord(runtimeConfig.affinity) ?? parseEnvRecord('JANGAR_AGENT_RUNNER_AFFINITY')
+  const topologySpreadConstraints =
+    (Array.isArray(runtimeConfig.topologySpreadConstraints) ? runtimeConfig.topologySpreadConstraints : null) ??
+    parseEnvArray('JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS')
   const podSecurityContext =
     asRecord(runtimeConfig.podSecurityContext) ?? parseEnvRecord('JANGAR_AGENT_RUNNER_POD_SECURITY_CONTEXT')
   const priorityClassName =
@@ -1574,6 +1577,9 @@ const submitJobRun = async (
   }
   if (affinity && Object.keys(affinity).length > 0) {
     jobPodSpec.affinity = affinity
+  }
+  if (topologySpreadConstraints && topologySpreadConstraints.length > 0) {
+    jobPodSpec.topologySpreadConstraints = topologySpreadConstraints
   }
   if (podSecurityContext && Object.keys(podSecurityContext).length > 0) {
     jobPodSpec.securityContext = podSecurityContext
