@@ -222,6 +222,15 @@
           },
           "additionalProperties": false
         },
+        "authSecret": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "key": { "type": "string" },
+            "mountPath": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
         "defaultWorkload": {
           "type": "object",
           "properties": {
