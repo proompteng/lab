@@ -94,6 +94,51 @@ spec:
               value: "{{ .Values.image.repository }}:{{ .Values.image.tag }}{{- if .Values.image.digest }}@{{ .Values.image.digest }}{{ end }}"
             - name: JANGAR_SERVICE_ACCOUNT_NAME
               value: {{ include "agents.serviceAccountName" . | quote }}
+            {{- $runnerServiceAccount := include "agents.runnerServiceAccountName" . }}
+            {{- $defaultRunnerServiceAccount := .Values.controller.defaultWorkload.serviceAccountName | default "" }}
+            {{- if $defaultRunnerServiceAccount }}
+            - name: JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT
+              value: {{ $defaultRunnerServiceAccount | quote }}
+            {{- else if and $runnerServiceAccount .Values.runnerServiceAccount.setAsDefault }}
+            - name: JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT
+              value: {{ $runnerServiceAccount | quote }}
+            {{- end }}
+            {{- if and .Values.controller.defaultWorkload.nodeSelector (gt (len .Values.controller.defaultWorkload.nodeSelector) 0) }}
+            - name: JANGAR_AGENT_RUNNER_NODE_SELECTOR
+              value: {{ .Values.controller.defaultWorkload.nodeSelector | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.defaultWorkload.tolerations (gt (len .Values.controller.defaultWorkload.tolerations) 0) }}
+            - name: JANGAR_AGENT_RUNNER_TOLERATIONS
+              value: {{ .Values.controller.defaultWorkload.tolerations | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.defaultWorkload.affinity (gt (len .Values.controller.defaultWorkload.affinity) 0) }}
+            - name: JANGAR_AGENT_RUNNER_AFFINITY
+              value: {{ .Values.controller.defaultWorkload.affinity | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.defaultWorkload.podSecurityContext (gt (len .Values.controller.defaultWorkload.podSecurityContext) 0) }}
+            - name: JANGAR_AGENT_RUNNER_POD_SECURITY_CONTEXT
+              value: {{ .Values.controller.defaultWorkload.podSecurityContext | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.defaultWorkload.imagePullSecrets (gt (len .Values.controller.defaultWorkload.imagePullSecrets) 0) }}
+            - name: JANGAR_AGENT_RUNNER_IMAGE_PULL_SECRETS
+              value: {{ .Values.controller.defaultWorkload.imagePullSecrets | toJson | quote }}
+            {{- end }}
+            {{- if .Values.controller.defaultWorkload.priorityClassName }}
+            - name: JANGAR_AGENT_RUNNER_PRIORITY_CLASS
+              value: {{ .Values.controller.defaultWorkload.priorityClassName | quote }}
+            {{- end }}
+            {{- if .Values.controller.defaultWorkload.schedulerName }}
+            - name: JANGAR_AGENT_RUNNER_SCHEDULER_NAME
+              value: {{ .Values.controller.defaultWorkload.schedulerName | quote }}
+            {{- end }}
+            {{- if .Values.kubernetesApi.host }}
+            - name: KUBERNETES_SERVICE_HOST
+              value: {{ .Values.kubernetesApi.host | quote }}
+            {{- end }}
+            {{- if .Values.kubernetesApi.port }}
+            - name: KUBERNETES_SERVICE_PORT
+              value: {{ .Values.kubernetesApi.port | quote }}
+            {{- end }}
             - name: JANGAR_POD_NAMESPACE
               valueFrom:
                 fieldRef:

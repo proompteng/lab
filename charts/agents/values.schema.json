@@ -38,6 +38,24 @@
       },
       "additionalProperties": false
     },
+    "runnerServiceAccount": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+        "setAsDefault": { "type": "boolean" },
+        "rbac": {
+          "type": "object",
+          "properties": {
+            "create": { "type": "boolean" },
+            "extraRules": { "type": "array", "items": { "type": "object" } }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "rbac": {
       "type": "object",
       "properties": {
@@ -203,6 +221,20 @@
             "cluster": { "type": "integer", "minimum": 1 }
           },
           "additionalProperties": false
+        },
+        "defaultWorkload": {
+          "type": "object",
+          "properties": {
+            "serviceAccountName": { "type": "string" },
+            "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
+            "tolerations": { "type": "array", "items": { "type": "object" } },
+            "affinity": { "type": "object" },
+            "podSecurityContext": { "type": "object" },
+            "imagePullSecrets": { "type": "array", "items": { "type": "string" } },
+            "priorityClassName": { "type": "string" },
+            "schedulerName": { "type": "string" }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -286,6 +318,73 @@
       "type": "object",
       "properties": {
         "level": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "podSecurityAdmission": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "createNamespace": { "type": "boolean" },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "kubernetesApi": {
+      "type": "object",
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "argocdHooks": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "serviceAccountName": { "type": "string" },
+        "ttlSecondsAfterFinished": { "type": "integer", "minimum": 0 },
+        "syncWaves": {
+          "type": "object",
+          "properties": {
+            "preSync": { "type": "string" },
+            "postSync": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "pullPolicy": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "preSync": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "postSync": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "waitTimeout": { "type": "string" },
+            "cleanup": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "smoke": {
+          "type": "object",
+          "properties": {
+            "labelSelector": { "type": "string" },
+            "agentRun": { "type": "object" }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     }
