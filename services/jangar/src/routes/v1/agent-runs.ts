@@ -40,6 +40,7 @@ type AgentRunPayload = {
   parameters?: Record<string, string>
   secrets?: string[]
   policy?: Record<string, unknown>
+  ttlSecondsAfterFinished?: number
 }
 
 const normalizeParameterMap = (value: Record<string, unknown> | null): Record<string, string> | undefined => {
@@ -54,6 +55,15 @@ const normalizeParameterMap = (value: Record<string, unknown> | null): Record<st
     output[key] = raw
   }
   return output
+}
+
+const parseOptionalNumber = (value: unknown): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number.parseFloat(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
 }
 
 const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload => {
@@ -80,6 +90,14 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
   const memoryRef = asRecord(payload.memoryRef)
   const memoryRefName = asString(memoryRef?.name)
   const workload = asRecord(payload.workload) ?? undefined
+  const ttlRaw = payload.ttlSecondsAfterFinished
+  const ttlSecondsAfterFinished = parseOptionalNumber(ttlRaw)
+  if (ttlRaw != null && ttlSecondsAfterFinished === undefined) {
+    throw new Error('ttlSecondsAfterFinished must be a number')
+  }
+  if (ttlSecondsAfterFinished !== undefined && ttlSecondsAfterFinished < 0) {
+    throw new Error('ttlSecondsAfterFinished must be >= 0')
+  }
 
   if (!implementationSpecName && !inline) {
     throw new Error('implementationSpecRef or implementation is required')
@@ -96,6 +114,7 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
     parameters,
     secrets,
     policy,
+    ttlSecondsAfterFinished,
   }
 }
 
@@ -222,6 +241,7 @@ export const postAgentRunsHandler = async (
         secrets: parsed.secrets ?? undefined,
         memoryRef: parsed.memoryRef ?? undefined,
         idempotencyKey: deliveryId,
+        ttlSecondsAfterFinished: parsed.ttlSecondsAfterFinished ?? undefined,
       },
     }
 

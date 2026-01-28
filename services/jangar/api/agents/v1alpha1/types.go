@@ -89,6 +89,8 @@ type AgentRunSpec struct {
 	Secrets        []string          `json:"secrets,omitempty"`
 	MemoryRef      *LocalRef         `json:"memoryRef,omitempty"`
 	IdempotencyKey string            `json:"idempotencyKey,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	TTLSecondsAfterFinished *int32 `json:"ttlSecondsAfterFinished,omitempty"`
 }
 
 type InlineImplementation struct {

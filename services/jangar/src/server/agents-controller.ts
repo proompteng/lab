@@ -11,6 +11,7 @@ const DEFAULT_CONCURRENCY = {
   perAgent: 5,
   cluster: 100,
 }
+const DEFAULT_AGENTRUN_RETENTION_SECONDS = 30 * 24 * 60 * 60
 const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
 const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
@@ -581,6 +582,18 @@ const parseOptionalNumber = (value: unknown): number | undefined => {
     if (Number.isFinite(parsed)) return parsed
   }
   return undefined
+}
+
+const parseAgentRunRetentionSeconds = () => {
+  const parsed = parseOptionalNumber(process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS)
+  if (parsed === undefined || parsed < 0) return DEFAULT_AGENTRUN_RETENTION_SECONDS
+  return Math.floor(parsed)
+}
+
+const resolveAgentRunRetentionSeconds = (spec: Record<string, unknown>) => {
+  const override = parseOptionalNumber(spec.ttlSecondsAfterFinished)
+  if (override !== undefined && override >= 0) return Math.floor(override)
+  return parseAgentRunRetentionSeconds()
 }
 
 const isTemporalPollPending = (error: unknown) => {
@@ -2307,6 +2320,21 @@ const reconcileAgentRun = async (
   const runtimeConfig = asRecord(readNested(spec, ['runtime', 'config'])) ?? {}
   const workload = asRecord(readNested(spec, ['workload'])) ?? {}
   let workloadImage: string | null = null
+
+  if (!deleting && (phase === 'Succeeded' || phase === 'Failed')) {
+    const finishedAt = asString(status.finishedAt)
+    if (finishedAt) {
+      const finishedAtMs = Date.parse(finishedAt)
+      if (!Number.isNaN(finishedAtMs)) {
+        const retentionSeconds = resolveAgentRunRetentionSeconds(spec)
+        const expiresAtMs = finishedAtMs + retentionSeconds * 1000
+        if (Date.now() >= expiresAtMs) {
+          await kube.delete(RESOURCE_MAP.AgentRun, name, namespace)
+          return
+        }
+      }
+    }
+  }
 
   if (deleting) {
     if (hasFinalizer) {

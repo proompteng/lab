@@ -60,6 +60,8 @@ Status: Current (2026-01-19)
   - ImplementationSpec: `spec.text`
   - ImplementationSource: `spec.provider`, `spec.auth.secretRef`, `spec.webhook.enabled=true`
   - Memory: `spec.type`, `spec.connection.secretRef`
+- Optional fields:
+  - AgentRun: `spec.ttlSecondsAfterFinished` (integer seconds, >= 0) to override controller retention.
 
 ## Status Conditions (standard)
 - All CRDs include `status.conditions[]` with `type`, `status`, `reason`, `message`, `lastTransitionTime`.
