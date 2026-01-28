@@ -93,28 +93,6 @@
       },
       "additionalProperties": false
     },
-    "resourceQuota": {
-      "type": "object",
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "hard": { "type": "object", "additionalProperties": { "type": "string" } },
-        "scopes": { "type": "array", "items": { "type": "string" } },
-        "scopeSelector": { "type": "object" },
-        "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
-        "labels": { "type": "object", "additionalProperties": { "type": "string" } }
-      },
-      "additionalProperties": false
-    },
-    "limitRange": {
-      "type": "object",
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "limits": { "type": "array", "items": { "type": "object" } },
-        "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
-        "labels": { "type": "object", "additionalProperties": { "type": "string" } }
-      },
-      "additionalProperties": false
-    },
     "podAnnotations": { "type": "object", "additionalProperties": { "type": "string" } },
     "podLabels": { "type": "object", "additionalProperties": { "type": "string" } },
     "securityContext": { "type": "object" },
@@ -164,6 +142,30 @@
         "ingress": { "type": "array", "items": { "type": "object" } },
         "egress": { "type": "array", "items": { "type": "object" } },
         "annotations": { "type": "object", "additionalProperties": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "resourceQuota": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "name": { "type": "string" },
+        "hard": { "type": "object", "additionalProperties": { "type": "string" } },
+        "scopes": { "type": "array", "items": { "type": "string" } },
+        "scopeSelector": { "type": "object" },
+        "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "limitRange": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "name": { "type": "string" },
+        "limits": { "type": "array", "items": { "type": "object" } },
+        "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } }
       },
       "additionalProperties": false
     },
