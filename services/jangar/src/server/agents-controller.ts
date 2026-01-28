@@ -19,6 +19,7 @@ const PARAMETERS_MAX_ENTRIES = 100
 const PARAMETERS_MAX_VALUE_BYTES = 2048
 const DEFAULT_AUTH_SECRET_KEY = 'auth.json'
 const DEFAULT_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
+const DEFAULT_AGENTRUN_RETENTION_SECONDS = 30 * 24 * 60 * 60
 
 const REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -182,6 +183,11 @@ const parseConcurrency = () => ({
   cluster:
     Number.parseInt(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER ?? '', 10) || DEFAULT_CONCURRENCY.cluster,
 })
+
+const parseAgentRunRetentionSeconds = () => {
+  const parsed = parseOptionalSeconds(process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS)
+  return parsed ?? DEFAULT_AGENTRUN_RETENTION_SECONDS
+}
 
 const runKubectl = (args: string[]) =>
   new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
@@ -581,6 +587,20 @@ const parseOptionalNumber = (value: unknown): number | undefined => {
     if (Number.isFinite(parsed)) return parsed
   }
   return undefined
+}
+
+const parseOptionalSeconds = (value: unknown): number | undefined => {
+  const parsed = parseOptionalNumber(value)
+  if (parsed === undefined) return undefined
+  const rounded = Math.floor(parsed)
+  if (!Number.isFinite(rounded)) return undefined
+  return Math.max(0, rounded)
+}
+
+const resolveAgentRunRetentionSeconds = (agentRun: Record<string, unknown>) => {
+  const fromSpec = parseOptionalSeconds(readNested(agentRun, ['spec', 'ttlSecondsAfterFinished']))
+  if (fromSpec !== undefined) return fromSpec
+  return parseAgentRunRetentionSeconds()
 }
 
 const isTemporalPollPending = (error: unknown) => {
@@ -2330,6 +2350,19 @@ const reconcileAgentRun = async (
       metadata: { finalizers: [...finalizers, finalizer] },
     })
     return
+  }
+
+  const retentionSeconds = resolveAgentRunRetentionSeconds(agentRun)
+  const finishedAt = asString(status.finishedAt)
+  if ((phase === 'Succeeded' || phase === 'Failed') && finishedAt) {
+    const finishedAtMs = Date.parse(finishedAt)
+    if (Number.isFinite(finishedAtMs)) {
+      const expiresAt = finishedAtMs + retentionSeconds * 1000
+      if (Date.now() >= expiresAt) {
+        await kube.delete(RESOURCE_MAP.AgentRun, name, namespace)
+        return
+      }
+    }
   }
 
   const runtimeRef = parseRuntimeRef(status.runtimeRef)

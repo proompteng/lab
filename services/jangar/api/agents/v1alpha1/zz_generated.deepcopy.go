@@ -305,6 +305,11 @@ func (in *AgentRunSpec) DeepCopyInto(out *AgentRunSpec) {
 		*out = new(WorkloadSpec)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.TTLSecondsAfterFinished != nil {
+		in, out := &in.TTLSecondsAfterFinished, &out.TTLSecondsAfterFinished
+		*out = new(int32)
+		**out = **in
+	}
 	if in.Parameters != nil {
 		in, out := &in.Parameters, &out.Parameters
 		*out = make(map[string]string, len(*in))

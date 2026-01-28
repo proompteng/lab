@@ -32,6 +32,7 @@ const buildKube = (overrides: Record<string, unknown> = {}) => ({
   }),
   applyStatus: vi.fn(async (resource: Record<string, unknown>) => resource),
   patch: vi.fn(async () => ({})),
+  delete: vi.fn(async () => ({})),
   get: vi.fn(async () => null),
   list: vi.fn(async () => ({ items: [] })),
   ...overrides,
@@ -230,6 +231,79 @@ describe('agents controller reconcileAgentRun', () => {
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
     expect(condition?.reason).toBe('MissingEndpoint')
+  })
+
+  it('deletes completed AgentRun after retention window', async () => {
+    const previousRetention = process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
+
+    try {
+      const kube = buildKube()
+      const agentRun = buildAgentRun({
+        status: {
+          phase: 'Succeeded',
+          finishedAt: new Date(Date.now() - 120_000).toISOString(),
+        },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      expect(kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents')
+    } finally {
+      if (previousRetention === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+      }
+    }
+  })
+
+  it('uses per-run ttlSecondsAfterFinished over controller default', async () => {
+    const previousRetention = process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '3600'
+
+    try {
+      const kube = buildKube()
+      const agentRun = buildAgentRun({
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'job', config: {} },
+          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+          ttlSecondsAfterFinished: 30,
+        },
+        status: {
+          phase: 'Failed',
+          finishedAt: new Date(Date.now() - 90_000).toISOString(),
+        },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      expect(kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents')
+    } finally {
+      if (previousRetention === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+      }
+    }
   })
 
   it('creates job and configmaps for job runtime', async () => {

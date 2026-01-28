@@ -137,6 +137,7 @@ controller:
     perNamespace: 10
     perAgent: 5
     cluster: 100
+  agentRunRetentionSeconds: 2592000
   authSecret:
     name: ""
     key: auth.json

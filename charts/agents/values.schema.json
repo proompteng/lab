@@ -244,6 +244,7 @@
           },
           "additionalProperties": false
         },
+        "agentRunRetentionSeconds": { "type": "integer", "minimum": 0 },
         "authSecret": {
           "type": "object",
           "properties": {

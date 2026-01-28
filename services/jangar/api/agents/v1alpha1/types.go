@@ -84,6 +84,8 @@ type AgentRunSpec struct {
 	Runtime               RuntimeSpec           `json:"runtime"`
 	Workflow              *WorkflowSpec         `json:"workflow,omitempty"`
 	Workload              *WorkloadSpec         `json:"workload,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	TTLSecondsAfterFinished *int32 `json:"ttlSecondsAfterFinished,omitempty"`
 	// +kubebuilder:validation:MaxProperties=100
 	Parameters     map[string]string `json:"parameters,omitempty"`
 	Secrets        []string          `json:"secrets,omitempty"`
