@@ -34,6 +34,12 @@ rules:
   - apiGroups:
       - agents.proompteng.ai
     resources:
+      - agentruns
+    verbs:
+      - delete
+  - apiGroups:
+      - agents.proompteng.ai
+    resources:
       - agents/status
       - agentruns/status
       - agentproviders/status
@@ -280,6 +286,7 @@ rules:
       - create
       - update
       - patch
+      - delete
 {{- if .Values.rbac.clusterScoped }}
   - apiGroups: [""]
     resources:
