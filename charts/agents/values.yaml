@@ -97,6 +97,20 @@ networkPolicy:
   egress: []
   annotations: {}
 
+resourceQuota:
+  enabled: false
+  name: ""
+  annotations: {}
+  hard: {}
+  scopes: []
+  scopeSelector: {}
+
+limitRange:
+  enabled: false
+  name: ""
+  annotations: {}
+  limits: []
+
 env:
   extra: []
   secrets: []

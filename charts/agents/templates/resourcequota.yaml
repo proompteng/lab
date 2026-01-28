@@ -1,0 +1,26 @@
+{{- if .Values.resourceQuota.enabled }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ .Values.resourceQuota.name | default (include "agents.fullname" .) }}
+  namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+  {{- with .Values.resourceQuota.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.resourceQuota.hard }}
+  hard:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.resourceQuota.scopes }}
+  scopes:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.resourceQuota.scopeSelector }}
+  scopeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
