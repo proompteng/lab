@@ -102,10 +102,17 @@ jobs:
       - name: Generate Homebrew formula
         run: bun run --filter @proompteng/agentctl homebrew:generate -- --input ../../../release-artifacts --output ../../../release-artifacts/agentctl.rb
 
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-artifacts/out
+          find release-artifacts -type f -name 'agentctl-*.tar.gz' -exec cp {} release-artifacts/out/ \;
+          find release-artifacts -type f -name 'agentctl-*.tar.gz.sha256' -exec cp {} release-artifacts/out/ \;
+          cp release-artifacts/agentctl.rb release-artifacts/out/agentctl.rb
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: release-artifacts/**/*
+          files: release-artifacts/out/*
           generate_release_notes: true
 
       - name: Checkout Homebrew tap
