@@ -52,6 +52,11 @@ run_node() {
     echo "agentctl: node is required for kube mode; install node or set AGENTCTL_RUNTIME=bun" >&2
     exit 1
   fi
+  if [[ -z "${NODE_OPTIONS:-}" ]]; then
+    export NODE_OPTIONS="--no-deprecation"
+  elif [[ "${NODE_OPTIONS}" != *"--no-deprecation"* ]]; then
+    export NODE_OPTIONS="${NODE_OPTIONS} --no-deprecation"
+  fi
   exec node "${node_script}" "$@"
 }
 
