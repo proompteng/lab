@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHART_DIR="${ROOT_DIR}/charts/agents"
+ARGOCD_AGENTS_DIR="${ROOT_DIR}/argocd/applications/agents"
 
 go generate "${ROOT_DIR}/services/jangar/api/agents"
 
@@ -35,6 +36,23 @@ render_and_check "${CHART_DIR}/values-dev.yaml"
 render_and_check "${CHART_DIR}/values-local.yaml"
 render_and_check "${CHART_DIR}/values-ci.yaml"
 render_and_check "${CHART_DIR}/values-prod.yaml"
+
+render_kustomize() {
+  if command -v kustomize >/dev/null 2>&1; then
+    kustomize build --enable-helm "${ARGOCD_AGENTS_DIR}" >/dev/null
+    return 0
+  fi
+
+  if command -v kubectl >/dev/null 2>&1; then
+    kubectl kustomize --enable-helm "${ARGOCD_AGENTS_DIR}" >/dev/null
+    return 0
+  fi
+
+  echo "kustomize (or kubectl) is required to render ${ARGOCD_AGENTS_DIR}" >&2
+  exit 1
+}
+
+render_kustomize
 
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_agents.yaml" agents.proompteng.ai v1alpha1 Agent
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_agentruns.yaml" agents.proompteng.ai v1alpha1 AgentRun
@@ -153,10 +171,6 @@ kubeconform --strict --summary --ignore-missing-schemas \
   --schema-location "${schema_dir}/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
   --schema-location default \
   "${ROOT_DIR}/argocd/applications/agents/application.yaml"
-
-if [[ "${AGENTS_VALIDATE_KUSTOMIZE:-0}" == "1" ]]; then
-  kustomize build --enable-helm "${ROOT_DIR}/argocd/applications/agents" >/dev/null
-fi
 
 CRD_DIR="${CHART_DIR}/crds" python3 - <<'PY'
 import json
