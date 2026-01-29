@@ -3,7 +3,7 @@ name: agentctl release
 on:
   push:
     tags:
-      - 'v*'
+      - 'agentctl-v*'
 
 permissions:
   contents: write
@@ -106,6 +106,24 @@ jobs:
         with:
           files: release-artifacts/**/*
           generate_release_notes: true
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v5
+        with:
+          repository: proompteng/homebrew-tap
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN != '' && secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Update tap formula
+        run: |
+          mkdir -p homebrew-tap/Formula
+          cp release-artifacts/agentctl.rb homebrew-tap/Formula/agentctl.rb
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/agentctl.rb
+          git commit -m "agentctl ${GITHUB_REF_NAME}" || exit 0
+          git push
 
   publish-npm:
     name: Publish npm package

@@ -15,6 +15,7 @@ npx @proompteng/agentctl --help
 ### Homebrew
 
 ```bash
+brew tap proompteng/tap
 brew install proompteng/tap/agentctl
 ```
 
