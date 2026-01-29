@@ -52,6 +52,29 @@ spec:
                   type: string
                 maxItems: 50
                 type: array
+              contract:
+                properties:
+                  mappings:
+                    items:
+                      properties:
+                        from:
+                          maxLength: 256
+                          type: string
+                        to:
+                          maxLength: 256
+                          type: string
+                      required:
+                      - from
+                      - to
+                      type: object
+                    maxItems: 100
+                    type: array
+                  requiredKeys:
+                    items:
+                      type: string
+                    maxItems: 50
+                    type: array
+                type: object
               description:
                 maxLength: 131072
                 type: string
