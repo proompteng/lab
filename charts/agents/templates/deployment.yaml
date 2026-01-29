@@ -161,7 +161,7 @@ spec:
             - name: JANGAR_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER
               value: {{ .Values.controller.concurrency.cluster | default 100 | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
-              value: {{ .Values.controller.agentRunRetentionSeconds | quote }}
+              value: {{ .Values.controller.agentRunRetentionSeconds | default 2592000 | quote }}
             {{- if .Values.controller.authSecret.name }}
             - name: JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
               value: {{ .Values.controller.authSecret.name | quote }}

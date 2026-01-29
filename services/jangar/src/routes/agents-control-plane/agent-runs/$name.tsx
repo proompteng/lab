@@ -17,19 +17,13 @@ import { buildBaseSummaryItems } from '@/components/agents-control-plane-primiti
 import { parseNamespaceSearch } from '@/components/agents-control-plane-search'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
+  type AgentRunLogPod,
   fetchAgentRunLogs,
   fetchPrimitiveDetail,
   fetchPrimitiveEvents,
-  type AgentRunLogPod,
   type PrimitiveEventItem,
 } from '@/data/agents-control-plane'
 import { cn } from '@/lib/utils'
@@ -158,6 +152,7 @@ function AgentRunDetailPage() {
   const [tailLines, setTailLines] = React.useState('200')
   const [logsError, setLogsError] = React.useState<string | null>(null)
   const [isLogsLoading, setIsLogsLoading] = React.useState(false)
+  const logResetKey = `${params.name}:${searchState.namespace ?? ''}`
 
   const loadLogs = React.useCallback(async () => {
     setIsLogsLoading(true)
@@ -240,13 +235,14 @@ function AgentRunDetailPage() {
   }, [activeTab, loadLogs, resource])
 
   React.useEffect(() => {
+    if (!logResetKey) return
     setLogPods([])
     setLogPod(null)
     setLogContainer(null)
     setLogText('')
     setTailLines('200')
     setLogsError(null)
-  }, [params.name, searchState.namespace])
+  }, [logResetKey])
 
   const statusLabel = resource ? deriveStatusLabel(resource) : 'Unknown'
   const conditions = resource ? getStatusConditions(resource) : []
@@ -459,7 +455,9 @@ function AgentRunDetailPage() {
             <section className="space-y-4 rounded-none border border-border bg-card p-4">
               <div className="flex flex-wrap items-end gap-3">
                 <div className="flex flex-col gap-1 flex-1 min-w-0">
-                  <label className="text-xs font-medium text-foreground">Pod</label>
+                  <label className="text-xs font-medium text-foreground" htmlFor="logPodSelect">
+                    Pod
+                  </label>
                   <Select
                     value={logPod ?? ''}
                     onValueChange={(value) => {
@@ -470,7 +468,7 @@ function AgentRunDetailPage() {
                     }}
                     disabled={!hasPods}
                   >
-                    <SelectTrigger className="w-full" aria-label="Pod">
+                    <SelectTrigger id="logPodSelect" className="w-full" aria-label="Pod">
                       <SelectValue placeholder={hasPods ? 'Select pod' : 'No pods found'} />
                     </SelectTrigger>
                     <SelectContent>
@@ -484,13 +482,15 @@ function AgentRunDetailPage() {
                   </Select>
                 </div>
                 <div className="flex flex-col gap-1 flex-1 min-w-0">
-                  <label className="text-xs font-medium text-foreground">Container</label>
+                  <label className="text-xs font-medium text-foreground" htmlFor="logContainerSelect">
+                    Container
+                  </label>
                   <Select
                     value={logContainer ?? ''}
                     onValueChange={(value) => setLogContainer(value || null)}
                     disabled={containers.length === 0}
                   >
-                    <SelectTrigger className="w-full" aria-label="Container">
+                    <SelectTrigger id="logContainerSelect" className="w-full" aria-label="Container">
                       <SelectValue placeholder={containers.length > 0 ? 'Select container' : 'No containers'} />
                     </SelectTrigger>
                     <SelectContent>
