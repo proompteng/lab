@@ -150,6 +150,119 @@ describe('agents controller reconcileAgentRun', () => {
     expect(condition?.reason).toBe('MissingMemory')
   })
 
+  it('marks AgentRun failed when required metadata keys are missing', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return {
+            metadata: { name: 'impl-1' },
+            spec: {
+              text: 'demo',
+              contract: {
+                requiredKeys: ['repository', 'issueNumber'],
+              },
+            },
+          }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun()
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const status = getLastStatus(kube)
+    const condition = findCondition(status, 'InvalidSpec')
+    expect(condition?.reason).toBe('MissingRequiredMetadata')
+  })
+
+  it('accepts mapped metadata keys for required contract fields', async () => {
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      return { ...resource, metadata: { ...metadata, uid } }
+    })
+
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return {
+            metadata: { name: 'impl-1' },
+            spec: {
+              text: 'demo',
+              contract: {
+                requiredKeys: ['repository', 'issueNumber'],
+                mappings: [
+                  { from: 'linearRepo', to: 'repository' },
+                  { from: 'linearIssue', to: 'issueNumber' },
+                ],
+              },
+            },
+          }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        parameters: {
+          linearRepo: 'proompteng/lab',
+          linearIssue: '1234',
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const status = getLastStatus(kube)
+    const condition = findCondition(status, 'InvalidSpec')
+    expect(condition).toBeUndefined()
+    expect(apply).toHaveBeenCalled()
+    const appliedKinds = apply.mock.calls.map((call) => (call[0] as Record<string, unknown>).kind)
+    expect(appliedKinds).toContain('Job')
+  })
+
   it('marks AgentRun failed when job runtime lacks an image', async () => {
     const previousImage = process.env.JANGAR_AGENT_RUNNER_IMAGE
     const previousAgentImage = process.env.JANGAR_AGENT_IMAGE

@@ -252,8 +252,9 @@ type ImplementationSpecFields struct {
 	// +kubebuilder:validation:MaxLength=131072
 	Description string `json:"description,omitempty"`
 	// +kubebuilder:validation:MaxItems=50
-	AcceptanceCriteria []string `json:"acceptanceCriteria,omitempty"`
-	Labels             []string `json:"labels,omitempty"`
+	AcceptanceCriteria []string                `json:"acceptanceCriteria,omitempty"`
+	Labels             []string                `json:"labels,omitempty"`
+	Contract           *ImplementationContract `json:"contract,omitempty"`
 }
 
 type ImplementationSourceRef struct {
@@ -261,6 +262,20 @@ type ImplementationSourceRef struct {
 	Provider   string `json:"provider"`
 	ExternalId string `json:"externalId,omitempty"`
 	URL        string `json:"url,omitempty"`
+}
+
+type ImplementationContract struct {
+	// +kubebuilder:validation:MaxItems=50
+	RequiredKeys []string `json:"requiredKeys,omitempty"`
+	// +kubebuilder:validation:MaxItems=100
+	Mappings []ImplementationContractMapping `json:"mappings,omitempty"`
+}
+
+type ImplementationContractMapping struct {
+	// +kubebuilder:validation:MaxLength=256
+	From string `json:"from"`
+	// +kubebuilder:validation:MaxLength=256
+	To string `json:"to"`
 }
 
 type ImplementationSpecStatus struct {

@@ -1,7 +1,7 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: codex-run-sample
+  name: codex-run-linear-mapped
 spec:
   agentRef:
     name: codex-agent
@@ -28,10 +28,8 @@ spec:
         cpu: 250m
         memory: 512Mi
   parameters:
-    repository: proompteng/lab
-    issueNumber: "1234"
+    linearRepo: proompteng/lab
+    linearIssue: "1234"
+    linearUrl: https://linear.app/proompteng/issue/ENG-1234
     base: main
     head: codex/onboarding-flow
-    url: https://example.com/tasks/1234
-    task: "Update onboarding flow"
-    priority: "medium"

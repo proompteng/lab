@@ -7,6 +7,20 @@ spec:
     provider: manual
     externalId: manual:sample
     url: https://example.com/agents/specs/manual-sample
+  contract:
+    requiredKeys:
+      - repository
+      - issueNumber
+      - base
+      - head
+      - url
+    mappings:
+      - from: linearRepo
+        to: repository
+      - from: linearIssue
+        to: issueNumber
+      - from: linearUrl
+        to: url
   summary: "Implement onboarding flow"
   text: |
     Implement the onboarding flow described in the spec document.
