@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto'
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { renderHomebrewFormula } from './homebrew/render-homebrew'
-import { parseTargetsArgs, resolveTargets, TARGETS } from './targets'
+import { parseTargetsArgs, resolveTargets, TARGETS, type TargetInfo } from './targets'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const root = resolve(scriptDir, '..')
+const entry = resolve(root, 'src', 'index.ts')
 const distDir = resolve(root, 'dist')
 const releaseDir = resolve(distDir, 'release')
 
@@ -21,26 +22,54 @@ const loadPackageVersion = async () => {
   return pkg.version
 }
 
-const normalizeVersion = (value: string) => (value.startsWith('v') ? value.slice(1) : value)
+const normalizeVersion = (value: string) => {
+  if (value.startsWith('agentctl-v')) return value.replace('agentctl-v', '')
+  if (value.startsWith('agentctl-')) return value.replace('agentctl-', '')
+  if (value.startsWith('v')) return value.slice(1)
+  return value
+}
 
-const buildArchive = async (version: string, label: string) => {
-  const archiveName = `agentctl-${version}-${label}.tar.gz`
+const buildArchive = async (version: string, target: TargetInfo) => {
+  const archiveName = `agentctl-${version}-${target.label}.tar.gz`
   const archivePath = resolve(releaseDir, archiveName)
   const tempDir = await mkdtemp(resolve(tmpdir(), 'agentctl-release-'))
   const stagedBinary = resolve(tempDir, 'agentctl')
-  const sourceBinary = resolve(distDir, 'agentctl.js')
 
   try {
-    await copyFile(sourceBinary, stagedBinary)
+    const proc = Bun.spawn(
+      [
+        'bun',
+        'build',
+        entry,
+        '--compile',
+        '--compile-autoload-package-json',
+        '--format=cjs',
+        '--target',
+        target.bunTarget,
+        '--outfile',
+        stagedBinary,
+      ],
+      {
+        cwd: root,
+        stderr: 'inherit',
+        stdout: 'inherit',
+      },
+    )
+
+    const buildExit = await proc.exited
+    if (buildExit !== 0) {
+      throw new Error(`bun build failed for ${target.bunTarget} with exit code ${buildExit}`)
+    }
+
     await chmod(stagedBinary, 0o755)
 
-    const proc = Bun.spawn(['tar', '-C', tempDir, '-czf', archivePath, 'agentctl'], {
+    const tarProc = Bun.spawn(['tar', '-C', tempDir, '-czf', archivePath, 'agentctl'], {
       cwd: root,
       stderr: 'inherit',
       stdout: 'inherit',
     })
 
-    const exitCode = await proc.exited
+    const exitCode = await tarProc.exited
     if (exitCode !== 0) {
       throw new Error(`tar failed for ${archiveName} with exit code ${exitCode}`)
     }
@@ -66,14 +95,14 @@ const main = async () => {
   const argvForTargets = hasExplicitTargets ? argv : ['--all', ...argv]
   const targets = resolveTargets(argvForTargets, envTargets)
 
-  const buildProc = Bun.spawn(['bun', 'run', 'build'], {
+  const syncProc = Bun.spawn(['bun', 'run', 'sync:proto'], {
     cwd: root,
     stderr: 'inherit',
     stdout: 'inherit',
   })
-  const buildExit = await buildProc.exited
-  if (buildExit !== 0) {
-    throw new Error(`bun run build failed with exit code ${buildExit}`)
+  const syncExit = await syncProc.exited
+  if (syncExit !== 0) {
+    throw new Error(`bun run sync:proto failed with exit code ${syncExit}`)
   }
   await mkdir(releaseDir, { recursive: true })
 
@@ -88,12 +117,18 @@ const main = async () => {
   const checksums = new Map<string, string>()
 
   for (const target of targets) {
-    const sha256 = await buildArchive(resolvedVersion, target.label)
+    const sha256 = await buildArchive(resolvedVersion, target)
     checksums.set(target.label, sha256)
   }
 
   const requiredLabels = TARGETS.map((target) => target.label)
   const hasAllChecksums = requiredLabels.every((label) => checksums.has(label))
+
+  const checksumsPayload = {
+    version: resolvedVersion,
+    checksums: Object.fromEntries(checksums),
+  }
+  await writeFile(resolve(releaseDir, 'checksums.json'), `${JSON.stringify(checksumsPayload, null, 2)}\n`, 'utf8')
 
   if (hasAllChecksums) {
     await renderHomebrewFormula({
