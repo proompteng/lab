@@ -16,7 +16,7 @@ Status: Current (2026-01-19)
 - Concurrency controls per AgentRun and per namespace.
 - Backoff/retry policy for each reconciler (AgentRun, ImplementationSource, Memory).
 - Idempotency keys for run submission to avoid duplicates.
-- Controller leader election and horizontal scaling strategy.
+- Controller leader election and horizontal scaling strategy, required for multi-replica deployments.
 
 ## Security & Compliance
 - Threat model and trust boundaries (cluster, integrations, runtime, secrets).
@@ -64,5 +64,7 @@ Status: Current (2026-01-19)
 - Retry/backoff: exponential with base 5s, max 5m, jitter 20%.
 - Retention: AgentRun records 30 days; logs/artifacts 7 days (runtime configurable).
 - Size limits: ImplementationSpec text 128KB; parameters max 100 entries, 2KB per value.
+- Leader election: disabled by default for single replica; required when `replicaCount > 1` or `autoscaling.enabled=true`.
+  Lease duration 15s, renew deadline 10s, retry period 2s.
 - Supply chain: images signed (cosign), SBOMs (SPDX) published per release.
 - Release cadence: monthly minor, patch releases as needed for security fixes.

@@ -193,9 +193,11 @@ A release is considered “fully functional” when:
    - Ensure `values.schema.json` fully reflects `values.yaml`.
 4) **Controller Guardrails**
    - Add startup validation for missing CRDs with actionable logs/errors.
-5) **CI Validation**
+5) **Leader Election**
+   - Implement Lease-based leader election and chart gating per `docs/agents/leader-election-design.md`.
+6) **CI Validation**
    - Add CI steps for CRD generation diff, kubeconform example validation, and Helm lint.
-6) **Crossplane**
+7) **Crossplane**
    - Document that Crossplane is unsupported and must be uninstalled before deploying the chart.
 
 ## Open Questions
