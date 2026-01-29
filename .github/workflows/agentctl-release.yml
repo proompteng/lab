@@ -130,32 +130,49 @@ jobs:
     name: Publish npm package
     runs-on: ubuntu-24.04
     needs: release
-    if: ${{ secrets.NPM_TOKEN != '' }}
     steps:
+      - name: Check npm token
+        id: npm_token
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [[ -z "${NPM_TOKEN}" ]]; then
+            echo "skip=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "skip=false" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v5
+        if: ${{ steps.npm_token.outputs.skip != 'true' }}
 
       - name: Set up Node.js 22
         uses: actions/setup-node@v6
+        if: ${{ steps.npm_token.outputs.skip != 'true' }}
         with:
           node-version: '24.11.1'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
+        if: ${{ steps.npm_token.outputs.skip != 'true' }}
         with:
           bun-version: 1.3.5
 
       - name: Install dependencies
+        if: ${{ steps.npm_token.outputs.skip != 'true' }}
         run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Build npm entrypoint
+        if: ${{ steps.npm_token.outputs.skip != 'true' }}
         run: bun run --filter @proompteng/agentctl build
 
       - name: Validate npm metadata
+        if: ${{ steps.npm_token.outputs.skip != 'true' }}
         run: bun run --filter @proompteng/agentctl validate:metadata
 
       - name: Publish to npm
+        if: ${{ steps.npm_token.outputs.skip != 'true' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         working-directory: services/jangar/agentctl
