@@ -3,6 +3,7 @@ class Agentctl < Formula
   homepage "https://github.com/proompteng/lab/tree/main/services/jangar/agentctl"
   version "__VERSION__"
   license "MIT"
+  depends_on "node"
 
   on_macos do
     on_arm do
@@ -27,6 +28,7 @@ class Agentctl < Formula
   end
 
   def install
+    libexec.install "agentctl-bun", "agentctl.js"
     bin.install "agentctl"
   end
 

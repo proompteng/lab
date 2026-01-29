@@ -1584,7 +1584,7 @@ const outputStatusKube = async (clients: KubeClients, namespace: string, output:
   try {
     await clients.core.readNamespace({ name: namespace })
     namespaceStatus = 'healthy'
-  } catch {
+  } catch (_error) {
     namespaceStatus = 'missing'
     namespaceMessage = _error instanceof Error ? _error.message : String(_error)
   }

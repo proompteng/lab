@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -11,6 +11,8 @@ const root = resolve(scriptDir, '..')
 const entry = resolve(root, 'src', 'index.ts')
 const distDir = resolve(root, 'dist')
 const releaseDir = resolve(distDir, 'release')
+const wrapperTemplatePath = resolve(root, 'scripts', 'agentctl-wrapper.sh')
+const nodeBundlePath = resolve(distDir, 'agentctl.js')
 
 const loadPackageVersion = async () => {
   const packagePath = resolve(root, 'package.json')
@@ -29,11 +31,34 @@ const normalizeVersion = (value: string) => {
   return value
 }
 
-const buildArchive = async (version: string, target: TargetInfo) => {
+const buildNodeBundle = async () => {
+  await mkdir(distDir, { recursive: true })
+  const proc = Bun.spawn(['bun', 'build', entry, '--target', 'node', '--outfile', nodeBundlePath], {
+    cwd: root,
+    stderr: 'inherit',
+    stdout: 'inherit',
+  })
+  const exitCode = await proc.exited
+  if (exitCode !== 0) {
+    throw new Error(`bun build failed for node bundle with exit code ${exitCode}`)
+  }
+  return nodeBundlePath
+}
+
+const renderWrapper = async (version: string, outputPath: string) => {
+  const template = await readFile(wrapperTemplatePath, 'utf8')
+  const rendered = template.replaceAll('__AGENTCTL_VERSION__', version)
+  await writeFile(outputPath, rendered, 'utf8')
+  await chmod(outputPath, 0o755)
+}
+
+const buildArchive = async (version: string, target: TargetInfo, nodeScriptPath: string) => {
   const archiveName = `agentctl-${version}-${target.label}.tar.gz`
   const archivePath = resolve(releaseDir, archiveName)
   const tempDir = await mkdtemp(resolve(tmpdir(), 'agentctl-release-'))
-  const stagedBinary = resolve(tempDir, 'agentctl')
+  const stagedBinary = resolve(tempDir, 'agentctl-bun')
+  const wrapperPath = resolve(tempDir, 'agentctl')
+  const stagedNodeScript = resolve(tempDir, 'agentctl.js')
 
   try {
     const proc = Bun.spawn(
@@ -62,8 +87,10 @@ const buildArchive = async (version: string, target: TargetInfo) => {
     }
 
     await chmod(stagedBinary, 0o755)
+    await copyFile(nodeScriptPath, stagedNodeScript)
+    await renderWrapper(version, wrapperPath)
 
-    const tarProc = Bun.spawn(['tar', '-C', tempDir, '-czf', archivePath, 'agentctl'], {
+    const tarProc = Bun.spawn(['tar', '-C', tempDir, '-czf', archivePath, 'agentctl', 'agentctl-bun', 'agentctl.js'], {
       cwd: root,
       stderr: 'inherit',
       stdout: 'inherit',
@@ -104,6 +131,7 @@ const main = async () => {
   if (syncExit !== 0) {
     throw new Error(`bun run sync:proto failed with exit code ${syncExit}`)
   }
+  const builtNodeScript = await buildNodeBundle()
   await mkdir(releaseDir, { recursive: true })
 
   const packageVersion = await loadPackageVersion()
@@ -117,7 +145,7 @@ const main = async () => {
   const checksums = new Map<string, string>()
 
   for (const target of targets) {
-    const sha256 = await buildArchive(resolvedVersion, target)
+    const sha256 = await buildArchive(resolvedVersion, target, builtNodeScript)
     checksums.set(target.label, sha256)
   }
 
