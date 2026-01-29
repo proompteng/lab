@@ -120,7 +120,7 @@ jobs:
         with:
           repository: proompteng/homebrew-tap
           path: homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN }}
 
       - name: Update tap formula
         run: |
