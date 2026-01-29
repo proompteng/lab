@@ -1,9 +1,10 @@
 name: agentctl release
 
-on:
+'on':
   push:
     tags:
       - 'agentctl-v*'
+  workflow_dispatch: {}
 
 permissions:
   contents: write
