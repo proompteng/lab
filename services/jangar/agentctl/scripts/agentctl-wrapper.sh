@@ -5,7 +5,8 @@ if [[ -z "${AGENTCTL_VERSION:-}" ]]; then
   export AGENTCTL_VERSION="__AGENTCTL_VERSION__"
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PATH="$(perl -MCwd -e 'print Cwd::realpath($ARGV[0])' "$0")"
+SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
 LIBEXEC_DIR="${AGENTCTL_LIBEXEC:-${SCRIPT_DIR}/../libexec}"
 
 resolve_bun() {
