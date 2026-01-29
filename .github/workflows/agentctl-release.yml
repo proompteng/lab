@@ -112,7 +112,7 @@ jobs:
         with:
           repository: proompteng/homebrew-tap
           path: homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN != '' && secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       - name: Update tap formula
         run: |
