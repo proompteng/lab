@@ -58,6 +58,7 @@ resources:
 
 resourceQuota:
   enabled: false
+  name: ""
   hard: {}
   scopes: []
   scopeSelector: {}
@@ -66,6 +67,7 @@ resourceQuota:
 
 limitRange:
   enabled: false
+  name: ""
   limits: []
   annotations: {}
   labels: {}

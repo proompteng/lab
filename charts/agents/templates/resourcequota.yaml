@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: ResourceQuota
 metadata:
-  name: {{ include "agents.fullname" . }}
+  name: {{ .Values.resourceQuota.name | default (include "agents.fullname" .) }}
   namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
   labels:
     {{- include "agents.labels" . | nindent 4 }}
