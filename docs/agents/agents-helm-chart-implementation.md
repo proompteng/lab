@@ -38,6 +38,7 @@ A fully functional chart must provide:
 - **gRPC service port** (ClusterIP only) for optional `agentctl` access within the cluster.
 - **RBAC** that matches what Jangar actually does (jobs/secrets/configmaps/CRDs).
 - **Controller configuration** (namespaces, concurrency, resync interval) exposed via values.
+- **Leader election configuration** (lease name/namespace and timing) exposed via values.
 - **Examples** for each CRD and implementation source.
 - **CI validation** to ensure CRDs and examples are valid and up‑to‑date.
 - **Crossplane unsupported**: ensure Crossplane is uninstalled so native CRDs are the only definitions.
@@ -69,6 +70,9 @@ Jangar is the controller for all primitives and must:
 - Reconcile **Agent** and validate provider references.
 - Reconcile **AgentProvider** templates and expose invalid spec errors.
 - Reconcile **ImplementationSpec** and **ImplementationSource** (webhook-only).
+  - Enforce ImplementationSpec schema constraints: `spec.text` required, `spec.summary` <= 256 chars,
+    `spec.description` <= 128KB, `spec.acceptanceCriteria` <= 50 items, `spec.text` <= 128KB.
+  - Validate `spec.source.provider` when `spec.source` is present and set `InvalidSpec` on violations.
 - Reconcile **Memory** and validate referenced Secrets.
 - Reconcile **Orchestration** and **OrchestrationRun** with the native workflow runtime.
 - Reconcile **ToolRun** jobs and update status.
@@ -118,6 +122,7 @@ Controller behavior requires permissions to:
 - Create/update ConfigMaps for run inputs.
 - Create/update CronJobs for schedules.
 - Create/update PVCs for workspaces.
+- Create/update Leases for leader election.
 - Emit Events.
 
 ## Helm Chart Structure
@@ -133,7 +138,7 @@ Controller behavior requires permissions to:
 `values.schema.json` must cover:
 - Image configuration (`repository`, `tag`, `digest`, pull policy, pull secrets).
 - Database configuration (URL, secret ref, CA secret).
-- Controller settings (`enabled`, `namespaces`, `concurrency`).
+- Controller settings (`enabled`, `namespaces`, `concurrency`, `resyncInterval`, `leaderElection.*`).
 - Supporting controller settings (`enabled`, `namespaces`).
 - Agent comms configuration (NATS, optional).
 - gRPC service configuration (`grpc.enabled`, `grpc.port`, `grpc.servicePort`, `grpc.serviceType`).
