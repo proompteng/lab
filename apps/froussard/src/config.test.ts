@@ -59,6 +59,18 @@ describe('loadConfig', () => {
     expect(config.discord.defaultResponse.ephemeral).toBe(false)
   })
 
+  it('supports idempotency TTL seconds env', () => {
+    const env = {
+      ...baseEnv,
+      FROUSSARD_WEBHOOK_IDEMPOTENCY_TTL_SECONDS: '45',
+      FROUSSARD_WEBHOOK_IDEMPOTENCY_MAX_ENTRIES: '123',
+    }
+
+    const config = loadConfig(env)
+    expect(config.idempotency.ttlMs).toBe(45_000)
+    expect(config.idempotency.maxEntries).toBe(123)
+  })
+
   it('falls back to CODEX_TRIGGER_LOGIN when list env is absent', () => {
     const env = {
       ...baseEnv,

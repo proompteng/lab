@@ -56,11 +56,11 @@ export const createDiscordWebhookHandler =
 
     const interactionId = typeof typedInteraction.id === 'string' ? typedInteraction.id : undefined
     if (interactionId && idempotencyStore.isDuplicate(`discord:${interactionId}`)) {
-      logger.info({ interactionId }, 'duplicate discord interaction ignored')
+      logger.warn({ interactionId }, 'duplicate discord interaction ignored')
       return jsonResponse({
         type: 4,
         data: {
-          content: 'Interaction already received.',
+          content: 'Duplicate interaction ignored.',
           ...(config.discord.response.ephemeral ? { flags: EPHEMERAL_FLAG } : {}),
         },
       })
