@@ -4,7 +4,9 @@ Status: Current (2026-01-19)
 
 ## API & Contracts
 - Full CRD schemas for all resources (spec + status) with defaults and validation rules.
-- Explicit size limits for large fields (e.g., ImplementationSpec text).
+- Explicit size limits for large fields (ImplementationSpec text/description, summaries, acceptance criteria).
+- ImplementationSpec contract: required `spec.text`, optional `spec.source` metadata, summary/description limits,
+  and acceptance-criteria caps aligned to the CRD schema.
 - Conversion strategy when moving beyond v1alpha1 (webhook design + deprecation policy).
 - Runtime adapter contract: submit/status/cancel inputs and error codes.
 - Agent-runner spec contract: required fields, workspace layout, artifact paths.
@@ -16,7 +18,7 @@ Status: Current (2026-01-19)
 - Concurrency controls per AgentRun and per namespace.
 - Backoff/retry policy for each reconciler (AgentRun, ImplementationSource, Memory).
 - Idempotency keys for run submission to avoid duplicates.
-- Controller leader election and horizontal scaling strategy.
+- Controller leader election and horizontal scaling strategy (see `docs/agents/leader-election-design.md`).
 
 ## Security & Compliance
 - Threat model and trust boundaries (cluster, integrations, runtime, secrets).
@@ -63,6 +65,7 @@ Status: Current (2026-01-19)
 - Concurrency defaults: 10 in-flight AgentRuns per namespace, 5 per Agent, 100 cluster-wide.
 - Retry/backoff: exponential with base 5s, max 5m, jitter 20%.
 - Retention: AgentRun records 30 days; logs/artifacts 7 days (runtime configurable).
-- Size limits: ImplementationSpec text 128KB; parameters max 100 entries, 2KB per value.
+- Size limits: ImplementationSpec text 128KB, description 128KB, summary 256 chars, acceptanceCriteria 50 items;
+  parameters max 100 entries, 2KB per value.
 - Supply chain: images signed (cosign), SBOMs (SPDX) published per release.
 - Release cadence: monthly minor, patch releases as needed for security fixes.
