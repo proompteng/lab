@@ -49,7 +49,11 @@ const handleExit = (exit: Exit.Exit<unknown, unknown>, onExit: (code: number) =>
   }
 
   const message = failure instanceof Error ? failure.message : failure ? String(failure) : 'Unknown error'
-  if (message) console.error(message)
+  if (process.env.AGENTCTL_DEBUG) {
+    console.error(Cause.pretty(exit.cause))
+  } else if (message) {
+    console.error(message)
+  }
   onExit(EXIT_UNKNOWN)
 }
 
@@ -67,10 +71,12 @@ const main = async () => {
     config,
     resolved,
   })
-  const appLayer = Layer.provideMerge(contextLayer, TransportLive)
+  const transportLayer = Layer.provide(TransportLive, contextLayer)
+  const appLayer = Layer.mergeAll(contextLayer, transportLayer)
+  const runtimeLayer = Layer.mergeAll(appLayer, platformLayer)
   const app = makeApp()
   const run = Command.run({ name: 'agentctl', version: getVersion() })(app)
-  const program = Effect.provide(run(argv), [appLayer, platformLayer])
+  const program = Effect.provide(run(argv), runtimeLayer)
 
   runMain(program, {
     disableErrorReporting: true,
