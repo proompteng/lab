@@ -192,16 +192,12 @@ export const makeVersionCommand = () =>
           return
         }
         if (transport.mode === 'kube') {
-          const clients = transport.clients
+          const backend = transport.backend
           console.log(`agentctl ${version}`)
           try {
-            const response = yield* Effect.promise(() =>
-              clients.apps.listNamespacedDeployment({
-                namespace: resolved.namespace || DEFAULT_NAMESPACE,
-                labelSelector: 'app.kubernetes.io/name=agents',
-              }),
+            const body = yield* Effect.promise(() =>
+              backend.listDeployments(resolved.namespace || DEFAULT_NAMESPACE, 'app.kubernetes.io/name=agents'),
             )
-            const body = 'body' in response ? response.body : (response as { body?: unknown }).body
             const items = Array.isArray((body as { items?: unknown[] } | undefined)?.items)
               ? ((body as { items?: unknown[] }).items as Record<string, unknown>[])
               : []
@@ -251,7 +247,7 @@ const makeStatusLikeCommand = (name: 'status' | 'diagnose') =>
       const transport = yield* TransportService
       const output = resolved.output
       if (transport.mode === 'kube') {
-        yield* Effect.promise(() => outputStatusKube(transport.clients, resolved.namespace, output))
+        yield* Effect.promise(() => outputStatusKube(transport.backend, resolved.namespace, output))
         return
       }
       const response = yield* Effect.promise(

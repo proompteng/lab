@@ -90,7 +90,7 @@ const makeResourceCommand = (name: string, extras: Array<Command.Command<unknown
       const transport = yield* TransportService
       if (transport.mode === 'kube') {
         const resource = yield* Effect.promise(() =>
-          getCustomObjectOptional(transport.clients, spec, resourceName, resolved.namespace),
+          getCustomObjectOptional(transport.backend, spec, resourceName, resolved.namespace),
         )
         if (!resource) throw new Error(`${name} ${resourceName} not found`)
         outputResource(resource, resolved.output)
@@ -116,7 +116,7 @@ const makeResourceCommand = (name: string, extras: Array<Command.Command<unknown
       const describeOutput = resolveDescribeOutput(resolved.output, flags.output)
       if (transport.mode === 'kube') {
         const resource = yield* Effect.promise(() =>
-          getCustomObjectOptional(transport.clients, spec, resourceName, resolved.namespace),
+          getCustomObjectOptional(transport.backend, spec, resourceName, resolved.namespace),
         )
         if (!resource) throw new Error(`${name} ${resourceName} not found`)
         outputResource(resource, describeOutput)
@@ -142,7 +142,7 @@ const makeResourceCommand = (name: string, extras: Array<Command.Command<unknown
       const labelSelector = Option.getOrUndefined(selector)
       if (transport.mode === 'kube') {
         const resource = yield* Effect.promise(() =>
-          listCustomObjects(transport.clients, spec, resolved.namespace, labelSelector),
+          listCustomObjects(transport.backend, spec, resolved.namespace, labelSelector),
         )
         outputList(resource, resolved.output)
         return
@@ -172,7 +172,7 @@ const makeResourceCommand = (name: string, extras: Array<Command.Command<unknown
         while (true) {
           if (transport.mode === 'kube') {
             const resource = yield* Effect.promise(() =>
-              listCustomObjects(transport.clients, spec, resolved.namespace, labelSelector),
+              listCustomObjects(transport.backend, spec, resolved.namespace, labelSelector),
             )
             if (resolved.output === 'table') {
               clearScreen()
@@ -208,7 +208,7 @@ const makeResourceCommand = (name: string, extras: Array<Command.Command<unknown
       const transport = yield* TransportService
       const manifest = yield* Effect.promise(() => readFileContent(file))
       if (transport.mode === 'kube') {
-        const resources = yield* Effect.promise(() => applyManifest(transport.clients, manifest, resolved.namespace))
+        const resources = yield* Effect.promise(() => applyManifest(transport.backend, manifest, resolved.namespace))
         outputResources(resources, resolved.output)
         return
       }
@@ -231,7 +231,7 @@ const makeResourceCommand = (name: string, extras: Array<Command.Command<unknown
       const transport = yield* TransportService
       if (transport.mode === 'kube') {
         const result = yield* Effect.promise(() =>
-          deleteCustomObject(transport.clients, spec, resolved.namespace, resourceName),
+          deleteCustomObject(transport.backend, spec, resolved.namespace, resourceName),
         )
         if (!result) throw new Error(`${name} ${resourceName} not found`)
         console.log('deleted')
@@ -291,7 +291,7 @@ const makeImplCreateCommand = () => {
           },
         }
         const resource = yield* Effect.promise(() =>
-          createCustomObject(transport.clients, RESOURCE_SPECS.impl, resolved.namespace, manifest),
+          createCustomObject(transport.backend, RESOURCE_SPECS.impl, resolved.namespace, manifest),
         )
         outputResource(resource, resolved.output)
         return
@@ -393,7 +393,7 @@ const makeImplInitCommand = () => {
 
         if (transport.mode === 'kube') {
           const resources = yield* Effect.promise(() =>
-            applyManifest(transport.clients, manifestYaml, resolved.namespace),
+            applyManifest(transport.backend, manifestYaml, resolved.namespace),
           )
           outputResources(resources, resolved.output)
           return
