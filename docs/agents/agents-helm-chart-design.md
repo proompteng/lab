@@ -352,6 +352,9 @@ Key values (conceptual):
 - `resources`.
 - `crds.install` (optional flag for `--skip-crds` parity).
 
+Scheduling defaults for AgentRun pods (nodeSelector, tolerations, affinity, topology spread) are documented in
+`docs/agents/topology-spread-constraints.md`.
+
 No values for embedded database, migrations jobs, backups, or ingress.
 
 ## Compatibility & Installation
