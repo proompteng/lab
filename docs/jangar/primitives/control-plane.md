@@ -59,4 +59,4 @@ and return consistent results on retries.
 
 ## Related docs
 
-- [Agents control-plane filters (labels + phase)](../agents-control-plane-filters.md)
+- [`agents-control-plane-filters.md`](../agents-control-plane-filters.md)

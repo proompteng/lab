@@ -1,188 +1,210 @@
-# Agents Control-Plane Filters (Labels + Phase)
-
-Status: Draft (2026-01-30)
+# Jangar agents control-plane filters (design)
 
 ## Summary
 
-Introduce first-class label and phase filters across the agents control-plane API, CLI, and UI so operators can
-consistently scope listings and watches of Agents, AgentRuns, ImplementationSpecs, and related primitives.
-The change standardizes query parameters, ensures labels are stored in a consistent location, and keeps all
-filters optional for backward compatibility.
-
-## Background
-
-Today, filtering is inconsistent across surfaces:
-
-- The Jangar UI for the agents control plane already exposes label selector and phase/runtime filters for some
-  lists, but the behavior and query naming are not fully standardized.
-- The control-plane API includes a resources endpoint used by the UI; other external `/v1/*` endpoints do not
-  document label or phase filtering.
-- Some CRDs carry labels in `spec` fields, others rely on `metadata.labels`, which makes selector behavior ambiguous.
-
-This doc proposes a uniform filter contract so list/watch operations behave the same in the API, CLI, and UI.
+Add first-class label and phase filters to the agents control-plane API, CLI (`agentctl`), and Jangar UI. The goal is to
+make large namespaces usable by letting operators slice resources by labels (Kubernetes selector syntax) and by run phase
+(Pending/Running/Succeeded/Failed/Cancelled) without changing existing defaults.
 
 ## Goals
 
-- Provide a consistent label selector interface for list/watch across Agent, AgentRun, ImplementationSpec,
-  ImplementationSource, Orchestration, OrchestrationExecution, and related primitives.
-- Provide phase filtering for run-like resources (AgentRun and OrchestrationExecution).
-- Ensure UI and CLI can round-trip filters via query parameters and flags.
-- Keep all changes backward compatible and additive.
+- Provide consistent label + phase filtering across REST API, gRPC/CLI, and UI.
+- Support Kubernetes label selector syntax (`key=value`, `key in (...)`, `!key`, etc.).
+- Enable quick run-phase slicing for `AgentRun` and `OrchestrationRun` list views and streams.
+- Preserve backward compatibility for existing API clients and UI deep links.
+- Keep server-side filtering as the source of truth; avoid heavy client-side filtering for large datasets.
 
 ## Non-goals
 
-- Introducing complex field selectors beyond label/phase.
-- Altering how phases are computed or introducing new phases in this change.
-- Redesigning the control-plane UI; only incremental filter UI changes are in scope.
+- Full-text search over labels/annotations or status fields.
+- Cross-namespace queries (filtering remains namespace-scoped).
+- New persistence or indexing layers; labels remain on CRDs and are queried via Kubernetes APIs.
 
-## Definitions
+## Background / current state
 
-- **Label selector**: Kubernetes-style selector string (e.g. `team=platform,env in (prod,staging)`), used
-  to match `metadata.labels`.
-- **Phase**: A normalized status string for run-like resources. For AgentRun: `Pending`, `Running`, `Succeeded`,
-  `Failed`, `Cancelled`. For OrchestrationExecution: same set, plus any mapped provider states.
+- The control-plane REST list endpoint (`GET /api/agents/control-plane/resources`) already accepts a
+  `labelSelector` and `phase` query parameter, but only uses `phase` for `AgentRun` and does not expose a
+  cohesive UI/CLI surface.
+- The SSE stream (`GET /api/agents/control-plane/stream`) broadcasts all resource events in a namespace without
+  server-side label or phase filtering.
+- The CLI (`agentctl`) list commands support `--selector` / `--label-selector` for most primitives in gRPC mode, but the
+  UX is inconsistent with the UI and there is no run-phase filter across list commands.
 
-## Proposed API changes
+This design unifies those behaviors and makes filters visible, consistent, and shareable across surfaces.
 
-### 1) External Jangar API (`/v1/*`)
-
-Add optional query parameters to all list/watch endpoints:
-
-- `labelSelector`: string, Kubernetes label selector syntax.
-- `phase`: string or comma-separated list of phases (only valid for run-like resources).
-- `runtime`: string (optional, run-like resources only).
-- `limit`: integer (existing).
-- `watch`: boolean (if supported by the endpoint).
-
-Endpoints impacted:
-
-- `GET /v1/agents`
-- `GET /v1/agent-runs`
-- `GET /v1/implementation-specs`
-- `GET /v1/implementation-sources`
-- `GET /v1/orchestrations`
-- `GET /v1/orchestration-executions`
-
-Example:
-
-```
-GET /v1/agent-runs?labelSelector=team=platform,env=prod&phase=Running,Pending&runtime=workflow
-```
-
-Notes:
-
-- `phase` and `runtime` are ignored for non-run resources.
-- `labelSelector` applies to `metadata.labels` only.
-- API responses include the normalized `status.phase` to support client filtering and display.
-
-### 2) Control-plane UI API (`/api/agents/control-plane/resources`)
-
-Standardize the query parameters for the UI-facing resources endpoint:
-
-- `kind` (required)
-- `namespace` (optional)
-- `labelSelector` (optional)
-- `phase` (optional; accepts comma-separated list)
-- `runtime` (optional)
-- `limit` (optional)
-- `stream` (optional; watch)
-
-Behavior matches the `/v1/*` contract. The endpoint should accept both `labelSelector` and the legacy
-`label_selector` to keep existing clients working.
-
-### 3) Validation and error handling
-
-- Invalid label selectors should return `400` with a clear error message.
-- Unknown phases should return `400` on run resources, and be ignored on non-run resources.
-- When `phase` is provided on list/watch endpoints for non-run resources, the API returns all results (and logs
-  a structured warning server-side).
-
-## Data model changes
+## Data model
 
 ### Labels
 
-To make selection consistent, labels are stored in `metadata.labels` for all agent-related CRDs.
+- Filters rely on Kubernetes labels (`metadata.labels`). No new schema fields are required.
+- Label selectors must follow Kubernetes label selector syntax as implemented by `kubectl`/API server.
+- Reserved prefixes remain unchanged; recommend using `jangar.proompteng.ai/*` or existing `codex.*` labels for
+  system-generated values, and team-specific prefixes for custom tags.
 
-- **Source of truth:** `metadata.labels` on all resources.
-- **Backward compatibility:** when a resource includes `spec.labels` (e.g. ImplementationSpec), the API/controller
-  mirrors these into `metadata.labels` on create/update.
-- **Migration:** a one-time reconciliation job (or controller reconciliation loop) can backfill missing
-  `metadata.labels` from `spec.labels` for existing objects.
+### Run phases
 
-Labeling conventions (recommended, not required):
+- `AgentRun.status.phase` and `OrchestrationRun.status.phase` are the primary phase values:
+  - `Pending` | `Running` | `Succeeded` | `Failed` | `Cancelled`
+- Unknown or missing phases are treated as `Unknown` in summaries but are excluded when a phase filter is applied.
 
-- `team`, `env`, `provider`, `runtime`, `source`, `runType`, `owner`.
+## API design
 
-### Phase
+### REST endpoints (control-plane)
 
-- `status.phase` must be present on run-like resources (AgentRun and OrchestrationExecution).
-- The control plane normalizes provider-specific runtime statuses into these phases.
-- Phase is included in list responses so clients can filter further without additional calls.
+#### 1) List resources (existing, extend)
 
-## CLI changes (`agentctl`)
+**Endpoint**: `GET /api/agents/control-plane/resources`
 
-Add label/phase flags to list/watch commands, consistent with `kubectl` conventions:
+**Query params**:
+- `kind` (required)
+- `namespace` (optional, default `agents`)
+- `limit` (optional, default server-defined)
+- `labelSelector` (optional, K8s selector string)
+- `phase` (optional, for run-like kinds)
+- `phases` (optional, comma-separated list; supersedes `phase`)
+- `runtime` (optional, for `AgentRun` only)
 
-- `-l, --selector <labelSelector>`: pass through to API label selector.
-- `--label <k=v>`: repeatable; translated into a selector string.
-- `--phase <phase[,phase]>`: run-only list/watch filters.
-- `--runtime <type>`: run-only list/watch filters (existing or added where missing).
+**Behavior**:
+- `labelSelector` applies to all kinds (Kubernetes list with `-l` selector).
+- `phase`/`phases` applies to run-like kinds (`AgentRun`, `OrchestrationRun`).
+- `phases` is an OR over the supplied values.
+- If both `phase` and `phases` are provided, `phases` wins.
+
+#### 2) Stream resources (new filters)
+
+**Endpoint**: `GET /api/agents/control-plane/stream`
+
+**Query params**:
+- `namespace` (optional, default `agents`)
+- `labelSelector` (optional)
+- `phase` / `phases` (optional, run-like kinds only)
+- `runtime` (optional, `AgentRun` only)
+
+**Behavior**:
+- Server applies filters before emitting SSE events.
+- For non-run kinds, only `labelSelector` applies.
+- For run kinds, both label selector and phase filters are applied.
+
+#### 3) Summary (extend)
+
+**Endpoint**: `GET /api/agents/control-plane/summary`
+
+**Query params**:
+- `namespace` (optional)
+- `labelSelector` (optional)
+
+**Behavior**:
+- When `labelSelector` is present, totals and phase counts reflect only matching resources.
+- When absent, behavior remains unchanged.
+
+### Backward-compatible aliases
+
+- `label_selector` is accepted as an alias for `labelSelector` in all endpoints.
+- Existing `phase` parameter remains supported; `phases` is additive.
+
+### Response changes
+
+No breaking response shape changes. Filter metadata can be optionally echoed back in responses to simplify UI state
+rehydration:
+
+```json
+{
+  "ok": true,
+  "kind": "AgentRun",
+  "namespace": "agents",
+  "filters": {
+    "labelSelector": "codex.stage=implementation",
+    "phases": ["Running", "Pending"],
+    "runtime": "workflow"
+  },
+  "items": []
+}
+```
+
+## CLI design (`agentctl`)
+
+### List commands (all primitives)
+
+Add consistent flags to `list` and `watch` commands:
+
+- `--label-selector <expr>` (alias: `--selector`)
+- `--phase <phase>` (run kinds only)
+- `--phases <p1,p2,...>` (run kinds only)
 
 Examples:
 
 ```
-agentctl run list -n agents --phase Running,Pending -l team=platform
-agentctl impl list --label owner=codex --label env=staging
-agentctl agent watch -l provider=codex
+agentctl run list --label-selector "codex.stage=implementation" --phases Running,Pending
+agentctl orchestrationrun list --phase Failed
+agentctl run watch --label-selector "team=infra" --phase Running
 ```
 
-Behavior:
+### gRPC and kube modes
 
-- `--label` and `--selector` are mutually additive; the CLI combines them into a single selector.
-- In kube mode, these flags map to Kubernetes label selector query parameters.
-- In gRPC mode, these flags map to the new `/v1/*` query parameters.
+- gRPC mode passes `label_selector`, `phase`, and `runtime` to the gRPC list methods.
+- kube mode uses the same selector/phase filters and performs server-side filtering when possible (Kubernetes label
+  selector; phase filter applied client-side only when the server lacks native support).
 
-## UI changes
+### Help + completion
 
-### Global filter behavior
+- Ensure new flags appear in `agentctl help` output and shell completion scripts.
+- Keep flag names consistent with existing patterns (`label-selector` preferred over `labels`).
 
-- Filters are encoded in the URL query string to enable sharing and reload persistence.
-- Apply filters immediately on change (debounced for text inputs), with a clear reset button.
-- Active filters are displayed as removable chips.
+## UI design
 
-### Pages to update
+### Filter bar (AgentRun + OrchestrationRun list views)
 
-- **Agent Runs**: add a multi-select Phase filter, keep Runtime filter, and ensure Label Selector is present.
-- **Implementation Specs**: add/standardize the Label Selector filter.
-- **Agents / Orchestrations**: add Label Selector and, for run-like pages, Phase filter where relevant.
+Add a filter bar to the control-plane list screens:
 
-### UI schema
+- **Label selector** input (K8s selector syntax with inline helper text and examples).
+- **Phase pills**: Pending, Running, Succeeded, Failed, Cancelled.
+- **Quick presets**: `Active` (Pending + Running), `Completed` (Succeeded + Failed + Cancelled).
 
-- Label selector input uses the Kubernetes string format; inline helper text should link to docs/examples.
-- Phase filter supports multiple selection and maps to comma-separated values in the API query.
+Filters should update the URL query string so state is shareable:
+
+```
+/agents-control-plane/agent-runs?labelSelector=codex.stage%3Dimplementation&phases=Running,Pending
+```
+
+### Filter behavior
+
+- Filters apply server-side by passing query params to control-plane APIs.
+- UI caches the last-used label selector per user (local storage) and rehydrates on load.
+- Phase pills are multi-select (OR). Selecting a pill toggles it.
+
+### Status + empty states
+
+- When filters are active, show a “filtered” badge and a one-click clear action.
+- Empty state should distinguish between “no data” and “no matches for current filters.”
 
 ## Backward compatibility
 
-- All new parameters are optional; existing list and watch clients remain valid.
-- `label_selector` continues to work as an alias to `labelSelector` for the control-plane UI endpoint.
-- For resources without `metadata.labels`, filters are a best-effort match after backfilling from `spec.labels`.
-- CLI defaults remain unchanged when no flags are provided.
+- Existing API clients with no filters behave identically.
+- `phase` stays supported; `phases` is optional and additive.
+- `label_selector` continues to work as an alias for `labelSelector`.
+- UI defaults remain unchanged: no filters applied, same list ordering and limits.
 
 ## Rollout plan
 
-1. Add label/phase handling to `/v1/*` list endpoints and document them.
-2. Standardize and validate query params on `/api/agents/control-plane/resources`.
-3. Update agentctl flags and CLI help text.
-4. Update control-plane UI filter components and URL handling.
-5. Run a one-time reconciliation to backfill `metadata.labels` where needed.
+1) **API + gRPC**: Add `labelSelector`/`phase`/`phases` to REST endpoints and gRPC list methods where missing.
+2) **CLI**: Surface new flags in `agentctl` list/watch commands; update help and docs.
+3) **UI**: Add filter bar, update URL query sync, and wire to API.
+4) **Telemetry**: Add basic metrics for filter usage and error rates (see below).
 
 ## Observability
 
-- Emit structured logs for filter parsing errors and invalid selectors.
-- Track filter usage rates to validate rollout (percent of requests with labelSelector/phase).
+- Metric: `jangar_control_plane_filter_requests_total` (labels: endpoint, has_label_selector, has_phase).
+- Metric: `jangar_control_plane_filter_errors_total` (labels: endpoint, error_code).
+- Log filter payloads at debug level for troubleshooting (avoid logging sensitive label values if they can contain PII).
 
 ## Open questions
 
-- Should we accept repeated `phase` parameters in addition to comma-separated values?
-- Do we want a dedicated `labels` object in `/v1/*` responses, or rely solely on `metadata.labels`?
-- Should label selector parsing be shared by all endpoints (library) or per-route?
+- Should we add dedicated label helpers for common Codex fields (repo, issue, stage), or rely on raw selectors?
+- Do we need phase filtering for `ToolRun` or other run-like primitives beyond `AgentRun`/`OrchestrationRun`?
+- Should UI persist filters per-kind or globally across the control-plane views?
+
+## Appendix
+
+- Run phase definitions live in `docs/jangar/primitives/agent.md` and `docs/jangar/primitives/orchestration.md`.
+- Existing control-plane stream endpoint: `GET /api/agents/control-plane/stream`.
+- Existing resources list endpoint: `GET /api/agents/control-plane/resources`.
