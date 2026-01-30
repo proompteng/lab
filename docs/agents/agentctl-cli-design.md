@@ -38,6 +38,10 @@ style CLIs). gRPC is supported as an optional transport when you want to target 
 - **Current:** in-cluster gRPC only; external access via `kubectl port-forward` or an in-cluster client.
 - **Future-proofing:** TLS/mTLS support, optional auth tokens, and a dedicated Ingress/gateway can be layered without changing CLI commands.
 
+### gRPC primitive coverage
+For the full gRPC parity plan (proto additions, auth, error handling, testing), see
+`docs/agents/agentctl-grpc-coverage.md`.
+
 ## Command Surface
 ### Core
 - `agentctl version [--client]`
