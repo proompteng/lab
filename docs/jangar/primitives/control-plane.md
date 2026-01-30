@@ -60,3 +60,7 @@ and return consistent results on retries.
 ## UI surface
 
 - [Agents UI: YAML inspector + revision timeline](../agents-ui-yaml-inspector.md)
+
+## Related docs
+
+- [Agents control-plane filters (labels + phase)](../agents-control-plane-filters.md)
