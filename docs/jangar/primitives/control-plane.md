@@ -56,3 +56,7 @@ Use `jangar-db` (CNPG) as source of truth for:
 
 All Jangar endpoints must accept an idempotency key (`deliveryId`), stored in the database,
 and return consistent results on retries.
+
+## Related docs
+
+- [Agents control-plane filters (labels + phase)](../agents-control-plane-filters.md)
