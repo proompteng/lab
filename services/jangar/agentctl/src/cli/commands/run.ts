@@ -143,7 +143,7 @@ const buildRunSpec = (input: RunSubmitInput) => {
 }
 
 const submitRunKube = async (
-  clients: Parameters<typeof createCustomObject>[0],
+  backend: Parameters<typeof createCustomObject>[0],
   namespace: string,
   output: string,
   input: RunSubmitInput,
@@ -161,14 +161,14 @@ const submitRunKube = async (
     },
     spec: buildRunSpec(input),
   }
-  const resource = await createCustomObject(clients, AGENT_RUN_SPEC, namespace, manifest)
+  const resource = await createCustomObject(backend, AGENT_RUN_SPEC, namespace, manifest)
   outputResource(resource, output)
   if (input.wait) {
     const runName = readNestedValue(resource, ['metadata', 'name'])
     if (typeof runName !== 'string' || !runName) {
       throw new Error('AgentRun name not available for wait')
     }
-    await waitForRunCompletionKube(clients, runName, namespace, output)
+    await waitForRunCompletionKube(backend, runName, namespace, output)
   }
 }
 
@@ -259,7 +259,7 @@ export const makeRunCommand = () => {
           wait,
         }
         if (transport.mode === 'kube') {
-          yield* Effect.promise(() => submitRunKube(transport.clients, resolved.namespace, resolved.output, input))
+          yield* Effect.promise(() => submitRunKube(transport.backend, resolved.namespace, resolved.output, input))
           return
         }
         yield* Effect.promise(() =>
@@ -274,7 +274,7 @@ export const makeRunCommand = () => {
       const transport = yield* TransportService
       const manifest = yield* Effect.promise(() => readFileContent(file))
       if (transport.mode === 'kube') {
-        const resources = yield* Effect.promise(() => applyManifest(transport.clients, manifest, resolved.namespace))
+        const resources = yield* Effect.promise(() => applyManifest(transport.backend, manifest, resolved.namespace))
         outputResources(resources, resolved.output)
         return
       }
@@ -297,7 +297,7 @@ export const makeRunCommand = () => {
       const transport = yield* TransportService
       if (transport.mode === 'kube') {
         const resource = yield* Effect.promise(() =>
-          getCustomObjectOptional(transport.clients, AGENT_RUN_SPEC, name, resolved.namespace),
+          getCustomObjectOptional(transport.backend, AGENT_RUN_SPEC, name, resolved.namespace),
         )
         if (!resource) throw new Error('AgentRun not found')
         outputResource(resource, resolved.output)
@@ -323,7 +323,7 @@ export const makeRunCommand = () => {
       const describeOutput = resolveDescribeOutput(resolved.output, flags.output)
       if (transport.mode === 'kube') {
         const resource = yield* Effect.promise(() =>
-          getCustomObjectOptional(transport.clients, AGENT_RUN_SPEC, name, resolved.namespace),
+          getCustomObjectOptional(transport.backend, AGENT_RUN_SPEC, name, resolved.namespace),
         )
         if (!resource) throw new Error('AgentRun not found')
         outputResource(resource, describeOutput)
@@ -348,7 +348,7 @@ export const makeRunCommand = () => {
       const transport = yield* TransportService
       if (transport.mode === 'kube') {
         const resource = yield* Effect.promise(() =>
-          getCustomObjectOptional(transport.clients, AGENT_RUN_SPEC, name, resolved.namespace),
+          getCustomObjectOptional(transport.backend, AGENT_RUN_SPEC, name, resolved.namespace),
         )
         if (!resource) throw new Error('AgentRun not found')
         outputResource(resource, resolved.output)
@@ -373,7 +373,7 @@ export const makeRunCommand = () => {
       const transport = yield* TransportService
       if (transport.mode === 'kube') {
         yield* Effect.promise(() =>
-          waitForRunCompletionKube(transport.clients, name, resolved.namespace, resolved.output),
+          waitForRunCompletionKube(transport.backend, name, resolved.namespace, resolved.output),
         )
         return
       }
@@ -398,7 +398,7 @@ export const makeRunCommand = () => {
         const runtimeValue = Option.getOrUndefined(runtime)
         if (transport.mode === 'kube') {
           const resource = yield* Effect.promise(() =>
-            listCustomObjects(transport.clients, AGENT_RUN_SPEC, resolved.namespace, labelSelector),
+            listCustomObjects(transport.backend, AGENT_RUN_SPEC, resolved.namespace, labelSelector),
           )
           outputList(filterAgentRunsList(resource, phaseValue, runtimeValue), resolved.output)
           return
@@ -432,7 +432,7 @@ export const makeRunCommand = () => {
         while (true) {
           if (transport.mode === 'kube') {
             const resource = yield* Effect.promise(() =>
-              listCustomObjects(transport.clients, AGENT_RUN_SPEC, resolved.namespace, labelSelector),
+              listCustomObjects(transport.backend, AGENT_RUN_SPEC, resolved.namespace, labelSelector),
             )
             if (resolved.output === 'table') {
               clearScreen()
@@ -470,18 +470,18 @@ export const makeRunCommand = () => {
       const transport = yield* TransportService
       if (transport.mode === 'kube') {
         const resource = yield* Effect.promise(() =>
-          getCustomObjectOptional(transport.clients, AGENT_RUN_SPEC, name, resolved.namespace),
+          getCustomObjectOptional(transport.backend, AGENT_RUN_SPEC, name, resolved.namespace),
         )
         if (!resource) throw new Error('AgentRun not found')
         const { runtimeType, runtimeName } = resolveAgentRunRuntime(resource)
         const selector = isJobRuntime(runtimeType) && runtimeName ? `job-name=${runtimeName}` : runLabelSelector(name)
-        const pod = yield* Effect.promise(() => pickPodForRun(transport.clients, resolved.namespace, selector))
+        const pod = yield* Effect.promise(() => pickPodForRun(transport.backend, resolved.namespace, selector))
         if (!pod) throw new Error('No pods found for AgentRun')
         const podName = readNestedValue(pod, ['metadata', 'name'])
         if (typeof podName !== 'string' || !podName) throw new Error('Pod name not available for logs')
         const containerName = resolvePodContainerName(pod)
         yield* Effect.promise(() =>
-          streamPodLogs(transport.clients, resolved.namespace, podName, containerName, follow),
+          streamPodLogs(transport.backend, resolved.namespace, podName, containerName, follow),
         )
         return
       }
@@ -514,27 +514,27 @@ export const makeRunCommand = () => {
       const transport = yield* TransportService
       if (transport.mode === 'kube') {
         const resource = yield* Effect.promise(() =>
-          getCustomObjectOptional(transport.clients, AGENT_RUN_SPEC, name, resolved.namespace),
+          getCustomObjectOptional(transport.backend, AGENT_RUN_SPEC, name, resolved.namespace),
         )
         if (!resource) throw new Error('AgentRun not found')
         const { runtimeType, runtimeName } = resolveAgentRunRuntime(resource)
         if (runtimeType === 'workflow') {
           yield* Effect.promise(() =>
-            deleteJobsBySelector(transport.clients, resolved.namespace, runLabelSelector(name)),
+            deleteJobsBySelector(transport.backend, resolved.namespace, runLabelSelector(name)),
           )
           console.log('cancelled')
           return
         }
         if (isJobRuntime(runtimeType) && runtimeName) {
           const deleted = yield* Effect.promise(() =>
-            deleteJobByName(transport.clients, resolved.namespace, runtimeName),
+            deleteJobByName(transport.backend, resolved.namespace, runtimeName),
           )
           console.log(deleted ? 'cancelled' : 'job not found')
           return
         }
         if (isJobRuntime(runtimeType)) {
           yield* Effect.promise(() =>
-            deleteJobsBySelector(transport.clients, resolved.namespace, runLabelSelector(name)),
+            deleteJobsBySelector(transport.backend, resolved.namespace, runLabelSelector(name)),
           )
           console.log('cancelled')
           return
@@ -651,14 +651,14 @@ export const makeRunCommand = () => {
         }
 
         if (transport.mode === 'kube') {
-          const resources = yield* Effect.promise(() => applyManifest(transport.clients, yaml, resolved.namespace))
+          const resources = yield* Effect.promise(() => applyManifest(transport.backend, yaml, resolved.namespace))
           outputResources(resources, resolved.output)
           if (wait) {
             const resource = resources[0]
             const runName = readNestedValue(resource, ['metadata', 'name'])
             if (typeof runName === 'string' && runName) {
               yield* Effect.promise(() =>
-                waitForRunCompletionKube(transport.clients, runName, resolved.namespace, resolved.output),
+                waitForRunCompletionKube(transport.backend, runName, resolved.namespace, resolved.output),
               )
             }
           }
@@ -727,7 +727,7 @@ export const makeRunCommand = () => {
             },
           }
           const resource = yield* Effect.promise(() =>
-            createCustomObject(transport.clients, RESOURCE_SPECS.impl, resolved.namespace, manifest),
+            createCustomObject(transport.backend, RESOURCE_SPECS.impl, resolved.namespace, manifest),
           )
           const nameValue = readNestedValue(resource, ['metadata', 'name'])
           implName = typeof nameValue === 'string' ? nameValue : null
@@ -773,7 +773,7 @@ export const makeRunCommand = () => {
         }
 
         if (transport.mode === 'kube') {
-          yield* Effect.promise(() => submitRunKube(transport.clients, resolved.namespace, resolved.output, input))
+          yield* Effect.promise(() => submitRunKube(transport.backend, resolved.namespace, resolved.output, input))
           return
         }
 

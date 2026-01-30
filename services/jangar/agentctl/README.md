@@ -20,7 +20,7 @@ brew install proompteng/tap/agentctl
 ```
 
 ## Modes
-- **Kube mode (default):** uses kubeconfig + context and talks to the Kubernetes API directly.
+- **Kube mode (default):** uses kubeconfig + context and shells out to `kubectl` (JSON output). Requires `kubectl` on PATH.
 - **gRPC mode (optional):** uses the Jangar gRPC endpoint; enable with `--grpc` or `AGENTCTL_MODE=grpc`.
 
 ## Quickstart

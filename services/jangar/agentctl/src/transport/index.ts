@@ -4,13 +4,12 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import { AgentctlContext } from '../cli/context'
 import { asAgentctlError } from '../cli/errors'
-import { createClient, createKubeClients, createMetadata } from '../legacy'
-
-export type KubeClients = ReturnType<typeof createKubeClients>
+import { createKubectlBackend, type KubeBackend } from '../kube/backend'
+import { createClient, createMetadata } from '../legacy'
 
 export type KubeTransport = {
   mode: 'kube'
-  clients: KubeClients
+  backend: KubeBackend
 }
 
 export type GrpcTransport = {
@@ -28,15 +27,15 @@ export const TransportLive = Layer.effect(
   Effect.gen(function* () {
     const { resolved } = yield* AgentctlContext
     if (resolved.mode === 'kube') {
-      const clients = yield* Effect.try({
+      const backend = yield* Effect.try({
         try: () =>
-          createKubeClients({
+          createKubectlBackend({
             kubeconfig: resolved.kubeconfig,
             context: resolved.context,
           }),
         catch: (error) => asAgentctlError(error, 'KubeError'),
       })
-      return { mode: 'kube', clients }
+      return { mode: 'kube', backend }
     }
 
     const client = yield* Effect.tryPromise({

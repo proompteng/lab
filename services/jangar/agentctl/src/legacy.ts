@@ -8,18 +8,10 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import * as grpc from '@grpc/grpc-js'
 import { fromJSON } from '@grpc/proto-loader'
-import {
-  ApiextensionsV1Api,
-  AppsV1Api,
-  BatchV1Api,
-  CoreV1Api,
-  CustomObjectsApi,
-  KubeConfig,
-  Log,
-} from '@kubernetes/client-node'
 import * as protobuf from 'protobufjs'
 import YAML from 'yaml'
 import { EMBEDDED_AGENTCTL_PROTO } from './embedded-proto'
+import { createKubectlBackend, type KubeBackend } from './kube/backend'
 import { PACKAGE_VERSION } from './version'
 
 const EXIT_VALIDATION = 2
@@ -76,16 +68,6 @@ type TransportMode = 'grpc' | 'kube'
 type KubeOptions = {
   kubeconfig?: string
   context?: string
-}
-
-type KubeClients = {
-  kubeConfig: KubeConfig
-  core: CoreV1Api
-  custom: CustomObjectsApi
-  apps: AppsV1Api
-  batch: BatchV1Api
-  crd: ApiextensionsV1Api
-  log: Log
 }
 
 type ResourceSpec = {
@@ -1062,40 +1044,6 @@ const parseYamlDocuments = (content: string) =>
     .map((doc) => doc.toJSON() as Record<string, unknown>)
     .filter((doc) => doc && Object.keys(doc).length > 0)
 
-const loadKubeConfig = (options: KubeOptions) => {
-  const kubeConfig = new KubeConfig()
-  if (options.kubeconfig) {
-    if (!existsSync(options.kubeconfig)) {
-      throw new Error(`kubeconfig not found: ${options.kubeconfig}`)
-    }
-    kubeConfig.loadFromFile(options.kubeconfig)
-  } else {
-    kubeConfig.loadFromDefault()
-  }
-  if (options.context) {
-    kubeConfig.setCurrentContext(options.context)
-  }
-  return kubeConfig
-}
-
-const createKubeClients = (options: KubeOptions): KubeClients => {
-  const kubeConfig = loadKubeConfig(options)
-  return {
-    kubeConfig,
-    core: kubeConfig.makeApiClient(CoreV1Api),
-    custom: kubeConfig.makeApiClient(CustomObjectsApi),
-    apps: kubeConfig.makeApiClient(AppsV1Api),
-    batch: kubeConfig.makeApiClient(BatchV1Api),
-    crd: kubeConfig.makeApiClient(ApiextensionsV1Api),
-    log: new Log(kubeConfig),
-  }
-}
-
-const unwrapResponse = <T>(response: T | { body: T }) =>
-  (typeof response === 'object' && response !== null && 'body' in response
-    ? (response as { body: T }).body
-    : response) as T
-
 const isNotFoundError = (error: unknown) => {
   if (!error || typeof error !== 'object') return false
   if ('statusCode' in error && (error as { statusCode?: number }).statusCode === 404) return true
@@ -1120,32 +1068,12 @@ const isNotFoundError = (error: unknown) => {
   return false
 }
 
-const listCustomObjects = async (
-  clients: KubeClients,
-  spec: ResourceSpec,
-  namespace: string,
-  labelSelector?: string,
-) => {
-  const response = await clients.custom.listNamespacedCustomObject({
-    group: spec.group,
-    version: spec.version,
-    namespace,
-    plural: spec.plural,
-    labelSelector,
-  })
-  return unwrapResponse(response) as Record<string, unknown>
-}
+const listCustomObjects = async (backend: KubeBackend, spec: ResourceSpec, namespace: string, labelSelector?: string) =>
+  backend.listCustomObjects(spec, namespace, labelSelector)
 
-const getCustomObjectOptional = async (clients: KubeClients, spec: ResourceSpec, name: string, namespace: string) => {
+const getCustomObjectOptional = async (backend: KubeBackend, spec: ResourceSpec, name: string, namespace: string) => {
   try {
-    const response = await clients.custom.getNamespacedCustomObject({
-      group: spec.group,
-      version: spec.version,
-      namespace,
-      plural: spec.plural,
-      name,
-    })
-    return unwrapResponse(response) as Record<string, unknown>
+    return await backend.getCustomObject(spec, namespace, name)
   } catch (error) {
     if (isNotFoundError(error)) return null
     throw error
@@ -1153,49 +1081,23 @@ const getCustomObjectOptional = async (clients: KubeClients, spec: ResourceSpec,
 }
 
 const createCustomObject = async (
-  clients: KubeClients,
+  backend: KubeBackend,
   spec: ResourceSpec,
   namespace: string,
   body: Record<string, unknown>,
-) => {
-  const response = await clients.custom.createNamespacedCustomObject({
-    group: spec.group,
-    version: spec.version,
-    namespace,
-    plural: spec.plural,
-    body,
-  })
-  return unwrapResponse(response) as Record<string, unknown>
-}
+) => backend.createCustomObject(spec, namespace, body)
 
 const replaceCustomObject = async (
-  clients: KubeClients,
+  backend: KubeBackend,
   spec: ResourceSpec,
   namespace: string,
   name: string,
   body: Record<string, unknown>,
-) => {
-  const response = await clients.custom.replaceNamespacedCustomObject({
-    group: spec.group,
-    version: spec.version,
-    namespace,
-    plural: spec.plural,
-    name,
-    body,
-  })
-  return unwrapResponse(response) as Record<string, unknown>
-}
+) => backend.replaceCustomObject(spec, namespace, name, body)
 
-const deleteCustomObject = async (clients: KubeClients, spec: ResourceSpec, namespace: string, name: string) => {
+const deleteCustomObject = async (backend: KubeBackend, spec: ResourceSpec, namespace: string, name: string) => {
   try {
-    const response = await clients.custom.deleteNamespacedCustomObject({
-      group: spec.group,
-      version: spec.version,
-      namespace,
-      plural: spec.plural,
-      name,
-    })
-    return unwrapResponse(response) as Record<string, unknown>
+    return await backend.deleteCustomObject(spec, namespace, name)
   } catch (error) {
     if (isNotFoundError(error)) return null
     throw error
@@ -1222,7 +1124,7 @@ const resolveSpecFromManifest = (resource: Record<string, unknown>) => {
   return { ...baseSpec, version }
 }
 
-const applyManifest = async (clients: KubeClients, manifest: string, namespace: string) => {
+const applyManifest = async (backend: KubeBackend, manifest: string, namespace: string) => {
   const documents = parseYamlDocuments(manifest)
   const applied: Record<string, unknown>[] = []
 
@@ -1236,15 +1138,15 @@ const applyManifest = async (clients: KubeClients, manifest: string, namespace: 
     doc.metadata = metadata
 
     if (name) {
-      const existing = await getCustomObjectOptional(clients, spec, name, resolvedNamespace)
+      const existing = await getCustomObjectOptional(backend, spec, name, resolvedNamespace)
       if (existing) {
         const existingMeta = (existing.metadata ?? {}) as Record<string, unknown>
         if (existingMeta.resourceVersion) {
           metadata.resourceVersion = existingMeta.resourceVersion
         }
-        applied.push(await replaceCustomObject(clients, spec, resolvedNamespace, name, doc))
+        applied.push(await replaceCustomObject(backend, spec, resolvedNamespace, name, doc))
       } else {
-        applied.push(await createCustomObject(clients, spec, resolvedNamespace, doc))
+        applied.push(await createCustomObject(backend, spec, resolvedNamespace, doc))
       }
       continue
     }
@@ -1252,7 +1154,7 @@ const applyManifest = async (clients: KubeClients, manifest: string, namespace: 
     if (!generateName) {
       throw new Error('manifest metadata.name or metadata.generateName is required')
     }
-    applied.push(await createCustomObject(clients, spec, resolvedNamespace, doc))
+    applied.push(await createCustomObject(backend, spec, resolvedNamespace, doc))
   }
 
   return applied
@@ -1285,18 +1187,17 @@ const isJobRuntime = (runtimeType: string | null) => runtimeType === 'job' || ru
 
 const runLabelSelector = (runName: string) => `agents.proompteng.ai/agent-run=${runName}`
 
-const listPodsForSelector = async (clients: KubeClients, namespace: string, selector: string) => {
-  const response = await clients.core.listNamespacedPod({ namespace, labelSelector: selector })
-  const body = unwrapResponse(response) as { items?: Record<string, unknown>[] }
+const listPodsForSelector = async (backend: KubeBackend, namespace: string, selector: string) => {
+  const body = (await backend.listPods(namespace, selector)) as { items?: Record<string, unknown>[] }
   return Array.isArray(body.items) ? body.items : []
 }
 
 const pickPodForRun = async (
-  clients: KubeClients,
+  backend: KubeBackend,
   namespace: string,
   selector: string,
 ): Promise<Record<string, unknown> | null> => {
-  const items = await listPodsForSelector(clients, namespace, selector)
+  const items = await listPodsForSelector(backend, namespace, selector)
   if (items.length === 0) return null
   const running = items.find((pod) => readNestedValue(pod, ['status', 'phase']) === 'Running')
   return running ?? items[0] ?? null
@@ -1310,56 +1211,18 @@ const resolvePodContainerName = (pod: Record<string, unknown>) => {
 }
 
 const streamPodLogs = async (
-  clients: KubeClients,
+  backend: KubeBackend,
   namespace: string,
   podName: string,
   container: string | undefined,
   follow: boolean,
 ) => {
-  if (!follow) {
-    const response = await clients.core.readNamespacedPodLog({
-      name: podName,
-      namespace,
-      container,
-      follow: false,
-    })
-    const body = unwrapResponse(response) as string
-    process.stdout.write(body ?? '')
-    return
-  }
-
-  const logClient = clients.log as unknown as {
-    log: (...args: unknown[]) => Promise<void>
-  }
-  if (typeof logClient.log !== 'function') {
-    const fallback = await clients.core.readNamespacedPodLog({
-      name: podName,
-      namespace,
-      container,
-      follow: false,
-    })
-    const body = unwrapResponse(fallback) as string
-    process.stdout.write(body ?? '')
-    return
-  }
-
-  try {
-    await logClient.log(namespace, podName, container ?? '', process.stdout, { follow: true })
-  } catch {
-    const fallback = await clients.core.readNamespacedPodLog({
-      name: podName,
-      namespace,
-      container,
-      follow: false,
-    })
-    const body = unwrapResponse(fallback) as string
-    process.stdout.write(body ?? '')
-  }
+  await backend.streamPodLogs(namespace, podName, container, follow)
 }
 
-const deleteJobByName = async (clients: KubeClients, namespace: string, name: string) => {
+const deleteJobByName = async (backend: KubeBackend, namespace: string, name: string) => {
   try {
-    await clients.batch.deleteNamespacedJob({ name, namespace })
+    await backend.deleteJob(namespace, name)
     return true
   } catch (error) {
     if (isNotFoundError(error)) return false
@@ -1367,8 +1230,8 @@ const deleteJobByName = async (clients: KubeClients, namespace: string, name: st
   }
 }
 
-const deleteJobsBySelector = async (clients: KubeClients, namespace: string, selector: string) => {
-  await clients.batch.deleteCollectionNamespacedJob({ namespace, labelSelector: selector })
+const deleteJobsBySelector = async (backend: KubeBackend, namespace: string, selector: string) => {
+  await backend.deleteJobsBySelector(namespace, selector)
 }
 
 const normalizeOutput = (value: string | undefined) => {
@@ -1804,9 +1667,9 @@ const filterAgentRunsList = (list: Record<string, unknown>, phase?: string, runt
   return { ...list, items: filtered }
 }
 
-const waitForRunCompletionKube = async (clients: KubeClients, name: string, namespace: string, output: string) => {
+const waitForRunCompletionKube = async (backend: KubeBackend, name: string, namespace: string, output: string) => {
   while (true) {
-    const resource = await getCustomObjectOptional(clients, AGENT_RUN_SPEC, name, namespace)
+    const resource = await getCustomObjectOptional(backend, AGENT_RUN_SPEC, name, namespace)
     if (!resource) {
       throw new Error('AgentRun not found')
     }
@@ -1819,12 +1682,12 @@ const waitForRunCompletionKube = async (clients: KubeClients, name: string, name
   }
 }
 
-const outputStatusKube = async (clients: KubeClients, namespace: string, output: string) => {
+const outputStatusKube = async (backend: KubeBackend, namespace: string, output: string) => {
   const generatedAt = new Date().toISOString()
   let namespaceStatus = 'unknown'
   let namespaceMessage = ''
   try {
-    await clients.core.readNamespace({ name: namespace })
+    await backend.readNamespace(namespace)
     namespaceStatus = 'healthy'
   } catch (_error) {
     namespaceStatus = 'missing'
@@ -1835,11 +1698,9 @@ const outputStatusKube = async (clients: KubeClients, namespace: string, output:
   let deploymentMessage = ''
   let deploymentName = 'agents'
   try {
-    const response = await clients.apps.listNamespacedDeployment({
-      namespace,
-      labelSelector: 'app.kubernetes.io/name=agents',
-    })
-    const body = unwrapResponse(response) as unknown as { items?: Record<string, unknown>[] }
+    const body = (await backend.listDeployments(namespace, 'app.kubernetes.io/name=agents')) as {
+      items?: Record<string, unknown>[]
+    }
     const items = Array.isArray(body.items) ? body.items : []
     const deployment = (items[0] ?? null) as Record<string, unknown> | null
     if (!deployment) {
@@ -1863,8 +1724,7 @@ const outputStatusKube = async (clients: KubeClients, namespace: string, output:
 
   let missingCrds: string[] = []
   try {
-    const response = await clients.crd.listCustomResourceDefinition()
-    const body = unwrapResponse(response) as unknown as { items?: Record<string, unknown>[] }
+    const body = (await backend.listCrds()) as { items?: Record<string, unknown>[] }
     const items = Array.isArray(body.items) ? body.items : []
     const found = new Set(
       items
@@ -2116,16 +1976,14 @@ const _main = async () => {
         kubeconfig: resolveKubeconfig(flags, config),
         context: resolveKubeContext(flags, config),
       }
-      const clients = createKubeClients(kubeOptions)
+      const backend = createKubectlBackend(kubeOptions)
 
       if (command === 'version') {
         console.log(`agentctl ${version}`)
         try {
-          const response = await clients.apps.listNamespacedDeployment({
-            namespace,
-            labelSelector: 'app.kubernetes.io/name=agents',
-          })
-          const body = unwrapResponse(response) as { items?: Record<string, unknown>[] }
+          const body = (await backend.listDeployments(namespace, 'app.kubernetes.io/name=agents')) as {
+            items?: Record<string, unknown>[]
+          }
           const items = Array.isArray(body.items) ? body.items : []
           const deployment = (items[0] ?? null) as Record<string, unknown> | null
           const image = deployment
@@ -2143,7 +2001,7 @@ const _main = async () => {
       }
 
       if (command === 'status' || command === 'diagnose') {
-        await outputStatusKube(clients, namespace, output)
+        await outputStatusKube(backend, namespace, output)
         return 0
       }
 
@@ -2154,7 +2012,7 @@ const _main = async () => {
           if (!name) {
             throw new Error('name is required')
           }
-          const resource = await getCustomObjectOptional(clients, spec, name, namespace)
+          const resource = await getCustomObjectOptional(backend, spec, name, namespace)
           if (!resource) {
             throw new Error(`${command} ${name} not found`)
           }
@@ -2163,7 +2021,7 @@ const _main = async () => {
         }
         if (subcommand === 'list') {
           const labelSelector = parseLabelSelector(args)
-          const resource = await listCustomObjects(clients, spec, namespace, labelSelector)
+          const resource = await listCustomObjects(backend, spec, namespace, labelSelector)
           outputList(resource, output)
           return 0
         }
@@ -2174,7 +2032,7 @@ const _main = async () => {
           process.on('SIGINT', stop)
           while (true) {
             const labelSelector = parseLabelSelector(args)
-            const resource = await listCustomObjects(clients, spec, namespace, labelSelector)
+            const resource = await listCustomObjects(backend, spec, namespace, labelSelector)
             if (output === 'table') {
               clearScreen()
             } else if (iteration > 0) {
@@ -2192,7 +2050,7 @@ const _main = async () => {
             throw new Error('apply requires -f <file>')
           }
           const manifest = await readFileContent(file)
-          const resources = await applyManifest(clients, manifest, namespace)
+          const resources = await applyManifest(backend, manifest, namespace)
           outputResources(resources, output)
           return 0
         }
@@ -2201,7 +2059,7 @@ const _main = async () => {
           if (!name) {
             throw new Error('name is required')
           }
-          const result = await deleteCustomObject(clients, spec, namespace, name)
+          const result = await deleteCustomObject(backend, spec, namespace, name)
           if (!result) {
             throw new Error(`${command} ${name} not found`)
           }
@@ -2239,7 +2097,7 @@ const _main = async () => {
                 : {}),
             },
           }
-          const resource = await createCustomObject(clients, spec, namespace, manifest)
+          const resource = await createCustomObject(backend, spec, namespace, manifest)
           outputResource(resource, output)
           return 0
         }
@@ -2326,14 +2184,14 @@ const _main = async () => {
             spec: runSpec,
           }
 
-          const resource = await createCustomObject(clients, AGENT_RUN_SPEC, namespace, manifest)
+          const resource = await createCustomObject(backend, AGENT_RUN_SPEC, namespace, manifest)
           outputResource(resource, output)
           if (options.wait === 'true') {
             const runName = readNestedValue(resource, ['metadata', 'name'])
             if (typeof runName !== 'string' || !runName) {
               throw new Error('AgentRun name not available for wait')
             }
-            return await waitForRunCompletionKube(clients, runName, namespace, output)
+            return await waitForRunCompletionKube(backend, runName, namespace, output)
           }
           return 0
         }
@@ -2344,7 +2202,7 @@ const _main = async () => {
             throw new Error('apply requires -f <file>')
           }
           const manifest = await readFileContent(file)
-          const resources = await applyManifest(clients, manifest, namespace)
+          const resources = await applyManifest(backend, manifest, namespace)
           outputResources(resources, output)
           return 0
         }
@@ -2353,7 +2211,7 @@ const _main = async () => {
           if (!name) {
             throw new Error('name is required')
           }
-          const resource = await getCustomObjectOptional(clients, AGENT_RUN_SPEC, name, namespace)
+          const resource = await getCustomObjectOptional(backend, AGENT_RUN_SPEC, name, namespace)
           if (!resource) {
             throw new Error('AgentRun not found')
           }
@@ -2362,7 +2220,7 @@ const _main = async () => {
         }
         if (subcommand === 'list') {
           const filters = parseRunListFilters(args)
-          const resource = await listCustomObjects(clients, AGENT_RUN_SPEC, namespace, filters.labelSelector)
+          const resource = await listCustomObjects(backend, AGENT_RUN_SPEC, namespace, filters.labelSelector)
           outputList(filterAgentRunsList(resource, filters.phase, filters.runtime), output)
           return 0
         }
@@ -2373,7 +2231,7 @@ const _main = async () => {
           process.on('SIGINT', stop)
           while (true) {
             const filters = parseRunListFilters(args)
-            const resource = await listCustomObjects(clients, AGENT_RUN_SPEC, namespace, filters.labelSelector)
+            const resource = await listCustomObjects(backend, AGENT_RUN_SPEC, namespace, filters.labelSelector)
             if (output === 'table') {
               clearScreen()
             } else if (iteration > 0) {
@@ -2389,7 +2247,7 @@ const _main = async () => {
           if (!name) {
             throw new Error('name is required')
           }
-          return await waitForRunCompletionKube(clients, name, namespace, output)
+          return await waitForRunCompletionKube(backend, name, namespace, output)
         }
         if (subcommand === 'logs') {
           const name = args[0]
@@ -2397,13 +2255,13 @@ const _main = async () => {
             throw new Error('name is required')
           }
           const follow = args.includes('--follow')
-          const resource = await getCustomObjectOptional(clients, AGENT_RUN_SPEC, name, namespace)
+          const resource = await getCustomObjectOptional(backend, AGENT_RUN_SPEC, name, namespace)
           if (!resource) {
             throw new Error('AgentRun not found')
           }
           const { runtimeType, runtimeName } = resolveAgentRunRuntime(resource)
           const selector = isJobRuntime(runtimeType) && runtimeName ? `job-name=${runtimeName}` : runLabelSelector(name)
-          const pod = await pickPodForRun(clients, namespace, selector)
+          const pod = await pickPodForRun(backend, namespace, selector)
           if (!pod) {
             throw new Error('No pods found for AgentRun')
           }
@@ -2412,7 +2270,7 @@ const _main = async () => {
             throw new Error('Pod name not available for logs')
           }
           const containerName = resolvePodContainerName(pod)
-          await streamPodLogs(clients, namespace, podName, containerName, follow)
+          await streamPodLogs(backend, namespace, podName, containerName, follow)
           return 0
         }
         if (subcommand === 'cancel') {
@@ -2420,18 +2278,18 @@ const _main = async () => {
           if (!name) {
             throw new Error('name is required')
           }
-          const resource = await getCustomObjectOptional(clients, AGENT_RUN_SPEC, name, namespace)
+          const resource = await getCustomObjectOptional(backend, AGENT_RUN_SPEC, name, namespace)
           if (!resource) {
             throw new Error('AgentRun not found')
           }
           const { runtimeType, runtimeName } = resolveAgentRunRuntime(resource)
           if (runtimeType === 'workflow') {
-            await deleteJobsBySelector(clients, namespace, runLabelSelector(name))
+            await deleteJobsBySelector(backend, namespace, runLabelSelector(name))
             console.log('cancelled')
             return 0
           }
           if (isJobRuntime(runtimeType) && runtimeName) {
-            const deleted = await deleteJobByName(clients, namespace, runtimeName)
+            const deleted = await deleteJobByName(backend, namespace, runtimeName)
             if (!deleted) {
               console.log('job not found')
             } else {
@@ -2440,7 +2298,7 @@ const _main = async () => {
             return 0
           }
           if (isJobRuntime(runtimeType)) {
-            await deleteJobsBySelector(clients, namespace, runLabelSelector(name))
+            await deleteJobsBySelector(backend, namespace, runLabelSelector(name))
             console.log('cancelled')
             return 0
           }
@@ -2812,7 +2670,6 @@ export {
   clearScreen,
   createClient,
   createCustomObject,
-  createKubeClients,
   createMetadata,
   deleteCustomObject,
   deleteJobByName,
