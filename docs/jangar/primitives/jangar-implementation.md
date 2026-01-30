@@ -110,3 +110,7 @@ Jangar must implement:
 
 - Enforce allowlist of service accounts and secrets
 - Persist every policy decision in `audit_events`
+
+## 6) Related docs
+
+- `docs/jangar/argo-only-judge-mode.md`
