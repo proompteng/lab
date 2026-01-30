@@ -19,7 +19,7 @@ const buildAgentRun = (overrides: Record<string, unknown> = {}) => ({
     implementationSpecRef: { name: 'impl-1' },
     runtime: { type: 'job', config: {} },
     workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
-  },
+  } as Record<string, unknown>,
   status: {},
   ...overrides,
 })

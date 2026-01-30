@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { getAgentRunLogs } from '~/routes/api/agents/control-plane/logs'
+import type { KubernetesClient } from '~/server/primitives-kube'
 
 const buildPod = (name: string, phase: string, containers: string[], initContainers: string[] = []) => ({
   metadata: { name },
@@ -13,7 +14,14 @@ const buildPod = (name: string, phase: string, containers: string[], initContain
 
 describe('control plane logs route', () => {
   it('returns pods and logs for the selected pod', async () => {
-    const kube = {
+    const kube: KubernetesClient = {
+      apply: vi.fn(async (resource) => resource),
+      applyManifest: vi.fn(async () => ({})),
+      applyStatus: vi.fn(async (resource) => resource),
+      createManifest: vi.fn(async () => ({})),
+      delete: vi.fn(async () => ({})),
+      patch: vi.fn(async (_resource, _name, _namespace, patch) => patch as Record<string, unknown>),
+      get: vi.fn(async () => null),
       list: vi.fn(async () => ({
         items: [
           buildPod('agent-run-1', 'Running', ['runner'], ['init-seed']),
@@ -21,6 +29,7 @@ describe('control plane logs route', () => {
         ],
       })),
       logs: vi.fn(async () => 'log output'),
+      listEvents: vi.fn(async () => ({ items: [] })),
     }
 
     const response = await getAgentRunLogs(
@@ -44,9 +53,17 @@ describe('control plane logs route', () => {
   })
 
   it('returns ok with empty pods when none are found', async () => {
-    const kube = {
+    const kube: KubernetesClient = {
+      apply: vi.fn(async (resource) => resource),
+      applyManifest: vi.fn(async () => ({})),
+      applyStatus: vi.fn(async (resource) => resource),
+      createManifest: vi.fn(async () => ({})),
+      delete: vi.fn(async () => ({})),
+      patch: vi.fn(async (_resource, _name, _namespace, patch) => patch as Record<string, unknown>),
+      get: vi.fn(async () => null),
       list: vi.fn(async () => ({ items: [] })),
       logs: vi.fn(),
+      listEvents: vi.fn(async () => ({ items: [] })),
     }
 
     const response = await getAgentRunLogs(
@@ -64,7 +81,18 @@ describe('control plane logs route', () => {
 
   it('requires name and namespace', async () => {
     const response = await getAgentRunLogs(new Request('http://localhost/api/agents/control-plane/logs?name=run-1'), {
-      kubeClient: { list: vi.fn(), logs: vi.fn() },
+      kubeClient: {
+        apply: vi.fn(async (resource) => resource),
+        applyManifest: vi.fn(async () => ({})),
+        applyStatus: vi.fn(async (resource) => resource),
+        createManifest: vi.fn(async () => ({})),
+        delete: vi.fn(async () => ({})),
+        patch: vi.fn(async (_resource, _name, _namespace, patch) => patch as Record<string, unknown>),
+        get: vi.fn(async () => null),
+        list: vi.fn(async () => ({ items: [] })),
+        logs: vi.fn(async () => ''),
+        listEvents: vi.fn(async () => ({ items: [] })),
+      },
     })
 
     expect(response.status).toBe(400)

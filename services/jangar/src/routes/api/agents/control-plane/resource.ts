@@ -1,13 +1,23 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { resolvePrimitiveKind } from '~/server/primitives-control-plane'
-import { asRecord, asString, errorResponse, normalizeNamespace, okResponse } from '~/server/primitives-http'
+import {
+  asRecord,
+  asString,
+  errorResponse,
+  normalizeNamespace,
+  okResponse,
+  parseJsonBody,
+  requireIdempotencyKey,
+} from '~/server/primitives-http'
 import { createKubernetesClient } from '~/server/primitives-kube'
 import { createKubectlWatchStream } from '~/server/primitives-watch'
+import { createPrimitivesStore } from '~/server/primitives-store'
 
 export const Route = createFileRoute('/api/agents/control-plane/resource')({
   server: {
     handlers: {
       GET: async ({ request }) => getPrimitiveResource(request),
+      POST: async ({ request }) => postPrimitiveResource(request),
     },
   },
 })
@@ -64,5 +74,137 @@ export const getPrimitiveResource = async (
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return errorResponse(message, 500, { kind: resolved.kind, namespace, name })
+  }
+}
+
+type ImplementationSpecPayload = {
+  name: string
+  namespace: string
+  spec: Record<string, unknown>
+}
+
+const coerceStringList = (value: unknown, limit = 100) => {
+  if (!Array.isArray(value)) return []
+  const trimmed = value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+  return trimmed.slice(0, limit)
+}
+
+const normalizeContractMappings = (value: unknown) => {
+  if (!Array.isArray(value)) return []
+  const mappings = value
+    .map((entry) => {
+      const record = asRecord(entry)
+      if (!record) return null
+      const from = asString(record.from)
+      const to = asString(record.to)
+      if (!from || !to) return null
+      return { from, to }
+    })
+    .filter((entry): entry is { from: string; to: string } => Boolean(entry))
+  return mappings.slice(0, 100)
+}
+
+const normalizeImplementationSpec = (spec: Record<string, unknown>) => {
+  const summary = asString(spec.summary) ?? undefined
+  const description = asString(spec.description) ?? undefined
+  const text = asString(spec.text)
+  const acceptanceCriteria = coerceStringList(spec.acceptanceCriteria, 50)
+  const labels = coerceStringList(spec.labels, 50)
+  const sourceInput = asRecord(spec.source) ?? null
+  const provider = asString(sourceInput?.provider) ?? 'manual'
+  const source = sourceInput
+    ? {
+        provider,
+        ...(asString(sourceInput.externalId) ? { externalId: asString(sourceInput.externalId) } : {}),
+        ...(asString(sourceInput.url) ? { url: asString(sourceInput.url) } : {}),
+      }
+    : { provider }
+  const contractInput = asRecord(spec.contract) ?? null
+  const contractMappings = normalizeContractMappings(contractInput?.mappings)
+  const requiredKeys = coerceStringList(contractInput?.requiredKeys, 50)
+  const contract =
+    contractMappings.length > 0 || requiredKeys.length > 0
+      ? {
+          ...(contractMappings.length > 0 ? { mappings: contractMappings } : {}),
+          ...(requiredKeys.length > 0 ? { requiredKeys } : {}),
+        }
+      : undefined
+
+  if (!text) {
+    throw new Error('spec.text is required')
+  }
+
+  return {
+    ...(summary ? { summary } : {}),
+    ...(description ? { description } : {}),
+    ...(acceptanceCriteria.length > 0 ? { acceptanceCriteria } : {}),
+    ...(labels.length > 0 ? { labels } : {}),
+    ...(contract ? { contract } : {}),
+    ...(source ? { source } : {}),
+    text,
+  }
+}
+
+const parseImplementationSpecPayload = (payload: Record<string, unknown>): ImplementationSpecPayload => {
+  const kind = asString(payload.kind)
+  if (kind && kind.toLowerCase() !== 'implementationspec') {
+    throw new Error('kind must be ImplementationSpec')
+  }
+  const name = asString(payload.name)
+  if (!name) throw new Error('name is required')
+  const namespace = normalizeNamespace(asString(payload.namespace), 'agents')
+  const specInput = asRecord(payload.spec)
+  if (!specInput) throw new Error('spec is required')
+  const spec = normalizeImplementationSpec(specInput)
+  return { name, namespace, spec }
+}
+
+export const postPrimitiveResource = async (
+  request: Request,
+  deps: { storeFactory?: typeof createPrimitivesStore; kubeClient?: ReturnType<typeof createKubernetesClient> } = {},
+) => {
+  const store = (deps.storeFactory ?? createPrimitivesStore)()
+  try {
+    const deliveryId = requireIdempotencyKey(request)
+    const payload = await parseJsonBody(request)
+    const parsed = parseImplementationSpecPayload(payload)
+
+    await store.ready
+    const kube = deps.kubeClient ?? createKubernetesClient()
+    const resource = {
+      apiVersion: 'agents.proompteng.ai/v1alpha1',
+      kind: 'ImplementationSpec',
+      metadata: {
+        name: parsed.name,
+        namespace: parsed.namespace,
+        labels: {
+          'jangar.proompteng.ai/delivery-id': deliveryId,
+        },
+      },
+      spec: parsed.spec,
+    }
+
+    const applied = await kube.apply(resource)
+    const metadata = asRecord(applied.metadata) ?? {}
+    const uid = asString(metadata.uid)
+
+    if (uid) {
+      await store.createAuditEvent({
+        entityType: 'ImplementationSpec',
+        entityId: uid,
+        eventType: 'implementation_spec.created',
+        payload: { deliveryId, name: parsed.name, namespace: parsed.namespace },
+      })
+    }
+
+    return okResponse({ ok: true, resource: applied }, 201)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 400)
+  } finally {
+    await store.close()
   }
 }
