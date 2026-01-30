@@ -53,10 +53,7 @@ kubectl -n agents port-forward svc/agents-grpc 50052:50051
 bun run --filter @proompteng/agentctl validate:bin -- --server 127.0.0.1:50052
 ```
 
-To validate against a kube context instead (optional binary):
-```bash
-AGENTCTL_KUBECONFIG=~/.kube/config bun run --filter @proompteng/agentctl validate:bin -- --kube
-```
+`validate:bin` always exercises gRPC mode (use `--grpc` when running the binary manually).
 
 ## Publish npm
 
@@ -86,8 +83,9 @@ npm publish --access public
 3. If you built artifacts on multiple machines, combine them and run
    `bun run --filter @proompteng/agentctl homebrew:generate -- --input dist/release`
    to generate `agentctl.rb` with verified checksums.
-4. Copy the generated `dist/release/agentctl.rb` into the Homebrew tap repo and commit (formula depends on `node`).
-4. If needed, the template lives at `services/jangar/agentctl/scripts/homebrew/agentctl.rb`.
+4. Copy the generated `dist/release/agentctl.rb` into the Homebrew tap repo (`proompteng/homebrew-tap`) and commit
+   (formula depends on `node`).
+5. If needed, the template lives at `services/jangar/agentctl/scripts/homebrew/agentctl.rb`.
 
 Example checksum:
 
@@ -100,13 +98,14 @@ shasum -a 256 dist/release/agentctl-<version>-linux-amd64.tar.gz
 
 ## CI release (tag)
 
-Push a semver tag (e.g. `v0.1.0`) to trigger `.github/workflows/agentctl-release.yml`. It:
+Push a semver tag with the `agentctl-` prefix (e.g. `agentctl-v0.1.0`) to trigger
+`.github/workflows/agentctl-release.yml`. It:
 
 - builds all target binaries and archives,
 - uploads the artifacts to the GitHub release,
 - optionally publishes npm if `NPM_TOKEN` is available.
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag agentctl-v0.1.0
+git push origin agentctl-v0.1.0
 ```

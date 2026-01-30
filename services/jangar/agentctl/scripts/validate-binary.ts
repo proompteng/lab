@@ -156,7 +156,7 @@ const main = async () => {
   let exitCode = 1
 
   try {
-    const proc = Bun.spawn([binaryPath, 'version', '--server', server], {
+    const proc = Bun.spawn([binaryPath, 'version', '--grpc', '--server', server], {
       stdout: 'pipe',
       stderr: 'pipe',
     })

@@ -21,7 +21,7 @@ brew install proompteng/tap/agentctl
 
 ## Modes
 - **Kube mode (default):** uses your kubeconfig + context and talks to the Kubernetes API directly.
-- **gRPC mode (optional):** uses the Jangar gRPC endpoint.
+- **gRPC mode (optional):** uses the Jangar gRPC endpoint; enable with `--grpc` or `AGENTCTL_MODE=grpc`.
 
 ## Port-forward for gRPC access (optional)
 
@@ -29,7 +29,7 @@ Jangar gRPC is cluster-only by default. For local usage, port-forward the `agent
 
 ```bash
 kubectl -n agents port-forward svc/agents-grpc 50051:50051
-agentctl --server 127.0.0.1:50051 status
+agentctl --grpc --server 127.0.0.1:50051 status
 ```
 
 ## Configuration
@@ -53,6 +53,10 @@ Kube mode uses:
 - `--kubeconfig` or `AGENTCTL_KUBECONFIG` (optional)
 - `--context` or `AGENTCTL_CONTEXT` (optional)
 
+Transport selection:
+- `--grpc` (or `AGENTCTL_MODE=grpc`) to use gRPC
+- `--kube` (or `AGENTCTL_MODE=kube`) to force kube mode
+
 TLS is supported on the client side. Use `--tls` and set:
 - `AGENTCTL_CA_CERT` (optional)
 - `AGENTCTL_CLIENT_CERT` / `AGENTCTL_CLIENT_KEY` (optional mTLS)
@@ -68,8 +72,11 @@ agentctl agent watch --interval 5
 
 agentctl impl list
 agentctl impl describe <name>
+agentctl impl init --apply
 
 agentctl run submit --agent <name> --impl <name> --runtime <type>
+agentctl run init --apply --wait
+agentctl run codex --prompt "Summarize repo" --agent <name> --runtime workflow --wait
 agentctl run status <name>
 agentctl run list --phase Succeeded --runtime workflow
 agentctl run watch --selector app=my-agent
