@@ -1,6 +1,6 @@
 # agentctl CLI Design
 
-Status: Current (2026-01-20)
+Status: Current (2026-01-30)
 
 Location: `services/jangar/agentctl` (ships with the Jangar service; **not** a separate product or service).
 
@@ -13,6 +13,8 @@ style CLIs). gRPC is supported as an optional transport when you want to target 
 - CRUD for Agent, AgentRun, ImplementationSpec, ImplementationSource, Memory.
 - CRUD for supporting primitives (Tool, Schedule, Workspace, Signal, ApprovalPolicy, Budget, SecretBinding).
 - First‑class “run” command to submit an AgentRun from flags or a spec file.
+- Interactive `init` flows for ImplementationSpecs and AgentRuns.
+- `run codex` convenience command to generate an ImplementationSpec and submit an AgentRun.
 - Works against any Kubernetes cluster where Jangar is deployed by using the current kube context.
 - Optional gRPC mode for direct Jangar access (port‑forward, in‑cluster, or gateway).
 - Packaged as a Node-bundled CLI (single JS file) with optional Bun binaries; distributed via npm and Homebrew.
@@ -26,6 +28,7 @@ style CLIs). gRPC is supported as an optional transport when you want to target 
 ## Architecture
 - Client talks to the Kubernetes API directly by default.
 - gRPC transport is available for compatibility and future remote access.
+- CLI built with `@effect/cli` for composable command parsing and completion generation.
 - Default namespace is `agents`, with explicit overrides via flags/config.
 - CLI is bundled and versioned with the Jangar service, even though it is published independently.
 - Jangar is the source of truth for list/get/apply/delete operations.
@@ -35,11 +38,12 @@ style CLIs). gRPC is supported as an optional transport when you want to target 
 - **Current:** in-cluster gRPC only; external access via `kubectl port-forward` or an in-cluster client.
 - **Future-proofing:** TLS/mTLS support, optional auth tokens, and a dedicated Ingress/gateway can be layered without changing CLI commands.
 
-## Command Surface (proposed)
+## Command Surface
 ### Core
 - `agentctl version [--client]`
 - `agentctl config view|set`
 - `agentctl completion <shell>`
+- `agentctl completion install <shell>`
 - `agentctl status` / `agentctl diagnose` (control-plane health)
 
 ### Agent
@@ -52,6 +56,7 @@ style CLIs). gRPC is supported as an optional transport when you want to target 
 - `agentctl impl get <name>` / `agentctl impl describe <name>`
 - `agentctl impl list` / `agentctl impl watch`
 - `agentctl impl create --text <text> [--summary ...] [--source ...]`
+- `agentctl impl init [--apply] [--file <path>]`
 - `agentctl impl apply -f <file>`
 - `agentctl impl delete <name>`
 
@@ -78,6 +83,8 @@ style CLIs). gRPC is supported as an optional transport when you want to target 
 
 ### AgentRun
 - `agentctl run submit --agent <name> --impl <name> --runtime <type> [--workload-image ...] [--cpu ...] [--memory ...] [--idempotency-key ...]`
+- `agentctl run init [--apply] [--file <path>] [--wait]`
+- `agentctl run codex --prompt "<task>" --agent <name> --runtime <type> [--wait]`
 - `agentctl run apply -f <file>`
 - `agentctl run get <name>` / `agentctl run describe <name>`
 - `agentctl run status <name>` (alias for `run get`)
@@ -164,7 +171,7 @@ grpc                     agents     healthy   127.0.0.1:50051
 - `--context` / `AGENTCTL_CONTEXT` to select a kube context.
 - `--grpc` to force gRPC mode.
 - `--server` / `--address` (gRPC address; default `agents-grpc.agents.svc.cluster.local:50051`).
-- For port‑forwarded usage, pass `--server 127.0.0.1:50051`.
+- For port‑forwarded usage, pass `--grpc --server 127.0.0.1:50051`.
 - `--token` (optional shared secret).
 - `--tls` to enable TLS when configured (future-proofed).
 - `--output` / `-o` (`yaml|json|table`, default `table`).
@@ -172,12 +179,14 @@ grpc                     agents     healthy   127.0.0.1:50051
 - `--wait` for `run submit` to block until completion.
 - `--idempotency-key` to avoid duplicate run submissions.
 - `--interval` (seconds) for `watch` commands (default 5).
+- `--apply` and `--file` for `init` commands.
 
 ## Spec Rendering
 `agentctl run submit` builds an AgentRun manifest from flags:
 - Required: `--agent`, `--impl` (ImplementationSpec), `--runtime`.
 - Optional: `--workload-image`, `--cpu`, `--memory`, `--memory-ref`, `--param key=value`.
-- Produces `spec.implementationSpecRef`, `spec.runtime`, `spec.workload`, `spec.parameters`, `spec.idempotencyKey`.
+- Produces `spec.implementationSpecRef`, `spec.runtime`, `spec.workload`, `spec.parameters`.
+- `--idempotency-key` is sent to gRPC as `idempotency_key` and recorded as a delivery-id label in kube mode.
 
 ## Runtime Handling
 - `--runtime` maps to `spec.runtime.type`.

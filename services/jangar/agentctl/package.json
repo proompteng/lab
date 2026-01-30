@@ -38,14 +38,21 @@
     "build:release": "bun run sync:proto && bun run scripts/build-release.ts",
     "homebrew:generate": "bun run scripts/generate-homebrew.ts",
     "lint": "bunx biome check --config-path ../../../biome.json src scripts",
+    "test": "bun test",
     "validate:metadata": "bun run scripts/validate-npm-metadata.ts",
     "validate:bin": "bun run scripts/validate-binary.ts",
     "prepack": "bun run build && bun run build:bins"
   },
   "dependencies": {
+    "@proompteng/codex": "workspace:*",
+    "@effect/cli": "^0.73.1",
+    "@effect/platform": "^0.94.2",
+    "@effect/platform-bun": "^0.87.1",
+    "@effect/platform-node": "^0.104.1",
     "@grpc/grpc-js": "^1.12.6",
     "@grpc/proto-loader": "^0.7.13",
     "@kubernetes/client-node": "^1.0.0",
+    "effect": "^3.19.15",
     "protobufjs": "^7.5.4",
     "yaml": "^2.8.2"
   },
