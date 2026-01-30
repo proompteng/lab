@@ -155,3 +155,47 @@ kubectl -n jangar exec open-webui-0 -- sh -lc 'curl -fsS http://192.168.1.190:11
 
 If the models are available, OpenWebUI should include `qwen3-coder-saigak:30b-a3b-q4_K_M` and
 `qwen3-embedding-saigak:0.6b` in its model list.
+
+## Troubleshooting
+### Ollama running but completions time out
+Symptoms:
+- `/v1/chat/completions` hangs or returns 500s after minutes.
+- Ollama logs show `offloaded 0/.. layers to GPU` or CUDA init errors.
+- `nvidia-smi` fails with driver/library mismatch.
+
+Fix (driver mismatch on `docker-host`):
+1) Remove stray 550 packages (if present):
+   ```bash
+   sudo apt-get purge -y 'nvidia-*550*'
+   ```
+2) Reinstall the 580 stack and rebuild initramfs:
+   ```bash
+   sudo apt-get install -y nvidia-driver-580 nvidia-utils-580 nvidia-kernel-common-580 nvidia-kernel-source-580 nvidia-dkms-580 nvidia-compute-utils-580
+   sudo update-initramfs -u
+   sudo reboot
+   ```
+3) Verify:
+   ```bash
+   nvidia-smi
+   journalctl -u ollama -n 50 --no-pager | grep -i cuda
+   ```
+
+### Saigak Alloy keeps restarting after reboot
+Cause: the Saigak compose stack lives in `/tmp/saigak`, and `/tmp` may be wiped on reboot.
+
+Fix:
+1) Restore the Saigak files on the host:
+   ```bash
+   scp -r services/saigak/* kalmyk@192.168.1.190:/tmp/saigak/
+   ```
+2) Restart the stack:
+   ```bash
+   ssh kalmyk@192.168.1.190 'cd /tmp/saigak && docker compose up -d'
+   ```
+3) Confirm:
+   ```bash
+   docker ps --format 'table {{.Names}}\t{{.Status}}' | grep saigak
+   ```
+
+Long-term: move the Saigak compose directory to a persistent path (e.g., `/opt/saigak`)
+and update the install script or systemd units accordingly.
