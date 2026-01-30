@@ -20,6 +20,7 @@ import {
 import * as protobuf from 'protobufjs'
 import YAML from 'yaml'
 import { EMBEDDED_AGENTCTL_PROTO } from './embedded-proto'
+import { PACKAGE_VERSION } from './version'
 
 const EXIT_VALIDATION = 2
 const EXIT_RUNTIME = 4
@@ -377,6 +378,7 @@ const RPC_RESOURCE_MAP: Record<string, { list: string; get: string; apply: strin
 const getVersion = () => {
   const env = process.env.AGENTCTL_VERSION?.trim()
   if (env) return env
+  if (PACKAGE_VERSION && PACKAGE_VERSION !== 'dev') return PACKAGE_VERSION
   try {
     const moduleDir = resolve(fileURLToPath(import.meta.url), '..')
     const pkgCandidates = [
@@ -394,7 +396,7 @@ const getVersion = () => {
   } catch {
     // ignore
   }
-  return 'dev'
+  return PACKAGE_VERSION
 }
 
 const usage = (version: string) =>
