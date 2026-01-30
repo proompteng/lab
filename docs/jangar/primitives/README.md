@@ -36,3 +36,4 @@ Jangar APIs; Jangar creates and manages the underlying CRDs and reconciles statu
 - `control-plane.md`
 - `jangar-implementation.md`
 - `production-validation.md`
+- [`agents-control-plane-log-viewer.md`](../agents-control-plane-log-viewer.md)
