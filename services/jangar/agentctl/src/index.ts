@@ -59,6 +59,7 @@ const handleExit = (exit: Exit.Exit<unknown, unknown>, onExit: (code: number) =>
 
 const main = async () => {
   const { argv, flags } = parseGlobalFlags(process.argv.slice(2))
+  const commandArgv = [process.argv[0] ?? 'node', process.argv[1] ?? 'agentctl', ...argv]
   const config = await loadConfig()
   const { resolved, warnings } = resolveConfig(flags, config)
   warnings.forEach((warning) => {
@@ -76,7 +77,7 @@ const main = async () => {
   const runtimeLayer = Layer.mergeAll(appLayer, platformLayer)
   const app = makeApp()
   const run = Command.run({ name: 'agentctl', version: getVersion() })(app)
-  const program = Effect.provide(run(argv), runtimeLayer)
+  const program = Effect.provide(run(commandArgv), runtimeLayer)
 
   runMain(program, {
     disableErrorReporting: true,
