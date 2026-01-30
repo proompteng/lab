@@ -206,6 +206,10 @@ A release is considered “fully functional” when:
 ## Open Questions
 - Should the chart support an optional CRD install guard (e.g., pre‑install job) for clusters that skip `crds/`? Current best practice says no, but some GitOps tools may need explicit handling.
 
+## Production Features
+For the next production iteration focused on AgentRun execution hardening, see:
+- `docs/agents/agents-chart-five-features.md`
+
 ## References
 - `docs/agents/agents-helm-chart-design.md`
 - `docs/agents/ci-validation-plan.md`
