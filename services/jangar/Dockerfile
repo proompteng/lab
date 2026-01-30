@@ -514,6 +514,7 @@ COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/node_modules/node-pty/prebui
 WORKDIR /app/services/jangar
 COPY --from=jangar-build /app/services/jangar/.output ./.output
 COPY --from=jangar-build /app/services/jangar/package.json ./package.json
+COPY --from=jangar-deps-prod /app/services/jangar/node_modules ./node_modules
 COPY --from=jangar-pty /tmp/node-pty/build /app/services/jangar/.output/server/node_modules/node-pty/build
 COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/server/node_modules/node-pty/prebuilds
 
