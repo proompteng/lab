@@ -1,15 +1,16 @@
 import path from 'node:path'
+import { createRequire } from 'node:module'
 
 import { defineConfig } from 'vitest/config'
+
+const require = createRequire(import.meta.url)
+const codegenv2Path = require.resolve('@bufbuild/protobuf/codegenv2')
 
 export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      '@bufbuild/protobuf/codegenv2': path.resolve(
-        __dirname,
-        '../../node_modules/@bufbuild/protobuf/dist/esm/codegenv2/index.js',
-      ),
+      '@bufbuild/protobuf/codegenv2': codegenv2Path,
     },
   },
   test: {
