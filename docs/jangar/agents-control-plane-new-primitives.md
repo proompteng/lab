@@ -10,7 +10,7 @@ views, relationship navigation, and status insight.
 ## Goals
 
 - Ship list and detail pages for all new primitives with consistent navigation and filters.
-- Expose the core spec + status fields in structured summaries alongside raw YAML.
+- Expose the core spec + status fields in structured summaries alongside raw YAML (with sensitive fields redacted).
 - Provide relationship links between primitives (ex: Tool -> ToolRun, Signal -> SignalDelivery).
 - Reuse existing control-plane API endpoints and streaming mechanisms where possible.
 - Ensure sensitive data (secrets, payloads) is redacted or summarized appropriately.
@@ -64,6 +64,7 @@ All routes live under `/agents-control-plane` and use the same namespace + label
 - All list/detail pages accept `?namespace=<ns>&labelSelector=<selector>`.
 - Detail pages propagate `namespace` in the search state to allow direct linking.
 - Relationship links should preserve `namespace` unless an explicit cross-namespace reference is present.
+- For cluster-scoped kinds, the namespace parameter is ignored and the UI should indicate cluster scope.
 
 ## API needs
 
@@ -108,7 +109,7 @@ control-plane kind resolver and resource map.
 Use the existing primitives shell as the baseline:
 
 - **List**: `PrimitiveListPage` with namespace + label selector filters, count, and a consistent fields grid.
-- **Detail**: `PrimitiveDetailPage` with summary cards, Conditions, Events, and full YAML tabs.
+- **Detail**: `PrimitiveDetailPage` with summary cards, Conditions, Events, and full YAML tabs (redacted where needed).
 
 ### Primitive-specific list fields
 
