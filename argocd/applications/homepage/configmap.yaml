@@ -9,6 +9,21 @@ data:
   bookmarks.yaml: |
     []
   custom.css: |
+    :root {
+      --homelab-bg:
+        radial-gradient(1200px circle at 10% 15%, rgba(56, 189, 248, 0.18), transparent 45%),
+        radial-gradient(900px circle at 85% 20%, rgba(129, 140, 248, 0.18), transparent 50%),
+        linear-gradient(160deg, rgba(2, 6, 23, 0.98), rgba(15, 23, 42, 0.94));
+    }
+
+    body {
+      background: var(--homelab-bg) fixed;
+    }
+
+    #page_container {
+      background: transparent;
+      min-height: 100vh;
+    }
   custom.js: |
   docker.yaml: |
     {}
@@ -17,46 +32,128 @@ data:
     ingress: true
     traefik: true
   services.yaml: |
-    - Public:
-        - Proompteng:
+    - apps:
+        - proompteng:
             href: https://proompteng.ai
-        - App:
+            icon: mdi-home-variant
+            description: marketing site
+        - app:
             href: https://app.proompteng.ai
-        - CMS:
+            icon: mdi-view-dashboard
+            description: main product ui
+        - cms:
             href: https://cms.proompteng.ai
-        - Docs:
+            icon: mdi-database
+            description: content authoring
+        - docs:
             href: https://docs.proompteng.ai
-        - Discourse:
+            icon: mdi-book-open-page-variant
+            description: product docs
+        - discourse:
             href: https://forum.proompteng.ai
-    - Tailscale:
-        - Homepage:
-            href: https://homepage.ide-newton.ts.net
-        - Jangar:
-            href: https://jangar.ide-newton.ts.net
-        - OpenWebUI:
-            href: https://openwebui.ide-newton.ts.net
-        - Jangar VSCode:
-            href: https://jangar-vscode.ide-newton.ts.net
-        - Facteur:
-            href: https://facteur.ide-newton.ts.net
-        - GoLink:
-            href: https://go.ide-newton.ts.net
-        - Torghut:
-            href: https://torghut.ide-newton.ts.net
-    - Internal:
-        - Agents:
+            icon: si-discourse
+            description: community forum
+        - homepage:
+            href: http://homepage
+            icon: mdi-home
+            description: homelab dashboard
+        - jangar:
+            href: http://jangar
+            icon: mdi-robot
+            description: agents control plane
+        - openwebui:
+            href: http://openwebui
+            icon: mdi-chat
+            description: llm chat ui
+        - jangar vscode:
+            href: http://jangar-vscode
+            icon: si-visualstudiocode
+            description: remote editor
+        - facteur:
+            href: http://facteur
+            icon: mdi-email
+            description: notifications
+        - golink:
+            href: http://go
+            icon: mdi-link-variant
+            description: short links
+        - torghut:
+            href: http://torghut
+            icon: mdi-server
+            description: task runner
+        - argocd:
+            href: https://argocd.proompteng.ai
+            icon: si-argocd
+            description: cluster control plane
+        - agents:
             href: https://argocd.proompteng.ai/applications/agents
-        - Agents CI:
+            icon: si-argocd
+            description: agents controller
+        - agents ci:
             href: https://argocd.proompteng.ai/applications/agents-ci
-        - Bumba:
+            icon: si-argocd
+            description: ci runners
+        - bumba:
             href: https://argocd.proompteng.ai/applications/bumba
-        - Oirat:
+            icon: si-argocd
+            description: event pipelines
+        - oirat:
             href: https://argocd.proompteng.ai/applications/oirat
-        - Dernier:
+            icon: si-argocd
+            description: chat ops
+        - dernier:
             href: https://argocd.proompteng.ai/applications/dernier
-        - Froussard:
+            icon: si-argocd
+            description: release system
+        - froussard:
             href: https://argocd.proompteng.ai/applications/froussard
+            icon: si-argocd
+            description: workflow bridge
   settings.yaml: |
     title: Homelab
+    description: Proompteng homelab control plane
+    theme: dark
+    color: zinc
+    headerStyle: boxedWidgets
+    cardBlur: sm
+    iconStyle: theme
+    fullWidth: true
+    useEqualHeights: true
+    disableCollapse: true
+    statusStyle: dot
+    quicklaunch:
+      searchDescriptions: true
+      hideInternetSearch: true
+      hideVisitURL: true
+      showSearchSuggestions: true
+      provider: duckduckgo
+    layout:
+      apps:
+        style: row
+        columns: 5
+        header: false
   widgets.yaml: |
-    []
+    - logo:
+        icon: mdi-home-variant
+    - resources:
+        cpu: true
+        memory: true
+        disk: /
+    - kubernetes:
+        cluster:
+          show: true
+          cpu: true
+          memory: true
+          showLabel: true
+          label: cluster
+        nodes:
+          show: false
+    - search:
+        provider: [duckduckgo, brave]
+        target: _blank
+        showSearchSuggestions: true
+    - datetime:
+        text_size: xl
+        format:
+          dateStyle: medium
+          timeStyle: short
