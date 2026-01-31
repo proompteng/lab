@@ -446,7 +446,7 @@ ARG TARGETARCH
 WORKDIR /app
 COPY json/ .
 RUN --mount=type=cache,target=/root/.cache/bun \
-  bun install --no-save --ignore-scripts --filter @proompteng/jangar
+  bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar
 RUN --mount=type=cache,target=/root/.cache/bun \
   set -eux; \
   case "${TARGETARCH:-$(uname -m)}" in \
@@ -471,7 +471,7 @@ FROM tools AS jangar-deps-dev
 WORKDIR /app
 COPY json/ .
 RUN --mount=type=cache,target=/root/.cache/bun \
-  bun install --no-save --ignore-scripts --filter @proompteng/jangar
+  bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar
 
 FROM jangar-deps-dev AS jangar-build
 WORKDIR /app
@@ -493,7 +493,7 @@ FROM tools AS jangar-deps-prod
 WORKDIR /app
 COPY json/ .
 RUN --mount=type=cache,target=/root/.cache/bun \
-  bun install --no-save --ignore-scripts --filter @proompteng/jangar
+  bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar
 
 FROM tools AS runtime
 
