@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homepage
+  namespace: homepage
+  labels:
+    app.kubernetes.io/name: homepage
+data:
+  bookmarks.yaml: |
+    []
+  custom.css: |
+  custom.js: |
+  docker.yaml: |
+    {}
+  kubernetes.yaml: |
+    mode: cluster
+    ingress: true
+    traefik: true
+  services.yaml: |
+    - Public:
+        - Proompteng:
+            href: https://proompteng.ai
+        - App:
+            href: https://app.proompteng.ai
+        - CMS:
+            href: https://cms.proompteng.ai
+        - Docs:
+            href: https://docs.proompteng.ai
+        - Discourse:
+            href: https://forum.proompteng.ai
+    - Tailscale:
+        - Homepage:
+            href: https://homepage.ide-newton.ts.net
+        - Jangar:
+            href: https://jangar.ide-newton.ts.net
+        - OpenWebUI:
+            href: https://openwebui.ide-newton.ts.net
+        - Jangar VSCode:
+            href: https://jangar-vscode.ide-newton.ts.net
+        - Facteur:
+            href: https://facteur.ide-newton.ts.net
+        - GoLink:
+            href: https://go.ide-newton.ts.net
+        - Torghut:
+            href: https://torghut.ide-newton.ts.net
+    - Internal:
+        - Agents:
+            href: https://argocd.proompteng.ai/applications/agents
+        - Agents CI:
+            href: https://argocd.proompteng.ai/applications/agents-ci
+        - Bumba:
+            href: https://argocd.proompteng.ai/applications/bumba
+        - Oirat:
+            href: https://argocd.proompteng.ai/applications/oirat
+        - Dernier:
+            href: https://argocd.proompteng.ai/applications/dernier
+        - Froussard:
+            href: https://argocd.proompteng.ai/applications/froussard
+  settings.yaml: |
+    title: Homelab
+  widgets.yaml: |
+    []
