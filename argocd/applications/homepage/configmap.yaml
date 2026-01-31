@@ -11,9 +11,10 @@ data:
   custom.css: |
     :root {
       --homelab-bg:
-        radial-gradient(1200px circle at 10% 15%, rgba(56, 189, 248, 0.18), transparent 45%),
-        radial-gradient(900px circle at 85% 20%, rgba(129, 140, 248, 0.18), transparent 50%),
-        linear-gradient(160deg, rgba(2, 6, 23, 0.98), rgba(15, 23, 42, 0.94));
+        radial-gradient(1200px circle at 12% 12%, rgba(34, 197, 94, 0.16), transparent 45%),
+        radial-gradient(900px circle at 85% 18%, rgba(14, 116, 144, 0.18), transparent 50%),
+        radial-gradient(700px circle at 55% 85%, rgba(234, 179, 8, 0.12), transparent 55%),
+        linear-gradient(160deg, rgba(2, 6, 23, 0.98), rgba(15, 23, 42, 0.96));
     }
 
     body {
@@ -118,7 +119,7 @@ data:
     cardBlur: sm
     iconStyle: theme
     fullWidth: true
-    useEqualHeights: true
+    useEqualHeights: false
     disableCollapse: true
     statusStyle: dot
     quicklaunch:
@@ -130,8 +131,9 @@ data:
     layout:
       apps:
         style: row
-        columns: 5
+        columns: 6
         header: false
+        useEqualHeights: false
   widgets.yaml: |
     - logo:
         icon: mdi-home-variant
