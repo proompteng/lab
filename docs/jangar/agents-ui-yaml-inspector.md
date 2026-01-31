@@ -28,7 +28,8 @@ changed, with minimal backend and UI latency.
 
 ### YAML inspector
 
-1. Default view shows the latest resolved YAML for the selected Agent.
+1. Default view shows the latest resolved YAML for the selected Agent, falling back to the raw spec when resolved
+   output is unavailable.
 2. A compact selector allows choosing a revision by timestamp or version.
 3. Two modes: "Raw YAML" and "Normalized JSON" (read-only).
 4. "Copy" and "Download" buttons for the current view.
