@@ -97,6 +97,7 @@ style CLIs). gRPC is supported as an optional transport when you want to target 
 `agentctl status` and `agentctl diagnose` present control-plane health. In kube mode they inspect the namespace,
 deployment, and CRDs directly; in gRPC mode they call the Jangar control-plane status endpoint. Use `--output json`
 for machine parsing.
+See `docs/agents/agentctl-status-watch.md` for the streaming watch design.
 
 Example table (left-aligned, kubectl-style headers):
 
