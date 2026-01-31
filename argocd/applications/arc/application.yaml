@@ -39,6 +39,8 @@ spec:
             spec:
               hostNetwork: true
               dnsPolicy: ClusterFirstWithHostNet
+              containers:
+                - name: listener
           template:
             spec:
               hostNetwork: true
