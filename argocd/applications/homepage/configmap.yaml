@@ -119,6 +119,7 @@ data:
     cardBlur: sm
     iconStyle: theme
     fullWidth: true
+    maxGroupColumns: 6
     useEqualHeights: false
     disableCollapse: true
     statusStyle: dot
@@ -129,11 +130,10 @@ data:
       showSearchSuggestions: true
       provider: duckduckgo
     layout:
-      apps:
-        style: row
-        columns: 6
-        header: false
-        useEqualHeights: false
+      - apps:
+          style: column
+          header: false
+          useEqualHeights: false
   widgets.yaml: |
     - logo:
         icon: mdi-home-variant
