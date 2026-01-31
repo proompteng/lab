@@ -4,8 +4,9 @@ Status: Draft (2026-01-30)
 
 ## Problem
 `agentctl` supports gRPC as an optional transport, but coverage is uneven relative to the Kubernetes API mode. The CLI
-exposes list/watch/describe/apply/delete and run/log/status workflows for every Agents primitive, yet the gRPC API
-is missing consistent watch semantics, pagination knobs, and structured error details. This makes gRPC a partial
+exposes list/watch/describe/apply/delete and run/log/status workflows for most Agents primitives (with newer or
+less-used kinds still on the roadmap), yet the gRPC API is missing consistent watch semantics, pagination knobs, and
+structured error details. This makes gRPC a partial
 substitute for kube mode rather than a full-fidelity transport.
 
 ## Goals
@@ -89,6 +90,9 @@ custom messages.
   - `string field_selector`
   - `string resource_version`
   - `bool include_initial_list`
+
+Notes:
+- `namespace` is ignored for cluster-scoped resources but should still be accepted for parity with kube mode.
 
 ### Watch event shape
 - `WatchEvent`:
