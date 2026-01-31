@@ -32,6 +32,7 @@ cognitive load, and standardize visual and interaction patterns without re-archi
 - Keep status meaning consistent everywhere (text + color + icon + timing).
 - Optimize for scanning: summary first, then details, then raw payloads.
 - Avoid hidden complexity: if something is loading, be explicit about it.
+- Honor user preferences (reduced motion, high-contrast settings) across all polish updates.
 
 ## Scope and UX updates
 
@@ -41,6 +42,7 @@ cognitive load, and standardize visual and interaction patterns without re-archi
 - Make breadcrumb labels reflect resource names and resource types (not internal IDs only).
 - Add a lightweight “scope switch” affordance (e.g., org/project or namespace) if multiple contexts exist.
 - Provide a consistent “back to list” affordance in detail pages without relying on browser back.
+- Persist the current namespace/scope in navigation links to avoid accidental context loss.
 
 ### Empty states
 
