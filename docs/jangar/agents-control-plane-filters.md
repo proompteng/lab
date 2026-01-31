@@ -74,6 +74,7 @@ Notes:
 - `phase` and `runtime` are ignored for non-run resources.
 - `labelSelector` applies to `metadata.labels` only.
 - API responses include the normalized `status.phase` to support client filtering and display.
+- When multiple phases are provided (comma-separated), matching is OR (any listed phase).
 
 ### 2) Control-plane UI API (`/api/agents/control-plane/resources`)
 
@@ -138,7 +139,7 @@ agentctl agent watch -l provider=codex
 
 Behavior:
 
-- `--label` and `--selector` are mutually additive; the CLI combines them into a single selector.
+- `--label` and `--selector` are mutually additive; the CLI combines them into a single selector (AND semantics).
 - In kube mode, these flags map to Kubernetes label selector query parameters.
 - In gRPC mode, these flags map to the new `/v1/*` query parameters.
 
