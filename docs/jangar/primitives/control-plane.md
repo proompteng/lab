@@ -56,3 +56,7 @@ Use `jangar-db` (CNPG) as source of truth for:
 
 All Jangar endpoints must accept an idempotency key (`deliveryId`), stored in the database,
 and return consistent results on retries.
+
+## UI surface
+
+- [Agents UI: YAML inspector + revision timeline](../agents-ui-yaml-inspector.md)
