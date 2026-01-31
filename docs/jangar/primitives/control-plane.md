@@ -68,3 +68,4 @@ and return consistent results on retries.
 ## Related docs
 
 - [Agents control-plane filters (labels + phase)](../agents-control-plane-filters.md)
+- [Agents control-plane UI polish](../agents-control-plane-polish.md)
