@@ -111,17 +111,6 @@ if ! command -v ssh >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! command -v gh >/dev/null 2>&1; then
-  echo "gh CLI not found in PATH; install it to sync GitHub auth" >&2
-  exit 1
-fi
-
-gh_token="$(gh auth token -h github.com 2>/dev/null || true)"
-if [[ -z "$gh_token" ]]; then
-  echo "Missing GitHub token for github.com; run 'gh auth login -h github.com -s repo,workflow' first" >&2
-  exit 1
-fi
-
 if [[ -z "$remote_repo" ]]; then
   remote_repo="${remote_home%/}/github.com/lab"
 fi
@@ -151,11 +140,6 @@ ssh_opts=(-o BatchMode=yes -o ConnectTimeout=10)
 init_cmd="set -euo pipefail; mkdir -p $(shell_escape "$remote_auth_dir") $(shell_escape "$remote_config_dir"); rm -f $(shell_escape "$remote_auth") $(shell_escape "$remote_config")"
 # shellcheck disable=SC2029
 ssh "${ssh_opts[@]}" "$coder_host" "$init_cmd"
-
-if ! ssh "${ssh_opts[@]}" "$coder_host" "command -v gh >/dev/null 2>&1"; then
-  echo "gh CLI not found on workspace '$workspace'; install it before syncing GitHub auth" >&2
-  exit 1
-fi
 
 echo "Copying auth.json to $(shell_escape "$workspace:$remote_auth")"
 RSYNC_RSH="ssh -o BatchMode=yes -o ConnectTimeout=10" rsync -av --progress "$local_auth" "$coder_host:$remote_auth"
@@ -200,9 +184,6 @@ else
   echo "No local skills directory found at $local_skills_dir; skipping skills sync"
 fi
 
-echo "Syncing GitHub CLI auth to $(shell_escape "$workspace")"
-printf '%s' "$gh_token" | ssh "${ssh_opts[@]}" "$coder_host" "gh auth login -h github.com --with-token >/dev/null 2>&1"
-
 ssh "${ssh_opts[@]}" "$coder_host" bash -s <<'REMOTE'
 set -euo pipefail
 codex_marker="# Managed by sync-codex-cli codex wrapper"
@@ -224,4 +205,4 @@ for rc in ~/.profile ~/.bashrc ~/.zshrc; do
 done
 REMOTE
 
-echo "Codex auth, config, skills, and GitHub auth synced to $workspace"
+echo "Codex auth, config, and skills synced to $workspace"
