@@ -1,6 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 
-import type { ClientInfo, ClientRequest, RequestId, ServerNotification } from './app-server'
+import type { ClientInfo, RequestId } from './app-server'
 import type { ReasoningEffort } from './app-server/ReasoningEffort'
 import type { JsonValue } from './app-server/serde_json/JsonValue'
 import type {
@@ -38,6 +38,10 @@ type PendingRequest = {
   startedAt: number
 }
 
+type JsonRpcRequestMethod = 'initialize' | 'thread/start' | 'turn/start' | 'turn/interrupt'
+type JsonRpcRequest = { id: RequestId; method: JsonRpcRequestMethod; params: unknown }
+type JsonRpcNotification = { method: string; params?: unknown }
+
 export type StreamDelta =
   | { type: 'message' | 'reasoning'; delta: string }
   | {
@@ -59,10 +63,6 @@ export type StreamDelta =
   | { type: 'error'; error: unknown }
 
 type ToolPayload = Omit<Extract<StreamDelta, { type: 'tool' }>, 'type'>
-type ToolKind = ToolPayload['toolKind']
-
-type MessageDeltaSource = 'v2' | 'legacy_delta' | 'legacy_content'
-type ToolDeltaSource = 'v2' | 'legacy'
 
 type TurnStream = {
   push: (delta: StreamDelta) => void
@@ -71,9 +71,6 @@ type TurnStream = {
   iterator: AsyncGenerator<StreamDelta, Turn | null, void>
   lastReasoningDelta: string | null
   lastMessageDelta: string | null
-  messageDeltaSource: MessageDeltaSource | null
-  toolDeltaSources: Partial<Record<ToolKind, ToolDeltaSource>>
-  turnDiffDeltaSource: ToolDeltaSource | null
 }
 
 type LegacySandboxMode = 'dangerFullAccess' | 'workspaceWrite' | 'readOnly'
@@ -207,9 +204,6 @@ const createTurnStream = (): TurnStream => {
     iterator,
     lastReasoningDelta: null,
     lastMessageDelta: null,
-    messageDeltaSource: null,
-    toolDeltaSources: {},
-    turnDiffDeltaSource: null,
   }
   return stream
 }
@@ -416,6 +410,9 @@ export class CodexAppServerClient {
         config: this.threadConfig,
         baseInstructions: null,
         developerInstructions: null,
+        personality: null,
+        ephemeral: null,
+        dynamicTools: null,
         experimentalRawEvents: this.experimentalRawEvents,
       }
 
@@ -425,14 +422,16 @@ export class CodexAppServerClient {
 
     const turnParams: TurnStartParams = {
       threadId: activeThreadId,
-      input: [{ type: 'text', text: prompt }],
+      input: [{ type: 'text', text: prompt, text_elements: [] }],
       cwd: turnOptions.cwd ?? null,
       approvalPolicy: this.approval,
       sandboxPolicy: toSandboxPolicy(this.sandbox),
       model: turnOptions.model ?? this.defaultModel,
       effort: turnOptions.effort ?? this.defaultEffort,
       summary: null,
+      personality: null,
       outputSchema: null,
+      collaborationMode: null,
     }
 
     const turnResp = (await this.request<TurnStartResponse>('turn/start', turnParams)) as TurnStartResponse
@@ -499,7 +498,7 @@ export class CodexAppServerClient {
     }
 
     if (hasMethod) {
-      this.handleNotification(msg as ServerNotification)
+      this.handleNotification(msg as JsonRpcNotification)
     }
   }
 
@@ -554,7 +553,7 @@ export class CodexAppServerClient {
     })
   }
 
-  private handleNotification(notification: ServerNotification | { method: string; params?: unknown }): void {
+  private handleNotification(notification: JsonRpcNotification): void {
     const { method } = notification
     const params = notification.params
 
@@ -591,35 +590,12 @@ export class CodexAppServerClient {
       })
     }
 
-    const pushMessage = (
-      targetParams: unknown,
-      delta: string,
-      source: MessageDeltaSource,
-      { trackItem }: { trackItem?: boolean } = {},
-    ) => {
+    const pushMessage = (targetParams: unknown, delta: string, { trackItem }: { trackItem?: boolean } = {}) => {
       routeToStream(
         targetParams,
-        (stream, turnId) => {
-          if (stream.messageDeltaSource && stream.messageDeltaSource !== source) {
-            this.log('info', 'skipping agent message delta from secondary source', {
-              turnId,
-              source,
-              activeSource: stream.messageDeltaSource,
-              method,
-              deltaBytes: delta.length,
-            })
-            return
-          }
-
-          if (!stream.messageDeltaSource) {
-            stream.messageDeltaSource = source
-            this.log('info', 'selected agent message delta source', { turnId, source, method })
-          }
-
+        (stream) => {
           if (stream.lastMessageDelta === delta) {
             this.log('info', 'skipping duplicate agent message delta', {
-              turnId,
-              source,
               method,
               deltaBytes: delta.length,
             })
@@ -632,44 +608,8 @@ export class CodexAppServerClient {
       )
     }
 
-    const pushTool = (
-      targetParams: unknown,
-      payload: ToolPayload,
-      source: ToolDeltaSource,
-      { trackItem }: { trackItem?: boolean } = {},
-    ) => {
-      const isTurnDiff = payload.toolKind === 'file' && payload.title === 'turn diff'
-      routeToStream(
-        targetParams,
-        (stream, turnId) => {
-          const activeSource = isTurnDiff ? stream.turnDiffDeltaSource : stream.toolDeltaSources[payload.toolKind]
-          if (activeSource && activeSource !== source) {
-            this.log('info', 'skipping tool delta from secondary source', {
-              turnId,
-              source,
-              activeSource,
-              method,
-              toolKind: payload.toolKind,
-              status: payload.status,
-              id: payload.id,
-              title: payload.title,
-            })
-            return
-          }
-
-          if (!activeSource) {
-            if (isTurnDiff) {
-              stream.turnDiffDeltaSource = source
-            } else {
-              stream.toolDeltaSources[payload.toolKind] = source
-            }
-            this.log('info', 'selected tool delta source', { turnId, source, method })
-          }
-
-          stream.push({ type: 'tool', ...payload })
-        },
-        { trackItem },
-      )
+    const pushTool = (targetParams: unknown, payload: ToolPayload, { trackItem }: { trackItem?: boolean } = {}) => {
+      routeToStream(targetParams, (stream) => stream.push({ type: 'tool', ...payload }), { trackItem })
     }
 
     const pushUsage = (usage: unknown) => {
@@ -870,36 +810,6 @@ export class CodexAppServerClient {
       return `${decodedPrefix}${decodedRemainder ?? remainder}${suffix}`
     }
 
-    const extractPlanUpdate = (
-      raw: unknown,
-    ): {
-      explanation: string | null
-      plan: Array<{ step: string; status: 'pending' | 'in_progress' | 'completed' }>
-    } | null => {
-      if (!raw || typeof raw !== 'object') return null
-      const record = raw as Record<string, unknown>
-      const maybeMsg = record.msg
-      const source = maybeMsg && typeof maybeMsg === 'object' ? (maybeMsg as Record<string, unknown>) : record
-
-      const explanation =
-        source.explanation === null || typeof source.explanation === 'string'
-          ? (source.explanation as string | null)
-          : null
-
-      if (!Array.isArray(source.plan)) return null
-      const plan: Array<{ step: string; status: 'pending' | 'in_progress' | 'completed' }> = []
-      for (const entry of source.plan) {
-        if (!entry || typeof entry !== 'object') continue
-        const step = entry as Record<string, unknown>
-        if (typeof step.step !== 'string') continue
-        const status = normalizePlanStepStatus(step.status)
-        if (!status) continue
-        plan.push({ step: step.step, status })
-      }
-
-      return { explanation, plan }
-    }
-
     const toToolDeltaFromItem = (item: ThreadItem, status: 'started' | 'completed'): ToolPayload | null => {
       switch (item.type) {
         case 'commandExecution':
@@ -948,382 +858,18 @@ export class CodexAppServerClient {
       }
     }
 
-    const extractDelta = (params: unknown): string | null => {
-      if (!params) return null
-      if (typeof params === 'string') return params
-      if (typeof params === 'object') {
-        const obj = params as { delta?: unknown; msg?: { delta?: unknown } }
-        if (typeof obj.delta === 'string') return obj.delta
-        if (obj.msg && typeof obj.msg.delta === 'string') return obj.msg.delta
-      }
-      return null
-    }
-
-    const extractCodexMsg = (raw: unknown): Record<string, unknown> | null => {
-      if (!raw || typeof raw !== 'object') return null
-      const record = raw as Record<string, unknown>
-      const msg = record.msg
-      if (msg && typeof msg === 'object') return msg as Record<string, unknown>
-      return record
-    }
-
-    const extractTokenUsageFromTokenCount = (raw: unknown): unknown | null => {
-      const msg = extractCodexMsg(raw)
-      if (!msg) return null
-      const info = msg.info
-      if (!info || typeof info !== 'object') return null
-      const infoRecord = info as Record<string, unknown>
-
-      const total = infoRecord.total_token_usage
-      const last = infoRecord.last_token_usage
-      const modelContextWindow = infoRecord.model_context_window
-
-      if (!total || typeof total !== 'object' || !last || typeof last !== 'object') return null
-      return { total, last, modelContextWindow: modelContextWindow ?? null }
-    }
-
-    const toCommandTitle = (raw: unknown): string => {
-      if (Array.isArray(raw)) {
-        const parts = raw.filter((part) => typeof part === 'string') as string[]
-        if (parts.length) return parts.join(' ')
-      }
-      if (typeof raw === 'string') return raw
-      return 'command'
-    }
-
-    const toFileChangesForRenderer = (raw: unknown): Array<{ path: string; diff: string }> | null => {
-      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
-      const record = raw as Record<string, unknown>
-      const changes: Array<{ path: string; diff: string }> = []
-
-      for (const [path, entry] of Object.entries(record)) {
-        if (!entry || typeof entry !== 'object') continue
-        const change = entry as Record<string, unknown>
-        const type = change.type
-        if (type === 'update') {
-          const diff = typeof change.unified_diff === 'string' ? change.unified_diff : ''
-          changes.push({ path, diff })
-          continue
-        }
-        if (type === 'add' || type === 'delete') {
-          const content = typeof change.content === 'string' ? change.content : ''
-          changes.push({ path, diff: content })
-        }
-      }
-
-      return changes.length ? changes : null
-    }
-
     switch (method) {
       case 'item/agentMessage/delta': {
         const params = notification.params as AgentMessageDeltaNotification
-        pushMessage(params, params.delta, 'v2', { trackItem: true })
+        pushMessage(params, params.delta, { trackItem: true })
         this.log('info', 'agent message delta', { deltaBytes: params.delta.length })
         break
       }
-      case 'codex/event/agent_reasoning_delta':
-      case 'codex/event/reasoning_content_delta':
       case 'item/reasoning/summaryTextDelta':
       case 'item/reasoning/textDelta': {
-        pushReasoning(extractDelta(notification.params ?? null))
+        const params = notification.params as { delta?: string }
+        if (params?.delta) pushReasoning(params.delta)
         this.log('info', 'agent reasoning delta', { method, params: notification.params })
-        break
-      }
-      case 'codex/event/agent_message_delta':
-      case 'codex/event/agent_message_content_delta': {
-        const delta = extractDelta(notification.params ?? null)
-        if (delta) {
-          pushMessage(
-            notification.params,
-            delta,
-            method === 'codex/event/agent_message_content_delta' ? 'legacy_content' : 'legacy_delta',
-          )
-        }
-        break
-      }
-      case 'codex/event/plan_update': {
-        const planUpdate = extractPlanUpdate(notification.params)
-        if (planUpdate) {
-          routeToStream(notification.params, (stream) => {
-            stream.push({ type: 'plan', ...planUpdate })
-          })
-        }
-        this.log('info', 'codex plan update', { params: notification.params })
-        break
-      }
-      case 'codex/event/token_count': {
-        const usage = extractTokenUsageFromTokenCount(notification.params)
-        if (usage) pushUsage(usage)
-        break
-      }
-      case 'codex/event/exec_command_begin': {
-        const msg = extractCodexMsg(notification.params)
-        if (!msg) break
-        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
-        if (!callId) break
-        const title = toCommandTitle(msg.command)
-        pushTool(
-          notification.params,
-          {
-            toolKind: 'command',
-            id: callId,
-            status: 'started',
-            title,
-            detail: typeof msg.cwd === 'string' ? msg.cwd : undefined,
-            data: {
-              processId: typeof msg.process_id === 'string' ? msg.process_id : undefined,
-              source: typeof msg.source === 'string' ? msg.source : undefined,
-            },
-          },
-          'legacy',
-          { trackItem: true },
-        )
-        break
-      }
-      case 'codex/event/exec_command_output_delta': {
-        const msg = extractCodexMsg(notification.params)
-        if (!msg) break
-        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
-        if (!callId) break
-        const chunk = typeof msg.chunk === 'string' ? decodeMaybeBase64Text(msg.chunk) : null
-        if (!chunk) break
-        pushTool(
-          notification.params,
-          { toolKind: 'command', id: callId, status: 'delta', title: 'command output', detail: chunk },
-          'legacy',
-          { trackItem: true },
-        )
-        break
-      }
-      case 'codex/event/terminal_interaction': {
-        const msg = extractCodexMsg(notification.params)
-        if (!msg) break
-        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
-        if (!callId) break
-        const stdin = typeof msg.stdin === 'string' ? msg.stdin : null
-        if (!stdin) break
-        pushTool(
-          notification.params,
-          {
-            toolKind: 'command',
-            id: callId,
-            status: 'delta',
-            title: 'command input',
-            detail: stdin,
-            data: { processId: typeof msg.process_id === 'string' ? msg.process_id : undefined },
-          },
-          'legacy',
-          { trackItem: true },
-        )
-        break
-      }
-      case 'codex/event/exec_command_end': {
-        const msg = extractCodexMsg(notification.params)
-        if (!msg) break
-        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
-        if (!callId) break
-        const title = toCommandTitle(msg.command)
-        pushTool(
-          notification.params,
-          {
-            toolKind: 'command',
-            id: callId,
-            status: 'completed',
-            title,
-            data: {
-              aggregatedOutput:
-                typeof msg.aggregated_output === 'string' ? decodeMaybeBase64Text(msg.aggregated_output) : undefined,
-              exitCode: typeof msg.exit_code === 'number' ? msg.exit_code : undefined,
-              duration: typeof msg.duration === 'string' ? msg.duration : undefined,
-            },
-          },
-          'legacy',
-          { trackItem: true },
-        )
-        break
-      }
-      case 'codex/event/mcp_tool_call_begin': {
-        const msg = extractCodexMsg(notification.params)
-        if (!msg) break
-        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
-        if (!callId) break
-        const invocation =
-          msg.invocation && typeof msg.invocation === 'object' ? (msg.invocation as Record<string, unknown>) : null
-        const server = invocation && typeof invocation.server === 'string' ? invocation.server : null
-        const tool = invocation && typeof invocation.tool === 'string' ? invocation.tool : null
-        const title = server && tool ? `${server}:${tool}` : 'mcp'
-        const args = invocation ? invocation.arguments : undefined
-
-        pushTool(
-          notification.params,
-          {
-            toolKind: 'mcp',
-            id: callId,
-            status: 'started',
-            title,
-            data: { arguments: args },
-          },
-          'legacy',
-          { trackItem: true },
-        )
-        break
-      }
-      case 'codex/event/mcp_tool_call_end': {
-        const msg = extractCodexMsg(notification.params)
-        if (!msg) break
-        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
-        if (!callId) break
-        const invocation =
-          msg.invocation && typeof msg.invocation === 'object' ? (msg.invocation as Record<string, unknown>) : null
-        const server = invocation && typeof invocation.server === 'string' ? invocation.server : null
-        const tool = invocation && typeof invocation.tool === 'string' ? invocation.tool : null
-        const title = server && tool ? `${server}:${tool}` : 'mcp'
-        const args = invocation ? invocation.arguments : undefined
-
-        let result: unknown
-        let error: unknown
-        if (msg.result && typeof msg.result === 'object') {
-          const payload = msg.result as Record<string, unknown>
-          if ('Ok' in payload) result = payload.Ok
-          if ('Err' in payload) error = payload.Err
-        }
-
-        pushTool(
-          notification.params,
-          {
-            toolKind: 'mcp',
-            id: callId,
-            status: 'completed',
-            title,
-            data: {
-              arguments: args,
-              result,
-              error,
-            },
-          },
-          'legacy',
-          { trackItem: true },
-        )
-        break
-      }
-      case 'codex/event/patch_apply_begin': {
-        const msg = extractCodexMsg(notification.params)
-        if (!msg) break
-        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
-        if (!callId) break
-        const changes = toFileChangesForRenderer(msg.changes)
-        pushTool(
-          notification.params,
-          {
-            toolKind: 'file',
-            id: callId,
-            status: 'started',
-            title: 'file changes',
-            data: changes ? { changes } : undefined,
-          },
-          'legacy',
-          { trackItem: true },
-        )
-        break
-      }
-      case 'codex/event/patch_apply_end': {
-        const msg = extractCodexMsg(notification.params)
-        if (!msg) break
-        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
-        if (!callId) break
-        const changes = toFileChangesForRenderer(msg.changes)
-        pushTool(
-          notification.params,
-          {
-            toolKind: 'file',
-            id: callId,
-            status: 'completed',
-            title: 'file changes',
-            detail: typeof msg.stdout === 'string' ? msg.stdout : undefined,
-            data: {
-              success: typeof msg.success === 'boolean' ? msg.success : undefined,
-              changes: changes ?? undefined,
-            },
-          },
-          'legacy',
-          { trackItem: true },
-        )
-        break
-      }
-      case 'codex/event/turn_diff': {
-        const msg = extractCodexMsg(notification.params)
-        if (!msg) break
-        const diff = typeof msg.unified_diff === 'string' ? msg.unified_diff : null
-        if (!diff) break
-        pushTool(
-          notification.params,
-          {
-            toolKind: 'file',
-            id: 'turn.diff',
-            status: 'delta',
-            title: 'turn diff',
-            data: { changes: [{ path: 'turn.diff', diff }] },
-          },
-          'legacy',
-        )
-        break
-      }
-      case 'codex/event/web_search_begin': {
-        const msg = extractCodexMsg(notification.params)
-        if (!msg) break
-        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
-        if (!callId) break
-        pushTool(
-          notification.params,
-          { toolKind: 'webSearch', id: callId, status: 'started', title: 'web search' },
-          'legacy',
-          { trackItem: true },
-        )
-        break
-      }
-      case 'codex/event/web_search_end': {
-        const msg = extractCodexMsg(notification.params)
-        if (!msg) break
-        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
-        if (!callId) break
-        const query = typeof msg.query === 'string' ? msg.query : null
-        if (!query) break
-        routeToStream(
-          notification.params,
-          (stream) => {
-            const activeSource = stream.toolDeltaSources.webSearch
-            if (activeSource && activeSource !== 'legacy') return
-            if (!activeSource) stream.toolDeltaSources.webSearch = 'legacy'
-
-            stream.push({ type: 'tool', toolKind: 'webSearch', id: callId, status: 'started', title: query })
-            stream.push({ type: 'tool', toolKind: 'webSearch', id: callId, status: 'completed', title: query })
-          },
-          { trackItem: true },
-        )
-        break
-      }
-      case 'codex/event/task_complete': {
-        routeToStream(
-          notification.params,
-          (stream, turnId) => {
-            stream.complete(null)
-            this.clearTurn(turnId)
-          },
-          { trackItem: false },
-        )
-        this.log('info', 'codex task complete -> closing turn stream', { params: notification.params })
-        break
-      }
-      case 'codex/event/turn_aborted': {
-        routeToStream(
-          notification.params,
-          (stream, turnId) => {
-            stream.fail(new Error('turn aborted'))
-            this.clearTurn(turnId)
-          },
-          { trackItem: false },
-        )
-        this.log('warn', 'codex turn aborted -> failing turn stream', { params: notification.params })
         break
       }
       case 'turn/completed': {
@@ -1351,17 +897,13 @@ export class CodexAppServerClient {
       }
       case 'turn/diff/updated': {
         const params = notification.params as TurnDiffUpdatedNotification
-        pushTool(
-          params,
-          {
-            toolKind: 'file',
-            id: `${params.turnId}:diff`,
-            status: 'delta',
-            title: 'turn diff',
-            data: { changes: [{ path: 'turn.diff', diff: params.diff }] },
-          },
-          'v2',
-        )
+        pushTool(params, {
+          toolKind: 'file',
+          id: `${params.turnId}:diff`,
+          status: 'delta',
+          title: 'turn diff',
+          data: { changes: [{ path: 'turn.diff', diff: params.diff }] },
+        })
         break
       }
       case 'turn/plan/updated': {
@@ -1385,67 +927,63 @@ export class CodexAppServerClient {
         const params = notification.params as ItemStartedNotification
         this.trackItemFromParams(params)
         const toolDelta = toToolDeltaFromItem(params.item, 'started')
-        if (toolDelta) pushTool(params, toolDelta, 'v2')
+        if (toolDelta) pushTool(params, toolDelta)
         break
       }
       case 'item/completed': {
         const params = notification.params as ItemCompletedNotification
         this.trackItemFromParams(params)
         const toolDelta = toToolDeltaFromItem(params.item, 'completed')
-        if (toolDelta) pushTool(params, toolDelta, 'v2')
+        if (toolDelta) pushTool(params, toolDelta)
         break
       }
       case 'item/commandExecution/outputDelta': {
         const params = notification.params as CommandExecutionOutputDeltaNotification
         this.trackItemFromParams(params)
-        pushTool(
-          params,
-          {
-            toolKind: 'command',
-            id: params.itemId,
-            status: 'delta',
-            title: 'command output',
-            detail: decodeMaybeBase64Text(params.delta),
-          },
-          'v2',
-        )
+        pushTool(params, {
+          toolKind: 'command',
+          id: params.itemId,
+          status: 'delta',
+          title: 'command output',
+          detail: decodeMaybeBase64Text(params.delta),
+        })
         break
       }
       case 'item/fileChange/outputDelta': {
         const params = notification.params as FileChangeOutputDeltaNotification
         this.trackItemFromParams(params)
-        pushTool(
-          params,
-          { toolKind: 'file', id: params.itemId, status: 'delta', title: 'file changes', detail: params.delta },
-          'v2',
-        )
+        pushTool(params, {
+          toolKind: 'file',
+          id: params.itemId,
+          status: 'delta',
+          title: 'file changes',
+          detail: params.delta,
+        })
         break
       }
       case 'item/commandExecution/terminalInteraction': {
         const params = notification.params as TerminalInteractionNotification
         this.trackItemFromParams(params)
-        pushTool(
-          params,
-          {
-            toolKind: 'command',
-            id: params.itemId,
-            status: 'delta',
-            title: 'command input',
-            detail: params.stdin,
-            data: { processId: params.processId },
-          },
-          'v2',
-        )
+        pushTool(params, {
+          toolKind: 'command',
+          id: params.itemId,
+          status: 'delta',
+          title: 'command input',
+          detail: params.stdin,
+          data: { processId: params.processId },
+        })
         break
       }
       case 'item/mcpToolCall/progress': {
         const params = notification.params as McpToolCallProgressNotification
         this.trackItemFromParams(params)
-        pushTool(
-          params,
-          { toolKind: 'mcp', id: params.itemId, status: 'delta', title: 'mcp progress', detail: params.message },
-          'v2',
-        )
+        pushTool(params, {
+          toolKind: 'mcp',
+          id: params.itemId,
+          status: 'delta',
+          title: 'mcp progress',
+          detail: params.message,
+        })
         break
       }
       case 'thread/tokenUsage/updated': {
@@ -1469,8 +1007,6 @@ export class CodexAppServerClient {
         this.log('info', 'account rate limits updated', { params })
         break
       }
-      case 'codex/event/stream_error':
-      case 'stream_error':
       case 'error': {
         const errorPayload = (notification.params as ErrorNotification) ?? { message: 'unknown error' }
         const resolved = this.resolveTurnStream(notification.params)
@@ -1629,9 +1165,9 @@ export class CodexAppServerClient {
     }
   }
 
-  private request<T = unknown>(method: ClientRequest['method'], params: ClientRequest['params']): Promise<T> {
+  private request<T = unknown>(method: JsonRpcRequestMethod, params: unknown): Promise<T> {
     const id: RequestId = newId()
-    const payload = { id, method, params } as ClientRequest
+    const payload: JsonRpcRequest = { id, method, params }
 
     const promise = new Promise<T>((resolve, reject) => {
       const wrappedResolve = (value: unknown) => resolve(value as T)

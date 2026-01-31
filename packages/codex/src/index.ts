@@ -1,4 +1,4 @@
-export * from './app-server'
+export * from './app-server/v2'
 export type { StreamDelta } from './app-server-client'
 export { CodexAppServerClient } from './app-server-client'
 export { Codex } from './codex'
