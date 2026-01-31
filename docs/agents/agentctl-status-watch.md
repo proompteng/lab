@@ -36,7 +36,7 @@ The design adds:
 - Starts with an initial snapshot of the full control-plane status.
 - Follows with incremental updates (deltas) when components change.
 - Emits a heartbeat every N seconds to confirm liveness.
-- If the stream disconnects, retries with exponential backoff unless `--no-retry` is set.
+- If the stream disconnects, retries with exponential backoff unless `--retry=false` is set.
 
 ### Flags
 - `--watch`: enable streaming mode on `agentctl status` and `agentctl diagnose`.
@@ -45,6 +45,7 @@ The design adds:
 - `--heartbeat <duration>`: heartbeat interval (default `30s`).
 - `--retry`: retry on disconnect (default `true`).
 - `--retry-backoff <duration>`: base backoff (default `1s`, max `30s`).
+- `--fallback-poll`: if streaming is unavailable, fall back to polling instead of exiting.
 - `--since <cursor>`: resume from a cursor (SSE `Last-Event-ID` or gRPC cursor).
 - `--timeout <duration>`: optional overall watch duration (default: no timeout).
 - `--transport <kube|grpc>`: explicit transport override.
@@ -168,7 +169,7 @@ Response event:
 ### CLI
 - Retry on network disconnects by default; exponential backoff with jitter.
 - If retries exceed `--timeout`, the CLI exits with non-zero status.
-- `--no-retry` (or `--retry=false`) exits immediately on disconnect.
+- `--retry=false` exits immediately on disconnect.
 - For recoverable server errors, emit `error` event to output stream and continue.
 
 ### Server
