@@ -16,6 +16,8 @@ const kubeConfigPath = process.env.K3S_LOCAL_PATH ?? `${homeDir}/.kube/config`
 const kubeContext = process.env.K3S_CONTEXT ?? 'default'
 const primaryHost = process.env.K3S_PRIMARY_HOST ?? '192.168.1.150'
 const apiLoadBalancer = process.env.K3S_API_LB ?? '192.168.1.200'
+const k3sChannel = process.env.K3S_CHANNEL ?? 'latest'
+const k3sVersion = process.env.K3S_VERSION
 
 function readParallelism(value: string | undefined, fallback: number) {
   if (!value) {
@@ -189,6 +191,13 @@ async function fetchNodeToken() {
   return output
 }
 
+function k3sVersionArgs() {
+  if (k3sVersion) {
+    return ['--k3s-version', k3sVersion]
+  }
+  return ['--k3s-channel', k3sChannel]
+}
+
 async function installPrimary() {
   console.log(`Setting up primary server ${primaryHost}`)
   await exec([
@@ -205,6 +214,7 @@ async function installPrimary() {
     kubeContext,
     '--ssh-key',
     sshKeyPath,
+    ...k3sVersionArgs(),
     '--k3s-extra-args',
     serverExtraArgs,
   ])
@@ -227,6 +237,7 @@ async function joinAdditionalServers(nodeToken: string) {
       sshUser,
       '--ssh-key',
       sshKeyPath,
+      ...k3sVersionArgs(),
       '--k3s-extra-args',
       serverExtraArgs,
     ])
@@ -249,6 +260,7 @@ async function joinWorkers(nodeToken: string) {
       sshUser,
       '--ssh-key',
       sshKeyPath,
+      ...k3sVersionArgs(),
       '--k3s-extra-args',
       workerExtraArgs,
     ])
