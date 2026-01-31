@@ -8,6 +8,8 @@ WORKDIR /app
 ENV HUSKY=0
 COPY json/ .
 COPY tsconfig.base.json ./
+# Turbo prune leaves the root workspace list intact; drop missing explicit entries.
+RUN bun -e "const fs = require('fs'); const path = 'package.json'; const pkg = JSON.parse(fs.readFileSync(path, 'utf8')); if (Array.isArray(pkg.workspaces)) { pkg.workspaces = pkg.workspaces.filter((entry) => entry !== 'services/jangar/agentctl'); fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\\n'); }"
 # Turbo prune doesn't emit a bun.lock that stays frozen with trimmed workspaces.
 RUN --mount=type=cache,target=/root/.cache/bun \
   bun install --ignore-scripts --filter @proompteng/bumba
@@ -22,6 +24,7 @@ WORKDIR /app
 ENV HUSKY=0
 COPY json/ .
 COPY tsconfig.base.json ./
+RUN bun -e "const fs = require('fs'); const path = 'package.json'; const pkg = JSON.parse(fs.readFileSync(path, 'utf8')); if (Array.isArray(pkg.workspaces)) { pkg.workspaces = pkg.workspaces.filter((entry) => entry !== 'services/jangar/agentctl'); fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\\n'); }"
 RUN --mount=type=cache,target=/root/.cache/bun \
   bun install --omit=dev --ignore-scripts --filter @proompteng/bumba
 
