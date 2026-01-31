@@ -354,6 +354,7 @@ resource "kubernetes_deployment" "main" {
         security_context {
           run_as_user     = 1000
           fs_group        = 1000
+          fs_group_change_policy = "OnRootMismatch"
           run_as_non_root = true
         }
 
@@ -368,6 +369,24 @@ resource "kubernetes_deployment" "main" {
           env {
             name  = "CODER_AGENT_TOKEN"
             value = coder_agent.main.token
+          }
+          env {
+            name = "GH_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "github-token"
+                key  = "GH_TOKEN"
+              }
+            }
+          }
+          env {
+            name = "GITHUB_TOKEN"
+            value_from {
+              secret_key_ref {
+                name = "github-token"
+                key  = "GITHUB_TOKEN"
+              }
+            }
           }
           resources {
             requests = {
@@ -590,7 +609,11 @@ resource "coder_script" "bootstrap_tools" {
       log "Installing AstroNvim"
       for dir in "$HOME/.config/nvim" "$HOME/.local/share/nvim" "$HOME/.local/state/nvim" "$HOME/.cache/nvim"; do
         if [ -d "$dir" ]; then
-          mv "$dir" "$${dir}.bak"
+          backup="$${dir}.bak"
+          if [ -e "$backup" ]; then
+            backup="$${dir}.bak.$(date +%s)"
+          fi
+          mv "$dir" "$backup"
         fi
       done
       mkdir -p "$HOME/.config"

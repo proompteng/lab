@@ -6,6 +6,7 @@ model_verbosity = "medium"
 model_auto_compact_token_limit = 24000
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
+suppress_unstable_features_warning = true
 
 [features]
 undo = true
@@ -18,7 +19,7 @@ shell_snapshot = true
 steer = true
 collab = true
 child_agents_md = true
-collaboration_modes = true
+collaboration_modes = false
 responses_websockets = false
 
 [mcp_servers.memories]
