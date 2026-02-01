@@ -5,6 +5,7 @@ resources:
   - sample-approvalpolicy.yaml
   - sample-budget.yaml
   - sample-signal.yaml
+  - tailscale-service.yaml
 helmGlobals:
   chartHome: ../../../charts
 helmCharts:
