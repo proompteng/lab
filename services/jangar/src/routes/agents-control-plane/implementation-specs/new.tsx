@@ -358,7 +358,7 @@ function ImplementationSpecCreatePage() {
       </div>
 
       {step === 1 ? (
-        <section className="space-y-2 rounded-none border border-border bg-card p-4">
+        <section className="space-y-2">
           <div className="space-y-2">
             <h2 className="text-sm font-semibold">Describe the spec</h2>
             <p className="text-xs text-muted-foreground">
@@ -402,7 +402,7 @@ function ImplementationSpecCreatePage() {
       ) : null}
 
       {step === 2 ? (
-        <section className="space-y-2 rounded-none border border-border bg-card p-4">
+        <section className="space-y-2">
           <div className="space-y-2">
             <h2 className="text-sm font-semibold">Review & save</h2>
             <p className="text-xs text-muted-foreground">Edit the draft so it is clear and actionable.</p>
@@ -532,7 +532,7 @@ function ImplementationSpecCreatePage() {
       ) : null}
 
       {step === 3 ? (
-        <section className="space-y-2 rounded-none border border-border bg-card p-4">
+        <section className="space-y-2">
           <div className="space-y-2">
             <h2 className="text-sm font-semibold">Spec saved</h2>
             <p className="text-xs text-muted-foreground">Continue to run the spec or return to the list.</p>
