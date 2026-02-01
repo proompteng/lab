@@ -160,7 +160,7 @@ function ImplementationSpecsListPage() {
       {total > 0 ? <div className="text-xs text-muted-foreground">Loaded {total} specs.</div> : null}
 
       <div className="overflow-hidden rounded-none border bg-card">
-        <table className="w-full table-fixed text-[11px] leading-tight">
+        <table className="w-full table-fixed text-xs leading-tight">
           <colgroup>
             <col className="w-[20%]" />
             <col className="w-[32%]" />
@@ -169,7 +169,7 @@ function ImplementationSpecsListPage() {
             <col className="w-[18%]" />
             <col className="w-[4%]" />
           </colgroup>
-          <thead className="border-b bg-muted/30 text-[10px] uppercase tracking-widest text-muted-foreground">
+          <thead className="border-b bg-muted/30 text-xs uppercase tracking-widest text-muted-foreground">
             <tr className="text-left">
               <th className="px-2 py-1 font-medium">Spec</th>
               <th className="px-2 py-1 font-medium">Summary</th>
@@ -211,9 +211,9 @@ function ImplementationSpecsListPage() {
                     <td className="px-2 py-1 text-muted-foreground">{formatTimestamp(updatedAt)}</td>
                     <td className="px-2 py-1">
                       <div className="flex min-w-0 items-center gap-2">
-                        <StatusBadge label={statusLabel} className="px-1.5 py-0 text-[10px] leading-none" />
+                        <StatusBadge label={statusLabel} className="px-1.5 py-0 leading-none" />
                         <span
-                          className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground"
+                          className="min-w-0 flex-1 truncate text-muted-foreground"
                           title={conditionSummary.summary}
                         >
                           {conditionSummary.summary}
@@ -224,7 +224,7 @@ function ImplementationSpecsListPage() {
                       <button
                         type="button"
                         className={cn(
-                          'inline-flex items-center gap-2 text-[10px] font-medium uppercase tracking-wide',
+                          'inline-flex items-center gap-2 text-xs font-medium uppercase tracking-wide',
                           'text-muted-foreground transition hover:text-foreground',
                         )}
                         onClick={(event) => {
