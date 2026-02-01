@@ -12,5 +12,5 @@ helmCharts:
     releaseName: agents
     namespace: agents
     valuesFile: values.yaml
-    version: 0.9.0
+    version: 0.9.1
     includeCRDs: true
