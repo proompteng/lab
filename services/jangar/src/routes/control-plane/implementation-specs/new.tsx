@@ -1,4 +1,3 @@
-import { IconChevronRight } from '@tabler/icons-react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
@@ -117,7 +116,7 @@ const extractCompletionText = (payload: CompletionPayload) => {
   return null
 }
 
-const readStreamedCompletion = async (response: Response) => {
+const readStreamedCompletion = async (response: Response, onChunk?: (chunk: string, nextOutput: string) => void) => {
   if (!response.body) {
     throw new Error('Response body is unavailable.')
   }
@@ -142,6 +141,7 @@ const readStreamedCompletion = async (response: Response) => {
       const delta = parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.message?.content
       if (typeof delta === 'string') {
         output += delta
+        onChunk?.(delta, output)
         return
       }
       const parts = parsed.choices?.[0]?.message?.content
@@ -158,6 +158,9 @@ const readStreamedCompletion = async (response: Response) => {
           })
           .join('')
         output += next
+        if (next) {
+          onChunk?.(next, output)
+        }
       }
     } catch {
       // Ignore malformed stream fragments.
@@ -192,6 +195,7 @@ function ImplementationSpecCreatePage() {
   const [isGenerating, setIsGenerating] = React.useState(false)
   const [generationError, setGenerationError] = React.useState<string | null>(null)
   const [generationLog, setGenerationLog] = React.useState('')
+  const logContainerRef = React.useRef<HTMLDivElement | null>(null)
 
   const [specDraft, setSpecDraft] = React.useState<SpecDraft>({
     summary: '',
@@ -214,6 +218,12 @@ function ImplementationSpecCreatePage() {
   }, [searchState.namespace])
 
   React.useEffect(() => {
+    if (!logContainerRef.current) return
+    void generationLog
+    logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight
+  }, [generationLog])
+
+  React.useEffect(() => {
     if (specNameTouched) return
     const nextName = slugifyName(specDraft.summary)
     if (nextName) setSpecName(nextName)
@@ -232,6 +242,7 @@ function ImplementationSpecCreatePage() {
     }
     setGenerationError(null)
     setIsGenerating(true)
+    setGenerationLog('')
     try {
       const response = await fetch('/openai/v1/chat/completions', {
         method: 'POST',
@@ -247,7 +258,10 @@ function ImplementationSpecCreatePage() {
       const contentType = response.headers.get('content-type') ?? ''
       const content =
         contentType.includes('text/event-stream') || contentType.includes('text/plain')
-          ? await readStreamedCompletion(response)
+          ? await readStreamedCompletion(response, (chunk) => {
+              if (!chunk) return
+              setGenerationLog((prev) => prev + chunk)
+            })
           : await response
               .json()
               .then((payload: CompletionPayload) => {
@@ -324,6 +338,7 @@ function ImplementationSpecCreatePage() {
   }
 
   const hasDraftContent = Boolean(specDraft.summary.trim() || specDraft.text.trim() || specDraft.description.trim())
+  const showGenerationLog = isGenerating || generationLog.length > 0 || Boolean(generationError)
 
   return (
     <main className="mx-auto w-full space-y-2 p-4">
@@ -377,15 +392,17 @@ function ImplementationSpecCreatePage() {
                 Next: review
               </Button>
             </div>
-            {generationError ? <div className="text-xs text-destructive">{generationError}</div> : null}
-            {generationLog ? (
-              <details className="group rounded-none border border-border bg-background p-3">
-                <summary className="flex cursor-pointer items-center gap-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                  <IconChevronRight className="size-3 transition-transform group-open:rotate-90" />
-                  Generation log
-                </summary>
-                <pre className="mt-3 whitespace-pre-wrap text-[11px] text-foreground">{generationLog}</pre>
-              </details>
+            {showGenerationLog ? (
+              <div className="rounded-none border border-border bg-background">
+                <div className="flex items-center justify-between px-3 py-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                  <span>Generation log</span>
+                  {isGenerating ? <span className="text-[10px]">Streaming</span> : null}
+                </div>
+                <div ref={logContainerRef} className="h-40 overflow-y-auto border-t border-border px-3 py-2">
+                  {generationError ? <div className="text-xs text-destructive">{generationError}</div> : null}
+                  <pre className="whitespace-pre-wrap text-[11px] text-foreground">{generationLog}</pre>
+                </div>
+              </div>
             ) : null}
           </div>
         </section>
