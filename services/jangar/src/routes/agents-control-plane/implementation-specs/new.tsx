@@ -329,7 +329,6 @@ function ImplementationSpecCreatePage() {
     <main className="mx-auto w-full space-y-2 p-4">
       <header className="flex flex-wrap items-start justify-between gap-2">
         <div className="space-y-2">
-          <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Control plane</p>
           <h1 className="text-lg font-semibold">Create spec</h1>
           <p className="text-xs text-muted-foreground">Follow each step to draft and save an ImplementationSpec.</p>
         </div>

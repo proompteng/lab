@@ -8,13 +8,29 @@ import {
   getResourceUpdatedAt,
   readNestedValue,
   StatusBadge,
-  summarizeConditions,
 } from '@/components/agents-control-plane'
 import { DEFAULT_NAMESPACE, parseNamespaceSearch } from '@/components/agents-control-plane-search'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from '@/components/ui/pagination'
 import { fetchPrimitiveList, type PrimitiveResource } from '@/data/agents-control-plane'
-import { cn } from '@/lib/utils'
+
+const PAGE_SIZE = 20
+
+const parseUpdatedAt = (resource: PrimitiveResource) => {
+  const value = getResourceUpdatedAt(resource)
+  if (!value) return 0
+  const parsed = Date.parse(value)
+  return Number.isNaN(parsed) ? 0 : parsed
+}
 
 export const Route = createFileRoute('/agents-control-plane/implementation-specs/')({
   validateSearch: parseNamespaceSearch,
@@ -30,8 +46,8 @@ function ImplementationSpecsListPage() {
   const [items, setItems] = React.useState<PrimitiveResource[]>([])
   const [total, setTotal] = React.useState(0)
   const [error, setError] = React.useState<string | null>(null)
-  const [status, setStatus] = React.useState<string | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
+  const [page, setPage] = React.useState(1)
 
   const namespaceId = React.useId()
   const labelSelectorId = React.useId()
@@ -39,12 +55,12 @@ function ImplementationSpecsListPage() {
   React.useEffect(() => {
     setNamespace(searchState.namespace)
     setLabelSelector(searchState.labelSelector ?? '')
+    setPage(1)
   }, [searchState.labelSelector, searchState.namespace])
 
   const load = React.useCallback(async (params: { namespace: string; labelSelector?: string }) => {
     setIsLoading(true)
     setError(null)
-    setStatus(null)
     try {
       const result = await fetchPrimitiveList({
         kind: 'ImplementationSpec',
@@ -59,7 +75,6 @@ function ImplementationSpecsListPage() {
       }
       setItems(result.items)
       setTotal(result.total)
-      setStatus(result.items.length === 0 ? 'No specs found.' : null)
     } catch (err) {
       setItems([])
       setTotal(0)
@@ -93,14 +108,40 @@ function ImplementationSpecsListPage() {
     })
   }
 
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const pageStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1
+  const pageEnd = Math.min(total, page * PAGE_SIZE)
+  const sortedItems = React.useMemo(() => {
+    return [...items].sort((a, b) => parseUpdatedAt(b) - parseUpdatedAt(a))
+  }, [items])
+
+  const pagedItems = React.useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE
+    return sortedItems.slice(start, start + PAGE_SIZE)
+  }, [page, sortedItems])
+
+  React.useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages)
+    }
+  }, [page, totalPages])
+
+  const pageItems = React.useMemo(() => {
+    if (totalPages <= 7) {
+      return Array.from({ length: totalPages }, (_, index) => index + 1)
+    }
+    if (page <= 3) {
+      return [1, 2, 3, 4, 'ellipsis', totalPages] as const
+    }
+    if (page >= totalPages - 2) {
+      return [1, 'ellipsis', totalPages - 3, totalPages - 2, totalPages - 1, totalPages] as const
+    }
+    return [1, 'ellipsis', page - 1, page, page + 1, 'ellipsis', totalPages] as const
+  }, [page, totalPages])
+
   return (
     <main className="mx-auto w-full space-y-2 p-4">
-      <header className="flex flex-wrap items-start justify-between gap-2">
-        <div className="space-y-2">
-          <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Control plane</p>
-          <h1 className="text-lg font-semibold">Specs</h1>
-          <p className="text-xs text-muted-foreground">Browse and launch implementation specs.</p>
-        </div>
+      <div className="flex items-center justify-end">
         <Button asChild>
           <Link
             to="/agents-control-plane/implementation-specs/new"
@@ -109,7 +150,7 @@ function ImplementationSpecsListPage() {
             Create spec
           </Link>
         </Button>
-      </header>
+      </div>
 
       <form className="flex flex-wrap items-end gap-2" onSubmit={submit}>
         <div className="flex min-w-0 flex-1 flex-col gap-2">
@@ -156,18 +197,15 @@ function ImplementationSpecsListPage() {
           {error}
         </div>
       ) : null}
-      {status ? <div className="text-xs text-muted-foreground">{status}</div> : null}
-      {total > 0 ? <div className="text-xs text-muted-foreground">Loaded {total} specs.</div> : null}
 
       <div className="overflow-hidden rounded-none border bg-card">
         <table className="w-full table-fixed text-xs leading-tight">
           <colgroup>
-            <col className="w-[20%]" />
-            <col className="w-[32%]" />
-            <col className="w-[12%]" />
+            <col className="w-[24%]" />
+            <col className="w-[36%]" />
             <col className="w-[14%]" />
-            <col className="w-[18%]" />
-            <col className="w-[4%]" />
+            <col className="w-[14%]" />
+            <col className="w-[12%]" />
           </colgroup>
           <thead className="border-b bg-muted/30 text-xs uppercase tracking-widest text-muted-foreground">
             <tr className="text-left">
@@ -176,24 +214,22 @@ function ImplementationSpecsListPage() {
               <th className="px-2 py-1 font-medium">Namespace</th>
               <th className="px-2 py-1 font-medium">Updated</th>
               <th className="px-2 py-1 font-medium">Status</th>
-              <th className="px-2 py-1 font-medium text-right">Use</th>
             </tr>
           </thead>
           <tbody>
-            {items.length === 0 && !isLoading ? (
+            {pagedItems.length === 0 && !isLoading ? (
               <tr>
-                <td colSpan={6} className="px-3 py-4 text-center text-muted-foreground">
+                <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">
                   No specs found in this namespace.
                 </td>
               </tr>
             ) : (
-              items.map((resource) => {
+              pagedItems.map((resource) => {
                 const name = getMetadataValue(resource, 'name') ?? 'unknown'
                 const resourceNamespace = getMetadataValue(resource, 'namespace') ?? searchState.namespace
                 const summary = readNestedValue(resource, ['spec', 'summary']) ?? '—'
                 const updatedAt = getResourceUpdatedAt(resource)
                 const statusLabel = deriveStatusCategory(resource)
-                const conditionSummary = summarizeConditions(resource)
 
                 return (
                   <tr
@@ -210,30 +246,7 @@ function ImplementationSpecsListPage() {
                     <td className="px-2 py-1 text-muted-foreground">{resourceNamespace}</td>
                     <td className="px-2 py-1 text-muted-foreground">{formatTimestamp(updatedAt)}</td>
                     <td className="px-2 py-1">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <StatusBadge label={statusLabel} className="px-1.5 py-0 leading-none" />
-                        <span
-                          className="min-w-0 flex-1 truncate text-muted-foreground"
-                          title={conditionSummary.summary}
-                        >
-                          {conditionSummary.summary}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-2 py-1 text-right">
-                      <button
-                        type="button"
-                        className={cn(
-                          'inline-flex items-center gap-2 text-xs font-medium uppercase tracking-wide',
-                          'text-muted-foreground transition hover:text-foreground',
-                        )}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          openSpec(name, resourceNamespace)
-                        }}
-                      >
-                        Open
-                      </button>
+                      <StatusBadge label={statusLabel} className="px-1.5 py-0 leading-none" />
                     </td>
                   </tr>
                 )
@@ -241,6 +254,59 @@ function ImplementationSpecsListPage() {
             )}
           </tbody>
         </table>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-2 py-1 text-xs text-muted-foreground">
+          <span>{total === 0 ? '0 specs' : `Showing ${pageStart}-${pageEnd} of ${total}`}</span>
+          {totalPages > 1 ? (
+            <Pagination className="mx-0 w-auto justify-end text-xs">
+              <PaginationContent>
+                <PaginationItem>
+                  <PaginationPrevious
+                    href="#"
+                    aria-disabled={page === 1}
+                    tabIndex={page === 1 ? -1 : 0}
+                    className={page === 1 ? 'pointer-events-none opacity-50' : undefined}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      setPage((prev) => Math.max(1, prev - 1))
+                    }}
+                  />
+                </PaginationItem>
+                {pageItems.map((item, index) =>
+                  item === 'ellipsis' ? (
+                    <PaginationItem key={`ellipsis-${index}`}>
+                      <PaginationEllipsis />
+                    </PaginationItem>
+                  ) : (
+                    <PaginationItem key={item}>
+                      <PaginationLink
+                        href="#"
+                        isActive={item === page}
+                        onClick={(event) => {
+                          event.preventDefault()
+                          setPage(item)
+                        }}
+                      >
+                        {item}
+                      </PaginationLink>
+                    </PaginationItem>
+                  ),
+                )}
+                <PaginationItem>
+                  <PaginationNext
+                    href="#"
+                    aria-disabled={page === totalPages}
+                    tabIndex={page === totalPages ? -1 : 0}
+                    className={page === totalPages ? 'pointer-events-none opacity-50' : undefined}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      setPage((prev) => Math.min(totalPages, prev + 1))
+                    }}
+                  />
+                </PaginationItem>
+              </PaginationContent>
+            </Pagination>
+          ) : null}
+        </div>
       </div>
     </main>
   )
