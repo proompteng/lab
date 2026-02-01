@@ -360,12 +360,6 @@ function ImplementationSpecCreatePage() {
       {step === 1 ? (
         <section className="space-y-2">
           <div className="space-y-2">
-            <h2 className="text-sm font-semibold">Describe the spec</h2>
-            <p className="text-xs text-muted-foreground">
-              Write what you want built. Generate a draft or paste your own.
-            </p>
-          </div>
-          <div className="space-y-2">
             <label className="text-xs font-medium" htmlFor={promptId}>
               Prompt
             </label>
@@ -377,8 +371,11 @@ function ImplementationSpecCreatePage() {
               placeholder="Describe the implementation you need."
             />
             <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" onClick={() => void generateSpec()} disabled={isGenerating}>
+              <Button type="button" variant="outline" onClick={() => void generateSpec()} disabled={isGenerating}>
                 {isGenerating ? 'Generating...' : 'Generate spec'}
+              </Button>
+              <Button type="button" onClick={() => setStep(2)}>
+                Next: review
               </Button>
             </div>
             {generationError ? <div className="text-xs text-destructive">{generationError}</div> : null}
@@ -391,11 +388,6 @@ function ImplementationSpecCreatePage() {
                 <pre className="mt-3 whitespace-pre-wrap text-[11px] text-foreground">{generationLog}</pre>
               </details>
             ) : null}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" onClick={() => setStep(2)}>
-              Next: review
-            </Button>
           </div>
         </section>
       ) : null}
