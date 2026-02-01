@@ -80,6 +80,7 @@ const ROOT_LABELS = new Map<string, string>([
   ['/agents', 'Agents'],
   ['/control-plane', 'Control plane'],
   ['/control-plane/implementation-specs', 'Specs'],
+  ['/control-plane/agent-runs', 'Runs'],
   ['/codex', 'Codex'],
   ['/codex/search', 'Search'],
   ['/codex/runs', 'All runs'],
