@@ -1,11 +1,10 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { DEFAULT_NAMESPACE, parseNamespaceSearch } from '@/components/agents-control-plane-search'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
 import { fetchPrimitiveList } from '@/data/agents-control-plane'
 import { cn } from '@/lib/utils'
@@ -33,6 +32,12 @@ type SpecDraft = {
 type AgentOption = {
   name: string
   provider: string | null
+}
+
+type SpecOption = SpecDraft & {
+  name: string
+  namespace: string
+  updatedAt: string | null
 }
 
 type CompletionMessage = {
@@ -116,6 +121,30 @@ const normalizeSpecDraft = (value: Record<string, unknown>) => {
     labels: coerceStringList(record.labels),
     requiredKeys: coerceStringList(asRecord(record.contract)?.requiredKeys),
   } satisfies SpecDraft
+}
+
+const getSpecUpdatedAt = (resource: Record<string, unknown>) => {
+  const status = asRecord(resource.status) ?? {}
+  const metadata = asRecord(resource.metadata) ?? {}
+  return (
+    asString(status.updatedAt) ??
+    asString(status.lastSyncedAt) ??
+    asString(status.syncedAt) ??
+    asString(metadata.creationTimestamp) ??
+    null
+  )
+}
+
+const formatTimestamp = (value: string | null) => {
+  if (!value) return '—'
+  const parsed = Date.parse(value)
+  if (!Number.isFinite(parsed)) return value
+  return new Intl.DateTimeFormat('en', {
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(parsed))
 }
 
 const extractDeltaText = (payload: CompletionPayload) => {
@@ -213,6 +242,11 @@ function AgentStudioPage() {
   const [agentLoading, setAgentLoading] = React.useState(false)
   const [agentError, setAgentError] = React.useState<string | null>(null)
   const [selectedAgent, setSelectedAgent] = React.useState('')
+  const [specs, setSpecs] = React.useState<SpecOption[]>([])
+  const [specLoading, setSpecLoading] = React.useState(false)
+  const [specError, setSpecError] = React.useState<string | null>(null)
+  const [specFilter, setSpecFilter] = React.useState('')
+  const [selectedSpecName, setSelectedSpecName] = React.useState('')
 
   const [prompt, setPrompt] = React.useState('')
   const [messages, setMessages] = React.useState<ChatMessage[]>([])
@@ -245,6 +279,7 @@ function AgentStudioPage() {
   const [ttlSeconds, setTtlSeconds] = React.useState('3600')
 
   const abortRef = React.useRef<AbortController | null>(null)
+  const appliedSpecRef = React.useRef<string | null>(null)
 
   React.useEffect(() => {
     setNamespace(searchState.namespace)
@@ -286,9 +321,59 @@ function AgentStudioPage() {
     [selectedAgent],
   )
 
+  const loadSpecs = React.useCallback(
+    async (nextNamespace: string) => {
+      setSpecLoading(true)
+      setSpecError(null)
+      try {
+        const result = await fetchPrimitiveList({ kind: 'ImplementationSpec', namespace: nextNamespace, limit: 200 })
+        if (!result.ok) {
+          setSpecs([])
+          setSpecError(result.message)
+          return
+        }
+        const options = result.items
+          .map((item) => {
+            const metadata = asRecord(item.metadata) ?? {}
+            const name = asString(metadata.name)
+            if (!name) return null
+            return {
+              ...normalizeSpecDraft(item),
+              name,
+              namespace: nextNamespace,
+              updatedAt: getSpecUpdatedAt(item),
+            } satisfies SpecOption
+          })
+          .filter((item): item is SpecOption => Boolean(item))
+          .sort((a, b) => {
+            const aTime = a.updatedAt ? Date.parse(a.updatedAt) : 0
+            const bTime = b.updatedAt ? Date.parse(b.updatedAt) : 0
+            if (aTime !== bTime) return bTime - aTime
+            return a.name.localeCompare(b.name)
+          })
+        setSpecs(options)
+        if (selectedSpecName && !options.some((option) => option.name === selectedSpecName)) {
+          setSelectedSpecName('')
+          setSavedSpec(null)
+          setSpecSaveStatus('idle')
+        }
+      } catch (error) {
+        setSpecs([])
+        setSpecError(error instanceof Error ? error.message : 'Unable to load specs')
+      } finally {
+        setSpecLoading(false)
+      }
+    },
+    [selectedSpecName],
+  )
+
   React.useEffect(() => {
     void loadAgents(searchState.namespace)
   }, [loadAgents, searchState.namespace])
+
+  React.useEffect(() => {
+    void loadSpecs(searchState.namespace)
+  }, [loadSpecs, searchState.namespace])
 
   React.useEffect(() => {
     if (specNameTouched) return
@@ -299,6 +384,78 @@ function AgentStudioPage() {
   React.useEffect(() => {
     return () => abortRef.current?.abort()
   }, [])
+
+  const markSpecDirty = React.useCallback(() => {
+    setSpecSaveStatus('idle')
+    setSavedSpec(null)
+    setSpecSaveError(null)
+  }, [])
+
+  const selectSpec = React.useCallback((spec: SpecOption) => {
+    setSpecDraft({
+      summary: spec.summary,
+      description: spec.description,
+      text: spec.text,
+      acceptanceCriteria: spec.acceptanceCriteria,
+      labels: spec.labels,
+      requiredKeys: spec.requiredKeys,
+    })
+    setSpecName(spec.name)
+    setSpecNameTouched(true)
+    setSpecSaveStatus('saved')
+    setSavedSpec({ name: spec.name, namespace: spec.namespace })
+    setSpecSaveError(null)
+    setSelectedSpecName(spec.name)
+  }, [])
+
+  React.useEffect(() => {
+    if (!searchState.spec) {
+      appliedSpecRef.current = null
+      return
+    }
+    if (appliedSpecRef.current === searchState.spec) return
+    const match = specs.find((spec) => spec.name === searchState.spec)
+    if (!match) return
+    selectSpec(match)
+    appliedSpecRef.current = searchState.spec
+  }, [searchState.spec, selectSpec, specs])
+
+  const startNewSpec = React.useCallback(() => {
+    setSpecDraft({
+      summary: '',
+      description: '',
+      text: '',
+      acceptanceCriteria: [],
+      labels: [],
+      requiredKeys: [],
+    })
+    setMessages([])
+    setPrompt('')
+    setAssistantDraft('')
+    setGenerationError(null)
+    setSpecName('')
+    setSpecNameTouched(false)
+    setSpecSaveStatus('idle')
+    setSavedSpec(null)
+    setSpecSaveError(null)
+    setSelectedSpecName('')
+  }, [])
+
+  const filteredSpecs = React.useMemo(() => {
+    const filter = specFilter.trim().toLowerCase()
+    if (!filter) return specs
+    return specs.filter(
+      (spec) =>
+        spec.name.toLowerCase().includes(filter) ||
+        spec.summary.toLowerCase().includes(filter) ||
+        spec.description.toLowerCase().includes(filter),
+    )
+  }, [specFilter, specs])
+
+  const hasDraftContent = React.useMemo(
+    () => Boolean(specDraft.summary.trim() || specDraft.description.trim() || specDraft.text.trim()),
+    [specDraft],
+  )
 
   const submitNamespace = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -365,9 +522,11 @@ function AgentStudioPage() {
         setGenerationError('Spec text is required. Add it below before saving.')
       }
       setSpecDraft(nextSpec)
+      setSpecNameTouched(false)
       setSpecSaveStatus('idle')
       setSavedSpec(null)
       setSpecSaveError(null)
+      setSelectedSpecName('')
     } catch {
       setGenerationError('Failed to parse JSON. Edit the spec manually.')
     }
@@ -412,8 +571,11 @@ function AgentStudioPage() {
       setSpecSaveError(asString(payload?.error) ?? 'Unable to save spec')
       return
     }
+    const saved = { name: specName.trim(), namespace: searchState.namespace }
     setSpecSaveStatus('saved')
-    setSavedSpec({ name: specName.trim(), namespace: searchState.namespace })
+    setSavedSpec(saved)
+    setSelectedSpecName(saved.name)
+    void loadSpecs(searchState.namespace)
   }
 
   const parseParameters = () => {
@@ -447,8 +609,8 @@ function AgentStudioPage() {
       setRunError('Select an agent to run.')
       return
     }
-    if (!specDraft.text.trim() && !savedSpec) {
-      setRunError('Generate or enter a spec first.')
+    if (!savedSpec) {
+      setRunError('Select or save an ImplementationSpec before starting a run.')
       return
     }
     if (!workloadImage.trim()) {
@@ -484,18 +646,7 @@ function AgentStudioPage() {
       body: JSON.stringify({
         agentRef: { name: selectedAgent },
         namespace: searchState.namespace,
-        implementationSpecRef: savedSpec ? { name: savedSpec.name } : undefined,
-        implementation: savedSpec
-          ? undefined
-          : {
-              summary: specDraft.summary.trim() || undefined,
-              description: specDraft.description.trim() || undefined,
-              text: specDraft.text.trim(),
-              acceptanceCriteria: specDraft.acceptanceCriteria,
-              labels: specDraft.labels,
-              contract: specDraft.requiredKeys.length > 0 ? { requiredKeys: specDraft.requiredKeys } : undefined,
-              source: { provider: 'manual' },
-            },
+        implementationSpecRef: { name: savedSpec.name },
         runtime: { type: 'workflow', config: runtimeConfig },
         workload: { image: workloadImage.trim() },
         workflow: {
@@ -532,12 +683,12 @@ function AgentStudioPage() {
         <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Agents</p>
         <h1 className="text-xl font-semibold">Agent studio</h1>
         <p className="text-xs text-muted-foreground">
-          A single, focused flow: draft an ImplementationSpec with chat, save it, and launch an AgentRun.
+          Build an ImplementationSpec, save it, then pick an agent to execute the run.
         </p>
       </header>
 
       <form className="flex flex-wrap items-end gap-3" onSubmit={submitNamespace}>
-        <div className="flex flex-col gap-1 min-w-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
           <label className="text-xs font-medium" htmlFor="studio-namespace">
             Namespace
           </label>
@@ -550,311 +701,404 @@ function AgentStudioPage() {
             autoComplete="off"
           />
         </div>
-        <Button type="submit" disabled={agentLoading}>
+        <Button type="submit" disabled={agentLoading || specLoading}>
           Use namespace
         </Button>
       </form>
 
-      <section className="space-y-4 p-5 rounded-none border border-border bg-card">
-        <div className="space-y-1">
-          <h2 className="text-sm font-semibold">1. Describe the implementation</h2>
-          <p className="text-xs text-muted-foreground">
-            Write what you want built. The assistant will return a structured ImplementationSpec.
-          </p>
-        </div>
-        <Textarea
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          placeholder="Example: Build a CLI command that lists agents, summarizes their status, and prints run links."
-          rows={4}
-        />
-        <div className="flex flex-wrap items-center gap-3">
-          <Button type="button" onClick={() => void startGeneration()} disabled={isGenerating}>
-            {isGenerating ? 'Generating...' : 'Generate spec'}
-          </Button>
-          <span className="text-xs text-muted-foreground">Uses Jangar completion API.</span>
-        </div>
-        {generationError ? <div className="text-xs text-destructive">{generationError}</div> : null}
-        {messages.length > 0 || (isGenerating && assistantDraft) ? (
-          <div className="space-y-3">
-            {messages.map((message, index) => (
-              <div
-                key={`${message.role}-${index}`}
-                className="space-y-2 p-3 rounded-none border border-border bg-background"
-              >
-                <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-                  {message.role === 'user' ? 'You' : 'Spec'}
-                </div>
-                <pre className="whitespace-pre-wrap text-xs text-foreground">{message.content}</pre>
+      <div className="grid gap-6 lg:grid-cols-[1fr_2fr]">
+        <aside className="space-y-6">
+          <section className="space-y-4 rounded-none border border-border bg-card p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="space-y-1">
+                <h2 className="text-sm font-semibold">Implementation specs</h2>
+                <p className="text-xs text-muted-foreground">
+                  {specLoading ? 'Loading specs...' : `${specs.length} saved specs in ${searchState.namespace}.`}
+                </p>
               </div>
-            ))}
-            {isGenerating && assistantDraft ? (
-              <div className="space-y-2 p-3 rounded-none border border-border bg-background">
-                <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Spec</div>
-                <pre className="whitespace-pre-wrap text-xs text-foreground">{assistantDraft}</pre>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void loadSpecs(searchState.namespace)}
+                disabled={specLoading}
+              >
+                {specLoading ? 'Refreshing...' : 'Refresh'}
+              </Button>
+            </div>
+            <Input
+              value={specFilter}
+              onChange={(event) => setSpecFilter(event.target.value)}
+              placeholder="Filter specs"
+            />
+            {specError ? <div className="text-xs text-destructive">{specError}</div> : null}
+            <div className="space-y-2">
+              {filteredSpecs.length === 0 ? (
+                <div className="text-xs text-muted-foreground">No specs saved yet.</div>
+              ) : (
+                filteredSpecs.map((spec) => {
+                  const preview = spec.summary || spec.description || spec.text
+                  const previewLine = preview ? preview.split('\n')[0] : 'No summary yet.'
+                  const isActive = selectedSpecName === spec.name
+                  return (
+                    <button
+                      key={spec.name}
+                      type="button"
+                      className={cn(
+                        'flex w-full flex-col gap-2 rounded-none border px-3 py-2 text-left text-xs transition-colors',
+                        isActive
+                          ? 'border-primary/40 bg-primary/5'
+                          : 'border-border bg-background hover:border-primary/30',
+                      )}
+                      onClick={() => selectSpec(spec)}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="text-xs font-semibold">{spec.name}</div>
+                          <div className="text-[11px] text-muted-foreground">{previewLine}</div>
+                        </div>
+                        {isActive ? (
+                          <span className="text-[10px] font-semibold uppercase tracking-widest text-primary">
+                            Active
+                          </span>
+                        ) : null}
+                      </div>
+                      {spec.updatedAt ? (
+                        <div className="text-[11px] text-muted-foreground">
+                          Updated {formatTimestamp(spec.updatedAt)}
+                        </div>
+                      ) : null}
+                    </button>
+                  )
+                })
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button type="button" variant="ghost" size="sm" onClick={startNewSpec}>
+                New draft
+              </Button>
+              {selectedSpecName ? (
+                <span className="text-xs text-muted-foreground">Selected: {selectedSpecName}</span>
+              ) : null}
+            </div>
+          </section>
+
+          <section className="space-y-2 rounded-none border border-border bg-card p-5">
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Run spec</div>
+            <div className="text-sm font-semibold">{savedSpec?.name ?? 'No spec selected'}</div>
+            <p className="text-xs text-muted-foreground">
+              {savedSpec
+                ? 'Runs will reference this ImplementationSpec.'
+                : 'Select or save a spec to enable agent runs.'}
+            </p>
+            {specSaveStatus !== 'saved' && hasDraftContent ? (
+              <div className="text-xs text-destructive">Unsaved changes</div>
+            ) : null}
+          </section>
+        </aside>
+
+        <div className="space-y-6">
+          <section className="space-y-4 rounded-none border border-border bg-card p-5">
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold">1. Describe the implementation</h2>
+              <p className="text-xs text-muted-foreground">
+                Write what you want built. The assistant will return a structured ImplementationSpec.
+              </p>
+            </div>
+            <Textarea
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              placeholder="Example: Build a CLI command that lists agents, summarizes their status, and prints run links."
+              rows={4}
+            />
+            <div className="flex flex-wrap items-center gap-3">
+              <Button type="button" onClick={() => void startGeneration()} disabled={isGenerating}>
+                {isGenerating ? 'Generating...' : 'Generate spec'}
+              </Button>
+              <span className="text-xs text-muted-foreground">Uses Jangar completion API.</span>
+            </div>
+            {generationError ? <div className="text-xs text-destructive">{generationError}</div> : null}
+            {messages.length > 0 || (isGenerating && assistantDraft) ? (
+              <div className="space-y-3">
+                {messages.map((message, index) => (
+                  <div
+                    key={`${message.role}-${index}`}
+                    className="space-y-2 rounded-none border border-border bg-background p-3"
+                  >
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                      {message.role === 'user' ? 'You' : 'Spec'}
+                    </div>
+                    <pre className="whitespace-pre-wrap text-xs text-foreground">{message.content}</pre>
+                  </div>
+                ))}
+                {isGenerating && assistantDraft ? (
+                  <div className="space-y-2 rounded-none border border-border bg-background p-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                      Spec
+                    </div>
+                    <pre className="whitespace-pre-wrap text-xs text-foreground">{assistantDraft}</pre>
+                  </div>
+                ) : null}
               </div>
             ) : null}
-          </div>
-        ) : null}
-      </section>
+          </section>
 
-      <section className="space-y-4 p-5 rounded-none border border-border bg-card">
-        <div className="space-y-1">
-          <h2 className="text-sm font-semibold">2. Review the spec</h2>
-          <p className="text-xs text-muted-foreground">Edit the draft so it is clear and actionable.</p>
-        </div>
-        <div className="grid gap-4">
-          <div className="grid gap-3 md:grid-cols-2">
+          <section className="space-y-4 rounded-none border border-border bg-card p-5">
             <div className="space-y-1">
-              <label className="text-xs font-medium" htmlFor="spec-summary">
-                Summary
-              </label>
-              <Input
-                id="spec-summary"
-                value={specDraft.summary}
-                onChange={(event) => setSpecDraft((prev) => ({ ...prev, summary: event.target.value }))}
-                placeholder="Short one-line summary"
-              />
+              <h2 className="text-sm font-semibold">2. Review the spec</h2>
+              <p className="text-xs text-muted-foreground">Edit the draft so it is clear and actionable.</p>
             </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium" htmlFor="spec-name">
-                Spec name
-              </label>
-              <Input
-                id="spec-name"
-                value={specName}
-                onChange={(event) => {
-                  setSpecName(event.target.value)
-                  setSpecNameTouched(true)
-                }}
-                placeholder="implementation-spec-name"
-              />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-medium" htmlFor="spec-text">
-              Spec text
-            </label>
-            <Textarea
-              id="spec-text"
-              value={specDraft.text}
-              onChange={(event) => setSpecDraft((prev) => ({ ...prev, text: event.target.value }))}
-              rows={6}
-              placeholder="Full specification text"
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-medium" htmlFor="spec-criteria">
-              Acceptance criteria (one per line)
-            </label>
-            <Textarea
-              id="spec-criteria"
-              value={specDraft.acceptanceCriteria.join('\n')}
-              onChange={(event) =>
-                setSpecDraft((prev) => ({ ...prev, acceptanceCriteria: coerceStringList(event.target.value) }))
-              }
-              rows={4}
-              placeholder="Example: CLI command returns exit code 0 on success."
-            />
-          </div>
-        </div>
-        <details className="space-y-3">
-          <summary className="cursor-pointer text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-            Advanced fields
-          </summary>
-          <div className="grid gap-4">
-            <div className="space-y-1">
-              <label className="text-xs font-medium" htmlFor="spec-description">
-                Description
-              </label>
-              <Textarea
-                id="spec-description"
-                value={specDraft.description}
-                onChange={(event) => setSpecDraft((prev) => ({ ...prev, description: event.target.value }))}
-                rows={4}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium" htmlFor="spec-labels">
-                Labels (comma or newline)
-              </label>
-              <Textarea
-                id="spec-labels"
-                value={specDraft.labels.join('\n')}
-                onChange={(event) =>
-                  setSpecDraft((prev) => ({ ...prev, labels: coerceStringList(event.target.value) }))
-                }
-                rows={3}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium" htmlFor="spec-required-keys">
-                Contract required keys (one per line)
-              </label>
-              <Textarea
-                id="spec-required-keys"
-                value={specDraft.requiredKeys.join('\n')}
-                onChange={(event) =>
-                  setSpecDraft((prev) => ({ ...prev, requiredKeys: coerceStringList(event.target.value) }))
-                }
-                rows={3}
-              />
-            </div>
-          </div>
-        </details>
-        <div className="flex flex-wrap items-center gap-3">
-          <Button type="button" onClick={() => void saveSpec()} disabled={specSaveStatus === 'saving'}>
-            {specSaveStatus === 'saving' ? 'Saving...' : 'Save ImplementationSpec'}
-          </Button>
-          {specSaveStatus === 'saved' && savedSpec ? (
-            <span className="text-xs text-muted-foreground">
-              Saved as{' '}
-              <Link
-                to="/agents-control-plane/implementation-specs/$name"
-                params={{ name: savedSpec.name }}
-                className="text-primary underline-offset-4 hover:underline"
-              >
-                {savedSpec.name}
-              </Link>
-            </span>
-          ) : null}
-        </div>
-        {specSaveError ? <div className="text-xs text-destructive">{specSaveError}</div> : null}
-      </section>
-
-      <section className="space-y-4 p-5 rounded-none border border-border bg-card">
-        <div className="space-y-1">
-          <h2 className="text-sm font-semibold">3. Launch an agent run</h2>
-          <p className="text-xs text-muted-foreground">
-            Choose an agent and start a workflow run using this specification.
-          </p>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="space-y-1">
-            <label className="text-xs font-medium" htmlFor="studio-agent">
-              Agent
-            </label>
-            <Select value={selectedAgent} onValueChange={(value) => setSelectedAgent(value ?? '')}>
-              <SelectTrigger id="studio-agent" className="w-full">
-                <SelectValue placeholder={agentLoading ? 'Loading agents...' : 'Select agent'} />
-              </SelectTrigger>
-              <SelectContent>
-                {agents.length === 0 ? (
-                  <SelectItem value="none" disabled>
-                    No agents found
-                  </SelectItem>
-                ) : null}
-                {agents.map((agent) => (
-                  <SelectItem key={agent.name} value={agent.name}>
-                    <span>{agent.name}</span>
-                    {agent.provider ? <span className="text-muted-foreground">{agent.provider}</span> : null}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {agentError ? <div className="text-xs text-destructive">{agentError}</div> : null}
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-medium" htmlFor="studio-image">
-              Runner image
-            </label>
-            <Input
-              id="studio-image"
-              value={workloadImage}
-              onChange={(event) => setWorkloadImage(event.target.value)}
-              placeholder={DEFAULT_RUN_IMAGE}
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-medium" htmlFor="studio-step">
-              Workflow step name
-            </label>
-            <Input
-              id="studio-step"
-              value={workflowStep}
-              onChange={(event) => setWorkflowStep(event.target.value)}
-              placeholder={DEFAULT_STEP_NAME}
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-medium" htmlFor="studio-ttl">
-              TTL seconds
-            </label>
-            <Input
-              id="studio-ttl"
-              value={ttlSeconds}
-              onChange={(event) => setTtlSeconds(event.target.value)}
-              placeholder="3600"
-              inputMode="numeric"
-            />
-          </div>
-        </div>
-        <details className="space-y-3">
-          <summary className="cursor-pointer text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-            Advanced run settings
-          </summary>
-          <div className="grid gap-4">
-            <div className="space-y-1">
-              <label className="text-xs font-medium" htmlFor="studio-parameters">
-                Parameters (JSON)
-              </label>
-              <Textarea
-                id="studio-parameters"
-                value={parametersInput}
-                onChange={(event) => setParametersInput(event.target.value)}
-                rows={4}
-                placeholder='{"repository":"proompteng/lab","issueNumber":"1234"}'
-              />
-            </div>
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-4">
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium" htmlFor="spec-summary">
+                    Summary
+                  </label>
+                  <Input
+                    id="spec-summary"
+                    value={specDraft.summary}
+                    onChange={(event) => {
+                      setSpecDraft((prev) => ({ ...prev, summary: event.target.value }))
+                      markSpecDirty()
+                    }}
+                    placeholder="Short one-line summary"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium" htmlFor="spec-name">
+                    Spec name
+                  </label>
+                  <Input
+                    id="spec-name"
+                    value={specName}
+                    onChange={(event) => {
+                      setSpecName(event.target.value)
+                      setSpecNameTouched(true)
+                      setSelectedSpecName('')
+                      markSpecDirty()
+                    }}
+                    placeholder="implementation-spec-name"
+                  />
+                </div>
+              </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium" htmlFor="studio-secrets">
-                  Secrets (comma separated)
+                <label className="text-xs font-medium" htmlFor="spec-text">
+                  Spec text
                 </label>
-                <Input
-                  id="studio-secrets"
-                  value={secretsInput}
-                  onChange={(event) => setSecretsInput(event.target.value)}
-                  placeholder="codex-github-token"
+                <Textarea
+                  id="spec-text"
+                  value={specDraft.text}
+                  onChange={(event) => {
+                    setSpecDraft((prev) => ({ ...prev, text: event.target.value }))
+                    markSpecDirty()
+                  }}
+                  rows={6}
+                  placeholder="Full specification text"
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium" htmlFor="studio-secret-binding">
-                  Secret binding ref
+                <label className="text-xs font-medium" htmlFor="spec-criteria">
+                  Acceptance criteria (one per line)
                 </label>
-                <Input
-                  id="studio-secret-binding"
-                  value={secretBindingRef}
-                  onChange={(event) => setSecretBindingRef(event.target.value)}
-                  placeholder="my-secret-binding"
+                <Textarea
+                  id="spec-criteria"
+                  value={specDraft.acceptanceCriteria.join('\n')}
+                  onChange={(event) => {
+                    setSpecDraft((prev) => ({ ...prev, acceptanceCriteria: coerceStringList(event.target.value) }))
+                    markSpecDirty()
+                  }}
+                  rows={4}
+                  placeholder="Example: CLI command returns exit code 0 on success."
                 />
               </div>
             </div>
-          </div>
-        </details>
-        <Separator />
-        <div className="flex flex-wrap items-center gap-3">
-          <Button type="button" onClick={() => void runAgent()} disabled={runStatus === 'running'}>
-            {runStatus === 'running' ? 'Starting...' : 'Run agent'}
-          </Button>
-          <span className="text-xs text-muted-foreground">
-            {savedSpec ? `Uses ImplementationSpec ${savedSpec.name}` : 'Runs with inline spec'}
-          </span>
+            <details className="space-y-3">
+              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                Advanced fields
+              </summary>
+              <div className="grid gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium" htmlFor="spec-description">
+                    Description
+                  </label>
+                  <Textarea
+                    id="spec-description"
+                    value={specDraft.description}
+                    onChange={(event) => {
+                      setSpecDraft((prev) => ({ ...prev, description: event.target.value }))
+                      markSpecDirty()
+                    }}
+                    rows={4}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium" htmlFor="spec-labels">
+                    Labels (comma or newline)
+                  </label>
+                  <Textarea
+                    id="spec-labels"
+                    value={specDraft.labels.join('\n')}
+                    onChange={(event) => {
+                      setSpecDraft((prev) => ({ ...prev, labels: coerceStringList(event.target.value) }))
+                      markSpecDirty()
+                    }}
+                    rows={3}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium" htmlFor="spec-required-keys">
+                    Contract required keys (one per line)
+                  </label>
+                  <Textarea
+                    id="spec-required-keys"
+                    value={specDraft.requiredKeys.join('\n')}
+                    onChange={(event) => {
+                      setSpecDraft((prev) => ({ ...prev, requiredKeys: coerceStringList(event.target.value) }))
+                      markSpecDirty()
+                    }}
+                    rows={3}
+                  />
+                </div>
+              </div>
+            </details>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button type="button" onClick={() => void saveSpec()} disabled={specSaveStatus === 'saving'}>
+                {specSaveStatus === 'saving' ? 'Saving...' : 'Save ImplementationSpec'}
+              </Button>
+              {specSaveStatus === 'saved' && savedSpec ? (
+                <span className="text-xs text-muted-foreground">Saved as {savedSpec.name}</span>
+              ) : null}
+            </div>
+            {specSaveError ? <div className="text-xs text-destructive">{specSaveError}</div> : null}
+          </section>
+
+          <section className="space-y-4 rounded-none border border-border bg-card p-5">
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold">3. Launch an agent run</h2>
+              <p className="text-xs text-muted-foreground">
+                Choose an agent and start a workflow run using this specification.
+              </p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-1">
+                <label className="text-xs font-medium" htmlFor="studio-agent">
+                  Agent
+                </label>
+                <Select value={selectedAgent} onValueChange={(value) => setSelectedAgent(value ?? '')}>
+                  <SelectTrigger id="studio-agent" className="w-full">
+                    <SelectValue placeholder={agentLoading ? 'Loading agents...' : 'Select agent'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {agents.length === 0 ? (
+                      <SelectItem value="none" disabled>
+                        No agents found
+                      </SelectItem>
+                    ) : null}
+                    {agents.map((agent) => (
+                      <SelectItem key={agent.name} value={agent.name}>
+                        <span>{agent.name}</span>
+                        {agent.provider ? <span className="text-muted-foreground">{agent.provider}</span> : null}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {agentError ? <div className="text-xs text-destructive">{agentError}</div> : null}
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium" htmlFor="studio-image">
+                  Runner image
+                </label>
+                <Input
+                  id="studio-image"
+                  value={workloadImage}
+                  onChange={(event) => setWorkloadImage(event.target.value)}
+                  placeholder={DEFAULT_RUN_IMAGE}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium" htmlFor="studio-step">
+                  Workflow step name
+                </label>
+                <Input
+                  id="studio-step"
+                  value={workflowStep}
+                  onChange={(event) => setWorkflowStep(event.target.value)}
+                  placeholder={DEFAULT_STEP_NAME}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium" htmlFor="studio-ttl">
+                  TTL seconds
+                </label>
+                <Input
+                  id="studio-ttl"
+                  value={ttlSeconds}
+                  onChange={(event) => setTtlSeconds(event.target.value)}
+                  placeholder="3600"
+                  inputMode="numeric"
+                />
+              </div>
+            </div>
+            <details className="space-y-3">
+              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                Advanced run settings
+              </summary>
+              <div className="grid gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium" htmlFor="studio-parameters">
+                    Parameters (JSON)
+                  </label>
+                  <Textarea
+                    id="studio-parameters"
+                    value={parametersInput}
+                    onChange={(event) => setParametersInput(event.target.value)}
+                    rows={4}
+                    placeholder='{"repository":"proompteng/lab","issueNumber":"1234"}'
+                  />
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium" htmlFor="studio-secrets">
+                      Secrets (comma separated)
+                    </label>
+                    <Input
+                      id="studio-secrets"
+                      value={secretsInput}
+                      onChange={(event) => setSecretsInput(event.target.value)}
+                      placeholder="codex-github-token"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium" htmlFor="studio-secret-binding">
+                      Secret binding ref
+                    </label>
+                    <Input
+                      id="studio-secret-binding"
+                      value={secretBindingRef}
+                      onChange={(event) => setSecretBindingRef(event.target.value)}
+                      placeholder="my-secret-binding"
+                    />
+                  </div>
+                </div>
+              </div>
+            </details>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button type="button" onClick={() => void runAgent()} disabled={runStatus === 'running' || !savedSpec}>
+                {runStatus === 'running' ? 'Starting...' : 'Run agent'}
+              </Button>
+              {savedSpec ? (
+                <span className="text-xs text-muted-foreground">Using {savedSpec.name}</span>
+              ) : (
+                <span className="text-xs text-muted-foreground">Select a spec to enable runs.</span>
+              )}
+            </div>
+            {runError ? <div className="text-xs text-destructive">{runError}</div> : null}
+            {runStatus === 'done' && runResult ? (
+              <div className="text-xs text-muted-foreground">Run started: {runResult.name}</div>
+            ) : null}
+          </section>
         </div>
-        {runError ? <div className="text-xs text-destructive">{runError}</div> : null}
-        {runStatus === 'done' && runResult ? (
-          <div className="text-xs text-muted-foreground">
-            Run started:{' '}
-            <Link
-              to="/agents-control-plane/agent-runs/$name"
-              params={{ name: runResult.name }}
-              className="text-primary underline-offset-4 hover:underline"
-            >
-              {runResult.name}
-            </Link>
-          </div>
-        ) : null}
-      </section>
+      </div>
 
       <div className={cn('text-xs text-muted-foreground', isGenerating ? 'opacity-70' : '')}>
         Tip: keep specs concise and add missing context in the parameters JSON.

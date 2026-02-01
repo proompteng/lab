@@ -1,33 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { readNestedArrayValue, readNestedValue } from '@/components/agents-control-plane'
-import { PrimitiveDetailPage } from '@/components/agents-control-plane-primitives'
-import { parseNamespaceSearch } from '@/components/agents-control-plane-search'
+import { ControlPlaneRedirect } from '@/components/agents-control-plane-redirect'
 
 export const Route = createFileRoute('/agents-control-plane/workspaces/$name')({
-  validateSearch: parseNamespaceSearch,
-  component: WorkspaceDetailRoute,
+  component: ControlPlaneRedirect,
 })
-
-function WorkspaceDetailRoute() {
-  const params = Route.useParams()
-  const searchState = Route.useSearch()
-
-  return (
-    <PrimitiveDetailPage
-      title="Workspaces"
-      description="Workspace storage configuration and status."
-      kind="Workspace"
-      name={params.name}
-      backPath="/agents-control-plane/workspaces"
-      searchState={searchState}
-      summaryItems={(resource, _namespace) => [
-        { label: 'Size', value: readNestedValue(resource, ['spec', 'size']) ?? '—' },
-        { label: 'Access modes', value: readNestedArrayValue(resource, ['spec', 'accessModes']) ?? '—' },
-        { label: 'Storage class', value: readNestedValue(resource, ['spec', 'storageClassName']) ?? '—' },
-        { label: 'TTL', value: readNestedValue(resource, ['spec', 'ttlSeconds']) ?? '—' },
-        { label: 'Volume', value: readNestedValue(resource, ['status', 'volumeName']) ?? '—' },
-      ]}
-    />
-  )
-}

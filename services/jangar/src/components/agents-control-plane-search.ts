@@ -3,6 +3,7 @@ export const DEFAULT_NAMESPACE = 'agents'
 export type NamespaceSearchState = {
   namespace: string
   labelSelector?: string
+  spec?: string
 }
 
 export type AgentRunsSearchState = {
@@ -25,7 +26,8 @@ export const parseNamespaceSearch = (search: Record<string, unknown>): Namespace
       : DEFAULT_NAMESPACE
   const labelSelector =
     parseOptionalFilter(search.labelSelector) ?? parseOptionalFilter(search.label_selector ?? search.labelSelector)
-  return { namespace: namespaceValue, ...(labelSelector ? { labelSelector } : {}) }
+  const spec = parseOptionalFilter(search.spec)
+  return { namespace: namespaceValue, ...(labelSelector ? { labelSelector } : {}), ...(spec ? { spec } : {}) }
 }
 
 export const parseAgentRunsSearch = (search: Record<string, unknown>): AgentRunsSearchState => {

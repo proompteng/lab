@@ -1,32 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { readNestedValue } from '@/components/agents-control-plane'
-import { PrimitiveDetailPage } from '@/components/agents-control-plane-primitives'
-import { parseNamespaceSearch } from '@/components/agents-control-plane-search'
+import { ControlPlaneRedirect } from '@/components/agents-control-plane-redirect'
 
 export const Route = createFileRoute('/agents-control-plane/schedules/$name')({
-  validateSearch: parseNamespaceSearch,
-  component: ScheduleDetailRoute,
+  component: ControlPlaneRedirect,
 })
-
-function ScheduleDetailRoute() {
-  const params = Route.useParams()
-  const searchState = Route.useSearch()
-
-  return (
-    <PrimitiveDetailPage
-      title="Schedules"
-      description="Schedule configuration and status."
-      kind="Schedule"
-      name={params.name}
-      backPath="/agents-control-plane/schedules"
-      searchState={searchState}
-      summaryItems={(resource, _namespace) => [
-        { label: 'Cron', value: readNestedValue(resource, ['spec', 'cron']) ?? '—' },
-        { label: 'Timezone', value: readNestedValue(resource, ['spec', 'timezone']) ?? '—' },
-        { label: 'Target kind', value: readNestedValue(resource, ['spec', 'targetRef', 'kind']) ?? '—' },
-        { label: 'Target name', value: readNestedValue(resource, ['spec', 'targetRef', 'name']) ?? '—' },
-      ]}
-    />
-  )
-}
