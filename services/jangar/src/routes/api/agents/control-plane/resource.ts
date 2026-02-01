@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+
 import { resolvePrimitiveKind } from '~/server/primitives-control-plane'
 import {
   asRecord,
@@ -10,8 +11,8 @@ import {
   requireIdempotencyKey,
 } from '~/server/primitives-http'
 import { createKubernetesClient } from '~/server/primitives-kube'
-import { createKubectlWatchStream } from '~/server/primitives-watch'
 import { createPrimitivesStore } from '~/server/primitives-store'
+import { createKubectlWatchStream } from '~/server/primitives-watch'
 
 export const Route = createFileRoute('/api/agents/control-plane/resource')({
   server: {
