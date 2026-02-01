@@ -103,7 +103,7 @@ const CONTROL_PLANE_PRIMITIVES: PrimitiveDefinition[] = [
     title: 'Agent runs',
     description: 'Execution history and status.',
     section: 'Runs',
-    listPath: '/control-plane/agent-runs',
+    listPath: '/control-plane/runs',
     detailPath: '/control-plane/agent-runs/$name',
   },
   {

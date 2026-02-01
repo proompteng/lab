@@ -49,6 +49,7 @@ import { Route as ControlPlaneSignalsIndexRouteImport } from './routes/control-p
 import { Route as ControlPlaneSignalDeliveriesIndexRouteImport } from './routes/control-plane/signal-deliveries/index'
 import { Route as ControlPlaneSecretBindingsIndexRouteImport } from './routes/control-plane/secret-bindings/index'
 import { Route as ControlPlaneSchedulesIndexRouteImport } from './routes/control-plane/schedules/index'
+import { Route as ControlPlaneRunsIndexRouteImport } from './routes/control-plane/runs/index'
 import { Route as ControlPlaneOrchestrationsIndexRouteImport } from './routes/control-plane/orchestrations/index'
 import { Route as ControlPlaneOrchestrationRunsIndexRouteImport } from './routes/control-plane/orchestration-runs/index'
 import { Route as ControlPlaneMemoriesIndexRouteImport } from './routes/control-plane/memories/index'
@@ -340,6 +341,11 @@ const ControlPlaneSchedulesIndexRoute =
     path: '/control-plane/schedules/',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ControlPlaneRunsIndexRoute = ControlPlaneRunsIndexRouteImport.update({
+  id: '/control-plane/runs/',
+  path: '/control-plane/runs/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ControlPlaneOrchestrationsIndexRoute =
   ControlPlaneOrchestrationsIndexRouteImport.update({
     id: '/control-plane/orchestrations/',
@@ -895,6 +901,7 @@ export interface FileRoutesByFullPath {
   '/control-plane/memories': typeof ControlPlaneMemoriesIndexRoute
   '/control-plane/orchestration-runs': typeof ControlPlaneOrchestrationRunsIndexRoute
   '/control-plane/orchestrations': typeof ControlPlaneOrchestrationsIndexRoute
+  '/control-plane/runs': typeof ControlPlaneRunsIndexRoute
   '/control-plane/schedules': typeof ControlPlaneSchedulesIndexRoute
   '/control-plane/secret-bindings': typeof ControlPlaneSecretBindingsIndexRoute
   '/control-plane/signal-deliveries': typeof ControlPlaneSignalDeliveriesIndexRoute
@@ -1019,6 +1026,7 @@ export interface FileRoutesByTo {
   '/control-plane/memories': typeof ControlPlaneMemoriesIndexRoute
   '/control-plane/orchestration-runs': typeof ControlPlaneOrchestrationRunsIndexRoute
   '/control-plane/orchestrations': typeof ControlPlaneOrchestrationsIndexRoute
+  '/control-plane/runs': typeof ControlPlaneRunsIndexRoute
   '/control-plane/schedules': typeof ControlPlaneSchedulesIndexRoute
   '/control-plane/secret-bindings': typeof ControlPlaneSecretBindingsIndexRoute
   '/control-plane/signal-deliveries': typeof ControlPlaneSignalDeliveriesIndexRoute
@@ -1146,6 +1154,7 @@ export interface FileRoutesById {
   '/control-plane/memories/': typeof ControlPlaneMemoriesIndexRoute
   '/control-plane/orchestration-runs/': typeof ControlPlaneOrchestrationRunsIndexRoute
   '/control-plane/orchestrations/': typeof ControlPlaneOrchestrationsIndexRoute
+  '/control-plane/runs/': typeof ControlPlaneRunsIndexRoute
   '/control-plane/schedules/': typeof ControlPlaneSchedulesIndexRoute
   '/control-plane/secret-bindings/': typeof ControlPlaneSecretBindingsIndexRoute
   '/control-plane/signal-deliveries/': typeof ControlPlaneSignalDeliveriesIndexRoute
@@ -1274,6 +1283,7 @@ export interface FileRouteTypes {
     | '/control-plane/memories'
     | '/control-plane/orchestration-runs'
     | '/control-plane/orchestrations'
+    | '/control-plane/runs'
     | '/control-plane/schedules'
     | '/control-plane/secret-bindings'
     | '/control-plane/signal-deliveries'
@@ -1398,6 +1408,7 @@ export interface FileRouteTypes {
     | '/control-plane/memories'
     | '/control-plane/orchestration-runs'
     | '/control-plane/orchestrations'
+    | '/control-plane/runs'
     | '/control-plane/schedules'
     | '/control-plane/secret-bindings'
     | '/control-plane/signal-deliveries'
@@ -1524,6 +1535,7 @@ export interface FileRouteTypes {
     | '/control-plane/memories/'
     | '/control-plane/orchestration-runs/'
     | '/control-plane/orchestrations/'
+    | '/control-plane/runs/'
     | '/control-plane/schedules/'
     | '/control-plane/secret-bindings/'
     | '/control-plane/signal-deliveries/'
@@ -1643,6 +1655,7 @@ export interface RootRouteChildren {
   ControlPlaneMemoriesIndexRoute: typeof ControlPlaneMemoriesIndexRoute
   ControlPlaneOrchestrationRunsIndexRoute: typeof ControlPlaneOrchestrationRunsIndexRoute
   ControlPlaneOrchestrationsIndexRoute: typeof ControlPlaneOrchestrationsIndexRoute
+  ControlPlaneRunsIndexRoute: typeof ControlPlaneRunsIndexRoute
   ControlPlaneSchedulesIndexRoute: typeof ControlPlaneSchedulesIndexRoute
   ControlPlaneSecretBindingsIndexRoute: typeof ControlPlaneSecretBindingsIndexRoute
   ControlPlaneSignalDeliveriesIndexRoute: typeof ControlPlaneSignalDeliveriesIndexRoute
@@ -1944,6 +1957,13 @@ declare module '@tanstack/react-router' {
       path: '/control-plane/schedules'
       fullPath: '/control-plane/schedules'
       preLoaderRoute: typeof ControlPlaneSchedulesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/runs/': {
+      id: '/control-plane/runs/'
+      path: '/control-plane/runs'
+      fullPath: '/control-plane/runs'
+      preLoaderRoute: typeof ControlPlaneRunsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/control-plane/orchestrations/': {
@@ -2839,6 +2859,7 @@ const rootRouteChildren: RootRouteChildren = {
   ControlPlaneOrchestrationRunsIndexRoute:
     ControlPlaneOrchestrationRunsIndexRoute,
   ControlPlaneOrchestrationsIndexRoute: ControlPlaneOrchestrationsIndexRoute,
+  ControlPlaneRunsIndexRoute: ControlPlaneRunsIndexRoute,
   ControlPlaneSchedulesIndexRoute: ControlPlaneSchedulesIndexRoute,
   ControlPlaneSecretBindingsIndexRoute: ControlPlaneSecretBindingsIndexRoute,
   ControlPlaneSignalDeliveriesIndexRoute:

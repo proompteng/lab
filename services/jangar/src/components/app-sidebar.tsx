@@ -82,7 +82,7 @@ const agentsStudioNav: AppNavItem = {
 }
 const controlPlaneNav: AppNavItem[] = [
   { to: '/control-plane/implementation-specs', label: 'Specs', icon: IconList },
-  { to: '/control-plane/agent-runs', label: 'Runs', icon: IconList },
+  { to: '/control-plane/runs', label: 'Runs', icon: IconList },
 ]
 
 const apiNav = [
