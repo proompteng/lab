@@ -139,10 +139,6 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {appNav.map((item) => {
-                const isActive =
-                  item.to === '/codex/runs'
-                    ? pathname.startsWith('/codex')
-                    : pathname === item.to || pathname.startsWith(`${item.to}/`)
                 const children =
                   item.to === '/terminals' && terminalSessions.length > 0
                     ? terminalSessions.map((session) => ({
@@ -150,6 +146,14 @@ export function AppSidebar() {
                         label: session.label || session.id,
                       }))
                     : item.children
+                const hasActiveChild = children?.some(
+                  (child) => pathname === child.to || pathname.startsWith(`${child.to}/`),
+                )
+                const isActive = hasActiveChild
+                  ? false
+                  : item.to === '/codex/runs'
+                    ? pathname.startsWith('/codex')
+                    : pathname === item.to || pathname.startsWith(`${item.to}/`)
                 return (
                   <SidebarMenuItem key={item.to}>
                     <SidebarNavButton
@@ -163,7 +167,10 @@ export function AppSidebar() {
                       <SidebarMenuSub>
                         {children.map((child) => (
                           <SidebarMenuSubItem key={child.to}>
-                            <SidebarMenuSubButton render={<Link to={child.to} />} isActive={pathname === child.to}>
+                            <SidebarMenuSubButton
+                              render={<Link to={child.to} />}
+                              isActive={pathname === child.to || pathname.startsWith(`${child.to}/`)}
+                            >
                               {child.label}
                             </SidebarMenuSubButton>
                           </SidebarMenuSubItem>
