@@ -143,6 +143,7 @@ function ImplementationSpecsListPage() {
     const start = (page - 1) * PAGE_SIZE
     return sortedItems.slice(start, start + PAGE_SIZE)
   }, [page, sortedItems])
+  const placeholderCount = Math.max(0, PAGE_SIZE - pagedItems.length)
 
   const keyForResource = React.useCallback(
     (resource: PrimitiveResource) => {
@@ -401,44 +402,74 @@ function ImplementationSpecsListPage() {
                 </td>
               </tr>
             ) : (
-              pagedItems.map((resource) => {
-                const name = getMetadataValue(resource, 'name') ?? 'unknown'
-                const resourceNamespace = getMetadataValue(resource, 'namespace') ?? searchState.namespace
-                const summary = readNestedValue(resource, ['spec', 'summary']) ?? '—'
-                const updatedAt = getResourceUpdatedAt(resource)
-                const statusLabel = deriveStatusCategory(resource)
-                const rowKey = `${resourceNamespace}/${name}`
+              <>
+                {pagedItems.map((resource) => {
+                  const name = getMetadataValue(resource, 'name') ?? 'unknown'
+                  const resourceNamespace = getMetadataValue(resource, 'namespace') ?? searchState.namespace
+                  const summary = readNestedValue(resource, ['spec', 'summary']) ?? '—'
+                  const updatedAt = getResourceUpdatedAt(resource)
+                  const statusLabel = deriveStatusCategory(resource)
+                  const rowKey = `${resourceNamespace}/${name}`
 
-                return (
-                  <tr
-                    key={`${resourceNamespace}/${name}`}
-                    className="border-b cursor-default transition-colors last:border-b-0 hover:bg-muted/40"
-                    onClick={() => openSpec(name, resourceNamespace)}
-                  >
-                    <td className="px-2 py-1.5">
-                      <input
-                        type="checkbox"
-                        className="size-3 accent-foreground"
-                        checked={selectedKeys.has(rowKey)}
-                        onChange={() => toggleSelection(rowKey)}
-                        onClick={(event) => event.stopPropagation()}
-                        aria-label={`Select ${name}`}
-                      />
-                    </td>
-                    <td className="px-2 py-1.5 font-medium text-foreground">
-                      <span className="block truncate">{name}</span>
-                    </td>
-                    <td className="px-2 py-1.5 text-muted-foreground">
-                      <span className="block truncate text-foreground">{summary}</span>
-                    </td>
-                    <td className="px-2 py-1.5 text-muted-foreground">{resourceNamespace}</td>
-                    <td className="px-2 py-1.5 text-muted-foreground">{formatTimestamp(updatedAt)}</td>
-                    <td className="px-2 py-1.5">
-                      <StatusBadge label={statusLabel} className="px-1.5 py-0 leading-none" />
-                    </td>
-                  </tr>
-                )
-              })
+                  return (
+                    <tr
+                      key={`${resourceNamespace}/${name}`}
+                      className="border-b cursor-default transition-colors last:border-b-0 hover:bg-muted/40"
+                      onClick={() => openSpec(name, resourceNamespace)}
+                    >
+                      <td className="px-2 py-1.5">
+                        <input
+                          type="checkbox"
+                          className="size-3 accent-foreground"
+                          checked={selectedKeys.has(rowKey)}
+                          onChange={() => toggleSelection(rowKey)}
+                          onClick={(event) => event.stopPropagation()}
+                          aria-label={`Select ${name}`}
+                        />
+                      </td>
+                      <td className="px-2 py-1.5 font-medium text-foreground">
+                        <span className="block truncate">{name}</span>
+                      </td>
+                      <td className="px-2 py-1.5 text-muted-foreground">
+                        <span className="block truncate text-foreground">{summary}</span>
+                      </td>
+                      <td className="px-2 py-1.5 text-muted-foreground">{resourceNamespace}</td>
+                      <td className="px-2 py-1.5 text-muted-foreground">{formatTimestamp(updatedAt)}</td>
+                      <td className="px-2 py-1.5">
+                        <StatusBadge label={statusLabel} className="px-1.5 py-0 leading-none" />
+                      </td>
+                    </tr>
+                  )
+                })}
+                {pagedItems.length > 0
+                  ? Array.from({ length: placeholderCount }).map((_, index) => (
+                      <tr
+                        key={`placeholder-${index}`}
+                        className="border-b last:border-b-0 pointer-events-none"
+                        aria-hidden
+                      >
+                        <td className="px-2 py-1.5">
+                          <span className="opacity-0">-</span>
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <span className="opacity-0">-</span>
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <span className="opacity-0">-</span>
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <span className="opacity-0">-</span>
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <span className="opacity-0">-</span>
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <span className="opacity-0">-</span>
+                        </td>
+                      </tr>
+                    ))
+                  : null}
+              </>
             )}
           </tbody>
         </table>
