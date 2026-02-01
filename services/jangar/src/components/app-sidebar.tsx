@@ -75,10 +75,13 @@ const appNav: AppNavItem[] = [
   },
 ]
 
-const agentsStudioNav: AppNavItem = { to: '/agents-control-plane', label: 'Agent studio', icon: IconRobot }
+const agentsStudioNav: AppNavItem = {
+  to: '/agents-control-plane/implementation-specs',
+  label: 'Control plane',
+  icon: IconRobot,
+}
 const controlPlaneNav: AppNavItem[] = [
-  { to: '/agents-control-plane/implementation-specs', label: 'Implementation specs', icon: IconList },
-  { to: '/agents-control-plane', label: 'Agent studio', icon: IconRobot },
+  { to: '/agents-control-plane/implementation-specs', label: 'Specs', icon: IconList },
 ]
 
 const apiNav = [

@@ -93,6 +93,7 @@ import { Route as AgentsControlPlaneSchedulesNameRouteImport } from './routes/ag
 import { Route as AgentsControlPlaneOrchestrationsNameRouteImport } from './routes/agents-control-plane/orchestrations/$name'
 import { Route as AgentsControlPlaneOrchestrationRunsNameRouteImport } from './routes/agents-control-plane/orchestration-runs/$name'
 import { Route as AgentsControlPlaneMemoriesNameRouteImport } from './routes/agents-control-plane/memories/$name'
+import { Route as AgentsControlPlaneImplementationSpecsNewRouteImport } from './routes/agents-control-plane/implementation-specs/new'
 import { Route as AgentsControlPlaneImplementationSpecsNameRouteImport } from './routes/agents-control-plane/implementation-specs/$name'
 import { Route as AgentsControlPlaneImplementationSourcesNameRouteImport } from './routes/agents-control-plane/implementation-sources/$name'
 import { Route as AgentsControlPlaneBudgetsNameRouteImport } from './routes/agents-control-plane/budgets/$name'
@@ -582,6 +583,12 @@ const AgentsControlPlaneMemoriesNameRoute =
     path: '/agents-control-plane/memories/$name',
     getParentRoute: () => rootRouteImport,
   } as any)
+const AgentsControlPlaneImplementationSpecsNewRoute =
+  AgentsControlPlaneImplementationSpecsNewRouteImport.update({
+    id: '/agents-control-plane/implementation-specs/new',
+    path: '/agents-control-plane/implementation-specs/new',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const AgentsControlPlaneImplementationSpecsNameRoute =
   AgentsControlPlaneImplementationSpecsNameRouteImport.update({
     id: '/agents-control-plane/implementation-specs/$name',
@@ -849,6 +856,7 @@ export interface FileRoutesByFullPath {
   '/agents-control-plane/budgets/$name': typeof AgentsControlPlaneBudgetsNameRoute
   '/agents-control-plane/implementation-sources/$name': typeof AgentsControlPlaneImplementationSourcesNameRoute
   '/agents-control-plane/implementation-specs/$name': typeof AgentsControlPlaneImplementationSpecsNameRoute
+  '/agents-control-plane/implementation-specs/new': typeof AgentsControlPlaneImplementationSpecsNewRoute
   '/agents-control-plane/memories/$name': typeof AgentsControlPlaneMemoriesNameRoute
   '/agents-control-plane/orchestration-runs/$name': typeof AgentsControlPlaneOrchestrationRunsNameRoute
   '/agents-control-plane/orchestrations/$name': typeof AgentsControlPlaneOrchestrationsNameRoute
@@ -972,6 +980,7 @@ export interface FileRoutesByTo {
   '/agents-control-plane/budgets/$name': typeof AgentsControlPlaneBudgetsNameRoute
   '/agents-control-plane/implementation-sources/$name': typeof AgentsControlPlaneImplementationSourcesNameRoute
   '/agents-control-plane/implementation-specs/$name': typeof AgentsControlPlaneImplementationSpecsNameRoute
+  '/agents-control-plane/implementation-specs/new': typeof AgentsControlPlaneImplementationSpecsNewRoute
   '/agents-control-plane/memories/$name': typeof AgentsControlPlaneMemoriesNameRoute
   '/agents-control-plane/orchestration-runs/$name': typeof AgentsControlPlaneOrchestrationRunsNameRoute
   '/agents-control-plane/orchestrations/$name': typeof AgentsControlPlaneOrchestrationsNameRoute
@@ -1098,6 +1107,7 @@ export interface FileRoutesById {
   '/agents-control-plane/budgets/$name': typeof AgentsControlPlaneBudgetsNameRoute
   '/agents-control-plane/implementation-sources/$name': typeof AgentsControlPlaneImplementationSourcesNameRoute
   '/agents-control-plane/implementation-specs/$name': typeof AgentsControlPlaneImplementationSpecsNameRoute
+  '/agents-control-plane/implementation-specs/new': typeof AgentsControlPlaneImplementationSpecsNewRoute
   '/agents-control-plane/memories/$name': typeof AgentsControlPlaneMemoriesNameRoute
   '/agents-control-plane/orchestration-runs/$name': typeof AgentsControlPlaneOrchestrationRunsNameRoute
   '/agents-control-plane/orchestrations/$name': typeof AgentsControlPlaneOrchestrationsNameRoute
@@ -1225,6 +1235,7 @@ export interface FileRouteTypes {
     | '/agents-control-plane/budgets/$name'
     | '/agents-control-plane/implementation-sources/$name'
     | '/agents-control-plane/implementation-specs/$name'
+    | '/agents-control-plane/implementation-specs/new'
     | '/agents-control-plane/memories/$name'
     | '/agents-control-plane/orchestration-runs/$name'
     | '/agents-control-plane/orchestrations/$name'
@@ -1348,6 +1359,7 @@ export interface FileRouteTypes {
     | '/agents-control-plane/budgets/$name'
     | '/agents-control-plane/implementation-sources/$name'
     | '/agents-control-plane/implementation-specs/$name'
+    | '/agents-control-plane/implementation-specs/new'
     | '/agents-control-plane/memories/$name'
     | '/agents-control-plane/orchestration-runs/$name'
     | '/agents-control-plane/orchestrations/$name'
@@ -1473,6 +1485,7 @@ export interface FileRouteTypes {
     | '/agents-control-plane/budgets/$name'
     | '/agents-control-plane/implementation-sources/$name'
     | '/agents-control-plane/implementation-specs/$name'
+    | '/agents-control-plane/implementation-specs/new'
     | '/agents-control-plane/memories/$name'
     | '/agents-control-plane/orchestration-runs/$name'
     | '/agents-control-plane/orchestrations/$name'
@@ -1599,6 +1612,7 @@ export interface RootRouteChildren {
   AgentsControlPlaneBudgetsNameRoute: typeof AgentsControlPlaneBudgetsNameRoute
   AgentsControlPlaneImplementationSourcesNameRoute: typeof AgentsControlPlaneImplementationSourcesNameRoute
   AgentsControlPlaneImplementationSpecsNameRoute: typeof AgentsControlPlaneImplementationSpecsNameRoute
+  AgentsControlPlaneImplementationSpecsNewRoute: typeof AgentsControlPlaneImplementationSpecsNewRoute
   AgentsControlPlaneMemoriesNameRoute: typeof AgentsControlPlaneMemoriesNameRoute
   AgentsControlPlaneOrchestrationRunsNameRoute: typeof AgentsControlPlaneOrchestrationRunsNameRoute
   AgentsControlPlaneOrchestrationsNameRoute: typeof AgentsControlPlaneOrchestrationsNameRoute
@@ -2246,6 +2260,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentsControlPlaneMemoriesNameRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/agents-control-plane/implementation-specs/new': {
+      id: '/agents-control-plane/implementation-specs/new'
+      path: '/agents-control-plane/implementation-specs/new'
+      fullPath: '/agents-control-plane/implementation-specs/new'
+      preLoaderRoute: typeof AgentsControlPlaneImplementationSpecsNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/agents-control-plane/implementation-specs/$name': {
       id: '/agents-control-plane/implementation-specs/$name'
       path: '/agents-control-plane/implementation-specs/$name'
@@ -2783,6 +2804,8 @@ const rootRouteChildren: RootRouteChildren = {
     AgentsControlPlaneImplementationSourcesNameRoute,
   AgentsControlPlaneImplementationSpecsNameRoute:
     AgentsControlPlaneImplementationSpecsNameRoute,
+  AgentsControlPlaneImplementationSpecsNewRoute:
+    AgentsControlPlaneImplementationSpecsNewRoute,
   AgentsControlPlaneMemoriesNameRoute: AgentsControlPlaneMemoriesNameRoute,
   AgentsControlPlaneOrchestrationRunsNameRoute:
     AgentsControlPlaneOrchestrationRunsNameRoute,

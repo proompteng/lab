@@ -347,7 +347,7 @@ const toneForStatus = (value: string) => {
   return 'muted'
 }
 
-export const StatusBadge = ({ label }: { label: string }) => {
+export const StatusBadge = ({ label, className }: { label: string; className?: string }) => {
   const tone = toneForStatus(label)
   const base = 'inline-flex items-center rounded-none border px-2 py-0.5 text-xs uppercase tracking-wide'
   const classes =
@@ -361,7 +361,7 @@ export const StatusBadge = ({ label }: { label: string }) => {
             ? `${base} border-sky-200 bg-sky-50 text-sky-700`
             : `${base} border-border bg-muted text-muted-foreground`
 
-  return <span className={classes}>{label}</span>
+  return <span className={cn(classes, className)}>{label}</span>
 }
 
 export const ConditionsList = ({

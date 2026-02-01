@@ -35,12 +35,23 @@ type AgentRunPayload = {
   implementationSpecRef?: { name: string }
   implementation?: Record<string, unknown>
   runtime: { type: string; config?: Record<string, unknown> }
+  workflow?: { steps: WorkflowStepPayload[] }
   workload?: Record<string, unknown>
   memoryRef?: { name: string }
   parameters?: Record<string, string>
   secrets?: string[]
   policy?: Record<string, unknown>
   ttlSecondsAfterFinished?: number
+}
+
+type WorkflowStepPayload = {
+  name: string
+  implementationSpecRef?: { name: string }
+  implementation?: Record<string, unknown>
+  parameters?: Record<string, string>
+  workload?: Record<string, unknown>
+  retries?: number
+  retryBackoffSeconds?: number
 }
 
 const normalizeParameterMap = (value: Record<string, unknown> | null): Record<string, string> | undefined => {
@@ -64,6 +75,61 @@ const parseOptionalNumber = (value: unknown): number | undefined => {
     if (Number.isFinite(parsed)) return parsed
   }
   return undefined
+}
+
+const parseWorkflowStepNumber = (value: unknown, path: string): number | undefined => {
+  if (value == null) return undefined
+  const parsed = parseOptionalNumber(value)
+  if (parsed === undefined) {
+    throw new Error(`${path} must be a number`)
+  }
+  if (parsed < 0) {
+    throw new Error(`${path} must be >= 0`)
+  }
+  return Math.trunc(parsed)
+}
+
+const parseWorkflowSteps = (value: Record<string, unknown> | null): WorkflowStepPayload[] | undefined => {
+  if (!value) return undefined
+  const rawSteps = value.steps
+  if (!Array.isArray(rawSteps)) {
+    throw new Error('workflow.steps must be an array')
+  }
+  return rawSteps.map((raw, index) => {
+    const step = asRecord(raw)
+    if (!step) {
+      throw new Error(`workflow.steps[${index}] must be an object`)
+    }
+    const name = asString(step.name)
+    if (!name) {
+      throw new Error(`workflow.steps[${index}].name is required`)
+    }
+    let parameters: Record<string, string> | undefined
+    try {
+      parameters = normalizeParameterMap(asRecord(step.parameters))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`workflow.steps[${index}] ${message}`)
+    }
+
+    const implementationSpecRef = asRecord(step.implementationSpecRef)
+    const implementationSpecName = asString(implementationSpecRef?.name)
+    const implementationRaw = asRecord(step.implementation)
+    const implementationInline = asRecord(implementationRaw?.inline) ?? implementationRaw ?? undefined
+
+    return {
+      name,
+      implementationSpecRef: implementationSpecName ? { name: implementationSpecName } : undefined,
+      implementation: implementationInline,
+      parameters,
+      workload: asRecord(step.workload) ?? undefined,
+      retries: parseWorkflowStepNumber(step.retries, `workflow.steps[${index}].retries`),
+      retryBackoffSeconds: parseWorkflowStepNumber(
+        step.retryBackoffSeconds,
+        `workflow.steps[${index}].retryBackoffSeconds`,
+      ),
+    }
+  })
 }
 
 const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload => {
@@ -103,12 +169,18 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
     throw new Error('implementationSpecRef or implementation is required')
   }
 
+  const workflowSteps = parseWorkflowSteps(asRecord(payload.workflow))
+  if (runtimeType === 'workflow' && (!workflowSteps || workflowSteps.length === 0)) {
+    throw new Error('workflow.steps is required for workflow runtime')
+  }
+
   return {
     agentRef: { name },
     namespace,
     implementationSpecRef: implementationSpecName ? { name: implementationSpecName } : undefined,
     implementation: inline ?? undefined,
     runtime: { type: runtimeType, config: asRecord(runtime.config) ?? undefined },
+    workflow: workflowSteps ? { steps: workflowSteps } : undefined,
     workload,
     memoryRef: memoryRefName ? { name: memoryRefName } : undefined,
     parameters,
@@ -236,6 +308,19 @@ export const postAgentRunsHandler = async (
         implementationSpecRef: parsed.implementationSpecRef ?? undefined,
         implementation: parsed.implementation ? { inline: parsed.implementation } : undefined,
         runtime: parsed.runtime,
+        workflow: parsed.workflow
+          ? {
+              steps: parsed.workflow.steps.map((step) => ({
+                name: step.name,
+                implementationSpecRef: step.implementationSpecRef ?? undefined,
+                implementation: step.implementation ? { inline: step.implementation } : undefined,
+                parameters: step.parameters ?? undefined,
+                workload: step.workload ?? undefined,
+                retries: step.retries ?? undefined,
+                retryBackoffSeconds: step.retryBackoffSeconds ?? undefined,
+              })),
+            }
+          : undefined,
         workload: parsed.workload ?? undefined,
         parameters: parsed.parameters ?? {},
         secrets: parsed.secrets ?? undefined,

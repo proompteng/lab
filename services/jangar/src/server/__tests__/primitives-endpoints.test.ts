@@ -75,6 +75,63 @@ const buildRequest = (url: string, payload: Record<string, unknown>, headers?: R
   })
 
 describe('primitives endpoints', () => {
+  it('passes workflow steps through when submitting workflow agent runs', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock({
+      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
+    })
+
+    const request = buildRequest(
+      'http://localhost/v1/agent-runs',
+      {
+        agentRef: { name: 'demo-agent' },
+        namespace: 'jangar',
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'workflow' },
+        workload: { image: 'registry.example.com/demo:latest' },
+        workflow: {
+          steps: [{ name: 'plan', parameters: { stage: 'plan' } }],
+        },
+      },
+      { 'Idempotency-Key': 'demo-agent-run-workflow-1' },
+    )
+
+    const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
+
+    expect(response.status).toBe(201)
+    expect(kube.apply).toHaveBeenCalledTimes(1)
+    const resource = (kube.apply as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as Record<string, unknown>
+    const spec = resource.spec as Record<string, unknown>
+    const workflow = spec.workflow as Record<string, unknown>
+    expect(Array.isArray(workflow.steps)).toBe(true)
+    expect((workflow.steps as Record<string, unknown>[])[0]?.name).toBe('plan')
+  })
+
+  it('rejects workflow agent runs without workflow steps', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock({
+      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
+    })
+
+    const request = buildRequest(
+      'http://localhost/v1/agent-runs',
+      {
+        agentRef: { name: 'demo-agent' },
+        namespace: 'jangar',
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'workflow' },
+        workload: { image: 'registry.example.com/demo:latest' },
+      },
+      { 'Idempotency-Key': 'demo-agent-run-workflow-2' },
+    )
+
+    const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
+
+    expect(response.status).toBe(400)
+    const body = (await response.json()) as { error?: string }
+    expect(body.error).toContain('workflow.steps is required')
+  })
+
   it('rejects agent runs that request secrets without a secret binding', async () => {
     const store = createStoreMock()
     const kube = createKubeMock({
