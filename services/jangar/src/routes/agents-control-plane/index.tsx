@@ -279,6 +279,7 @@ function AgentStudioPage() {
   const [ttlSeconds, setTtlSeconds] = React.useState('3600')
 
   const abortRef = React.useRef<AbortController | null>(null)
+  const appliedSpecRef = React.useRef<string | null>(null)
 
   React.useEffect(() => {
     setNamespace(searchState.namespace)
@@ -406,6 +407,18 @@ function AgentStudioPage() {
     setSpecSaveError(null)
     setSelectedSpecName(spec.name)
   }, [])
+
+  React.useEffect(() => {
+    if (!searchState.spec) {
+      appliedSpecRef.current = null
+      return
+    }
+    if (appliedSpecRef.current === searchState.spec) return
+    const match = specs.find((spec) => spec.name === searchState.spec)
+    if (!match) return
+    selectSpec(match)
+    appliedSpecRef.current = searchState.spec
+  }, [searchState.spec, selectSpec, specs])
 
   const startNewSpec = React.useCallback(() => {
     setSpecDraft({
