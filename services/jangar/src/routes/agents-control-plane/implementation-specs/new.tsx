@@ -326,18 +326,13 @@ function ImplementationSpecCreatePage() {
   const hasDraftContent = Boolean(specDraft.summary.trim() || specDraft.text.trim() || specDraft.description.trim())
 
   return (
-    <main className="mx-auto w-full space-y-2 p-6">
+    <main className="mx-auto w-full space-y-2 p-4">
       <header className="flex flex-wrap items-start justify-between gap-2">
         <div className="space-y-2">
           <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Control plane</p>
           <h1 className="text-lg font-semibold">Create spec</h1>
           <p className="text-xs text-muted-foreground">Follow each step to draft and save an ImplementationSpec.</p>
         </div>
-        <Button variant="outline" asChild>
-          <Link to="/agents-control-plane/implementation-specs" search={{ namespace: resolvedNamespace }}>
-            Back to list
-          </Link>
-        </Button>
       </header>
 
       <div className="flex flex-wrap items-end gap-2">
