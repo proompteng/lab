@@ -141,7 +141,7 @@ function ImplementationSpecsListPage() {
 
   return (
     <main className="mx-auto w-full space-y-2 p-4">
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-start">
         <Button asChild>
           <Link
             to="/agents-control-plane/implementation-specs/new"
