@@ -6,6 +6,7 @@ resources:
   - sample-budget.yaml
   - sample-signal.yaml
   - tailscale-service.yaml
+  - tailscale-networkpolicy.yaml
 helmGlobals:
   chartHome: ../../../charts
 helmCharts:
