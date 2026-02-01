@@ -368,19 +368,44 @@ function ImplementationSpecRunPage() {
 
       {selectedSpec ? (
         <section className="space-y-2 rounded-none border border-border bg-card p-4">
-          <div className="space-y-2">
-            <h2 className="text-sm font-semibold">Spec</h2>
-            <p className="text-xs text-muted-foreground">{selectedSpec.name}</p>
-          </div>
-          <div className="space-y-2 rounded-none border border-border bg-background p-3">
-            <div className="text-xs font-medium">Summary</div>
-            <div className="text-sm font-semibold">{selectedSpec.summary || 'No summary'}</div>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="space-y-2">
+              <h2 className="text-sm font-semibold">Spec</h2>
+              <p className="text-xs text-muted-foreground">{selectedSpec.name}</p>
+            </div>
             {selectedSpec.updatedAt ? (
               <div className="text-[11px] text-muted-foreground">Updated {selectedSpec.updatedAt}</div>
             ) : null}
-            {selectedSpec.requiredKeys.length ? (
-              <div className="text-[11px] text-muted-foreground">
-                Required metadata: {selectedSpec.requiredKeys.join(', ')}
+          </div>
+          {selectedSpec.summary ? <div className="text-sm font-semibold">{selectedSpec.summary}</div> : null}
+          {selectedSpec.description ? (
+            <div className="text-xs whitespace-pre-wrap text-muted-foreground">{selectedSpec.description}</div>
+          ) : null}
+          <div className="space-y-2">
+            <div className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Requirements</div>
+            <div className="text-xs whitespace-pre-wrap text-foreground">
+              {selectedSpec.text || 'No requirements provided.'}
+            </div>
+            {selectedSpec.acceptanceCriteria.length > 0 ? (
+              <div className="space-y-1">
+                <div className="text-xs font-medium text-foreground">Acceptance criteria</div>
+                <ul className="list-disc space-y-1 pl-4 text-xs text-foreground">
+                  {selectedSpec.acceptanceCriteria.map((item, index) => (
+                    <li key={`${item}-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {selectedSpec.requiredKeys.length > 0 ? (
+              <div className="space-y-1">
+                <div className="text-xs font-medium text-foreground">Required metadata</div>
+                <div className="flex flex-wrap gap-2">
+                  {selectedSpec.requiredKeys.map((key) => (
+                    <span key={key} className="rounded-none border border-border px-2 py-0.5 text-[11px]">
+                      {key}
+                    </span>
+                  ))}
+                </div>
               </div>
             ) : null}
           </div>
@@ -433,121 +458,16 @@ function ImplementationSpecRunPage() {
             </div>
           </div>
 
-          <div className="grid gap-2 md:grid-cols-2">
-            <div className="space-y-2">
-              <label className="text-xs font-medium" htmlFor="run-repo">
-                Repository
-              </label>
-              <Input
-                id="run-repo"
-                value={repository}
-                onChange={(event) => setRepository(event.target.value)}
-                placeholder="proompteng/lab"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-medium" htmlFor="run-issue-number">
-                Issue number
-              </label>
-              <Input
-                id="run-issue-number"
-                value={issueNumber}
-                onChange={(event) => setIssueNumber(event.target.value)}
-                placeholder="1234"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-medium" htmlFor="run-issue-title">
-                Issue title
-              </label>
-              <Input
-                id="run-issue-title"
-                value={issueTitle}
-                onChange={(event) => setIssueTitle(event.target.value)}
-                placeholder="Optional"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-medium" htmlFor="run-issue-url">
-                Issue URL
-              </label>
-              <Input
-                id="run-issue-url"
-                value={issueUrl}
-                onChange={(event) => setIssueUrl(event.target.value)}
-                placeholder="https://github.com/org/repo/issues/1234"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-medium" htmlFor="run-base">
-                Base branch
-              </label>
-              <Input
-                id="run-base"
-                value={baseBranch}
-                placeholder={DEFAULT_BASE_BRANCH}
-                readOnly
-                className="bg-muted/40 text-muted-foreground"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-medium" htmlFor="run-head">
-                Head branch
-              </label>
-              <Input
-                id="run-head"
-                value={headBranch}
-                onChange={(event) => setHeadBranch(event.target.value)}
-                placeholder={selectedSpec ? buildHeadBranch(selectedSpec.name) : 'codex/feature-branch'}
-              />
-            </div>
-          </div>
-
-          <div className="grid gap-2 md:grid-cols-2">
-            <div className="space-y-2">
-              <label className="text-xs font-medium" htmlFor="run-image">
-                Runner image
-              </label>
-              <Input
-                id="run-image"
-                value={workloadImage}
-                onChange={(event) => setWorkloadImage(event.target.value)}
-                placeholder={DEFAULT_RUN_IMAGE}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-medium" htmlFor="run-step">
-                Workflow step
-              </label>
-              <Input
-                id="run-step"
-                value={workflowStep}
-                onChange={(event) => setWorkflowStep(event.target.value)}
-                placeholder={DEFAULT_STEP_NAME}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-medium" htmlFor="run-ttl">
-                TTL seconds
-              </label>
-              <Input
-                id="run-ttl"
-                value={ttlSeconds}
-                onChange={(event) => setTtlSeconds(event.target.value)}
-                placeholder="3600"
-                inputMode="numeric"
-              />
-            </div>
-            <div className="flex items-center gap-2 pt-6 text-xs text-muted-foreground">
-              <input
-                id="run-fresh-pull"
-                type="checkbox"
-                className="size-4 accent-foreground"
-                checked={freshPull}
-                disabled
-              />
-              <label htmlFor="run-fresh-pull">Fresh pull from base before run (enforced)</label>
-            </div>
+          <div className="space-y-2">
+            <label className="text-xs font-medium" htmlFor="run-repo">
+              Repository
+            </label>
+            <Input
+              id="run-repo"
+              value={repository}
+              onChange={(event) => setRepository(event.target.value)}
+              placeholder="proompteng/lab"
+            />
           </div>
 
           <details className="space-y-2">
@@ -555,6 +475,108 @@ function ImplementationSpecRunPage() {
               Advanced run settings
             </summary>
             <div className="space-y-2">
+              <div className="grid gap-2 md:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="text-xs font-medium" htmlFor="run-issue-number">
+                    Issue number
+                  </label>
+                  <Input
+                    id="run-issue-number"
+                    value={issueNumber}
+                    onChange={(event) => setIssueNumber(event.target.value)}
+                    placeholder="1234"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-medium" htmlFor="run-issue-title">
+                    Issue title
+                  </label>
+                  <Input
+                    id="run-issue-title"
+                    value={issueTitle}
+                    onChange={(event) => setIssueTitle(event.target.value)}
+                    placeholder="Optional"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-medium" htmlFor="run-issue-url">
+                    Issue URL
+                  </label>
+                  <Input
+                    id="run-issue-url"
+                    value={issueUrl}
+                    onChange={(event) => setIssueUrl(event.target.value)}
+                    placeholder="https://github.com/org/repo/issues/1234"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-medium" htmlFor="run-base">
+                    Base branch
+                  </label>
+                  <Input
+                    id="run-base"
+                    value={baseBranch}
+                    placeholder={DEFAULT_BASE_BRANCH}
+                    readOnly
+                    className="bg-muted/40 text-muted-foreground"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-medium" htmlFor="run-head">
+                    Head branch
+                  </label>
+                  <Input
+                    id="run-head"
+                    value={headBranch}
+                    onChange={(event) => setHeadBranch(event.target.value)}
+                    placeholder={selectedSpec ? buildHeadBranch(selectedSpec.name) : 'codex/feature-branch'}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-medium" htmlFor="run-image">
+                    Runner image
+                  </label>
+                  <Input
+                    id="run-image"
+                    value={workloadImage}
+                    onChange={(event) => setWorkloadImage(event.target.value)}
+                    placeholder={DEFAULT_RUN_IMAGE}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-medium" htmlFor="run-step">
+                    Workflow step
+                  </label>
+                  <Input
+                    id="run-step"
+                    value={workflowStep}
+                    onChange={(event) => setWorkflowStep(event.target.value)}
+                    placeholder={DEFAULT_STEP_NAME}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-medium" htmlFor="run-ttl">
+                    TTL seconds
+                  </label>
+                  <Input
+                    id="run-ttl"
+                    value={ttlSeconds}
+                    onChange={(event) => setTtlSeconds(event.target.value)}
+                    placeholder="3600"
+                    inputMode="numeric"
+                  />
+                </div>
+                <div className="flex items-center gap-2 pt-6 text-xs text-muted-foreground">
+                  <input
+                    id="run-fresh-pull"
+                    type="checkbox"
+                    className="size-4 accent-foreground"
+                    checked={freshPull}
+                    disabled
+                  />
+                  <label htmlFor="run-fresh-pull">Fresh pull from base before run (enforced)</label>
+                </div>
+              </div>
               <div className="space-y-2">
                 <label className="text-xs font-medium" htmlFor="run-parameters">
                   Additional parameters (JSON)
