@@ -61,7 +61,6 @@ export function AppShell({ mainId, children }: { mainId: string; children: React
               })}
             </BreadcrumbList>
           </Breadcrumb>
-          <div className="text-xs text-muted-foreground">Cmd/Ctrl + B</div>
         </header>
         <div id={mainId} className="flex-1 min-h-0" tabIndex={-1}>
           <ScrollArea className="h-full">{children}</ScrollArea>
