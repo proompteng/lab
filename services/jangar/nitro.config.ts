@@ -12,7 +12,14 @@ export default defineNitroConfig({
   serveStatic: true,
   minify: false,
   externals: {
-    inline: ['@tanstack/react-start', '@tanstack/react-start-server', '@tanstack/start-server-core'],
+    inline: [
+      '@tanstack/react-start',
+      '@tanstack/react-start-server',
+      '@tanstack/start-server-core',
+      /^@aws-sdk\//,
+      /^@smithy\//,
+    ],
+    traceInclude: ['@aws-sdk/core/protocols'],
   },
   experimental: {
     websocket: true,
