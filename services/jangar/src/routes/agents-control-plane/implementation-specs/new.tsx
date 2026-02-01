@@ -380,7 +380,6 @@ function ImplementationSpecCreatePage() {
               <Button type="button" onClick={() => void generateSpec()} disabled={isGenerating}>
                 {isGenerating ? 'Generating...' : 'Generate spec'}
               </Button>
-              <span className="text-xs text-muted-foreground">Uses the control plane completion API.</span>
             </div>
             {generationError ? <div className="text-xs text-destructive">{generationError}</div> : null}
             {generationLog ? (
