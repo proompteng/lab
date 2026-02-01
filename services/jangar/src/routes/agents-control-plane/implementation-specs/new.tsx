@@ -332,7 +332,7 @@ function ImplementationSpecCreatePage() {
           <h1 className="text-lg font-semibold">Create spec</h1>
           <p className="text-xs text-muted-foreground">Follow each step to draft and save an ImplementationSpec.</p>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
+        <div className="flex flex-col items-end gap-1 text-xs text-muted-foreground">
           <span className="rounded-none border border-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest">
             Step {step} of 3
           </span>
