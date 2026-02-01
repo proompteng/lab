@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { getMetadataValue, getResourceUpdatedAt } from '@/components/agents-control-plane'
@@ -360,18 +360,6 @@ function ImplementationSpecRunPage() {
         <div className="space-y-2">
           <h1 className="text-lg font-semibold">Run spec</h1>
           <p className="text-xs text-muted-foreground">Launch an agent run for this spec.</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" asChild>
-            <Link to="/agents-control-plane/implementation-specs" search={{ namespace: searchState.namespace }}>
-              Back to list
-            </Link>
-          </Button>
-          <Button asChild>
-            <Link to="/agents-control-plane/implementation-specs/new" search={{ namespace: searchState.namespace }}>
-              Create spec
-            </Link>
-          </Button>
         </div>
       </header>
 
