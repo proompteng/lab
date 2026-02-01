@@ -234,7 +234,7 @@ function ImplementationSpecsListPage() {
                 return (
                   <tr
                     key={`${resourceNamespace}/${name}`}
-                    className="border-b transition-colors last:border-b-0 hover:bg-muted/40"
+                    className="border-b cursor-default transition-colors last:border-b-0 hover:bg-muted/40"
                     onClick={() => openSpec(name, resourceNamespace)}
                   >
                     <td className="px-2 py-1 font-medium text-foreground">
