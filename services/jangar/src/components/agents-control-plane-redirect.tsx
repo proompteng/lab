@@ -1,5 +1,5 @@
 import { Navigate } from '@tanstack/react-router'
 
 export function ControlPlaneRedirect() {
-  return <Navigate to="/agents-control-plane/implementation-specs" />
+  return <Navigate to="/control-plane/implementation-specs" />
 }

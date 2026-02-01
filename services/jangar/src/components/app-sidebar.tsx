@@ -76,13 +76,11 @@ const appNav: AppNavItem[] = [
 ]
 
 const agentsStudioNav: AppNavItem = {
-  to: '/agents-control-plane/implementation-specs',
+  to: '/control-plane/implementation-specs',
   label: 'Control plane',
   icon: IconRobot,
 }
-const controlPlaneNav: AppNavItem[] = [
-  { to: '/agents-control-plane/implementation-specs', label: 'Specs', icon: IconList },
-]
+const controlPlaneNav: AppNavItem[] = [{ to: '/control-plane/implementation-specs', label: 'Specs', icon: IconList }]
 
 const apiNav = [
   { to: '/api/models', label: 'Models', icon: IconRobot },
@@ -98,7 +96,7 @@ export function AppSidebar() {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const { state: sidebarState } = useSidebar()
   const isCollapsed = sidebarState === 'collapsed'
-  const isControlPlaneRoute = pathname === '/agents-control-plane' || pathname.startsWith('/agents-control-plane/')
+  const isControlPlaneRoute = pathname === '/control-plane' || pathname.startsWith('/control-plane/')
   const [terminalSessions, setTerminalSessions] = React.useState<TerminalSession[]>([])
 
   React.useEffect(() => {
@@ -200,7 +198,7 @@ export function AppSidebar() {
             <SidebarMenu>
               {(isControlPlaneRoute ? controlPlaneNav : [agentsStudioNav]).map((item) => {
                 const isActive = isControlPlaneRoute
-                  ? item.to === '/agents-control-plane'
+                  ? item.to === '/control-plane'
                     ? pathname === item.to
                     : pathname === item.to || pathname.startsWith(`${item.to}/`)
                   : pathname === item.to || pathname.startsWith(`${item.to}/`)
