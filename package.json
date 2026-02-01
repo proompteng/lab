@@ -47,6 +47,7 @@
     "test:discord": "bun run --filter @proompteng/discord test",
     "build:facteur": "bun run packages/scripts/src/facteur/build-image.ts",
     "build:oirat": "bun run packages/scripts/src/oirat/build-image.ts",
+    "agents:deploy": "bun run packages/scripts/src/agents/deploy-service.ts",
     "bonjour:deploy": "bun run packages/scripts/src/bonjour/deploy-service.ts",
     "app:deploy": "bun run packages/scripts/src/app/deploy-service.ts",
     "cms:deploy": "bun run packages/scripts/src/cms/deploy-service.ts",
