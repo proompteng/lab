@@ -209,11 +209,11 @@ function ImplementationSpecsListPage() {
           </colgroup>
           <thead className="border-b bg-muted/30 text-xs uppercase tracking-widest text-muted-foreground">
             <tr className="text-left">
-              <th className="px-2 py-1 font-medium">Spec</th>
-              <th className="px-2 py-1 font-medium">Summary</th>
-              <th className="px-2 py-1 font-medium">Namespace</th>
-              <th className="px-2 py-1 font-medium">Updated</th>
-              <th className="px-2 py-1 font-medium">Status</th>
+              <th className="px-2 py-1.5 font-medium">Spec</th>
+              <th className="px-2 py-1.5 font-medium">Summary</th>
+              <th className="px-2 py-1.5 font-medium">Namespace</th>
+              <th className="px-2 py-1.5 font-medium">Updated</th>
+              <th className="px-2 py-1.5 font-medium">Status</th>
             </tr>
           </thead>
           <tbody>
@@ -237,15 +237,15 @@ function ImplementationSpecsListPage() {
                     className="border-b cursor-default transition-colors last:border-b-0 hover:bg-muted/40"
                     onClick={() => openSpec(name, resourceNamespace)}
                   >
-                    <td className="px-2 py-1 font-medium text-foreground">
+                    <td className="px-2 py-1.5 font-medium text-foreground">
                       <span className="block truncate">{name}</span>
                     </td>
-                    <td className="px-2 py-1 text-muted-foreground">
+                    <td className="px-2 py-1.5 text-muted-foreground">
                       <span className="block truncate text-foreground">{summary}</span>
                     </td>
-                    <td className="px-2 py-1 text-muted-foreground">{resourceNamespace}</td>
-                    <td className="px-2 py-1 text-muted-foreground">{formatTimestamp(updatedAt)}</td>
-                    <td className="px-2 py-1">
+                    <td className="px-2 py-1.5 text-muted-foreground">{resourceNamespace}</td>
+                    <td className="px-2 py-1.5 text-muted-foreground">{formatTimestamp(updatedAt)}</td>
+                    <td className="px-2 py-1.5">
                       <StatusBadge label={statusLabel} className="px-1.5 py-0 leading-none" />
                     </td>
                   </tr>
