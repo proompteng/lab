@@ -9,6 +9,7 @@ import { startResourceWatch } from '~/server/kube-watch'
 import { recordSseConnection, recordSseError } from '~/server/metrics'
 import { type AgentPrimitiveKind, listPrimitiveKinds, resolvePrimitiveKind } from '~/server/primitives-control-plane'
 import { asRecord, asString, normalizeNamespace } from '~/server/primitives-http'
+import { buildResourceFingerprint } from '~/server/status-utils'
 
 export const Route = createFileRoute('/api/agents/control-plane/stream')({
   server: {
@@ -47,6 +48,7 @@ type NamespaceStream = {
   watchers: Array<{ stop: () => void }>
   statusTimeout: NodeJS.Timeout | null
   lastStatus: ControlPlaneStatus | null
+  resourceFingerprints: Map<string, string>
 }
 
 const HEARTBEAT_INTERVAL_MS = 15_000
@@ -107,6 +109,7 @@ const ensureNamespaceStream = (namespace: string): NamespaceStream => {
     watchers: [],
     statusTimeout: null,
     lastStatus: null,
+    resourceFingerprints: new Map(),
   }
 
   const kinds = listPrimitiveKinds()
@@ -125,11 +128,25 @@ const ensureNamespaceStream = (namespace: string): NamespaceStream => {
           const metadata = asRecord(summary.metadata) ?? {}
           const resourceNamespace = asString(metadata.namespace) ?? namespace
           const name = asString(metadata.name) ?? null
+          const action = event.type ?? null
+          const key = name ? `${resolved.kind}:${resourceNamespace}:${name}` : null
+          if (key) {
+            if (action === 'DELETED') {
+              stream.resourceFingerprints.delete(key)
+            } else {
+              const fingerprint = buildResourceFingerprint(summary)
+              const previous = stream.resourceFingerprints.get(key)
+              if (previous === fingerprint) {
+                return
+              }
+              stream.resourceFingerprints.set(key, fingerprint)
+            }
+          }
           stream.emitter.emit('event', {
             type: 'resource',
             kind: resolved.kind,
             namespace: resourceNamespace,
-            action: event.type ?? null,
+            action,
             name,
             resource: summary,
           } satisfies ControlPlaneResourceEvent)

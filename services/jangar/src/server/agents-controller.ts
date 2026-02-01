@@ -1,9 +1,12 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
+
 import { createTemporalClient, loadTemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
+
 import { startResourceWatch } from '~/server/kube-watch'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import { shouldApplyStatus } from '~/server/status-utils'
 
 const DEFAULT_NAMESPACES = ['agents']
 const DEFAULT_CONCURRENCY = {
@@ -402,16 +405,15 @@ const setStatus = async (
   for (const update of standardUpdates) {
     conditions = upsertCondition(conditions, update)
   }
-  await kube.applyStatus({
-    apiVersion,
-    kind,
-    metadata: { name, namespace },
-    status: {
-      ...status,
-      updatedAt: nowIso(),
-      conditions,
-    },
-  })
+  const nextStatus = {
+    ...status,
+    updatedAt: nowIso(),
+    conditions,
+  }
+  if (!shouldApplyStatus(asRecord(resource.status), nextStatus)) {
+    return
+  }
+  await kube.applyStatus({ apiVersion, kind, metadata: { name, namespace }, status: nextStatus })
 }
 
 const parseRuntimeRef = (raw: unknown): RuntimeRef | null => asRecord(raw) ?? null
