@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: 07bf2903e
-  digest: sha256:5cb7c57b51986fef9ce9b85530d3850af405c9a18421de51c50bff0928ae5175
+  tag: "145353138"
+  digest: sha256:48012295a50ec6030b6105281d58322d772dc08a24e26ebf656e7edb087f672e
   pullPolicy: IfNotPresent
 resources:
   requests:
@@ -29,3 +29,6 @@ env:
     JANGAR_GRPC_ENABLED: "true"
     JANGAR_GRPC_HOST: 0.0.0.0
     JANGAR_GRPC_PORT: "50051"
+    JANGAR_GITHUB_REPOS_ALLOWED: proompteng/lab
+envFromSecretRefs:
+  - agents-github-token-env
