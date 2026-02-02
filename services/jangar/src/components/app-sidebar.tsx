@@ -2,6 +2,7 @@ import {
   IconBrain,
   IconChartCandle,
   IconDatabase,
+  IconFileText,
   IconGitPullRequest,
   IconHeart,
   IconHome,
@@ -9,6 +10,7 @@ import {
   IconMessages,
   IconRobot,
   IconTerminal2,
+  IconActivity,
 } from '@tabler/icons-react'
 import { Link, useRouterState } from '@tanstack/react-router'
 import * as React from 'react'
@@ -81,8 +83,8 @@ const agentsStudioNav: AppNavItem = {
   icon: IconRobot,
 }
 const controlPlaneNav: AppNavItem[] = [
-  { to: '/control-plane/implementation-specs', label: 'Specs', icon: IconList },
-  { to: '/control-plane/runs', label: 'Runs', icon: IconList },
+  { to: '/control-plane/implementation-specs', label: 'Specs', icon: IconFileText },
+  { to: '/control-plane/runs', label: 'Runs', icon: IconActivity },
 ]
 
 const apiNav = [
