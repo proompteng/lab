@@ -172,6 +172,27 @@ function ImplementationSpecRunPage() {
   const [runResult, setRunResult] = React.useState<{ name: string; namespace: string } | null>(null)
 
   const previousSpecRef = React.useRef<string | null>(null)
+  const repositoryRef = React.useRef<HTMLInputElement | null>(null)
+
+  const syncRepositoryFromInput = React.useCallback(
+    (value?: string) => {
+      const nextValue = (value ?? repositoryRef.current?.value ?? '').trim()
+      if (nextValue && nextValue !== repository) {
+        setRepository(nextValue)
+      }
+    },
+    [repository],
+  )
+
+  React.useEffect(() => {
+    if (repository.trim()) return
+    const timer = window.setTimeout(() => {
+      syncRepositoryFromInput()
+    }, 200)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [repository, syncRepositoryFromInput])
 
   React.useEffect(() => {
     let isMounted = true
@@ -578,8 +599,10 @@ function ImplementationSpecRunPage() {
             </label>
             <Input
               id="run-repo"
+              ref={repositoryRef}
               value={repository}
               onChange={(event) => setRepository(event.target.value)}
+              onBlur={(event) => syncRepositoryFromInput(event.currentTarget.value)}
               placeholder="proompteng/lab"
             />
             <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
