@@ -1,17 +1,17 @@
 import { fileURLToPath } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import { devtools } from '@tanstack/devtools-vite'
+import { rootRouteId } from '@tanstack/router-core'
 import {
+  type TanStackStartInputConfig,
   TanStackStartVitePluginCore,
   VITE_ENVIRONMENT_NAMES,
-  type TanStackStartInputConfig,
 } from '@tanstack/start-plugin-core'
 import viteReact from '@vitejs/plugin-react'
 import { nitro } from 'nitro/vite'
+import path from 'pathe'
 import { defineConfig } from 'vite'
 import viteTsConfigPaths from 'vite-tsconfig-paths'
-import { rootRouteId } from '@tanstack/router-core'
-import path from 'pathe'
 
 const ssrExternals = ['kysely', 'nats', 'pg', 'node-pty']
 const bunShimEnabled = process.env.JANGAR_BUN_SHIM === '1'
@@ -34,7 +34,7 @@ const isInsideRouterMonoRepo = path.basename(path.resolve(repoRoot, '..')) === '
 
 const ensureRoutesManifestPlugin = () => ({
   name: 'jangar-ensure-start-routes-manifest',
-  applyToEnvironment: (env: { name: string }) => env.name === 'nitro',
+  applyToEnvironment: (env: { name: string }) => env.name === VITE_ENVIRONMENT_NAMES.server || env.name === 'nitro',
   buildStart() {
     const routes = (
       globalThis as typeof globalThis & {
@@ -99,7 +99,7 @@ const tanstackStartNitro = (options?: TanStackStartInputConfig) => [
     {
       framework: 'react',
       defaultEntryPaths,
-      serverFn: { providerEnv: 'nitro' },
+      serverFn: { providerEnv: VITE_ENVIRONMENT_NAMES.server },
     },
     options ?? {},
   ),
