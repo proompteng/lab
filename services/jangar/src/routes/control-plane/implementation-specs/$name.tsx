@@ -464,44 +464,49 @@ function ImplementationSpecRunPage() {
     setRunStatus('running')
     const deliveryId = randomUuid()
     const runtimeConfig = ttlValue != null ? { ttlSecondsAfterFinished: ttlValue } : undefined
-    const response = await fetch('/v1/agent-runs', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'idempotency-key': deliveryId,
-      },
-      body: JSON.stringify({
-        agentRef: { name: selectedAgent },
-        namespace: selectedSpec.namespace,
-        implementationSpecRef: { name: selectedSpec.name },
-        runtime: { type: 'workflow', config: runtimeConfig },
-        workload: { image: workloadImage.trim() },
-        workflow: {
-          steps: [
-            {
-              name: workflowStep.trim() || DEFAULT_STEP_NAME,
-              parameters: { stage: workflowStep.trim() || DEFAULT_STEP_NAME },
-            },
-          ],
+    try {
+      const response = await fetch('/v1/agent-runs', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'idempotency-key': deliveryId,
         },
-        parameters: mergedParameters,
-        secrets: secretsList,
-        policy: secretBindingRef.trim() ? { secretBindingRef: secretBindingRef.trim() } : undefined,
-        ttlSecondsAfterFinished: ttlValue,
-      }),
-    })
+        body: JSON.stringify({
+          agentRef: { name: selectedAgent },
+          namespace: selectedSpec.namespace,
+          implementationSpecRef: { name: selectedSpec.name },
+          runtime: { type: 'workflow', config: runtimeConfig },
+          workload: { image: workloadImage.trim() },
+          workflow: {
+            steps: [
+              {
+                name: workflowStep.trim() || DEFAULT_STEP_NAME,
+                parameters: { stage: workflowStep.trim() || DEFAULT_STEP_NAME },
+              },
+            ],
+          },
+          parameters: mergedParameters,
+          secrets: secretsList,
+          policy: secretBindingRef.trim() ? { secretBindingRef: secretBindingRef.trim() } : undefined,
+          ttlSecondsAfterFinished: ttlValue,
+        }),
+      })
 
-    const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null
-    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null
+      if (!response.ok) {
+        setRunStatus('idle')
+        setRunError(asString(payload?.error) ?? 'Unable to start agent run')
+        return
+      }
+      const resource = asRecord(payload?.resource) ?? {}
+      const metadata = asRecord(resource.metadata) ?? {}
+      const runName = asString(metadata.name)
+      setRunStatus('done')
+      setRunResult(runName ? { name: runName, namespace: selectedSpec.namespace } : null)
+    } catch (error) {
       setRunStatus('idle')
-      setRunError(asString(payload?.error) ?? 'Unable to start agent run')
-      return
+      setRunError(error instanceof Error ? error.message : 'Unable to start agent run')
     }
-    const resource = asRecord(payload?.resource) ?? {}
-    const metadata = asRecord(resource.metadata) ?? {}
-    const runName = asString(metadata.name)
-    setRunStatus('done')
-    setRunResult(runName ? { name: runName, namespace: selectedSpec.namespace } : null)
   }
 
   return (
