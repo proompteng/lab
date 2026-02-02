@@ -1,3 +1,4 @@
+import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import { devtools } from '@tanstack/devtools-vite'
@@ -7,9 +8,11 @@ import {
   TanStackStartVitePluginCore,
   VITE_ENVIRONMENT_NAMES,
 } from '@tanstack/start-plugin-core'
+import { VIRTUAL_MODULES } from '@tanstack/start-server-core'
 import viteReact from '@vitejs/plugin-react'
 import { nitro } from 'nitro/vite'
 import path from 'pathe'
+import { joinURL } from 'ufo'
 import { defineConfig } from 'vite'
 import viteTsConfigPaths from 'vite-tsconfig-paths'
 
@@ -31,6 +34,17 @@ const defaultEntryPaths = {
   start: path.resolve(defaultEntryDir, 'start.ts'),
 }
 const isInsideRouterMonoRepo = path.basename(path.resolve(repoRoot, '..')) === 'packages'
+const startManifestModuleId = `\0${VIRTUAL_MODULES.startManifest}`
+const startClientEntryId = 'virtual:tanstack-start-client-entry'
+
+const isFullUrl = (value: string): boolean => {
+  try {
+    new URL(value)
+    return true
+  } catch {
+    return false
+  }
+}
 
 const ensureRoutesManifestPlugin = () => ({
   name: 'jangar-ensure-start-routes-manifest',
@@ -56,6 +70,46 @@ const ensureRoutesManifestPlugin = () => ({
     }
   },
 })
+
+const nitroStartManifestPlugin = () => {
+  let manifestSource: string | null = null
+  let viteAppBase = '/'
+
+  return {
+    name: 'jangar-start-manifest-nitro',
+    enforce: 'pre',
+    applyToEnvironment: (env: { name: string }) => env.name === VITE_ENVIRONMENT_NAMES.server || env.name === 'nitro',
+    configResolved(config: { base?: string }) {
+      const base = config.base ?? '/'
+      viteAppBase = isFullUrl(base) ? base : `/${base}`.replace(/\/{2,}/g, '/').replace(/\/?$/, '/')
+    },
+    resolveId(id: string) {
+      if (id === VIRTUAL_MODULES.startManifest) {
+        return startManifestModuleId
+      }
+    },
+    load(id: string) {
+      if (id !== startManifestModuleId || this.environment.name !== 'nitro') return
+      if (this.environment.config.command === 'serve') {
+        return `export const tsrStartManifest = () => ({
+          routes: {},
+          clientEntry: '${joinURL(viteAppBase, '@id', startClientEntryId)}',
+        })`
+      }
+      if (!manifestSource) {
+        const manifestDir = path.resolve(configDir, '.nitro/vite/services/ssr/assets')
+        const manifestEntry = readdirSync(manifestDir, { withFileTypes: true }).find(
+          (entry) => entry.isFile() && entry.name.startsWith('_tanstack-start-manifest_v-'),
+        )
+        if (!manifestEntry) {
+          this.error('[jangar] Start manifest chunk not found for nitro build.')
+        }
+        manifestSource = readFileSync(path.join(manifestDir, manifestEntry.name), 'utf8')
+      }
+      return manifestSource
+    },
+  }
+}
 
 const tanstackStartNitro = (options?: TanStackStartInputConfig) => [
   {
@@ -125,6 +179,7 @@ const config = defineConfig({
   },
   plugins: [
     devtools(),
+    nitroStartManifestPlugin(),
     ...tanstackStartNitro(),
     ensureRoutesManifestPlugin(),
     nitro(),
