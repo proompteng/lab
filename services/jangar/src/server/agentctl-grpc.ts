@@ -744,9 +744,12 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
         const idempotencyKey = call.request?.idempotency_key ?? ''
         const runtimeConfig = parseEntryMap(call.request?.runtime_config ?? [])
         const parameters = parseEntryMap(call.request?.parameters ?? [])
-        const stageValue = asString(parameters.stage) ?? asString(runtimeConfig.stage) ?? DEFAULT_WORKFLOW_STEP
-        if (!asString(parameters.stage)) {
-          parameters.stage = stageValue
+        let stageValue: string | null = null
+        if (runtimeType === 'workflow') {
+          stageValue = asString(parameters.stage) ?? asString(runtimeConfig.stage) ?? DEFAULT_WORKFLOW_STEP
+          if (!asString(parameters.stage)) {
+            parameters.stage = stageValue
+          }
         }
 
         const workload = call.request?.workload
@@ -765,8 +768,8 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
           payload.workflow = {
             steps: [
               {
-                name: stageValue,
-                parameters: { stage: stageValue },
+                name: stageValue ?? DEFAULT_WORKFLOW_STEP,
+                parameters: { stage: stageValue ?? DEFAULT_WORKFLOW_STEP },
               },
             ],
           }
