@@ -186,13 +186,23 @@ function ImplementationSpecRunPage() {
 
   React.useEffect(() => {
     if (repository.trim()) return
-    const timer = window.setTimeout(() => {
-      syncRepositoryFromInput()
+    let attempts = 0
+    const timer = window.setInterval(() => {
+      attempts += 1
+      const value = repositoryRef.current?.value?.trim() ?? ''
+      if (value) {
+        setRepository(value)
+        window.clearInterval(timer)
+        return
+      }
+      if (attempts >= 10) {
+        window.clearInterval(timer)
+      }
     }, 200)
     return () => {
-      window.clearTimeout(timer)
+      window.clearInterval(timer)
     }
-  }, [repository, syncRepositoryFromInput])
+  }, [repository])
 
   React.useEffect(() => {
     let isMounted = true
