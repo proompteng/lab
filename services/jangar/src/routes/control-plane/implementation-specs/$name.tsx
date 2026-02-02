@@ -38,11 +38,16 @@ type AgentOption = {
 const DEFAULT_RUN_IMAGE = 'registry.ide-newton.ts.net/lab/codex-universal:latest'
 const DEFAULT_STEP_NAME = 'implement'
 const DEFAULT_BASE_BRANCH = 'main'
+const ISSUE_AUTOMATION_MARKER = '<!-- codex:skip-automation -->'
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
 
 const asString = (value: unknown) => (typeof value === 'string' && value.trim().length > 0 ? value.trim() : null)
+const asStringValue = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return asString(value)
+}
 
 const coerceStringList = (value: unknown) => {
   if (Array.isArray(value)) {
@@ -104,6 +109,32 @@ const buildHeadBranch = (specName: string) => {
   return `codex/${specName}`
 }
 
+const buildIssueHeadBranch = (issueNumber: string) => {
+  const trimmed = issueNumber.trim()
+  if (!trimmed) return ''
+  const suffix = randomUuid().slice(0, 8)
+  return `codex/issue-${trimmed}-${suffix}`
+}
+
+const buildIssueBody = (spec: SpecOption) => {
+  const sections: string[] = []
+  if (spec.summary) {
+    sections.push(`## Summary\n${spec.summary}`)
+  }
+  if (spec.description) {
+    sections.push(`## Description\n${spec.description}`)
+  }
+  if (spec.text) {
+    sections.push(`## Requirements\n${spec.text}`)
+  }
+  if (spec.acceptanceCriteria.length > 0) {
+    const criteria = spec.acceptanceCriteria.map((item) => `- ${item}`).join('\n')
+    sections.push(`## Acceptance criteria\n${criteria}`)
+  }
+  sections.push(ISSUE_AUTOMATION_MARKER)
+  return sections.filter(Boolean).join('\n\n')
+}
+
 function ImplementationSpecRunPage() {
   const params = Route.useParams()
   const searchState = Route.useSearch()
@@ -130,7 +161,11 @@ function ImplementationSpecRunPage() {
   const [issueUrl, setIssueUrl] = React.useState('')
   const [baseBranch, setBaseBranch] = React.useState(DEFAULT_BASE_BRANCH)
   const [headBranch, setHeadBranch] = React.useState('')
+  const [headBranchTouched, setHeadBranchTouched] = React.useState(false)
   const [freshPull, _setFreshPull] = React.useState(true)
+
+  const [issueCreateStatus, setIssueCreateStatus] = React.useState<'idle' | 'creating' | 'created'>('idle')
+  const [issueCreateError, setIssueCreateError] = React.useState<string | null>(null)
 
   const [runStatus, setRunStatus] = React.useState<'idle' | 'running' | 'done'>('idle')
   const [runError, setRunError] = React.useState<string | null>(null)
@@ -232,18 +267,31 @@ function ImplementationSpecRunPage() {
       setBaseBranch(DEFAULT_BASE_BRANCH)
     }
     const previousSpecName = previousSpecRef.current
+    if (previousSpecName && previousSpecName !== selectedSpec.name) {
+      setIssueNumber('')
+      setIssueUrl('')
+      setIssueTitle(selectedSpec.summary)
+      setIssueCreateStatus('idle')
+      setIssueCreateError(null)
+      setHeadBranchTouched(false)
+    }
     const previousDefaultHead = previousSpecName ? buildHeadBranch(previousSpecName) : ''
-    if (!headBranch || headBranch === previousDefaultHead) {
+    if ((!headBranch || headBranch === previousDefaultHead) && !headBranchTouched) {
       setHeadBranch(buildHeadBranch(selectedSpec.name))
     }
     if (!issueTitle && selectedSpec.summary) {
       setIssueTitle(selectedSpec.summary)
     }
     previousSpecRef.current = selectedSpec.name
-  }, [baseBranch, headBranch, issueTitle, selectedSpec])
+  }, [baseBranch, headBranch, headBranchTouched, issueTitle, selectedSpec])
 
   const parsedParameters = React.useMemo(() => parseParametersInput(parametersInput), [parametersInput])
   const secretsList = React.useMemo(() => parseSecretsInput(secretsInput), [secretsInput])
+
+  React.useEffect(() => {
+    if (!repository.trim() || !issueNumber.trim() || issueUrl.trim()) return
+    setIssueUrl(`https://github.com/${repository.trim()}/issues/${issueNumber.trim()}`)
+  }, [issueNumber, issueUrl, repository])
 
   const metadataParameters = React.useMemo(() => {
     const output: Record<string, string> = {}
@@ -272,7 +320,69 @@ function ImplementationSpecRunPage() {
       return !value || value.trim().length === 0
     })
   }, [mergedParameters, selectedSpec])
+
+  const missingRunMetadata = React.useMemo(() => {
+    const missing: string[] = []
+    if (!repository.trim()) missing.push('Repository')
+    if (!issueNumber.trim()) missing.push('Issue number')
+    if (!headBranch.trim()) missing.push('Head branch')
+    return missing
+  }, [headBranch, issueNumber, repository])
   const missingSecretBinding = Boolean(secretsList?.length) && !secretBindingRef.trim()
+
+  const createIssue = async () => {
+    setIssueCreateError(null)
+    if (!selectedSpec) {
+      setIssueCreateError('Spec is required to create an issue.')
+      return
+    }
+    const repoValue = repository.trim()
+    if (!repoValue) {
+      setIssueCreateError('Repository is required to create an issue.')
+      return
+    }
+    const titleValue = issueTitle.trim() || selectedSpec.summary || selectedSpec.name
+    const bodyValue = buildIssueBody(selectedSpec)
+    setIssueCreateStatus('creating')
+    try {
+      const response = await fetch('/api/github/issues', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          repository: repoValue,
+          title: titleValue,
+          body: bodyValue,
+        }),
+      })
+      const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null
+      if (!response.ok) {
+        setIssueCreateStatus('idle')
+        setIssueCreateError(asString(payload?.error) ?? 'Unable to create issue')
+        return
+      }
+      const issue = asRecord(payload?.issue) ?? {}
+      const createdNumber = asStringValue(issue.number) ?? ''
+      const createdTitle = asString(issue.title) ?? titleValue
+      const createdUrl = asString(issue.url) ?? ''
+      if (createdNumber) {
+        setIssueNumber(createdNumber)
+      }
+      setIssueTitle(createdTitle)
+      if (createdUrl) {
+        setIssueUrl(createdUrl)
+      }
+      if (!headBranchTouched || headBranch === buildHeadBranch(selectedSpec.name)) {
+        const nextHead = createdNumber ? buildIssueHeadBranch(createdNumber) : buildHeadBranch(selectedSpec.name)
+        if (nextHead) setHeadBranch(nextHead)
+      }
+      setIssueCreateStatus('created')
+    } catch (error) {
+      setIssueCreateStatus('idle')
+      setIssueCreateError(error instanceof Error ? error.message : 'Unable to create issue')
+    }
+  }
 
   const runAgent = async () => {
     setRunError(null)
@@ -295,6 +405,10 @@ function ImplementationSpecRunPage() {
     }
     if (missingRequiredKeys.length > 0) {
       setRunError(`Missing required metadata keys: ${missingRequiredKeys.join(', ')}`)
+      return
+    }
+    if (missingRunMetadata.length > 0) {
+      setRunError(`Missing required run metadata: ${missingRunMetadata.join(', ')}`)
       return
     }
     if (missingSecretBinding) {
@@ -468,6 +582,29 @@ function ImplementationSpecRunPage() {
               onChange={(event) => setRepository(event.target.value)}
               placeholder="proompteng/lab"
             />
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void createIssue()}
+                disabled={issueCreateStatus === 'creating' || !selectedSpec || !repository.trim()}
+              >
+                {issueCreateStatus === 'creating' ? 'Creating issue…' : 'Create GitHub issue'}
+              </Button>
+              {issueNumber ? <span>Issue #{issueNumber}</span> : null}
+              {issueUrl ? (
+                <a
+                  className="underline decoration-dotted underline-offset-4"
+                  href={issueUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  View issue
+                </a>
+              ) : null}
+              {issueCreateStatus === 'created' && !issueNumber ? <span>Issue created.</span> : null}
+            </div>
+            {issueCreateError ? <div className="text-xs text-destructive">{issueCreateError}</div> : null}
           </div>
 
           <details className="space-y-2">
@@ -528,7 +665,10 @@ function ImplementationSpecRunPage() {
                   <Input
                     id="run-head"
                     value={headBranch}
-                    onChange={(event) => setHeadBranch(event.target.value)}
+                    onChange={(event) => {
+                      setHeadBranch(event.target.value)
+                      setHeadBranchTouched(true)
+                    }}
                     placeholder={selectedSpec ? buildHeadBranch(selectedSpec.name) : 'codex/feature-branch'}
                   />
                 </div>
@@ -628,6 +768,9 @@ function ImplementationSpecRunPage() {
             Missing required metadata keys: {missingRequiredKeys.join(', ')}
           </div>
         ) : null}
+        {missingRunMetadata.length > 0 ? (
+          <div className="text-xs text-destructive">Missing required run metadata: {missingRunMetadata.join(', ')}</div>
+        ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -640,6 +783,7 @@ function ImplementationSpecRunPage() {
               !workloadImage.trim() ||
               !parsedParameters.ok ||
               missingRequiredKeys.length > 0 ||
+              missingRunMetadata.length > 0 ||
               missingSecretBinding
             }
           >

@@ -181,6 +181,18 @@ function AgentRunsListPage() {
     })
   }, [load, searchState.labelSelector, searchState.namespace, searchState.phase, searchState.runtime])
 
+  React.useEffect(() => {
+    const timer = window.setInterval(() => {
+      void load({
+        namespace: searchState.namespace,
+        labelSelector: searchState.labelSelector,
+        phase: searchState.phase,
+        runtime: searchState.runtime,
+      })
+    }, 15000)
+    return () => window.clearInterval(timer)
+  }, [load, searchState.labelSelector, searchState.namespace, searchState.phase, searchState.runtime])
+
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const nextNamespace = namespace.trim() || DEFAULT_NAMESPACE

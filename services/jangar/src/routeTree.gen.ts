@@ -92,6 +92,7 @@ import { Route as ApiTorghutSymbolsRouteImport } from './routes/api/torghut/symb
 import { Route as ApiTerminalsSessionIdRouteImport } from './routes/api/terminals/$sessionId'
 import { Route as ApiMemoriesCountRouteImport } from './routes/api/memories/count'
 import { Route as ApiGithubPullsRouteImport } from './routes/api/github/pulls'
+import { Route as ApiGithubIssuesRouteImport } from './routes/api/github/issues'
 import { Route as ApiCodexRunsRouteImport } from './routes/api/codex/runs'
 import { Route as ApiCodexRunCompleteRouteImport } from './routes/api/codex/run-complete'
 import { Route as ApiCodexRerunRouteImport } from './routes/api/codex/rerun'
@@ -582,6 +583,11 @@ const ApiGithubPullsRoute = ApiGithubPullsRouteImport.update({
   path: '/api/github/pulls',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiGithubIssuesRoute = ApiGithubIssuesRouteImport.update({
+  id: '/api/github/issues',
+  path: '/api/github/issues',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiCodexRunsRoute = ApiCodexRunsRouteImport.update({
   id: '/api/codex/runs',
   path: '/api/codex/runs',
@@ -859,6 +865,7 @@ export interface FileRoutesByFullPath {
   '/api/codex/rerun': typeof ApiCodexRerunRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
+  '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/memories/count': typeof ApiMemoriesCountRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
@@ -984,6 +991,7 @@ export interface FileRoutesByTo {
   '/api/codex/rerun': typeof ApiCodexRerunRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
+  '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/memories/count': typeof ApiMemoriesCountRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
@@ -1112,6 +1120,7 @@ export interface FileRoutesById {
   '/api/codex/rerun': typeof ApiCodexRerunRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
+  '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/memories/count': typeof ApiMemoriesCountRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
@@ -1241,6 +1250,7 @@ export interface FileRouteTypes {
     | '/api/codex/rerun'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
+    | '/api/github/issues'
     | '/api/github/pulls'
     | '/api/memories/count'
     | '/api/terminals/$sessionId'
@@ -1366,6 +1376,7 @@ export interface FileRouteTypes {
     | '/api/codex/rerun'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
+    | '/api/github/issues'
     | '/api/github/pulls'
     | '/api/memories/count'
     | '/api/terminals/$sessionId'
@@ -1493,6 +1504,7 @@ export interface FileRouteTypes {
     | '/api/codex/rerun'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
+    | '/api/github/issues'
     | '/api/github/pulls'
     | '/api/memories/count'
     | '/api/terminals/$sessionId'
@@ -1621,6 +1633,7 @@ export interface RootRouteChildren {
   ApiCodexRerunRoute: typeof ApiCodexRerunRoute
   ApiCodexRunCompleteRoute: typeof ApiCodexRunCompleteRoute
   ApiCodexRunsRoute: typeof ApiCodexRunsRouteWithChildren
+  ApiGithubIssuesRoute: typeof ApiGithubIssuesRoute
   ApiGithubPullsRoute: typeof ApiGithubPullsRouteWithChildren
   ApiTorghutSymbolsRoute: typeof ApiTorghutSymbolsRouteWithChildren
   ControlPlaneAgentProvidersNameRoute: typeof ControlPlaneAgentProvidersNameRoute
@@ -2260,6 +2273,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiGithubPullsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/github/issues': {
+      id: '/api/github/issues'
+      path: '/api/github/issues'
+      fullPath: '/api/github/issues'
+      preLoaderRoute: typeof ApiGithubIssuesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/codex/runs': {
       id: '/api/codex/runs'
       path: '/api/codex/runs'
@@ -2818,6 +2838,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiCodexRerunRoute: ApiCodexRerunRoute,
   ApiCodexRunCompleteRoute: ApiCodexRunCompleteRoute,
   ApiCodexRunsRoute: ApiCodexRunsRouteWithChildren,
+  ApiGithubIssuesRoute: ApiGithubIssuesRoute,
   ApiGithubPullsRoute: ApiGithubPullsRouteWithChildren,
   ApiTorghutSymbolsRoute: ApiTorghutSymbolsRouteWithChildren,
   ControlPlaneAgentProvidersNameRoute: ControlPlaneAgentProvidersNameRoute,
