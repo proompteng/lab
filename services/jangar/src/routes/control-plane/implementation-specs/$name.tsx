@@ -39,6 +39,7 @@ const DEFAULT_RUN_IMAGE = 'registry.ide-newton.ts.net/lab/codex-universal:latest
 const DEFAULT_STEP_NAME = 'implement'
 const DEFAULT_BASE_BRANCH = 'main'
 const ISSUE_AUTOMATION_MARKER = '<!-- codex:skip-automation -->'
+const DEFAULT_CODEX_SECRET = 'codex-github-token'
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
@@ -154,6 +155,8 @@ function ImplementationSpecRunPage() {
   const [parametersInput, setParametersInput] = React.useState('')
   const [secretsInput, setSecretsInput] = React.useState('')
   const [secretBindingRef, setSecretBindingRef] = React.useState('')
+  const [secretsTouched, setSecretsTouched] = React.useState(false)
+  const [secretBindingTouched, setSecretBindingTouched] = React.useState(false)
 
   const [repository, setRepository] = React.useState('')
   const [issueNumber, setIssueNumber] = React.useState('')
@@ -323,6 +326,29 @@ function ImplementationSpecRunPage() {
 
   const parsedParameters = React.useMemo(() => parseParametersInput(parametersInput), [parametersInput])
   const secretsList = React.useMemo(() => parseSecretsInput(secretsInput), [secretsInput])
+  const selectedAgentOption = React.useMemo(
+    () => agents.find((agent) => agent.name === selectedAgent) ?? null,
+    [agents, selectedAgent],
+  )
+  const isCodexAgent = selectedAgentOption?.provider === 'codex'
+
+  React.useEffect(() => {
+    if (isCodexAgent) {
+      if (!secretsTouched && !secretsInput.trim()) {
+        setSecretsInput(DEFAULT_CODEX_SECRET)
+      }
+      if (!secretBindingTouched && !secretBindingRef.trim()) {
+        setSecretBindingRef(DEFAULT_CODEX_SECRET)
+      }
+      return
+    }
+    if (!secretsTouched && secretsInput.trim() === DEFAULT_CODEX_SECRET) {
+      setSecretsInput('')
+    }
+    if (!secretBindingTouched && secretBindingRef.trim() === DEFAULT_CODEX_SECRET) {
+      setSecretBindingRef('')
+    }
+  }, [isCodexAgent, secretBindingRef, secretBindingTouched, secretsInput, secretsTouched])
 
   React.useEffect(() => {
     if (!repository.trim() || !issueNumber.trim() || issueUrl.trim()) return
@@ -788,7 +814,10 @@ function ImplementationSpecRunPage() {
                   <Input
                     id="run-secrets"
                     value={secretsInput}
-                    onChange={(event) => setSecretsInput(event.target.value)}
+                    onChange={(event) => {
+                      setSecretsTouched(true)
+                      setSecretsInput(event.target.value)
+                    }}
                     placeholder="codex-github-token"
                   />
                 </div>
@@ -799,7 +828,10 @@ function ImplementationSpecRunPage() {
                   <Input
                     id="run-secret-binding"
                     value={secretBindingRef}
-                    onChange={(event) => setSecretBindingRef(event.target.value)}
+                    onChange={(event) => {
+                      setSecretBindingTouched(true)
+                      setSecretBindingRef(event.target.value)
+                    }}
                     placeholder="my-secret-binding"
                   />
                 </div>
