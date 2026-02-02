@@ -94,6 +94,19 @@ export const IssueCommentPayloadSchema = Schema.Struct({
 
 export type IssueCommentPayload = Schema.Schema.Type<typeof IssueCommentPayloadSchema>
 
+const AUTOMATION_SKIP_MARKERS = ['codex:skip-automation']
+
+const hasAutomationSkipMarker = (body: string) => {
+  const normalized = body.toLowerCase()
+  return AUTOMATION_SKIP_MARKERS.some((marker) => normalized.includes(marker))
+}
+
+const hasAutomationSkipLabel = (labels: IssueOpenedPayload['issue']['labels']) =>
+  labels?.some((label) => {
+    const name = typeof label?.name === 'string' ? label.name.toLowerCase().trim() : ''
+    return name === 'codex-control-plane' || name === 'codex-manual'
+  }) ?? false
+
 export const handleIssueOpened = async (params: BaseIssueParams): Promise<WorkflowStage | null> => {
   const { parsedPayload, headers, config, executionContext, deliveryId, senderLogin } = params
 
@@ -129,6 +142,12 @@ export const handleIssueOpened = async (params: BaseIssueParams): Promise<Workfl
     return null
   }
 
+  const issueBody = typeof issue?.body === 'string' ? issue.body : ''
+  if (hasAutomationSkipMarker(issueBody) || hasAutomationSkipLabel(issue?.labels)) {
+    logger.info({ repositoryFullName, issueNumber }, 'Skipping codex automation for issue')
+    return null
+  }
+
   const isPullRequestIssue = Boolean(issue?.pull_request?.url ?? issue?.pull_request?.html_url)
   if (!isPullRequestIssue) {
     const reactionResult = await executionContext.runGithub(() =>
@@ -158,7 +177,6 @@ export const handleIssueOpened = async (params: BaseIssueParams): Promise<Workfl
   const baseBranch = repository?.default_branch ?? config.codebase.baseBranch
   const headBranch = buildCodexBranchName(issueNumber, deliveryId, config.codebase.branchPrefix)
   const issueTitle = typeof issue?.title === 'string' && issue.title.length > 0 ? issue.title : `Issue #${issueNumber}`
-  const issueBody = typeof issue?.body === 'string' ? issue.body : ''
   const issueUrl = typeof issue?.html_url === 'string' ? issue.html_url : ''
   const metadata = parseCodexIssueMetadata(issueBody)
   const prompt = buildCodexPrompt({
