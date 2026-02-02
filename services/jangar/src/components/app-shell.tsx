@@ -61,7 +61,6 @@ export function AppShell({ mainId, children }: { mainId: string; children: React
               })}
             </BreadcrumbList>
           </Breadcrumb>
-          <div className="text-xs text-muted-foreground">Cmd/Ctrl + B</div>
         </header>
         <div id={mainId} className="flex-1 min-h-0" tabIndex={-1}>
           <ScrollArea className="h-full">{children}</ScrollArea>
@@ -79,7 +78,9 @@ const ROOT_LABELS = new Map<string, string>([
   ['/atlas/enrich', 'Enrich'],
   ['/atlas/indexed', 'Indexed'],
   ['/agents', 'Agents'],
-  ['/agents-control-plane', 'Agent studio'],
+  ['/control-plane', 'Control plane'],
+  ['/control-plane/implementation-specs', 'Specs'],
+  ['/control-plane/runs', 'Runs'],
   ['/codex', 'Codex'],
   ['/codex/search', 'Search'],
   ['/codex/runs', 'All runs'],

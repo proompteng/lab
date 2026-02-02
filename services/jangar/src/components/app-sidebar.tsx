@@ -2,6 +2,7 @@ import {
   IconBrain,
   IconChartCandle,
   IconDatabase,
+  IconFileText,
   IconGitPullRequest,
   IconHeart,
   IconHome,
@@ -9,6 +10,7 @@ import {
   IconMessages,
   IconRobot,
   IconTerminal2,
+  IconActivity,
 } from '@tabler/icons-react'
 import { Link, useRouterState } from '@tanstack/react-router'
 import * as React from 'react'
@@ -75,10 +77,14 @@ const appNav: AppNavItem[] = [
   },
 ]
 
-const agentsStudioNav: AppNavItem = { to: '/agents-control-plane', label: 'Agent studio', icon: IconRobot }
+const agentsStudioNav: AppNavItem = {
+  to: '/control-plane/implementation-specs',
+  label: 'Control plane',
+  icon: IconRobot,
+}
 const controlPlaneNav: AppNavItem[] = [
-  { to: '/agents-control-plane/implementation-specs', label: 'Implementation specs', icon: IconList },
-  { to: '/agents-control-plane', label: 'Agent studio', icon: IconRobot },
+  { to: '/control-plane/implementation-specs', label: 'Specs', icon: IconFileText },
+  { to: '/control-plane/runs', label: 'Runs', icon: IconActivity },
 ]
 
 const apiNav = [
@@ -95,7 +101,7 @@ export function AppSidebar() {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const { state: sidebarState } = useSidebar()
   const isCollapsed = sidebarState === 'collapsed'
-  const isControlPlaneRoute = pathname === '/agents-control-plane' || pathname.startsWith('/agents-control-plane/')
+  const isControlPlaneRoute = pathname === '/control-plane' || pathname.startsWith('/control-plane/')
   const [terminalSessions, setTerminalSessions] = React.useState<TerminalSession[]>([])
 
   React.useEffect(() => {
@@ -197,7 +203,7 @@ export function AppSidebar() {
             <SidebarMenu>
               {(isControlPlaneRoute ? controlPlaneNav : [agentsStudioNav]).map((item) => {
                 const isActive = isControlPlaneRoute
-                  ? item.to === '/agents-control-plane'
+                  ? item.to === '/control-plane'
                     ? pathname === item.to
                     : pathname === item.to || pathname.startsWith(`${item.to}/`)
                   : pathname === item.to || pathname.startsWith(`${item.to}/`)

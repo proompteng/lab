@@ -14,6 +14,7 @@ import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '~/s
 
 const DEFAULT_NAMESPACE = 'agents'
 const DEFAULT_GRPC_PORT = 50051
+const DEFAULT_WORKFLOW_STEP = 'implement'
 const SERVICE_NAME = 'jangar'
 
 type AgentctlServer = {
@@ -743,6 +744,13 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
         const idempotencyKey = call.request?.idempotency_key ?? ''
         const runtimeConfig = parseEntryMap(call.request?.runtime_config ?? [])
         const parameters = parseEntryMap(call.request?.parameters ?? [])
+        let stageValue: string | null = null
+        if (runtimeType === 'workflow') {
+          stageValue = asString(parameters.stage) ?? asString(runtimeConfig.stage) ?? DEFAULT_WORKFLOW_STEP
+          if (!asString(parameters.stage)) {
+            parameters.stage = stageValue
+          }
+        }
 
         const workload = call.request?.workload
         const payload: Record<string, unknown> = {
@@ -754,6 +762,17 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
             ...(Object.keys(runtimeConfig).length > 0 ? { config: runtimeConfig } : {}),
           },
           ...(Object.keys(parameters).length > 0 ? { parameters } : {}),
+        }
+
+        if (runtimeType === 'workflow') {
+          payload.workflow = {
+            steps: [
+              {
+                name: stageValue ?? DEFAULT_WORKFLOW_STEP,
+                parameters: { stage: stageValue ?? DEFAULT_WORKFLOW_STEP },
+              },
+            ],
+          }
         }
 
         if (workload?.image || workload?.cpu || workload?.memory) {

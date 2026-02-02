@@ -247,6 +247,38 @@ export const fetchPrimitiveDetail = async (params: {
   return { ok: true, resource, kind: params.kind, namespace }
 }
 
+export const deletePrimitiveResource = async (params: {
+  kind: AgentPrimitiveKind
+  name: string
+  namespace: string
+}): Promise<PrimitiveDetailResult> => {
+  const searchParams = new URLSearchParams({
+    kind: params.kind,
+    name: params.name,
+    namespace: params.namespace,
+  })
+  const response = await fetch(`/api/agents/control-plane/resource?${searchParams.toString()}`, {
+    method: 'DELETE',
+  })
+  const payload = await parseResponse(response)
+  if (!payload || typeof payload !== 'object') {
+    return { ok: false, message: 'Invalid response payload', status: response.status }
+  }
+  if ('ok' in payload && payload.ok === false) {
+    return {
+      ok: false,
+      message: extractErrorMessage(payload) ?? 'Request failed',
+      status: response.status,
+      raw: payload,
+    }
+  }
+  const record = payload as Record<string, unknown>
+  const resource =
+    record.resource && typeof record.resource === 'object' ? (record.resource as Record<string, unknown>) : {}
+  const namespace = typeof record.namespace === 'string' ? record.namespace : params.namespace
+  return { ok: true, resource, kind: params.kind, namespace }
+}
+
 export const fetchPrimitiveEvents = async (params: {
   kind: AgentPrimitiveKind
   name: string

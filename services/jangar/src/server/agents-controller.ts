@@ -2979,7 +2979,9 @@ const seedNamespaceState = async (
   for (const resource of providers) updateStateMap(nsState.providers, 'ADDED', resource)
   for (const resource of runs) updateStateMap(nsState.runs, 'ADDED', resource)
 
-  await reconcileNamespaceSnapshot(kube, namespace, snapshotNamespace(nsState), state, concurrency)
+  enqueueNamespaceTask(namespace, () =>
+    reconcileNamespaceSnapshot(kube, namespace, snapshotNamespace(nsState), state, concurrency),
+  )
 }
 
 const startNamespaceWatches = (

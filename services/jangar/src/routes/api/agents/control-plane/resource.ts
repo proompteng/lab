@@ -19,6 +19,7 @@ export const Route = createFileRoute('/api/agents/control-plane/resource')({
     handlers: {
       GET: async ({ request }) => getPrimitiveResource(request),
       POST: async ({ request }) => postPrimitiveResource(request),
+      DELETE: async ({ request }) => deletePrimitiveResource(request),
     },
   },
 })
@@ -72,6 +73,36 @@ export const getPrimitiveResource = async (
       return errorResponse(`${resolved.kind} not found`, 404, { name, namespace })
     }
     return okResponse({ ok: true, kind: resolved.kind, namespace, resource })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return errorResponse(message, 500, { kind: resolved.kind, namespace, name })
+  }
+}
+
+export const deletePrimitiveResource = async (
+  request: Request,
+  deps: { kubeClient?: ReturnType<typeof createKubernetesClient> } = {},
+) => {
+  const url = new URL(request.url)
+  const kindParam = url.searchParams.get('kind')
+  const name = asString(url.searchParams.get('name'))
+  const resolved = resolvePrimitiveKind(kindParam)
+  if (!resolved) {
+    return errorResponse('kind is required', 400)
+  }
+  if (!name) {
+    return errorResponse('name is required', 400)
+  }
+
+  const namespace = normalizeNamespace(url.searchParams.get('namespace'), 'agents')
+  const kube = deps.kubeClient ?? createKubernetesClient()
+
+  try {
+    const deleted = await kube.delete(resolved.resource, name, namespace)
+    if (!deleted) {
+      return errorResponse(`${resolved.kind} not found`, 404, { name, namespace })
+    }
+    return okResponse({ ok: true, kind: resolved.kind, namespace, resource: deleted })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return errorResponse(message, 500, { kind: resolved.kind, namespace, name })

@@ -115,6 +115,15 @@ export const createKubernetesClient = (): KubernetesClient => ({
       return parseJson(output, 'kubectl delete')
     } catch (error) {
       if (notFound(error)) return null
+      const message = error instanceof Error ? error.message : String(error)
+      if (message.includes("only support '-o name'") || message.includes('unexpected -o output mode')) {
+        const output = await kubectl(
+          ['delete', resource, name, '-n', namespace, '-o', 'name'],
+          undefined,
+          'kubectl delete',
+        )
+        return { name, namespace, resource, output }
+      }
       throw error
     }
   },

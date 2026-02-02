@@ -71,6 +71,21 @@ export type IssueSummary = {
   updatedAt: string | null
 }
 
+export type CreateIssueInput = {
+  owner: string
+  repo: string
+  title: string
+  body?: string | null
+  labels?: string[]
+}
+
+export type CreatedIssue = {
+  number: number
+  title: string
+  body: string | null
+  htmlUrl: string | null
+}
+
 export type FileContent = {
   content: string
   sha: string
@@ -807,6 +822,27 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
     })
   }
 
+  const createIssue = async ({ owner, repo, title, body, labels }: CreateIssueInput): Promise<CreatedIssue> => {
+    const payload: Record<string, unknown> = { title }
+    if (typeof body === 'string' && body.trim().length > 0) {
+      payload.body = body
+    }
+    if (Array.isArray(labels) && labels.length > 0) {
+      payload.labels = labels
+    }
+    const data = (await rest(`/repos/${owner}/${repo}/issues`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })) as Record<string, unknown>
+    return {
+      number: Number(data.number),
+      title: typeof data.title === 'string' ? data.title : title,
+      body: typeof data.body === 'string' ? data.body : (body ?? null),
+      htmlUrl: typeof data.html_url === 'string' ? data.html_url : null,
+    }
+  }
+
   const listIssues = async ({
     owner,
     repo,
@@ -866,6 +902,7 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
     updateFile,
     createBranch,
     createPullRequest,
+    createIssue,
     listIssues,
   }
 }
