@@ -172,16 +172,21 @@ function ImplementationSpecRunPage() {
   const [runResult, setRunResult] = React.useState<{ name: string; namespace: string } | null>(null)
 
   const previousSpecRef = React.useRef<string | null>(null)
-  const repositoryRef = React.useRef<HTMLInputElement | null>(null)
+
+  const readRepositoryValue = React.useCallback(() => {
+    if (typeof document === 'undefined') return ''
+    const input = document.getElementById('run-repo') as HTMLInputElement | null
+    return input?.value?.trim() ?? ''
+  }, [])
 
   const syncRepositoryFromInput = React.useCallback(
     (value?: string) => {
-      const nextValue = (value ?? repositoryRef.current?.value ?? '').trim()
+      const nextValue = (value ?? readRepositoryValue()).trim()
       if (nextValue && nextValue !== repository) {
         setRepository(nextValue)
       }
     },
-    [repository],
+    [readRepositoryValue, repository],
   )
 
   React.useEffect(() => {
@@ -189,20 +194,20 @@ function ImplementationSpecRunPage() {
     let attempts = 0
     const timer = window.setInterval(() => {
       attempts += 1
-      const value = repositoryRef.current?.value?.trim() ?? ''
+      const value = readRepositoryValue()
       if (value) {
         setRepository(value)
         window.clearInterval(timer)
         return
       }
-      if (attempts >= 10) {
+      if (attempts >= 120) {
         window.clearInterval(timer)
       }
-    }, 200)
+    }, 250)
     return () => {
       window.clearInterval(timer)
     }
-  }, [repository])
+  }, [readRepositoryValue, repository])
 
   React.useEffect(() => {
     let isMounted = true
@@ -609,10 +614,12 @@ function ImplementationSpecRunPage() {
             </label>
             <Input
               id="run-repo"
-              ref={repositoryRef}
               value={repository}
               onChange={(event) => setRepository(event.target.value)}
               onBlur={(event) => syncRepositoryFromInput(event.currentTarget.value)}
+              onFocus={() => syncRepositoryFromInput()}
+              autoComplete="on"
+              name="repository"
               placeholder="proompteng/lab"
             />
             <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
