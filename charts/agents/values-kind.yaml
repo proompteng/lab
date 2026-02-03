@@ -1,0 +1,31 @@
+replicaCount: 1
+
+image:
+  repository: jangar-local
+  tag: kind
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+controller:
+  namespaces:
+    - agents
+
+rbac:
+  clusterScoped: false
+
+database:
+  secretRef:
+    name: jangar-db-app
+    key: uri
+
+agentComms:
+  enabled: false
+
+grpc:
+  enabled: true
+  port: 50051
+  servicePort: 50051
+  serviceType: ClusterIP
