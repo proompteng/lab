@@ -3164,24 +3164,6 @@ const loadWorkflowDependencies = async (
   const allowedServiceAccounts = parseStringList(security.allowedServiceAccounts)
   const runSecrets = parseStringList(spec.secrets)
   const authSecret = resolveAuthSecretConfig()
-  const parameters = resolveParameters(agentRun)
-  const vcsResolution = await resolveVcsContext({
-    kube,
-    namespace,
-    agentRun,
-    agent,
-    implementation: implResource,
-    parameters,
-    allowedSecrets,
-  })
-  if (!vcsResolution.ok) {
-    return {
-      ok: false as const,
-      reason: vcsResolution.reason ?? 'VcsUnavailable',
-      message: vcsResolution.message ?? 'vcs provider unavailable',
-    }
-  }
-
   if (allowedSecrets.length > 0) {
     const forbidden = runSecrets.filter((secret) => !allowedSecrets.includes(secret))
     if (forbidden.length > 0) {
@@ -3246,7 +3228,7 @@ const loadWorkflowDependencies = async (
     provider,
     implementation: implResource,
     memory,
-    vcs: vcsResolution,
+    allowedSecrets,
   }
 }
 
@@ -3316,19 +3298,12 @@ const reconcileWorkflowRun = async (
     return
   }
 
-  const baseConditions =
-    dependencies.vcs?.skip && dependencies.vcs.reason
-      ? upsertCondition(conditions, {
-          type: 'VcsSkipped',
-          status: 'True',
-          reason: dependencies.vcs.reason,
-          message: dependencies.vcs.message ?? '',
-        })
-      : conditions
-  const vcsStatus = dependencies.vcs?.status ?? undefined
+  let baseConditions = conditions
+  let vcsStatus: Record<string, unknown> | undefined
 
   const baseParameters = resolveParameters(agentRun)
   const baseWorkload = asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
+  const allowedSecrets = dependencies.allowedSecrets
   const workflowStatus = normalizeWorkflowStatus(asRecord(status.workflow) ?? null, workflowSteps)
   let runtimeRefUpdate: RuntimeRef | null = null
   let workflowFailure: { reason: string; message: string } | null = null
@@ -3413,6 +3388,36 @@ const reconcileWorkflowRun = async (
         }
         break
       }
+
+      const stepVcs = await resolveVcsContext({
+        kube,
+        namespace,
+        agentRun,
+        agent: dependencies.agent,
+        implementation,
+        parameters: stepParameters,
+        allowedSecrets,
+      })
+      if (!stepVcs.ok) {
+        setWorkflowStepPhase(stepStatus, 'Failed', stepVcs.message ?? 'vcs provider unavailable')
+        stepStatus.finishedAt = nowIso()
+        workflowFailure = {
+          reason: stepVcs.reason ?? 'VcsUnavailable',
+          message: `workflow step ${stepSpec.name} ${stepVcs.message ?? 'vcs provider unavailable'}`,
+        }
+        break
+      }
+      if (stepVcs.skip && stepVcs.reason) {
+        baseConditions = upsertCondition(baseConditions, {
+          type: 'VcsSkipped',
+          status: 'True',
+          reason: stepVcs.reason,
+          message: stepVcs.message ?? '',
+        })
+      }
+      if (stepVcs.status) {
+        vcsStatus = stepVcs.status
+      }
       const jobSuffix = `step-${index + 1}-attempt-${attempt}`
       const stepLabels = {
         'agents.proompteng.ai/step': normalizeLabelValue(stepSpec.name),
@@ -3434,7 +3439,7 @@ const reconcileWorkflowRun = async (
           workload: stepWorkload,
           parameters: stepParameters,
           runtimeConfig,
-          vcs: dependencies.vcs,
+          vcs: stepVcs,
         },
       )
 
