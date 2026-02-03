@@ -33,13 +33,22 @@ const makeLoginCommand = () => {
         })).trim()
       }
       if (!resolvedToken) {
-        resolvedToken = await promptText('Token')
+        resolvedToken = yield* Effect.tryPromise({
+          try: () => promptText('Token'),
+          catch: (error) => asAgentctlError(error, 'ValidationError'),
+        })
       }
       if (!resolvedToken) {
         throw new Error('Token is required')
       }
-      const config = await loadConfig()
-      await saveConfig({ ...config, token: resolvedToken })
+      const config = yield* Effect.tryPromise({
+        try: () => loadConfig(),
+        catch: (error) => asAgentctlError(error, 'IoError'),
+      })
+      yield* Effect.tryPromise({
+        try: () => saveConfig({ ...config, token: resolvedToken }),
+        catch: (error) => asAgentctlError(error, 'IoError'),
+      })
       console.log(`Saved token to ${resolveConfigPath()}`)
     }).pipe(Effect.mapError((error) => asAgentctlError(error, 'IoError'))),
   )
@@ -48,7 +57,10 @@ const makeLoginCommand = () => {
 const makeStatusCommand = () =>
   Command.make('status', {}, () =>
     Effect.gen(function* () {
-      const config = await loadConfig()
+      const config = yield* Effect.tryPromise({
+        try: () => loadConfig(),
+        catch: (error) => asAgentctlError(error, 'IoError'),
+      })
       if (!config.token) {
         console.log('No token configured.')
         return
@@ -60,14 +72,20 @@ const makeStatusCommand = () =>
 const makeLogoutCommand = () =>
   Command.make('logout', {}, () =>
     Effect.gen(function* () {
-      const config = await loadConfig()
+      const config = yield* Effect.tryPromise({
+        try: () => loadConfig(),
+        catch: (error) => asAgentctlError(error, 'IoError'),
+      })
       if (!config.token) {
         console.log('No token configured.')
         return
       }
       const next = { ...config }
       delete next.token
-      await saveConfig(next)
+      yield* Effect.tryPromise({
+        try: () => saveConfig(next),
+        catch: (error) => asAgentctlError(error, 'IoError'),
+      })
       console.log(`Removed token from ${resolveConfigPath()}`)
     }).pipe(Effect.mapError((error) => asAgentctlError(error, 'IoError'))),
   )
