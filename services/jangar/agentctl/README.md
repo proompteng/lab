@@ -29,8 +29,8 @@ brew install proompteng/tap/agentctl
 
 ```bash
 agentctl status
-agentctl agent list
-agentctl impl list
+agentctl get agent
+agentctl get impl
 ```
 
 ### gRPC mode
@@ -46,7 +46,7 @@ agentctl --grpc --server 127.0.0.1:50051 status
 agentctl help
 agentctl examples
 agentctl help run
-agentctl agent --help
+agentctl get --help
 ```
 
 ## Configuration
@@ -88,99 +88,106 @@ Environment overrides:
 agentctl examples
 agentctl version
 agentctl version --client
+agentctl auth login
+agentctl auth status
 agentctl config view
 agentctl config view --show-secrets
+agentctl config init
 agentctl config set --namespace agents --address 127.0.0.1:50051
 agentctl config set --tls
 agentctl --grpc --server 127.0.0.1:50051 status
 agentctl completion install zsh
 
-agentctl agent list
-agentctl agent get <name>
-agentctl agent describe <name>
-agentctl agent watch --interval 5
-agentctl agent apply -f agent.yaml
-agentctl agent delete <name>
+agentctl get agent
+agentctl get agent <name>
+agentctl describe agent <name>
+agentctl list agent --selector app=demo
+agentctl watch agent --interval 5
+agentctl apply -f agent.yaml
+agentctl delete agent <name> --yes
+agentctl explain agent
 
-agentctl impl list
-agentctl impl create --text "..." --summary "..." --source provider=github,externalId=...,url=...
-agentctl impl create --text @impl.md --summary "..."
-agentctl impl create --text - --summary "..." < impl.md
-agentctl impl init --apply
-agentctl impl describe <name>
-agentctl impl watch
-agentctl impl apply -f impl.yaml
-agentctl impl delete <name>
+agentctl get impl
+agentctl create impl --text "..." --summary "..." --source provider=github,externalId=...,url=...
+agentctl create impl --text @impl.md --summary "..."
+agentctl create impl --text - --summary "..." < impl.md
+agentctl init impl --apply
+agentctl describe impl <name>
+agentctl watch impl
+agentctl apply -f impl.yaml
+agentctl delete impl <name> --yes
 
-agentctl source list
-agentctl source get <name>
-agentctl source describe <name>
-agentctl source watch
-agentctl source apply -f source.yaml
-agentctl source delete <name>
+agentctl get source
+agentctl get source <name>
+agentctl describe source <name>
+agentctl watch source
+agentctl apply -f source.yaml
+agentctl delete source <name> --yes
 
-agentctl memory list
-agentctl memory get <name>
-agentctl memory describe <name>
-agentctl memory watch
-agentctl memory apply -f memory.yaml
-agentctl memory delete <name>
+agentctl get memory
+agentctl get memory <name>
+agentctl describe memory <name>
+agentctl watch memory
+agentctl apply -f memory.yaml
+agentctl delete memory <name> --yes
 
-agentctl orchestration list
-agentctl orchestration get <name>
-agentctl orchestration describe <name>
-agentctl orchestration apply -f orchestration.yaml
+agentctl get orchestration
+agentctl get orchestration <name>
+agentctl describe orchestration <name>
+agentctl apply -f orchestration.yaml
 
-agentctl orchestrationrun list
-agentctl orchestrationrun get <name>
-agentctl orchestrationrun describe <name>
-agentctl orchestrationrun apply -f orchestration-run.yaml
+agentctl get orchestrationrun
+agentctl get orchestrationrun <name>
+agentctl describe orchestrationrun <name>
+agentctl apply -f orchestration-run.yaml
 
-agentctl tool list
-agentctl tool get <name>
-agentctl tool describe <name>
-agentctl tool apply -f tool.yaml
+agentctl get tool
+agentctl get tool <name>
+agentctl describe tool <name>
+agentctl apply -f tool.yaml
 
-agentctl signal list
-agentctl signal get <name>
-agentctl signal describe <name>
-agentctl signal apply -f signal.yaml
+agentctl get signal
+agentctl get signal <name>
+agentctl describe signal <name>
+agentctl apply -f signal.yaml
 
-agentctl schedule list
-agentctl schedule get <name>
-agentctl schedule describe <name>
-agentctl schedule apply -f schedule.yaml
+agentctl get schedule
+agentctl get schedule <name>
+agentctl describe schedule <name>
+agentctl apply -f schedule.yaml
 
-agentctl artifact list
-agentctl artifact get <name>
-agentctl artifact describe <name>
-agentctl artifact apply -f artifact.yaml
+agentctl get artifact
+agentctl get artifact <name>
+agentctl describe artifact <name>
+agentctl apply -f artifact.yaml
 
-agentctl workspace list
-agentctl workspace get <name>
-agentctl workspace describe <name>
-agentctl workspace apply -f workspace.yaml
+agentctl get workspace
+agentctl get workspace <name>
+agentctl describe workspace <name>
+agentctl apply -f workspace.yaml
 
 agentctl run submit --agent <name> --impl <name> --runtime <type>
-agentctl run init --apply --wait
+agentctl init run --apply --wait
 agentctl run codex --prompt "Summarize repo" --agent <name> --runtime workflow --wait
-agentctl run list
-agentctl run get <name>
-agentctl run describe <name>
-agentctl run status <name>
-agentctl run watch
+agentctl get run
+agentctl get run <name>
+agentctl describe run <name>
+agentctl list run --phase Succeeded
+agentctl watch run --runtime workflow
 agentctl run wait <name>
 agentctl run logs <name> --follow
 agentctl run cancel <name>
 ```
 
 Notes:
-- All `apply` commands accept `-f -` to read manifests from stdin.
-- `impl create --text` accepts inline text, `@file`, or `-` for stdin.
+- `apply` accepts `-f -` to read manifests from stdin.
+- `create impl --text` accepts inline text, `@file`, or `-` for stdin.
+- Use `--dry-run` with `apply` or `delete` to preview changes.
+- Use `--yes` to skip confirmation prompts (required for apply/delete in non-interactive contexts).
 
 By default, `agentctl` targets the Kubernetes API using your kube context. Use `--grpc` (or `AGENTCTL_MODE=grpc`) plus
-`--server` (or `--address`) to target the Jangar gRPC endpoint. `--output` supports `table` (default), `json`, and
-`yaml`; `describe` defaults to `yaml` when `--output` is omitted.
+`--server` (or `--address`) to target the Jangar gRPC endpoint. `--output` supports `table` (default), `wide`, `json`,
+`yaml`, `yaml-stream`, and `text`; `describe` defaults to `yaml` when `--output` is omitted.
 
 Port-forward example:
 
@@ -188,6 +195,19 @@ Port-forward example:
 kubectl -n agents port-forward svc/agents-grpc 50051:50051
 agentctl --grpc --server 127.0.0.1:50051 status
 ```
+
+## Migration guide (breaking changes)
+
+- `agentctl <resource> list` → `agentctl get <resource>` (or `agentctl list <resource>`)
+- `agentctl <resource> get <name>` → `agentctl get <resource> <name>`
+- `agentctl <resource> describe <name>` → `agentctl describe <resource> <name>`
+- `agentctl <resource> watch` → `agentctl watch <resource>`
+- `agentctl <resource> apply -f <file>` → `agentctl apply -f <file>`
+- `agentctl <resource> delete <name>` → `agentctl delete <resource> <name> --yes`
+- `agentctl impl init` → `agentctl init impl`
+- `agentctl impl create` → `agentctl create impl`
+- `agentctl run list/get/describe/watch` → `agentctl list|get|describe|watch run`
+- `agentctl run init` → `agentctl init run`
 
 ## Build
 

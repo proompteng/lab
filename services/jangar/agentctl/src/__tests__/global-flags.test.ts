@@ -15,4 +15,11 @@ describe('parseGlobalFlags', () => {
     expect(flags.output).toBe('json')
     expect(argv).toEqual(['status'])
   })
+
+  it('parses confirmation and non-interactive flags', () => {
+    const { argv, flags } = parseGlobalFlags(['--yes', '--no-input', 'delete', 'agent', 'demo'])
+    expect(flags.yes).toBe(true)
+    expect(flags.noInput).toBe(true)
+    expect(argv).toEqual(['delete', 'agent', 'demo'])
+  })
 })

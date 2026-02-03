@@ -9,11 +9,13 @@ import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
+import { spawn } from 'node:child_process'
 
 import { makeApp } from './cli/app'
 import { makeAgentctlContextLayer } from './cli/context'
 import { exitCodeFor, formatError, isAgentctlError } from './cli/errors'
 import { parseGlobalFlags } from './cli/global-flags'
+import { renderGlobalFlags } from './cli/help'
 import { loadConfig, resolveConfig } from './config'
 import { EXIT_UNKNOWN, EXIT_VALIDATION, getVersion } from './legacy'
 import { TransportLive } from './transport'
@@ -33,6 +35,7 @@ const handleExit = (exit: Exit.Exit<unknown, unknown>, onExit: (code: number) =>
     const text = HelpDoc.toAnsiText(failure.error)
     if (failure._tag === 'HelpRequested') {
       console.log(text)
+      console.log(renderGlobalFlags())
       onExit(0)
     } else {
       console.error(text)
@@ -57,8 +60,43 @@ const handleExit = (exit: Exit.Exit<unknown, unknown>, onExit: (code: number) =>
   onExit(EXIT_UNKNOWN)
 }
 
+const setupPager = (enabled?: boolean) => {
+  if (!enabled) return null
+  if (!process.stdout.isTTY) return null
+  const pager = process.env.PAGER?.trim() || 'less -FRX'
+  const [cmd, ...args] = pager.split(' ').filter(Boolean)
+  if (!cmd) return null
+  let child: ReturnType<typeof spawn> | null = null
+  try {
+    child = spawn(cmd, args, { stdio: ['pipe', process.stdout, process.stderr] })
+  } catch {
+    return null
+  }
+  const originalWrite = process.stdout.write.bind(process.stdout)
+  if (!child || !child.stdin) return null
+  process.stdout.write = child.stdin.write.bind(child.stdin)
+  child.on('error', () => {
+    process.stdout.write = originalWrite
+  })
+  return () => {
+    try {
+      child?.stdin?.end()
+    } catch {
+      // ignore
+    }
+    process.stdout.write = originalWrite
+  }
+}
+
 const main = async () => {
   const { argv, flags } = parseGlobalFlags(process.argv.slice(2))
+  if (flags.noInput) {
+    process.env.AGENTCTL_NO_INPUT = '1'
+  }
+  if (flags.color === false) {
+    process.env.NO_COLOR = '1'
+  }
+  const teardownPager = setupPager(flags.pager)
   const commandArgv = [process.argv[0] ?? 'node', process.argv[1] ?? 'agentctl', ...argv]
   const config = await loadConfig()
   const { resolved, warnings } = resolveConfig(flags, config)
@@ -82,7 +120,10 @@ const main = async () => {
   runMain(program, {
     disableErrorReporting: true,
     disablePrettyLogger: true,
-    teardown: handleExit,
+    teardown: (exit, onExit) => {
+      if (teardownPager) teardownPager()
+      handleExit(exit, onExit)
+    },
   })
 }
 

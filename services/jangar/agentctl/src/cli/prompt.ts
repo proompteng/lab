@@ -6,7 +6,20 @@ export type PromptOptions = {
   allowEmpty?: boolean
 }
 
+const isInteractiveAllowed = () => {
+  if (!stdin.isTTY || !stdout.isTTY) return false
+  if (process.env.CI) return false
+  if (process.env.AGENTCTL_NO_INPUT) return false
+  return true
+}
+
 export const promptText = async (question: string, options: PromptOptions = {}) => {
+  if (!isInteractiveAllowed()) {
+    if (options.allowEmpty) {
+      return options.defaultValue ?? ''
+    }
+    throw new Error('Interactive prompts are disabled; pass flags or remove --no-input.')
+  }
   const rl = createInterface({ input: stdin, output: stdout })
   const suffix = options.defaultValue ? ` (${options.defaultValue})` : ''
   const answer = await rl.question(`${question}${suffix}: `)
@@ -19,6 +32,9 @@ export const promptText = async (question: string, options: PromptOptions = {}) 
 }
 
 export const promptConfirm = async (question: string, defaultValue = false) => {
+  if (!isInteractiveAllowed()) {
+    throw new Error('Interactive prompts are disabled; pass --yes or remove --no-input.')
+  }
   const rl = createInterface({ input: stdin, output: stdout })
   const hint = defaultValue ? 'Y/n' : 'y/N'
   const answer = await rl.question(`${question} (${hint}): `)

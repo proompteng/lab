@@ -131,6 +131,31 @@ export const parseGlobalFlags = (argv: string[]): ParsedGlobalFlags => {
       continue
     }
 
+    if (arg === '--yes' || arg === '-y') {
+      flags.yes = true
+      continue
+    }
+    if (arg === '--no-input') {
+      flags.noInput = true
+      continue
+    }
+    if (arg === '--color') {
+      flags.color = true
+      continue
+    }
+    if (arg === '--no-color') {
+      flags.color = false
+      continue
+    }
+    if (arg === '--pager') {
+      flags.pager = true
+      continue
+    }
+    if (arg === '--no-pager') {
+      flags.pager = false
+      continue
+    }
+
     rest.push(arg)
   }
 
