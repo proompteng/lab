@@ -23,6 +23,7 @@ type SpecDraft = {
 
 type CompletionPayload = {
   choices?: Array<{
+    delta?: { content?: string | null } | null
     message?: { content?: string | Array<{ text?: string; content?: string }> | null } | null
   }>
   error?: { message?: string }

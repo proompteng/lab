@@ -620,24 +620,25 @@ function AgentRunsListPage() {
                   />
                 </PaginationItem>
                 {pageItemsWithKeys.map((entry) => {
-                  if (entry.item === 'ellipsis') {
+                  if (typeof entry.item !== 'number') {
                     return (
                       <PaginationItem key={entry.key}>
                         <PaginationEllipsis />
                       </PaginationItem>
                     )
                   }
+                  const pageNumber = entry.item
                   return (
                     <PaginationItem key={entry.key}>
                       <PaginationLink
                         href="#"
-                        isActive={entry.item === page}
+                        isActive={pageNumber === page}
                         onClick={(event) => {
                           event.preventDefault()
-                          setPage(entry.item)
+                          setPage(pageNumber)
                         }}
                       >
-                        {entry.item}
+                        {pageNumber}
                       </PaginationLink>
                     </PaginationItem>
                   )

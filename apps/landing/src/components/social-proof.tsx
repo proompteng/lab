@@ -1,4 +1,4 @@
-import type { SocialProof } from '@/app/config'
+import type { SocialProof as SocialProofItem } from '@/app/config'
 
 const SOCIAL_PROOF_HEADING_ID = 'social-proof-heading'
 
@@ -6,7 +6,7 @@ type SocialProofProps = {
   kicker: string
   heading: string
   description: string
-  items: SocialProof[]
+  items: SocialProofItem[]
 }
 
 export default function SocialProof({ kicker, heading, description, items }: SocialProofProps) {

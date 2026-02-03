@@ -1,6 +1,5 @@
-import Link from 'next/link'
-
 import { Button } from '@proompteng/design/ui'
+import Link from 'next/link'
 
 const NAV_ITEMS = [
   { href: '#platform', label: 'platform' },

@@ -1,7 +1,6 @@
+import { Badge, Button } from '@proompteng/design/ui'
 import { ArrowRight, Check, ChevronRight } from 'lucide-react'
 import Link from 'next/link'
-
-import { Badge, Button } from '@proompteng/design/ui'
 import type { HeroContent } from '@/app/config'
 import { cn } from '@/lib/utils'
 

@@ -1,6 +1,5 @@
-import { ArrowRight } from 'lucide-react'
-
 import { Button } from '@proompteng/design/ui'
+import { ArrowRight } from 'lucide-react'
 import type { LandingContent } from '@/app/config'
 
 type ClosingCtaProps = LandingContent['closingCta']
