@@ -31,8 +31,22 @@ export type PrimitiveListResult =
   | { ok: false; message: string; status?: number; raw?: unknown }
 
 export type PrimitiveDetailResult =
-  | { ok: true; resource: Record<string, unknown>; kind: AgentPrimitiveKind; namespace: string }
+  | { ok: true; resource: PrimitiveResource; kind: AgentPrimitiveKind; namespace: string }
   | { ok: false; message: string; status?: number; raw?: unknown }
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+
+const normalizePrimitiveResource = (value: unknown): PrimitiveResource => {
+  const record = asRecord(value)
+  return {
+    apiVersion: typeof record.apiVersion === 'string' ? record.apiVersion : null,
+    kind: typeof record.kind === 'string' ? record.kind : null,
+    metadata: asRecord(record.metadata),
+    spec: asRecord(record.spec),
+    status: asRecord(record.status),
+  }
+}
 
 export type PrimitiveEventItem = {
   name: string | null
@@ -241,8 +255,7 @@ export const fetchPrimitiveDetail = async (params: {
     }
   }
   const record = payload as Record<string, unknown>
-  const resource =
-    record.resource && typeof record.resource === 'object' ? (record.resource as Record<string, unknown>) : {}
+  const resource = normalizePrimitiveResource(record.resource)
   const namespace = typeof record.namespace === 'string' ? record.namespace : params.namespace
   return { ok: true, resource, kind: params.kind, namespace }
 }
@@ -273,8 +286,7 @@ export const deletePrimitiveResource = async (params: {
     }
   }
   const record = payload as Record<string, unknown>
-  const resource =
-    record.resource && typeof record.resource === 'object' ? (record.resource as Record<string, unknown>) : {}
+  const resource = normalizePrimitiveResource(record.resource)
   const namespace = typeof record.namespace === 'string' ? record.namespace : params.namespace
   return { ok: true, resource, kind: params.kind, namespace }
 }

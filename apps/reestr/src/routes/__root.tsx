@@ -2,7 +2,7 @@ import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-r
 import type { ReactNode } from 'react'
 
 import '../index.css'
-import { TooltipProvider } from '~/components/ui/tooltip'
+import { TooltipProvider } from '@proompteng/design/ui'
 
 export const Route = createRootRoute({
   component: RootComponent,

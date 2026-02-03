@@ -2,9 +2,9 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { DEFAULT_NAMESPACE, parseNamespaceSearch } from '@/components/agents-control-plane-search'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
+import { Button } from '@proompteng/design/ui'
+import { Input } from '@proompteng/design/ui'
+import { Textarea } from '@proompteng/design/ui'
 import { randomUuid } from '@/lib/uuid'
 
 export const Route = createFileRoute('/control-plane/implementation-specs/new')({
@@ -23,6 +23,7 @@ type SpecDraft = {
 
 type CompletionPayload = {
   choices?: Array<{
+    delta?: { content?: string | null } | null
     message?: { content?: string | Array<{ text?: string; content?: string }> | null } | null
   }>
   error?: { message?: string }

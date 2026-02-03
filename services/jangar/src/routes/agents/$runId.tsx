@@ -7,7 +7,7 @@ import {
   sortMessagesByTimestamp,
   useAgentEventStream,
 } from '@/components/agent-comms'
-import { Button } from '@/components/ui/button'
+import { Button } from '@proompteng/design/ui'
 
 export const Route = createFileRoute('/agents/$runId')({
   component: AgentsRunPage,

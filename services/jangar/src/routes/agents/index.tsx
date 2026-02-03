@@ -2,8 +2,8 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { AgentStreamStatusBadge, buildRunSummaries, useAgentEventStream } from '@/components/agent-comms'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Button } from '@proompteng/design/ui'
+import { Input } from '@proompteng/design/ui'
 
 export const Route = createFileRoute('/agents/')({
   component: AgentsIndexPage,

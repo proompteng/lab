@@ -1,6 +1,4 @@
-@import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
+@import "@proompteng/design/tailwind.css";
 @import "@fontsource-variable/jetbrains-mono";
 @import "@xterm/xterm/css/xterm.css";
 
@@ -19,8 +17,6 @@
   font-weight: 700;
   src: url("./assets/fonts/JetBrainsMonoNerdFontMono-Bold.ttf") format("truetype");
 }
-
-@custom-variant dark (&:is(.dark *));
 
 :root {
   --background: oklch(1 0 0);

@@ -10,8 +10,8 @@ import {
   StatusBadge,
 } from '@/components/agents-control-plane'
 import { DEFAULT_NAMESPACE, parseNamespaceSearch } from '@/components/agents-control-plane-search'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Button } from '@proompteng/design/ui'
+import { Input } from '@proompteng/design/ui'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,7 +22,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
+} from '@proompteng/design/ui'
 import {
   Pagination,
   PaginationContent,
@@ -31,7 +31,7 @@ import {
   PaginationLink,
   PaginationNext,
   PaginationPrevious,
-} from '@/components/ui/pagination'
+} from '@proompteng/design/ui'
 import { deletePrimitiveResource, fetchPrimitiveList, type PrimitiveResource } from '@/data/agents-control-plane'
 
 const PAGE_SIZE = 20

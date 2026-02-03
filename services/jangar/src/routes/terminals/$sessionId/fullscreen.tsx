@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { TerminalView } from '@/components/terminal-view'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Skeleton } from '@proompteng/design/ui'
 
 export const Route = createFileRoute('/terminals/$sessionId/fullscreen')({
   component: TerminalFullscreenPage,

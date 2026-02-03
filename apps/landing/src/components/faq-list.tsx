@@ -1,5 +1,5 @@
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@proompteng/design/ui'
 import type { FaqItem } from '@/app/config'
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
 
 const FAQ_SECTION_ID = 'faq'
 const FAQ_HEADING_ID = 'faq-heading'

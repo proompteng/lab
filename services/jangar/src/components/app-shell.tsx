@@ -9,10 +9,10 @@ import {
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
-import { Toaster } from '@/components/ui/sonner'
+} from '@proompteng/design/ui'
+import { ScrollArea } from '@proompteng/design/ui'
+import { SidebarProvider, SidebarTrigger } from '@proompteng/design/ui'
+import { Toaster } from '@proompteng/design/ui'
 
 export function AppShell({ mainId, children }: { mainId: string; children: React.ReactNode }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })

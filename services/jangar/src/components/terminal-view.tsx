@@ -5,7 +5,7 @@ import type { SearchAddon } from '@xterm/addon-search'
 import type { Terminal } from '@xterm/xterm'
 import * as React from 'react'
 
-import { Button } from '@/components/ui/button'
+import { Button } from '@proompteng/design/ui'
 import { cn } from '@/lib/utils'
 import { randomUuid } from '@/lib/uuid'
 
