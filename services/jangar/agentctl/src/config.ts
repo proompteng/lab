@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { DEFAULT_ADDRESS, DEFAULT_NAMESPACE, normalizeOutput } from './legacy'
 
-export type OutputFormat = 'json' | 'table' | 'yaml'
+export type OutputFormat = 'json' | 'table' | 'yaml' | 'yaml-stream' | 'text' | 'wide'
 
 export type Config = {
   namespace?: string
@@ -25,6 +25,10 @@ export type GlobalFlags = {
   grpc?: boolean
   kubeconfig?: string
   context?: string
+  yes?: boolean
+  noInput?: boolean
+  color?: boolean
+  pager?: boolean
 }
 
 export type TransportMode = 'grpc' | 'kube'

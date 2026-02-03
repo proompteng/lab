@@ -66,20 +66,22 @@ Jangar itself does not terminate TLS; use a gateway/mesh if you need TLS in prod
 
 ```bash
 agentctl status
-agentctl agent list --selector app=my-agent
-agentctl agent describe <name>
-agentctl agent watch --interval 5
+agentctl auth login
+agentctl auth status
+agentctl get agent --selector app=my-agent
+agentctl describe agent <name>
+agentctl watch agent --interval 5
 
-agentctl impl list
-agentctl impl describe <name>
-agentctl impl init --apply
+agentctl get impl
+agentctl describe impl <name>
+agentctl init impl --apply
 
 agentctl run submit --agent <name> --impl <name> --runtime <type>
-agentctl run init --apply --wait
+agentctl init run --apply --wait
 agentctl run codex --prompt "Summarize repo" --agent <name> --runtime workflow --wait
-agentctl run status <name>
-agentctl run list --phase Succeeded --runtime workflow
-agentctl run watch --selector app=my-agent
+agentctl get run <name>
+agentctl list run --phase Succeeded --runtime workflow
+agentctl watch run --selector app=my-agent
 ```
 
 Use gRPC mode explicitly when needed:

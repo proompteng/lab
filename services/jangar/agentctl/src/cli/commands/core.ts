@@ -18,6 +18,7 @@ import { AgentctlContext } from '../context'
 import { asAgentctlError } from '../errors'
 import { renderExamples } from '../examples'
 import { renderGlobalFlags, renderShortHelp, renderTopicHelp } from '../help'
+import { promptConfirm, promptText } from '../prompt'
 
 const formatConfig = (config: Record<string, unknown>) => JSON.stringify(config, null, 2)
 
@@ -55,7 +56,7 @@ export const makeQuickstartCommand = () =>
   Command.make('quickstart', {}, () =>
     Effect.sync(() => {
       console.log(
-        `Quickstart (kube mode default):\n  agentctl status\n  agentctl agent list\n  agentctl impl init --apply\n  agentctl run init --apply --wait\n\nOptional gRPC:\n  kubectl -n agents port-forward svc/agents-grpc 50051:50051\n  agentctl --grpc --server 127.0.0.1:50051 status\n`,
+        `Quickstart (kube mode default):\n  agentctl status\n  agentctl get agent\n  agentctl init impl --apply\n  agentctl run submit --agent <name> --impl <name> --runtime workflow --wait\n\nOptional gRPC:\n  kubectl -n agents port-forward svc/agents-grpc 50051:50051\n  agentctl --grpc --server 127.0.0.1:50051 status\n`,
       )
     }),
   )
@@ -175,7 +176,86 @@ export const makeConfigCommand = () => {
       }).pipe(Effect.mapError((error) => asAgentctlError(error, 'IoError'))),
   )
 
-  return Command.make('config').pipe(Command.withSubcommands([view, set]))
+  const init = Command.make(
+    'init',
+    { namespace, server, address, token, kubeconfig, context, tls },
+    ({ namespace, server, address, token, kubeconfig, context }) =>
+      Effect.gen(function* () {
+        const config = yield* Effect.promise(() => loadConfig())
+        const resolvedNamespace = Option.isSome(namespace)
+          ? namespace.value
+          : yield* Effect.tryPromise({
+              try: () => promptText('Namespace', { defaultValue: config.namespace ?? DEFAULT_NAMESPACE }),
+              catch: (error) => asAgentctlError(error, 'ValidationError'),
+            })
+        const resolvedKubeconfig = Option.isSome(kubeconfig)
+          ? kubeconfig.value
+          : yield* Effect.tryPromise({
+              try: () => promptText('Kubeconfig path (optional)', { allowEmpty: true }),
+              catch: (error) => asAgentctlError(error, 'ValidationError'),
+            })
+        const resolvedContext = Option.isSome(context)
+          ? context.value
+          : yield* Effect.tryPromise({
+              try: () => promptText('Kube context (optional)', { allowEmpty: true }),
+              catch: (error) => asAgentctlError(error, 'ValidationError'),
+            })
+        const argv = process.argv.slice(2)
+        const hasGrpcFlags =
+          Option.isSome(server) ||
+          Option.isSome(address) ||
+          Option.isSome(token) ||
+          argv.includes('--tls') ||
+          argv.includes('--no-tls')
+        const wantsGrpc = hasGrpcFlags
+          ? true
+          : yield* Effect.tryPromise({
+              try: () => promptConfirm('Configure gRPC access?', false),
+              catch: (error) => asAgentctlError(error, 'ValidationError'),
+            })
+        let resolvedAddress = config.address
+        let resolvedToken = config.token
+        let resolvedTls = config.tls
+        if (wantsGrpc) {
+          resolvedAddress = Option.isSome(server)
+            ? server.value
+            : Option.isSome(address)
+              ? address.value
+              : yield* Effect.tryPromise({
+                  try: () => promptText('gRPC address', { defaultValue: config.address ?? '127.0.0.1:50051' }),
+                  catch: (error) => asAgentctlError(error, 'ValidationError'),
+                })
+          resolvedToken = Option.isSome(token)
+            ? token.value
+            : yield* Effect.tryPromise({
+                try: () => promptText('Token (optional)', { allowEmpty: true }),
+                catch: (error) => asAgentctlError(error, 'ValidationError'),
+              })
+          if (argv.includes('--tls')) resolvedTls = true
+          if (argv.includes('--no-tls')) resolvedTls = false
+          if (resolvedTls === undefined) {
+            resolvedTls = yield* Effect.tryPromise({
+              try: () => promptConfirm('Enable TLS?', false),
+              catch: (error) => asAgentctlError(error, 'ValidationError'),
+            })
+          }
+        }
+
+        const next = {
+          ...config,
+          namespace: resolvedNamespace,
+          ...(resolvedAddress ? { address: resolvedAddress } : {}),
+          ...(resolvedToken ? { token: resolvedToken } : {}),
+          ...(resolvedTls !== undefined ? { tls: resolvedTls } : {}),
+          ...(resolvedKubeconfig ? { kubeconfig: resolvedKubeconfig } : {}),
+          ...(resolvedContext ? { context: resolvedContext } : {}),
+        }
+        yield* Effect.promise(() => saveConfig(next))
+        console.log(`Updated ${resolveConfigPath()}`)
+      }).pipe(Effect.mapError((error) => asAgentctlError(error, 'IoError'))),
+  )
+
+  return Command.make('config').pipe(Command.withSubcommands([view, set, init]))
 }
 
 export const makeVersionCommand = () =>
