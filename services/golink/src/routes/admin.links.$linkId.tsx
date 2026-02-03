@@ -1,8 +1,3 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute, notFound, Link as RouterLink, useNavigate } from '@tanstack/react-router'
-import { Save } from 'lucide-react'
-import { toast } from 'sonner'
-import { LinkForm } from '../components/link-form'
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -11,6 +6,11 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@proompteng/design/ui'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { createFileRoute, notFound, Link as RouterLink, useNavigate } from '@tanstack/react-router'
+import { Save } from 'lucide-react'
+import { toast } from 'sonner'
+import { LinkForm } from '../components/link-form'
 import type { Link } from '../db/schema/links'
 import { type LinkInput, serverFns } from '../server/links'
 

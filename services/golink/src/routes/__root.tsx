@@ -1,3 +1,4 @@
+import { Toaster } from '@proompteng/design/ui'
 import { TanStackDevtools } from '@tanstack/react-devtools'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
@@ -5,7 +6,6 @@ import { createRootRoute, HeadContent, Link, Outlet, Scripts } from '@tanstack/r
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { useId, useMemo, useState } from 'react'
 import appCss from '../app/styles/app.css?url'
-import { Toaster } from '@proompteng/design/ui'
 
 export const Route = createRootRoute({
   head: () => ({

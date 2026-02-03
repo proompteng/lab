@@ -1,9 +1,3 @@
-import { IconHome2, IconTrash } from '@tabler/icons-react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute, Link, useRouterState } from '@tanstack/react-router'
-import { useServerFn } from '@tanstack/react-start'
-import { useState, type KeyboardEvent } from 'react'
-
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,6 +23,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@proompteng/design/ui'
+import { IconHome2, IconTrash } from '@tabler/icons-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { createFileRoute, Link, useRouterState } from '@tanstack/react-router'
+import { useServerFn } from '@tanstack/react-start'
+import { type KeyboardEvent, useState } from 'react'
 import { encodeRepositoryParam, formatSize } from '~/lib/registry'
 import { deleteTagServerFn } from '~/server/delete-tag'
 import { type RegistryImagesResponse, registryImagesServerFn } from '~/server/registry-images'
