@@ -10,7 +10,7 @@ import {
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
-} from '../components/ui/breadcrumb'
+} from '@proompteng/design/ui'
 import type { Link } from '../db/schema/links'
 import { type LinkInput, serverFns } from '../server/links'
 

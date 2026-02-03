@@ -1,8 +1,8 @@
 import { ArrowRight, Check, ChevronRight } from 'lucide-react'
 import Link from 'next/link'
+
+import { Badge, Button } from '@proompteng/design/ui'
 import type { HeroContent } from '@/app/config'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 const HERO_HEADING_ID = 'hero-heading'

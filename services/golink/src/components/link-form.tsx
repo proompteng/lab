@@ -3,10 +3,7 @@ import { type FormEvent, type ReactNode, useEffect, useId, useState } from 'reac
 import { toast } from 'sonner'
 import { cn } from '../lib/utils'
 import { type LinkInput, linkInputSchema } from '../server/links'
-import { Button } from './ui/button'
-import { Input } from './ui/input'
-import { Label } from './ui/label'
-import { Textarea } from './ui/textarea'
+import { Button, Input, Label, Textarea } from '@proompteng/design/ui'
 
 type FormState = {
   slug: string

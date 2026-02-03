@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
 
-import { Button } from '@/components/ui/button'
+import { Button } from '@proompteng/design/ui'
 import {
   Combobox,
   ComboboxContent,
@@ -9,8 +9,8 @@ import {
   ComboboxInput,
   ComboboxItem,
   ComboboxList,
-} from '@/components/ui/combobox'
-import { Input } from '@/components/ui/input'
+} from '@proompteng/design/ui'
+import { Input } from '@proompteng/design/ui'
 import {
   type CodexArtifactRecord,
   type CodexEvaluationRecord,

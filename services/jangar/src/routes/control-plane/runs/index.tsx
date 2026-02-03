@@ -19,9 +19,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+} from '@proompteng/design/ui'
+import { Button } from '@proompteng/design/ui'
+import { Input } from '@proompteng/design/ui'
 import {
   Pagination,
   PaginationContent,
@@ -30,7 +30,7 @@ import {
   PaginationLink,
   PaginationNext,
   PaginationPrevious,
-} from '@/components/ui/pagination'
+} from '@proompteng/design/ui'
 import { deletePrimitiveResource, fetchPrimitiveList, type PrimitiveResource } from '@/data/agents-control-plane'
 
 const PAGE_SIZE = 20

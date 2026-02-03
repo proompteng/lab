@@ -13,19 +13,24 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '~/components/ui/alert-dialog'
-import {
   Breadcrumb,
   BreadcrumbItem,
   BreadcrumbLink,
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
-} from '~/components/ui/breadcrumb'
-import { Button } from '~/components/ui/button'
-import { ScrollArea } from '~/components/ui/scroll-area'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
-import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
+  Button,
+  ScrollArea,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@proompteng/design/ui'
 import { decodeRepositoryParam, formatSize, type TagManifestBreakdown } from '~/lib/registry'
 import { deleteTagServerFn } from '~/server/delete-tag'
 import { type ImageDetailsResponse, imageDetailsServerFn } from '~/server/image-details'

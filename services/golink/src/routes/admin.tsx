@@ -13,7 +13,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '../components/ui/alert-dialog'
+} from '@proompteng/design/ui'
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -21,8 +21,8 @@ import {
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
-} from '../components/ui/breadcrumb'
-import { Button } from '../components/ui/button'
+} from '@proompteng/design/ui'
+import { Button } from '@proompteng/design/ui'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,8 +30,8 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '../components/ui/dropdown-menu'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
+} from '@proompteng/design/ui'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@proompteng/design/ui'
 import type { Link } from '../db/schema/links'
 import { cn } from '../lib/utils'
 import { serverFns } from '../server/links'

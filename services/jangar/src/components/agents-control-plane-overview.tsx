@@ -8,7 +8,7 @@ import {
   getMetadataValue,
   StatusBadge,
 } from '@/components/agents-control-plane'
-import { buttonVariants } from '@/components/ui/button'
+import { buttonVariants } from '@proompteng/design/ui'
 import type { AgentPrimitiveKind, PrimitiveEventItem, PrimitiveResource } from '@/data/agents-control-plane'
 import { fetchPrimitiveEvents, fetchPrimitiveList } from '@/data/agents-control-plane'
 import { cn } from '@/lib/utils'

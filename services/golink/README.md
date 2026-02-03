@@ -1,6 +1,6 @@
 # golink
 
-Internal Knative service that powers `http://go/<slug>` redirects with a small admin UI. Built with TanStack Start (React), Tailwind CSS v4, shadcn/ui, and Drizzle on Postgres/CNPG.
+Internal Knative service that powers `http://go/<slug>` redirects with a small admin UI. Built with TanStack Start (React), Tailwind CSS v4, @proompteng/design, and Drizzle on Postgres/CNPG.
 
 ## Prerequisites
 - `.env.local` in `services/golink` (copy `.env.example`) with `GOLINK_DATABASE_URL` set. Defaults point to the local compose Postgres on port 15433.

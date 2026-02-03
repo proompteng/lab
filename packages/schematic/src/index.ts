@@ -60,7 +60,7 @@ export const runCli = async (opts: CliOptions = {}) => {
     opts.type ||
     ((await select({
       message: 'What do you want to scaffold?',
-      options: [{ value: 'tanstack-start', label: 'TanStack Start (Bun, Tailwind v4, shadcn/ui)' }],
+      options: [{ value: 'tanstack-start', label: 'TanStack Start (Bun, Tailwind v4, @proompteng/design)' }],
       initialValue: 'tanstack-start',
     })) as 'tanstack-start')
 

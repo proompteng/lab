@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowRight } from 'lucide-react'
-import { Button } from '../components/ui/button'
+import { Button } from '@proompteng/design/ui'
 
 export const Route = createFileRoute('/')({
   component: Overview,

@@ -30,8 +30,8 @@ import {
   SidebarMenuSubItem,
   SidebarRail,
   useSidebar,
-} from '@/components/ui/sidebar'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+} from '@proompteng/design/ui'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@proompteng/design/ui'
 
 type AppNavItem = {
   to: string

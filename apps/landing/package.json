@@ -60,6 +60,7 @@
     "vaul": "^1.1.2",
     "zod": "^3.24.2",
     "@proompteng/backend": "workspace:*",
+    "@proompteng/design": "workspace:*",
     "convex": "^1.27.0"
   },
   "devDependencies": {

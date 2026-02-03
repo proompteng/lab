@@ -1,6 +1,6 @@
 import * as React from 'react'
 
-import { Button } from '@/components/ui/button'
+import { Button } from '@proompteng/design/ui'
 import { cn } from '@/lib/utils'
 
 type JsonResponseViewProps = {

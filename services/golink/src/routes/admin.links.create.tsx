@@ -10,7 +10,7 @@ import {
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
-} from '../components/ui/breadcrumb'
+} from '@proompteng/design/ui'
 import { type LinkInput, serverFns } from '../server/links'
 
 export const Route = createFileRoute('/admin/links/create')({

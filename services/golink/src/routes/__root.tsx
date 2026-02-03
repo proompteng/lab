@@ -5,7 +5,7 @@ import { createRootRoute, HeadContent, Link, Outlet, Scripts } from '@tanstack/r
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { useId, useMemo, useState } from 'react'
 import appCss from '../app/styles/app.css?url'
-import { Toaster } from '../components/ui/sonner'
+import { Toaster } from '@proompteng/design/ui'
 
 export const Route = createRootRoute({
   head: () => ({
