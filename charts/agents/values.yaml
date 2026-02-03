@@ -144,6 +144,8 @@ controller:
     name: ""
     key: auth.json
     mountPath: /root/.codex
+  vcsProviders:
+    enabled: true
   defaultWorkload:
     serviceAccountName: ""
     nodeSelector: {}

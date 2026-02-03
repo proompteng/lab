@@ -21,6 +21,8 @@ resources:
 controller:
   namespaces:
     - agents-ci
+  vcsProviders:
+    enabled: false
 
 orchestrationController:
   namespaces:

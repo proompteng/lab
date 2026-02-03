@@ -23,7 +23,9 @@ rules:
       - agentproviders
       - implementationspecs
       - implementationsources
+      {{- if .Values.controller.vcsProviders.enabled }}
       - versioncontrolproviders
+      {{- end }}
       - memories
     verbs:
       - get
@@ -46,7 +48,9 @@ rules:
       - agentproviders/status
       - implementationspecs/status
       - implementationsources/status
+      {{- if .Values.controller.vcsProviders.enabled }}
       - versioncontrolproviders/status
+      {{- end }}
       - memories/status
     verbs:
       - get

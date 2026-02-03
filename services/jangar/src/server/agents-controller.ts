@@ -25,15 +25,30 @@ const DEFAULT_AUTH_SECRET_KEY = 'auth.json'
 const DEFAULT_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
 const DEFAULT_GITHUB_APP_TOKEN_TTL_SECONDS = 3600
 
-const REQUIRED_CRDS = [
+const BASE_REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
   'agentruns.agents.proompteng.ai',
   'agentproviders.agents.proompteng.ai',
   'implementationspecs.agents.proompteng.ai',
   'implementationsources.agents.proompteng.ai',
-  'versioncontrolproviders.agents.proompteng.ai',
   'memories.agents.proompteng.ai',
 ]
+const VCS_PROVIDER_CRD = 'versioncontrolproviders.agents.proompteng.ai'
+
+const parseBooleanEnv = (value: string | undefined, fallback: boolean) => {
+  if (value == null) return fallback
+  const normalized = value.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'y'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'n'].includes(normalized)) return false
+  return fallback
+}
+
+const isVcsProvidersEnabled = () => parseBooleanEnv(process.env.JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED, true)
+
+const resolveRequiredCrds = () => {
+  if (!isVcsProvidersEnabled()) return BASE_REQUIRED_CRDS
+  return [...BASE_REQUIRED_CRDS.slice(0, 5), VCS_PROVIDER_CRD, ...BASE_REQUIRED_CRDS.slice(5)]
+}
 
 type CrdCheckState = {
   ok: boolean
@@ -245,7 +260,7 @@ const checkCrds = async (): Promise<CrdCheckState> => {
   const namespace = resolveCrdCheckNamespace()
   const missing: string[] = []
   const forbidden: string[] = []
-  for (const name of REQUIRED_CRDS) {
+  for (const name of resolveRequiredCrds()) {
     const resource = name.split('.')[0] ?? name
     const result = await runKubectl(['get', resource, '-n', namespace, '-o', 'json'])
     if (result.code !== 0) {
@@ -1759,6 +1774,17 @@ const resolveVcsContext = async ({
   parameters: Record<string, string>
   allowedSecrets: string[]
 }): Promise<VcsResolution> => {
+  if (!isVcsProvidersEnabled()) {
+    return {
+      ok: true,
+      skip: true,
+      reason: 'VcsProvidersDisabled',
+      message: 'vcs providers are disabled by configuration',
+      mode: 'none',
+      requiredSecrets: [],
+    }
+  }
+
   const spec = asRecord(agentRun.spec) ?? {}
   const policy = asRecord(spec.vcsPolicy) ?? {}
   const required = policy.required === true
@@ -4067,8 +4093,10 @@ const reconcileNamespaceSnapshot = async (
     await reconcileImplementationSource(kube, source, namespace)
   }
 
-  for (const vcsProvider of vcsProviders) {
-    await reconcileVersionControlProvider(kube, vcsProvider, namespace)
+  if (isVcsProvidersEnabled()) {
+    for (const vcsProvider of vcsProviders) {
+      await reconcileVersionControlProvider(kube, vcsProvider, namespace)
+    }
   }
 
   const counts = buildInFlightCounts(state, namespace)
@@ -4138,7 +4166,9 @@ const seedNamespaceState = async (
   const agents = listItems(await kube.list(RESOURCE_MAP.Agent, namespace))
   const specs = listItems(await kube.list(RESOURCE_MAP.ImplementationSpec, namespace))
   const sources = listItems(await kube.list(RESOURCE_MAP.ImplementationSource, namespace))
-  const vcsProviders = listItems(await kube.list(RESOURCE_MAP.VersionControlProvider, namespace))
+  const vcsProviders = isVcsProvidersEnabled()
+    ? listItems(await kube.list(RESOURCE_MAP.VersionControlProvider, namespace))
+    : []
   const providers = listItems(await kube.list(RESOURCE_MAP.AgentProvider, namespace))
   const runs = listItems(await kube.list(RESOURCE_MAP.AgentRun, namespace))
 
@@ -4269,14 +4299,16 @@ const startNamespaceWatches = (
       onError: (error) => console.warn('[jangar] implementation source watch failed', error),
     }),
   )
-  watchHandles.push(
-    startResourceWatch({
-      resource: RESOURCE_MAP.VersionControlProvider,
-      namespace,
-      onEvent: handleVcsProviderEvent,
-      onError: (error) => console.warn('[jangar] vcs provider watch failed', error),
-    }),
-  )
+  if (isVcsProvidersEnabled()) {
+    watchHandles.push(
+      startResourceWatch({
+        resource: RESOURCE_MAP.VersionControlProvider,
+        namespace,
+        onEvent: handleVcsProviderEvent,
+        onError: (error) => console.warn('[jangar] vcs provider watch failed', error),
+      }),
+    )
+  }
   watchHandles.push(
     startResourceWatch({
       resource: RESOURCE_MAP.Memory,

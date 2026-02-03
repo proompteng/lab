@@ -85,6 +85,16 @@ const normalizeVcsMode = (value?: string | null) => {
   return 'read-write'
 }
 
+const parseBooleanEnv = (value: string | undefined, fallback: boolean) => {
+  if (value == null) return fallback
+  const normalized = value.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'y'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'n'].includes(normalized)) return false
+  return fallback
+}
+
+const isVcsProvidersEnabled = () => parseBooleanEnv(process.env.JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED, true)
+
 const parseWorkflowStepNumber = (value: unknown, path: string): number | undefined => {
   if (value == null) return undefined
   const parsed = parseOptionalNumber(value)
@@ -280,7 +290,7 @@ export const postAgentRunsHandler = async (
     const requiredSecrets = parsed.secrets ?? extractRequiredSecrets(agentSpec)
     const vcsSecrets = new Set<string>()
     const desiredVcsMode = normalizeVcsMode(parsed.vcsPolicy?.mode ?? null)
-    const shouldResolveVcs = desiredVcsMode !== 'none'
+    const shouldResolveVcs = isVcsProvidersEnabled() && desiredVcsMode !== 'none'
     const resolveVcsRefName = async () => {
       if (parsed.vcsRef?.name) return parsed.vcsRef.name
       if (parsed.implementation) {
