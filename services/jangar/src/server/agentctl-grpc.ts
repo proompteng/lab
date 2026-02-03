@@ -52,6 +52,9 @@ type SubmitRunRequest = {
   idempotency_key?: string
   workload?: { image?: string; cpu?: string; memory?: string }
   memory_ref?: string
+  vcs_ref?: string
+  vcs_policy_mode?: string
+  vcs_policy_required?: boolean
 }
 type LogsRequest = { namespace?: string; name?: string; follow?: boolean }
 type StatusStreamRequest = { namespace?: string; name?: string }
@@ -547,6 +550,19 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
       }
     },
 
+    ListVersionControlProviders: createListHandler(kube, RESOURCE_MAP.VersionControlProvider),
+    GetVersionControlProvider: createGetHandler(
+      kube,
+      RESOURCE_MAP.VersionControlProvider,
+      'VersionControlProvider not found',
+    ),
+    ApplyVersionControlProvider: createApplyHandler(kube),
+    DeleteVersionControlProvider: createDeleteHandler(
+      kube,
+      RESOURCE_MAP.VersionControlProvider,
+      'VersionControlProvider not found',
+    ),
+
     ListMemories: async (call: UnaryCall<ListRequest>, callback: UnaryCallback) => {
       const authError = requireAuth(call)
       if (authError) return callback(authError, null)
@@ -790,6 +806,21 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
 
         if (call.request?.memory_ref) {
           payload.memoryRef = { name: call.request.memory_ref }
+        }
+
+        if (call.request?.vcs_ref) {
+          payload.vcsRef = { name: call.request.vcs_ref }
+        }
+
+        const vcsPolicy: Record<string, unknown> = {}
+        if (call.request?.vcs_policy_mode) {
+          vcsPolicy.mode = call.request.vcs_policy_mode
+        }
+        if (call.request?.vcs_policy_required) {
+          vcsPolicy.required = true
+        }
+        if (Object.keys(vcsPolicy).length > 0) {
+          payload.vcsPolicy = vcsPolicy
         }
 
         const request = new Request('http://localhost/v1/agent-runs', {

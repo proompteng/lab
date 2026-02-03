@@ -4,21 +4,21 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.0
-  name: agents.agents.proompteng.ai
+  name: versioncontrolproviders.agents.proompteng.ai
 spec:
   group: agents.proompteng.ai
   names:
-    kind: Agent
-    listKind: AgentList
-    plural: agents
-    singular: agent
+    kind: VersionControlProvider
+    listKind: VersionControlProviderList
+    plural: versioncontrolproviders
+    singular: versioncontrolprovider
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
     - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
       type: string
-    - jsonPath: .spec.providerRef.name
+    - jsonPath: .spec.provider
       name: Provider
       type: string
     name: v1alpha1
@@ -44,68 +44,156 @@ spec:
             type: object
           spec:
             properties:
-              config:
-                additionalProperties:
-                  x-kubernetes-preserve-unknown-fields: true
+              apiBaseUrl:
+                format: uri
+                type: string
+              auth:
+                properties:
+                  app:
+                    properties:
+                      appId:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        x-kubernetes-int-or-string: true
+                      installationId:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        x-kubernetes-int-or-string: true
+                      privateKeySecretRef:
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      tokenTtlSeconds:
+                        format: int32
+                        minimum: 0
+                        type: integer
+                    type: object
+                  method:
+                    enum:
+                    - token
+                    - app
+                    - ssh
+                    - none
+                    type: string
+                  ssh:
+                    properties:
+                      knownHostsConfigMapRef:
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      privateKeySecretRef:
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    type: object
+                  token:
+                    properties:
+                      secretRef:
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      type:
+                        enum:
+                        - pat
+                        - fine_grained
+                        - api_token
+                        - access_token
+                        type: string
+                    type: object
+                  username:
+                    type: string
                 type: object
-                x-kubernetes-preserve-unknown-fields: true
+              capabilities:
+                properties:
+                  pullRequests:
+                    type: boolean
+                  read:
+                    type: boolean
+                  write:
+                    type: boolean
+                type: object
+              cloneBaseUrl:
+                format: uri
+                type: string
+              cloneProtocol:
+                enum:
+                - https
+                - ssh
+                type: string
               defaults:
                 properties:
-                  retryLimit:
-                    format: int32
-                    minimum: 0
-                    type: integer
-                  timeoutSeconds:
-                    format: int32
-                    minimum: 0
-                    type: integer
-                type: object
-              env:
-                items:
-                  properties:
-                    name:
-                      type: string
-                    value:
-                      type: string
-                  required:
-                  - name
-                  - value
-                  type: object
-                type: array
-              memoryRef:
-                properties:
-                  name:
+                  baseBranch:
                     type: string
-                required:
-                - name
-                type: object
-              providerRef:
-                properties:
-                  name:
+                  branchTemplate:
                     type: string
-                required:
-                - name
+                  commitAuthorEmail:
+                    type: string
+                  commitAuthorName:
+                    type: string
+                  pullRequest:
+                    properties:
+                      bodyTemplate:
+                        type: string
+                      draft:
+                        type: boolean
+                      enabled:
+                        type: boolean
+                      titleTemplate:
+                        type: string
+                    type: object
                 type: object
-              security:
+              provider:
+                enum:
+                - github
+                - gitlab
+                - bitbucket
+                - gitea
+                - generic
+                type: string
+              repositoryPolicy:
                 properties:
-                  allowedSecrets:
+                  allow:
                     items:
                       type: string
+                    maxItems: 200
                     type: array
-                  allowedServiceAccounts:
+                  deny:
                     items:
                       type: string
+                    maxItems: 200
                     type: array
                 type: object
-              vcsRef:
-                properties:
-                  name:
-                    type: string
-                required:
-                - name
-                type: object
+              sshHost:
+                type: string
+              sshUser:
+                type: string
+              webBaseUrl:
+                format: uri
+                type: string
             required:
-            - providerRef
+            - provider
             type: object
           status:
             properties:
@@ -165,6 +253,9 @@ spec:
                   - type
                   type: object
                 type: array
+              lastValidatedAt:
+                format: date-time
+                type: string
               observedGeneration:
                 format: int64
                 type: integer

@@ -57,6 +57,9 @@ type RunSubmitInput = {
   cpu?: string
   memory?: string
   memoryRef?: string
+  vcsRef?: string
+  vcsPolicyMode?: string
+  vcsPolicyRequired?: boolean
   wait?: boolean
 }
 
@@ -120,6 +123,21 @@ const buildRunSpec = (input: RunSubmitInput) => {
 
   if (input.memoryRef) {
     spec.memoryRef = { name: input.memoryRef }
+  }
+
+  if (input.vcsRef) {
+    spec.vcsRef = { name: input.vcsRef }
+  }
+
+  const vcsPolicy: Record<string, unknown> = {}
+  if (input.vcsPolicyMode) {
+    vcsPolicy.mode = input.vcsPolicyMode
+  }
+  if (input.vcsPolicyRequired) {
+    vcsPolicy.required = input.vcsPolicyRequired
+  }
+  if (Object.keys(vcsPolicy).length > 0) {
+    spec.vcsPolicy = vcsPolicy
   }
 
   if (input.runtime === 'workflow') {
@@ -200,6 +218,9 @@ const submitRunGrpc = async (
         memory: input.memory ?? '',
       },
       memory_ref: input.memoryRef ?? '',
+      vcs_ref: input.vcsRef ?? '',
+      vcs_policy_mode: input.vcsPolicyMode ?? '',
+      vcs_policy_required: input.vcsPolicyRequired ?? false,
     },
     metadata,
   )
@@ -239,9 +260,27 @@ export const makeRunCommand = () => {
       cpu: Options.optional(Options.text('cpu')),
       memory: Options.optional(Options.text('memory')),
       memoryRef: Options.optional(Options.text('memory-ref')),
+      vcs: Options.optional(Options.text('vcs')),
+      vcsMode: Options.optional(Options.text('vcs-mode')),
+      vcsRequired: Options.boolean('vcs-required'),
       wait: Options.boolean('wait'),
     },
-    ({ agent, impl, runtime, runtimeConfig, param, idempotencyKey, workloadImage, cpu, memory, memoryRef, wait }) =>
+    ({
+      agent,
+      impl,
+      runtime,
+      runtimeConfig,
+      param,
+      idempotencyKey,
+      workloadImage,
+      cpu,
+      memory,
+      memoryRef,
+      vcs,
+      vcsMode,
+      vcsRequired,
+      wait,
+    }) =>
       Effect.gen(function* () {
         const { resolved } = yield* AgentctlContext
         const transport = yield* TransportService
@@ -256,6 +295,9 @@ export const makeRunCommand = () => {
           cpu: Option.getOrUndefined(cpu),
           memory: Option.getOrUndefined(memory),
           memoryRef: Option.getOrUndefined(memoryRef),
+          vcsRef: Option.getOrUndefined(vcs),
+          vcsPolicyMode: Option.getOrUndefined(vcsMode),
+          vcsPolicyRequired: vcsRequired,
           wait,
         }
         if (transport.mode === 'kube') {
@@ -566,6 +608,9 @@ export const makeRunCommand = () => {
       cpu: Options.optional(Options.text('cpu')),
       memory: Options.optional(Options.text('memory')),
       memoryRef: Options.optional(Options.text('memory-ref')),
+      vcs: Options.optional(Options.text('vcs')),
+      vcsMode: Options.optional(Options.text('vcs-mode')),
+      vcsRequired: Options.boolean('vcs-required'),
       idempotencyKey: Options.optional(Options.text('idempotency-key')),
       file: Options.optional(Options.text('file')),
       apply: Options.boolean('apply'),
@@ -582,6 +627,9 @@ export const makeRunCommand = () => {
       cpu,
       memory,
       memoryRef,
+      vcs,
+      vcsMode,
+      vcsRequired,
       idempotencyKey,
       file,
       apply,
@@ -607,6 +655,9 @@ export const makeRunCommand = () => {
         const resolvedCpu = Option.getOrUndefined(cpu)
         const resolvedMemory = Option.getOrUndefined(memory)
         const resolvedMemoryRef = Option.getOrUndefined(memoryRef)
+        const resolvedVcsRef = Option.getOrUndefined(vcs)
+        const resolvedVcsMode = Option.getOrUndefined(vcsMode)
+        const resolvedVcsRequired = vcsRequired
 
         const yaml = buildAgentRunYaml({
           name: Option.getOrUndefined(name),
@@ -621,6 +672,9 @@ export const makeRunCommand = () => {
           workloadImage: resolvedWorkloadImage,
           cpu: resolvedCpu,
           memory: resolvedMemory,
+          vcsRef: resolvedVcsRef,
+          vcsPolicyMode: resolvedVcsMode,
+          vcsPolicyRequired: resolvedVcsRequired,
         })
 
         const filePath = Option.getOrUndefined(file)
@@ -647,6 +701,9 @@ export const makeRunCommand = () => {
           cpu: resolvedCpu,
           memory: resolvedMemory,
           memoryRef: resolvedMemoryRef,
+          vcsRef: resolvedVcsRef,
+          vcsPolicyMode: resolvedVcsMode,
+          vcsPolicyRequired: resolvedVcsRequired,
           wait,
         }
 
@@ -683,10 +740,28 @@ export const makeRunCommand = () => {
       cpu: Options.optional(Options.text('cpu')),
       memory: Options.optional(Options.text('memory')),
       memoryRef: Options.optional(Options.text('memory-ref')),
+      vcs: Options.optional(Options.text('vcs')),
+      vcsMode: Options.optional(Options.text('vcs-mode')),
+      vcsRequired: Options.boolean('vcs-required'),
       idempotencyKey: Options.optional(Options.text('idempotency-key')),
       wait: Options.boolean('wait'),
     },
-    ({ prompt, agent, runtime, runtimeConfig, param, workloadImage, cpu, memory, memoryRef, idempotencyKey, wait }) =>
+    ({
+      prompt,
+      agent,
+      runtime,
+      runtimeConfig,
+      param,
+      workloadImage,
+      cpu,
+      memory,
+      memoryRef,
+      vcs,
+      vcsMode,
+      vcsRequired,
+      idempotencyKey,
+      wait,
+    }) =>
       Effect.gen(function* () {
         const { resolved } = yield* AgentctlContext
         const transport = yield* TransportService
@@ -707,6 +782,9 @@ export const makeRunCommand = () => {
         const resolvedCpu = Option.getOrUndefined(cpu)
         const resolvedMemory = Option.getOrUndefined(memory)
         const resolvedMemoryRef = Option.getOrUndefined(memoryRef)
+        const resolvedVcsRef = Option.getOrUndefined(vcs)
+        const resolvedVcsMode = Option.getOrUndefined(vcsMode)
+        const resolvedVcsRequired = vcsRequired
 
         const spec = yield* Effect.tryPromise({
           try: () => runCodex(resolvedPrompt),
@@ -769,6 +847,9 @@ export const makeRunCommand = () => {
           cpu: resolvedCpu,
           memory: resolvedMemory,
           memoryRef: resolvedMemoryRef,
+          vcsRef: resolvedVcsRef,
+          vcsPolicyMode: resolvedVcsMode,
+          vcsPolicyRequired: resolvedVcsRequired,
           wait,
         }
 

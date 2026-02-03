@@ -38,6 +38,8 @@ type AgentRunPayload = {
   workflow?: { steps: WorkflowStepPayload[] }
   workload?: Record<string, unknown>
   memoryRef?: { name: string }
+  vcsRef?: { name: string }
+  vcsPolicy?: { required?: boolean; mode?: string }
   parameters?: Record<string, string>
   secrets?: string[]
   policy?: Record<string, unknown>
@@ -75,6 +77,12 @@ const parseOptionalNumber = (value: unknown): number | undefined => {
     if (Number.isFinite(parsed)) return parsed
   }
   return undefined
+}
+
+const normalizeVcsMode = (value?: string | null) => {
+  const raw = value?.trim().toLowerCase()
+  if (raw === 'read-only' || raw === 'read-write' || raw === 'none') return raw
+  return 'read-write'
 }
 
 const parseWorkflowStepNumber = (value: unknown, path: string): number | undefined => {
@@ -156,6 +164,16 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
   const memoryRef = asRecord(payload.memoryRef)
   const memoryRefName = asString(memoryRef?.name)
   const workload = asRecord(payload.workload) ?? undefined
+  const vcsRef = asRecord(payload.vcsRef)
+  const vcsRefName = asString(vcsRef?.name)
+  const vcsPolicyRaw = asRecord(payload.vcsPolicy)
+  const vcsPolicy =
+    vcsPolicyRaw != null
+      ? {
+          required: vcsPolicyRaw.required === true,
+          mode: asString(vcsPolicyRaw.mode) ?? undefined,
+        }
+      : undefined
   const ttlRaw = payload.ttlSecondsAfterFinished
   const ttlSecondsAfterFinished = parseOptionalNumber(ttlRaw)
   if (ttlRaw != null && ttlSecondsAfterFinished === undefined) {
@@ -183,6 +201,8 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
     workflow: workflowSteps ? { steps: workflowSteps } : undefined,
     workload,
     memoryRef: memoryRefName ? { name: memoryRefName } : undefined,
+    vcsRef: vcsRefName ? { name: vcsRefName } : undefined,
+    vcsPolicy,
     parameters,
     secrets,
     policy,
@@ -258,15 +278,73 @@ export const postAgentRunsHandler = async (
     }
 
     const requiredSecrets = parsed.secrets ?? extractRequiredSecrets(agentSpec)
+    const vcsSecrets = new Set<string>()
+    const desiredVcsMode = normalizeVcsMode(parsed.vcsPolicy?.mode ?? null)
+    const shouldResolveVcs = desiredVcsMode !== 'none'
+    const resolveVcsRefName = async () => {
+      if (parsed.vcsRef?.name) return parsed.vcsRef.name
+      if (parsed.implementation) {
+        const inline = asRecord(parsed.implementation)
+        const inlineVcsRef = asRecord(inline?.vcsRef)
+        const inlineVcsName = asString(inlineVcsRef?.name)
+        if (inlineVcsName) return inlineVcsName
+      }
+      if (parsed.implementationSpecRef?.name) {
+        const impl = await kube.get(
+          RESOURCE_MAP.ImplementationSpec,
+          parsed.implementationSpecRef.name,
+          parsed.namespace,
+        )
+        const implRef = asRecord(impl?.spec)
+        const implVcsRef = asRecord(implRef?.vcsRef)
+        const implVcsName = asString(implVcsRef?.name)
+        if (implVcsName) return implVcsName
+      }
+      const agentVcsRef = asRecord(agentSpec.vcsRef)
+      const agentVcsName = asString(agentVcsRef?.name)
+      if (agentVcsName) return agentVcsName
+      return null
+    }
+
+    if (shouldResolveVcs) {
+      const vcsRefName = await resolveVcsRefName()
+      if (!vcsRefName && parsed.vcsPolicy?.required) {
+        return errorResponse('vcsRef is required when vcsPolicy.required is true', 400)
+      }
+      if (vcsRefName) {
+        const vcsProvider = await kube.get(RESOURCE_MAP.VersionControlProvider, vcsRefName, parsed.namespace)
+        if (!vcsProvider) {
+          if (parsed.vcsPolicy?.required) {
+            return errorResponse(`version control provider ${vcsRefName} not found`, 404)
+          }
+        } else {
+          const auth = asRecord(readNested(vcsProvider, ['spec', 'auth'])) ?? {}
+          const tokenSecret = asRecord(readNested(auth, ['token', 'secretRef']))
+          const appSecret = asRecord(readNested(auth, ['app', 'privateKeySecretRef']))
+          const sshSecret = asRecord(readNested(auth, ['ssh', 'privateKeySecretRef']))
+          const tokenName = asString(tokenSecret?.name)
+          const appName = asString(appSecret?.name)
+          const sshName = asString(sshSecret?.name)
+          if (tokenName) vcsSecrets.add(tokenName)
+          if (appName) vcsSecrets.add(appName)
+          if (sshName) vcsSecrets.add(sshName)
+        }
+      }
+    }
+
+    const requiredSecretSet = new Set(requiredSecrets)
+    for (const name of vcsSecrets) {
+      requiredSecretSet.add(name)
+    }
     const policy = parsed.policy ?? {}
     const policyChecks = {
       budgetRef: asString(policy.budgetRef) ?? undefined,
       secretBindingRef: asString(policy.secretBindingRef) ?? undefined,
-      requiredSecrets,
+      requiredSecrets: Array.from(requiredSecretSet),
       subject: { kind: 'Agent', name: parsed.agentRef.name, namespace: parsed.namespace },
     }
 
-    if (requiredSecrets.length > 0 && !policyChecks.secretBindingRef) {
+    if (requiredSecretSet.size > 0 && !policyChecks.secretBindingRef) {
       return errorResponse('secretBindingRef is required when secrets are requested', 403)
     }
 
@@ -325,6 +403,8 @@ export const postAgentRunsHandler = async (
         parameters: parsed.parameters ?? {},
         secrets: parsed.secrets ?? undefined,
         memoryRef: parsed.memoryRef ?? undefined,
+        vcsRef: parsed.vcsRef ?? undefined,
+        vcsPolicy: parsed.vcsPolicy ?? undefined,
         idempotencyKey: deliveryId,
         ttlSecondsAfterFinished: parsed.ttlSecondsAfterFinished ?? undefined,
       },

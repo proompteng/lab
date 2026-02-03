@@ -23,6 +23,7 @@ rules:
       - agentproviders
       - implementationspecs
       - implementationsources
+      - versioncontrolproviders
       - memories
     verbs:
       - get
@@ -45,6 +46,7 @@ rules:
       - agentproviders/status
       - implementationspecs/status
       - implementationsources/status
+      - versioncontrolproviders/status
       - memories/status
     verbs:
       - get

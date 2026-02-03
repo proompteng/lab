@@ -157,6 +157,12 @@ const RESOURCE_SPECS: Record<string, ResourceSpec> = {
     version: 'v1alpha1',
     plural: 'implementationsources',
   },
+  vcs: {
+    kind: 'VersionControlProvider',
+    group: 'agents.proompteng.ai',
+    version: 'v1alpha1',
+    plural: 'versioncontrolproviders',
+  },
   memory: {
     kind: 'Memory',
     group: 'agents.proompteng.ai',
@@ -276,6 +282,12 @@ const RPC_RESOURCE_MAP: Record<string, { list: string; get: string; apply: strin
     get: 'GetImplementationSource',
     apply: 'ApplyImplementationSource',
     del: 'DeleteImplementationSource',
+  },
+  vcs: {
+    list: 'ListVersionControlProviders',
+    get: 'GetVersionControlProvider',
+    apply: 'ApplyVersionControlProvider',
+    del: 'DeleteVersionControlProvider',
   },
   memory: {
     list: 'ListMemories',
@@ -423,6 +435,13 @@ Usage:
   agentctl source apply -f <file|->
   agentctl source delete <name>
 
+  agentctl vcs list
+  agentctl vcs get <name>
+  agentctl vcs describe <name>
+  agentctl vcs watch
+  agentctl vcs apply -f <file|->
+  agentctl vcs delete <name>
+
   agentctl memory list
   agentctl memory get <name>
   agentctl memory describe <name>
@@ -545,6 +564,9 @@ Run submit flags:
   --cpu <value>
   --memory <value>
   --memory-ref <name>
+  --vcs <name>
+  --vcs-mode <read-write|read-only|none>
+  --vcs-required
   --param key=value
   --runtime-config key=value
   --idempotency-key <value>
@@ -581,6 +603,7 @@ const RESOURCE_COMMANDS = new Set([
   'provider',
   'impl',
   'source',
+  'vcs',
   'memory',
   'tool',
   'toolrun',
@@ -700,6 +723,9 @@ Run submit flags:
   --cpu <value>
   --memory <value>
   --memory-ref <name>
+  --vcs <name>
+  --vcs-mode <read-write|read-only|none>
+  --vcs-required
   --param key=value
   --runtime-config key=value
   --idempotency-key <value>

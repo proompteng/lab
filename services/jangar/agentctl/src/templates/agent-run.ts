@@ -13,6 +13,9 @@ export type AgentRunParams = {
   workloadImage?: string
   cpu?: string
   memory?: string
+  vcsRef?: string
+  vcsPolicyMode?: string
+  vcsPolicyRequired?: boolean
 }
 
 export const buildAgentRunYaml = (params: AgentRunParams) => {
@@ -38,6 +41,21 @@ export const buildAgentRunYaml = (params: AgentRunParams) => {
 
   if (params.memoryRef) {
     spec.memoryRef = { name: params.memoryRef }
+  }
+
+  if (params.vcsRef) {
+    spec.vcsRef = { name: params.vcsRef }
+  }
+
+  const vcsPolicy: Record<string, unknown> = {}
+  if (params.vcsPolicyMode) {
+    vcsPolicy.mode = params.vcsPolicyMode
+  }
+  if (params.vcsPolicyRequired) {
+    vcsPolicy.required = params.vcsPolicyRequired
+  }
+  if (Object.keys(vcsPolicy).length > 0) {
+    spec.vcsPolicy = vcsPolicy
   }
 
   if (params.runtimeType === 'workflow') {

@@ -5,6 +5,7 @@ package v1alpha1
 import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // +kubebuilder:object:root=true
@@ -26,6 +27,7 @@ type AgentSpec struct {
 	Env       []AgentEnvVar                   `json:"env,omitempty"`
 	Security  *AgentSecurity                  `json:"security,omitempty"`
 	MemoryRef *LocalRef                       `json:"memoryRef,omitempty"`
+	VcsRef    *LocalRef                       `json:"vcsRef,omitempty"`
 	Defaults  *AgentRunDefaults               `json:"defaults,omitempty"`
 }
 
@@ -88,6 +90,8 @@ type AgentRunSpec struct {
 	Parameters     map[string]string `json:"parameters,omitempty"`
 	Secrets        []string          `json:"secrets,omitempty"`
 	MemoryRef      *LocalRef         `json:"memoryRef,omitempty"`
+	VcsRef         *LocalRef         `json:"vcsRef,omitempty"`
+	VcsPolicy      *VcsPolicy        `json:"vcsPolicy,omitempty"`
 	IdempotencyKey string            `json:"idempotencyKey,omitempty"`
 	// +kubebuilder:validation:Minimum=0
 	TTLSecondsAfterFinished *int32 `json:"ttlSecondsAfterFinished,omitempty"`
@@ -151,8 +155,24 @@ type AgentRunStatus struct {
 	FinishedAt         *metav1.Time                    `json:"finishedAt,omitempty"`
 	UpdatedAt          *metav1.Time                    `json:"updatedAt,omitempty"`
 	Artifacts          []Artifact                      `json:"artifacts,omitempty"`
+	Vcs                *AgentRunVcsStatus              `json:"vcs,omitempty"`
 	Conditions         []metav1.Condition              `json:"conditions,omitempty"`
 	ObservedGeneration int64                           `json:"observedGeneration,omitempty"`
+}
+
+type VcsPolicy struct {
+	Required bool `json:"required,omitempty"`
+	// +kubebuilder:validation:Enum=read-write;read-only;none
+	Mode string `json:"mode,omitempty"`
+}
+
+type AgentRunVcsStatus struct {
+	Provider   string `json:"provider,omitempty"`
+	Repository string `json:"repository,omitempty"`
+	BaseBranch string `json:"baseBranch,omitempty"`
+	HeadBranch string `json:"headBranch,omitempty"`
+	// +kubebuilder:validation:Enum=read-write;read-only;none
+	Mode string `json:"mode,omitempty"`
 }
 
 type WorkflowStatus struct {
@@ -245,6 +265,7 @@ type ImplementationSpec struct {
 
 type ImplementationSpecFields struct {
 	Source *ImplementationSourceRef `json:"source,omitempty"`
+	VcsRef *LocalRef                `json:"vcsRef,omitempty"`
 	// +kubebuilder:validation:MaxLength=131072
 	Text string `json:"text"`
 	// +kubebuilder:validation:MaxLength=256
@@ -350,6 +371,107 @@ type ImplementationSourceList struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Provider",type=string,JSONPath=`.spec.provider`
+type VersionControlProvider struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   VersionControlProviderSpec   `json:"spec"`
+	Status VersionControlProviderStatus `json:"status,omitempty"`
+}
+
+type VersionControlProviderSpec struct {
+	// +kubebuilder:validation:Enum=github;gitlab;bitbucket;gitea;generic
+	Provider string `json:"provider"`
+	// +kubebuilder:validation:Format=uri
+	ApiBaseUrl string `json:"apiBaseUrl,omitempty"`
+	// +kubebuilder:validation:Format=uri
+	CloneBaseUrl string `json:"cloneBaseUrl,omitempty"`
+	// +kubebuilder:validation:Format=uri
+	WebBaseUrl string `json:"webBaseUrl,omitempty"`
+	// +kubebuilder:validation:Enum=https;ssh
+	CloneProtocol    string                                  `json:"cloneProtocol,omitempty"`
+	SshHost          string                                  `json:"sshHost,omitempty"`
+	SshUser          string                                  `json:"sshUser,omitempty"`
+	Auth             *VersionControlProviderAuth             `json:"auth,omitempty"`
+	RepositoryPolicy *VersionControlProviderRepositoryPolicy `json:"repositoryPolicy,omitempty"`
+	Capabilities     *VersionControlProviderCapabilities     `json:"capabilities,omitempty"`
+	Defaults         *VersionControlProviderDefaults         `json:"defaults,omitempty"`
+}
+
+type VersionControlProviderAuth struct {
+	// +kubebuilder:validation:Enum=token;app;ssh;none
+	Method   string                           `json:"method,omitempty"`
+	Token    *VersionControlProviderTokenAuth `json:"token,omitempty"`
+	App      *VersionControlProviderAppAuth   `json:"app,omitempty"`
+	Ssh      *VersionControlProviderSshAuth   `json:"ssh,omitempty"`
+	Username string                           `json:"username,omitempty"`
+}
+
+type VersionControlProviderTokenAuth struct {
+	SecretRef *SecretRef `json:"secretRef,omitempty"`
+	// +kubebuilder:validation:Enum=pat;fine_grained;api_token;access_token
+	Type string `json:"type,omitempty"`
+}
+
+type VersionControlProviderAppAuth struct {
+	AppId               intstr.IntOrString `json:"appId,omitempty"`
+	InstallationId      intstr.IntOrString `json:"installationId,omitempty"`
+	PrivateKeySecretRef *SecretRef         `json:"privateKeySecretRef,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	TokenTtlSeconds int32 `json:"tokenTtlSeconds,omitempty"`
+}
+
+type VersionControlProviderSshAuth struct {
+	PrivateKeySecretRef    *SecretRef    `json:"privateKeySecretRef,omitempty"`
+	KnownHostsConfigMapRef *ConfigMapRef `json:"knownHostsConfigMapRef,omitempty"`
+}
+
+type VersionControlProviderRepositoryPolicy struct {
+	// +kubebuilder:validation:MaxItems=200
+	Allow []string `json:"allow,omitempty"`
+	// +kubebuilder:validation:MaxItems=200
+	Deny []string `json:"deny,omitempty"`
+}
+
+type VersionControlProviderCapabilities struct {
+	Read         bool `json:"read,omitempty"`
+	Write        bool `json:"write,omitempty"`
+	PullRequests bool `json:"pullRequests,omitempty"`
+}
+
+type VersionControlProviderDefaults struct {
+	BaseBranch        string                                     `json:"baseBranch,omitempty"`
+	BranchTemplate    string                                     `json:"branchTemplate,omitempty"`
+	CommitAuthorName  string                                     `json:"commitAuthorName,omitempty"`
+	CommitAuthorEmail string                                     `json:"commitAuthorEmail,omitempty"`
+	PullRequest       *VersionControlProviderPullRequestDefaults `json:"pullRequest,omitempty"`
+}
+
+type VersionControlProviderPullRequestDefaults struct {
+	Enabled       bool   `json:"enabled,omitempty"`
+	Draft         bool   `json:"draft,omitempty"`
+	TitleTemplate string `json:"titleTemplate,omitempty"`
+	BodyTemplate  string `json:"bodyTemplate,omitempty"`
+}
+
+type VersionControlProviderStatus struct {
+	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+	LastValidatedAt    *metav1.Time       `json:"lastValidatedAt,omitempty"`
+	UpdatedAt          *metav1.Time       `json:"updatedAt,omitempty"`
+	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+type VersionControlProviderList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []VersionControlProvider `json:"items"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.spec.type`
 // +kubebuilder:printcolumn:name="Default",type=boolean,JSONPath=`.spec.default`
 type Memory struct {
@@ -389,6 +511,11 @@ type MemoryList struct {
 }
 
 type SecretRef struct {
+	Name string `json:"name"`
+	Key  string `json:"key,omitempty"`
+}
+
+type ConfigMapRef struct {
 	Name string `json:"name"`
 	Key  string `json:"key,omitempty"`
 }

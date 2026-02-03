@@ -22,6 +22,7 @@ kubectl apply -n agents -f charts/agents/examples/agentprovider-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/agent-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/memory-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/implementationspec-sample.yaml
+kubectl apply -n agents -f charts/agents/examples/versioncontrolprovider-github.yaml
 kubectl apply -n agents -f charts/agents/examples/agentrun-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/tool-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/orchestration-sample.yaml
@@ -39,6 +40,7 @@ kubectl apply -n agents -f charts/agents/examples/orchestrationrun-sample.yaml
 - Jangar control-plane Deployment + Service
 - Controllers and CRDs for:
   - Agents (Agent, AgentRun, AgentProvider)
+  - Version control providers (VersionControlProvider)
   - Orchestration (Orchestration, OrchestrationRun)
   - Tools (Tool, ToolRun)
   - Signals (Signal, SignalDelivery)
@@ -79,6 +81,11 @@ Enable gRPC for agentctl or in-cluster clients:
 ### Migrations
 Automatic migrations are enabled by default. To skip:
 - `env.vars.JANGAR_MIGRATIONS=skip`
+
+### Version control providers
+Define a VersionControlProvider resource to decouple repo access from issue intake. This is required for
+agent runtimes that clone, commit, push, or open pull requests. Pair it with a SecretBinding that
+allows the provider's secret.
 
 ## Example production values
 ```yaml
