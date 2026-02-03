@@ -73,6 +73,11 @@ python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/schedule
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/artifacts.proompteng.ai_artifacts.yaml" artifacts.proompteng.ai v1alpha1 Artifact
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/workspaces.proompteng.ai_workspaces.yaml" workspaces.proompteng.ai v1alpha1 Workspace
 
+if ! git -C "${ROOT_DIR}" diff --exit-code -- "${ROOT_DIR}/schemas/custom"; then
+  echo "schemas/custom is out of date; regenerate and commit the CRD schemas." >&2
+  exit 1
+fi
+
 python3 - <<'PY'
 import sys
 from pathlib import Path
