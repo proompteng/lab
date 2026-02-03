@@ -2856,9 +2856,17 @@ const submitJobRun = async (
   }
 
   if (authSecret) {
-    const authVolumeName = makeName(runName, options.nameSuffix ? `auth-${options.nameSuffix}` : 'auth')
+    const authHomeVolumeName = makeName(runName, options.nameSuffix ? `auth-home-${options.nameSuffix}` : 'auth-home')
+    const authSecretVolumeName = makeName(
+      runName,
+      options.nameSuffix ? `auth-secret-${options.nameSuffix}` : 'auth-secret',
+    )
     volumes.push({
-      name: authVolumeName,
+      name: authHomeVolumeName,
+      spec: { emptyDir: {} },
+    })
+    volumes.push({
+      name: authSecretVolumeName,
       spec: {
         secret: {
           secretName: authSecret.name,
@@ -2867,8 +2875,13 @@ const submitJobRun = async (
       },
     })
     configVolumeMounts.push({
-      name: authVolumeName,
+      name: authHomeVolumeName,
       mountPath: authSecret.mountPath,
+    })
+    configVolumeMounts.push({
+      name: authSecretVolumeName,
+      mountPath: buildAuthSecretPath(authSecret),
+      subPath: authSecret.key,
       readOnly: true,
     })
   }
@@ -2894,7 +2907,12 @@ const submitJobRun = async (
         env: [
           { name: 'AGENT_RUN_SPEC', value: '/workspace/run.json' },
           { name: 'AGENT_RUNNER_SPEC_PATH', value: '/workspace/agent-runner.json' },
-          ...(authSecret ? [{ name: 'CODEX_AUTH', value: buildAuthSecretPath(authSecret) }] : []),
+          ...(authSecret
+            ? [
+                { name: 'CODEX_HOME', value: authSecret.mountPath },
+                { name: 'CODEX_AUTH', value: buildAuthSecretPath(authSecret) },
+              ]
+            : []),
           ...env,
         ],
         envFrom: envFrom.length > 0 ? envFrom : undefined,

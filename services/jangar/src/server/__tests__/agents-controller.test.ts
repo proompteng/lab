@@ -595,18 +595,34 @@ describe('agents controller reconcileAgentRun', () => {
       const volumes = (podSpecSpec.volumes as Record<string, unknown>[] | undefined) ?? []
       const volumeMounts = (container.volumeMounts as Record<string, unknown>[] | undefined) ?? []
 
+      const codexHomeEnv = env.find((entry) => entry.name === 'CODEX_HOME') as Record<string, unknown> | undefined
+      expect(codexHomeEnv?.value).toBe('/root/.codex')
       const codexEnv = env.find((entry) => entry.name === 'CODEX_AUTH') as Record<string, unknown> | undefined
       expect(codexEnv?.value).toBe('/root/.codex/auth.json')
 
-      const authVolume = volumes.find((volume) => volume.name === 'run-1-auth') as Record<string, unknown> | undefined
+      const authHomeVolume = volumes.find((volume) => volume.name === 'run-1-auth-home') as
+        | Record<string, unknown>
+        | undefined
+      const authHomeEmptyDir = (authHomeVolume?.emptyDir as Record<string, unknown> | undefined) ?? {}
+      expect(authHomeEmptyDir).toEqual({})
+
+      const authVolume = volumes.find((volume) => volume.name === 'run-1-auth-secret') as
+        | Record<string, unknown>
+        | undefined
       const authSecret = (authVolume?.secret as Record<string, unknown> | undefined) ?? {}
       expect(authSecret.secretName).toBe('codex-auth')
       const items = (authSecret.items as Record<string, unknown>[] | undefined) ?? []
       expect(items[0]?.key).toBe('auth.json')
 
-      const authMount = volumeMounts.find((mount) => mount.mountPath === '/root/.codex') as
+      const authHomeMount = volumeMounts.find((mount) => mount.mountPath === '/root/.codex') as
         | Record<string, unknown>
         | undefined
+      expect(authHomeMount?.readOnly).toBeUndefined()
+
+      const authMount = volumeMounts.find((mount) => mount.mountPath === '/root/.codex/auth.json') as
+        | Record<string, unknown>
+        | undefined
+      expect(authMount?.subPath).toBe('auth.json')
       expect(authMount?.readOnly).toBe(true)
     } finally {
       if (previousName === undefined) {
