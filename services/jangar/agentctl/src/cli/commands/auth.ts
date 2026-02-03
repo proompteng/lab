@@ -3,6 +3,7 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import { loadConfig, resolveConfigPath, saveConfig } from '../../config'
 import { maskSecret } from '../../legacy'
+import { AgentctlContext } from '../context'
 import { asAgentctlError } from '../errors'
 import { promptText } from '../prompt'
 
@@ -22,10 +23,11 @@ const makeLoginCommand = () => {
   const withToken = Options.boolean('with-token')
   return Command.make('login', { token, withToken }, ({ token, withToken }) =>
     Effect.gen(function* () {
-      if (withToken && Option.isSome(token)) {
+      const { flags } = yield* AgentctlContext
+      if (withToken && (Option.isSome(token) || flags.token)) {
         throw new Error('Use either --token or --with-token, not both.')
       }
-      let resolvedToken = Option.isSome(token) ? token.value : ''
+      let resolvedToken = Option.isSome(token) ? token.value : (flags.token ?? '')
       if (withToken) {
         resolvedToken = (yield* Effect.tryPromise({
           try: () => readStdin(),
