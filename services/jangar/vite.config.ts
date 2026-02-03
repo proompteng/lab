@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import { devtools } from '@tanstack/devtools-vite'
@@ -28,10 +28,12 @@ const resolveAliases: Record<string, string> = {
 const configDir = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(configDir, '../..')
 const defaultEntryDir = path.resolve(repoRoot, 'node_modules/@tanstack/react-start/dist/plugin/default-entry')
+const localEntryDir = path.resolve(configDir, 'node_modules/@tanstack/react-start/dist/plugin/default-entry')
+const resolvedEntryDir = existsSync(defaultEntryDir) ? defaultEntryDir : localEntryDir
 const defaultEntryPaths = {
-  client: path.resolve(defaultEntryDir, 'client.tsx'),
-  server: path.resolve(defaultEntryDir, 'server.ts'),
-  start: path.resolve(defaultEntryDir, 'start.ts'),
+  client: path.resolve(resolvedEntryDir, 'client.tsx'),
+  server: path.resolve(resolvedEntryDir, 'server.ts'),
+  start: path.resolve(resolvedEntryDir, 'start.ts'),
 }
 const isInsideRouterMonoRepo = path.basename(path.resolve(repoRoot, '..')) === 'packages'
 const startManifestModuleId = `\0${VIRTUAL_MODULES.startManifest}`

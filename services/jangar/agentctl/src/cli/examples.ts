@@ -3,9 +3,10 @@ export const renderExamples = (topic?: string) => {
   if (!normalized) {
     return `Examples:
   agentctl status
-  agentctl agent list
-  agentctl impl init --apply
+  agentctl get agent
+  agentctl init impl --apply
   agentctl run submit --agent demo --impl demo --runtime job --wait
+  agentctl get run --phase Succeeded
   agentctl run logs demo-xxxx --follow
   agentctl run codex --prompt "Summarize repo" --agent demo --runtime workflow --wait
   agentctl completion install zsh
@@ -15,14 +16,14 @@ export const renderExamples = (topic?: string) => {
   if (normalized === 'run') {
     return `Run examples:
   agentctl run submit --agent demo --impl demo --runtime workflow --wait
-  agentctl run list --phase Succeeded
+  agentctl get run --phase Succeeded
   agentctl run logs demo-xxxx --follow
 `
   }
   if (normalized === 'impl') {
     return `ImplementationSpec examples:
-  agentctl impl init --apply
-  agentctl impl create --text @spec.md --summary "Implement feature" --source provider=manual,externalId=demo
+  agentctl init impl --apply
+  agentctl create impl --text @spec.md --summary "Implement feature" --source provider=manual,externalId=demo
 `
   }
   if (normalized === 'config') {

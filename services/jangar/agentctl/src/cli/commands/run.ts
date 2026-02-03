@@ -1,33 +1,24 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
 
 import { Args, Command, Options } from '@effect/cli'
 import type * as grpc from '@grpc/grpc-js'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
+import YAML from 'yaml'
 import { runCodex } from '../../codex'
 import {
   AGENT_RUN_SPEC,
-  applyManifest,
   callUnary,
-  clearScreen,
   createCustomObject,
-  DEFAULT_WATCH_INTERVAL_MS,
   deleteJobByName,
   deleteJobsBySelector,
-  filterAgentRunsList,
   getCustomObjectOptional,
   isJobRuntime,
-  listCustomObjects,
-  outputList,
   outputResource,
-  outputResources,
   parseJson,
   parseKeyValueList,
   pickPodForRun,
   RESOURCE_SPECS,
-  readFileContent,
   readNestedValue,
   resolveAgentRunRuntime,
   resolvePodContainerName,
@@ -38,13 +29,10 @@ import {
   waitForRunCompletion,
   waitForRunCompletionKube,
 } from '../../legacy'
-import { buildAgentRunYaml } from '../../templates/agent-run'
-import { buildImplementationSpecYaml } from '../../templates/implementation-spec'
 import { TransportService } from '../../transport'
 import { AgentctlContext } from '../context'
 import { asAgentctlError } from '../errors'
 import { promptList, promptText } from '../prompt'
-import { sleep } from '../utils'
 
 type RunSubmitInput = {
   agent: string
@@ -62,15 +50,6 @@ type RunSubmitInput = {
   vcsPolicyRequired?: boolean
   wait?: boolean
 }
-
-const parseIntervalMs = (value?: string) => {
-  if (!value) return DEFAULT_WATCH_INTERVAL_MS
-  const parsed = Number.parseFloat(value)
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_WATCH_INTERVAL_MS
-  return Math.floor(parsed * 1000)
-}
-
-const resolveDescribeOutput = (output: string, outputFlag?: string) => (outputFlag ? output : 'yaml')
 
 const transportErrorTag = (error: unknown) => {
   if (error && typeof error === 'object' && 'code' in error) return 'GrpcError'
@@ -102,11 +81,6 @@ const resolvePromptList = (values: string[], question: string) =>
         try: () => promptList(question),
         catch: (error) => asAgentctlError(error, 'ValidationError'),
       })
-
-const writeYamlFile = async (path: string, contents: string) => {
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, contents, 'utf8')
-}
 
 const buildRunSpec = (input: RunSubmitInput) => {
   const runtimeConfig = toKeyValueMap(parseKeyValueList(input.runtimeConfig))
@@ -241,11 +215,6 @@ const submitRunGrpc = async (
 
 export const makeRunCommand = () => {
   const nameArg = Args.text({ name: 'name' })
-  const fileOption = Options.text('file').pipe(Options.withAlias('f'))
-  const selectorOption = Options.optional(Options.text('selector').pipe(Options.withAlias('l')))
-  const intervalOption = Options.optional(Options.text('interval'))
-  const phaseOption = Options.optional(Options.text('phase'))
-  const runtimeFilterOption = Options.optional(Options.text('runtime'))
 
   const submit = Command.make(
     'submit',
@@ -310,202 +279,6 @@ export const makeRunCommand = () => {
       }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
   )
 
-  const apply = Command.make('apply', { file: fileOption }, ({ file }) =>
-    Effect.gen(function* () {
-      const { resolved } = yield* AgentctlContext
-      const transport = yield* TransportService
-      const manifest = yield* Effect.promise(() => readFileContent(file))
-      if (transport.mode === 'kube') {
-        const resources = yield* Effect.promise(() => applyManifest(transport.backend, manifest, resolved.namespace))
-        outputResources(resources, resolved.output)
-        return
-      }
-      const response = yield* Effect.promise(() =>
-        callUnary<{ json: string }>(
-          transport.client,
-          'ApplyAgentRun',
-          { namespace: resolved.namespace, manifest_yaml: manifest },
-          transport.metadata,
-        ),
-      )
-      const resource = parseJson(response.json)
-      if (resource) outputResource(resource, resolved.output)
-    }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
-
-  const get = Command.make('get', { name: nameArg }, ({ name }) =>
-    Effect.gen(function* () {
-      const { resolved } = yield* AgentctlContext
-      const transport = yield* TransportService
-      if (transport.mode === 'kube') {
-        const resource = yield* Effect.promise(() =>
-          getCustomObjectOptional(transport.backend, AGENT_RUN_SPEC, name, resolved.namespace),
-        )
-        if (!resource) throw new Error('AgentRun not found')
-        outputResource(resource, resolved.output)
-        return
-      }
-      const response = yield* Effect.promise(() =>
-        callUnary<{ json: string }>(
-          transport.client,
-          'GetAgentRun',
-          { name, namespace: resolved.namespace },
-          transport.metadata,
-        ),
-      )
-      const resource = parseJson(response.json)
-      if (resource) outputResource(resource, resolved.output)
-    }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
-
-  const describe = Command.make('describe', { name: nameArg }, ({ name }) =>
-    Effect.gen(function* () {
-      const { resolved, flags } = yield* AgentctlContext
-      const transport = yield* TransportService
-      const describeOutput = resolveDescribeOutput(resolved.output, flags.output)
-      if (transport.mode === 'kube') {
-        const resource = yield* Effect.promise(() =>
-          getCustomObjectOptional(transport.backend, AGENT_RUN_SPEC, name, resolved.namespace),
-        )
-        if (!resource) throw new Error('AgentRun not found')
-        outputResource(resource, describeOutput)
-        return
-      }
-      const response = yield* Effect.promise(() =>
-        callUnary<{ json: string }>(
-          transport.client,
-          'GetAgentRun',
-          { name, namespace: resolved.namespace },
-          transport.metadata,
-        ),
-      )
-      const resource = parseJson(response.json)
-      if (resource) outputResource(resource, describeOutput)
-    }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
-
-  const status = Command.make('status', { name: nameArg }, ({ name }) =>
-    Effect.gen(function* () {
-      const { resolved } = yield* AgentctlContext
-      const transport = yield* TransportService
-      if (transport.mode === 'kube') {
-        const resource = yield* Effect.promise(() =>
-          getCustomObjectOptional(transport.backend, AGENT_RUN_SPEC, name, resolved.namespace),
-        )
-        if (!resource) throw new Error('AgentRun not found')
-        outputResource(resource, resolved.output)
-        return
-      }
-      const response = yield* Effect.promise(() =>
-        callUnary<{ json: string }>(
-          transport.client,
-          'GetAgentRun',
-          { name, namespace: resolved.namespace },
-          transport.metadata,
-        ),
-      )
-      const resource = parseJson(response.json)
-      if (resource) outputResource(resource, resolved.output)
-    }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
-
-  const wait = Command.make('wait', { name: nameArg }, ({ name }) =>
-    Effect.gen(function* () {
-      const { resolved } = yield* AgentctlContext
-      const transport = yield* TransportService
-      if (transport.mode === 'kube') {
-        yield* Effect.promise(() =>
-          waitForRunCompletionKube(transport.backend, name, resolved.namespace, resolved.output),
-        )
-        return
-      }
-      const exitCode = yield* Effect.promise(() =>
-        waitForRunCompletion(transport.client, transport.metadata, name, resolved.namespace, resolved.output),
-      )
-      if (exitCode !== 0) {
-        throw { _tag: 'GrpcError', message: '' }
-      }
-    }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
-
-  const list = Command.make(
-    'list',
-    { selector: selectorOption, phase: phaseOption, runtime: runtimeFilterOption },
-    ({ selector, phase, runtime }) =>
-      Effect.gen(function* () {
-        const { resolved } = yield* AgentctlContext
-        const transport = yield* TransportService
-        const labelSelector = Option.getOrUndefined(selector)
-        const phaseValue = Option.getOrUndefined(phase)
-        const runtimeValue = Option.getOrUndefined(runtime)
-        if (transport.mode === 'kube') {
-          const resource = yield* Effect.promise(() =>
-            listCustomObjects(transport.backend, AGENT_RUN_SPEC, resolved.namespace, labelSelector),
-          )
-          outputList(filterAgentRunsList(resource, phaseValue, runtimeValue), resolved.output)
-          return
-        }
-        const request: Record<string, string> = { namespace: resolved.namespace }
-        if (labelSelector) request.label_selector = labelSelector
-        if (phaseValue) request.phase = phaseValue
-        if (runtimeValue) request.runtime = runtimeValue
-        const response = yield* Effect.promise(() =>
-          callUnary<{ json: string }>(transport.client, 'ListAgentRuns', request, transport.metadata),
-        )
-        const resource = parseJson(response.json)
-        if (resource) outputList(resource, resolved.output)
-      }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
-
-  const watch = Command.make(
-    'watch',
-    { selector: selectorOption, phase: phaseOption, runtime: runtimeFilterOption, interval: intervalOption },
-    ({ selector, phase, runtime, interval }) =>
-      Effect.gen(function* () {
-        const { resolved } = yield* AgentctlContext
-        const transport = yield* TransportService
-        const labelSelector = Option.getOrUndefined(selector)
-        const phaseValue = Option.getOrUndefined(phase)
-        const runtimeValue = Option.getOrUndefined(runtime)
-        const intervalMs = parseIntervalMs(Option.getOrUndefined(interval))
-        let iteration = 0
-        const stop = () => process.exit(0)
-        process.on('SIGINT', stop)
-        while (true) {
-          if (transport.mode === 'kube') {
-            const resource = yield* Effect.promise(() =>
-              listCustomObjects(transport.backend, AGENT_RUN_SPEC, resolved.namespace, labelSelector),
-            )
-            if (resolved.output === 'table') {
-              clearScreen()
-            } else if (iteration > 0) {
-              console.log('')
-            }
-            outputList(filterAgentRunsList(resource, phaseValue, runtimeValue), resolved.output)
-          } else {
-            const request: Record<string, string> = { namespace: resolved.namespace }
-            if (labelSelector) request.label_selector = labelSelector
-            if (phaseValue) request.phase = phaseValue
-            if (runtimeValue) request.runtime = runtimeValue
-            const response = yield* Effect.promise(() =>
-              callUnary<{ json: string }>(transport.client, 'ListAgentRuns', request, transport.metadata),
-            )
-            const resource = parseJson(response.json)
-            if (resource) {
-              if (resolved.output === 'table') {
-                clearScreen()
-              } else if (iteration > 0) {
-                console.log('')
-              }
-              outputList(resource, resolved.output)
-            }
-          }
-          iteration += 1
-          yield* Effect.promise(() => sleep(intervalMs))
-        }
-      }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
-
   const logs = Command.make('logs', { name: nameArg, follow: Options.boolean('follow') }, ({ name, follow }) =>
     Effect.gen(function* () {
       const { resolved } = yield* AgentctlContext
@@ -547,6 +320,25 @@ export const makeRunCommand = () => {
             call.on('error', (error: unknown) => reject(error))
           }),
       )
+    }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
+  )
+
+  const wait = Command.make('wait', { name: nameArg }, ({ name }) =>
+    Effect.gen(function* () {
+      const { resolved } = yield* AgentctlContext
+      const transport = yield* TransportService
+      if (transport.mode === 'kube') {
+        yield* Effect.promise(() =>
+          waitForRunCompletionKube(transport.backend, name, resolved.namespace, resolved.output),
+        )
+        return
+      }
+      const exitCode = yield* Effect.promise(() =>
+        waitForRunCompletion(transport.client, transport.metadata, name, resolved.namespace, resolved.output),
+      )
+      if (exitCode !== 0) {
+        throw { _tag: 'GrpcError', message: '' }
+      }
     }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
   )
 
@@ -593,139 +385,6 @@ export const makeRunCommand = () => {
       )
       console.log(response.message ?? 'cancelled')
     }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
-  )
-
-  const init = Command.make(
-    'init',
-    {
-      name: Options.optional(Options.text('name')),
-      agent: Options.optional(Options.text('agent')),
-      impl: Options.optional(Options.text('impl')),
-      runtime: Options.optional(Options.text('runtime')),
-      runtimeConfig: Options.repeated(Options.text('runtime-config')),
-      param: Options.repeated(Options.text('param')),
-      workloadImage: Options.optional(Options.text('workload-image')),
-      cpu: Options.optional(Options.text('cpu')),
-      memory: Options.optional(Options.text('memory')),
-      memoryRef: Options.optional(Options.text('memory-ref')),
-      vcs: Options.optional(Options.text('vcs')),
-      vcsMode: Options.optional(Options.text('vcs-mode')),
-      vcsRequired: Options.boolean('vcs-required'),
-      idempotencyKey: Options.optional(Options.text('idempotency-key')),
-      file: Options.optional(Options.text('file')),
-      apply: Options.boolean('apply'),
-      wait: Options.boolean('wait'),
-    },
-    ({
-      name,
-      agent,
-      impl,
-      runtime,
-      runtimeConfig,
-      param,
-      workloadImage,
-      cpu,
-      memory,
-      memoryRef,
-      vcs,
-      vcsMode,
-      vcsRequired,
-      idempotencyKey,
-      file,
-      apply,
-      wait,
-    }) =>
-      Effect.gen(function* () {
-        const { resolved } = yield* AgentctlContext
-        const transport = yield* TransportService
-        const resolvedAgent = yield* resolvePromptText(agent, 'Agent name')
-        const resolvedImpl = yield* resolvePromptText(impl, 'ImplementationSpec name')
-        const resolvedRuntime = yield* resolvePromptText(
-          runtime,
-          'Runtime (workflow|job|temporal|custom)',
-          false,
-          'workflow',
-        )
-        const params = yield* resolvePromptList(param, 'Parameters (key=value, comma-separated, optional)')
-        const runtimeParams = yield* resolvePromptList(
-          runtimeConfig,
-          'Runtime config (key=value, comma-separated, optional)',
-        )
-        const resolvedWorkloadImage = Option.getOrUndefined(workloadImage)
-        const resolvedCpu = Option.getOrUndefined(cpu)
-        const resolvedMemory = Option.getOrUndefined(memory)
-        const resolvedMemoryRef = Option.getOrUndefined(memoryRef)
-        const resolvedVcsRef = Option.getOrUndefined(vcs)
-        const resolvedVcsMode = Option.getOrUndefined(vcsMode)
-        const resolvedVcsRequired = vcsRequired
-
-        const yaml = buildAgentRunYaml({
-          name: Option.getOrUndefined(name),
-          generateName: Option.isSome(name) ? undefined : `${resolvedAgent}-`,
-          namespace: resolved.namespace,
-          agentName: resolvedAgent,
-          implName: resolvedImpl,
-          runtimeType: resolvedRuntime,
-          runtimeConfig: toKeyValueMap(parseKeyValueList(runtimeParams)),
-          parameters: toKeyValueMap(parseKeyValueList(params)),
-          memoryRef: resolvedMemoryRef,
-          workloadImage: resolvedWorkloadImage,
-          cpu: resolvedCpu,
-          memory: resolvedMemory,
-          vcsRef: resolvedVcsRef,
-          vcsPolicyMode: resolvedVcsMode,
-          vcsPolicyRequired: resolvedVcsRequired,
-        })
-
-        const filePath = Option.getOrUndefined(file)
-        if (filePath) {
-          yield* Effect.promise(() => writeYamlFile(filePath, yaml))
-          console.log(`Wrote ${filePath}`)
-        }
-
-        if (!apply) {
-          if (!filePath) {
-            console.log(yaml.trim())
-          }
-          return
-        }
-
-        const input: RunSubmitInput = {
-          agent: resolvedAgent,
-          impl: resolvedImpl,
-          runtime: resolvedRuntime,
-          runtimeConfig: runtimeParams,
-          parameters: params,
-          idempotencyKey: Option.getOrUndefined(idempotencyKey),
-          workloadImage: resolvedWorkloadImage,
-          cpu: resolvedCpu,
-          memory: resolvedMemory,
-          memoryRef: resolvedMemoryRef,
-          vcsRef: resolvedVcsRef,
-          vcsPolicyMode: resolvedVcsMode,
-          vcsPolicyRequired: resolvedVcsRequired,
-          wait,
-        }
-
-        if (transport.mode === 'kube') {
-          const resources = yield* Effect.promise(() => applyManifest(transport.backend, yaml, resolved.namespace))
-          outputResources(resources, resolved.output)
-          if (wait) {
-            const resource = resources[0]
-            const runName = readNestedValue(resource, ['metadata', 'name'])
-            if (typeof runName === 'string' && runName) {
-              yield* Effect.promise(() =>
-                waitForRunCompletionKube(transport.backend, runName, resolved.namespace, resolved.output),
-              )
-            }
-          }
-          return
-        }
-
-        yield* Effect.promise(() =>
-          submitRunGrpc(transport.client, transport.metadata, resolved.namespace, resolved.output, input),
-        )
-      }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
   )
 
   const codex = Command.make(
@@ -811,13 +470,16 @@ export const makeRunCommand = () => {
           implName = typeof nameValue === 'string' ? nameValue : null
         } else {
           const generatedName = `impl-${randomUUID().slice(0, 8)}`
-          const manifestYaml = buildImplementationSpecYaml({
-            name: generatedName,
-            namespace: resolved.namespace,
-            summary: spec.summary,
-            text: spec.text,
-            acceptanceCriteria: spec.acceptanceCriteria,
-            labels: spec.labels,
+          const manifestYaml = YAML.stringify({
+            apiVersion: `${RESOURCE_SPECS.impl.group}/${RESOURCE_SPECS.impl.version}`,
+            kind: RESOURCE_SPECS.impl.kind,
+            metadata: { name: generatedName, namespace: resolved.namespace },
+            spec: {
+              summary: spec.summary,
+              text: spec.text,
+              ...(spec.acceptanceCriteria.length > 0 ? { acceptanceCriteria: spec.acceptanceCriteria } : {}),
+              ...(spec.labels && spec.labels.length > 0 ? { labels: spec.labels } : {}),
+            },
           })
           const response = yield* Effect.promise(() =>
             callUnary<{ json: string }>(
@@ -866,22 +528,9 @@ export const makeRunCommand = () => {
 
   const base = Command.make('run', {}, () =>
     Effect.sync(() => {
-      console.log('Usage: agentctl run <submit|apply|get|describe|status|wait|list|watch|logs|cancel|init|codex>')
+      console.log('Usage: agentctl run <submit|logs|wait|cancel|codex>')
     }),
   )
 
-  return Command.withSubcommands(base, [
-    submit,
-    apply,
-    get,
-    describe,
-    status,
-    wait,
-    list,
-    watch,
-    logs,
-    cancel,
-    init,
-    codex,
-  ])
+  return Command.withSubcommands(base, [submit, logs, wait, cancel, codex])
 }

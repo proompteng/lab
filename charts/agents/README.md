@@ -29,6 +29,33 @@ kubectl apply -n agents -f charts/agents/examples/orchestration-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/orchestrationrun-sample.yaml
 ```
 
+## Kind quickstart (end-to-end)
+Spin up a local kind cluster, install Postgres, deploy the chart, and run the
+smoke AgentRun with a single command:
+
+```bash
+scripts/agents/kind-e2e.sh
+```
+
+The script builds a local Jangar image first (running `bun install` + `bun run build`
+if `.output` is missing), then loads the image into kind.
+
+Environment variables you can override:
+- `CLUSTER_NAME` (default: `agents`)
+- `NAMESPACE` (default: `agents`)
+- `POSTGRES_RELEASE` (default: `agents-postgres`)
+- `POSTGRES_USER` (default: `agents`)
+- `POSTGRES_PASSWORD` (default: `agents`)
+- `POSTGRES_DB` (default: `agents`)
+- `CHART_PATH` (default: `charts/agents`)
+- `VALUES_FILE` (default: `charts/agents/values-kind.yaml`)
+- `SECRET_NAME` (default: `jangar-db-app`)
+- `SECRET_KEY` (default: `uri`)
+- `KUBECTL_CONTEXT` (default: `kind-<cluster>`)
+- `IMAGE_REPOSITORY` (default: `jangar-local`)
+- `IMAGE_TAG` (default: `kind`)
+- `BUILD_IMAGE` (default: `1`, set to `0` to skip the Docker build)
+
 ## Why teams use this chart
 - **Operator-native orchestration**: run workflows with Kubernetes Jobs/Pods (no external workflow engine required).
 - **Batteries-included CRDs**: agents, tools, orchestration, approvals, schedules, artifacts, workspaces, and more.

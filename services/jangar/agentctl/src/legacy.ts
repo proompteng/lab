@@ -1263,7 +1263,7 @@ const deleteJobsBySelector = async (backend: KubeBackend, namespace: string, sel
 const normalizeOutput = (value: string | undefined) => {
   if (!value) return 'table'
   const normalized = value.trim().toLowerCase()
-  if (normalized === 'json' || normalized === 'yaml' || normalized === 'table') return normalized
+  if (['json', 'yaml', 'yaml-stream', 'table', 'text', 'wide'].includes(normalized)) return normalized
   return 'table'
 }
 
@@ -1417,6 +1417,39 @@ const resolveStatusPhase = (resource: Record<string, unknown>) => {
   return ''
 }
 
+const formatLabels = (resource: Record<string, unknown>) => {
+  const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+  const labels = metadata.labels as Record<string, string> | undefined
+  if (!labels || typeof labels !== 'object') return ''
+  const entries = Object.entries(labels)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(',')
+  return entries
+}
+
+const extractDetails = (resource: Record<string, unknown>) => {
+  const kind = typeof resource.kind === 'string' ? resource.kind.toLowerCase() : ''
+  if (kind === 'agentrun') {
+    return toCell(readNestedValue(resource, ['spec', 'runtime', 'type']))
+  }
+  if (kind === 'implementationspec') {
+    return toCell(readNestedValue(resource, ['spec', 'summary']))
+  }
+  if (kind === 'implementationsource') {
+    return toCell(readNestedValue(resource, ['spec', 'provider']))
+  }
+  if (kind === 'schedule') {
+    return toCell(readNestedValue(resource, ['spec', 'schedule']))
+  }
+  if (kind === 'toolrun') {
+    return toCell(readNestedValue(resource, ['spec', 'toolRef', 'name']))
+  }
+  if (kind === 'agent') {
+    return toCell(readNestedValue(resource, ['spec', 'providerRef', 'name']))
+  }
+  return ''
+}
+
 const toRow = (resource: Record<string, unknown>) => {
   const metadata = (resource.metadata ?? {}) as Record<string, unknown>
   const phase = resolveStatusPhase(resource)
@@ -1426,7 +1459,35 @@ const toRow = (resource: Record<string, unknown>) => {
     kind: toCell(resource.kind ?? ''),
     age: formatAge(typeof metadata.creationTimestamp === 'string' ? metadata.creationTimestamp : undefined),
     status: phase,
+    labels: formatLabels(resource),
+    details: extractDetails(resource),
   }
+}
+
+const toResourceName = (row: ReturnType<typeof toRow>) => {
+  const kind = row.kind ? String(row.kind).toLowerCase() : ''
+  if (kind && row.name) return `${kind}/${row.name}`
+  return row.name
+}
+
+const renderRows = (rows: ReturnType<typeof toRow>[], output: string) => {
+  if (output === 'wide') {
+    renderTable(rows, [
+      { label: 'NAME', value: (entry) => entry.name },
+      { label: 'NAMESPACE', value: (entry) => entry.namespace },
+      { label: 'KIND', value: (entry) => entry.kind },
+      { label: 'AGE', value: (entry) => entry.age },
+      { label: 'STATUS', value: (entry) => entry.status },
+      { label: 'LABELS', value: (entry) => entry.labels ?? '' },
+      { label: 'DETAILS', value: (entry) => entry.details ?? '' },
+    ])
+    return
+  }
+  renderTable(rows, [
+    { label: 'NAME', value: (entry) => entry.name },
+    { label: 'NAMESPACE', value: (entry) => entry.namespace },
+    { label: 'STATUS', value: (entry) => entry.status },
+  ])
 }
 
 const outputResource = (resource: Record<string, unknown>, output: string) => {
@@ -1434,21 +1495,17 @@ const outputResource = (resource: Record<string, unknown>, output: string) => {
     console.log(JSON.stringify(resource, null, 2))
     return
   }
-  if (output === 'yaml') {
+  if (output === 'yaml' || output === 'yaml-stream') {
     console.log(YAML.stringify(resource))
     return
   }
+  if (output === 'text') {
+    const row = toRow(resource)
+    console.log(toResourceName(row))
+    return
+  }
   const row = toRow(resource)
-  renderTable(
-    [row],
-    [
-      { label: 'NAME', value: (entry) => entry.name },
-      { label: 'NAMESPACE', value: (entry) => entry.namespace },
-      { label: 'KIND', value: (entry) => entry.kind },
-      { label: 'AGE', value: (entry) => entry.age },
-      { label: 'STATUS', value: (entry) => entry.status },
-    ],
-  )
+  renderRows([row], output)
 }
 
 const outputList = (resource: Record<string, unknown>, output: string) => {
@@ -1460,15 +1517,23 @@ const outputList = (resource: Record<string, unknown>, output: string) => {
     console.log(YAML.stringify(resource))
     return
   }
+  if (output === 'yaml-stream') {
+    const items = Array.isArray(resource.items) ? (resource.items as Record<string, unknown>[]) : []
+    const docs = items.map((item) => YAML.stringify(item).trim()).filter(Boolean)
+    console.log(docs.map((doc) => `---\n${doc}`).join('\n'))
+    return
+  }
+  if (output === 'text') {
+    const items = Array.isArray(resource.items) ? (resource.items as Record<string, unknown>[]) : []
+    const rows = items.map(toRow)
+    for (const row of rows) {
+      console.log(toResourceName(row))
+    }
+    return
+  }
   const items = Array.isArray(resource.items) ? (resource.items as Record<string, unknown>[]) : []
   const rows = items.map(toRow)
-  renderTable(rows, [
-    { label: 'NAME', value: (entry) => entry.name },
-    { label: 'NAMESPACE', value: (entry) => entry.namespace },
-    { label: 'KIND', value: (entry) => entry.kind },
-    { label: 'AGE', value: (entry) => entry.age },
-    { label: 'STATUS', value: (entry) => entry.status },
-  ])
+  renderRows(rows, output)
 }
 
 const outputResources = (resources: Record<string, unknown>[], output: string) => {
@@ -1480,14 +1545,20 @@ const outputResources = (resources: Record<string, unknown>[], output: string) =
     console.log(YAML.stringify(resources))
     return
   }
+  if (output === 'yaml-stream') {
+    const docs = resources.map((item) => YAML.stringify(item).trim()).filter(Boolean)
+    console.log(docs.map((doc) => `---\n${doc}`).join('\n'))
+    return
+  }
+  if (output === 'text') {
+    const rows = resources.map(toRow)
+    for (const row of rows) {
+      console.log(toResourceName(row))
+    }
+    return
+  }
   const rows = resources.map(toRow)
-  renderTable(rows, [
-    { label: 'NAME', value: (entry) => entry.name },
-    { label: 'NAMESPACE', value: (entry) => entry.namespace },
-    { label: 'KIND', value: (entry) => entry.kind },
-    { label: 'AGE', value: (entry) => entry.age },
-    { label: 'STATUS', value: (entry) => entry.status },
-  ])
+  renderRows(rows, output)
 }
 
 const parseKeyValueList = (values: string[]) => {
