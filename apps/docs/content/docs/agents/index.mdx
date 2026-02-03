@@ -67,6 +67,96 @@ The `scripts/agents/kind-e2e.sh` script performs the following steps:
 6. Applies the smoke AgentProvider/Agent/ImplementationSpec/AgentRun examples.
 7. Waits for the AgentRun to succeed.
 
+## Codex PR end-to-end (optional)
+
+This flow runs a Codex agent inside the cluster and creates a GitHub PR. It requires a Codex auth session and a
+GitHub token with repo write access.
+
+Create the secrets:
+
+```bash
+kubectl -n agents create secret generic codex-auth \
+  --from-file=auth.json="$HOME/.codex/auth.json"
+
+kubectl -n agents create secret generic codex-github-token \
+  --from-literal=GITHUB_TOKEN="$(gh auth token)" \
+  --from-literal=GH_TOKEN="$(gh auth token)"
+```
+
+Mount the auth secret outside `/root/.codex` so Codex can write its caches:
+
+```bash
+helm upgrade agents charts/agents --namespace agents --reuse-values \
+  --set controller.authSecret.name=codex-auth \
+  --set controller.authSecret.key=auth.json \
+  --set controller.authSecret.mountPath=/var/run/secrets/codex
+```
+
+Apply the Codex provider + agent, then run an AgentRun with an inline ImplementationSpec:
+
+```bash
+kubectl -n agents apply -f charts/agents/examples/agentprovider-native-workflow.yaml
+kubectl -n agents apply -f charts/agents/examples/agent-native-workflow.yaml
+
+cat <<'EOF' | kubectl -n agents apply -f -
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: codex-e2e-proof
+spec:
+  source:
+    provider: manual
+    externalId: manual:codex-e2e-proof
+    url: https://example.com/agents/codex-e2e-proof
+  summary: "Codex E2E proof"
+  text: |
+    Create a new file docs/agents/codex-e2e-proof.md with the single line:
+    "Codex E2E test ran on 2026-02-03."
+  acceptanceCriteria:
+    - File exists with the note
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: codex-e2e-pr
+spec:
+  agentRef:
+    name: codex-native-workflow
+  implementationSpecRef:
+    name: codex-e2e-proof
+  runtime:
+    type: workflow
+    config:
+      ttlSecondsAfterFinished: 900
+  workflow:
+    steps:
+      - name: implement
+        parameters:
+          stage: implement
+  workload:
+    image: jangar-local:kind
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+  secrets:
+    - codex-github-token
+  parameters:
+    repository: proompteng/lab
+    base: main
+    issueTitle: "Codex E2E proof"
+    issueUrl: "https://github.com/proompteng/lab"
+EOF
+```
+
+Wait for the run and confirm the PR:
+
+```bash
+kubectl -n agents wait --for=condition=Succeeded agentrun/codex-e2e-pr --timeout=1800s
+kubectl -n agents get jobs
+kubectl -n agents logs job/codex-e2e-pr-step-1-attempt-1
+```
+
 ## Configuration knobs
 
 The kind script supports the following environment overrides:
