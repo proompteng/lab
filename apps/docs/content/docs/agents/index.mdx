@@ -83,13 +83,12 @@ kubectl -n agents create secret generic codex-github-token \
   --from-literal=GH_TOKEN="$(gh auth token)"
 ```
 
-Mount the auth secret outside `/root/.codex` so Codex can write its caches:
+Mount the auth secret so the controller can set up a writable Codex home directory:
 
 ```bash
 helm upgrade agents charts/agents --namespace agents --reuse-values \
   --set controller.authSecret.name=codex-auth \
-  --set controller.authSecret.key=auth.json \
-  --set controller.authSecret.mountPath=/var/run/secrets/codex
+  --set controller.authSecret.key=auth.json
 ```
 
 Apply the Codex provider + agent, then run an AgentRun with an inline ImplementationSpec:

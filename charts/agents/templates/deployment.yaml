@@ -168,7 +168,7 @@ spec:
             - name: JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_KEY
               value: {{ .Values.controller.authSecret.key | default "auth.json" | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
-              value: {{ .Values.controller.authSecret.mountPath | default "/var/run/secrets/codex" | quote }}
+              value: {{ .Values.controller.authSecret.mountPath | default "/root/.codex" | quote }}
             {{- end }}
             {{- else }}
             - name: JANGAR_AGENTS_CONTROLLER_ENABLED

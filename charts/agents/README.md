@@ -108,15 +108,14 @@ Automatic migrations are enabled by default. To skip:
 - `env.vars.JANGAR_MIGRATIONS=skip`
 
 ### Codex auth secret (optional)
-If you mount a Codex auth secret, avoid `/root/.codex` because secret volumes are read-only and Codex writes caches
-there. Use a dedicated mount path and let the controller set `CODEX_AUTH` to it.
+The controller mounts a writable `emptyDir` at `controller.authSecret.mountPath` (default `/root/.codex`) and then
+mounts the secret file at `auth.json` inside it. It also sets `CODEX_HOME` and `CODEX_AUTH` for the runner pods.
 
 Example:
 ```bash
 helm upgrade agents charts/agents --namespace agents --reuse-values \
   --set controller.authSecret.name=codex-auth \
-  --set controller.authSecret.key=auth.json \
-  --set controller.authSecret.mountPath=/var/run/secrets/codex
+  --set controller.authSecret.key=auth.json
 ```
 
 ## Example production values
