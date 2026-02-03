@@ -334,7 +334,7 @@ spec:
   if (existsSync(caFile)) {
     agentctlEnv.NODE_EXTRA_CA_CERTS = caFile
   }
-  await run(agentctlCommand[0], [...agentctlCommand.slice(1), '--kube', 'run', 'apply', '-f', agentRunFile], {
+  await run(agentctlCommand[0], [...agentctlCommand.slice(1), '--kube', 'apply', '-f', agentRunFile], {
     env: agentctlEnv,
   })
 
