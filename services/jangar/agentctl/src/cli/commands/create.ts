@@ -7,9 +7,9 @@ import {
   outputResource,
   parseJson,
   parseSource,
-  readTextInput,
   RESOURCE_SPECS,
   RPC_RESOURCE_MAP,
+  readTextInput,
 } from '../../legacy'
 import { TransportService } from '../../transport'
 import { AgentctlContext } from '../context'

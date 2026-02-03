@@ -13,7 +13,6 @@ import {
   parseJson,
   parseKeyValueList,
   readTextInput,
-  RESOURCE_SPECS,
   toKeyValueMap,
   waitForRunCompletion,
   waitForRunCompletionKube,
@@ -174,7 +173,6 @@ const makeInitRunCommand = () => {
   const cpu = Options.optional(Options.text('cpu'))
   const memory = Options.optional(Options.text('memory'))
   const memoryRef = Options.optional(Options.text('memory-ref'))
-  const idempotencyKey = Options.optional(Options.text('idempotency-key'))
   const file = Options.optional(Options.text('file'))
   const apply = Options.boolean('apply')
   const wait = Options.boolean('wait')
@@ -192,27 +190,11 @@ const makeInitRunCommand = () => {
       cpu,
       memory,
       memoryRef,
-      idempotencyKey,
       file,
       apply,
       wait,
     },
-    ({
-      name,
-      agent,
-      impl,
-      runtime,
-      runtimeConfig,
-      param,
-      workloadImage,
-      cpu,
-      memory,
-      memoryRef,
-      idempotencyKey,
-      file,
-      apply,
-      wait,
-    }) =>
+    ({ name, agent, impl, runtime, runtimeConfig, param, workloadImage, cpu, memory, memoryRef, file, apply, wait }) =>
       Effect.gen(function* () {
         const { resolved } = yield* AgentctlContext
         const transport = yield* TransportService
@@ -292,7 +274,13 @@ const makeInitRunCommand = () => {
             const runName = (resource.metadata as { name?: string } | undefined)?.name
             if (runName) {
               const exitCode = yield* Effect.promise(() =>
-                waitForRunCompletion(transport.client, transport.metadata, runName, resolved.namespace, resolved.output),
+                waitForRunCompletion(
+                  transport.client,
+                  transport.metadata,
+                  runName,
+                  resolved.namespace,
+                  resolved.output,
+                ),
               )
               if (exitCode !== 0) {
                 throw { _tag: 'GrpcError', message: '' }

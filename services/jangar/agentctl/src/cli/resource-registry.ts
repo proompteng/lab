@@ -85,10 +85,6 @@ export const listResourceNames = () =>
     .map((entry) => entry.name)
     .sort()
 
-export const listAllResourceNames = () =>
-  resources
-    .map((entry) => entry.name)
-    .sort()
+export const listAllResourceNames = () => resources.map((entry) => entry.name).sort()
 
-export const listAllResourceAliases = () =>
-  Array.from(resourceIndex.keys()).sort()
+export const listAllResourceAliases = () => Array.from(resourceIndex.keys()).sort()

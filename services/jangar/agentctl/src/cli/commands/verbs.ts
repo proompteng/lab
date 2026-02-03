@@ -18,9 +18,9 @@ import {
   outputResources,
   parseJson,
   parseYamlDocuments,
-  readFileContent,
   RESOURCE_SPECS,
   RPC_RESOURCE_MAP,
+  readFileContent,
 } from '../../legacy'
 import { TransportService } from '../../transport'
 import { AgentctlContext } from '../context'
@@ -190,31 +190,34 @@ const getGenericResource = (resourceName: string, name: string, describeOutput?:
 export const makeGetCommand = () => {
   const resourceArg = Args.text({ name: 'resource' })
   const nameArg = Args.optional(Args.text({ name: 'name' }))
-  return Command.make('get', { resource: resourceArg, name: nameArg, selector: selectorOption, phase: phaseOption, runtime: runtimeOption }, ({ resource, name, selector, phase, runtime }) =>
-    Effect.gen(function* () {
-      const resolvedName = Option.getOrUndefined(name)
-      const resolvedSelector = Option.getOrUndefined(selector)
-      const resolvedPhase = Option.getOrUndefined(phase)
-      const resolvedRuntime = Option.getOrUndefined(runtime)
+  return Command.make(
+    'get',
+    { resource: resourceArg, name: nameArg, selector: selectorOption, phase: phaseOption, runtime: runtimeOption },
+    ({ resource, name, selector, phase, runtime }) =>
+      Effect.gen(function* () {
+        const resolvedName = Option.getOrUndefined(name)
+        const resolvedSelector = Option.getOrUndefined(selector)
+        const resolvedPhase = Option.getOrUndefined(phase)
+        const resolvedRuntime = Option.getOrUndefined(runtime)
 
-      if (!resolvedName) {
-        const entry = resolveResourceOrThrow(resource)
-        if (entry.isRun) {
-          yield* listRuns(resolvedPhase, resolvedRuntime, resolvedSelector)
+        if (!resolvedName) {
+          const entry = resolveResourceOrThrow(resource)
+          if (entry.isRun) {
+            yield* listRuns(resolvedPhase, resolvedRuntime, resolvedSelector)
+            return
+          }
+          if (resolvedPhase || resolvedRuntime) {
+            throw new Error('Run filters are only supported for resource "run".')
+          }
+          yield* listGenericResource(resource, resolvedSelector)
           return
         }
-        if (resolvedPhase || resolvedRuntime) {
-          throw new Error('Run filters are only supported for resource "run".')
-        }
-        yield* listGenericResource(resource, resolvedSelector)
-        return
-      }
 
-      if (resolvedSelector || resolvedPhase || resolvedRuntime) {
-        throw new Error('Selectors and filters are only supported when listing resources.')
-      }
-      yield* getGenericResource(resource, resolvedName)
-    }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
+        if (resolvedSelector || resolvedPhase || resolvedRuntime) {
+          throw new Error('Selectors and filters are only supported when listing resources.')
+        }
+        yield* getGenericResource(resource, resolvedName)
+      }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
   )
 }
 
@@ -257,7 +260,13 @@ export const makeWatchCommand = () => {
   const resourceArg = Args.text({ name: 'resource' })
   return Command.make(
     'watch',
-    { resource: resourceArg, selector: selectorOption, phase: phaseOption, runtime: runtimeOption, interval: intervalOption },
+    {
+      resource: resourceArg,
+      selector: selectorOption,
+      phase: phaseOption,
+      runtime: runtimeOption,
+      interval: intervalOption,
+    },
     ({ resource, selector, phase, runtime, interval }) =>
       Effect.gen(function* () {
         const { resolved } = yield* AgentctlContext
@@ -294,63 +303,66 @@ export const makeWatchCommand = () => {
 export const makeDeleteCommand = () => {
   const resourceArg = Args.text({ name: 'resource' })
   const nameArg = Args.text({ name: 'name' })
-  return Command.make('delete', { resource: resourceArg, name: nameArg, dryRun: dryRunOption }, ({ resource, name, dryRun }) =>
-    Effect.gen(function* () {
-      const entry = resolveResourceOrThrow(resource)
-      if (entry.isRun || entry.supportsDelete === false) {
-        throw new Error('Deleting runs is not supported. Use `agentctl run cancel <name>`.')
-      }
-      if (!entry.rpc) {
-        throw new Error(`No RPC mapping for ${entry.name}`)
-      }
-      const { resolved, flags } = yield* AgentctlContext
-      const transport = yield* TransportService
-      if (dryRun) {
-        if (transport.mode === 'kube') {
-          const resourceBody = yield* Effect.promise(() =>
-            getCustomObjectOptional(transport.backend, entry.spec, name, resolved.namespace),
+  return Command.make(
+    'delete',
+    { resource: resourceArg, name: nameArg, dryRun: dryRunOption },
+    ({ resource, name, dryRun }) =>
+      Effect.gen(function* () {
+        const entry = resolveResourceOrThrow(resource)
+        if (entry.isRun || entry.supportsDelete === false) {
+          throw new Error('Deleting runs is not supported. Use `agentctl run cancel <name>`.')
+        }
+        if (!entry.rpc) {
+          throw new Error(`No RPC mapping for ${entry.name}`)
+        }
+        const { resolved, flags } = yield* AgentctlContext
+        const transport = yield* TransportService
+        if (dryRun) {
+          if (transport.mode === 'kube') {
+            const resourceBody = yield* Effect.promise(() =>
+              getCustomObjectOptional(transport.backend, entry.spec, name, resolved.namespace),
+            )
+            if (!resourceBody) throw new Error(`${entry.name} ${name} not found`)
+            outputResource(resourceBody, resolved.output)
+            return
+          }
+          const response = yield* Effect.promise(() =>
+            callUnary<{ json: string }>(
+              transport.client,
+              entry.rpc.get,
+              { name, namespace: resolved.namespace },
+              transport.metadata,
+            ),
           )
-          if (!resourceBody) throw new Error(`${entry.name} ${name} not found`)
-          outputResource(resourceBody, resolved.output)
+          const resourceBody = parseJson(response.json)
+          if (resourceBody) outputResource(resourceBody, resolved.output)
+          return
+        }
+
+        const confirmed = yield* confirmOrThrow(`Delete ${entry.name} ${name}?`, flags)
+        if (!confirmed) {
+          console.log('Cancelled')
+          return
+        }
+
+        if (transport.mode === 'kube') {
+          const result = yield* Effect.promise(() =>
+            deleteCustomObject(transport.backend, entry.spec, resolved.namespace, name),
+          )
+          if (!result) throw new Error(`${entry.name} ${name} not found`)
+          console.log('deleted')
           return
         }
         const response = yield* Effect.promise(() =>
-          callUnary<{ json: string }>(
+          callUnary<{ ok: boolean; message?: string }>(
             transport.client,
-            entry.rpc.get,
+            entry.rpc.del,
             { name, namespace: resolved.namespace },
             transport.metadata,
           ),
         )
-        const resourceBody = parseJson(response.json)
-        if (resourceBody) outputResource(resourceBody, resolved.output)
-        return
-      }
-
-      const confirmed = yield* confirmOrThrow(`Delete ${entry.name} ${name}?`, flags)
-      if (!confirmed) {
-        console.log('Cancelled')
-        return
-      }
-
-      if (transport.mode === 'kube') {
-        const result = yield* Effect.promise(() =>
-          deleteCustomObject(transport.backend, entry.spec, resolved.namespace, name),
-        )
-        if (!result) throw new Error(`${entry.name} ${name} not found`)
-        console.log('deleted')
-        return
-      }
-      const response = yield* Effect.promise(() =>
-        callUnary<{ ok: boolean; message?: string }>(
-          transport.client,
-          entry.rpc.del,
-          { name, namespace: resolved.namespace },
-          transport.metadata,
-        ),
-      )
-      console.log(response.message ?? 'deleted')
-    }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
+        console.log(response.message ?? 'deleted')
+      }).pipe(Effect.mapError((error) => asAgentctlError(error, transportErrorTag(error)))),
   )
 }
 

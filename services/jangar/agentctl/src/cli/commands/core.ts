@@ -5,7 +5,14 @@ import { Args, CliConfig, Command, HelpDoc, Options } from '@effect/cli'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import { loadConfig, resolveConfigPath, saveConfig } from '../../config'
-import { DEFAULT_NAMESPACE, getVersion, maskSecret, outputStatus, outputStatusKube, readNestedValue } from '../../legacy'
+import {
+  DEFAULT_NAMESPACE,
+  getVersion,
+  maskSecret,
+  outputStatus,
+  outputStatusKube,
+  readNestedValue,
+} from '../../legacy'
 import { TransportService } from '../../transport'
 import { AgentctlContext } from '../context'
 import { asAgentctlError } from '../errors'

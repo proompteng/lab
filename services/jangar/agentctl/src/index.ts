@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+import { spawn } from 'node:child_process'
 import process from 'node:process'
 
 import { Command, HelpDoc, ValidationError } from '@effect/cli'
@@ -9,7 +9,6 @@ import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
-import { spawn } from 'node:child_process'
 
 import { makeApp } from './cli/app'
 import { makeAgentctlContextLayer } from './cli/context'
