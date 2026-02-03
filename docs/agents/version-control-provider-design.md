@@ -277,6 +277,6 @@ spec:
 - GitLab personal access token scopes: https://docs.gitlab.com/user/profile/personal_access_tokens/
 - GitLab project access token scopes: https://docs.gitlab.com/user/project/settings/project_access_tokens/
 - GitLab webhook secret header: https://docs.gitlab.com/ee/user/project/integrations/webhooks.html
-- Bitbucket API tokens (replacement for app passwords): https://support.atlassian.com/bitbucket-cloud/docs/app-passwords/
-- Bitbucket API token overview: https://support.atlassian.com/bitbucket-cloud/docs/app-passwords/
+- Bitbucket API tokens overview: https://support.atlassian.com/bitbucket-cloud/docs/api-tokens/
+- Bitbucket app password deprecation notice: https://support.atlassian.com/bitbucket-cloud/docs/revoke-an-app-password/
 - Gitea API authentication methods: https://docs.gitea.com/1.20/development/api-usage
