@@ -27,7 +27,10 @@ const makeLoginCommand = () => {
       }
       let resolvedToken = Option.isSome(token) ? token.value : ''
       if (withToken) {
-        resolvedToken = (await readStdin()).trim()
+        resolvedToken = (yield* Effect.tryPromise({
+          try: () => readStdin(),
+          catch: (error) => asAgentctlError(error, 'IoError'),
+        })).trim()
       }
       if (!resolvedToken) {
         resolvedToken = await promptText('Token')
