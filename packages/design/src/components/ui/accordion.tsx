@@ -1,15 +1,87 @@
 'use client'
 
+import * as React from 'react'
 import { Accordion as AccordionPrimitive } from '@base-ui/react/accordion'
-
-import { cn } from '../../lib/utils'
 import { ChevronDownIcon, ChevronUpIcon } from 'lucide-react'
 
-function Accordion({ className, ...props }: AccordionPrimitive.Root.Props) {
+import { cn } from '../../lib/utils'
+
+type AccordionType = 'single' | 'multiple'
+type AccordionValue = AccordionPrimitive.Root.Props['value'] | string
+
+type AccordionProps = Omit<AccordionPrimitive.Root.Props, 'value' | 'defaultValue' | 'onValueChange' | 'multiple'> & {
+  type?: AccordionType
+  collapsible?: boolean
+  multiple?: boolean
+  value?: AccordionValue
+  defaultValue?: AccordionValue
+  onValueChange?: (value: AccordionValue, details: AccordionPrimitive.Root.ChangeEventDetails) => void
+}
+
+function normalizeValue(value: AccordionValue | undefined) {
+  if (value === undefined) {
+    return undefined
+  }
+
+  if (Array.isArray(value)) {
+    return value
+  }
+
+  return [value]
+}
+
+function formatValue(value: AccordionPrimitive.Root.Props['value'] | undefined, multiple: boolean) {
+  if (value === undefined) {
+    return undefined
+  }
+
+  if (multiple) {
+    return value
+  }
+
+  return value[0] ?? ''
+}
+
+function Accordion({
+  className,
+  type,
+  collapsible,
+  multiple: multipleProp,
+  value,
+  defaultValue,
+  onValueChange,
+  ...props
+}: AccordionProps) {
+  const multiple = type ? type === 'multiple' : Boolean(multipleProp)
+  const isCollapsible = multiple ? true : (collapsible ?? false)
+  const normalizedValue = normalizeValue(value)
+  const normalizedDefaultValue = normalizeValue(defaultValue)
+
+  const handleValueChange = React.useCallback(
+    (nextValue: AccordionPrimitive.Root.Props['value'], details: AccordionPrimitive.Root.ChangeEventDetails) => {
+      if (nextValue === undefined) {
+        onValueChange?.(formatValue(nextValue, multiple), details)
+        return
+      }
+
+      if (!multiple && !isCollapsible && nextValue.length === 0) {
+        details.cancel()
+        return
+      }
+
+      onValueChange?.(formatValue(nextValue, multiple), details)
+    },
+    [isCollapsible, multiple, onValueChange],
+  )
+
   return (
     <AccordionPrimitive.Root
       data-slot="accordion"
       className={cn('overflow-hidden rounded-md border flex w-full flex-col', className)}
+      multiple={multiple}
+      value={normalizedValue}
+      defaultValue={normalizedDefaultValue}
+      onValueChange={onValueChange || !isCollapsible ? handleValueChange : undefined}
       {...props}
     />
   )
