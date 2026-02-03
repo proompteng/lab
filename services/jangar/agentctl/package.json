@@ -1,6 +1,6 @@
 {
   "name": "@proompteng/agentctl",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "CLI for managing Agents via Kubernetes or Jangar gRPC",
   "license": "MIT",
   "type": "module",
