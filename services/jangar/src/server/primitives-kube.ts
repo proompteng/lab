@@ -178,6 +178,7 @@ export const RESOURCE_MAP = {
   AgentProvider: 'agentproviders.agents.proompteng.ai',
   ImplementationSpec: 'implementationspecs.agents.proompteng.ai',
   ImplementationSource: 'implementationsources.agents.proompteng.ai',
+  VersionControlProvider: 'versioncontrolproviders.agents.proompteng.ai',
   Memory: 'memories.agents.proompteng.ai',
   Tool: 'tools.tools.proompteng.ai',
   ToolRun: 'toolruns.tools.proompteng.ai',

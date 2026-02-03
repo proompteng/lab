@@ -104,6 +104,13 @@ spec:
               text:
                 maxLength: 131072
                 type: string
+              vcsRef:
+                properties:
+                  name:
+                    type: string
+                required:
+                - name
+                type: object
             required:
             - text
             type: object

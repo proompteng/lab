@@ -54,12 +54,30 @@ const ensureDir = async (path: string) => {
   await mkdir(dirname(path), { recursive: true })
 }
 
+const resolveVcsProvider = (env: Record<string, string | undefined>) =>
+  env.VCS_PROVIDER ? env.VCS_PROVIDER.trim().toLowerCase() : ''
+
+const resolveVcsToken = (env: Record<string, string | undefined>) =>
+  (env.VCS_TOKEN || env.GH_TOKEN || env.GITHUB_TOKEN || '').trim()
+
+const resolveVcsUsername = (env: Record<string, string | undefined>) => {
+  if (env.VCS_USERNAME?.trim()) return env.VCS_USERNAME.trim()
+  const provider = resolveVcsProvider(env)
+  if (provider === 'gitlab') return 'oauth2'
+  if (provider === 'bitbucket') return 'x-token-auth'
+  if (provider === 'github') return 'x-access-token'
+  return 'git'
+}
+
 const configureGitAskpass = async (env: Record<string, string | undefined>) => {
-  const token = env.GH_TOKEN || env.GITHUB_TOKEN
+  const token = resolveVcsToken(env)
   if (!token) return
 
-  if (!env.GITHUB_TOKEN) env.GITHUB_TOKEN = token
-  if (!env.GH_TOKEN) env.GH_TOKEN = token
+  if (!env.VCS_TOKEN) env.VCS_TOKEN = token
+  if (resolveVcsProvider(env) === 'github') {
+    if (!env.GITHUB_TOKEN) env.GITHUB_TOKEN = token
+    if (!env.GH_TOKEN) env.GH_TOKEN = token
+  }
 
   if (!env.GIT_ASKPASS) {
     const askpassPath = '/tmp/git-askpass.sh'
@@ -76,9 +94,7 @@ esac
   }
 
   env.GIT_ASKPASS_TOKEN = token
-  if (!env.GIT_ASKPASS_USERNAME) {
-    env.GIT_ASKPASS_USERNAME = 'x-access-token'
-  }
+  if (!env.GIT_ASKPASS_USERNAME) env.GIT_ASKPASS_USERNAME = resolveVcsUsername(env)
   if (!env.GIT_TERMINAL_PROMPT) {
     env.GIT_TERMINAL_PROMPT = '0'
   }
@@ -294,18 +310,70 @@ const runCommand = (command: string, args: string[]) =>
     })
   })
 
-const configureGitAuth = async () => {
-  const token = (process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? '').trim()
-  if (!token) return
-
-  const authUrl = `https://x-access-token:${token}@github.com/`
+const normalizeBaseUrl = (value: string) => {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const withScheme = trimmed.includes('://') ? trimmed : `https://${trimmed}`
   try {
-    await runCommand('git', ['config', '--global', `url.${authUrl}.insteadOf`, 'https://github.com/'])
-    await runCommand('git', ['config', '--global', `url.${authUrl}.insteadOf`, 'ssh://git@github.com/'])
-    await runCommand('git', ['config', '--global', `url.${authUrl}.insteadOf`, 'git@github.com:'])
+    const url = new URL(withScheme)
+    const pathname = url.pathname.replace(/\/?$/, '/')
+    return {
+      origin: `${url.protocol}//${url.host}${pathname}`,
+      protocol: url.protocol,
+      host: url.host,
+      pathname,
+    }
+  } catch {
+    return null
+  }
+}
+
+const configureGitAuth = async (env: Record<string, string | undefined>) => {
+  const token = resolveVcsToken(env)
+  if (!token) return
+  const cloneProtocol = env.VCS_CLONE_PROTOCOL?.trim().toLowerCase()
+  if (cloneProtocol === 'ssh' || env.VCS_SSH_KEY_PATH) return
+
+  const rawBase = env.VCS_CLONE_BASE_URL || env.VCS_WEB_BASE_URL || ''
+  let base = normalizeBaseUrl(rawBase)
+  if (!base) {
+    const provider = resolveVcsProvider(env)
+    if (provider === 'github' || env.GH_TOKEN || env.GITHUB_TOKEN) {
+      base = normalizeBaseUrl('https://github.com')
+    }
+  }
+  if (!base) return
+
+  const username = resolveVcsUsername(env)
+  const authUrl = `${base.protocol}//${encodeURIComponent(username)}:${encodeURIComponent(token)}@${base.host}${base.pathname}`
+  const patterns = [base.origin]
+  const sshUser = env.VCS_SSH_USER?.trim() || 'git'
+  patterns.push(`ssh://${sshUser}@${base.host}/`)
+  patterns.push(`${sshUser}@${base.host}:`)
+  if (sshUser !== 'git') {
+    patterns.push(`ssh://git@${base.host}/`)
+    patterns.push(`git@${base.host}:`)
+  }
+
+  try {
+    for (const pattern of patterns) {
+      await runCommand('git', ['config', '--global', `url.${authUrl}.insteadOf`, pattern])
+    }
   } catch (error) {
     console.warn('[agent-runner] failed to configure git auth', error)
   }
+}
+
+const configureGitSsh = (env: Record<string, string | undefined>) => {
+  if (!env.VCS_SSH_KEY_PATH || env.GIT_SSH_COMMAND) return
+  const keyPath = env.VCS_SSH_KEY_PATH
+  const args = ['ssh', '-i', keyPath, '-o', 'IdentitiesOnly=yes']
+  if (env.VCS_SSH_KNOWN_HOSTS_PATH) {
+    args.push('-o', `UserKnownHostsFile=${env.VCS_SSH_KNOWN_HOSTS_PATH}`, '-o', 'StrictHostKeyChecking=yes')
+  } else {
+    args.push('-o', 'StrictHostKeyChecking=accept-new')
+  }
+  env.GIT_SSH_COMMAND = args.join(' ')
 }
 
 const run = async () => {
@@ -314,8 +382,6 @@ const run = async () => {
   if (!providerName) {
     throw new Error('Agent spec missing provider name')
   }
-
-  await configureGitAuth()
 
   const providerSpec = await loadProviderSpec(providerName, spec.providerSpec)
 
@@ -389,7 +455,9 @@ const run = async () => {
   const logStream = createWriteStream(logPath, { flags: 'a' })
 
   const env = buildEnvironment(process.env, renderedEnv)
+  configureGitSsh(env)
   await configureGitAskpass(env)
+  await configureGitAuth(env)
 
   const child = spawn(command, args, {
     env,

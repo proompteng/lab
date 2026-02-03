@@ -256,6 +256,13 @@
           },
           "additionalProperties": false
         },
+        "vcsProviders": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
         "defaultWorkload": {
           "type": "object",
           "properties": {

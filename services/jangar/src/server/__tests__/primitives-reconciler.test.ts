@@ -28,6 +28,7 @@ vi.mock('~/server/primitives-kube', () => {
       AgentProvider: 'agentproviders.agents.proompteng.ai',
       ImplementationSpec: 'implementationspecs.agents.proompteng.ai',
       ImplementationSource: 'implementationsources.agents.proompteng.ai',
+      VersionControlProvider: 'versioncontrolproviders.agents.proompteng.ai',
       Memory: 'memories.agents.proompteng.ai',
       Orchestration: 'orchestrations.orchestration.proompteng.ai',
       OrchestrationRun: 'orchestrationruns.orchestration.proompteng.ai',

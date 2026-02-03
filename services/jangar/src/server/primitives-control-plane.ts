@@ -6,6 +6,7 @@ export type AgentPrimitiveKind =
   | 'AgentProvider'
   | 'ImplementationSpec'
   | 'ImplementationSource'
+  | 'VersionControlProvider'
   | 'Memory'
   | 'Tool'
   | 'ToolRun'
@@ -31,6 +32,7 @@ const PRIMITIVE_KIND_CONFIG: PrimitiveKindConfig[] = [
   { kind: 'AgentProvider', resource: RESOURCE_MAP.AgentProvider },
   { kind: 'ImplementationSpec', resource: RESOURCE_MAP.ImplementationSpec },
   { kind: 'ImplementationSource', resource: RESOURCE_MAP.ImplementationSource },
+  { kind: 'VersionControlProvider', resource: RESOURCE_MAP.VersionControlProvider },
   { kind: 'Memory', resource: RESOURCE_MAP.Memory },
   { kind: 'Tool', resource: RESOURCE_MAP.Tool },
   { kind: 'ToolRun', resource: RESOURCE_MAP.ToolRun },
