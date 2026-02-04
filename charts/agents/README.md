@@ -99,6 +99,14 @@ Agent memory backends are configured separately via the `Memory` CRD.
 ### Controller scope
 - Single namespace: default
 - Multi-namespace: set `controller.namespaces` and `rbac.clusterScoped=true`
+- Wildcard: set `controller.namespaces=["*"]` and `rbac.clusterScoped=true`
+
+#### Namespaced vs cluster-scoped install matrix
+| Install mode | controller.namespaces | rbac.clusterScoped | RBAC scope |
+| --- | --- | --- | --- |
+| Namespaced (single) | `[]` or `["agents"]` | `false` | Role + RoleBinding |
+| Multi-namespace (explicit) | `["team-a", "team-b"]` | `true` | ClusterRole + ClusterRoleBinding |
+| Wildcard (all namespaces) | `["*"]` | `true` | ClusterRole + ClusterRoleBinding (namespace list/watch) |
 
 ### gRPC service (optional)
 Enable gRPC for agentctl or in-cluster clients:

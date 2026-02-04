@@ -434,5 +434,151 @@
       },
       "additionalProperties": false
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "controller": {
+            "properties": {
+              "namespaces": { "type": "array", "minItems": 2 }
+            },
+            "required": ["namespaces"]
+          }
+        },
+        "required": ["controller"]
+      },
+      "then": {
+        "properties": {
+          "rbac": {
+            "properties": {
+              "clusterScoped": { "const": true }
+            },
+            "required": ["clusterScoped"]
+          }
+        },
+        "required": ["rbac"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "controller": {
+            "properties": {
+              "namespaces": { "type": "array", "contains": { "const": "*" } }
+            },
+            "required": ["namespaces"]
+          }
+        },
+        "required": ["controller"]
+      },
+      "then": {
+        "properties": {
+          "rbac": {
+            "properties": {
+              "clusterScoped": { "const": true }
+            },
+            "required": ["clusterScoped"]
+          }
+        },
+        "required": ["rbac"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "orchestrationController": {
+            "properties": {
+              "namespaces": { "type": "array", "minItems": 2 }
+            },
+            "required": ["namespaces"]
+          }
+        },
+        "required": ["orchestrationController"]
+      },
+      "then": {
+        "properties": {
+          "rbac": {
+            "properties": {
+              "clusterScoped": { "const": true }
+            },
+            "required": ["clusterScoped"]
+          }
+        },
+        "required": ["rbac"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "orchestrationController": {
+            "properties": {
+              "namespaces": { "type": "array", "contains": { "const": "*" } }
+            },
+            "required": ["namespaces"]
+          }
+        },
+        "required": ["orchestrationController"]
+      },
+      "then": {
+        "properties": {
+          "rbac": {
+            "properties": {
+              "clusterScoped": { "const": true }
+            },
+            "required": ["clusterScoped"]
+          }
+        },
+        "required": ["rbac"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "supportingController": {
+            "properties": {
+              "namespaces": { "type": "array", "minItems": 2 }
+            },
+            "required": ["namespaces"]
+          }
+        },
+        "required": ["supportingController"]
+      },
+      "then": {
+        "properties": {
+          "rbac": {
+            "properties": {
+              "clusterScoped": { "const": true }
+            },
+            "required": ["clusterScoped"]
+          }
+        },
+        "required": ["rbac"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "supportingController": {
+            "properties": {
+              "namespaces": { "type": "array", "contains": { "const": "*" } }
+            },
+            "required": ["namespaces"]
+          }
+        },
+        "required": ["supportingController"]
+      },
+      "then": {
+        "properties": {
+          "rbac": {
+            "properties": {
+              "clusterScoped": { "const": true }
+            },
+            "required": ["clusterScoped"]
+          }
+        },
+        "required": ["rbac"]
+      }
+    }
+  ]
 }

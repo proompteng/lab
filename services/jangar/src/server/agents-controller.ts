@@ -4,6 +4,7 @@ import { createHash, createPrivateKey, createSign } from 'node:crypto'
 import { createTemporalClient, loadTemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
 
 import { startResourceWatch } from '~/server/kube-watch'
+import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { shouldApplyStatus } from '~/server/status-utils'
@@ -194,7 +195,9 @@ const parseNamespaces = () => {
     .split(',')
     .map((value) => value.trim())
     .filter((value) => value.length > 0)
-  return list.length > 0 ? list : DEFAULT_NAMESPACES
+  const namespaces = list.length > 0 ? list : DEFAULT_NAMESPACES
+  assertClusterScopedForWildcard(namespaces, 'agents controller')
+  return namespaces
 }
 
 const resolveCrdCheckNamespace = () => {
