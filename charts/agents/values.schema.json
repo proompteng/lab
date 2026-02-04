@@ -259,7 +259,11 @@
         "vcsProviders": {
           "type": "object",
           "properties": {
-            "enabled": { "type": "boolean" }
+            "enabled": { "type": "boolean" },
+            "deprecatedTokenTypes": {
+              "type": "object",
+              "additionalProperties": { "type": "array", "items": { "type": "string" } }
+            }
           },
           "additionalProperties": false
         },
