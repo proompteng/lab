@@ -1590,6 +1590,27 @@ describe('agents controller reconcileVersionControlProvider', () => {
   })
 })
 
+describe('agents controller vcs pr rate limits', () => {
+  it('parses PR rate limits from env', () => {
+    const previous = process.env.JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS
+    process.env.JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS = JSON.stringify({
+      github: { windowSeconds: 60, maxRequests: 10, backoffSeconds: 30 },
+    })
+
+    try {
+      expect(__test.resolveVcsPrRateLimits()).toEqual({
+        github: { windowSeconds: 60, maxRequests: 10, backoffSeconds: 30 },
+      })
+    } finally {
+      if (previous === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS = previous
+      }
+    }
+  })
+})
+
 describe('agents controller reconcileMemory', () => {
   it('marks Memory invalid when secret ref is missing', async () => {
     const kube = buildKube()
