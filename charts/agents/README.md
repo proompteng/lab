@@ -125,6 +125,60 @@ Define a VersionControlProvider resource to decouple repo access from issue inta
 agent runtimes that clone, commit, push, or open pull requests. Pair it with a SecretBinding that
 allows the provider's secret.
 
+Auth options (VersionControlProvider `spec.auth`):
+- `method: token` with `token.type: pat | fine_grained | api_token | access_token`
+- `method: app` (GitHub only) with `appId`, `installationId`, and `privateKeySecretRef`
+- `method: ssh` with `privateKeySecretRef` (optional `knownHostsConfigMapRef`)
+
+Token scopes & expiry guidance:
+- GitHub App installation tokens expire after ~1 hour (default 3600s). Use `spec.auth.app.tokenTtlSeconds` if you need a shorter TTL.
+- GitHub fine-grained PATs should include repository contents + pull request scopes for write flows.
+- GitLab tokens must include `read_repository` for read-only workflows and `write_repository` for pushes/merges.
+- Bitbucket access tokens should include repository read/write scopes matching your intended mode.
+- Gitea API tokens need repo access; set `spec.auth.username` if your HTTPS auth requires a specific account name.
+
+Example token auth (GitHub fine-grained PAT):
+```yaml
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: VersionControlProvider
+metadata:
+  name: github
+spec:
+  provider: github
+  apiBaseUrl: https://api.github.com
+  cloneBaseUrl: https://github.com
+  webBaseUrl: https://github.com
+  auth:
+    method: token
+    token:
+      secretRef:
+        name: codex-github-token
+        key: token
+      type: fine_grained
+```
+
+Example GitHub App auth (short-lived tokens):
+```yaml
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: VersionControlProvider
+metadata:
+  name: github-app
+spec:
+  provider: github
+  apiBaseUrl: https://api.github.com
+  cloneBaseUrl: https://github.com
+  webBaseUrl: https://github.com
+  auth:
+    method: app
+    app:
+      appId: "12345"
+      installationId: "7890"
+      privateKeySecretRef:
+        name: github-app-key
+        key: privateKey
+      tokenTtlSeconds: 3600
+```
+
 ## Example production values
 ```yaml
 image:

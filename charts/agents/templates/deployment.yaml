@@ -164,6 +164,10 @@ spec:
               value: {{ .Values.controller.agentRunRetentionSeconds | default 2592000 | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED
               value: {{ .Values.controller.vcsProviders.enabled | default true | quote }}
+            {{- if .Values.controller.vcsProviders.deprecatedTokenTypes }}
+            - name: JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
+              value: {{ .Values.controller.vcsProviders.deprecatedTokenTypes | toJson | quote }}
+            {{- end }}
             {{- if .Values.controller.authSecret.name }}
             - name: JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
               value: {{ .Values.controller.authSecret.name | quote }}

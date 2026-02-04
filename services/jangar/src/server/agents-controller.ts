@@ -86,6 +86,16 @@ type RuntimeRef = Record<string, unknown>
 
 type VcsMode = 'read-write' | 'read-only' | 'none'
 type VcsAuthMethod = 'token' | 'app' | 'ssh' | 'none'
+type VcsTokenType = 'pat' | 'fine_grained' | 'api_token' | 'access_token'
+
+type VcsAuthAdapter = {
+  provider: string
+  allowedMethods: VcsAuthMethod[]
+  tokenTypes?: VcsTokenType[]
+  deprecatedTokenTypes?: VcsTokenType[]
+  defaultUsername?: string
+  defaultTokenType?: VcsTokenType
+}
 
 type VcsRuntimeConfig = {
   env: Array<Record<string, unknown>>
@@ -855,6 +865,125 @@ const resolveVcsAuthMethod = (auth: Record<string, unknown>): VcsAuthMethod => {
   return 'none'
 }
 
+const VCS_TOKEN_TYPE_ALIASES: Record<string, VcsTokenType> = {
+  'personal-access-token': 'pat',
+  personal_access_token: 'pat',
+  'fine-grained': 'fine_grained',
+  finegrained: 'fine_grained',
+  api: 'api_token',
+  access: 'access_token',
+}
+
+const DEFAULT_VCS_AUTH_ADAPTERS: Record<string, VcsAuthAdapter> = {
+  github: {
+    provider: 'github',
+    allowedMethods: ['token', 'app', 'ssh', 'none'],
+    tokenTypes: ['pat', 'fine_grained', 'access_token'],
+    deprecatedTokenTypes: ['pat'],
+    defaultUsername: 'x-access-token',
+    defaultTokenType: 'fine_grained',
+  },
+  gitlab: {
+    provider: 'gitlab',
+    allowedMethods: ['token', 'ssh', 'none'],
+    tokenTypes: ['pat', 'access_token'],
+    defaultUsername: 'oauth2',
+    defaultTokenType: 'access_token',
+  },
+  bitbucket: {
+    provider: 'bitbucket',
+    allowedMethods: ['token', 'ssh', 'none'],
+    tokenTypes: ['access_token'],
+    defaultUsername: 'x-token-auth',
+    defaultTokenType: 'access_token',
+  },
+  gitea: {
+    provider: 'gitea',
+    allowedMethods: ['token', 'ssh', 'none'],
+    tokenTypes: ['api_token', 'access_token'],
+    defaultUsername: 'git',
+    defaultTokenType: 'api_token',
+  },
+  generic: {
+    provider: 'generic',
+    allowedMethods: ['token', 'ssh', 'none'],
+    tokenTypes: ['pat', 'fine_grained', 'api_token', 'access_token'],
+    defaultUsername: 'git',
+  },
+}
+
+const normalizeTokenType = (value: unknown): VcsTokenType | null => {
+  const raw = asString(value)?.trim().toLowerCase()
+  if (!raw) return null
+  const normalized = raw.replace(/-/g, '_')
+  return VCS_TOKEN_TYPE_ALIASES[normalized] ?? (normalized as VcsTokenType)
+}
+
+const normalizeTokenTypeOverrides = (value: unknown) => {
+  if (!Array.isArray(value)) return null
+  const tokens = value.map((entry) => normalizeTokenType(entry)).filter((entry): entry is VcsTokenType => !!entry)
+  return tokens.length > 0 ? tokens : []
+}
+
+const resolveDeprecatedTokenTypeOverrides = () => {
+  const overrides = parseEnvRecord('JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES')
+  if (!overrides) return null
+  const output: Record<string, VcsTokenType[]> = {}
+  for (const [key, value] of Object.entries(overrides)) {
+    const normalized = normalizeTokenTypeOverrides(value)
+    if (normalized) output[key] = normalized
+  }
+  return Object.keys(output).length > 0 ? output : null
+}
+
+const resolveVcsAuthAdapter = (providerType: string | null) => {
+  const key = providerType ?? 'generic'
+  const base = DEFAULT_VCS_AUTH_ADAPTERS[key] ?? DEFAULT_VCS_AUTH_ADAPTERS.generic
+  const overrides = resolveDeprecatedTokenTypeOverrides()
+  const deprecatedTokenTypes = overrides?.[key] ?? base.deprecatedTokenTypes ?? []
+  return {
+    ...base,
+    deprecatedTokenTypes,
+  }
+}
+
+const validateVcsAuthConfig = (providerType: string | null, auth: Record<string, unknown>) => {
+  const adapter = resolveVcsAuthAdapter(providerType)
+  const method = resolveVcsAuthMethod(auth)
+  if (!adapter.allowedMethods.includes(method)) {
+    return {
+      ok: false as const,
+      reason: 'UnsupportedAuth',
+      message: `auth.method=${method} is not supported for ${adapter.provider} providers`,
+    }
+  }
+
+  const warnings: Array<{ reason: string; message: string }> = []
+  if (method === 'token') {
+    const tokenType = normalizeTokenType(readNested(auth, ['token', 'type']))
+    if (tokenType && adapter.tokenTypes && !adapter.tokenTypes.includes(tokenType)) {
+      return {
+        ok: false as const,
+        reason: 'UnsupportedAuth',
+        message: `auth.token.type=${tokenType} is not supported for ${adapter.provider} providers`,
+      }
+    }
+    if (tokenType && (adapter.deprecatedTokenTypes ?? []).includes(tokenType)) {
+      warnings.push({
+        reason: 'DeprecatedAuth',
+        message: `auth.token.type=${tokenType} is deprecated for ${adapter.provider} providers`,
+      })
+    }
+  }
+
+  return {
+    ok: true as const,
+    method,
+    warnings,
+    defaultUsername: adapter.defaultUsername ?? null,
+  }
+}
+
 const fetchGithubAppToken = async (input: {
   apiBaseUrl: string
   appId: string
@@ -1360,6 +1489,7 @@ const reconcileVersionControlProvider = async (
   const auth = asRecord(spec.auth) ?? {}
   const method = resolveVcsAuthMethod(auth)
   let updated = conditions
+  const warnings: Array<{ reason: string; message: string }> = []
   const markHealthy = () => {
     updated = upsertCondition(updated, { type: 'InvalidSpec', status: 'False', reason: 'Reconciled' })
     updated = upsertCondition(updated, { type: 'Unreachable', status: 'False', reason: 'Reconciled' })
@@ -1379,140 +1509,164 @@ const reconcileVersionControlProvider = async (
       reason: 'UnsupportedProvider',
       message: `unsupported provider ${providerType}`,
     })
-  } else if (method === 'token') {
-    const tokenRef = asRecord(readNested(auth, ['token', 'secretRef'])) ?? {}
-    const secretName = asString(tokenRef.name)
-    const secretKey = asString(tokenRef.key) ?? 'token'
-    if (!secretName) {
+  } else {
+    const authValidation = validateVcsAuthConfig(providerType, auth)
+    if (!authValidation.ok) {
       updated = upsertCondition(updated, {
         type: 'InvalidSpec',
         status: 'True',
-        reason: 'MissingSecretRef',
-        message: 'spec.auth.token.secretRef.name is required',
+        reason: authValidation.reason,
+        message: authValidation.message,
       })
     } else {
-      const secret = await kube.get('secret', secretName, namespace)
-      if (!secret) {
-        updated = upsertCondition(updated, {
-          type: 'Unreachable',
-          status: 'True',
-          reason: 'SecretNotFound',
-          message: `secret ${secretName} not found`,
-        })
-      } else if (!secretHasKey(secret, secretKey)) {
-        updated = upsertCondition(updated, {
-          type: 'InvalidSpec',
-          status: 'True',
-          reason: 'SecretKeyMissing',
-          message: `secret ${secretName} missing key ${secretKey}`,
-        })
-      } else {
-        updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'AuthReady' })
-        markHealthy()
-      }
-    }
-  } else if (method === 'app') {
-    const appSpec = asRecord(readNested(auth, ['app'])) ?? {}
-    const appId = parseIntOrString(appSpec.appId)
-    const installationId = parseIntOrString(appSpec.installationId)
-    const secretRef = asRecord(appSpec.privateKeySecretRef) ?? {}
-    const secretName = asString(secretRef.name)
-    const secretKey = asString(secretRef.key) ?? 'privateKey'
-    if (!appId || !installationId || !secretName) {
-      updated = upsertCondition(updated, {
-        type: 'InvalidSpec',
-        status: 'True',
-        reason: 'MissingAppAuth',
-        message: 'spec.auth.app.appId, installationId, and privateKeySecretRef.name are required',
-      })
-    } else {
-      const secret = await kube.get('secret', secretName, namespace)
-      if (!secret) {
-        updated = upsertCondition(updated, {
-          type: 'Unreachable',
-          status: 'True',
-          reason: 'SecretNotFound',
-          message: `secret ${secretName} not found`,
-        })
-      } else if (!secretHasKey(secret, secretKey)) {
-        updated = upsertCondition(updated, {
-          type: 'InvalidSpec',
-          status: 'True',
-          reason: 'SecretKeyMissing',
-          message: `secret ${secretName} missing key ${secretKey}`,
-        })
-      } else {
-        updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'AuthReady' })
-        markHealthy()
-      }
-    }
-  } else if (method === 'ssh') {
-    const sshSpec = asRecord(readNested(auth, ['ssh'])) ?? {}
-    const secretRef = asRecord(sshSpec.privateKeySecretRef) ?? {}
-    const secretName = asString(secretRef.name)
-    const secretKey = asString(secretRef.key) ?? 'privateKey'
-    const knownHostsRef = asRecord(sshSpec.knownHostsConfigMapRef) ?? {}
-    const knownHostsName = asString(knownHostsRef.name)
-    const knownHostsKey = asString(knownHostsRef.key) ?? 'known_hosts'
-    if (!secretName) {
-      updated = upsertCondition(updated, {
-        type: 'InvalidSpec',
-        status: 'True',
-        reason: 'MissingSecretRef',
-        message: 'spec.auth.ssh.privateKeySecretRef.name is required',
-      })
-    } else {
-      const secret = await kube.get('secret', secretName, namespace)
-      if (!secret) {
-        updated = upsertCondition(updated, {
-          type: 'Unreachable',
-          status: 'True',
-          reason: 'SecretNotFound',
-          message: `secret ${secretName} not found`,
-        })
-      } else if (!secretHasKey(secret, secretKey)) {
-        updated = upsertCondition(updated, {
-          type: 'InvalidSpec',
-          status: 'True',
-          reason: 'SecretKeyMissing',
-          message: `secret ${secretName} missing key ${secretKey}`,
-        })
-      } else {
-        updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'AuthReady' })
-        markHealthy()
-      }
-    }
-    if (knownHostsName) {
-      const configMap = await kube.get('configmap', knownHostsName, namespace)
-      if (!configMap) {
-        updated = upsertCondition(updated, {
-          type: 'Unreachable',
-          status: 'True',
-          reason: 'ConfigMapNotFound',
-          message: `configmap ${knownHostsName} not found`,
-        })
-      } else if (knownHostsKey) {
-        const data = asRecord(configMap.data) ?? {}
-        if (!(knownHostsKey in data)) {
+      warnings.push(...authValidation.warnings)
+      if (method === 'token') {
+        const tokenRef = asRecord(readNested(auth, ['token', 'secretRef'])) ?? {}
+        const secretName = asString(tokenRef.name)
+        const secretKey = asString(tokenRef.key) ?? 'token'
+        if (!secretName) {
           updated = upsertCondition(updated, {
             type: 'InvalidSpec',
             status: 'True',
-            reason: 'ConfigMapKeyMissing',
-            message: `configmap ${knownHostsName} missing key ${knownHostsKey}`,
+            reason: 'MissingSecretRef',
+            message: 'spec.auth.token.secretRef.name is required',
           })
+        } else {
+          const secret = await kube.get('secret', secretName, namespace)
+          if (!secret) {
+            updated = upsertCondition(updated, {
+              type: 'Unreachable',
+              status: 'True',
+              reason: 'SecretNotFound',
+              message: `secret ${secretName} not found`,
+            })
+          } else if (!secretHasKey(secret, secretKey)) {
+            updated = upsertCondition(updated, {
+              type: 'InvalidSpec',
+              status: 'True',
+              reason: 'SecretKeyMissing',
+              message: `secret ${secretName} missing key ${secretKey}`,
+            })
+          } else {
+            updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'AuthReady' })
+            markHealthy()
+          }
         }
+      } else if (method === 'app') {
+        const appSpec = asRecord(readNested(auth, ['app'])) ?? {}
+        const appId = parseIntOrString(appSpec.appId)
+        const installationId = parseIntOrString(appSpec.installationId)
+        const secretRef = asRecord(appSpec.privateKeySecretRef) ?? {}
+        const secretName = asString(secretRef.name)
+        const secretKey = asString(secretRef.key) ?? 'privateKey'
+        if (!appId || !installationId || !secretName) {
+          updated = upsertCondition(updated, {
+            type: 'InvalidSpec',
+            status: 'True',
+            reason: 'MissingAppAuth',
+            message: 'spec.auth.app.appId, installationId, and privateKeySecretRef.name are required',
+          })
+        } else {
+          const secret = await kube.get('secret', secretName, namespace)
+          if (!secret) {
+            updated = upsertCondition(updated, {
+              type: 'Unreachable',
+              status: 'True',
+              reason: 'SecretNotFound',
+              message: `secret ${secretName} not found`,
+            })
+          } else if (!secretHasKey(secret, secretKey)) {
+            updated = upsertCondition(updated, {
+              type: 'InvalidSpec',
+              status: 'True',
+              reason: 'SecretKeyMissing',
+              message: `secret ${secretName} missing key ${secretKey}`,
+            })
+          } else {
+            updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'AuthReady' })
+            markHealthy()
+          }
+        }
+      } else if (method === 'ssh') {
+        const sshSpec = asRecord(readNested(auth, ['ssh'])) ?? {}
+        const secretRef = asRecord(sshSpec.privateKeySecretRef) ?? {}
+        const secretName = asString(secretRef.name)
+        const secretKey = asString(secretRef.key) ?? 'privateKey'
+        const knownHostsRef = asRecord(sshSpec.knownHostsConfigMapRef) ?? {}
+        const knownHostsName = asString(knownHostsRef.name)
+        const knownHostsKey = asString(knownHostsRef.key) ?? 'known_hosts'
+        if (!secretName) {
+          updated = upsertCondition(updated, {
+            type: 'InvalidSpec',
+            status: 'True',
+            reason: 'MissingSecretRef',
+            message: 'spec.auth.ssh.privateKeySecretRef.name is required',
+          })
+        } else {
+          const secret = await kube.get('secret', secretName, namespace)
+          if (!secret) {
+            updated = upsertCondition(updated, {
+              type: 'Unreachable',
+              status: 'True',
+              reason: 'SecretNotFound',
+              message: `secret ${secretName} not found`,
+            })
+          } else if (!secretHasKey(secret, secretKey)) {
+            updated = upsertCondition(updated, {
+              type: 'InvalidSpec',
+              status: 'True',
+              reason: 'SecretKeyMissing',
+              message: `secret ${secretName} missing key ${secretKey}`,
+            })
+          } else {
+            updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'AuthReady' })
+            markHealthy()
+          }
+        }
+        if (knownHostsName) {
+          const configMap = await kube.get('configmap', knownHostsName, namespace)
+          if (!configMap) {
+            updated = upsertCondition(updated, {
+              type: 'Unreachable',
+              status: 'True',
+              reason: 'ConfigMapNotFound',
+              message: `configmap ${knownHostsName} not found`,
+            })
+          } else if (knownHostsKey) {
+            const data = asRecord(configMap.data) ?? {}
+            if (!(knownHostsKey in data)) {
+              updated = upsertCondition(updated, {
+                type: 'InvalidSpec',
+                status: 'True',
+                reason: 'ConfigMapKeyMissing',
+                message: `configmap ${knownHostsName} missing key ${knownHostsKey}`,
+              })
+            }
+          }
+        }
+      } else if (method === 'none') {
+        updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'NoAuth' })
+        markHealthy()
+      } else {
+        updated = upsertCondition(updated, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: 'UnsupportedAuth',
+          message: `unsupported auth method ${method}`,
+        })
       }
     }
-  } else if (method === 'none') {
-    updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'NoAuth' })
-    markHealthy()
-  } else {
+  }
+
+  if (warnings.length > 0) {
     updated = upsertCondition(updated, {
-      type: 'InvalidSpec',
+      type: 'Warning',
       status: 'True',
-      reason: 'UnsupportedAuth',
-      message: `unsupported auth method ${method}`,
+      reason: warnings[0]?.reason ?? 'Warning',
+      message: warnings.map((warning) => warning.message).join('; '),
     })
+  } else {
+    updated = upsertCondition(updated, { type: 'Warning', status: 'False', reason: 'None', message: '' })
   }
 
   await setStatus(kube, provider, {
@@ -1997,6 +2151,33 @@ const resolveVcsContext = async ({
   let authAvailable = false
   let tokenValue: string | null = null
 
+  const authValidation = validateVcsAuthConfig(providerType, auth)
+  if (!authValidation.ok) {
+    if (required && desiredMode !== 'none') {
+      return {
+        ok: false,
+        skip: false,
+        reason: 'UnsupportedVcsAuth',
+        message: authValidation.message,
+        mode: effectiveMode,
+        status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
+        requiredSecrets: [],
+      }
+    }
+    return {
+      ok: true,
+      skip: true,
+      mode: effectiveMode,
+      reason: 'UnsupportedVcsAuth',
+      message: authValidation.message,
+      status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
+      requiredSecrets: [],
+    }
+  }
+
+  const resolvedUsername =
+    (method === 'token' || method === 'app') && !username ? authValidation.defaultUsername : username
+
   if (method === 'token') {
     const secretRef = asRecord(readNested(auth, ['token', 'secretRef'])) ?? {}
     const secretName = asString(secretRef.name)
@@ -2101,28 +2282,6 @@ const resolveVcsContext = async ({
   }
 
   if (method === 'app') {
-    if (providerType !== 'github') {
-      if (required && desiredMode !== 'none') {
-        return {
-          ok: false,
-          skip: false,
-          reason: 'UnsupportedVcsAuth',
-          message: `auth.method=app is only supported for github providers`,
-          mode: effectiveMode,
-          status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
-          requiredSecrets: [],
-        }
-      }
-      return {
-        ok: true,
-        skip: true,
-        mode: effectiveMode,
-        reason: 'UnsupportedVcsAuth',
-        message: `auth.method=app is only supported for github providers`,
-        status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
-        requiredSecrets: [],
-      }
-    }
     const appSpec = asRecord(readNested(auth, ['app'])) ?? {}
     const appId = parseIntOrString(appSpec.appId)
     const installationId = parseIntOrString(appSpec.installationId)
@@ -2436,9 +2595,9 @@ const resolveVcsContext = async ({
   pushEnv('VCS_CLONE_PROTOCOL', cloneProtocol)
   pushEnv('VCS_SSH_HOST', sshHost)
   pushEnv('VCS_SSH_USER', sshUser)
-  if (username) {
-    pushEnv('VCS_USERNAME', username)
-    pushEnv('GIT_ASKPASS_USERNAME', username)
+  if (resolvedUsername) {
+    pushEnv('VCS_USERNAME', resolvedUsername)
+    pushEnv('GIT_ASKPASS_USERNAME', resolvedUsername)
   }
   pushEnv('VCS_BRANCH_TEMPLATE', branchTemplate)
   pushEnv('VCS_COMMIT_AUTHOR_NAME', asString(defaults.commitAuthorName))
@@ -4391,6 +4550,7 @@ export const stopAgentsController = () => {
 export const __test = {
   checkCrds,
   reconcileAgentRun,
+  reconcileVersionControlProvider,
   reconcileMemory,
   resolveJobImage,
 }

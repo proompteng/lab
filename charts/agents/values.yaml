@@ -146,6 +146,9 @@ controller:
     mountPath: /root/.codex
   vcsProviders:
     enabled: true
+    deprecatedTokenTypes:
+      github:
+        - pat
   defaultWorkload:
     serviceAccountName: ""
     nodeSelector: {}

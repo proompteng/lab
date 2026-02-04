@@ -72,6 +72,31 @@ const buildMemory = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
+const buildVcsProvider = (overrides: Record<string, unknown> = {}) => ({
+  apiVersion: 'agents.proompteng.ai/v1alpha1',
+  kind: 'VersionControlProvider',
+  metadata: {
+    name: 'vcs-1',
+    namespace: 'agents',
+    generation: 1,
+  },
+  spec: {
+    provider: 'github',
+    auth: {
+      method: 'token',
+      token: {
+        secretRef: {
+          name: 'vcs-token',
+          key: 'token',
+        },
+        type: 'pat',
+      },
+    },
+  },
+  status: {},
+  ...overrides,
+})
+
 describe('agents controller reconcileAgentRun', () => {
   it('marks AgentRun failed when provider is missing', async () => {
     const kube = buildKube({
@@ -1025,6 +1050,69 @@ describe('agents controller reconcileAgentRun', () => {
         process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
       }
     }
+  })
+})
+
+describe('agents controller reconcileVersionControlProvider', () => {
+  it('surfaces deprecation warnings for github token types', async () => {
+    const kube = buildKube({
+      get: vi.fn(async () => ({
+        stringData: { token: 'value' },
+      })),
+    })
+    const provider = buildVcsProvider()
+
+    await __test.reconcileVersionControlProvider(kube as never, provider, 'agents')
+
+    const status = getLastStatus(kube)
+    const warning = findCondition(status, 'Warning')
+    expect(warning?.status).toBe('True')
+    expect(warning?.reason).toBe('DeprecatedAuth')
+  })
+
+  it('rejects unsupported auth methods for non-github providers', async () => {
+    const kube = buildKube()
+    const provider = buildVcsProvider({
+      spec: {
+        provider: 'gitlab',
+        auth: {
+          method: 'app',
+          app: {
+            appId: '1',
+            installationId: '2',
+            privateKeySecretRef: { name: 'app-secret' },
+          },
+        },
+      },
+    })
+
+    await __test.reconcileVersionControlProvider(kube as never, provider, 'agents')
+
+    const status = getLastStatus(kube)
+    const invalid = findCondition(status, 'InvalidSpec')
+    expect(invalid?.reason).toBe('UnsupportedAuth')
+  })
+
+  it('rejects token types that are not supported by the provider', async () => {
+    const kube = buildKube()
+    const provider = buildVcsProvider({
+      spec: {
+        provider: 'bitbucket',
+        auth: {
+          method: 'token',
+          token: {
+            secretRef: { name: 'bitbucket-token', key: 'token' },
+            type: 'pat',
+          },
+        },
+      },
+    })
+
+    await __test.reconcileVersionControlProvider(kube as never, provider, 'agents')
+
+    const status = getLastStatus(kube)
+    const invalid = findCondition(status, 'InvalidSpec')
+    expect(invalid?.reason).toBe('UnsupportedAuth')
   })
 })
 
