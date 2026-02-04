@@ -29,6 +29,12 @@ kubectl apply -n agents -f charts/agents/examples/orchestration-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/orchestrationrun-sample.yaml
 ```
 
+Optional GitHub App auth sample:
+```bash
+kubectl apply -n agents -f charts/agents/examples/secret-github-app-private-key.yaml
+kubectl apply -n agents -f charts/agents/examples/versioncontrolprovider-github-app.yaml
+```
+
 ## Kind quickstart (end-to-end)
 Spin up a local kind cluster, install Postgres, deploy the chart, and run the
 smoke AgentRun with a single command:
@@ -125,32 +131,23 @@ Define a VersionControlProvider resource to decouple repo access from issue inta
 agent runtimes that clone, commit, push, or open pull requests. Pair it with a SecretBinding that
 allows the provider's secret.
 
-GitHub App auth example:
+GitHub App auth can be configured via Helm to install a provider and private key secret:
 ```yaml
-apiVersion: agents.proompteng.ai/v1alpha1
-kind: VersionControlProvider
-metadata:
+versionControlProvider:
+  enabled: true
   name: github-app
-spec:
   provider: github
-  apiBaseUrl: https://api.github.com
-  cloneBaseUrl: https://github.com
-  webBaseUrl: https://github.com
   auth:
     method: app
     app:
       appId: "12345"
       installationId: "67890"
-      privateKeySecretRef:
-        name: codex-github-app-key
-        key: privateKey
-  repositoryPolicy:
-    allow:
-      - proompteng/*
-  capabilities:
-    read: true
-    write: true
-    pullRequests: true
+  privateKeySecret:
+    create: true
+    value: |
+      -----BEGIN RSA PRIVATE KEY-----
+      ...
+      -----END RSA PRIVATE KEY-----
 ```
 
 ## Example production values

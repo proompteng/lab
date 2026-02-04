@@ -161,6 +161,8 @@ versionControlProvider:
   enabled: false
   name: github
   namespace: ""
+  labels: {}
+  annotations: {}
   provider: github
   apiBaseUrl: https://api.github.com
   cloneBaseUrl: https://github.com
@@ -168,28 +170,6 @@ versionControlProvider:
   cloneProtocol: ""
   sshHost: ""
   sshUser: ""
-  auth:
-    method: token
-    username: ""
-    token:
-      secretRef:
-        name: ""
-        key: token
-      type: ""
-    app:
-      appId: ""
-      installationId: ""
-      privateKeySecretRef:
-        name: ""
-        key: privateKey
-      tokenTtlSeconds: 0
-    ssh:
-      privateKeySecretRef:
-        name: ""
-        key: privateKey
-      knownHostsConfigMapRef:
-        name: ""
-        key: known_hosts
   repositoryPolicy:
     allow: []
     deny: []
@@ -207,6 +187,35 @@ versionControlProvider:
       draft: false
       titleTemplate: "Codex: {{repository}}"
       bodyTemplate: "Closes #{{issueNumber}}"
+  auth:
+    method: token
+    username: ""
+    token:
+      secretRef:
+        name: ""
+        key: token
+      type: ""
+    app:
+      appId: ""
+      installationId: ""
+      tokenTtlSeconds: 0
+      privateKeySecretRef:
+        name: ""
+        key: privateKey
+    ssh:
+      privateKeySecretRef:
+        name: ""
+        key: privateKey
+      knownHostsConfigMapRef:
+        name: ""
+        key: known_hosts
+  privateKeySecret:
+    create: false
+    name: ""
+    key: privateKey
+    value: ""
+    annotations: {}
+    labels: {}
 
 orchestrationController:
   enabled: true

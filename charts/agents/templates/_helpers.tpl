@@ -72,6 +72,18 @@ url
 {{- end -}}
 {{- end -}}
 
+{{- define "agents.vcsAppSecretName" -}}
+{{- if .Values.versionControlProvider.privateKeySecret.create -}}
+{{- if .Values.versionControlProvider.privateKeySecret.name -}}
+{{- .Values.versionControlProvider.privateKeySecret.name -}}
+{{- else -}}
+{{- printf "%s-github-app" (include "agents.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- else -}}
+{{- .Values.versionControlProvider.auth.app.privateKeySecretRef.name -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "agents.controllerNamespaces" -}}
 {{- $namespaces := .Values.controller.namespaces | default (list) -}}
 {{- if or (not $namespaces) (eq (len $namespaces) 0) -}}

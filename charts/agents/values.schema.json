@@ -34,6 +34,7 @@
       "properties": {
         "create": { "type": "boolean" },
         "name": { "type": "string" },
+        "namespace": { "type": "string" },
         "annotations": { "type": "object", "additionalProperties": { "type": "string" } }
       },
       "additionalProperties": false
@@ -281,12 +282,29 @@
       },
       "additionalProperties": false
     },
+    "orchestrationController": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "namespaces": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "supportingController": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "namespaces": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
     "versionControlProvider": {
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" },
         "name": { "type": "string" },
-        "namespace": { "type": "string" },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+        "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
         "provider": { "type": "string" },
         "apiBaseUrl": { "type": "string" },
         "cloneBaseUrl": { "type": "string" },
@@ -294,68 +312,6 @@
         "cloneProtocol": { "type": "string" },
         "sshHost": { "type": "string" },
         "sshUser": { "type": "string" },
-        "auth": {
-          "type": "object",
-          "properties": {
-            "method": { "type": "string" },
-            "username": { "type": "string" },
-            "token": {
-              "type": "object",
-              "properties": {
-                "secretRef": {
-                  "type": "object",
-                  "properties": {
-                    "name": { "type": "string" },
-                    "key": { "type": "string" }
-                  },
-                  "additionalProperties": false
-                },
-                "type": { "type": "string" }
-              },
-              "additionalProperties": false
-            },
-            "app": {
-              "type": "object",
-              "properties": {
-                "appId": { "type": ["string", "integer"] },
-                "installationId": { "type": ["string", "integer"] },
-                "privateKeySecretRef": {
-                  "type": "object",
-                  "properties": {
-                    "name": { "type": "string" },
-                    "key": { "type": "string" }
-                  },
-                  "additionalProperties": false
-                },
-                "tokenTtlSeconds": { "type": "integer", "minimum": 0 }
-              },
-              "additionalProperties": false
-            },
-            "ssh": {
-              "type": "object",
-              "properties": {
-                "privateKeySecretRef": {
-                  "type": "object",
-                  "properties": {
-                    "name": { "type": "string" },
-                    "key": { "type": "string" }
-                  },
-                  "additionalProperties": false
-                },
-                "knownHostsConfigMapRef": {
-                  "type": "object",
-                  "properties": {
-                    "name": { "type": "string" },
-                    "key": { "type": "string" }
-                  },
-                  "additionalProperties": false
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "additionalProperties": false
-        },
         "repositoryPolicy": {
           "type": "object",
           "properties": {
@@ -392,23 +348,81 @@
             }
           },
           "additionalProperties": false
+        },
+        "auth": {
+          "type": "object",
+          "properties": {
+            "method": { "type": "string" },
+            "username": { "type": "string" },
+            "token": {
+              "type": "object",
+              "properties": {
+                "secretRef": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "key": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                },
+                "type": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            "app": {
+              "type": "object",
+              "properties": {
+                "appId": { "type": ["string", "integer"] },
+                "installationId": { "type": ["string", "integer"] },
+                "tokenTtlSeconds": { "type": "integer", "minimum": 0 },
+                "privateKeySecretRef": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "key": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "ssh": {
+              "type": "object",
+              "properties": {
+                "privateKeySecretRef": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "key": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                },
+                "knownHostsConfigMapRef": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "key": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "privateKeySecret": {
+          "type": "object",
+          "properties": {
+            "create": { "type": "boolean" },
+            "name": { "type": "string" },
+            "key": { "type": "string" },
+            "value": { "type": "string" },
+            "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+            "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
+          "additionalProperties": false
         }
-      },
-      "additionalProperties": false
-    },
-    "orchestrationController": {
-      "type": "object",
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "namespaces": { "type": "array", "items": { "type": "string" } }
-      },
-      "additionalProperties": false
-    },
-    "supportingController": {
-      "type": "object",
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "namespaces": { "type": "array", "items": { "type": "string" } }
       },
       "additionalProperties": false
     },

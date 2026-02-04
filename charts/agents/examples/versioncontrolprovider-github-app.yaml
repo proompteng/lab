@@ -13,7 +13,7 @@ spec:
       appId: "12345"
       installationId: "67890"
       privateKeySecretRef:
-        name: codex-github-app-key
+        name: github-app-private-key
         key: privateKey
   repositoryPolicy:
     allow:

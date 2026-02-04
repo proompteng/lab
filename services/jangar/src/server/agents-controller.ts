@@ -864,7 +864,7 @@ const fetchGithubAppToken = async (input: {
   privateKey: string
   ttlSeconds?: number
 }) => {
-  const cacheKey = `${input.apiBaseUrl}|${input.installationId}`
+  const cacheKey = `${input.apiBaseUrl}|${input.appId}|${input.installationId}`
   const cached = githubAppTokenCache.get(cacheKey)
   const now = Date.now()
   if (cached && now < cached.refreshAfter) {

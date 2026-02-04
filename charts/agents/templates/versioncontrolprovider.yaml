@@ -1,5 +1,10 @@
-{{- if .Values.versionControlProvider.enabled -}}
 {{- $vcp := .Values.versionControlProvider -}}
+{{- if $vcp.enabled -}}
+{{- $method := $vcp.auth.method | default "token" -}}
+{{- $appSecretName := $vcp.auth.app.privateKeySecretRef.name -}}
+{{- if and $vcp.privateKeySecret.create (not $appSecretName) -}}
+{{- $appSecretName = include "agents.vcsAppSecretName" . -}}
+{{- end -}}
 {{- $namespace := $vcp.namespace | default (.Values.namespaceOverride | default .Release.Namespace) -}}
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: VersionControlProvider
@@ -8,8 +13,15 @@ metadata:
   namespace: {{ $namespace }}
   labels:
     {{- include "agents.labels" . | nindent 4 }}
+    {{- with $vcp.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with $vcp.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
-  provider: {{ required "versionControlProvider.provider is required when versionControlProvider.enabled=true" $vcp.provider }}
+  provider: {{ required "versionControlProvider.provider is required when versionControlProvider.enabled is true" $vcp.provider }}
   {{- with $vcp.apiBaseUrl }}
   apiBaseUrl: {{ . | quote }}
   {{- end }}
@@ -30,80 +42,53 @@ spec:
   {{- end }}
   {{- with $vcp.auth }}
   auth:
-    {{- with .method }}
-    method: {{ . | quote }}
+    method: {{ $method | quote }}
+    {{- if .username }}
+    username: {{ .username | quote }}
     {{- end }}
-    {{- with .username }}
-    username: {{ . | quote }}
-    {{- end }}
-    {{- with .token }}
+    {{- if .token.secretRef.name }}
     token:
-      {{- with .secretRef }}
       secretRef:
-        {{- with .name }}
-        name: {{ . | quote }}
-        {{- end }}
-        {{- with .key }}
-        key: {{ . | quote }}
-        {{- end }}
-      {{- end }}
-      {{- with .type }}
-      type: {{ . | quote }}
+        name: {{ .token.secretRef.name | quote }}
+        key: {{ .token.secretRef.key | default "token" | quote }}
+      {{- if .token.type }}
+      type: {{ .token.type | quote }}
       {{- end }}
     {{- end }}
-    {{- with .app }}
+    {{- if or (eq $method "app") .app.appId .app.installationId $appSecretName }}
     app:
-      {{- with .appId }}
-      appId: {{ . | quote }}
+      {{- if .app.appId }}
+      appId: {{ .app.appId | quote }}
       {{- end }}
-      {{- with .installationId }}
-      installationId: {{ . | quote }}
+      {{- if .app.installationId }}
+      installationId: {{ .app.installationId | quote }}
       {{- end }}
-      {{- with .privateKeySecretRef }}
+      {{- if $appSecretName }}
       privateKeySecretRef:
-        {{- with .name }}
-        name: {{ . | quote }}
-        {{- end }}
-        {{- with .key }}
-        key: {{ . | quote }}
-        {{- end }}
+        name: {{ $appSecretName | quote }}
+        key: {{ .app.privateKeySecretRef.key | default $vcp.privateKeySecret.key | default "privateKey" | quote }}
       {{- end }}
-      {{- if .tokenTtlSeconds }}
-      tokenTtlSeconds: {{ .tokenTtlSeconds }}
+      {{- if and .app.tokenTtlSeconds (gt (int .app.tokenTtlSeconds) 0) }}
+      tokenTtlSeconds: {{ .app.tokenTtlSeconds }}
       {{- end }}
     {{- end }}
-    {{- with .ssh }}
+    {{- if or .ssh.privateKeySecretRef.name .ssh.knownHostsConfigMapRef.name }}
     ssh:
-      {{- with .privateKeySecretRef }}
+      {{- if .ssh.privateKeySecretRef.name }}
       privateKeySecretRef:
-        {{- with .name }}
-        name: {{ . | quote }}
-        {{- end }}
-        {{- with .key }}
-        key: {{ . | quote }}
-        {{- end }}
+        name: {{ .ssh.privateKeySecretRef.name | quote }}
+        key: {{ .ssh.privateKeySecretRef.key | default "privateKey" | quote }}
       {{- end }}
-      {{- with .knownHostsConfigMapRef }}
+      {{- if .ssh.knownHostsConfigMapRef.name }}
       knownHostsConfigMapRef:
-        {{- with .name }}
-        name: {{ . | quote }}
-        {{- end }}
-        {{- with .key }}
-        key: {{ . | quote }}
-        {{- end }}
+        name: {{ .ssh.knownHostsConfigMapRef.name | quote }}
+        key: {{ .ssh.knownHostsConfigMapRef.key | default "known_hosts" | quote }}
       {{- end }}
     {{- end }}
   {{- end }}
   {{- with $vcp.repositoryPolicy }}
   repositoryPolicy:
-    {{- with .allow }}
-    allow:
-      {{- toYaml . | nindent 6 }}
-    {{- end }}
-    {{- with .deny }}
-    deny:
-      {{- toYaml . | nindent 6 }}
-    {{- end }}
+    {{- toYaml . | nindent 4 }}
   {{- end }}
   {{- with $vcp.capabilities }}
   capabilities:
