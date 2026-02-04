@@ -116,10 +116,13 @@ AgentRun runtime config does not specify a value.
 Common fields:
 - `controller.defaultWorkload.nodeSelector`
 - `controller.defaultWorkload.affinity`
+- `controller.defaultWorkload.topologySpreadConstraints`
 - `controller.defaultWorkload.priorityClassName`
 - `controller.defaultWorkload.schedulerName`
 
 Per-run overrides live under `spec.runtime.config` on the AgentRun and take precedence over defaults.
+Use `spec.runtime.config.topologySpreadConstraints` (array) to override or set an explicit empty array to clear
+defaults for a single run.
 
 ### gRPC service (optional)
 Enable gRPC for agentctl or in-cluster clients:
