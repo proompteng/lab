@@ -182,6 +182,10 @@ Enable reruns or system-improvement flows using:
 - Scope controllers to specific namespaces unless you need cluster-wide control.
 - Prefer image digests in production (`values-prod.yaml`).
 
+## Admission control
+- Configure backpressure with `controller.queue.*` and `controller.rate.*` in `values.yaml`.
+- Queue limits cap pending AgentRuns; rate limits cap submit throughput.
+
 ## Publishing (OCI)
 ```bash
 bun packages/scripts/src/agents/publish-chart.ts
