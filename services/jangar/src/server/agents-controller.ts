@@ -1788,6 +1788,87 @@ const resolveParam = (params: Record<string, string>, keys: string[]) => {
   return ''
 }
 
+const resolveRunParam = (run: Record<string, unknown>, keys: string[]) => {
+  const raw = asRecord(readNested(run, ['spec', 'parameters'])) ?? {}
+  const params: Record<string, string> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value !== 'string') continue
+    params[key] = value
+  }
+  return resolveParam(params, keys)
+}
+
+const normalizeRepository = (value: string) => value.trim().toLowerCase()
+
+const normalizeBranchName = (value: string) => value.trim()
+
+const isActiveRun = (run: Record<string, unknown>) => {
+  const phase = asString(readNested(run, ['status', 'phase'])) ?? 'Pending'
+  return phase !== 'Succeeded' && phase !== 'Failed' && phase !== 'Cancelled'
+}
+
+const resolveRunRepository = (run: Record<string, unknown>) =>
+  asString(readNested(run, ['status', 'vcs', 'repository'])) ??
+  resolveRunParam(run, ['repository', 'repo', 'issueRepository'])
+
+const resolveRunHeadBranch = (run: Record<string, unknown>) =>
+  asString(readNested(run, ['status', 'vcs', 'headBranch'])) ??
+  asString(readNested(run, ['status', 'vcs', 'branch'])) ??
+  resolveRunParam(run, ['head', 'headBranch', 'head_ref', 'headRef', 'branch'])
+
+const hasBranchConflict = (
+  runs: Record<string, unknown>[],
+  currentRunName: string,
+  repository: string,
+  headBranch: string,
+) => {
+  if (!repository || !headBranch) return false
+  const normalizedRepo = normalizeRepository(repository)
+  const normalizedBranch = normalizeBranchName(headBranch)
+  return runs.some((run) => {
+    const runName = asString(readNested(run, ['metadata', 'name'])) ?? ''
+    if (!runName || runName === currentRunName) return false
+    if (!isActiveRun(run)) return false
+    const runRepo = resolveRunRepository(run)
+    if (!runRepo || normalizeRepository(runRepo) !== normalizedRepo) return false
+    const runBranch = resolveRunHeadBranch(run)
+    if (!runBranch) return false
+    return normalizeBranchName(runBranch) === normalizedBranch
+  })
+}
+
+const appendBranchSuffix = (branch: string, suffix: string) => {
+  const trimmed = suffix.trim()
+  if (!trimmed) return branch
+  const cleaned = trimmed.replace(/^[-/]+/, '')
+  if (!cleaned) return branch
+  const separator = branch.endsWith('/') || branch.endsWith('-') ? '' : '-'
+  return `${branch}${separator}${cleaned}`
+}
+
+const hasParameterValue = (parameters: Record<string, string>, keys: string[]) =>
+  resolveParam(parameters, keys) !== ''
+
+const applyVcsMetadataToParameters = (
+  parameters: Record<string, string>,
+  vcsContext: Record<string, unknown> | null,
+) => {
+  if (!vcsContext) return parameters
+  const baseBranch = asString(readNested(vcsContext, ['baseBranch'])) ?? ''
+  const headBranch = asString(readNested(vcsContext, ['headBranch'])) ?? ''
+  let updated = false
+  const next = { ...parameters }
+  if (baseBranch && !hasParameterValue(parameters, ['base', 'baseBranch', 'base_ref', 'baseRef'])) {
+    next.base = baseBranch
+    updated = true
+  }
+  if (headBranch && !hasParameterValue(parameters, ['head', 'headBranch', 'head_ref', 'headRef', 'branch'])) {
+    next.head = headBranch
+    updated = true
+  }
+  return updated ? next : parameters
+}
+
 const parseGithubExternalId = (externalId: string) => {
   const trimmed = externalId.trim()
   const [repo, number] = trimmed.split('#')
@@ -1956,6 +2037,7 @@ const resolveVcsContext = async ({
   implementation,
   parameters,
   allowedSecrets,
+  existingRuns,
 }: {
   kube: ReturnType<typeof createKubernetesClient>
   namespace: string
@@ -1964,6 +2046,7 @@ const resolveVcsContext = async ({
   implementation: Record<string, unknown>
   parameters: Record<string, string>
   allowedSecrets: string[]
+  existingRuns?: Record<string, unknown>[]
 }): Promise<VcsResolution> => {
   if (!isVcsProvidersEnabled()) {
     return {
@@ -2153,16 +2236,31 @@ const resolveVcsContext = async ({
   const baseBranch = asString(metadata.base) ?? asString(defaults.baseBranch) ?? ''
   let headBranch = asString(metadata.head) ?? ''
   const branchTemplate = asString(defaults.branchTemplate)
+  const conflictSuffixTemplate = asString(defaults.branchConflictSuffixTemplate)
+  const templateContext = {
+    ...metadata,
+    ...parameters,
+    agentRun: {
+      name: runName,
+      namespace: asString(runMetadata.namespace) ?? namespace,
+    },
+    parameters,
+    metadata,
+    event: eventContext.payload,
+  }
   if (!headBranch && branchTemplate) {
-    headBranch = renderTemplate(branchTemplate, {
-      agentRun: {
-        name: runName,
-        namespace: asString(runMetadata.namespace) ?? namespace,
-      },
-      parameters,
-      metadata,
-      event: eventContext.payload,
-    })
+    headBranch = renderTemplate(branchTemplate, templateContext)
+  }
+  if (headBranch && conflictSuffixTemplate) {
+    const conflictRuns = existingRuns ?? []
+    if (hasBranchConflict(conflictRuns, runName, repository, headBranch)) {
+      const conflictSuffix = renderTemplate(conflictSuffixTemplate, {
+        ...templateContext,
+        branch: headBranch,
+        headBranch,
+      })
+      headBranch = appendBranchSuffix(headBranch, conflictSuffix)
+    }
   }
 
   const auth = asRecord(providerSpec.auth) ?? {}
@@ -2637,6 +2735,7 @@ const resolveVcsContext = async ({
     pushEnv('GIT_ASKPASS_USERNAME', resolvedUsername)
   }
   pushEnv('VCS_BRANCH_TEMPLATE', branchTemplate)
+  pushEnv('VCS_BRANCH_CONFLICT_SUFFIX_TEMPLATE', conflictSuffixTemplate)
   pushEnv('VCS_COMMIT_AUTHOR_NAME', asString(defaults.commitAuthorName))
   pushEnv('VCS_COMMIT_AUTHOR_EMAIL', asString(defaults.commitAuthorEmail))
   if (asString(defaults.commitAuthorName)) {
@@ -2672,6 +2771,7 @@ const resolveVcsContext = async ({
     defaults: {
       baseBranch: asString(defaults.baseBranch),
       branchTemplate,
+      branchConflictSuffixTemplate: conflictSuffixTemplate,
       commitAuthorName: asString(defaults.commitAuthorName),
       commitAuthorEmail: asString(defaults.commitAuthorEmail),
       pullRequest: {
@@ -3230,6 +3330,7 @@ const submitTemporalRun = async (
   implementation: Record<string, unknown>,
   memory: Record<string, unknown> | null,
   vcs?: Record<string, unknown> | null,
+  parametersOverride?: Record<string, string>,
 ) => {
   const runtimeConfig = asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
   const workflowType = asString(runtimeConfig.workflowType)
@@ -3249,7 +3350,7 @@ const submitTemporalRun = async (
 
   const timeouts = asRecord(runtimeConfig.timeouts) ?? {}
 
-  const parameters = resolveParameters(agentRun)
+  const parameters = parametersOverride ?? resolveParameters(agentRun)
   const providerSpec = asRecord(provider.spec) ?? {}
   const providerName = asString(readNested(provider, ['metadata', 'name'])) ?? ''
   const outputArtifacts = Array.isArray(providerSpec.outputArtifacts) ? providerSpec.outputArtifacts : []
@@ -3836,6 +3937,7 @@ const reconcileAgentRun = async (
   agentRun: Record<string, unknown>,
   namespace: string,
   memories: Record<string, unknown>[],
+  existingRuns: Record<string, unknown>[],
   concurrency: ReturnType<typeof parseConcurrency>,
   inFlight: { total: number; perAgent: Map<string, number> },
   globalInFlight: number,
@@ -4175,6 +4277,7 @@ const reconcileAgentRun = async (
       implementation: implResource,
       parameters,
       allowedSecrets,
+      existingRuns,
     })
     if (!vcsResolution.ok) {
       const updated = upsertCondition(conditions, {
@@ -4203,6 +4306,7 @@ const reconcileAgentRun = async (
         : conditions
     const vcsContext = vcsResolution.context ?? null
     const vcsStatus = vcsResolution.status ?? undefined
+    const resolvedParameters = applyVcsMetadataToParameters(parameters, vcsContext)
 
     let newRuntimeRef: RuntimeRef | null = null
     try {
@@ -4219,12 +4323,21 @@ const reconcileAgentRun = async (
           runtimeType,
           {
             vcs: vcsResolution,
+            parameters: resolvedParameters,
           },
         )
       } else if (runtimeType === 'custom') {
         newRuntimeRef = await submitCustomRun(agentRun, implResource, memory)
       } else if (runtimeType === 'temporal') {
-        newRuntimeRef = await submitTemporalRun(agentRun, agent, provider, implResource, memory, vcsContext)
+        newRuntimeRef = await submitTemporalRun(
+          agentRun,
+          agent,
+          provider,
+          implResource,
+          memory,
+          vcsContext,
+          resolvedParameters,
+        )
       } else {
         throw new Error(`unknown runtime type: ${runtimeType}`)
       }
@@ -4362,7 +4475,7 @@ const reconcileNamespaceSnapshot = async (
   }
 
   for (const run of runs) {
-    await reconcileAgentRun(kube, run, namespace, memories, concurrency, inFlight, counts.cluster)
+    await reconcileAgentRun(kube, run, namespace, memories, runs, concurrency, inFlight, counts.cluster)
   }
 }
 
@@ -4379,7 +4492,16 @@ const reconcileRunWithState = async (
     total: counts.total,
     perAgent: counts.perAgent,
   }
-  await reconcileAgentRun(kube, run, namespace, snapshot.memories, concurrency, inFlight, counts.cluster)
+  await reconcileAgentRun(
+    kube,
+    run,
+    namespace,
+    snapshot.memories,
+    snapshot.runs,
+    concurrency,
+    inFlight,
+    counts.cluster,
+  )
 }
 
 const reconcileNamespaceState = async (
@@ -4627,4 +4749,5 @@ export const __test = {
   reconcileVersionControlProvider,
   reconcileMemory,
   resolveJobImage,
+  resolveVcsContext,
 }

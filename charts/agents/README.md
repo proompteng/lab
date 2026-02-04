@@ -145,6 +145,10 @@ Token scopes & expiry guidance:
 - Bitbucket access tokens should include repository read/write scopes matching your intended mode.
 - Gitea API tokens need repo access; set `spec.auth.username` if your HTTPS auth requires a specific account name.
 
+Branch naming defaults (VersionControlProvider `spec.defaults`):
+- `branchTemplate` controls deterministic head branch names (e.g. `codex/{{issueNumber}}`).
+- `branchConflictSuffixTemplate` appends a suffix when another active run uses the same branch.
+
 Example token auth (GitHub fine-grained PAT):
 ```yaml
 apiVersion: agents.proompteng.ai/v1alpha1
