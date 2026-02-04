@@ -764,6 +764,142 @@ describe('agents controller reconcileAgentRun', () => {
     }
   })
 
+  it('applies default scheduling config and allows per-run overrides', async () => {
+    const previousEnv = {
+      nodeSelector: process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR,
+      affinity: process.env.JANGAR_AGENT_RUNNER_AFFINITY,
+      priorityClass: process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS,
+      schedulerName: process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME,
+    }
+    const defaultAffinity = {
+      nodeAffinity: {
+        requiredDuringSchedulingIgnoredDuringExecution: {
+          nodeSelectorTerms: [
+            {
+              matchExpressions: [{ key: 'tier', operator: 'In', values: ['default'] }],
+            },
+          ],
+        },
+      },
+    }
+    process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR = JSON.stringify({ disktype: 'ssd' })
+    process.env.JANGAR_AGENT_RUNNER_AFFINITY = JSON.stringify(defaultAffinity)
+    process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS = 'default-priority'
+    process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME = 'default-scheduler'
+
+    try {
+      let lastJob: Record<string, unknown> | null = null
+      const apply = vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        const applied = { ...resource, metadata: { ...metadata, uid } }
+        if (resource.kind === 'Job') {
+          lastJob = applied
+        }
+        return applied
+      })
+      const kube = buildKube({
+        apply,
+        get: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          return null
+        }),
+      })
+
+      const agentRun = buildAgentRun()
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      const defaultPodSpec = ((lastJob?.spec as Record<string, unknown>)?.template as Record<string, unknown>)
+        ?.spec as Record<string, unknown>
+      expect(defaultPodSpec.nodeSelector).toEqual({ disktype: 'ssd' })
+      expect(defaultPodSpec.affinity).toEqual(defaultAffinity)
+      expect(defaultPodSpec.priorityClassName).toBe('default-priority')
+      expect(defaultPodSpec.schedulerName).toBe('default-scheduler')
+
+      const overrideAffinity = {
+        nodeAffinity: {
+          preferredDuringSchedulingIgnoredDuringExecution: [
+            {
+              weight: 1,
+              preference: { matchExpressions: [{ key: 'tier', operator: 'In', values: ['override'] }] },
+            },
+          ],
+        },
+      }
+      const overrideRun = buildAgentRun()
+      overrideRun.metadata = { ...(overrideRun.metadata as Record<string, unknown>), name: 'run-2' }
+      overrideRun.spec = {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: {
+          type: 'job',
+          config: {
+            nodeSelector: { disktype: 'gpu' },
+            affinity: overrideAffinity,
+            priorityClassName: 'run-priority',
+            schedulerName: 'run-scheduler',
+          },
+        },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+      }
+
+      lastJob = null
+      await __test.reconcileAgentRun(
+        kube as never,
+        overrideRun,
+        'agents',
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      const overridePodSpec = ((lastJob?.spec as Record<string, unknown>)?.template as Record<string, unknown>)
+        ?.spec as Record<string, unknown>
+      expect(overridePodSpec.nodeSelector).toEqual({ disktype: 'gpu' })
+      expect(overridePodSpec.affinity).toEqual(overrideAffinity)
+      expect(overridePodSpec.priorityClassName).toBe('run-priority')
+      expect(overridePodSpec.schedulerName).toBe('run-scheduler')
+    } finally {
+      if (previousEnv.nodeSelector === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR = previousEnv.nodeSelector
+      }
+      if (previousEnv.affinity === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_AFFINITY
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_AFFINITY = previousEnv.affinity
+      }
+      if (previousEnv.priorityClass === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS = previousEnv.priorityClass
+      }
+      if (previousEnv.schedulerName === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME = previousEnv.schedulerName
+      }
+    }
+  })
+
   it('marks AgentRun failed when controller blocks secrets', async () => {
     const previousBlocked = process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS
     process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS = 'blocked-secret'
