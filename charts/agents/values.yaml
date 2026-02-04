@@ -58,6 +58,31 @@ grpc:
   servicePort: 50051
   serviceType: ClusterIP
 
+metrics:
+  enabled: true
+  path: /metrics
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 9090
+    annotations: {}
+    labels: {}
+  serviceMonitor:
+    enabled: false
+    namespace: ""
+    interval: 30s
+    scrapeTimeout: 10s
+    honorLabels: false
+    labels: {}
+    annotations: {}
+    relabelings: []
+    metricRelabelings: []
+  dashboards:
+    enabled: true
+    annotations: {}
+    labels:
+      grafana_dashboard: "1"
+
 resources:
   requests:
     cpu: 100m

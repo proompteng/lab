@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
+const recordReconcileDurationMs = vi.fn()
+const recordAgentRunOutcome = vi.fn()
+
+vi.mock('~/server/metrics', () => ({
+  recordReconcileDurationMs,
+  recordAgentRunOutcome,
+}))
+
 import { __test } from '~/server/agents-controller'
 import { RESOURCE_MAP } from '~/server/primitives-kube'
 
@@ -1421,6 +1429,24 @@ describe('agents controller reconcileAgentRun', () => {
         process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
       }
     }
+  })
+
+  it('records reconcile duration metrics', async () => {
+    const kube = buildKube()
+    recordReconcileDurationMs.mockClear()
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      buildAgentRun(),
+      'agents',
+      [],
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    expect(recordReconcileDurationMs).toHaveBeenCalled()
   })
 })
 

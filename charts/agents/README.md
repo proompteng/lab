@@ -125,6 +125,13 @@ Enable gRPC for agentctl or in-cluster clients:
 - `grpc.enabled=true`
 - Set `env.vars.JANGAR_GRPC_TOKEN` to require a shared token
 
+### Observability (Prometheus + Grafana)
+The chart ships a Prometheus scrape endpoint and an optional ServiceMonitor plus a Grafana dashboard ConfigMap.
+- Metrics endpoint: `metrics.enabled=true` (default) exposes `metrics.path` (default `/metrics`).
+- Metrics service: `metrics.service.enabled=true` publishes a `*-metrics` Service on `metrics.service.port`.
+- ServiceMonitor: set `metrics.serviceMonitor.enabled=true` and add labels/annotations as needed.
+- Grafana dashboard: `metrics.dashboards.enabled=true` creates a ConfigMap labeled for Grafana sidecars.
+
 ### Migrations
 Automatic migrations are enabled by default. To skip:
 - `env.vars.JANGAR_MIGRATIONS=skip`
