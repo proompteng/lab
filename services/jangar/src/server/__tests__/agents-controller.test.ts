@@ -1095,6 +1095,108 @@ describe('agents controller reconcileAgentRun', () => {
     expect(thirdSteps[0]?.phase).toBe('Running')
   })
 
+  it('times out workflow steps and retries', async () => {
+    const jobStatuses = new Map<string, Record<string, unknown>>()
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      const applied = { ...resource, metadata: { ...metadata, uid } }
+      if (resource.kind === 'Job') {
+        const name = (resource.metadata as Record<string, unknown> | undefined)?.name as string | undefined
+        if (name) {
+          jobStatuses.set(name, applied)
+        }
+      }
+      return applied
+    })
+    const deleteMock = vi.fn(async () => ({}))
+    const kube = buildKube({
+      apply,
+      delete: deleteMock,
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'provider-1' },
+            spec: { binary: '/usr/local/bin/agent-runner' },
+          }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === 'job') {
+          return jobStatuses.get(name) ?? null
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'workflow', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workflow: {
+          steps: [{ name: 'timeout-step', retries: 1, retryBackoffSeconds: 30, timeoutSeconds: 1 }],
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const firstStatus = getLastStatus(kube)
+    const firstWorkflow = firstStatus.workflow as Record<string, unknown>
+    const firstSteps = (firstWorkflow.steps as Record<string, unknown>[]) ?? []
+    const firstJobName = (firstSteps[0]?.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
+    expect(firstJobName).toBeTruthy()
+    const oldStartTime = new Date(Date.now() - 10_000).toISOString()
+    jobStatuses.set(firstJobName ?? '', {
+      ...jobStatuses.get(firstJobName ?? ''),
+      status: { startTime: oldStartTime, active: 1 },
+    })
+
+    const timeoutStatus = {
+      ...firstStatus,
+      workflow: {
+        ...(firstStatus.workflow as Record<string, unknown>),
+        steps: [
+          {
+            ...firstSteps[0],
+            startedAt: oldStartTime,
+          },
+        ],
+      },
+    }
+    const secondAgentRun = { ...agentRun, status: timeoutStatus }
+    await __test.reconcileAgentRun(
+      kube as never,
+      secondAgentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const secondStatus = getLastStatus(kube)
+    const secondWorkflow = secondStatus.workflow as Record<string, unknown>
+    const secondSteps = (secondWorkflow.steps as Record<string, unknown>[]) ?? []
+    expect(secondSteps[0]?.phase).toBe('Retrying')
+    expect(secondSteps[0]?.nextRetryAt).toBeTruthy()
+    expect(deleteMock).toHaveBeenCalledWith('job', firstJobName, 'agents')
+  })
+
   it('deletes completed AgentRun after retention window', async () => {
     const deleteMock = vi.fn(async () => ({}))
     const kube = buildKube({ delete: deleteMock })

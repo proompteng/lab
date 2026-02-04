@@ -127,6 +127,7 @@ type WorkflowStepSpec = {
   workload: Record<string, unknown> | null
   retries: number
   retryBackoffSeconds: number
+  timeoutSeconds: number | null
 }
 
 type WorkflowStepStatus = {
@@ -491,6 +492,7 @@ const parseWorkflowSteps = (agentRun: Record<string, unknown>): WorkflowStepSpec
       }
       const retries = parseOptionalNumber(step.retries)
       const retryBackoffSeconds = parseOptionalNumber(step.retryBackoffSeconds)
+      const timeoutSeconds = parseOptionalNumber(step.timeoutSeconds)
       return {
         name,
         implementationSpecRefName: asString(readNested(step, ['implementationSpecRef', 'name'])) ?? null,
@@ -501,6 +503,10 @@ const parseWorkflowSteps = (agentRun: Record<string, unknown>): WorkflowStepSpec
         retryBackoffSeconds: Number.isFinite(retryBackoffSeconds)
           ? Math.max(0, Math.trunc(retryBackoffSeconds ?? 0))
           : 0,
+        timeoutSeconds:
+          Number.isFinite(timeoutSeconds) && (timeoutSeconds ?? 0) > 0
+            ? Math.trunc(timeoutSeconds ?? 0)
+            : null,
       }
     })
     .filter((step) => step.name.length > 0)
@@ -594,6 +600,33 @@ const shouldRetryStep = (step: WorkflowStepStatus, now: number) => {
   if (!step.nextRetryAt) return true
   const retryAt = Date.parse(step.nextRetryAt)
   return Number.isNaN(retryAt) ? true : retryAt <= now
+}
+
+const parseTimestamp = (value: string | undefined) => {
+  if (!value) return null
+  const parsed = Date.parse(value)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+const resolveWorkflowStepTimeout = (
+  step: WorkflowStepSpec,
+  status: WorkflowStepStatus,
+  jobStatus: Record<string, unknown>,
+  now: number,
+) => {
+  if (!step.timeoutSeconds || step.timeoutSeconds <= 0) {
+    return { timedOut: false as const, startedAt: status.startedAt }
+  }
+  const startedAt = status.startedAt ?? asString(jobStatus.startTime) ?? undefined
+  const startMs = parseTimestamp(startedAt)
+  if (startMs === null) {
+    return { timedOut: false as const, startedAt }
+  }
+  const deadlineMs = startMs + step.timeoutSeconds * 1000
+  const completionTime = asString(jobStatus.completionTime) ?? undefined
+  const completionMs = parseTimestamp(completionTime)
+  const effectiveMs = completionMs ?? now
+  return { timedOut: effectiveMs > deadlineMs, startedAt, deadlineMs }
 }
 
 const renderTemplate = (template: string, context: Record<string, unknown>) =>
@@ -3724,6 +3757,49 @@ const reconcileWorkflowRun = async (
       const jobStatus = asRecord(job.status) ?? {}
       const succeeded = Number(jobStatus.succeeded ?? 0)
       const failed = Number(jobStatus.failed ?? 0)
+      const jobComplete = succeeded > 0 || failed > 0 || isJobComplete(job) || isJobFailed(job)
+      const timeoutResult = resolveWorkflowStepTimeout(stepSpec, stepStatus, jobStatus, now)
+      if (!stepStatus.startedAt && timeoutResult.startedAt) {
+        stepStatus.startedAt = timeoutResult.startedAt
+      }
+      const hasCompletionTime = Boolean(asString(jobStatus.completionTime))
+      if (timeoutResult.timedOut && (!jobComplete || hasCompletionTime)) {
+        if (stepStatus.attempt < maxAttempts) {
+          setWorkflowStepPhase(stepStatus, 'Retrying', 'Step timed out; retrying')
+          stepStatus.finishedAt = nowIso()
+          stepStatus.nextRetryAt =
+            stepSpec.retryBackoffSeconds > 0
+              ? new Date(now + stepSpec.retryBackoffSeconds * 1000).toISOString()
+              : nowIso()
+          if (jobComplete) {
+            completedJobs.push({ job, namespace: jobNamespace })
+          } else {
+            try {
+              await kube.delete('job', jobName, jobNamespace)
+            } catch (error) {
+              console.warn('[jangar] failed to delete timed out workflow job', error)
+            }
+          }
+          workflowRunning = true
+          break
+        }
+        setWorkflowStepPhase(stepStatus, 'Failed', 'Step timed out')
+        stepStatus.finishedAt = nowIso()
+        if (jobComplete) {
+          completedJobs.push({ job, namespace: jobNamespace })
+        } else {
+          try {
+            await kube.delete('job', jobName, jobNamespace)
+          } catch (error) {
+            console.warn('[jangar] failed to delete timed out workflow job', error)
+          }
+        }
+        workflowFailure = {
+          reason: 'WorkflowStepTimeout',
+          message: `workflow step ${stepSpec.name} timed out`,
+        }
+        break
+      }
       if (succeeded > 0 || isJobComplete(job)) {
         setWorkflowStepPhase(stepStatus, 'Succeeded')
         stepStatus.startedAt = asString(jobStatus.startTime) ?? stepStatus.startedAt ?? undefined

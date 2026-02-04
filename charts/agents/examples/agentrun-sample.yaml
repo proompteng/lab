@@ -16,9 +16,11 @@ spec:
   workflow:
     steps:
       - name: plan
+        timeoutSeconds: 900
         parameters:
           stage: plan
       - name: implement
+        timeoutSeconds: 3600
         parameters:
           stage: implement
   workload:

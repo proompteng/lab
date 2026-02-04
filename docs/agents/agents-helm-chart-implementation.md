@@ -96,8 +96,9 @@ Jangar is the controller for all primitives and must:
   - `implementationSpecRef` or `implementation.inline` (optional overrides)
   - `workload` (optional override for image/resources/volumes)
   - `retries` and `retryBackoffSeconds` (per-step retry policy)
+  - `timeoutSeconds` (per-step deadline; `0` disables timeouts)
 - The controller runs steps sequentially, creating a Job per attempt and advancing only after success.
-- Failed steps retry up to `retries`, waiting `retryBackoffSeconds` between attempts.
+- Failed or timed-out steps retry up to `retries`, waiting `retryBackoffSeconds` between attempts.
 - Status reporting:
   - `status.workflow.phase` reflects overall workflow state (`Running`, `Succeeded`, `Failed`).
   - `status.workflow.steps[]` tracks per-step phase, attempt count, timestamps, and job reference.
