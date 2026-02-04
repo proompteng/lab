@@ -897,7 +897,7 @@ describe('agents controller reconcileAgentRun', () => {
     const previousEnv = {
       nodeSelector: process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR,
       affinity: process.env.JANGAR_AGENT_RUNNER_AFFINITY,
-      topologySpreadConstraints: process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS,
+      topologySpread: process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS,
       priorityClass: process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS,
       schedulerName: process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME,
     }
@@ -917,11 +917,6 @@ describe('agents controller reconcileAgentRun', () => {
         maxSkew: 1,
         topologyKey: 'topology.kubernetes.io/zone',
         whenUnsatisfiable: 'ScheduleAnyway',
-        labelSelector: {
-          matchLabels: {
-            'agents.proompteng.ai/agent': 'agent-1',
-          },
-        },
       },
     ]
     process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR = JSON.stringify({ disktype: 'ssd' })
@@ -986,13 +981,6 @@ describe('agents controller reconcileAgentRun', () => {
           ],
         },
       }
-      const overrideTopology = [
-        {
-          maxSkew: 1,
-          topologyKey: 'kubernetes.io/hostname',
-          whenUnsatisfiable: 'DoNotSchedule',
-        },
-      ]
       const overrideRun = buildAgentRun()
       overrideRun.metadata = { ...(overrideRun.metadata as Record<string, unknown>), name: 'run-2' }
       overrideRun.spec = {
@@ -1003,7 +991,13 @@ describe('agents controller reconcileAgentRun', () => {
           config: {
             nodeSelector: { disktype: 'gpu' },
             affinity: overrideAffinity,
-            topologySpreadConstraints: overrideTopology,
+            topologySpreadConstraints: [
+              {
+                maxSkew: 1,
+                topologyKey: 'kubernetes.io/hostname',
+                whenUnsatisfiable: 'DoNotSchedule',
+              },
+            ],
             priorityClassName: 'run-priority',
             schedulerName: 'run-scheduler',
           },
@@ -1026,7 +1020,13 @@ describe('agents controller reconcileAgentRun', () => {
         ?.spec as Record<string, unknown>
       expect(overridePodSpec.nodeSelector).toEqual({ disktype: 'gpu' })
       expect(overridePodSpec.affinity).toEqual(overrideAffinity)
-      expect(overridePodSpec.topologySpreadConstraints).toEqual(overrideTopology)
+      expect(overridePodSpec.topologySpreadConstraints).toEqual([
+        {
+          maxSkew: 1,
+          topologyKey: 'kubernetes.io/hostname',
+          whenUnsatisfiable: 'DoNotSchedule',
+        },
+      ])
       expect(overridePodSpec.priorityClassName).toBe('run-priority')
       expect(overridePodSpec.schedulerName).toBe('run-scheduler')
     } finally {
@@ -1040,10 +1040,10 @@ describe('agents controller reconcileAgentRun', () => {
       } else {
         process.env.JANGAR_AGENT_RUNNER_AFFINITY = previousEnv.affinity
       }
-      if (previousEnv.topologySpreadConstraints === undefined) {
+      if (previousEnv.topologySpread === undefined) {
         delete process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS
       } else {
-        process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = previousEnv.topologySpreadConstraints
+        process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = previousEnv.topologySpread
       }
       if (previousEnv.priorityClass === undefined) {
         delete process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS
@@ -1054,6 +1054,65 @@ describe('agents controller reconcileAgentRun', () => {
         delete process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME
       } else {
         process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME = previousEnv.schedulerName
+      }
+    }
+  })
+
+  it('ignores invalid topology spread env JSON with warnings', async () => {
+    const previousEnv = process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS
+    process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = '{invalid'
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      let lastJob: Record<string, unknown> | null = null
+      const apply = vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        const applied = { ...resource, metadata: { ...metadata, uid } }
+        if (resource.kind === 'Job') {
+          lastJob = applied
+        }
+        return applied
+      })
+      const kube = buildKube({
+        apply,
+        get: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          return null
+        }),
+      })
+
+      const agentRun = buildAgentRun()
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      const defaultPodSpec = ((lastJob?.spec as Record<string, unknown>)?.template as Record<string, unknown>)
+        ?.spec as Record<string, unknown>
+      expect(defaultPodSpec.topologySpreadConstraints).toBeUndefined()
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS'),
+      )
+    } finally {
+      warnSpy.mockRestore()
+      if (previousEnv === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = previousEnv
       }
     }
   })

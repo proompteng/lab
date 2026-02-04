@@ -115,6 +115,7 @@ AgentRun runtime config does not specify a value.
 
 Common fields:
 - `controller.defaultWorkload.nodeSelector`
+- `controller.defaultWorkload.topologySpreadConstraints`
 - `controller.defaultWorkload.affinity`
 - `controller.defaultWorkload.topologySpreadConstraints`
 - `controller.defaultWorkload.priorityClassName`
