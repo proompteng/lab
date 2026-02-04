@@ -897,6 +897,7 @@ describe('agents controller reconcileAgentRun', () => {
     const previousEnv = {
       nodeSelector: process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR,
       affinity: process.env.JANGAR_AGENT_RUNNER_AFFINITY,
+      topologySpreadConstraints: process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS,
       priorityClass: process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS,
       schedulerName: process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME,
     }
@@ -913,6 +914,16 @@ describe('agents controller reconcileAgentRun', () => {
     }
     process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR = JSON.stringify({ disktype: 'ssd' })
     process.env.JANGAR_AGENT_RUNNER_AFFINITY = JSON.stringify(defaultAffinity)
+    const defaultTopologySpreadConstraints = [
+      {
+        maxSkew: 1,
+        topologyKey: 'topology.kubernetes.io/zone',
+        whenUnsatisfiable: 'ScheduleAnyway',
+      },
+    ]
+    process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = JSON.stringify(
+      defaultTopologySpreadConstraints,
+    )
     process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS = 'default-priority'
     process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME = 'default-scheduler'
 
@@ -958,6 +969,7 @@ describe('agents controller reconcileAgentRun', () => {
         ?.spec as Record<string, unknown>
       expect(defaultPodSpec.nodeSelector).toEqual({ disktype: 'ssd' })
       expect(defaultPodSpec.affinity).toEqual(defaultAffinity)
+      expect(defaultPodSpec.topologySpreadConstraints).toEqual(defaultTopologySpreadConstraints)
       expect(defaultPodSpec.priorityClassName).toBe('default-priority')
       expect(defaultPodSpec.schedulerName).toBe('default-scheduler')
 
@@ -981,6 +993,13 @@ describe('agents controller reconcileAgentRun', () => {
           config: {
             nodeSelector: { disktype: 'gpu' },
             affinity: overrideAffinity,
+            topologySpreadConstraints: [
+              {
+                maxSkew: 1,
+                topologyKey: 'kubernetes.io/hostname',
+                whenUnsatisfiable: 'DoNotSchedule',
+              },
+            ],
             priorityClassName: 'run-priority',
             schedulerName: 'run-scheduler',
           },
@@ -1003,6 +1022,13 @@ describe('agents controller reconcileAgentRun', () => {
         ?.spec as Record<string, unknown>
       expect(overridePodSpec.nodeSelector).toEqual({ disktype: 'gpu' })
       expect(overridePodSpec.affinity).toEqual(overrideAffinity)
+      expect(overridePodSpec.topologySpreadConstraints).toEqual([
+        {
+          maxSkew: 1,
+          topologyKey: 'kubernetes.io/hostname',
+          whenUnsatisfiable: 'DoNotSchedule',
+        },
+      ])
       expect(overridePodSpec.priorityClassName).toBe('run-priority')
       expect(overridePodSpec.schedulerName).toBe('run-scheduler')
     } finally {
@@ -1015,6 +1041,11 @@ describe('agents controller reconcileAgentRun', () => {
         delete process.env.JANGAR_AGENT_RUNNER_AFFINITY
       } else {
         process.env.JANGAR_AGENT_RUNNER_AFFINITY = previousEnv.affinity
+      }
+      if (previousEnv.topologySpreadConstraints === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = previousEnv.topologySpreadConstraints
       }
       if (previousEnv.priorityClass === undefined) {
         delete process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS
