@@ -174,6 +174,10 @@ controller:
         - pat
 ```
 
+Branch naming defaults (VersionControlProvider `spec.defaults`):
+- `branchTemplate` controls deterministic head branch names (e.g. `codex/{{issueNumber}}`).
+- `branchConflictSuffixTemplate` appends a suffix when another active run uses the same branch.
+
 Example token auth (GitHub fine-grained PAT):
 ```yaml
 apiVersion: agents.proompteng.ai/v1alpha1

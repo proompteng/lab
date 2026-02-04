@@ -23,6 +23,7 @@ spec:
   defaults:
     baseBranch: main
     branchTemplate: codex/{{issueNumber}}
+    branchConflictSuffixTemplate: "{{agentRun.name}}"
     commitAuthorName: codex
     commitAuthorEmail: codex@proompt.com
     pullRequest:

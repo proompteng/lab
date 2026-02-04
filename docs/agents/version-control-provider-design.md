@@ -74,6 +74,7 @@ Spec (proposed):
 - `defaults`:
   - `baseBranch`: string
   - `branchTemplate`: string (e.g. `codex/{{issueNumber}}`)
+  - `branchConflictSuffixTemplate`: string (suffix template when branch names collide)
   - `commitAuthorName`: string
   - `commitAuthorEmail`: string
   - `pullRequest`:
@@ -142,6 +143,7 @@ For compatibility with existing agent images:
   - `VCS_MODE`, `VCS_WRITE_ENABLED`, `VCS_PULL_REQUESTS_ENABLED`
   - `VCS_PR_TITLE_TEMPLATE`, `VCS_PR_BODY_TEMPLATE`, `VCS_PR_DRAFT`
   - `VCS_COMMIT_AUTHOR_NAME`, `VCS_COMMIT_AUTHOR_EMAIL`
+  - `VCS_BRANCH_CONFLICT_SUFFIX_TEMPLATE`
 
 This keeps GitHub-specific tooling working while allowing multi-provider behavior.
 

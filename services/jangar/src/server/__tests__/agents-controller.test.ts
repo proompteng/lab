@@ -121,6 +121,7 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -164,6 +165,7 @@ describe('agents controller reconcileAgentRun', () => {
       kube as never,
       agentRun,
       'agents',
+      [],
       [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
@@ -323,6 +325,7 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -389,6 +392,7 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -422,6 +426,7 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -450,6 +455,7 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -474,6 +480,7 @@ describe('agents controller reconcileAgentRun', () => {
       kube as never,
       agentRun,
       'agents',
+      [],
       [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
@@ -500,6 +507,7 @@ describe('agents controller reconcileAgentRun', () => {
         kube as never,
         agentRun,
         'agents',
+        [],
         [],
         { perNamespace: 10, perAgent: 5, cluster: 100 },
         { total: 0, perAgent: new Map() },
@@ -539,6 +547,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRun,
         'agents',
         [],
+        [],
         { perNamespace: 10, perAgent: 5, cluster: 100 },
         { total: 0, perAgent: new Map() },
         0,
@@ -577,6 +586,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRun,
         'agents',
         [],
+        [],
         { perNamespace: 10, perAgent: 5, cluster: 100 },
         { total: 0, perAgent: new Map() },
         0,
@@ -606,6 +616,7 @@ describe('agents controller reconcileAgentRun', () => {
         kube as never,
         agentRun,
         'agents',
+        [],
         [],
         { perNamespace: 10, perAgent: 5, cluster: 100 },
         { total: 0, perAgent: new Map() },
@@ -657,6 +668,7 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -706,6 +718,7 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -752,6 +765,7 @@ describe('agents controller reconcileAgentRun', () => {
         kube as never,
         agentRun,
         'agents',
+        [],
         [],
         { perNamespace: 10, perAgent: 5, cluster: 100 },
         { total: 0, perAgent: new Map() },
@@ -812,6 +826,7 @@ describe('agents controller reconcileAgentRun', () => {
         kube as never,
         agentRun,
         'agents',
+        [],
         [],
         { perNamespace: 10, perAgent: 5, cluster: 100 },
         { total: 0, perAgent: new Map() },
@@ -1048,6 +1063,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRun,
         'agents',
         [],
+        [],
         { perNamespace: 10, perAgent: 5, cluster: 100 },
         { total: 0, perAgent: new Map() },
         0,
@@ -1097,6 +1113,7 @@ describe('agents controller reconcileAgentRun', () => {
         kube as never,
         agentRun,
         'agents',
+        [],
         [],
         { perNamespace: 10, perAgent: 5, cluster: 100 },
         { total: 0, perAgent: new Map() },
@@ -1168,6 +1185,7 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -1194,6 +1212,7 @@ describe('agents controller reconcileAgentRun', () => {
       secondAgentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -1216,6 +1235,7 @@ describe('agents controller reconcileAgentRun', () => {
       kube as never,
       thirdAgentRun,
       'agents',
+      [],
       [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
@@ -1284,6 +1304,7 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -1303,6 +1324,7 @@ describe('agents controller reconcileAgentRun', () => {
       kube as never,
       secondAgentRun,
       'agents',
+      [],
       [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
@@ -1333,6 +1355,7 @@ describe('agents controller reconcileAgentRun', () => {
       thirdAgentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -1357,6 +1380,7 @@ describe('agents controller reconcileAgentRun', () => {
       kube as never,
       agentRun,
       'agents',
+      [],
       [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
@@ -1383,6 +1407,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRun,
         'agents',
         [],
+        [],
         { perNamespace: 10, perAgent: 5, cluster: 100 },
         { total: 0, perAgent: new Map() },
         0,
@@ -1396,6 +1421,67 @@ describe('agents controller reconcileAgentRun', () => {
         process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
       }
     }
+  })
+})
+
+describe('agents controller resolveVcsContext', () => {
+  it('suffixes the head branch when a conflict exists', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.VersionControlProvider) {
+          return buildVcsProvider({
+            spec: {
+              provider: 'github',
+              auth: { method: 'none' },
+              defaults: {
+                branchTemplate: 'codex/{{issueNumber}}',
+                branchConflictSuffixTemplate: '{{agentRun.name}}',
+              },
+            },
+          })
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        vcsRef: { name: 'vcs-1' },
+        parameters: {
+          repository: 'proompteng/lab',
+          issueNumber: '123',
+        },
+      },
+    })
+
+    const result = await __test.resolveVcsContext({
+      kube: kube as never,
+      namespace: 'agents',
+      agentRun,
+      agent: { metadata: { name: 'agent-1' }, spec: {} },
+      implementation: {},
+      parameters: {
+        repository: 'proompteng/lab',
+        issueNumber: '123',
+      },
+      allowedSecrets: [],
+      existingRuns: [
+        {
+          metadata: { name: 'run-2' },
+          status: {
+            phase: 'Running',
+            vcs: { repository: 'proompteng/lab', headBranch: 'codex/123' },
+          },
+        },
+      ],
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.context?.headBranch).toBe('codex/123-run-1')
   })
 })
 
