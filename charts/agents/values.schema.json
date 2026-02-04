@@ -263,6 +263,36 @@
           },
           "additionalProperties": false
         },
+        "admissionPolicy": {
+          "type": "object",
+          "properties": {
+            "labels": {
+              "type": "object",
+              "properties": {
+                "allow": { "type": "array", "items": { "type": "string" } },
+                "deny": { "type": "array", "items": { "type": "string" } }
+              },
+              "additionalProperties": false
+            },
+            "secrets": {
+              "type": "object",
+              "properties": {
+                "allow": { "type": "array", "items": { "type": "string" } },
+                "deny": { "type": "array", "items": { "type": "string" } }
+              },
+              "additionalProperties": false
+            },
+            "images": {
+              "type": "object",
+              "properties": {
+                "allow": { "type": "array", "items": { "type": "string" } },
+                "deny": { "type": "array", "items": { "type": "string" } }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
         "defaultWorkload": {
           "type": "object",
           "properties": {

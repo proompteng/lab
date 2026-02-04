@@ -490,6 +490,17 @@ const parseWorkflowSteps = (agentRun: Record<string, unknown>): WorkflowStepSpec
     .filter((step) => step.name.length > 0)
 }
 
+const collectRunLabels = (agentRun: Record<string, unknown>) => {
+  const raw = asRecord(readNested(agentRun, ['metadata', 'labels'])) ?? {}
+  const labels: Record<string, string> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === 'string') {
+      labels[key] = value
+    }
+  }
+  return labels
+}
+
 const validateWorkflowSteps = (steps: WorkflowStepSpec[]) => {
   if (steps.length === 0) {
     return {
@@ -753,6 +764,40 @@ const parseEnvList = (name: string) => {
     .filter((value) => value.length > 0)
 }
 
+type AdmissionPolicyRule = {
+  allow: string[]
+  deny: string[]
+}
+
+type AdmissionPolicy = {
+  labels: AdmissionPolicyRule
+  secrets: AdmissionPolicyRule
+  images: AdmissionPolicyRule
+}
+
+const resolveAdmissionPolicy = (): AdmissionPolicy => {
+  const secretsDeny = Array.from(
+    new Set([
+      ...parseEnvList('JANGAR_AGENTS_CONTROLLER_POLICY_SECRETS_DENY'),
+      ...parseEnvList('JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS'),
+    ]),
+  )
+  return {
+    labels: {
+      allow: parseEnvList('JANGAR_AGENTS_CONTROLLER_POLICY_LABELS_ALLOW'),
+      deny: parseEnvList('JANGAR_AGENTS_CONTROLLER_POLICY_LABELS_DENY'),
+    },
+    secrets: {
+      allow: parseEnvList('JANGAR_AGENTS_CONTROLLER_POLICY_SECRETS_ALLOW'),
+      deny: secretsDeny,
+    },
+    images: {
+      allow: parseEnvList('JANGAR_AGENTS_CONTROLLER_POLICY_IMAGES_ALLOW'),
+      deny: parseEnvList('JANGAR_AGENTS_CONTROLLER_POLICY_IMAGES_DENY'),
+    },
+  }
+}
+
 const resolveRunnerServiceAccount = (runtimeConfig: Record<string, unknown>) =>
   asString(runtimeConfig.serviceAccount) ?? asString(process.env.JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT)
 
@@ -777,7 +822,7 @@ const buildAuthSecretPath = (config: AuthSecretConfig) => {
 }
 
 const collectBlockedSecrets = (secrets: string[]) => {
-  const blocked = parseEnvList('JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS')
+  const blocked = resolveAdmissionPolicy().secrets.deny
   if (blocked.length === 0) return []
   const blockedSet = new Set(blocked)
   return Array.from(new Set(secrets.filter((secret) => blockedSet.has(secret))))
@@ -834,6 +879,70 @@ const matchesPattern = (value: string, pattern: string) => {
 
 const matchesAnyPattern = (value: string, patterns: string[]) =>
   patterns.some((pattern) => matchesPattern(value, pattern))
+
+const matchesLabelPolicy = (key: string, value: string, patterns: string[]) =>
+  matchesAnyPattern(key, patterns) || matchesAnyPattern(`${key}=${value}`, patterns)
+
+const validateLabelPolicy = (labels: Record<string, string>, policy: AdmissionPolicyRule) => {
+  const entries = Object.entries(labels)
+  if (entries.length === 0) return { ok: true as const }
+  for (const [key, value] of entries) {
+    const label = `${key}=${value}`
+    if (policy.deny.length > 0 && matchesLabelPolicy(key, value, policy.deny)) {
+      return {
+        ok: false as const,
+        reason: 'LabelBlocked',
+        message: `label ${label} is blocked by controller policy`,
+      }
+    }
+    if (policy.allow.length > 0 && !matchesLabelPolicy(key, value, policy.allow)) {
+      return {
+        ok: false as const,
+        reason: 'LabelNotAllowed',
+        message: `label ${label} is not allowlisted by controller policy`,
+      }
+    }
+  }
+  return { ok: true as const }
+}
+
+const validateSecretAllowList = (secretName: string, policy: AdmissionPolicyRule, subject: string) => {
+  if (!secretName) return { ok: true as const }
+  if (policy.allow.length > 0 && !matchesAnyPattern(secretName, policy.allow)) {
+    return {
+      ok: false as const,
+      reason: 'SecretNotAllowed',
+      message: `${subject} ${secretName} is not allowlisted by controller policy`,
+    }
+  }
+  return { ok: true as const }
+}
+
+const validateSecretAllowListEntries = (secrets: string[], policy: AdmissionPolicyRule, subject: string) => {
+  for (const secret of secrets) {
+    const check = validateSecretAllowList(secret, policy, subject)
+    if (!check.ok) return check
+  }
+  return { ok: true as const }
+}
+
+const validateImagePolicy = (image: string, policy: AdmissionPolicyRule) => {
+  if (policy.deny.length > 0 && matchesAnyPattern(image, policy.deny)) {
+    return {
+      ok: false as const,
+      reason: 'ImageBlocked',
+      message: `image ${image} is blocked by controller policy`,
+    }
+  }
+  if (policy.allow.length > 0 && !matchesAnyPattern(image, policy.allow)) {
+    return {
+      ok: false as const,
+      reason: 'ImageNotAllowed',
+      message: `image ${image} is not allowlisted by controller policy`,
+    }
+  }
+  return { ok: true as const }
+}
 
 const normalizeVcsMode = (value: unknown): VcsMode => {
   const raw = asString(value)?.toLowerCase()
@@ -1789,6 +1898,8 @@ const resolveVcsContext = async ({
   const policy = asRecord(spec.vcsPolicy) ?? {}
   const required = policy.required === true
   const desiredMode = normalizeVcsMode(policy.mode)
+  const admissionPolicy = resolveAdmissionPolicy()
+  const secretPolicy = admissionPolicy.secrets
 
   const runMetadata = asRecord(agentRun.metadata) ?? {}
   const runName = asString(runMetadata.name) ?? 'agentrun'
@@ -2046,6 +2157,29 @@ const resolveVcsContext = async ({
         requiredSecrets: [],
       }
     }
+    const secretPolicyCheck = validateSecretAllowList(secretName, secretPolicy, 'vcs secret')
+    if (!secretPolicyCheck.ok) {
+      if (required && desiredMode !== 'none') {
+        return {
+          ok: false,
+          skip: false,
+          reason: secretPolicyCheck.reason,
+          message: secretPolicyCheck.message,
+          mode: effectiveMode,
+          status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
+          requiredSecrets: [],
+        }
+      }
+      return {
+        ok: true,
+        skip: true,
+        mode: effectiveMode,
+        reason: secretPolicyCheck.reason,
+        message: secretPolicyCheck.message,
+        status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
+        requiredSecrets: [],
+      }
+    }
     if (allowedSecrets.length > 0 && !allowedSecrets.includes(secretName)) {
       if (required && desiredMode !== 'none') {
         return {
@@ -2171,6 +2305,29 @@ const resolveVcsContext = async ({
         mode: effectiveMode,
         reason: 'SecretBlocked',
         message: `vcs secret ${secretName} is blocked by controller policy`,
+        status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
+        requiredSecrets: [],
+      }
+    }
+    const secretPolicyCheck = validateSecretAllowList(secretName, secretPolicy, 'vcs secret')
+    if (!secretPolicyCheck.ok) {
+      if (required && desiredMode !== 'none') {
+        return {
+          ok: false,
+          skip: false,
+          reason: secretPolicyCheck.reason,
+          message: secretPolicyCheck.message,
+          mode: effectiveMode,
+          status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
+          requiredSecrets: [],
+        }
+      }
+      return {
+        ok: true,
+        skip: true,
+        mode: effectiveMode,
+        reason: secretPolicyCheck.reason,
+        message: secretPolicyCheck.message,
         status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
         requiredSecrets: [],
       }
@@ -2306,6 +2463,29 @@ const resolveVcsContext = async ({
         mode: effectiveMode,
         reason: 'SecretBlocked',
         message: `vcs secret ${secretName} is blocked by controller policy`,
+        status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
+        requiredSecrets: [],
+      }
+    }
+    const secretPolicyCheck = validateSecretAllowList(secretName, secretPolicy, 'vcs secret')
+    if (!secretPolicyCheck.ok) {
+      if (required && desiredMode !== 'none') {
+        return {
+          ok: false,
+          skip: false,
+          reason: secretPolicyCheck.reason,
+          message: secretPolicyCheck.message,
+          mode: effectiveMode,
+          status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
+          requiredSecrets: [],
+        }
+      }
+      return {
+        ok: true,
+        skip: true,
+        mode: effectiveMode,
+        reason: secretPolicyCheck.reason,
+        message: secretPolicyCheck.message,
         status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
         requiredSecrets: [],
       }
@@ -3182,6 +3362,8 @@ const loadWorkflowDependencies = async (
   const allowedServiceAccounts = parseStringList(security.allowedServiceAccounts)
   const runSecrets = parseStringList(spec.secrets)
   const authSecret = resolveAuthSecretConfig()
+  const admissionPolicy = resolveAdmissionPolicy()
+  const secretPolicy = admissionPolicy.secrets
   if (allowedSecrets.length > 0) {
     const forbidden = runSecrets.filter((secret) => !allowedSecrets.includes(secret))
     if (forbidden.length > 0) {
@@ -3204,6 +3386,23 @@ const loadWorkflowDependencies = async (
       ok: false as const,
       reason: 'SecretBlocked',
       message: `secrets blocked by controller policy: ${blockedSecrets.join(', ')}`,
+    }
+  }
+
+  const runSecretsAllowList = validateSecretAllowListEntries(runSecrets, secretPolicy, 'secret')
+  if (!runSecretsAllowList.ok) {
+    return runSecretsAllowList
+  }
+  if (authSecret) {
+    const authSecretAllowList = validateSecretAllowList(authSecret.name, secretPolicy, 'auth secret')
+    if (!authSecretAllowList.ok) {
+      return authSecretAllowList
+    }
+  }
+  if (memorySecretName) {
+    const memorySecretAllowList = validateSecretAllowList(memorySecretName, secretPolicy, 'memory secret')
+    if (!memorySecretAllowList.ok) {
+      return memorySecretAllowList
     }
   }
 
@@ -3282,6 +3481,7 @@ const reconcileWorkflowRun = async (
   const workflowSteps = parseWorkflowSteps(agentRun)
   const workflowValidation = validateWorkflowSteps(workflowSteps)
   const conditions = buildConditions(agentRun)
+  const admissionPolicy = resolveAdmissionPolicy()
 
   if (!workflowValidation.ok) {
     const updated = upsertCondition(conditions, {
@@ -3393,6 +3593,27 @@ const reconcileWorkflowRun = async (
             'spec.workload.image, JANGAR_AGENT_RUNNER_IMAGE, or JANGAR_AGENT_IMAGE is required for workflow runtime',
         }
         break
+      }
+      const imagePolicy = validateImagePolicy(workloadImage, admissionPolicy.images)
+      if (!imagePolicy.ok) {
+        setWorkflowStepPhase(stepStatus, 'Failed', imagePolicy.message)
+        stepStatus.finishedAt = nowIso()
+        const updated = upsertCondition(baseConditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: imagePolicy.reason,
+          message: imagePolicy.message,
+        })
+        await setStatus(kube, agentRun, {
+          observedGeneration,
+          phase: 'Failed',
+          finishedAt: nowIso(),
+          runtimeRef: runtimeRefUpdate ?? parseRuntimeRef(status.runtimeRef) ?? undefined,
+          workflow: workflowStatus,
+          conditions: updated,
+          vcs: vcsStatus ?? undefined,
+        })
+        return
       }
 
       const stepParameters = { ...baseParameters, ...stepSpec.parameters }
@@ -3638,6 +3859,7 @@ const reconcileAgentRun = async (
   const runtimeType = asString(readNested(spec, ['runtime', 'type']))
   const runtimeConfig = asRecord(readNested(spec, ['runtime', 'config'])) ?? {}
   const workload = asRecord(readNested(spec, ['workload'])) ?? {}
+  const admissionPolicy = resolveAdmissionPolicy()
   let workloadImage: string | null = null
 
   if (deleting) {
@@ -3715,6 +3937,17 @@ const reconcileAgentRun = async (
   }
 
   if (shouldSubmit) {
+    const labelPolicy = validateLabelPolicy(collectRunLabels(agentRun), admissionPolicy.labels)
+    if (!labelPolicy.ok) {
+      const updated = upsertCondition(conditions, {
+        type: 'InvalidSpec',
+        status: 'True',
+        reason: labelPolicy.reason,
+        message: labelPolicy.message,
+      })
+      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      return
+    }
     if (!runtimeType) {
       const updated = upsertCondition(conditions, {
         type: 'InvalidSpec',
@@ -3747,6 +3980,17 @@ const reconcileAgentRun = async (
           status: 'True',
           reason: 'MissingWorkloadImage',
           message: 'spec.workload.image, JANGAR_AGENT_RUNNER_IMAGE, or JANGAR_AGENT_IMAGE is required for job runtime',
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+      const imagePolicy = validateImagePolicy(workloadImage, admissionPolicy.images)
+      if (!imagePolicy.ok) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: imagePolicy.reason,
+          message: imagePolicy.message,
         })
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
         return
@@ -3818,6 +4062,18 @@ const reconcileAgentRun = async (
     const allowedServiceAccounts = parseStringList(security.allowedServiceAccounts)
     const runSecrets = parseStringList(spec.secrets)
     const authSecret = resolveAuthSecretConfig()
+
+    const runSecretsAllowList = validateSecretAllowListEntries(runSecrets, admissionPolicy.secrets, 'secret')
+    if (!runSecretsAllowList.ok) {
+      const updated = upsertCondition(conditions, {
+        type: 'InvalidSpec',
+        status: 'True',
+        reason: runSecretsAllowList.reason,
+        message: runSecretsAllowList.message,
+      })
+      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      return
+    }
 
     if (allowedSecrets.length > 0) {
       const forbidden = runSecrets.filter((secret) => !allowedSecrets.includes(secret))
@@ -3912,6 +4168,20 @@ const reconcileAgentRun = async (
       return
     }
 
+    if (authSecret) {
+      const authSecretAllowList = validateSecretAllowList(authSecret.name, admissionPolicy.secrets, 'auth secret')
+      if (!authSecretAllowList.ok) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: authSecretAllowList.reason,
+          message: authSecretAllowList.message,
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+    }
+
     const authSecretPolicy = validateAuthSecretPolicy(allowedSecrets, authSecret)
     if (!authSecretPolicy.ok) {
       const updated = upsertCondition(conditions, {
@@ -3924,6 +4194,21 @@ const reconcileAgentRun = async (
       return
     }
     if (memorySecretName) {
+      const memorySecretAllowList = validateSecretAllowList(
+        memorySecretName,
+        admissionPolicy.secrets,
+        'memory secret',
+      )
+      if (!memorySecretAllowList.ok) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: memorySecretAllowList.reason,
+          message: memorySecretAllowList.message,
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
       if (allowedSecrets.length > 0 && !allowedSecrets.includes(memorySecretName)) {
         const updated = upsertCondition(conditions, {
           type: 'InvalidSpec',

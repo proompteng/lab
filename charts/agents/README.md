@@ -190,6 +190,12 @@ bun packages/scripts/src/agents/publish-chart.ts
 ## Values
 See `values.yaml` and `values.schema.json` for full configuration.
 
+## Admission Policy
+Configure admission checks for AgentRuns via `controller.admissionPolicy`:
+- `labels.allow`/`labels.deny`: label key or `key=value` patterns (supports `*` wildcards).
+- `secrets.allow`/`secrets.deny`: secret name patterns for AgentRun secrets, memory secrets, auth secrets, and VCS secrets.
+- `images.allow`/`images.deny`: workload image patterns for job/workflow runs.
+
 ## Support
 Open issues or discussions in the repo if you want:
 - new CRDs

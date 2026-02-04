@@ -164,6 +164,30 @@ spec:
               value: {{ .Values.controller.agentRunRetentionSeconds | default 2592000 | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED
               value: {{ .Values.controller.vcsProviders.enabled | default true | quote }}
+            {{- if and .Values.controller.admissionPolicy.labels.allow (gt (len .Values.controller.admissionPolicy.labels.allow) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_POLICY_LABELS_ALLOW
+              value: {{ join "," .Values.controller.admissionPolicy.labels.allow | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.labels.deny (gt (len .Values.controller.admissionPolicy.labels.deny) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_POLICY_LABELS_DENY
+              value: {{ join "," .Values.controller.admissionPolicy.labels.deny | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.secrets.allow (gt (len .Values.controller.admissionPolicy.secrets.allow) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_POLICY_SECRETS_ALLOW
+              value: {{ join "," .Values.controller.admissionPolicy.secrets.allow | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.secrets.deny (gt (len .Values.controller.admissionPolicy.secrets.deny) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_POLICY_SECRETS_DENY
+              value: {{ join "," .Values.controller.admissionPolicy.secrets.deny | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.images.allow (gt (len .Values.controller.admissionPolicy.images.allow) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_POLICY_IMAGES_ALLOW
+              value: {{ join "," .Values.controller.admissionPolicy.images.allow | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.images.deny (gt (len .Values.controller.admissionPolicy.images.deny) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_POLICY_IMAGES_DENY
+              value: {{ join "," .Values.controller.admissionPolicy.images.deny | quote }}
+            {{- end }}
             {{- if .Values.controller.authSecret.name }}
             - name: JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
               value: {{ .Values.controller.authSecret.name | quote }}

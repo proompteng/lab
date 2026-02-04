@@ -146,6 +146,16 @@ controller:
     mountPath: /root/.codex
   vcsProviders:
     enabled: true
+  admissionPolicy:
+    labels:
+      allow: []
+      deny: []
+    secrets:
+      allow: []
+      deny: []
+    images:
+      allow: []
+      deny: []
   defaultWorkload:
     serviceAccountName: ""
     nodeSelector: {}

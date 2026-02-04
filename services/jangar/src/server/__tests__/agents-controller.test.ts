@@ -694,6 +694,124 @@ describe('agents controller reconcileAgentRun', () => {
     }
   })
 
+  it('marks AgentRun failed when labels are not allowlisted', async () => {
+    const previousAllow = process.env.JANGAR_AGENTS_CONTROLLER_POLICY_LABELS_ALLOW
+    process.env.JANGAR_AGENTS_CONTROLLER_POLICY_LABELS_ALLOW = 'allowed-*'
+
+    try {
+      const kube = buildKube()
+      const base = buildAgentRun()
+      const agentRun = {
+        ...base,
+        metadata: {
+          ...(base.metadata as Record<string, unknown>),
+          labels: { blocked: 'true' },
+        },
+      }
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      const status = getLastStatus(kube)
+      const condition = findCondition(status, 'InvalidSpec')
+      expect(condition?.reason).toBe('LabelNotAllowed')
+    } finally {
+      if (previousAllow === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_POLICY_LABELS_ALLOW
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_POLICY_LABELS_ALLOW = previousAllow
+      }
+    }
+  })
+
+  it('marks AgentRun failed when image is blocked by policy', async () => {
+    const previousDeny = process.env.JANGAR_AGENTS_CONTROLLER_POLICY_IMAGES_DENY
+    process.env.JANGAR_AGENTS_CONTROLLER_POLICY_IMAGES_DENY = 'registry.ide-newton.ts.net/lab/*'
+
+    try {
+      const kube = buildKube()
+      const agentRun = buildAgentRun()
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      const status = getLastStatus(kube)
+      const condition = findCondition(status, 'InvalidSpec')
+      expect(condition?.reason).toBe('ImageBlocked')
+    } finally {
+      if (previousDeny === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_POLICY_IMAGES_DENY
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_POLICY_IMAGES_DENY = previousDeny
+      }
+    }
+  })
+
+  it('marks AgentRun failed when secrets are not allowlisted by policy', async () => {
+    const previousAllow = process.env.JANGAR_AGENTS_CONTROLLER_POLICY_SECRETS_ALLOW
+    process.env.JANGAR_AGENTS_CONTROLLER_POLICY_SECRETS_ALLOW = 'allowed-secret'
+
+    try {
+      const kube = buildKube({
+        get: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          return null
+        }),
+      })
+      const agentRun = buildAgentRun({
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'job', config: {} },
+          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+          secrets: ['denied-secret'],
+        },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      const status = getLastStatus(kube)
+      const condition = findCondition(status, 'InvalidSpec')
+      expect(condition?.reason).toBe('SecretNotAllowed')
+    } finally {
+      if (previousAllow === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_POLICY_SECRETS_ALLOW
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_POLICY_SECRETS_ALLOW = previousAllow
+      }
+    }
+  })
+
   it('marks AgentRun failed when auth secret is not allowlisted', async () => {
     const previousName = process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
     process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME = 'codex-auth'
