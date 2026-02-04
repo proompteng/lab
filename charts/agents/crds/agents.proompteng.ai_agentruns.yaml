@@ -424,17 +424,6 @@ spec:
                   - name
                   type: object
                 type: array
-              contract:
-                properties:
-                  missingKeys:
-                    items:
-                      type: string
-                    type: array
-                  requiredKeys:
-                    items:
-                      type: string
-                    type: array
-                type: object
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current
@@ -491,6 +480,17 @@ spec:
                   - type
                   type: object
                 type: array
+              contract:
+                properties:
+                  missingKeys:
+                    items:
+                      type: string
+                    type: array
+                  requiredKeys:
+                    items:
+                      type: string
+                    type: array
+                type: object
               finishedAt:
                 format: date-time
                 type: string
