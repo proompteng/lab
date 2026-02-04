@@ -24,6 +24,8 @@ const PARAMETERS_MAX_VALUE_BYTES = 2048
 const DEFAULT_AUTH_SECRET_KEY = 'auth.json'
 const DEFAULT_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
 const DEFAULT_GITHUB_APP_TOKEN_TTL_SECONDS = 3600
+const DEFAULT_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 300
+const MIN_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 30
 
 const BASE_REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -153,7 +155,7 @@ let temporalClientPromise: ReturnType<typeof createTemporalClient> | null = null
 let watchHandles: Array<{ stop: () => void }> = []
 let _controllerState: ControllerState | null = null
 const namespaceQueues = new Map<string, Promise<void>>()
-const githubAppTokenCache = new Map<string, { token: string; expiresAt: number }>()
+const githubAppTokenCache = new Map<string, { token: string; expiresAt: number; refreshAfter: number }>()
 
 const nowIso = () => new Date().toISOString()
 
@@ -865,7 +867,7 @@ const fetchGithubAppToken = async (input: {
   const cacheKey = `${input.apiBaseUrl}|${input.installationId}`
   const cached = githubAppTokenCache.get(cacheKey)
   const now = Date.now()
-  if (cached && cached.expiresAt - now > 30_000) {
+  if (cached && now < cached.refreshAfter) {
     return cached.token
   }
 
@@ -907,14 +909,25 @@ const fetchGithubAppToken = async (input: {
 
   const expiresAtRaw = asString(payloadResponse.expires_at)
   const ttlSeconds = typeof input.ttlSeconds === 'number' && input.ttlSeconds > 0 ? input.ttlSeconds : undefined
-  const expiresAtMs = expiresAtRaw
-    ? Date.parse(expiresAtRaw)
-    : now + (ttlSeconds ?? DEFAULT_GITHUB_APP_TOKEN_TTL_SECONDS) * 1000
+  const fallbackExpiresAt = now + (ttlSeconds ?? DEFAULT_GITHUB_APP_TOKEN_TTL_SECONDS) * 1000
+  const parsedExpiresAt = expiresAtRaw ? Date.parse(expiresAtRaw) : NaN
+  const expiresAtMs = Number.isNaN(parsedExpiresAt) ? fallbackExpiresAt : parsedExpiresAt
+  const ttlMs = Math.max(0, expiresAtMs - now)
+  const refreshWindowMs = Math.min(
+    DEFAULT_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS * 1000,
+    Math.max(MIN_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS * 1000, Math.floor(ttlMs * 0.1)),
+  )
+  const refreshAfter = Math.max(now, expiresAtMs - refreshWindowMs)
   githubAppTokenCache.set(cacheKey, {
     token,
-    expiresAt: Number.isNaN(expiresAtMs) ? now + 30 * 60 * 1000 : expiresAtMs,
+    expiresAt: expiresAtMs,
+    refreshAfter,
   })
   return token
+}
+
+const clearGithubAppTokenCache = () => {
+  githubAppTokenCache.clear()
 }
 
 const parseJsonEnv = (name: string) => {
@@ -4390,6 +4403,8 @@ export const stopAgentsController = () => {
 
 export const __test = {
   checkCrds,
+  clearGithubAppTokenCache,
+  fetchGithubAppToken,
   reconcileAgentRun,
   reconcileMemory,
   resolveJobImage,

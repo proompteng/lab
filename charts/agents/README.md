@@ -125,6 +125,34 @@ Define a VersionControlProvider resource to decouple repo access from issue inta
 agent runtimes that clone, commit, push, or open pull requests. Pair it with a SecretBinding that
 allows the provider's secret.
 
+GitHub App auth example:
+```yaml
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: VersionControlProvider
+metadata:
+  name: github-app
+spec:
+  provider: github
+  apiBaseUrl: https://api.github.com
+  cloneBaseUrl: https://github.com
+  webBaseUrl: https://github.com
+  auth:
+    method: app
+    app:
+      appId: "12345"
+      installationId: "67890"
+      privateKeySecretRef:
+        name: codex-github-app-key
+        key: privateKey
+  repositoryPolicy:
+    allow:
+      - proompteng/*
+  capabilities:
+    read: true
+    write: true
+    pullRequests: true
+```
+
 ## Example production values
 ```yaml
 image:
