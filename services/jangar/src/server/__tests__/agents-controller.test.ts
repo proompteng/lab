@@ -1251,6 +1251,139 @@ describe('agents controller reconcileAgentRun', () => {
     expect(thirdSteps[1]?.phase).toBe('Succeeded')
   })
 
+  it('waits for workflow job creation before reconciling status', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'provider-1' },
+            spec: { binary: '/usr/local/bin/agent-runner' },
+          }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === 'job') {
+          return null
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'workflow', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workflow: {
+          steps: [{ name: 'step-one' }],
+        },
+      },
+      status: {
+        phase: 'Running',
+        workflow: {
+          phase: 'Running',
+          steps: [
+            {
+              name: 'step-one',
+              phase: 'Running',
+              attempt: 1,
+              lastTransitionTime: '2026-01-20T00:00:00Z',
+              jobRef: { name: 'run-1-step-1', namespace: 'agents' },
+            },
+          ],
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const status = getLastStatus(kube)
+    const workflow = status.workflow as Record<string, unknown>
+    const steps = (workflow.steps as Record<string, unknown>[]) ?? []
+    expect(steps[0]?.phase).toBe('Running')
+    expect(steps[0]?.message).toBe('Waiting for job to be created')
+  })
+
+  it('warns when workflow jobs disappear after observation', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'provider-1' },
+            spec: { binary: '/usr/local/bin/agent-runner' },
+          }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === 'job') {
+          return null
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'workflow', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workflow: {
+          steps: [{ name: 'step-one', retries: 1 }],
+        },
+      },
+      status: {
+        phase: 'Running',
+        workflow: {
+          phase: 'Running',
+          steps: [
+            {
+              name: 'step-one',
+              phase: 'Running',
+              attempt: 1,
+              lastTransitionTime: '2026-01-20T00:00:00Z',
+              jobObservedAt: '2026-01-20T00:00:05Z',
+              jobRef: { name: 'run-1-step-1', namespace: 'agents' },
+            },
+          ],
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const status = getLastStatus(kube)
+    const warning = findCondition(status, 'Warning')
+    expect(warning?.reason).toBe('WorkflowJobMissing')
+  })
+
   it('retries workflow steps with backoff', async () => {
     const jobStatuses = new Map<string, Record<string, unknown>>()
     const apply = vi.fn(async (resource: Record<string, unknown>) => {

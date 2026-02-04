@@ -271,10 +271,13 @@ The chart sets `JANGAR_AGENT_RUNNER_IMAGE` from `runner.image.*` to avoid missin
 Override `runner.image.repository`, `runner.image.tag`, or `runner.image.digest` to point at your own build.
 
 ## Job TTL behavior
-Jobs launched by the controller use `controller.jobTtlSecondsAfterFinished` as the default TTL (seconds).
+Jobs launched by the controller use `controller.jobTtlSeconds` (or `controller.jobTtlSecondsAfterFinished`) as the
+default TTL (seconds).
 The controller applies TTL only after it records the AgentRun/workflow status to avoid cleanup races.
-Set `controller.jobTtlSecondsAfterFinished=0` to disable job cleanup, or override per run via
-`spec.runtime.config.ttlSecondsAfterFinished`. Values are clamped to 30s–7d for safety.
+Set `controller.jobTtlSeconds=0` (or `controller.jobTtlSecondsAfterFinished=0`) to disable job cleanup, or override per
+run via `spec.runtime.config.ttlSecondsAfterFinished`. Values are clamped to 30s–7d for safety.
+Log retention hints default to `controller.logRetentionSeconds` (overridable via
+`spec.runtime.config.logRetentionSeconds`).
 
 ## Native orchestration
 Native orchestration runs in-cluster and supports:

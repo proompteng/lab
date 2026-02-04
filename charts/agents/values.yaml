@@ -157,6 +157,8 @@ controller:
     perRepo: 30
     cluster: 600
   agentRunRetentionSeconds: 2592000
+  logRetentionSeconds: 604800
+  jobTtlSeconds: 600
   jobTtlSecondsAfterFinished: 600
   authSecret:
     name: ""
