@@ -300,6 +300,10 @@ Enable reruns or system-improvement flows using:
 - Queue limits cap pending AgentRuns; rate limits cap submit throughput.
 - Webhook ingestion uses `controller.webhook.queueSize` and `controller.webhook.retry.*` for buffering and retries.
 
+## Webhook ingestion
+- Control webhook buffering with `controller.webhook.queueSize`.
+- Tune retry backoff with `controller.webhook.retry.*` (seconds).
+
 ## Publishing (OCI)
 ```bash
 bun packages/scripts/src/agents/publish-chart.ts

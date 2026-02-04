@@ -289,9 +289,9 @@
             "retry": {
               "type": "object",
               "properties": {
+                "maxAttempts": { "type": "integer", "minimum": 1 },
                 "baseDelaySeconds": { "type": "integer", "minimum": 0 },
-                "maxDelaySeconds": { "type": "integer", "minimum": 0 },
-                "maxAttempts": { "type": "integer", "minimum": 1 }
+                "maxDelaySeconds": { "type": "integer", "minimum": 0 }
               },
               "additionalProperties": false
             }
