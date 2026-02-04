@@ -1166,6 +1166,48 @@ describe('agents controller reconcileVersionControlProvider', () => {
     expect(warning?.reason).toBe('DeprecatedAuth')
   })
 
+  it('uses provider defaults when token type is omitted', async () => {
+    const previous = process.env.JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
+    process.env.JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES = JSON.stringify({
+      github: ['fine_grained'],
+    })
+
+    try {
+      const kube = buildKube({
+        get: vi.fn(async () => ({
+          stringData: { token: 'value' },
+        })),
+      })
+      const provider = buildVcsProvider({
+        spec: {
+          provider: 'github',
+          auth: {
+            method: 'token',
+            token: {
+              secretRef: {
+                name: 'vcs-token',
+                key: 'token',
+              },
+            },
+          },
+        },
+      })
+
+      await __test.reconcileVersionControlProvider(kube as never, provider, 'agents')
+
+      const status = getLastStatus(kube)
+      const warning = findCondition(status, 'Warning')
+      expect(warning?.status).toBe('True')
+      expect(warning?.reason).toBe('DeprecatedAuth')
+    } finally {
+      if (previous === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES = previous
+      }
+    }
+  })
+
   it('rejects unsupported auth methods for non-github providers', async () => {
     const kube = buildKube()
     const provider = buildVcsProvider({

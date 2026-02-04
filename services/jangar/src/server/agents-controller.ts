@@ -101,6 +101,16 @@ type VcsAuthAdapter = {
   defaultTokenType?: VcsTokenType
 }
 
+type VcsAuthValidation =
+  | { ok: false; reason: string; message: string }
+  | {
+      ok: true
+      method: VcsAuthMethod
+      warnings: Array<{ reason: string; message: string }>
+      defaultUsername: string | null
+      tokenType: VcsTokenType | null
+    }
+
 type VcsRuntimeConfig = {
   env: Array<Record<string, unknown>>
   volumes: Array<{ name: string; spec: Record<string, unknown> }>
@@ -116,6 +126,7 @@ type VcsResolution = {
   status?: Record<string, unknown> | null
   context?: Record<string, unknown> | null
   runtime?: VcsRuntimeConfig | null
+  warnings?: Array<{ reason: string; message: string }>
   requiredSecrets: string[]
 }
 
@@ -984,7 +995,7 @@ const resolveVcsAuthAdapter = (providerType: string | null) => {
   }
 }
 
-const validateVcsAuthConfig = (providerType: string | null, auth: Record<string, unknown>) => {
+const validateVcsAuthConfig = (providerType: string | null, auth: Record<string, unknown>): VcsAuthValidation => {
   const adapter = resolveVcsAuthAdapter(providerType)
   const method = resolveVcsAuthMethod(auth)
   if (!adapter.allowedMethods.includes(method)) {
@@ -996,19 +1007,21 @@ const validateVcsAuthConfig = (providerType: string | null, auth: Record<string,
   }
 
   const warnings: Array<{ reason: string; message: string }> = []
+  let resolvedTokenType: VcsTokenType | null = null
   if (method === 'token') {
-    const tokenType = normalizeTokenType(readNested(auth, ['token', 'type']))
-    if (tokenType && adapter.tokenTypes && !adapter.tokenTypes.includes(tokenType)) {
+    resolvedTokenType =
+      normalizeTokenType(readNested(auth, ['token', 'type'])) ?? adapter.defaultTokenType ?? null
+    if (resolvedTokenType && adapter.tokenTypes && !adapter.tokenTypes.includes(resolvedTokenType)) {
       return {
         ok: false as const,
         reason: 'UnsupportedAuth',
-        message: `auth.token.type=${tokenType} is not supported for ${adapter.provider} providers`,
+        message: `auth.token.type=${resolvedTokenType} is not supported for ${adapter.provider} providers`,
       }
     }
-    if (tokenType && (adapter.deprecatedTokenTypes ?? []).includes(tokenType)) {
+    if (resolvedTokenType && (adapter.deprecatedTokenTypes ?? []).includes(resolvedTokenType)) {
       warnings.push({
         reason: 'DeprecatedAuth',
-        message: `auth.token.type=${tokenType} is deprecated for ${adapter.provider} providers`,
+        message: `auth.token.type=${resolvedTokenType} is deprecated for ${adapter.provider} providers`,
       })
     }
   }
@@ -1018,6 +1031,7 @@ const validateVcsAuthConfig = (providerType: string | null, auth: Record<string,
     method,
     warnings,
     defaultUsername: adapter.defaultUsername ?? null,
+    tokenType: resolvedTokenType,
   }
 }
 
@@ -2212,6 +2226,11 @@ const resolveVcsContext = async ({
     }
   }
 
+  setMetadataIfMissing(metadata, 'vcsAuthMethod', authValidation.method)
+  if (authValidation.tokenType) {
+    setMetadataIfMissing(metadata, 'vcsTokenType', authValidation.tokenType)
+  }
+
   const resolvedUsername =
     (method === 'token' || method === 'app') && !username ? authValidation.defaultUsername : username
 
@@ -2698,6 +2717,7 @@ const resolveVcsContext = async ({
     status,
     context,
     runtime,
+    warnings: authValidation.warnings,
     requiredSecrets,
   }
 }
@@ -4192,15 +4212,24 @@ const reconcileAgentRun = async (
       })
       return
     }
+    let warnedConditions =
+      (vcsResolution.warnings ?? []).length > 0
+        ? upsertCondition(conditions, {
+            type: 'Warning',
+            status: 'True',
+            reason: vcsResolution.warnings?.[0]?.reason ?? 'Warning',
+            message: (vcsResolution.warnings ?? []).map((warning) => warning.message).join('; '),
+          })
+        : upsertCondition(conditions, { type: 'Warning', status: 'False', reason: 'None', message: '' })
     const baseConditions =
       vcsResolution.skip && vcsResolution.reason
-        ? upsertCondition(conditions, {
+        ? upsertCondition(warnedConditions, {
             type: 'VcsSkipped',
             status: 'True',
             reason: vcsResolution.reason,
             message: vcsResolution.message ?? '',
           })
-        : conditions
+        : warnedConditions
     const vcsContext = vcsResolution.context ?? null
     const vcsStatus = vcsResolution.status ?? undefined
 

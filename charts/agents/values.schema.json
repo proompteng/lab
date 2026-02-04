@@ -299,7 +299,10 @@
             "enabled": { "type": "boolean" },
             "deprecatedTokenTypes": {
               "type": "object",
-              "additionalProperties": { "type": "array", "items": { "type": "string" } }
+              "additionalProperties": {
+                "type": "array",
+                "items": { "type": "string", "enum": ["pat", "fine_grained", "api_token", "access_token"] }
+              }
             }
           },
           "additionalProperties": false

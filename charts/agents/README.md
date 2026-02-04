@@ -144,6 +144,18 @@ Token scopes & expiry guidance:
 - GitLab tokens must include `read_repository` for read-only workflows and `write_repository` for pushes/merges.
 - Bitbucket access tokens should include repository read/write scopes matching your intended mode.
 - Gitea API tokens need repo access; set `spec.auth.username` if your HTTPS auth requires a specific account name.
+- If `spec.auth.token.type` is omitted, the controller applies the provider default (e.g., `fine_grained` for GitHub).
+- Deprecated token types surface Warning conditions on the provider and runs; configure overrides in values.
+
+Values example (deprecated token types):
+```yaml
+controller:
+  vcsProviders:
+    enabled: true
+    deprecatedTokenTypes:
+      github:
+        - pat
+```
 
 Example token auth (GitHub fine-grained PAT):
 ```yaml
@@ -201,6 +213,11 @@ database:
 controller:
   namespaces:
     - agents
+  vcsProviders:
+    enabled: true
+    deprecatedTokenTypes:
+      github:
+        - pat
 
 rbac:
   clusterScoped: false
