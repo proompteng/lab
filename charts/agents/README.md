@@ -352,6 +352,21 @@ Helm ownership conflicts.
 - Configure backpressure with `controller.queue.*` and `controller.rate.*` in `values.yaml`.
 - Queue limits cap pending AgentRuns; rate limits cap submit throughput.
 
+## Pod Security Admission
+Opt in to Pod Security Admission (PSA) labels by enabling the feature and defining labels:
+
+```yaml
+podSecurityAdmission:
+  enabled: true
+  createNamespace: true
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+```
+
+If the namespace already exists, set `podSecurityAdmission.createNamespace=false` and apply the labels to the namespace
+out of band (for example, via your GitOps workflow or `kubectl label`). The chart only labels namespaces it creates.
+
 ## Publishing (OCI)
 ```bash
 bun packages/scripts/src/agents/publish-chart.ts
