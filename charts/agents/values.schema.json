@@ -35,6 +35,7 @@
         "create": { "type": "boolean" },
         "name": { "type": "string" },
         "namespace": { "type": "string" },
+        "namespace": { "type": "string" },
         "annotations": { "type": "object", "additionalProperties": { "type": "string" } }
       },
       "additionalProperties": false
@@ -303,6 +304,7 @@
       "properties": {
         "enabled": { "type": "boolean" },
         "name": { "type": "string" },
+        "namespace": { "type": "string" },
         "labels": { "type": "object", "additionalProperties": { "type": "string" } },
         "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
         "provider": { "type": "string" },
