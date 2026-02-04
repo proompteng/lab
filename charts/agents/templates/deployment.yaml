@@ -186,6 +186,30 @@ spec:
               value: {{ .Values.controller.rate.cluster | default 600 | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
               value: {{ .Values.controller.agentRunRetentionSeconds | default 2592000 | quote }}
+            {{- if and .Values.controller.admissionPolicy.labels.required (gt (len .Values.controller.admissionPolicy.labels.required) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED
+              value: {{ .Values.controller.admissionPolicy.labels.required | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.labels.allowed (gt (len .Values.controller.admissionPolicy.labels.allowed) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_LABELS_ALLOWED
+              value: {{ .Values.controller.admissionPolicy.labels.allowed | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.labels.denied (gt (len .Values.controller.admissionPolicy.labels.denied) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_LABELS_DENIED
+              value: {{ .Values.controller.admissionPolicy.labels.denied | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.images.allowed (gt (len .Values.controller.admissionPolicy.images.allowed) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_IMAGES_ALLOWED
+              value: {{ .Values.controller.admissionPolicy.images.allowed | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.images.denied (gt (len .Values.controller.admissionPolicy.images.denied) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED
+              value: {{ .Values.controller.admissionPolicy.images.denied | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.secrets.blocked (gt (len .Values.controller.admissionPolicy.secrets.blocked) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS
+              value: {{ .Values.controller.admissionPolicy.secrets.blocked | toJson | quote }}
+            {{- end }}
             - name: JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED
               value: {{ .Values.controller.vcsProviders.enabled | default true | quote }}
             {{- if .Values.controller.vcsProviders.deprecatedTokenTypes }}
