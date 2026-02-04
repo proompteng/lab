@@ -226,6 +226,25 @@ spec:
 See `charts/agents/examples/versioncontrolprovider-github-app.yaml` for a full example with repository policy and
 pull request defaults.
 
+### PR rate limits
+To smooth bursts when creating pull requests, configure per-provider rate limits in the chart values. Limits are
+passed to agent runtimes and applied before PR creation with backoff on rate-limit responses.
+
+Example:
+```yaml
+controller:
+  vcsProviders:
+    prRateLimits:
+      github:
+        windowSeconds: 60
+        maxRequests: 15
+        backoffSeconds: 30
+      default:
+        windowSeconds: 60
+        maxRequests: 10
+        backoffSeconds: 20
+```
+
 ## Example production values
 ```yaml
 image:
