@@ -13,6 +13,7 @@ spec:
       secretRef:
         name: codex-github-token
         key: token
+      type: fine_grained
   repositoryPolicy:
     allow:
       - proompteng/*

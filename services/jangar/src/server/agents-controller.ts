@@ -24,6 +24,43 @@ const PARAMETERS_MAX_VALUE_BYTES = 2048
 const DEFAULT_AUTH_SECRET_KEY = 'auth.json'
 const DEFAULT_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
 const DEFAULT_GITHUB_APP_TOKEN_TTL_SECONDS = 3600
+const VCS_AUTH_TOKEN_TYPES = ['pat', 'fine_grained', 'api_token', 'access_token'] as const
+
+const VCS_AUTH_ADAPTERS = {
+  github: {
+    allowedMethods: ['token', 'app', 'ssh', 'none'],
+    supportedTokenTypes: ['pat', 'fine_grained'],
+    deprecatedTokenTypes: ['pat'],
+    deprecatedTokenHints: {
+      pat: 'use fine_grained tokens for GitHub',
+    },
+  },
+  gitlab: {
+    allowedMethods: ['token', 'ssh', 'none'],
+    supportedTokenTypes: ['pat', 'api_token', 'access_token'],
+    deprecatedTokenTypes: [],
+    deprecatedTokenHints: {},
+  },
+  bitbucket: {
+    allowedMethods: ['token', 'ssh', 'none'],
+    supportedTokenTypes: ['access_token', 'api_token'],
+    deprecatedTokenTypes: [],
+    deprecatedTokenHints: {},
+    defaultUsername: 'x-token-auth',
+  },
+  gitea: {
+    allowedMethods: ['token', 'ssh', 'none'],
+    supportedTokenTypes: ['api_token', 'access_token', 'pat'],
+    deprecatedTokenTypes: [],
+    deprecatedTokenHints: {},
+  },
+  generic: {
+    allowedMethods: ['token', 'ssh', 'none'],
+    supportedTokenTypes: [...VCS_AUTH_TOKEN_TYPES],
+    deprecatedTokenTypes: [],
+    deprecatedTokenHints: {},
+  },
+} as const
 
 const BASE_REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -86,6 +123,14 @@ type RuntimeRef = Record<string, unknown>
 
 type VcsMode = 'read-write' | 'read-only' | 'none'
 type VcsAuthMethod = 'token' | 'app' | 'ssh' | 'none'
+type VcsTokenType = (typeof VCS_AUTH_TOKEN_TYPES)[number]
+type VcsAuthAdapter = {
+  allowedMethods: VcsAuthMethod[]
+  supportedTokenTypes: VcsTokenType[]
+  deprecatedTokenTypes: VcsTokenType[]
+  deprecatedTokenHints: Record<VcsTokenType, string>
+  defaultUsername?: string
+}
 
 type VcsRuntimeConfig = {
   env: Array<Record<string, unknown>>
@@ -841,6 +886,12 @@ const normalizeVcsMode = (value: unknown): VcsMode => {
   return 'read-write'
 }
 
+const normalizeVcsTokenType = (value: unknown): VcsTokenType | null => {
+  const raw = asString(value)?.toLowerCase()
+  if (!raw) return null
+  return (VCS_AUTH_TOKEN_TYPES as readonly string[]).includes(raw) ? (raw as VcsTokenType) : null
+}
+
 const resolveVcsAuthMethod = (auth: Record<string, unknown>): VcsAuthMethod => {
   const explicit = asString(auth.method)?.toLowerCase()
   if (explicit === 'token' || explicit === 'app' || explicit === 'ssh' || explicit === 'none') {
@@ -853,6 +904,13 @@ const resolveVcsAuthMethod = (auth: Record<string, unknown>): VcsAuthMethod => {
   const sshSecret = asString(readNested(auth, ['ssh', 'privateKeySecretRef', 'name']))
   if (sshSecret) return 'ssh'
   return 'none'
+}
+
+const getVcsAuthAdapter = (providerType: string | null | undefined): VcsAuthAdapter => {
+  if (providerType && providerType in VCS_AUTH_ADAPTERS) {
+    return VCS_AUTH_ADAPTERS[providerType as keyof typeof VCS_AUTH_ADAPTERS]
+  }
+  return VCS_AUTH_ADAPTERS.generic
 }
 
 const fetchGithubAppToken = async (input: {
@@ -1359,10 +1417,29 @@ const reconcileVersionControlProvider = async (
   const providerType = asString(spec.provider)
   const auth = asRecord(spec.auth) ?? {}
   const method = resolveVcsAuthMethod(auth)
+  const resolvedProviderType = providerType ?? 'generic'
+  const adapter = getVcsAuthAdapter(resolvedProviderType)
+  const tokenTypeRaw = asString(readNested(auth, ['token', 'type']))?.trim().toLowerCase()
+  const tokenType = normalizeVcsTokenType(tokenTypeRaw)
   let updated = conditions
   const markHealthy = () => {
     updated = upsertCondition(updated, { type: 'InvalidSpec', status: 'False', reason: 'Reconciled' })
     updated = upsertCondition(updated, { type: 'Unreachable', status: 'False', reason: 'Reconciled' })
+  }
+  const applyAuthDeprecationWarning = () => {
+    if (tokenType && adapter.deprecatedTokenTypes.includes(tokenType)) {
+      const hint = adapter.deprecatedTokenHints[tokenType]
+      updated = upsertCondition(updated, {
+        type: 'AuthDeprecated',
+        status: 'True',
+        reason: 'DeprecatedTokenType',
+        message: hint
+          ? `auth.token.type ${tokenType} is deprecated for ${resolvedProviderType}; ${hint}`
+          : `auth.token.type ${tokenType} is deprecated for ${resolvedProviderType}`,
+      })
+      return
+    }
+    updated = upsertCondition(updated, { type: 'AuthDeprecated', status: 'False', reason: 'Reconciled' })
   }
 
   if (!providerType) {
@@ -1378,6 +1455,27 @@ const reconcileVersionControlProvider = async (
       status: 'True',
       reason: 'UnsupportedProvider',
       message: `unsupported provider ${providerType}`,
+    })
+  } else if (method !== 'none' && !adapter.allowedMethods.includes(method)) {
+    updated = upsertCondition(updated, {
+      type: 'InvalidSpec',
+      status: 'True',
+      reason: 'UnsupportedAuth',
+      message: `auth.method=${method} is not supported for ${resolvedProviderType}`,
+    })
+  } else if (method === 'token' && tokenTypeRaw && !tokenType) {
+    updated = upsertCondition(updated, {
+      type: 'InvalidSpec',
+      status: 'True',
+      reason: 'UnsupportedTokenType',
+      message: `auth.token.type ${tokenTypeRaw} is not recognized`,
+    })
+  } else if (method === 'token' && tokenType && !adapter.supportedTokenTypes.includes(tokenType)) {
+    updated = upsertCondition(updated, {
+      type: 'InvalidSpec',
+      status: 'True',
+      reason: 'UnsupportedTokenType',
+      message: `auth.token.type ${tokenType} is not supported for ${resolvedProviderType}`,
     })
   } else if (method === 'token') {
     const tokenRef = asRecord(readNested(auth, ['token', 'secretRef'])) ?? {}
@@ -1515,6 +1613,7 @@ const reconcileVersionControlProvider = async (
     })
   }
 
+  applyAuthDeprecationWarning()
   await setStatus(kube, provider, {
     observedGeneration: asRecord(provider.metadata)?.generation ?? 0,
     lastValidatedAt: nowIso(),
@@ -1976,7 +2075,13 @@ const resolveVcsContext = async ({
 
   const auth = asRecord(providerSpec.auth) ?? {}
   const method = resolveVcsAuthMethod(auth)
-  const username = asString(auth.username)
+  const adapter = getVcsAuthAdapter(providerType)
+  const tokenTypeRaw = asString(readNested(auth, ['token', 'type']))?.trim().toLowerCase()
+  const tokenType = normalizeVcsTokenType(tokenTypeRaw)
+  let username = asString(auth.username)
+  if (!username && method === 'token' && adapter.defaultUsername) {
+    username = adapter.defaultUsername
+  }
   const requiredSecrets: string[] = []
   const runtime: VcsRuntimeConfig = { env: [], volumes: [], volumeMounts: [] }
 
@@ -1996,6 +2101,78 @@ const resolveVcsContext = async ({
 
   let authAvailable = false
   let tokenValue: string | null = null
+
+  if (method !== 'none' && !adapter.allowedMethods.includes(method)) {
+    const message = `auth.method=${method} is not supported for ${providerType}`
+    if (required && desiredMode !== 'none') {
+      return {
+        ok: false,
+        skip: false,
+        reason: 'UnsupportedVcsAuth',
+        message,
+        mode: effectiveMode,
+        status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
+        requiredSecrets: [],
+      }
+    }
+    return {
+      ok: true,
+      skip: true,
+      mode: effectiveMode,
+      reason: 'UnsupportedVcsAuth',
+      message,
+      status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
+      requiredSecrets: [],
+    }
+  }
+
+  if (method === 'token' && tokenTypeRaw && !tokenType) {
+    const message = `auth.token.type ${tokenTypeRaw} is not recognized`
+    if (required && desiredMode !== 'none') {
+      return {
+        ok: false,
+        skip: false,
+        reason: 'UnsupportedTokenType',
+        message,
+        mode: effectiveMode,
+        status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
+        requiredSecrets: [],
+      }
+    }
+    return {
+      ok: true,
+      skip: true,
+      mode: effectiveMode,
+      reason: 'UnsupportedTokenType',
+      message,
+      status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
+      requiredSecrets: [],
+    }
+  }
+
+  if (method === 'token' && tokenType && !adapter.supportedTokenTypes.includes(tokenType)) {
+    const message = `auth.token.type ${tokenType} is not supported for ${providerType}`
+    if (required && desiredMode !== 'none') {
+      return {
+        ok: false,
+        skip: false,
+        reason: 'UnsupportedTokenType',
+        message,
+        mode: effectiveMode,
+        status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
+        requiredSecrets: [],
+      }
+    }
+    return {
+      ok: true,
+      skip: true,
+      mode: effectiveMode,
+      reason: 'UnsupportedTokenType',
+      message,
+      status: { provider: vcsRefName, repository, baseBranch, headBranch, mode: effectiveMode },
+      requiredSecrets: [],
+    }
+  }
 
   if (method === 'token') {
     const secretRef = asRecord(readNested(auth, ['token', 'secretRef'])) ?? {}
@@ -4392,5 +4569,6 @@ export const __test = {
   checkCrds,
   reconcileAgentRun,
   reconcileMemory,
+  reconcileVersionControlProvider,
   resolveJobImage,
 }

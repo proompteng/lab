@@ -1028,6 +1028,72 @@ describe('agents controller reconcileAgentRun', () => {
   })
 })
 
+describe('agents controller reconcileVersionControlProvider', () => {
+  const buildProvider = (overrides: Record<string, unknown> = {}) => ({
+    apiVersion: 'agents.proompteng.ai/v1alpha1',
+    kind: 'VersionControlProvider',
+    metadata: {
+      name: 'github',
+      namespace: 'agents',
+      generation: 1,
+    },
+    spec: {
+      provider: 'github',
+      auth: {
+        method: 'token',
+        token: {
+          secretRef: { name: 'github-token', key: 'token' },
+          type: 'pat',
+        },
+      },
+    },
+    status: {},
+    ...overrides,
+  })
+
+  it('warns when a deprecated token type is used', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === 'secret' && name === 'github-token') {
+          return { data: { token: Buffer.from('token').toString('base64') } }
+        }
+        return null
+      }),
+    })
+
+    await __test.reconcileVersionControlProvider(kube as never, buildProvider(), 'agents')
+
+    const status = getLastStatus(kube)
+    const condition = findCondition(status, 'AuthDeprecated')
+    expect(condition?.status).toBe('True')
+    expect(condition?.reason).toBe('DeprecatedTokenType')
+  })
+
+  it('rejects unsupported auth methods per provider', async () => {
+    const kube = buildKube()
+    const provider = buildProvider({
+      metadata: { name: 'gitlab', namespace: 'agents', generation: 1 },
+      spec: {
+        provider: 'gitlab',
+        auth: {
+          method: 'app',
+          app: {
+            appId: '1',
+            installationId: '2',
+            privateKeySecretRef: { name: 'gitlab-app', key: 'key' },
+          },
+        },
+      },
+    })
+
+    await __test.reconcileVersionControlProvider(kube as never, provider, 'agents')
+
+    const status = getLastStatus(kube)
+    const condition = findCondition(status, 'InvalidSpec')
+    expect(condition?.reason).toBe('UnsupportedAuth')
+  })
+})
+
 describe('agents controller reconcileMemory', () => {
   it('marks Memory invalid when secret ref is missing', async () => {
     const kube = buildKube()

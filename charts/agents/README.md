@@ -125,6 +125,46 @@ Define a VersionControlProvider resource to decouple repo access from issue inta
 agent runtimes that clone, commit, push, or open pull requests. Pair it with a SecretBinding that
 allows the provider's secret.
 
+Auth options (examples):
+```yaml
+# Token auth (recommended for most providers)
+auth:
+  method: token
+  token:
+    secretRef:
+      name: vcs-token
+      key: token
+    type: fine_grained
+
+# GitHub App auth (GitHub only)
+auth:
+  method: app
+  app:
+    appId: "12345"
+    installationId: "67890"
+    privateKeySecretRef:
+      name: github-app-key
+      key: privateKey
+    tokenTtlSeconds: 3600
+
+# SSH auth
+auth:
+  method: ssh
+  ssh:
+    privateKeySecretRef:
+      name: vcs-ssh-key
+      key: privateKey
+    knownHostsConfigMapRef:
+      name: vcs-known-hosts
+      key: known_hosts
+```
+
+Token scopes and expiry guidance:
+- GitHub App installation tokens expire after 1 hour; keep `auth.app.tokenTtlSeconds` <= 3600.
+- GitLab tokens need `read_repository` for read and `write_repository` for write access.
+- Bitbucket HTTPS tokens use the username `x-token-auth` when no username is specified.
+- GitHub classic PATs (`auth.token.type=pat`) are deprecated; prefer `fine_grained`.
+
 ## Example production values
 ```yaml
 image:
