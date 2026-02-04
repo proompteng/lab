@@ -158,6 +158,33 @@ spec:
               lastSyncedAt:
                 format: date-time
                 type: string
+              lastWebhook:
+                properties:
+                  attempts:
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  deliveryId:
+                    type: string
+                  error:
+                    type: string
+                  externalId:
+                    type: string
+                  idempotencyKey:
+                    type: string
+                  processedAt:
+                    format: date-time
+                    type: string
+                  provider:
+                    type: string
+                  receivedAt:
+                    format: date-time
+                    type: string
+                  sourceVersion:
+                    type: string
+                  status:
+                    type: string
+                type: object
               observedGeneration:
                 format: int64
                 type: integer

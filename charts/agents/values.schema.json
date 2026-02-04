@@ -282,6 +282,22 @@
           },
           "additionalProperties": false
         },
+        "webhook": {
+          "type": "object",
+          "properties": {
+            "queueSize": { "type": "integer", "minimum": 1 },
+            "retry": {
+              "type": "object",
+              "properties": {
+                "baseDelaySeconds": { "type": "integer", "minimum": 0 },
+                "maxDelaySeconds": { "type": "integer", "minimum": 0 },
+                "maxAttempts": { "type": "integer", "minimum": 1 }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
         "agentRunRetentionSeconds": { "type": "integer", "minimum": 0 },
         "jobTtlSecondsAfterFinished": { "type": "integer", "minimum": 0 },
         "authSecret": {

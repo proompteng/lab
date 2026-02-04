@@ -184,6 +184,14 @@ spec:
               value: {{ .Values.controller.rate.perRepo | default 30 | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER
               value: {{ .Values.controller.rate.cluster | default 600 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_WEBHOOK_QUEUE_SIZE
+              value: {{ .Values.controller.webhook.queueSize | default 1000 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_WEBHOOK_RETRY_BASE_DELAY_SECONDS
+              value: {{ .Values.controller.webhook.retry.baseDelaySeconds | default 1 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_WEBHOOK_RETRY_MAX_DELAY_SECONDS
+              value: {{ .Values.controller.webhook.retry.maxDelaySeconds | default 60 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_WEBHOOK_RETRY_MAX_ATTEMPTS
+              value: {{ .Values.controller.webhook.retry.maxAttempts | default 5 | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
               value: {{ .Values.controller.agentRunRetentionSeconds | default 2592000 | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED
