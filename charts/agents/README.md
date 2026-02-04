@@ -108,6 +108,18 @@ Agent memory backends are configured separately via the `Memory` CRD.
 | Multi-namespace (explicit) | `["team-a", "team-b"]` | `true` | ClusterRole + ClusterRoleBinding |
 | Wildcard (all namespaces) | `["*"]` | `true` | ClusterRole + ClusterRoleBinding (namespace list/watch) |
 
+### Default scheduling for job pods
+Set controller-wide defaults for Job pods using `controller.defaultWorkload`. These defaults apply when the
+AgentRun runtime config does not specify a value.
+
+Common fields:
+- `controller.defaultWorkload.nodeSelector`
+- `controller.defaultWorkload.affinity`
+- `controller.defaultWorkload.priorityClassName`
+- `controller.defaultWorkload.schedulerName`
+
+Per-run overrides live under `spec.runtime.config` on the AgentRun and take precedence over defaults.
+
 ### gRPC service (optional)
 Enable gRPC for agentctl or in-cluster clients:
 - `grpc.enabled=true`
