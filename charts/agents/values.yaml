@@ -162,6 +162,16 @@ controller:
     name: ""
     key: auth.json
     mountPath: /root/.codex
+  admissionPolicy:
+    labels:
+      required: []
+      allowed: []
+      denied: []
+    images:
+      allowed: []
+      denied: []
+    secrets:
+      blocked: []
   vcsProviders:
     enabled: true
     deprecatedTokenTypes:
