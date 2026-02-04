@@ -7,6 +7,7 @@ spec:
   steps:
     - name: implement
       kind: AgentRun
+      timeoutSeconds: 1800
       agentRef:
         name: codex-agent
       implementationSpecRef:
@@ -18,6 +19,7 @@ spec:
       kind: ToolRun
       dependsOn:
         - implement
+      timeoutSeconds: 300
       toolRef:
         name: echo-tool
       with:
