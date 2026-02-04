@@ -175,6 +175,120 @@ describe('agents controller reconcileAgentRun', () => {
     expect(condition?.reason).toBe('MissingMemory')
   })
 
+  it('marks AgentRun failed when repository is not in allow list', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: {} }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === RESOURCE_MAP.VersionControlProvider) {
+          return {
+            metadata: { name: 'github' },
+            spec: {
+              provider: 'github',
+              repositoryPolicy: {
+                allow: ['allowed/*'],
+              },
+            },
+          }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        parameters: { repository: 'blocked/repo' },
+        vcsRef: { name: 'github' },
+        vcsPolicy: { mode: 'read-write' },
+      },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const status = getLastStatus(kube)
+    const condition = findCondition(status, 'InvalidSpec')
+    expect(condition?.reason).toBe('VcsPolicyDenied')
+  })
+
+  it('marks AgentRun failed when repository is denied by policy', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: {} }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === RESOURCE_MAP.VersionControlProvider) {
+          return {
+            metadata: { name: 'github' },
+            spec: {
+              provider: 'github',
+              repositoryPolicy: {
+                deny: ['blocked/*'],
+              },
+            },
+          }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        parameters: { repository: 'blocked/repo' },
+        vcsRef: { name: 'github' },
+        vcsPolicy: { mode: 'read-write' },
+      },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const status = getLastStatus(kube)
+    const condition = findCondition(status, 'InvalidSpec')
+    expect(condition?.reason).toBe('VcsPolicyDenied')
+  })
+
   it('marks AgentRun failed when required metadata keys are missing', async () => {
     const kube = buildKube({
       get: vi.fn(async (resource: string) => {

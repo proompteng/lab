@@ -138,6 +138,11 @@ Auth options (VersionControlProvider `spec.auth`):
 - `method: app` (GitHub only) with `appId`, `installationId`, and `privateKeySecretRef`
 - `method: ssh` with `privateKeySecretRef` (optional `knownHostsConfigMapRef`)
 
+Repository policy (VersionControlProvider `spec.repositoryPolicy`):
+- `allow` and `deny` accept `*` wildcards (for example, `acme/*`).
+- Deny rules win. When an allow list is set, repositories must match it.
+- Runs with `spec.vcsPolicy.mode` other than `none` are blocked if the repository is not allowed.
+
 Token scopes & expiry guidance:
 - GitHub App installation tokens expire after ~1 hour (default 3600s). Use `spec.auth.app.tokenTtlSeconds` if you need a shorter TTL.
 - GitHub fine-grained PATs should include repository contents + pull request scopes for write flows.
