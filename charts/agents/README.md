@@ -140,6 +140,34 @@ helm upgrade agents charts/agents --namespace agents --reuse-values \
   --set controller.authSecret.key=auth.json
 ```
 
+### Admission control policy
+Use admission policy values to reject unsafe AgentRuns before submission. Rejections surface as `InvalidSpec`.
+
+Supported checks (pattern lists accept `*` wildcards):
+- `controller.admissionPolicy.labels.required`: label keys that must exist on AgentRuns.
+- `controller.admissionPolicy.labels.allowed`: allowed label key patterns (deny-by-default when set).
+- `controller.admissionPolicy.labels.denied`: blocked label key patterns (deny wins).
+- `controller.admissionPolicy.images.allowed`: allowed workload image patterns.
+- `controller.admissionPolicy.images.denied`: blocked workload image patterns (deny wins).
+- `controller.admissionPolicy.secrets.blocked`: secret names blocked by controller policy.
+
+Example:
+```yaml
+controller:
+  admissionPolicy:
+    labels:
+      required:
+        - team
+      denied:
+        - "internal/*"
+    images:
+      allowed:
+        - "registry.ide-newton.ts.net/lab/*"
+    secrets:
+      blocked:
+        - prod-kubeconfig
+```
+
 ### Version control providers
 Define a VersionControlProvider resource to decouple repo access from issue intake. This is required for
 agent runtimes that clone, commit, push, or open pull requests. Pair it with a SecretBinding that
