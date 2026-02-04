@@ -1116,6 +1116,14 @@ const parseEnvArray = (name: string) => {
   return Array.isArray(parsed) ? parsed : null
 }
 
+const resolveVcsPrRateLimits = () => {
+  const parsed = parseJsonEnv('JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS')
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  const record = parsed as Record<string, unknown>
+  if (Object.keys(record).length === 0) return null
+  return record
+}
+
 const validateParameters = (params: Record<string, unknown>) => {
   const entries = Object.entries(params)
   if (entries.length > PARAMETERS_MAX_ENTRIES) {
@@ -2767,6 +2775,10 @@ const resolveVcsContext = async ({
   }
   pushEnv('VCS_PR_TITLE_TEMPLATE', prTitleTemplate)
   pushEnv('VCS_PR_BODY_TEMPLATE', prBodyTemplate)
+  const prRateLimits = resolveVcsPrRateLimits()
+  if (prRateLimits) {
+    pushEnv('VCS_PR_RATE_LIMITS', JSON.stringify(prRateLimits))
+  }
   pushEnvBool('VCS_PR_DRAFT', prDraft)
   pushEnvBool('VCS_WRITE_ENABLED', writeEnabled)
   pushEnvBool('VCS_PULL_REQUESTS_ENABLED', pullRequestsEnabled)
@@ -4777,6 +4789,7 @@ export const __test = {
   reconcileAgentRun,
   reconcileVersionControlProvider,
   reconcileMemory,
+  resolveVcsPrRateLimits,
   resolveJobImage,
   resolveVcsContext,
 }

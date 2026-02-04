@@ -220,6 +220,25 @@ spec:
       tokenTtlSeconds: 3600
 ```
 
+### PR rate limits
+To smooth bursts when creating pull requests, configure per-provider rate limits in the chart values. Limits are
+passed to agent runtimes and applied before PR creation with backoff on rate-limit responses.
+
+Example:
+```yaml
+controller:
+  vcsProviders:
+    prRateLimits:
+      github:
+        windowSeconds: 60
+        maxRequests: 15
+        backoffSeconds: 30
+      default:
+        windowSeconds: 60
+        maxRequests: 10
+        backoffSeconds: 20
+```
+
 ## Example production values
 ```yaml
 image:

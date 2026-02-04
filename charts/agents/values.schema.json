@@ -301,7 +301,22 @@
               "type": "object",
               "additionalProperties": {
                 "type": "array",
-                "items": { "type": "string", "enum": ["pat", "fine_grained", "api_token", "access_token"] }
+                "items": {
+                  "type": "string",
+                  "enum": ["pat", "fine_grained", "api_token", "access_token"]
+                }
+              }
+            },
+            "prRateLimits": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "windowSeconds": { "type": "integer", "minimum": 1 },
+                  "maxRequests": { "type": "integer", "minimum": 1 },
+                  "backoffSeconds": { "type": "integer", "minimum": 0 }
+                },
+                "additionalProperties": false
               }
             }
           },

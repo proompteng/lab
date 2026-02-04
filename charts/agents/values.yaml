@@ -167,6 +167,7 @@ controller:
     deprecatedTokenTypes:
       github:
         - pat
+    prRateLimits: {}
   defaultWorkload:
     serviceAccountName: ""
     nodeSelector: {}
