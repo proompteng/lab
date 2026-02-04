@@ -184,6 +184,57 @@ controller:
     priorityClassName: ""
     schedulerName: ""
 
+versionControlProvider:
+  enabled: false
+  name: github
+  namespace: ""
+  provider: github
+  apiBaseUrl: https://api.github.com
+  cloneBaseUrl: https://github.com
+  webBaseUrl: https://github.com
+  cloneProtocol: ""
+  sshHost: ""
+  sshUser: ""
+  auth:
+    method: token
+    username: ""
+    token:
+      secretRef:
+        name: ""
+        key: token
+      type: ""
+    app:
+      appId: ""
+      installationId: ""
+      privateKeySecretRef:
+        name: ""
+        key: privateKey
+      tokenTtlSeconds: 0
+    ssh:
+      privateKeySecretRef:
+        name: ""
+        key: privateKey
+      knownHostsConfigMapRef:
+        name: ""
+        key: known_hosts
+  repositoryPolicy:
+    allow: []
+    deny: []
+  capabilities:
+    read: true
+    write: true
+    pullRequests: true
+  defaults:
+    baseBranch: main
+    branchTemplate: codex/{{issueNumber}}
+    commitAuthorName: codex
+    commitAuthorEmail: codex@proompt.com
+    pullRequest:
+      enabled: true
+      draft: false
+      titleTemplate: "Codex: {{repository}}"
+      bodyTemplate: "Closes #{{issueNumber}}"
+
 orchestrationController:
   enabled: true
   namespaces: []

@@ -23,6 +23,7 @@ kubectl apply -n agents -f charts/agents/examples/agent-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/memory-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/implementationspec-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/versioncontrolprovider-github.yaml
+kubectl apply -n agents -f charts/agents/examples/versioncontrolprovider-github-app.yaml
 kubectl apply -n agents -f charts/agents/examples/agentrun-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/tool-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/orchestration-sample.yaml
@@ -219,6 +220,8 @@ spec:
         key: privateKey
       tokenTtlSeconds: 3600
 ```
+See `charts/agents/examples/versioncontrolprovider-github-app.yaml` for a full example with repository policy and
+pull request defaults.
 
 ## Example production values
 ```yaml
