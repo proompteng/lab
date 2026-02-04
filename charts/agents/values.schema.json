@@ -246,6 +246,25 @@
           },
           "additionalProperties": false
         },
+        "queue": {
+          "type": "object",
+          "properties": {
+            "perNamespace": { "type": "integer", "minimum": 0 },
+            "perRepo": { "type": "integer", "minimum": 0 },
+            "cluster": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "rate": {
+          "type": "object",
+          "properties": {
+            "windowSeconds": { "type": "integer", "minimum": 1 },
+            "perNamespace": { "type": "integer", "minimum": 0 },
+            "perRepo": { "type": "integer", "minimum": 0 },
+            "cluster": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
         "agentRunRetentionSeconds": { "type": "integer", "minimum": 0 },
         "authSecret": {
           "type": "object",

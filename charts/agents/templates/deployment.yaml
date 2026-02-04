@@ -162,6 +162,20 @@ spec:
               value: {{ .Values.controller.concurrency.perAgent | default 5 | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER
               value: {{ .Values.controller.concurrency.cluster | default 100 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE
+              value: {{ .Values.controller.queue.perNamespace | default 200 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_QUEUE_REPO
+              value: {{ .Values.controller.queue.perRepo | default 50 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_QUEUE_CLUSTER
+              value: {{ .Values.controller.queue.cluster | default 1000 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS
+              value: {{ .Values.controller.rate.windowSeconds | default 60 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE
+              value: {{ .Values.controller.rate.perNamespace | default 120 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_RATE_REPO
+              value: {{ .Values.controller.rate.perRepo | default 30 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER
+              value: {{ .Values.controller.rate.cluster | default 600 | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
               value: {{ .Values.controller.agentRunRetentionSeconds | default 2592000 | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED
