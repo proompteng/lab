@@ -454,6 +454,13 @@ const setStatus = async (
   const apiVersion = asString(resource.apiVersion)
   const kind = asString(resource.kind)
   if (!apiVersion || !kind) return
+  let nextStatusBase = status
+  if (kind === 'AgentRun' && status.contract === undefined) {
+    const existingContract = readNested(resource, ['status', 'contract'])
+    if (existingContract) {
+      nextStatusBase = { ...status, contract: existingContract }
+    }
+  }
   const phase = asString(status.phase) ?? null
   const baseConditions = normalizeConditions(status.conditions)
   const standardUpdates = deriveStandardConditionUpdates(baseConditions, phase)
@@ -462,7 +469,7 @@ const setStatus = async (
     conditions = upsertCondition(conditions, update)
   }
   const nextStatus = {
-    ...status,
+    ...nextStatusBase,
     updatedAt: nowIso(),
     conditions,
   }
@@ -1840,6 +1847,19 @@ const normalizeRequiredKeys = (value: unknown) => {
   return Array.from(new Set(keys))
 }
 
+const hasInvalidRequiredKeys = (value: unknown) =>
+  Array.isArray(value) && value.some((key) => typeof key !== 'string' || key.trim().length === 0)
+
+const hasInvalidContractMappings = (value: unknown) =>
+  Array.isArray(value) &&
+  value.some((entry) => {
+    const record = asRecord(entry)
+    if (!record) return true
+    const from = asString(record.from)?.trim()
+    const to = asString(record.to)?.trim()
+    return !from || !to
+  })
+
 const applyMetadataMappings = (metadata: Record<string, string>, mappings: ImplementationContractMapping[]) => {
   for (const mapping of mappings) {
     const fromValue = metadata[mapping.from]
@@ -1853,15 +1873,19 @@ const setMetadataIfMissing = (metadata: Record<string, string>, key: string, val
   metadata[key] = value
 }
 
-const buildEventContext = (implementation: Record<string, unknown>, parameters: Record<string, string>) => {
+const buildEventContext = (
+  implementation: Record<string, unknown>,
+  parameters: Record<string, string>,
+  contractOverride?: { requiredKeys?: string[]; mappings?: ImplementationContractMapping[] },
+) => {
   const source = asRecord(implementation.source) ?? {}
   const provider = asString(source.provider) ?? ''
   const externalId = asString(source.externalId) ?? ''
   const sourceUrl = asString(source.url) ?? ''
 
   const contract = asRecord(implementation.contract) ?? {}
-  const contractMappings = normalizeContractMappings(contract.mappings)
-  const requiredKeys = normalizeRequiredKeys(contract.requiredKeys)
+  const contractMappings = contractOverride?.mappings ?? normalizeContractMappings(contract.mappings)
+  const requiredKeys = contractOverride?.requiredKeys ?? normalizeRequiredKeys(contract.requiredKeys)
 
   const summary = asString(implementation.summary) ?? ''
   const text = asString(implementation.text) ?? ''
@@ -1927,7 +1951,7 @@ const buildEventContext = (implementation: Record<string, unknown>, parameters: 
 
   const missingRequiredKeys = requiredKeys.filter((key) => !metadata[key])
 
-  return { payload, metadata, missingRequiredKeys }
+  return { payload, metadata, missingRequiredKeys, requiredKeys }
 }
 
 const buildEventPayload = (implementation: Record<string, unknown>, parameters: Record<string, string>) =>
@@ -1937,15 +1961,52 @@ const validateImplementationContract = (
   implementation: Record<string, unknown>,
   parameters: Record<string, string>,
 ) => {
-  const { missingRequiredKeys } = buildEventContext(implementation, parameters)
+  const contract = asRecord(implementation.contract) ?? {}
+  if (hasInvalidRequiredKeys(contract.requiredKeys)) {
+    return {
+      ok: false as const,
+      reason: 'InvalidContract',
+      requiredKeys: normalizeRequiredKeys(contract.requiredKeys),
+      message: 'spec.contract.requiredKeys must be non-empty strings',
+    }
+  }
+  if (hasInvalidContractMappings(contract.mappings)) {
+    return {
+      ok: false as const,
+      reason: 'InvalidContract',
+      requiredKeys: normalizeRequiredKeys(contract.requiredKeys),
+      message: 'spec.contract.mappings entries must include non-empty from and to',
+    }
+  }
+
+  const requiredKeys = normalizeRequiredKeys(contract.requiredKeys)
+  const { missingRequiredKeys } = buildEventContext(implementation, parameters, {
+    requiredKeys,
+    mappings: normalizeContractMappings(contract.mappings),
+  })
   if (missingRequiredKeys.length === 0) {
-    return { ok: true as const }
+    return { ok: true as const, requiredKeys }
   }
   return {
     ok: false as const,
+    reason: 'MissingRequiredMetadata',
+    requiredKeys,
     missing: missingRequiredKeys,
     message: `missing required metadata keys: ${missingRequiredKeys.join(', ')}`,
   }
+}
+
+const buildContractStatus = (contractCheck: {
+  ok: boolean
+  requiredKeys: string[]
+  missing?: string[]
+}) => {
+  if (contractCheck.requiredKeys.length === 0) return undefined
+  const status: Record<string, unknown> = { requiredKeys: contractCheck.requiredKeys }
+  if (!contractCheck.ok && contractCheck.missing && contractCheck.missing.length > 0) {
+    status.missingKeys = contractCheck.missing
+  }
+  return status
 }
 
 const resolveVcsContext = async ({
@@ -3526,6 +3587,7 @@ const reconcileWorkflowRun = async (
 
   let baseConditions = conditions
   let vcsStatus: Record<string, unknown> | undefined
+  let workflowContractStatus: Record<string, unknown> | undefined
 
   const baseParameters = resolveParameters(agentRun)
   const baseWorkload = asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
@@ -3606,11 +3668,15 @@ const reconcileWorkflowRun = async (
 
       const stepParameters = { ...baseParameters, ...stepSpec.parameters }
       const contractCheck = validateImplementationContract(implementation, stepParameters)
+      const contractStatus = buildContractStatus(contractCheck)
+      if (contractStatus) {
+        workflowContractStatus = contractStatus
+      }
       if (!contractCheck.ok) {
         setWorkflowStepPhase(stepStatus, 'Failed', contractCheck.message)
         stepStatus.finishedAt = nowIso()
         workflowFailure = {
-          reason: 'MissingRequiredMetadata',
+          reason: contractCheck.reason,
           message: `workflow step ${stepSpec.name} ${contractCheck.message}`,
         }
         break
@@ -3765,8 +3831,12 @@ const reconcileWorkflowRun = async (
 
   if (workflowFailure) {
     setWorkflowPhase(workflowStatus, 'Failed')
+    const failureType =
+      workflowFailure.reason === 'MissingRequiredMetadata' || workflowFailure.reason === 'InvalidContract'
+        ? 'InvalidSpec'
+        : 'Failed'
     const updated = upsertCondition(baseConditions, {
-      type: 'Failed',
+      type: failureType,
       status: 'True',
       reason: workflowFailure.reason,
       message: workflowFailure.message,
@@ -3779,6 +3849,7 @@ const reconcileWorkflowRun = async (
       workflow: workflowStatus,
       conditions: updated,
       vcs: vcsStatus ?? undefined,
+      contract: workflowContractStatus,
     })
     for (const entry of completedJobs) {
       await applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
@@ -3824,6 +3895,7 @@ const reconcileWorkflowRun = async (
       workflow: workflowStatus,
       conditions: updated,
       vcs: vcsStatus ?? undefined,
+      contract: workflowContractStatus,
     })
     for (const entry of completedJobs) {
       await applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
@@ -4091,14 +4163,20 @@ const reconcileAgentRun = async (
     }
 
     const contractCheck = validateImplementationContract(implResource, parameters)
+    const contractStatus = buildContractStatus(contractCheck)
     if (!contractCheck.ok) {
       const updated = upsertCondition(conditions, {
         type: 'InvalidSpec',
         status: 'True',
-        reason: 'MissingRequiredMetadata',
+        reason: contractCheck.reason,
         message: contractCheck.message,
       })
-      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      await setStatus(kube, agentRun, {
+        observedGeneration,
+        conditions: updated,
+        phase: 'Failed',
+        contract: contractStatus,
+      })
       return
     }
 
@@ -4113,7 +4191,12 @@ const reconcileAgentRun = async (
         reason: 'MissingMemory',
         message: `memory ${missingName} not found`,
       })
-      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      await setStatus(kube, agentRun, {
+        observedGeneration,
+        conditions: updated,
+        phase: 'Failed',
+        contract: contractStatus,
+      })
       return
     }
     const memorySecretName = asString(readNested(memory, ['spec', 'connection', 'secretRef', 'name']))
@@ -4129,7 +4212,12 @@ const reconcileAgentRun = async (
         reason: 'SecretBlocked',
         message: `secrets blocked by controller policy: ${blockedSecrets.join(', ')}`,
       })
-      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      await setStatus(kube, agentRun, {
+        observedGeneration,
+        conditions: updated,
+        phase: 'Failed',
+        contract: contractStatus,
+      })
       return
     }
 
@@ -4141,7 +4229,12 @@ const reconcileAgentRun = async (
         reason: authSecretPolicy.reason,
         message: authSecretPolicy.message,
       })
-      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      await setStatus(kube, agentRun, {
+        observedGeneration,
+        conditions: updated,
+        phase: 'Failed',
+        contract: contractStatus,
+      })
       return
     }
     if (memorySecretName) {
@@ -4152,7 +4245,12 @@ const reconcileAgentRun = async (
           reason: 'SecretNotAllowed',
           message: `memory secret ${memorySecretName} is not allowlisted by the Agent`,
         })
-        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        await setStatus(kube, agentRun, {
+          observedGeneration,
+          conditions: updated,
+          phase: 'Failed',
+          contract: contractStatus,
+        })
         return
       }
       if (runSecrets.length > 0 && !runSecrets.includes(memorySecretName)) {
@@ -4162,7 +4260,12 @@ const reconcileAgentRun = async (
           reason: 'SecretNotAllowed',
           message: `memory secret ${memorySecretName} is not included in spec.secrets`,
         })
-        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        await setStatus(kube, agentRun, {
+          observedGeneration,
+          conditions: updated,
+          phase: 'Failed',
+          contract: contractStatus,
+        })
         return
       }
     }
@@ -4189,6 +4292,7 @@ const reconcileAgentRun = async (
         finishedAt: nowIso(),
         conditions: updated,
         vcs: vcsResolution.status ?? undefined,
+        contract: contractStatus,
       })
       return
     }
@@ -4241,6 +4345,7 @@ const reconcileAgentRun = async (
         startedAt: nowIso(),
         conditions: upsertCondition(updated, { type: 'InProgress', status: 'True', reason: 'Running' }),
         vcs: vcsStatus ?? undefined,
+        contract: contractStatus,
       })
     } catch (error) {
       const updated = upsertCondition(baseConditions, {
@@ -4255,6 +4360,7 @@ const reconcileAgentRun = async (
         finishedAt: nowIso(),
         conditions: updated,
         vcs: vcsStatus ?? undefined,
+        contract: contractStatus,
       })
     }
     return
