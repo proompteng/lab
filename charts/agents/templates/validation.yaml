@@ -1,0 +1,30 @@
+{{- $errors := list -}}
+{{- $clusterScoped := .Values.rbac.clusterScoped | default false -}}
+{{- $controllerNamespaces := .Values.controller.namespaces | default (list) -}}
+{{- $orchestrationNamespaces := .Values.orchestrationController.namespaces | default (list) -}}
+{{- $supportingNamespaces := .Values.supportingController.namespaces | default (list) -}}
+
+{{- if and (gt (len $controllerNamespaces) 1) (not $clusterScoped) -}}
+{{- $errors = append $errors "rbac.clusterScoped must be true when controller.namespaces has multiple entries." -}}
+{{- end -}}
+{{- if and (has "*" $controllerNamespaces) (not $clusterScoped) -}}
+{{- $errors = append $errors "rbac.clusterScoped must be true when controller.namespaces includes '*' (wildcard)." -}}
+{{- end -}}
+
+{{- if and (gt (len $orchestrationNamespaces) 1) (not $clusterScoped) -}}
+{{- $errors = append $errors "rbac.clusterScoped must be true when orchestrationController.namespaces has multiple entries." -}}
+{{- end -}}
+{{- if and (has "*" $orchestrationNamespaces) (not $clusterScoped) -}}
+{{- $errors = append $errors "rbac.clusterScoped must be true when orchestrationController.namespaces includes '*' (wildcard)." -}}
+{{- end -}}
+
+{{- if and (gt (len $supportingNamespaces) 1) (not $clusterScoped) -}}
+{{- $errors = append $errors "rbac.clusterScoped must be true when supportingController.namespaces has multiple entries." -}}
+{{- end -}}
+{{- if and (has "*" $supportingNamespaces) (not $clusterScoped) -}}
+{{- $errors = append $errors "rbac.clusterScoped must be true when supportingController.namespaces includes '*' (wildcard)." -}}
+{{- end -}}
+
+{{- if gt (len $errors) 0 -}}
+{{- fail (printf "Agents chart values validation failed:\n- %s" (join "\n- " $errors)) -}}
+{{- end -}}

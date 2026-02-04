@@ -1,4 +1,5 @@
 import { startResourceWatch } from '~/server/kube-watch'
+import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { hydrateMemoryRecord } from '~/server/primitives-memory'
@@ -41,7 +42,9 @@ const parseNamespaces = () => {
     .split(',')
     .map((value) => value.trim())
     .filter((value) => value.length > 0)
-  return list.length > 0 ? list : DEFAULT_NAMESPACES
+  const namespaces = list.length > 0 ? list : DEFAULT_NAMESPACES
+  assertClusterScopedForWildcard(namespaces, 'primitives reconciler')
+  return namespaces
 }
 
 const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
