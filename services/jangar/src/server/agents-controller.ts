@@ -2081,7 +2081,7 @@ const resolveVcsContext = async ({
   const allowList = parseStringList(repositoryPolicy.allow)
   const denyList = parseStringList(repositoryPolicy.deny)
   if (matchesAnyPattern(repository, denyList)) {
-    if (required && desiredMode !== 'none') {
+    if (desiredMode !== 'none') {
       return {
         ok: false,
         skip: false,
@@ -2103,7 +2103,7 @@ const resolveVcsContext = async ({
     }
   }
   if (allowList.length > 0 && !matchesAnyPattern(repository, allowList)) {
-    if (required && desiredMode !== 'none') {
+    if (desiredMode !== 'none') {
       return {
         ok: false,
         skip: false,
