@@ -29,6 +29,23 @@
       },
       "additionalProperties": false
     },
+    "runner": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "digest": { "type": "string" },
+            "pullPolicy": { "type": "string" },
+            "pullSecrets": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "serviceAccount": {
       "type": "object",
       "properties": {
@@ -247,6 +264,7 @@
           "additionalProperties": false
         },
         "agentRunRetentionSeconds": { "type": "integer", "minimum": 0 },
+        "jobTtlSecondsAfterFinished": { "type": "integer", "minimum": 0 },
         "authSecret": {
           "type": "object",
           "properties": {

@@ -166,6 +166,16 @@ agentctl run submit \
 Replace the workload image with your own agent-runner build.
 If your agent-runner uses NATS for context streaming, set `NATS_URL` in the AgentProvider `envTemplate`.
 
+## Runner image defaults
+The chart sets `JANGAR_AGENT_RUNNER_IMAGE` from `runner.image.*` to avoid missing workload image errors.
+Override `runner.image.repository`, `runner.image.tag`, or `runner.image.digest` to point at your own build.
+
+## Job TTL behavior
+Jobs launched by the controller use `controller.jobTtlSecondsAfterFinished` as the default TTL (seconds).
+The controller applies TTL only after it records the AgentRun/workflow status to avoid cleanup races.
+Set `controller.jobTtlSecondsAfterFinished=0` to disable job cleanup, or override per run via
+`spec.runtime.config.ttlSecondsAfterFinished`. Values are clamped to 30s–7d for safety.
+
 ## Native orchestration
 Native orchestration runs in-cluster and supports:
 - `AgentRun`

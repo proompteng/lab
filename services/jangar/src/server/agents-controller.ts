@@ -24,6 +24,9 @@ const PARAMETERS_MAX_VALUE_BYTES = 2048
 const DEFAULT_AUTH_SECRET_KEY = 'auth.json'
 const DEFAULT_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
 const DEFAULT_GITHUB_APP_TOKEN_TTL_SECONDS = 3600
+const DEFAULT_RUNNER_JOB_TTL_SECONDS = 600
+const MIN_RUNNER_JOB_TTL_SECONDS = 30
+const MAX_RUNNER_JOB_TTL_SECONDS = 7 * 24 * 60 * 60
 
 const BASE_REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -624,6 +627,37 @@ const parseOptionalNumber = (value: unknown): number | undefined => {
     if (Number.isFinite(parsed)) return parsed
   }
   return undefined
+}
+
+const normalizeRunnerJobTtlSeconds = (value: number, source: string) => {
+  if (!Number.isFinite(value)) return null
+  if (value <= 0) return null
+  const floored = Math.floor(value)
+  if (floored < MIN_RUNNER_JOB_TTL_SECONDS) {
+    console.warn(
+      `[jangar] runner job ttl ${floored}s from ${source} below minimum; clamping to ${MIN_RUNNER_JOB_TTL_SECONDS}s`,
+    )
+    return MIN_RUNNER_JOB_TTL_SECONDS
+  }
+  if (floored > MAX_RUNNER_JOB_TTL_SECONDS) {
+    console.warn(
+      `[jangar] runner job ttl ${floored}s from ${source} above maximum; clamping to ${MAX_RUNNER_JOB_TTL_SECONDS}s`,
+    )
+    return MAX_RUNNER_JOB_TTL_SECONDS
+  }
+  return floored
+}
+
+const resolveRunnerJobTtlSeconds = (runtimeConfig: Record<string, unknown>) => {
+  const override = parseOptionalNumber(runtimeConfig.ttlSecondsAfterFinished)
+  if (override !== undefined) {
+    return normalizeRunnerJobTtlSeconds(override, 'spec.runtime.config.ttlSecondsAfterFinished')
+  }
+  const envDefault = parseOptionalNumber(process.env.JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS)
+  if (envDefault !== undefined) {
+    return normalizeRunnerJobTtlSeconds(envDefault, 'JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS')
+  }
+  return normalizeRunnerJobTtlSeconds(DEFAULT_RUNNER_JOB_TTL_SECONDS, 'default')
 }
 
 const parseAgentRunRetentionSeconds = () => {
@@ -2681,6 +2715,21 @@ const buildAgentRunnerSpec = (
   },
 })
 
+const applyJobTtlAfterStatus = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  job: Record<string, unknown>,
+  namespace: string,
+  runtimeConfig: Record<string, unknown>,
+) => {
+  const ttlSeconds = resolveRunnerJobTtlSeconds(runtimeConfig)
+  if (ttlSeconds === null) return
+  const name = asString(readNested(job, ['metadata', 'name'])) ?? ''
+  if (!name) return
+  const currentTtl = parseOptionalNumber(readNested(job, ['spec', 'ttlSecondsAfterFinished']))
+  if (currentTtl === ttlSeconds) return
+  await kube.patch('job', name, namespace, { spec: { ttlSecondsAfterFinished: ttlSeconds } })
+}
+
 const submitJobRun = async (
   kube: ReturnType<typeof createKubernetesClient>,
   agentRun: Record<string, unknown>,
@@ -2787,8 +2836,6 @@ const submitJobRun = async (
       .filter((entry): entry is { name: string } => Boolean(entry))
     return resolved.length > 0 ? resolved : null
   })()
-  const ttlSeconds = runtimeConfig.ttlSecondsAfterFinished
-
   const metadata = asRecord(agentRun.metadata) ?? {}
   const runName = asString(metadata.name) ?? 'agentrun'
   const runUid = asString(metadata.uid)
@@ -2969,7 +3016,6 @@ const submitJobRun = async (
         : {}),
     },
     spec: {
-      ttlSecondsAfterFinished: typeof ttlSeconds === 'number' ? ttlSeconds : undefined,
       template: {
         metadata: {
           labels: mergedLabels,
@@ -3327,6 +3373,7 @@ const reconcileWorkflowRun = async (
   let workflowFailure: { reason: string; message: string } | null = null
   let workflowRunning = false
   const now = Date.now()
+  const completedJobs: Array<{ job: Record<string, unknown>; namespace: string }> = []
 
   for (let index = 0; index < workflowSteps.length; index += 1) {
     const stepSpec = workflowSteps[index]
@@ -3520,6 +3567,7 @@ const reconcileWorkflowRun = async (
         stepStatus.startedAt = asString(jobStatus.startTime) ?? stepStatus.startedAt ?? undefined
         stepStatus.finishedAt = asString(jobStatus.completionTime) ?? nowIso()
         stepStatus.nextRetryAt = undefined
+        completedJobs.push({ job, namespace: jobNamespace })
         continue
       }
       if (failed > 0 && isJobFailed(job)) {
@@ -3530,11 +3578,13 @@ const reconcileWorkflowRun = async (
             stepSpec.retryBackoffSeconds > 0
               ? new Date(now + stepSpec.retryBackoffSeconds * 1000).toISOString()
               : nowIso()
+          completedJobs.push({ job, namespace: jobNamespace })
           workflowRunning = true
           break
         }
         setWorkflowStepPhase(stepStatus, 'Failed', 'Step failed')
         stepStatus.finishedAt = nowIso()
+        completedJobs.push({ job, namespace: jobNamespace })
         workflowFailure = {
           reason: 'WorkflowStepFailed',
           message: `workflow step ${stepSpec.name} failed`,
@@ -3568,6 +3618,9 @@ const reconcileWorkflowRun = async (
       conditions: updated,
       vcs: vcsStatus ?? undefined,
     })
+    for (const entry of completedJobs) {
+      await applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
+    }
     return
   }
 
@@ -3588,6 +3641,9 @@ const reconcileWorkflowRun = async (
       conditions: updated,
       vcs: vcsStatus ?? undefined,
     })
+    for (const entry of completedJobs) {
+      await applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
+    }
     return
   }
 
@@ -3607,6 +3663,9 @@ const reconcileWorkflowRun = async (
       conditions: updated,
       vcs: vcsStatus ?? undefined,
     })
+    for (const entry of completedJobs) {
+      await applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
+    }
   }
 }
 
@@ -4065,6 +4124,12 @@ const reconcileAgentRun = async (
         conditions: updated,
         vcs: asRecord(status.vcs) ?? undefined,
       })
+      await applyJobTtlAfterStatus(
+        kube,
+        job,
+        asString(runtimeRef.namespace) ?? namespace,
+        runtimeConfig,
+      )
     } else if (failed > 0 && isJobFailed(job)) {
       const updated = upsertCondition(conditions, {
         type: 'Failed',
@@ -4079,6 +4144,12 @@ const reconcileAgentRun = async (
         conditions: updated,
         vcs: asRecord(status.vcs) ?? undefined,
       })
+      await applyJobTtlAfterStatus(
+        kube,
+        job,
+        asString(runtimeRef.namespace) ?? namespace,
+        runtimeConfig,
+      )
     }
   }
 
