@@ -160,6 +160,14 @@ spec:
               value: {{ .Values.controller.concurrency.perAgent | default 5 | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER
               value: {{ .Values.controller.concurrency.cluster | default 100 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_ENABLED
+              value: {{ .Values.controller.repoConcurrency.enabled | default false | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_DEFAULT
+              value: {{ .Values.controller.repoConcurrency.default | default 0 | quote }}
+            {{- if and .Values.controller.repoConcurrency.overrides (gt (len .Values.controller.repoConcurrency.overrides) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES
+              value: {{ .Values.controller.repoConcurrency.overrides | toJson | quote }}
+            {{- end }}
             - name: JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
               value: {{ .Values.controller.agentRunRetentionSeconds | default 2592000 | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED

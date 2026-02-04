@@ -100,6 +100,10 @@ Agent memory backends are configured separately via the `Memory` CRD.
 - Single namespace: default
 - Multi-namespace: set `controller.namespaces` and `rbac.clusterScoped=true`
 
+### Concurrency limits
+- `controller.concurrency.perNamespace`, `controller.concurrency.perAgent`, `controller.concurrency.cluster`
+- `controller.repoConcurrency.enabled` with `controller.repoConcurrency.default` and optional `controller.repoConcurrency.overrides` per repo
+
 ### gRPC service (optional)
 Enable gRPC for agentctl or in-cluster clients:
 - `grpc.enabled=true`

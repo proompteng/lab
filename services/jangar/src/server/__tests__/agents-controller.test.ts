@@ -4,6 +4,21 @@ import { __test } from '~/server/agents-controller'
 import { RESOURCE_MAP } from '~/server/primitives-kube'
 
 const finalizer = 'agents.proompteng.ai/runtime-cleanup'
+const defaultConcurrency = {
+  perNamespace: 10,
+  perAgent: 5,
+  cluster: 100,
+  repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map<string, number>() },
+}
+
+const buildInFlight = (
+  overrides: Partial<{ total: number; perAgent: Map<string, number>; perRepository: Map<string, number> }> = {},
+) => ({
+  total: 0,
+  perAgent: new Map<string, number>(),
+  perRepository: new Map<string, number>(),
+  ...overrides,
+})
 
 const buildAgentRun = (overrides: Record<string, unknown> = {}) => ({
   apiVersion: 'agents.proompteng.ai/v1alpha1',
@@ -98,6 +113,39 @@ const buildVcsProvider = (overrides: Record<string, unknown> = {}) => ({
 })
 
 describe('agents controller reconcileAgentRun', () => {
+  it('blocks AgentRun when repository concurrency limit is reached', async () => {
+    const kube = buildKube()
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        parameters: {
+          repository: 'proompteng/lab',
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      {
+        ...defaultConcurrency,
+        repoConcurrency: { enabled: true, defaultLimit: 1, overrides: new Map() },
+      },
+      buildInFlight({ perRepository: new Map([['proompteng/lab', 1]]) }),
+      0,
+    )
+
+    const status = getLastStatus(kube)
+    const condition = findCondition(status, 'Blocked')
+    expect(condition?.reason).toBe('ConcurrencyLimit')
+  })
+
   it('marks AgentRun failed when provider is missing', async () => {
     const kube = buildKube({
       get: vi.fn(async (resource: string) => {
@@ -121,8 +169,8 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -165,8 +213,8 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -209,8 +257,8 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -275,8 +323,8 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -308,8 +356,8 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -336,8 +384,8 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -361,8 +409,8 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -387,8 +435,8 @@ describe('agents controller reconcileAgentRun', () => {
         agentRun,
         'agents',
         [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
+        defaultConcurrency,
+        buildInFlight(),
         0,
       )
 
@@ -425,8 +473,8 @@ describe('agents controller reconcileAgentRun', () => {
         agentRun,
         'agents',
         [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
+        defaultConcurrency,
+        buildInFlight(),
         0,
       )
 
@@ -463,8 +511,8 @@ describe('agents controller reconcileAgentRun', () => {
         agentRun,
         'agents',
         [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
+        defaultConcurrency,
+        buildInFlight(),
         0,
       )
 
@@ -493,8 +541,8 @@ describe('agents controller reconcileAgentRun', () => {
         agentRun,
         'agents',
         [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
+        defaultConcurrency,
+        buildInFlight(),
         0,
       )
 
@@ -543,8 +591,8 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -603,8 +651,8 @@ describe('agents controller reconcileAgentRun', () => {
         agentRun,
         'agents',
         [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
+        defaultConcurrency,
+        buildInFlight(),
         0,
       )
 
@@ -702,8 +750,8 @@ describe('agents controller reconcileAgentRun', () => {
         agentRun,
         'agents',
         [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
+        defaultConcurrency,
+        buildInFlight(),
         0,
       )
 
@@ -752,8 +800,8 @@ describe('agents controller reconcileAgentRun', () => {
         agentRun,
         'agents',
         [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
+        defaultConcurrency,
+        buildInFlight(),
         0,
       )
 
@@ -822,8 +870,8 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -848,8 +896,8 @@ describe('agents controller reconcileAgentRun', () => {
       secondAgentRun,
       'agents',
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -871,8 +919,8 @@ describe('agents controller reconcileAgentRun', () => {
       thirdAgentRun,
       'agents',
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -938,8 +986,8 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -958,8 +1006,8 @@ describe('agents controller reconcileAgentRun', () => {
       secondAgentRun,
       'agents',
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -987,8 +1035,8 @@ describe('agents controller reconcileAgentRun', () => {
       thirdAgentRun,
       'agents',
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -1012,8 +1060,8 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -1037,8 +1085,8 @@ describe('agents controller reconcileAgentRun', () => {
         agentRun,
         'agents',
         [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
+        defaultConcurrency,
+        buildInFlight(),
         0,
       )
 

@@ -139,6 +139,10 @@ controller:
     perNamespace: 10
     perAgent: 5
     cluster: 100
+  repoConcurrency:
+    enabled: false
+    default: 0
+    overrides: {}
   agentRunRetentionSeconds: 2592000
   authSecret:
     name: ""
