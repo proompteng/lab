@@ -192,6 +192,10 @@ spec:
             - name: JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
               value: {{ .Values.controller.vcsProviders.deprecatedTokenTypes | toJson | quote }}
             {{- end }}
+            {{- if and .Values.controller.vcsProviders.prRateLimits (gt (len .Values.controller.vcsProviders.prRateLimits) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS
+              value: {{ .Values.controller.vcsProviders.prRateLimits | toJson | quote }}
+            {{- end }}
             {{- if .Values.controller.authSecret.name }}
             - name: JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
               value: {{ .Values.controller.authSecret.name | quote }}
