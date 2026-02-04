@@ -92,6 +92,14 @@ spec:
             {{- end }}
             - name: JANGAR_IMAGE
               value: "{{ .Values.image.repository }}:{{ .Values.image.tag }}{{- if .Values.image.digest }}@{{ .Values.image.digest }}{{ end }}"
+            {{- if .Values.runner.image.repository }}
+            - name: JANGAR_AGENT_RUNNER_IMAGE
+              value: "{{ .Values.runner.image.repository }}:{{ .Values.runner.image.tag }}{{- if .Values.runner.image.digest }}@{{ .Values.runner.image.digest }}{{ end }}"
+            {{- end }}
+            {{- if hasKey .Values.controller "jobTtlSecondsAfterFinished" }}
+            - name: JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS
+              value: {{ .Values.controller.jobTtlSecondsAfterFinished | quote }}
+            {{- end }}
             - name: JANGAR_SERVICE_ACCOUNT_NAME
               value: {{ include "agents.serviceAccountName" . | quote }}
             {{- $runnerServiceAccount := include "agents.runnerServiceAccountName" . }}

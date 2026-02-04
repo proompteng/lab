@@ -563,6 +563,102 @@ describe('agents controller reconcileAgentRun', () => {
     expect(jobLabels?.['agents.proompteng.ai/provider']).toBe('provider-1')
   })
 
+  it('defers job ttl until status is recorded', async () => {
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      return { ...resource, metadata: { ...metadata, uid } }
+    })
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun()
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const jobCall = apply.mock.calls.find((call) => (call[0] as Record<string, unknown>).kind === 'Job')
+    expect(jobCall).toBeTruthy()
+    const jobSpec = (jobCall?.[0] as Record<string, unknown>)?.spec as Record<string, unknown>
+    expect(jobSpec?.ttlSecondsAfterFinished).toBeUndefined()
+  })
+
+  it('applies a safe job ttl after completion', async () => {
+    const previousTtl = process.env.JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS
+    process.env.JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS = '5'
+
+    try {
+      const patch = vi.fn(async () => ({}))
+      const kube = buildKube({
+        patch,
+        get: vi.fn(async (resource: string) => {
+          if (resource === 'job') {
+            return {
+              metadata: { name: 'run-job', namespace: 'agents' },
+              spec: {},
+              status: {
+                succeeded: 1,
+                startTime: new Date(Date.now() - 60_000).toISOString(),
+                completionTime: new Date().toISOString(),
+              },
+            }
+          }
+          return null
+        }),
+      })
+
+      const agentRun = buildAgentRun({
+        status: {
+          phase: 'Running',
+          runtimeRef: { type: 'job', name: 'run-job', namespace: 'agents' },
+        },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      expect(patch).toHaveBeenCalledWith(
+        'job',
+        'run-job',
+        'agents',
+        expect.objectContaining({ spec: { ttlSecondsAfterFinished: 30 } }),
+      )
+    } finally {
+      if (previousTtl === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS = previousTtl
+      }
+    }
+  })
+
   it('injects auth secret volume and CODEX_AUTH env var', async () => {
     const previousName = process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
     const previousKey = process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_KEY

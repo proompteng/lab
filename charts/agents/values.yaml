@@ -19,6 +19,14 @@ image:
   pullPolicy: IfNotPresent
   pullSecrets: []
 
+runner:
+  image:
+    repository: registry.ide-newton.ts.net/lab/codex-universal
+    tag: latest
+    digest: ""
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+
 serviceAccount:
   create: true
   name: ""
@@ -149,6 +157,7 @@ controller:
     perRepo: 30
     cluster: 600
   agentRunRetentionSeconds: 2592000
+  jobTtlSecondsAfterFinished: 600
   authSecret:
     name: ""
     key: auth.json
