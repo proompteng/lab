@@ -158,6 +158,22 @@ spec:
               lastSyncedAt:
                 format: date-time
                 type: string
+              lastWebhook:
+                properties:
+                  externalId:
+                    type: string
+                  idempotencyKey:
+                    type: string
+                  provider:
+                    type: string
+                  receivedAt:
+                    format: date-time
+                    type: string
+                  sourceUrl:
+                    type: string
+                  sourceVersion:
+                    type: string
+                type: object
               observedGeneration:
                 format: int64
                 type: integer

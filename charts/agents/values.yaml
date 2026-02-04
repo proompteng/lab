@@ -149,6 +149,11 @@ controller:
     deprecatedTokenTypes:
       github:
         - pat
+  webhookIngestion:
+    queueSize: 500
+    retry:
+      initialMs: 1000
+      maxMs: 30000
   defaultWorkload:
     serviceAccountName: ""
     nodeSelector: {}

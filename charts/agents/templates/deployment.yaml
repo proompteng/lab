@@ -168,6 +168,18 @@ spec:
             - name: JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
               value: {{ .Values.controller.vcsProviders.deprecatedTokenTypes | toJson | quote }}
             {{- end }}
+            {{- if not (hasKey .Values.env.vars "JANGAR_WEBHOOK_QUEUE_SIZE") }}
+            - name: JANGAR_WEBHOOK_QUEUE_SIZE
+              value: {{ .Values.controller.webhookIngestion.queueSize | default 500 | quote }}
+            {{- end }}
+            {{- if not (hasKey .Values.env.vars "JANGAR_WEBHOOK_RETRY_INITIAL_MS") }}
+            - name: JANGAR_WEBHOOK_RETRY_INITIAL_MS
+              value: {{ .Values.controller.webhookIngestion.retry.initialMs | default 1000 | quote }}
+            {{- end }}
+            {{- if not (hasKey .Values.env.vars "JANGAR_WEBHOOK_RETRY_MAX_MS") }}
+            - name: JANGAR_WEBHOOK_RETRY_MAX_MS
+              value: {{ .Values.controller.webhookIngestion.retry.maxMs | default 30000 | quote }}
+            {{- end }}
             {{- if .Values.controller.authSecret.name }}
             - name: JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
               value: {{ .Values.controller.authSecret.name | quote }}

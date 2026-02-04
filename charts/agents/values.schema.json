@@ -267,6 +267,21 @@
           },
           "additionalProperties": false
         },
+        "webhookIngestion": {
+          "type": "object",
+          "properties": {
+            "queueSize": { "type": "integer", "minimum": 1 },
+            "retry": {
+              "type": "object",
+              "properties": {
+                "initialMs": { "type": "integer", "minimum": 0 },
+                "maxMs": { "type": "integer", "minimum": 0 }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
         "defaultWorkload": {
           "type": "object",
           "properties": {

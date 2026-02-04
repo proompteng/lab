@@ -9,6 +9,9 @@ const DEFAULT_NAMESPACES = ['agents']
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
 const IMPLEMENTATION_SUMMARY_LIMIT = 256
 const LINEAR_TIMESTAMP_TOLERANCE_MS = 60_000
+const DEFAULT_WEBHOOK_QUEUE_SIZE = 500
+const DEFAULT_WEBHOOK_RETRY_INITIAL_MS = 1000
+const DEFAULT_WEBHOOK_RETRY_MAX_MS = 30_000
 
 type Condition = {
   type: string
@@ -40,7 +43,39 @@ type SourceMatch = {
   namespace: string
 }
 
+type WebhookQueueItem = {
+  idempotencyKey: string
+  provider: WebhookProvider
+  event: ParsedWebhookEvent
+  matches: SourceMatch[]
+  sourceRef: ReturnType<typeof toSourceRef>
+  receivedAt: string
+  sourceVersion?: string | null
+  kubeClient?: ReturnType<typeof createKubernetesClient>
+}
+
+type ProviderBackoff = {
+  attempt: number
+  nextAttemptAt: number
+}
+
 const nowIso = () => new Date().toISOString()
+
+const parseNumber = (value: string | undefined, fallback: number) => {
+  const parsed = Number.parseInt(value ?? '', 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+const WEBHOOK_QUEUE_SIZE = parseNumber(process.env.JANGAR_WEBHOOK_QUEUE_SIZE, DEFAULT_WEBHOOK_QUEUE_SIZE)
+const WEBHOOK_RETRY_INITIAL_MS = parseNumber(process.env.JANGAR_WEBHOOK_RETRY_INITIAL_MS, DEFAULT_WEBHOOK_RETRY_INITIAL_MS)
+const WEBHOOK_RETRY_MAX_MS = parseNumber(process.env.JANGAR_WEBHOOK_RETRY_MAX_MS, DEFAULT_WEBHOOK_RETRY_MAX_MS)
+const WEBHOOK_DEDUPE_CACHE_SIZE = Math.max(WEBHOOK_QUEUE_SIZE * 4, 1024)
+
+const webhookQueue: WebhookQueueItem[] = []
+const webhookDedupeCache = new Map<string, number>()
+const providerBackoff = new Map<WebhookProvider, ProviderBackoff>()
+let webhookQueueRunning = false
+let webhookQueueTimer: ReturnType<typeof setTimeout> | null = null
 
 const parseNamespaces = () => {
   const raw = process.env.JANGAR_AGENTS_CONTROLLER_NAMESPACES
@@ -454,6 +489,14 @@ const updateSourceStatus = async (
     reason: string
     message?: string
     lastSyncedAt?: string
+    lastWebhook?: {
+      idempotencyKey: string
+      provider: WebhookProvider
+      externalId: string
+      receivedAt: string
+      sourceVersion?: string | null
+      sourceUrl?: string | null
+    }
   },
 ) => {
   const metadata = asRecord(source.metadata) ?? {}
@@ -467,6 +510,7 @@ const updateSourceStatus = async (
     observedGeneration: asRecord(metadata)?.generation ?? 0,
     cursor: asString(readNested(source, ['status', 'cursor'])) ?? undefined,
     lastSyncedAt: status.lastSyncedAt ?? asString(readNested(source, ['status', 'lastSyncedAt'])) ?? undefined,
+    lastWebhook: status.lastWebhook ?? asRecord(readNested(source, ['status', 'lastWebhook'])) ?? undefined,
     conditions,
   })
 }
@@ -530,6 +574,206 @@ const resolveEventName = (provider: WebhookProvider, headers: Headers) => {
 const isIssueEvent = (provider: WebhookProvider, eventName: string) => {
   if (provider === 'github') return eventName === 'issues'
   return eventName === 'issue'
+}
+
+const resolveIdempotencyKey = (
+  provider: WebhookProvider,
+  headers: Headers,
+  payload: Record<string, unknown>,
+  rawBody: string,
+) => {
+  const headerCandidates =
+    provider === 'github'
+      ? ['x-github-delivery', 'x-request-id', 'idempotency-key', 'x-idempotency-key']
+      : [
+          'linear-delivery-id',
+          'linear-delivery',
+          'x-linear-delivery-id',
+          'x-linear-delivery',
+          'x-request-id',
+          'idempotency-key',
+          'x-idempotency-key',
+        ]
+  for (const key of headerCandidates) {
+    const value = headers.get(key)
+    if (value && value.trim().length > 0) {
+      return `${provider}:${value.trim()}`
+    }
+  }
+  const payloadCandidates = [
+    asString(payload.deliveryId),
+    asString(payload.delivery_id),
+    asString(payload.id),
+    asString(payload.webhookId),
+    asString(payload.webhook_id),
+    asString(readNested(payload, ['data', 'id'])),
+  ].filter((value): value is string => Boolean(value))
+  if (payloadCandidates.length > 0) {
+    return `${provider}:${payloadCandidates[0]}`
+  }
+  const bodyHash = createHash('sha1').update(rawBody, 'utf8').digest('hex')
+  return `${provider}:body:${bodyHash}`
+}
+
+const registerIdempotencyKey = (key: string) => {
+  if (webhookDedupeCache.has(key)) return false
+  webhookDedupeCache.set(key, Date.now())
+  if (webhookDedupeCache.size > WEBHOOK_DEDUPE_CACHE_SIZE) {
+    let overflow = webhookDedupeCache.size - WEBHOOK_DEDUPE_CACHE_SIZE
+    for (const oldKey of webhookDedupeCache.keys()) {
+      webhookDedupeCache.delete(oldKey)
+      overflow -= 1
+      if (overflow <= 0) break
+    }
+  }
+  return true
+}
+
+const getProviderBackoff = (provider: WebhookProvider, nowMs: number) => {
+  const backoff = providerBackoff.get(provider)
+  if (!backoff) return null
+  if (backoff.nextAttemptAt <= nowMs) return null
+  return backoff
+}
+
+const setProviderBackoff = (provider: WebhookProvider) => {
+  const current = providerBackoff.get(provider) ?? { attempt: 0, nextAttemptAt: 0 }
+  const attempt = current.attempt + 1
+  const delay = Math.min(WEBHOOK_RETRY_INITIAL_MS * 2 ** (attempt - 1), WEBHOOK_RETRY_MAX_MS)
+  const nextAttemptAt = Date.now() + delay
+  providerBackoff.set(provider, { attempt, nextAttemptAt })
+  return delay
+}
+
+const clearProviderBackoff = (provider: WebhookProvider) => {
+  providerBackoff.delete(provider)
+}
+
+const scheduleWebhookQueue = () => {
+  if (webhookQueueTimer) {
+    clearTimeout(webhookQueueTimer)
+    webhookQueueTimer = null
+  }
+  if (webhookQueue.length === 0) return
+  const nowMs = Date.now()
+  let nextAt: number | null = null
+  for (const item of webhookQueue) {
+    const backoff = providerBackoff.get(item.provider)
+    if (!backoff || backoff.nextAttemptAt <= nowMs) {
+      nextAt = nowMs
+      break
+    }
+    if (nextAt == null || backoff.nextAttemptAt < nextAt) {
+      nextAt = backoff.nextAttemptAt
+    }
+  }
+  if (nextAt == null) return
+  const delay = Math.max(0, nextAt - nowMs)
+  webhookQueueTimer = setTimeout(() => {
+    webhookQueueTimer = null
+    void processWebhookQueue()
+  }, delay)
+}
+
+const processWebhookItem = async (kube: ReturnType<typeof createKubernetesClient>, item: WebhookQueueItem) => {
+  for (const match of item.matches) {
+    await syncImplementationSpec(kube, match.namespace, {
+      name: buildImplementationName(item.event),
+      source: item.sourceRef,
+      summary: item.event.summary,
+      text: item.event.text,
+      labels: item.event.labels,
+      sourceVersion: item.event.sourceVersion ?? undefined,
+    })
+
+    await updateSourceStatus(kube, match.source, {
+      type: 'Ready',
+      status: 'True',
+      reason: 'WebhookSynced',
+      lastSyncedAt: nowIso(),
+      lastWebhook: {
+        idempotencyKey: item.idempotencyKey,
+        provider: item.provider,
+        externalId: item.event.externalId,
+        receivedAt: item.receivedAt,
+        sourceVersion: item.sourceVersion ?? null,
+        sourceUrl: item.event.sourceUrl ?? null,
+      },
+    })
+  }
+}
+
+const processWebhookQueue = async () => {
+  if (webhookQueueRunning) return
+  webhookQueueRunning = true
+  try {
+    while (webhookQueue.length > 0) {
+      const nowMs = Date.now()
+      const index = webhookQueue.findIndex((item) => !getProviderBackoff(item.provider, nowMs))
+      if (index === -1) break
+      const item = webhookQueue.splice(index, 1)[0]
+      try {
+        const kube = item.kubeClient ?? createKubernetesClient()
+        await processWebhookItem(kube, item)
+        clearProviderBackoff(item.provider)
+      } catch (error) {
+        setProviderBackoff(item.provider)
+        webhookQueue.push(item)
+        console.warn('[jangar] webhook ingest failed; backing off', {
+          provider: item.provider,
+          idempotencyKey: item.idempotencyKey,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+  } finally {
+    webhookQueueRunning = false
+    scheduleWebhookQueue()
+  }
+}
+
+const enqueueWebhookItem = (item: WebhookQueueItem) => {
+  if (webhookDedupeCache.has(item.idempotencyKey)) return { ok: false as const, reason: 'Duplicate' }
+  if (webhookQueue.length >= WEBHOOK_QUEUE_SIZE) return { ok: false as const, reason: 'QueueFull' }
+  registerIdempotencyKey(item.idempotencyKey)
+  webhookQueue.push(item)
+  void processWebhookQueue()
+  return { ok: true as const }
+}
+
+const jsonResponseWithHeaders = (payload: unknown, status: number, headers: Record<string, string>) => {
+  const body = JSON.stringify(payload)
+  return new Response(body, {
+    status,
+    headers: {
+      'content-type': 'application/json',
+      'content-length': Buffer.byteLength(body).toString(),
+      ...headers,
+    },
+  })
+}
+
+export const flushWebhookQueueForTesting = async () => {
+  await new Promise<void>((resolve) => {
+    const check = () => {
+      if (!webhookQueueRunning && webhookQueue.length === 0) {
+        resolve()
+        return
+      }
+      setTimeout(check, 5)
+    }
+    check()
+  })
+}
+
+export const resetWebhookQueueForTesting = () => {
+  webhookQueue.length = 0
+  webhookDedupeCache.clear()
+  providerBackoff.clear()
+  if (webhookQueueTimer) {
+    clearTimeout(webhookQueueTimer)
+    webhookQueueTimer = null
+  }
 }
 
 export const postImplementationSourceWebhookHandler = async (
@@ -599,26 +843,38 @@ export const postImplementationSourceWebhookHandler = async (
     return errorResponse('No matching ImplementationSource for webhook payload', 404)
   }
 
-  const specName = buildImplementationName(event)
   const sourceRef = toSourceRef(event)
-
-  for (const match of matching) {
-    await syncImplementationSpec(kube, match.namespace, {
-      name: specName,
-      source: sourceRef,
-      summary: event.summary,
-      text: event.text,
-      labels: event.labels,
-      sourceVersion: event.sourceVersion ?? undefined,
-    })
-
-    await updateSourceStatus(kube, match.source, {
-      type: 'Ready',
-      status: 'True',
-      reason: 'WebhookSynced',
-      lastSyncedAt: now(),
-    })
+  const idempotencyKey = resolveIdempotencyKey(normalizedProvider, request.headers, payload, rawBody)
+  const backoff = getProviderBackoff(normalizedProvider, Date.now())
+  if (backoff) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((backoff.nextAttemptAt - Date.now()) / 1000))
+    return jsonResponseWithHeaders(
+      { ok: false, error: 'Webhook provider in backoff', retryAfterSeconds },
+      503,
+      { 'retry-after': retryAfterSeconds.toString() },
+    )
   }
 
-  return okResponse({ ok: true, processed: matching.length })
+  const enqueueResult = enqueueWebhookItem({
+    idempotencyKey,
+    provider: normalizedProvider,
+    event,
+    matches: matching,
+    sourceRef,
+    receivedAt: now(),
+    sourceVersion: event.sourceVersion ?? null,
+    kubeClient: deps.kubeClient,
+  })
+  if (!enqueueResult.ok) {
+    if (enqueueResult.reason === 'Duplicate') {
+      return okResponse({ ok: true, duplicated: true })
+    }
+    return jsonResponseWithHeaders(
+      { ok: false, error: 'Webhook queue full' },
+      429,
+      { 'retry-after': '2' },
+    )
+  }
+
+  return okResponse({ ok: true, queued: matching.length })
 }

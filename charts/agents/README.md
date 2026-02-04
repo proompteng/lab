@@ -230,6 +230,12 @@ Enable reruns or system-improvement flows using:
 - `workflowRuntime.native.rerunOrchestration`
 - `workflowRuntime.native.systemImprovementOrchestration`
 
+## Webhook ingestion
+ImplementationSource webhooks are buffered to handle bursts. Configure via:
+- `controller.webhookIngestion.queueSize`
+- `controller.webhookIngestion.retry.initialMs`
+- `controller.webhookIngestion.retry.maxMs`
+
 ## Security notes
 - Keep `service.type=ClusterIP` and expose via a gateway/mesh if needed.
 - Use `database.secretRef` and dedicated DB credentials per environment.
