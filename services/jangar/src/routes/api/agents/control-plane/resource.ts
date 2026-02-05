@@ -13,6 +13,7 @@ import {
 import { createKubernetesClient } from '~/server/primitives-kube'
 import { createPrimitivesStore } from '~/server/primitives-store'
 import { createKubectlWatchStream } from '~/server/primitives-watch'
+import { createControlPlaneCacheStore } from '~/server/control-plane-cache-store'
 
 export const Route = createFileRoute('/api/agents/control-plane/resource')({
   server: {
@@ -68,6 +69,39 @@ export const getPrimitiveResource = async (
         },
       })
     }
+
+    const cacheFlag = (process.env.JANGAR_CONTROL_PLANE_CACHE_ENABLED ?? '').trim().toLowerCase()
+    const cacheEnabled = cacheFlag === '1' || cacheFlag === 'true' || cacheFlag === 'yes' || cacheFlag === 'on'
+    const cacheKinds = new Set([
+      'Agent',
+      'AgentRun',
+      'AgentProvider',
+      'ImplementationSpec',
+      'ImplementationSource',
+      'VersionControlProvider',
+    ])
+
+    if (cacheEnabled && cacheKinds.has(resolved.kind)) {
+      const cluster = (process.env.JANGAR_CONTROL_PLANE_CACHE_CLUSTER ?? 'default').trim() || 'default'
+      let store: ReturnType<typeof createControlPlaneCacheStore> | null = null
+      try {
+        store = createControlPlaneCacheStore()
+        await store.ready
+        const cached = await store.getResource({ cluster, kind: resolved.kind, namespace, name })
+        if (cached) {
+          return okResponse({ ok: true, kind: resolved.kind, namespace, resource: cached })
+        }
+      } catch {
+        // Fall back to kubectl get for transient DB issues.
+      } finally {
+        try {
+          await store?.close()
+        } catch {
+          // ignore
+        }
+      }
+    }
+
     const resource = await kube.get(resolved.resource, name, namespace)
     if (!resource) {
       return errorResponse(`${resolved.kind} not found`, 404, { name, namespace })
