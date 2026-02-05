@@ -22,8 +22,6 @@ export type { CollabAgentState } from "./CollabAgentState";
 export type { CollabAgentStatus } from "./CollabAgentStatus";
 export type { CollabAgentTool } from "./CollabAgentTool";
 export type { CollabAgentToolCallStatus } from "./CollabAgentToolCallStatus";
-export type { CollaborationModeListParams } from "./CollaborationModeListParams";
-export type { CollaborationModeListResponse } from "./CollaborationModeListResponse";
 export type { CommandAction } from "./CommandAction";
 export type { CommandExecParams } from "./CommandExecParams";
 export type { CommandExecResponse } from "./CommandExecResponse";
@@ -82,8 +80,6 @@ export type { McpToolCallProgressNotification } from "./McpToolCallProgressNotif
 export type { McpToolCallResult } from "./McpToolCallResult";
 export type { McpToolCallStatus } from "./McpToolCallStatus";
 export type { MergeStrategy } from "./MergeStrategy";
-export type { MockExperimentalMethodParams } from "./MockExperimentalMethodParams";
-export type { MockExperimentalMethodResponse } from "./MockExperimentalMethodResponse";
 export type { Model } from "./Model";
 export type { ModelListParams } from "./ModelListParams";
 export type { ModelListResponse } from "./ModelListResponse";
