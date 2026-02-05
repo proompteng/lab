@@ -28,6 +28,8 @@ const DEFAULT_GITHUB_APP_TOKEN_TTL_SECONDS = 3600
 const DEFAULT_RUNNER_JOB_TTL_SECONDS = 600
 const MIN_RUNNER_JOB_TTL_SECONDS = 30
 const MAX_RUNNER_JOB_TTL_SECONDS = 7 * 24 * 60 * 60
+const DEFAULT_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 300
+const MIN_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 30
 
 const BASE_REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -92,6 +94,12 @@ type VcsMode = 'read-write' | 'read-only' | 'none'
 type VcsAuthMethod = 'token' | 'app' | 'ssh' | 'none'
 type VcsTokenType = 'pat' | 'fine_grained' | 'api_token' | 'access_token'
 
+type EnvVar = {
+  name: string
+  value?: string
+  valueFrom?: Record<string, unknown>
+}
+
 type VcsAuthAdapter = {
   provider: string
   allowedMethods: VcsAuthMethod[]
@@ -112,7 +120,7 @@ type VcsAuthValidation =
     }
 
 type VcsRuntimeConfig = {
-  env: Array<Record<string, unknown>>
+  env: EnvVar[]
   volumes: Array<{ name: string; spec: Record<string, unknown> }>
   volumeMounts: Array<Record<string, unknown>>
 }
@@ -178,7 +186,7 @@ let temporalClientPromise: ReturnType<typeof createTemporalClient> | null = null
 let watchHandles: Array<{ stop: () => void }> = []
 let _controllerState: ControllerState | null = null
 const namespaceQueues = new Map<string, Promise<void>>()
-const githubAppTokenCache = new Map<string, { token: string; expiresAt: number }>()
+const githubAppTokenCache = new Map<string, { token: string; expiresAt: number; refreshAfter: number }>()
 
 const nowIso = () => new Date().toISOString()
 
@@ -811,6 +819,18 @@ const parseEnvList = (name: string) => {
     .filter((value) => value.length > 0)
 }
 
+const normalizeStringList = (values: unknown[]) =>
+  values
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+
+const parseEnvStringList = (name: string) => {
+  const parsed = parseEnvArray(name)
+  if (Array.isArray(parsed)) return normalizeStringList(parsed)
+  return parseEnvList(name)
+}
+
 const resolveRunnerServiceAccount = (runtimeConfig: Record<string, unknown>) =>
   asString(runtimeConfig.serviceAccount) ?? asString(process.env.JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT)
 
@@ -835,10 +855,99 @@ const buildAuthSecretPath = (config: AuthSecretConfig) => {
 }
 
 const collectBlockedSecrets = (secrets: string[]) => {
-  const blocked = parseEnvList('JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS')
+  const blocked = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS')
   if (blocked.length === 0) return []
   const blockedSet = new Set(blocked)
   return Array.from(new Set(secrets.filter((secret) => blockedSet.has(secret))))
+}
+
+const normalizeLabelMap = (labels: Record<string, unknown>) => {
+  const output: Record<string, string> = {}
+  for (const [key, value] of Object.entries(labels)) {
+    if (!key) continue
+    if (typeof value !== 'string') continue
+    const trimmed = value.trim()
+    if (!trimmed) continue
+    output[key] = trimmed
+  }
+  return output
+}
+
+const validateLabelPolicy = (labels: Record<string, string>) => {
+  const required = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED')
+  const allowed = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_LABELS_ALLOWED')
+  const denied = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_LABELS_DENIED')
+
+  if (required.length > 0) {
+    const missing = required.filter((key) => !labels[key])
+    if (missing.length > 0) {
+      return {
+        ok: false as const,
+        reason: 'MissingRequiredLabels',
+        message: `missing required labels: ${missing.join(', ')}`,
+      }
+    }
+  }
+
+  const labelKeys = Object.keys(labels)
+  if (denied.length > 0) {
+    const blocked = labelKeys.filter((key) => matchesAnyPattern(key, denied))
+    if (blocked.length > 0) {
+      return {
+        ok: false as const,
+        reason: 'LabelBlocked',
+        message: `labels blocked by controller policy: ${blocked.join(', ')}`,
+      }
+    }
+  }
+
+  if (allowed.length > 0) {
+    const disallowed = labelKeys.filter((key) => !matchesAnyPattern(key, allowed))
+    if (disallowed.length > 0) {
+      return {
+        ok: false as const,
+        reason: 'LabelNotAllowed',
+        message: `labels not allowed by controller policy: ${disallowed.join(', ')}`,
+      }
+    }
+  }
+
+  return { ok: true as const }
+}
+
+type ImagePolicyCandidate = {
+  image: string
+  context?: string
+}
+
+const validateImagePolicy = (images: ImagePolicyCandidate[]) => {
+  const allowed = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_IMAGES_ALLOWED')
+  const denied = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED')
+  if (images.length === 0) return { ok: true as const }
+
+  for (const entry of images) {
+    const { image, context } = entry
+    if (denied.length > 0 && matchesAnyPattern(image, denied)) {
+      return {
+        ok: false as const,
+        reason: 'ImageBlocked',
+        message: context
+          ? `image ${image} for ${context} is blocked by controller policy`
+          : `image ${image} is blocked by controller policy`,
+      }
+    }
+    if (allowed.length > 0 && !matchesAnyPattern(image, allowed)) {
+      return {
+        ok: false as const,
+        reason: 'ImageNotAllowed',
+        message: context
+          ? `image ${image} for ${context} is not allowed by controller policy`
+          : `image ${image} is not allowed by controller policy`,
+      }
+    }
+  }
+
+  return { ok: true as const }
 }
 
 const validateAuthSecretPolicy = (allowedSecrets: string[], authSecret: AuthSecretConfig | null) => {
@@ -1009,8 +1118,7 @@ const validateVcsAuthConfig = (providerType: string | null, auth: Record<string,
   const warnings: Array<{ reason: string; message: string }> = []
   let resolvedTokenType: VcsTokenType | null = null
   if (method === 'token') {
-    resolvedTokenType =
-      normalizeTokenType(readNested(auth, ['token', 'type'])) ?? adapter.defaultTokenType ?? null
+    resolvedTokenType = normalizeTokenType(readNested(auth, ['token', 'type'])) ?? adapter.defaultTokenType ?? null
     if (resolvedTokenType && adapter.tokenTypes && !adapter.tokenTypes.includes(resolvedTokenType)) {
       return {
         ok: false as const,
@@ -1045,7 +1153,7 @@ const fetchGithubAppToken = async (input: {
   const cacheKey = `${input.apiBaseUrl}|${input.installationId}`
   const cached = githubAppTokenCache.get(cacheKey)
   const now = Date.now()
-  if (cached && cached.expiresAt - now > 30_000) {
+  if (cached && now < cached.refreshAfter) {
     return cached.token
   }
 
@@ -1087,14 +1195,25 @@ const fetchGithubAppToken = async (input: {
 
   const expiresAtRaw = asString(payloadResponse.expires_at)
   const ttlSeconds = typeof input.ttlSeconds === 'number' && input.ttlSeconds > 0 ? input.ttlSeconds : undefined
-  const expiresAtMs = expiresAtRaw
-    ? Date.parse(expiresAtRaw)
-    : now + (ttlSeconds ?? DEFAULT_GITHUB_APP_TOKEN_TTL_SECONDS) * 1000
+  const fallbackExpiresAt = now + (ttlSeconds ?? DEFAULT_GITHUB_APP_TOKEN_TTL_SECONDS) * 1000
+  const parsedExpiresAt = expiresAtRaw ? Date.parse(expiresAtRaw) : NaN
+  const expiresAtMs = Number.isNaN(parsedExpiresAt) ? fallbackExpiresAt : parsedExpiresAt
+  const ttlMs = Math.max(0, expiresAtMs - now)
+  const refreshWindowMs = Math.min(
+    DEFAULT_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS * 1000,
+    Math.max(MIN_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS * 1000, Math.floor(ttlMs * 0.1)),
+  )
+  const refreshAfter = Math.max(now, expiresAtMs - refreshWindowMs)
   githubAppTokenCache.set(cacheKey, {
     token,
-    expiresAt: Number.isNaN(expiresAtMs) ? now + 30 * 60 * 1000 : expiresAtMs,
+    expiresAt: expiresAtMs,
+    refreshAfter,
   })
   return token
+}
+
+const clearGithubAppTokenCache = () => {
+  githubAppTokenCache.clear()
 }
 
 const parseJsonEnv = (name: string) => {
@@ -1114,6 +1233,14 @@ const parseEnvRecord = (name: string) => asRecord(parseJsonEnv(name))
 const parseEnvArray = (name: string) => {
   const parsed = parseJsonEnv(name)
   return Array.isArray(parsed) ? parsed : null
+}
+
+const resolveVcsPrRateLimits = () => {
+  const parsed = parseJsonEnv('JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS')
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  const record = parsed as Record<string, unknown>
+  if (Object.keys(record).length === 0) return null
+  return record
 }
 
 const validateParameters = (params: Record<string, unknown>) => {
@@ -1860,8 +1987,7 @@ const appendBranchSuffix = (branch: string, suffix: string) => {
   return `${branch}${separator}${cleaned}`
 }
 
-const hasParameterValue = (parameters: Record<string, string>, keys: string[]) =>
-  resolveParam(parameters, keys) !== ''
+const hasParameterValue = (parameters: Record<string, string>, keys: string[]) => resolveParam(parameters, keys) !== ''
 
 const applyVcsMetadataToParameters = (
   parameters: Record<string, string>,
@@ -2233,7 +2359,7 @@ const resolveVcsContext = async ({
     effectiveMode = 'none'
   }
 
-  if (required && desiredMode !== effectiveMode && desiredMode !== 'none') {
+  if (required && desiredMode !== effectiveMode) {
     return {
       ok: false,
       skip: false,
@@ -2302,7 +2428,7 @@ const resolveVcsContext = async ({
 
   const authValidation = validateVcsAuthConfig(providerType, auth)
   if (!authValidation.ok) {
-    if (required && desiredMode !== 'none') {
+    if (required) {
       return {
         ok: false,
         skip: false,
@@ -2337,7 +2463,7 @@ const resolveVcsContext = async ({
     const secretName = asString(secretRef.name)
     const secretKey = asString(secretRef.key) ?? 'token'
     if (!secretName) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2360,7 +2486,7 @@ const resolveVcsContext = async ({
     }
     const blocked = collectBlockedSecrets([secretName])
     if (blocked.length > 0) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2382,7 +2508,7 @@ const resolveVcsContext = async ({
       }
     }
     if (allowedSecrets.length > 0 && !allowedSecrets.includes(secretName)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2405,7 +2531,7 @@ const resolveVcsContext = async ({
     }
     const secret = await kube.get('secret', secretName, namespace)
     if (!secret || !secretHasKey(secret, secretKey)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2444,7 +2570,7 @@ const resolveVcsContext = async ({
     const secretKey = asString(secretRef.key) ?? 'privateKey'
     const tokenTtlSeconds = Number(appSpec.tokenTtlSeconds)
     if (!appId || !installationId || !secretName) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2467,7 +2593,7 @@ const resolveVcsContext = async ({
     }
     const blocked = collectBlockedSecrets([secretName])
     if (blocked.length > 0) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2489,7 +2615,7 @@ const resolveVcsContext = async ({
       }
     }
     if (allowedSecrets.length > 0 && !allowedSecrets.includes(secretName)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2512,7 +2638,7 @@ const resolveVcsContext = async ({
     }
     const secret = await kube.get('secret', secretName, namespace)
     if (!secret || !secretHasKey(secret, secretKey)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2535,7 +2661,7 @@ const resolveVcsContext = async ({
     }
     const privateKey = resolveSecretValue(secret, secretKey)
     if (!privateKey) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2579,7 +2705,7 @@ const resolveVcsContext = async ({
     const knownHostsName = asString(knownHostsRef.name)
     const knownHostsKey = asString(knownHostsRef.key) ?? 'known_hosts'
     if (!secretName) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2602,7 +2728,7 @@ const resolveVcsContext = async ({
     }
     const blocked = collectBlockedSecrets([secretName])
     if (blocked.length > 0) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2624,7 +2750,7 @@ const resolveVcsContext = async ({
       }
     }
     if (allowedSecrets.length > 0 && !allowedSecrets.includes(secretName)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2647,7 +2773,7 @@ const resolveVcsContext = async ({
     }
     const secret = await kube.get('secret', secretName, namespace)
     if (!secret || !secretHasKey(secret, secretKey)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2767,6 +2893,10 @@ const resolveVcsContext = async ({
   }
   pushEnv('VCS_PR_TITLE_TEMPLATE', prTitleTemplate)
   pushEnv('VCS_PR_BODY_TEMPLATE', prBodyTemplate)
+  const prRateLimits = resolveVcsPrRateLimits()
+  if (prRateLimits) {
+    pushEnv('VCS_PR_RATE_LIMITS', JSON.stringify(prRateLimits))
+  }
   pushEnvBool('VCS_PR_DRAFT', prDraft)
   pushEnvBool('VCS_WRITE_ENABLED', writeEnabled)
   pushEnvBool('VCS_PULL_REQUESTS_ENABLED', pullRequestsEnabled)
@@ -3051,7 +3181,7 @@ const submitJobRun = async (
   const args = argsTemplate.map((arg) => renderTemplate(String(arg), context))
 
   const envTemplate = asRecord(providerSpec.envTemplate) ?? {}
-  const env = Object.entries(envTemplate).map(([key, value]) => ({
+  const env: EnvVar[] = Object.entries(envTemplate).map(([key, value]) => ({
     name: key,
     value: renderTemplate(String(value), context),
   }))
@@ -3609,6 +3739,7 @@ const reconcileWorkflowRun = async (
   const observedGeneration = asRecord(agentRun.metadata)?.generation ?? 0
   const runtimeConfig = asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
   const workflowSteps = parseWorkflowSteps(agentRun)
+  const baseWorkload = asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
   const workflowValidation = validateWorkflowSteps(workflowSteps)
   const conditions = buildConditions(agentRun)
 
@@ -3618,6 +3749,31 @@ const reconcileWorkflowRun = async (
       status: 'True',
       reason: workflowValidation.reason,
       message: workflowValidation.message,
+    })
+    await setStatus(kube, agentRun, {
+      observedGeneration,
+      phase: 'Failed',
+      finishedAt: nowIso(),
+      conditions: updated,
+    })
+    return
+  }
+
+  const imageCandidates = workflowSteps
+    .map((step) => {
+      const workload = step.workload ?? baseWorkload
+      const image = workload ? resolveJobImage(workload) : null
+      if (!image) return null
+      return { image, context: `workflow step ${step.name}` }
+    })
+    .filter((candidate): candidate is { image: string; context: string } => candidate !== null)
+  const imagePolicy = validateImagePolicy(imageCandidates)
+  if (!imagePolicy.ok) {
+    const updated = upsertCondition(conditions, {
+      type: 'InvalidSpec',
+      status: 'True',
+      reason: imagePolicy.reason,
+      message: imagePolicy.message,
     })
     await setStatus(kube, agentRun, {
       observedGeneration,
@@ -3649,7 +3805,6 @@ const reconcileWorkflowRun = async (
   let vcsStatus: Record<string, unknown> | undefined
 
   const baseParameters = resolveParameters(agentRun)
-  const baseWorkload = asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
   const allowedSecrets = dependencies.allowedSecrets
   const workflowStatus = normalizeWorkflowStatus(asRecord(status.workflow) ?? null, workflowSteps)
   let runtimeRefUpdate: RuntimeRef | null = null
@@ -4080,6 +4235,17 @@ const reconcileAgentRun = async (
       await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
       return
     }
+    const labelPolicy = validateLabelPolicy(normalizeLabelMap(asRecord(metadata.labels) ?? {}))
+    if (!labelPolicy.ok) {
+      const updated = upsertCondition(conditions, {
+        type: 'InvalidSpec',
+        status: 'True',
+        reason: labelPolicy.reason,
+        message: labelPolicy.message,
+      })
+      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      return
+    }
     const parameters = resolveParameters(agentRun)
 
     if (runtimeType === 'job') {
@@ -4090,6 +4256,17 @@ const reconcileAgentRun = async (
           status: 'True',
           reason: 'MissingWorkloadImage',
           message: 'spec.workload.image, JANGAR_AGENT_RUNNER_IMAGE, or JANGAR_AGENT_IMAGE is required for job runtime',
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+      const imagePolicy = validateImagePolicy([{ image: workloadImage, context: 'job runtime' }])
+      if (!imagePolicy.ok) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: imagePolicy.reason,
+          message: imagePolicy.message,
         })
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
         return
@@ -4428,12 +4605,7 @@ const reconcileAgentRun = async (
         conditions: updated,
         vcs: asRecord(status.vcs) ?? undefined,
       })
-      await applyJobTtlAfterStatus(
-        kube,
-        job,
-        asString(runtimeRef.namespace) ?? namespace,
-        runtimeConfig,
-      )
+      await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
     } else if (failed > 0 && isJobFailed(job)) {
       const updated = upsertCondition(conditions, {
         type: 'Failed',
@@ -4448,12 +4620,7 @@ const reconcileAgentRun = async (
         conditions: updated,
         vcs: asRecord(status.vcs) ?? undefined,
       })
-      await applyJobTtlAfterStatus(
-        kube,
-        job,
-        asString(runtimeRef.namespace) ?? namespace,
-        runtimeConfig,
-      )
+      await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
     }
   }
 
@@ -4521,16 +4688,7 @@ const reconcileRunWithState = async (
     total: counts.total,
     perAgent: counts.perAgent,
   }
-  await reconcileAgentRun(
-    kube,
-    run,
-    namespace,
-    snapshot.memories,
-    snapshot.runs,
-    concurrency,
-    inFlight,
-    counts.cluster,
-  )
+  await reconcileAgentRun(kube, run, namespace, snapshot.memories, snapshot.runs, concurrency, inFlight, counts.cluster)
 }
 
 const reconcileNamespaceState = async (
@@ -4774,9 +4932,12 @@ export const stopAgentsController = () => {
 
 export const __test = {
   checkCrds,
+  clearGithubAppTokenCache,
+  fetchGithubAppToken,
   reconcileAgentRun,
   reconcileVersionControlProvider,
   reconcileMemory,
+  resolveVcsPrRateLimits,
   resolveJobImage,
   resolveVcsContext,
 }

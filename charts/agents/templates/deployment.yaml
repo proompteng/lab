@@ -86,6 +86,22 @@ spec:
             - name: JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE
               value: {{ .Values.workflowRuntime.native.systemImprovementOrchestrationNamespace | quote }}
             {{- end }}
+            {{- if and .Values.runtime.agentRunnerImage (not (hasKey .Values.env.vars "JANGAR_AGENT_RUNNER_IMAGE")) }}
+            - name: JANGAR_AGENT_RUNNER_IMAGE
+              value: {{ .Values.runtime.agentRunnerImage | quote }}
+            {{- end }}
+            {{- if and .Values.runtime.agentImage (not (hasKey .Values.env.vars "JANGAR_AGENT_IMAGE")) }}
+            - name: JANGAR_AGENT_IMAGE
+              value: {{ .Values.runtime.agentImage | quote }}
+            {{- end }}
+            {{- if and .Values.runtime.scheduleRunnerImage (not (hasKey .Values.env.vars "JANGAR_SCHEDULE_RUNNER_IMAGE")) }}
+            - name: JANGAR_SCHEDULE_RUNNER_IMAGE
+              value: {{ .Values.runtime.scheduleRunnerImage | quote }}
+            {{- end }}
+            {{- if and .Values.runtime.scheduleServiceAccount (not (hasKey .Values.env.vars "JANGAR_SCHEDULE_SERVICE_ACCOUNT")) }}
+            - name: JANGAR_SCHEDULE_SERVICE_ACCOUNT
+              value: {{ .Values.runtime.scheduleServiceAccount | quote }}
+            {{- end }}
             {{- range $name, $value := .Values.env.vars }}
             - name: {{ $name }}
               value: {{ $value | quote }}
@@ -194,11 +210,39 @@ spec:
               value: {{ .Values.controller.webhook.retry.maxAttempts | default 5 | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
               value: {{ .Values.controller.agentRunRetentionSeconds | default 2592000 | quote }}
+            {{- if and .Values.controller.admissionPolicy.labels.required (gt (len .Values.controller.admissionPolicy.labels.required) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED
+              value: {{ .Values.controller.admissionPolicy.labels.required | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.labels.allowed (gt (len .Values.controller.admissionPolicy.labels.allowed) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_LABELS_ALLOWED
+              value: {{ .Values.controller.admissionPolicy.labels.allowed | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.labels.denied (gt (len .Values.controller.admissionPolicy.labels.denied) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_LABELS_DENIED
+              value: {{ .Values.controller.admissionPolicy.labels.denied | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.images.allowed (gt (len .Values.controller.admissionPolicy.images.allowed) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_IMAGES_ALLOWED
+              value: {{ .Values.controller.admissionPolicy.images.allowed | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.images.denied (gt (len .Values.controller.admissionPolicy.images.denied) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED
+              value: {{ .Values.controller.admissionPolicy.images.denied | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.secrets.blocked (gt (len .Values.controller.admissionPolicy.secrets.blocked) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS
+              value: {{ .Values.controller.admissionPolicy.secrets.blocked | toJson | quote }}
+            {{- end }}
             - name: JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED
               value: {{ .Values.controller.vcsProviders.enabled | default true | quote }}
             {{- if .Values.controller.vcsProviders.deprecatedTokenTypes }}
             - name: JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
               value: {{ .Values.controller.vcsProviders.deprecatedTokenTypes | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.vcsProviders.prRateLimits (gt (len .Values.controller.vcsProviders.prRateLimits) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS
+              value: {{ .Values.controller.vcsProviders.prRateLimits | toJson | quote }}
             {{- end }}
             {{- if .Values.controller.authSecret.name }}
             - name: JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
@@ -269,6 +313,10 @@ spec:
             - name: NATS_PASSWORD
               value: {{ .Values.agentComms.nats.password | quote }}
             {{- end }}
+            {{- end }}
+            {{- if and (gt (len .Values.agentComms.subjects) 0) (not (hasKey .Values.env.vars "JANGAR_AGENT_COMMS_SUBJECTS")) }}
+            - name: JANGAR_AGENT_COMMS_SUBJECTS
+              value: {{ join "," .Values.agentComms.subjects | quote }}
             {{- end }}
             {{- else }}
             - name: JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED

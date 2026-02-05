@@ -7,7 +7,12 @@ import type { AskForApproval } from "./AskForApproval";
 import type { DynamicToolSpec } from "./DynamicToolSpec";
 import type { SandboxMode } from "./SandboxMode";
 
-export type ThreadStartParams = { model: string | null, modelProvider: string | null, cwd: string | null, approvalPolicy: AskForApproval | null, sandbox: SandboxMode | null, config: { [key in string]?: JsonValue } | null, baseInstructions: string | null, developerInstructions: string | null, personality: Personality | null, ephemeral: boolean | null, dynamicTools: Array<DynamicToolSpec> | null, 
+export type ThreadStartParams = { model?: string | null, modelProvider?: string | null, cwd?: string | null, approvalPolicy?: AskForApproval | null, sandbox?: SandboxMode | null, config?: { [key in string]?: JsonValue } | null, baseInstructions?: string | null, developerInstructions?: string | null, personality?: Personality | null, ephemeral?: boolean | null, dynamicTools?: Array<DynamicToolSpec> | null, 
+/**
+ * Test-only experimental field used to validate experimental gating and
+ * schema filtering behavior in a stable way.
+ */
+mockExperimentalField?: string | null, 
 /**
  * If true, opt into emitting raw response items on the event stream.
  *
