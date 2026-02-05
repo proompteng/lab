@@ -813,6 +813,18 @@ const parseEnvList = (name: string) => {
     .filter((value) => value.length > 0)
 }
 
+const normalizeStringList = (values: unknown[]) =>
+  values
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+
+const parseEnvStringList = (name: string) => {
+  const parsed = parseEnvArray(name)
+  if (Array.isArray(parsed)) return normalizeStringList(parsed)
+  return parseEnvList(name)
+}
+
 const resolveRunnerServiceAccount = (runtimeConfig: Record<string, unknown>) =>
   asString(runtimeConfig.serviceAccount) ?? asString(process.env.JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT)
 
@@ -837,10 +849,99 @@ const buildAuthSecretPath = (config: AuthSecretConfig) => {
 }
 
 const collectBlockedSecrets = (secrets: string[]) => {
-  const blocked = parseEnvList('JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS')
+  const blocked = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS')
   if (blocked.length === 0) return []
   const blockedSet = new Set(blocked)
   return Array.from(new Set(secrets.filter((secret) => blockedSet.has(secret))))
+}
+
+const normalizeLabelMap = (labels: Record<string, unknown>) => {
+  const output: Record<string, string> = {}
+  for (const [key, value] of Object.entries(labels)) {
+    if (!key) continue
+    if (typeof value !== 'string') continue
+    const trimmed = value.trim()
+    if (!trimmed) continue
+    output[key] = trimmed
+  }
+  return output
+}
+
+const validateLabelPolicy = (labels: Record<string, string>) => {
+  const required = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED')
+  const allowed = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_LABELS_ALLOWED')
+  const denied = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_LABELS_DENIED')
+
+  if (required.length > 0) {
+    const missing = required.filter((key) => !labels[key])
+    if (missing.length > 0) {
+      return {
+        ok: false as const,
+        reason: 'MissingRequiredLabels',
+        message: `missing required labels: ${missing.join(', ')}`,
+      }
+    }
+  }
+
+  const labelKeys = Object.keys(labels)
+  if (denied.length > 0) {
+    const blocked = labelKeys.filter((key) => matchesAnyPattern(key, denied))
+    if (blocked.length > 0) {
+      return {
+        ok: false as const,
+        reason: 'LabelBlocked',
+        message: `labels blocked by controller policy: ${blocked.join(', ')}`,
+      }
+    }
+  }
+
+  if (allowed.length > 0) {
+    const disallowed = labelKeys.filter((key) => !matchesAnyPattern(key, allowed))
+    if (disallowed.length > 0) {
+      return {
+        ok: false as const,
+        reason: 'LabelNotAllowed',
+        message: `labels not allowed by controller policy: ${disallowed.join(', ')}`,
+      }
+    }
+  }
+
+  return { ok: true as const }
+}
+
+type ImagePolicyCandidate = {
+  image: string
+  context?: string
+}
+
+const validateImagePolicy = (images: ImagePolicyCandidate[]) => {
+  const allowed = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_IMAGES_ALLOWED')
+  const denied = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED')
+  if (images.length === 0) return { ok: true as const }
+
+  for (const entry of images) {
+    const { image, context } = entry
+    if (denied.length > 0 && matchesAnyPattern(image, denied)) {
+      return {
+        ok: false as const,
+        reason: 'ImageBlocked',
+        message: context
+          ? `image ${image} for ${context} is blocked by controller policy`
+          : `image ${image} is blocked by controller policy`,
+      }
+    }
+    if (allowed.length > 0 && !matchesAnyPattern(image, allowed)) {
+      return {
+        ok: false as const,
+        reason: 'ImageNotAllowed',
+        message: context
+          ? `image ${image} for ${context} is not allowed by controller policy`
+          : `image ${image} is not allowed by controller policy`,
+      }
+    }
+  }
+
+  return { ok: true as const }
 }
 
 const validateAuthSecretPolicy = (allowedSecrets: string[], authSecret: AuthSecretConfig | null) => {
@@ -1127,6 +1228,14 @@ const parseEnvRecord = (name: string) => asRecord(parseJsonEnv(name))
 const parseEnvArray = (name: string) => {
   const parsed = parseJsonEnv(name)
   return Array.isArray(parsed) ? parsed : null
+}
+
+const resolveVcsPrRateLimits = () => {
+  const parsed = parseJsonEnv('JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS')
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  const record = parsed as Record<string, unknown>
+  if (Object.keys(record).length === 0) return null
+  return record
 }
 
 const validateParameters = (params: Record<string, unknown>) => {
@@ -2780,6 +2889,10 @@ const resolveVcsContext = async ({
   }
   pushEnv('VCS_PR_TITLE_TEMPLATE', prTitleTemplate)
   pushEnv('VCS_PR_BODY_TEMPLATE', prBodyTemplate)
+  const prRateLimits = resolveVcsPrRateLimits()
+  if (prRateLimits) {
+    pushEnv('VCS_PR_RATE_LIMITS', JSON.stringify(prRateLimits))
+  }
   pushEnvBool('VCS_PR_DRAFT', prDraft)
   pushEnvBool('VCS_WRITE_ENABLED', writeEnabled)
   pushEnvBool('VCS_PULL_REQUESTS_ENABLED', pullRequestsEnabled)
@@ -3622,6 +3735,7 @@ const reconcileWorkflowRun = async (
   const observedGeneration = asRecord(agentRun.metadata)?.generation ?? 0
   const runtimeConfig = asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
   const workflowSteps = parseWorkflowSteps(agentRun)
+  const baseWorkload = asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
   const workflowValidation = validateWorkflowSteps(workflowSteps)
   const conditions = buildConditions(agentRun)
 
@@ -3631,6 +3745,31 @@ const reconcileWorkflowRun = async (
       status: 'True',
       reason: workflowValidation.reason,
       message: workflowValidation.message,
+    })
+    await setStatus(kube, agentRun, {
+      observedGeneration,
+      phase: 'Failed',
+      finishedAt: nowIso(),
+      conditions: updated,
+    })
+    return
+  }
+
+  const imageCandidates = workflowSteps
+    .map((step) => {
+      const workload = step.workload ?? baseWorkload
+      const image = workload ? resolveJobImage(workload) : null
+      if (!image) return null
+      return { image, context: `workflow step ${step.name}` }
+    })
+    .filter((candidate): candidate is ImagePolicyCandidate => Boolean(candidate))
+  const imagePolicy = validateImagePolicy(imageCandidates)
+  if (!imagePolicy.ok) {
+    const updated = upsertCondition(conditions, {
+      type: 'InvalidSpec',
+      status: 'True',
+      reason: imagePolicy.reason,
+      message: imagePolicy.message,
     })
     await setStatus(kube, agentRun, {
       observedGeneration,
@@ -3662,7 +3801,6 @@ const reconcileWorkflowRun = async (
   let vcsStatus: Record<string, unknown> | undefined
 
   const baseParameters = resolveParameters(agentRun)
-  const baseWorkload = asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
   const allowedSecrets = dependencies.allowedSecrets
   const workflowStatus = normalizeWorkflowStatus(asRecord(status.workflow) ?? null, workflowSteps)
   let runtimeRefUpdate: RuntimeRef | null = null
@@ -4093,6 +4231,17 @@ const reconcileAgentRun = async (
       await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
       return
     }
+    const labelPolicy = validateLabelPolicy(normalizeLabelMap(asRecord(metadata.labels) ?? {}))
+    if (!labelPolicy.ok) {
+      const updated = upsertCondition(conditions, {
+        type: 'InvalidSpec',
+        status: 'True',
+        reason: labelPolicy.reason,
+        message: labelPolicy.message,
+      })
+      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      return
+    }
     const parameters = resolveParameters(agentRun)
 
     if (runtimeType === 'job') {
@@ -4103,6 +4252,17 @@ const reconcileAgentRun = async (
           status: 'True',
           reason: 'MissingWorkloadImage',
           message: 'spec.workload.image, JANGAR_AGENT_RUNNER_IMAGE, or JANGAR_AGENT_IMAGE is required for job runtime',
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+      const imagePolicy = validateImagePolicy([{ image: workloadImage, context: 'job runtime' }])
+      if (!imagePolicy.ok) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: imagePolicy.reason,
+          message: imagePolicy.message,
         })
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
         return
@@ -4792,6 +4952,7 @@ export const __test = {
   reconcileAgentRun,
   reconcileVersionControlProvider,
   reconcileMemory,
+  resolveVcsPrRateLimits,
   resolveJobImage,
   resolveVcsContext,
 }
