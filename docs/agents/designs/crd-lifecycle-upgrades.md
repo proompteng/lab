@@ -8,6 +8,7 @@ compatibility rules, and CI enforcement. This design codifies the existing build
 production-ready checklist.
 
 ## Current State
+
 - Source of truth: Agents CRDs live in `charts/agents/crds/` and are installed by Helm (`includeCRDs: true` in
   `argocd/applications/agents/kustomization.yaml`).
 - Generation: Agent primitives are generated from Go types (`go generate services/jangar/api/agents`) and stamped
@@ -22,6 +23,7 @@ production-ready checklist.
   managing CRDs with ServerSideApply and is currently reporting some OutOfSync resources.
 
 ## Design Principles
+
 - CRDs are installed by Helm, not at runtime.
 - Controller behavior and CRD schema must evolve together in a single change.
 - Single-version CRDs (`v1alpha1`) remain the default until conversion webhooks are required.
@@ -55,19 +57,43 @@ production-ready checklist.
 - Ensure the controller image and chart version are upgraded together.
 
 ## Compatibility Rules
+
 - Additive changes only in `v1alpha1` (new optional fields, new status fields).
 - Do not remove or rename fields without a deprecation and migration plan.
 - Breaking schema changes require a new version and a conversion webhook.
 
 ## Rollback Strategy
+
 - Roll back CRDs and controller together.
 - Avoid introducing fields that older controllers cannot parse.
 
+## Operational Considerations
+
+- Keep configuration in the appropriate control plane (Helm values, CI, or code) and document overrides.
+- Update runbooks with enable/disable steps, rollback guidance, and expected failure modes.
+
+## Rollout
+
+- Ship behind feature flags or conservative defaults; validate in non-prod or CI first.
+- Verify deployment health (CI checks, ArgoCD sync, logs/metrics) before widening rollout.
+
+## Risks and Mitigations
+
+- Misconfiguration can cause deployment or runtime regressions; mitigate with schema validation and safe defaults.
+- Additional load or latency can impact controller throughput or CI runtime; mitigate with caps and monitoring.
+
+## Validation
+
+- Exercise the primary flow and confirm expected status, logs, or metrics.
+- Confirm no regression in existing workflows, CI checks, or chart rendering.
+
 ## Acceptance Criteria
+
 - Regenerated CRDs match repository state after `go generate`.
 - CI validation passes (`scripts/agents/validate-agents.sh`).
 - Jangar reports missing CRDs clearly on startup.
 
 ## Open Questions
+
 - When to introduce a formal `v1beta1` timeline and conversion webhook strategy.
 - Whether to add automated compatibility checks against previous CRD versions in CI.
