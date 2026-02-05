@@ -6,6 +6,7 @@ export type DockerBuildOptions = {
   tag: string
   context: string
   dockerfile: string
+  target?: string
   buildArgs?: Record<string, string>
   noCache?: boolean
   cwd?: string
@@ -82,6 +83,7 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
 
   if (shouldUseBuildx) {
     const args = ['buildx', 'build', '--push', '-f', options.dockerfile, '-t', image]
+    if (options.target) args.push('--target', options.target)
     if (noCache) args.push('--no-cache')
     if (options.platforms && options.platforms.length > 0) {
       args.push('--platform', options.platforms.join(','))
@@ -103,6 +105,7 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
     await run('docker', args, { cwd, env: dockerEnv })
   } else {
     const args = ['build', '-f', options.dockerfile, '-t', image]
+    if (options.target) args.push('--target', options.target)
     if (noCache) args.push('--no-cache')
     if (options.codexAuthPath) {
       args.push('--secret', `id=codexauth,src=${options.codexAuthPath}`)

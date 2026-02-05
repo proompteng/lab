@@ -1,31 +1,39 @@
-{{- $controlPlaneImage := .Values.controlPlane.image | default dict -}}
-{{- $controlPlaneEnvVars := .Values.controlPlane.env.vars | default dict -}}
-{{- $envVars := merge (deepCopy (.Values.env.vars | default dict)) (deepCopy $controlPlaneEnvVars) -}}
-{{- $imageRepo := $controlPlaneImage.repository | default .Values.image.repository -}}
-{{- $imageTag := $controlPlaneImage.tag | default .Values.image.tag -}}
-{{- $imageDigest := $controlPlaneImage.digest | default .Values.image.digest -}}
-{{- $imagePullPolicy := $controlPlaneImage.pullPolicy | default .Values.image.pullPolicy -}}
-{{- $imagePullSecrets := $controlPlaneImage.pullSecrets | default .Values.image.pullSecrets -}}
-{{- $replicas := .Values.controlPlane.replicaCount | default .Values.replicaCount -}}
-{{- $resources := .Values.controlPlane.resources | default .Values.resources -}}
+{{- if .Values.controllers.enabled -}}
+{{- $controllersImage := .Values.controllers.image | default dict -}}
+{{- $controllersEnvVars := .Values.controllers.env.vars | default dict -}}
+{{- $envVars := merge (deepCopy (.Values.env.vars | default dict)) (deepCopy $controllersEnvVars) -}}
+{{- if not (hasKey $controllersEnvVars "JANGAR_MIGRATIONS") -}}
+{{- $_ := set $envVars "JANGAR_MIGRATIONS" "skip" -}}
+{{- end -}}
+{{- if not (hasKey $controllersEnvVars "JANGAR_GRPC_ENABLED") -}}
+{{- $_ := set $envVars "JANGAR_GRPC_ENABLED" "0" -}}
+{{- end -}}
+{{- if not (hasKey $controllersEnvVars "JANGAR_CONTROL_PLANE_CACHE_ENABLED") -}}
+{{- $_ := set $envVars "JANGAR_CONTROL_PLANE_CACHE_ENABLED" "0" -}}
+{{- end -}}
+{{- $imageRepo := $controllersImage.repository | default .Values.image.repository -}}
+{{- $imageTag := $controllersImage.tag | default .Values.image.tag -}}
+{{- $imageDigest := $controllersImage.digest | default .Values.image.digest -}}
+{{- $imagePullPolicy := $controllersImage.pullPolicy | default .Values.image.pullPolicy -}}
+{{- $imagePullSecrets := $controllersImage.pullSecrets | default .Values.image.pullSecrets -}}
+{{- $replicas := .Values.controllers.replicaCount | default 1 -}}
+{{- $resources := .Values.controllers.resources | default .Values.resources -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "agents.fullname" . }}
+  name: {{ include "agents.fullname" . }}-controllers
   namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
   labels:
     {{- include "agents.labels" . | nindent 4 }}
 spec:
-  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ $replicas }}
-  {{- end }}
   selector:
     matchLabels:
-      {{- include "agents.selectorLabels" . | nindent 6 }}
+      {{- include "agents.controllersSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "agents.selectorLabels" . | nindent 8 }}
+        {{- include "agents.controllersSelectorLabels" . | nindent 8 }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -58,7 +66,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
-        - name: {{ include "agents.name" . }}
+        - name: {{ include "agents.controllersName" . }}
           image: "{{ $imageRepo }}:{{ $imageTag }}{{- if $imageDigest }}@{{ $imageDigest }}{{ end }}"
           imagePullPolicy: {{ $imagePullPolicy }}
           {{- with .Values.containerSecurityContext }}
@@ -185,14 +193,7 @@ spec:
               value: {{ .Values.rbac.clusterScoped | default false | quote }}
             - name: JANGAR_PRIMITIVES_NAMESPACES
               value: {{ include "agents.controllerNamespaces" . | quote }}
-            {{- if and .Values.controllers.enabled (not (hasKey $envVars "JANGAR_PRIMITIVES_RECONCILER")) }}
-            - name: JANGAR_PRIMITIVES_RECONCILER
-              value: "0"
-            {{- end }}
-            {{- if .Values.controllers.enabled }}
-            - name: JANGAR_AGENTS_CONTROLLER_ENABLED
-              value: "0"
-            {{- else if .Values.controller.enabled }}
+            {{- if .Values.controller.enabled }}
             - name: JANGAR_AGENTS_CONTROLLER_ENABLED
               value: "1"
             - name: JANGAR_AGENTS_CONTROLLER_NAMESPACES
@@ -265,10 +266,7 @@ spec:
             - name: JANGAR_AGENTS_CONTROLLER_ENABLED
               value: "0"
             {{- end }}
-            {{- if .Values.controllers.enabled }}
-            - name: JANGAR_ORCHESTRATION_CONTROLLER_ENABLED
-              value: "0"
-            {{- else if .Values.orchestrationController.enabled }}
+            {{- if .Values.orchestrationController.enabled }}
             - name: JANGAR_ORCHESTRATION_CONTROLLER_ENABLED
               value: "1"
             - name: JANGAR_ORCHESTRATION_CONTROLLER_NAMESPACES
@@ -277,10 +275,7 @@ spec:
             - name: JANGAR_ORCHESTRATION_CONTROLLER_ENABLED
               value: "0"
             {{- end }}
-            {{- if .Values.controllers.enabled }}
-            - name: JANGAR_SUPPORTING_CONTROLLER_ENABLED
-              value: "0"
-            {{- else if .Values.supportingController.enabled }}
+            {{- if .Values.supportingController.enabled }}
             - name: JANGAR_SUPPORTING_CONTROLLER_ENABLED
               value: "1"
             - name: JANGAR_SUPPORTING_CONTROLLER_NAMESPACES
@@ -303,10 +298,7 @@ spec:
               value: {{ .Values.grpc.port | quote }}
             {{- end }}
             {{- end }}
-            {{- if .Values.controllers.enabled }}
-            - name: JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED
-              value: "true"
-            {{- else if .Values.agentComms.enabled }}
+            {{- if .Values.agentComms.enabled }}
             - name: JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED
               value: "false"
             - name: NATS_URL
@@ -373,11 +365,6 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
-            {{- if .Values.grpc.enabled }}
-            - name: grpc
-              containerPort: {{ .Values.grpc.port }}
-              protocol: TCP
-            {{- end }}
           {{- if .Values.livenessProbe.enabled }}
           livenessProbe:
             httpGet:
@@ -426,3 +413,5 @@ spec:
         - name: {{ .name }}
           {{- toYaml .volume | nindent 10 }}
         {{- end }}
+{{- end }}
+

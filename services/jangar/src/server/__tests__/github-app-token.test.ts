@@ -7,7 +7,7 @@ import { __test } from '~/server/agents-controller'
 
 const loadPrivateKey = () =>
   readFileSync(
-    resolve(__dirname, '../../../../packages/temporal-bun-sdk/tests/fixtures/tls/temporal-test-client.key'),
+    resolve(__dirname, '../../../../../packages/temporal-bun-sdk/tests/fixtures/tls/temporal-test-client.key'),
     'utf8',
   )
 
@@ -27,8 +27,10 @@ describe('github app token cache', () => {
     vi.setSystemTime(baseTime)
 
     const expiresAt = new Date(baseTime.getTime() + 60 * 60 * 1000)
+    let callIndex = 0
     const fetchMock = vi.fn(async () => {
-      const token = `token-${fetchMock.mock.calls.length + 1}`
+      callIndex += 1
+      const token = `token-${callIndex}`
       return {
         ok: true,
         status: 201,
