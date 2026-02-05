@@ -66,15 +66,7 @@ const safeParseJson = (value: string | null | undefined) => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === 'object' && !Array.isArray(value))
 
-const isValidJudgeOutput = (value: unknown) => {
-  if (!isRecord(value)) return false
-  if (typeof value.decision !== 'string' || value.decision.trim().length === 0) return false
-  if (typeof value.next_prompt !== 'string') return false
-  const requiredKeys = ['requirements_coverage', 'missing_items', 'suggested_fixes', 'system_improvement_suggestions']
-  return requiredKeys.every((key) => key in value)
-}
-
-const VALID_STAGES = new Set(['implementation', 'judge', 'verify', 'review', 'planning', 'research'])
+const VALID_STAGES = new Set(['implementation', 'verify', 'review', 'planning', 'research'])
 
 const normalizeStage = (value: string | null | undefined) => {
   if (!value) return 'implementation'
@@ -113,7 +105,6 @@ type CodexNotifyPayload = {
   branch?: string | null
   prompt: string
   stage?: string | null
-  judge_output?: Record<string, unknown> | null
   context_soak?: {
     fetched: number
     filtered: number
@@ -229,111 +220,6 @@ const resolveHeadSha = async (worktree: string, logger: CodexLogger) => {
   return null
 }
 
-const resolveRepoOwner = (repository: string) => {
-  if (!repository.includes('/')) return { owner: '', repo: repository }
-  const [owner, repo] = repository.split('/')
-  return { owner: owner ?? '', repo: repo ?? '' }
-}
-
-const normalizeFileStatus = (status?: string | null) => {
-  const normalized = (status ?? '').toLowerCase()
-  if (normalized.startsWith('add')) return 'A'
-  if (normalized.startsWith('del') || normalized.startsWith('rem')) return 'D'
-  if (normalized.startsWith('ren')) return 'R'
-  if (normalized.startsWith('mod')) return 'M'
-  return normalized ? normalized.toUpperCase().slice(0, 1) : 'M'
-}
-
-type JangarFileEntry = {
-  path?: string
-  status?: string
-  patch?: string | null
-  previousFilename?: string | null
-}
-
-const buildWorktreeDiffFromJangarFiles = (files: JangarFileEntry[]) => {
-  if (files.length === 0) {
-    return { diff: '', error: 'worktree_diff_empty' }
-  }
-
-  const nameLines: string[] = []
-  const patchBlocks: string[] = []
-  for (const file of files) {
-    const path = file.path ?? ''
-    if (!path) continue
-    const status = normalizeFileStatus(file.status ?? null)
-    if (status === 'R' && file.previousFilename) {
-      nameLines.push(`${status}\t${file.previousFilename}\t${path}`)
-    } else {
-      nameLines.push(`${status}\t${path}`)
-    }
-
-    const patch = file.patch
-    if (patch && patch.trim().length > 0) {
-      const trimmedPatch = patch.trim()
-      if (trimmedPatch.startsWith('diff --git')) {
-        patchBlocks.push(trimmedPatch)
-      } else {
-        patchBlocks.push(
-          [
-            `diff --git a/${path} b/${path}`,
-            `--- a/${file.previousFilename ?? path}`,
-            `+++ b/${path}`,
-            trimmedPatch,
-          ].join('\n'),
-        )
-      }
-    }
-  }
-
-  if (patchBlocks.length === 0) {
-    return { diff: '', error: 'worktree_diff_empty' }
-  }
-
-  const header = nameLines.length > 0 ? `Worktree diff (authoritative):\n${nameLines.join('\n')}` : ''
-  const diff = [header, '', patchBlocks.join('\n\n')].filter((entry) => entry.length > 0).join('\n')
-  return { diff, error: null }
-}
-
-const fetchWorktreeDiffFromJangar = async (input: { repository: string; headBranch: string; logger: CodexLogger }) => {
-  const baseUrl = (process.env.JANGAR_BASE_URL ?? '').trim()
-  if (!baseUrl) {
-    return { diff: '', error: 'missing_jangar_base_url' }
-  }
-
-  let prInfo: PullRequestInfo | null = null
-  try {
-    prInfo = await listPullRequestByHead(input.repository, input.headBranch)
-  } catch (error) {
-    input.logger.warn('Failed to resolve PR before Jangar worktree diff', error)
-    return { diff: '', error: 'missing_pull_request' }
-  }
-
-  if (!prInfo?.number) {
-    return { diff: '', error: 'missing_pull_request' }
-  }
-
-  const { owner, repo } = resolveRepoOwner(input.repository)
-  if (!owner || !repo) {
-    return { diff: '', error: 'invalid_repository' }
-  }
-
-  const url = `${baseUrl.replace(/\/+$/, '')}/api/github/pulls/${owner}/${repo}/${prInfo.number}/files`
-  try {
-    const response = await fetch(url)
-    if (!response.ok) {
-      const message = await response.text()
-      return { diff: '', error: `jangar_files_fetch_failed:${response.status}:${message}` }
-    }
-    const payload = (await response.json()) as { files?: JangarFileEntry[] }
-    const files = Array.isArray(payload.files) ? payload.files : []
-    return buildWorktreeDiffFromJangarFiles(files)
-  } catch (error) {
-    input.logger.warn('Failed to fetch worktree diff from Jangar', error)
-    return { diff: '', error: 'jangar_files_fetch_failed' }
-  }
-}
-
 const initializeOutputFiles = async (paths: string[], logger: CodexLogger) => {
   await Promise.all(
     paths.map(async (path) => {
@@ -374,7 +260,6 @@ const buildNotifyPayload = ({
   headSha,
   prNumber,
   prUrl,
-  judgeOutput,
   contextSoak,
   memorySoak,
   iteration,
@@ -407,7 +292,6 @@ const buildNotifyPayload = ({
   headSha?: string | null
   prNumber?: number | null
   prUrl?: string | null
-  judgeOutput?: Record<string, unknown> | null
   contextSoak?: NatsContextPayload | null
   memorySoak?: MemoryContextPayload | null
   iteration?: number | null
@@ -437,7 +321,6 @@ const buildNotifyPayload = ({
     branch: headBranch || null,
     prompt,
     stage,
-    judge_output: judgeOutput ?? null,
     context_soak: contextSoak ?? null,
     memory_soak: memorySoak ?? null,
     iteration: iteration ?? null,
@@ -611,12 +494,6 @@ type PullRequestInfo = {
   baseRef?: string | null
 }
 
-type IssueDetails = {
-  title: string
-  body: string
-  url: string | null
-}
-
 const extractSectionLines = (text: string, header: string) => {
   const lines = text.replace(/\r/g, '').split('\n')
   const headerIndex = lines.findIndex((line) => line.trim().toLowerCase().startsWith(header.toLowerCase()))
@@ -660,37 +537,6 @@ const extractKnownGaps = (message?: string | null) => {
   if (gapLines.length > 0) return gapLines.map((line) => line.replace(/^[-*]\s*/, '')).filter(Boolean)
   const altLines = extractSectionLines(message, 'Gaps')
   return altLines.map((line) => line.replace(/^[-*]\s*/, '')).filter(Boolean)
-}
-
-const buildDefaultJudgePrompt = (input: {
-  repository: string
-  issueNumber: string
-  issueTitle: string
-  issueBody: string
-  issueUrl: string
-  baseBranch: string
-  headBranch: string
-}) => {
-  const trimmedBody = input.issueBody.trim() || 'No issue body provided.'
-  return [
-    'You are the Codex judge. Evaluate the implementation against the issue requirements.',
-    `Repository: ${input.repository}`,
-    `Issue: #${input.issueNumber} - ${input.issueTitle}`,
-    `Issue URL: ${input.issueUrl}`,
-    `Base branch: ${input.baseBranch}`,
-    `Head branch: ${input.headBranch}`,
-    '',
-    'Requirements:',
-    '- Use the worktree diff (git diff base..head) as the source of truth.',
-    '- Verify every requirement in the issue body is satisfied.',
-    '- If anything is missing, decide fail and provide a concrete next_prompt.',
-    '- Output strict JSON with fields: decision, requirements_coverage, missing_items, suggested_fixes, next_prompt, prompt_tuning_suggestions, system_improvement_suggestions.',
-    '',
-    'Issue body:',
-    '"""',
-    trimmedBody,
-    '"""',
-  ].join('\n')
 }
 
 const listPullRequestByHead = async (repository: string, headBranch: string) => {
@@ -742,89 +588,6 @@ const listPullRequestByHead = async (repository: string, headBranch: string) => 
     throw lastError
   }
   return null
-}
-
-const fetchPullRequestDetails = async (input: {
-  repository: string
-  headBranch: string
-  logger: CodexLogger
-}): Promise<PullRequestInfo | null> => {
-  let summary: PullRequestInfo | null = null
-  try {
-    summary = await listPullRequestByHead(input.repository, input.headBranch)
-  } catch (error) {
-    input.logger.warn('Failed to resolve pull request for judge context', error)
-    return null
-  }
-
-  if (!summary) return null
-  if (summary.title && summary.body) return summary
-
-  try {
-    const result = await runCommand('gh', [
-      'pr',
-      'view',
-      String(summary.number),
-      '--repo',
-      input.repository,
-      '--json',
-      'number,url,title,body,headRefOid,headRefName,baseRefName',
-    ])
-    if (result.exitCode !== 0) {
-      const message = result.stderr.trim() || result.stdout.trim()
-      throw new Error(message || 'gh pr view failed')
-    }
-    const parsed = JSON.parse(result.stdout || '{}') as PullRequestInfo & {
-      headRefOid?: string | null
-      headRefName?: string | null
-      baseRefName?: string | null
-    }
-    return {
-      number: parsed.number ?? summary.number,
-      url: parsed.url ?? summary.url,
-      title: parsed.title ?? summary.title ?? null,
-      body: parsed.body ?? summary.body ?? null,
-      headSha: parsed.headSha ?? parsed.headRefOid ?? summary.headSha ?? null,
-      headRef: parsed.headRef ?? parsed.headRefName ?? summary.headRef ?? null,
-      baseRef: parsed.baseRef ?? parsed.baseRefName ?? summary.baseRef ?? null,
-    }
-  } catch (error) {
-    input.logger.warn('Failed to load pull request details for judge context', error)
-    return summary
-  }
-}
-
-const fetchIssueDetails = async (input: {
-  repository: string
-  issueNumber: string
-  logger: CodexLogger
-}): Promise<IssueDetails | null> => {
-  try {
-    const result = await runCommand('gh', [
-      'issue',
-      'view',
-      input.issueNumber,
-      '--repo',
-      input.repository,
-      '--json',
-      'title,body,url',
-    ])
-    if (result.exitCode !== 0) {
-      const message = result.stderr.trim() || result.stdout.trim()
-      throw new Error(message || 'gh issue view failed')
-    }
-    const parsed = JSON.parse(result.stdout || '{}') as { title?: string; body?: string; url?: string }
-    const title = typeof parsed.title === 'string' ? parsed.title.trim() : ''
-    const body = typeof parsed.body === 'string' ? parsed.body.trim() : ''
-    const url = typeof parsed.url === 'string' && parsed.url.trim().length > 0 ? parsed.url.trim() : null
-    if (!title && !body) {
-      return null
-    }
-    return { title, body, url }
-  } catch (error) {
-    input.logger.warn('Failed to load issue details for judge context', error)
-    return null
-  }
 }
 
 const updatePullRequest = async (repository: string, pr: PullRequestInfo, title: string, body: string) => {
@@ -1130,59 +893,6 @@ const formatNatsContextBlock = (payload: NatsContextPayload | null, maxMessages 
     return `- [${timestamp}] (${kind}) ${truncateContextLine(content, 500)}`
   })
   return `Context soak from NATS general channel (latest ${messages.length} of ${payload.filtered}):\n${lines.join('\n')}`
-}
-
-const formatIssueContextBlock = (input: { title: string | null; body: string | null; url?: string | null }) => {
-  const title = input.title?.trim() ?? ''
-  const body = input.body?.trim() ?? ''
-  const url = input.url?.trim() ?? ''
-  if (!title && !body) return ''
-  return [
-    'Issue context (authoritative):',
-    title ? `Title: ${title}` : 'Title: (missing)',
-    url ? `URL: ${url}` : null,
-    'Body:',
-    '"""',
-    body || '(missing)',
-    '"""',
-  ]
-    .filter((line): line is string => Boolean(line))
-    .join('\n')
-}
-
-const formatPullRequestContextBlock = (input: PullRequestInfo | null) => {
-  if (!input) return ''
-  const title = input.title?.trim() ?? ''
-  const body = input.body?.trim() ?? ''
-  return [
-    'Pull request context (metadata only):',
-    `PR: #${input.number} ${input.url}`,
-    title ? `Title: ${title}` : 'Title: (missing)',
-    'Body:',
-    '"""',
-    body || '(missing)',
-    '"""',
-  ].join('\n')
-}
-
-const formatLogExcerptBlock = (input: CodexNotifyLogExcerpt | null) => {
-  if (!input) return ''
-  const sections: Array<[string, string | null | undefined]> = [
-    ['output', input.output],
-    ['events', input.events],
-    ['agent', input.agent],
-    ['runtime', input.runtime],
-    ['status', input.status],
-  ]
-  const lines: string[] = []
-  for (const [label, content] of sections) {
-    if (content == null || content === '') continue
-    lines.push(`[${label}]`)
-    lines.push(content)
-    lines.push('')
-  }
-  if (lines.length === 0) return ''
-  return ['Implementation log excerpts (authoritative artifacts):', ...lines].join('\n').trim()
 }
 
 const fetchNatsContext = async ({
@@ -1879,7 +1589,8 @@ export const runCodexImplementation = async (eventPath: string) => {
     throw new Error('Missing issue number metadata in event payload')
   }
 
-  const stage = normalizeStage(event.stage ?? process.env.CODEX_STAGE ?? 'implementation')
+  const rawStage = event.stage ?? process.env.CODEX_STAGE ?? 'implementation'
+  const stage = normalizeStage(rawStage)
   const iteration = parseOptionalInt(event.iteration)
   const iterationCycle = parseOptionalInt(event.iterationCycle ?? event.iteration_cycle)
   const iterations = parseOptionalInt(event.iterations)
@@ -1901,9 +1612,6 @@ export const runCodexImplementation = async (eventPath: string) => {
   const commitShaPath = process.env.COMMIT_SHA_PATH ?? `${worktree}/.codex-commit-sha.txt`
   const prNumberPath = process.env.PR_NUMBER_PATH ?? `${worktree}/.codex-pr-number.txt`
   const prUrlPath = process.env.PR_URL_PATH ?? `${worktree}/.codex-pr-url.txt`
-  const judgeOutputPath = process.env.JUDGE_OUTPUT_PATH ?? `${worktree}/.codex-judge-output.json`
-  const judgeDecisionPath = process.env.JUDGE_DECISION_PATH ?? `${worktree}/.codex-judge-decision.txt`
-  const judgeNextPromptPath = process.env.JUDGE_NEXT_PROMPT_PATH ?? `${worktree}/.codex-judge-next-prompt.txt`
   const natsContextPath = process.env.NATS_CONTEXT_PATH ?? `${worktree}/.codex-nats-context.json`
   const resumeMetadataPath = getResumeMetadataPath(worktree)
   const lokiEndpoint =
@@ -1974,19 +1682,7 @@ export const runCodexImplementation = async (eventPath: string) => {
   let issueUrl = sanitizeNullableString(event.issueUrl ?? '')
 
   if (!prompt) {
-    if (stage === 'judge') {
-      prompt = buildDefaultJudgePrompt({
-        repository,
-        issueNumber,
-        issueTitle: issueTitle || `Issue #${issueNumber}`,
-        issueBody,
-        issueUrl: issueUrl || `https://github.com/${repository}/issues/${issueNumber}`,
-        baseBranch,
-        headBranch,
-      })
-    } else {
-      throw new Error('Missing Codex prompt in event payload')
-    }
+    throw new Error('Missing Codex prompt in event payload')
   }
 
   process.env.CODEX_PROMPT = prompt
@@ -2045,9 +1741,6 @@ export const runCodexImplementation = async (eventPath: string) => {
       commitShaPath,
       prNumberPath,
       prUrlPath,
-      judgeOutputPath,
-      judgeDecisionPath,
-      judgeNextPromptPath,
       natsContextPath,
     ],
     consoleLogger,
@@ -2109,7 +1802,6 @@ export const runCodexImplementation = async (eventPath: string) => {
 
   const normalizedIssueNumber = issueNumber
   const supportsResume = stage === 'implementation'
-  let forcedJudgeOutput: Record<string, unknown> | null = null
   let prInfo: PullRequestInfo | null = null
   let resumeContext: ResumeContext | undefined
   let resumeSessionId: string | undefined
@@ -2140,79 +1832,6 @@ export const runCodexImplementation = async (eventPath: string) => {
           }
         } else {
           logger.warn('Failed to restore resume archive; proceeding with a fresh Codex session')
-        }
-      }
-    }
-
-    if (stage === 'judge') {
-      if (!issueTitle || !issueBody) {
-        const fetchedIssue = await fetchIssueDetails({ repository, issueNumber, logger })
-        if (fetchedIssue) {
-          issueTitle = fetchedIssue.title
-          issueBody = fetchedIssue.body
-          issueUrl = fetchedIssue.url ?? issueUrl
-          process.env.ISSUE_TITLE = issueTitle
-        }
-      }
-
-      if (!issueTitle || !issueBody) {
-        forcedJudgeOutput = {
-          decision: 'fail',
-          requirements_coverage: [],
-          missing_items: ['missing_issue_context'],
-          suggested_fixes: ['Ensure issue title/body are present in the judge input.'],
-          next_prompt: 'Issue context missing. Re-run the judge with full issue title and body.',
-          prompt_tuning_suggestions: [],
-          system_improvement_suggestions: [
-            'Ensure run-complete payloads always include issue title and body before judging.',
-          ],
-        }
-      } else {
-        const prDetails = await fetchPullRequestDetails({ repository, headBranch, logger })
-        prInfo = prDetails
-        if (!prDetails?.number) {
-          forcedJudgeOutput = {
-            decision: 'fail',
-            requirements_coverage: [],
-            missing_items: ['missing_pull_request'],
-            suggested_fixes: ['Ensure a PR exists for the branch before running the judge.'],
-            next_prompt: 'Open or restore the PR for this branch, then rerun the judge.',
-            prompt_tuning_suggestions: [],
-            system_improvement_suggestions: [
-              'Ensure implementation runs always create/update a PR before judge begins.',
-            ],
-          }
-        } else {
-          const diffResult = await fetchWorktreeDiffFromJangar({ repository, headBranch, logger })
-          if (diffResult.error) {
-            forcedJudgeOutput = {
-              decision: 'fail',
-              requirements_coverage: [],
-              missing_items: [diffResult.error],
-              suggested_fixes: ['Ensure a worktree diff is available for this PR head SHA before judging.'],
-              next_prompt:
-                'Worktree diff missing. Re-run the implementation with a valid worktree snapshot, then rerun the judge.',
-              prompt_tuning_suggestions: [],
-              system_improvement_suggestions: [
-                'Ensure worktree snapshots are generated and persisted before the judge runs.',
-              ],
-            }
-          } else if (diffResult.diff) {
-            const issueBlock = formatIssueContextBlock({ title: issueTitle, body: issueBody, url: issueUrl })
-            const prBlock = formatPullRequestContextBlock(prDetails)
-            const logExcerpt = await collectLogExcerpts(
-              {
-                outputPath: `${worktree}/.codex-implementation.log`,
-                jsonOutputPath: `${worktree}/.codex-implementation-events.jsonl`,
-                agentOutputPath: `${worktree}/.codex-implementation-agent.log`,
-                runtimeLogPath: `${worktree}/.codex-implementation-runtime.log`,
-                statusPath: `${worktree}/.codex-implementation-status.txt`,
-              },
-              logger,
-            )
-            const logBlock = formatLogExcerptBlock(logExcerpt)
-            prompt = [diffResult.diff, issueBlock, prBlock, logBlock, prompt].filter(Boolean).join('\n\n')
-          }
         }
       }
     }
@@ -2253,7 +1872,6 @@ export const runCodexImplementation = async (eventPath: string) => {
 
     let sessionResult: RunCodexSessionResult = { agentMessages: [], sessionId: undefined }
     let lastAssistantMessage: string | null = null
-    let judgeOutput: Record<string, unknown> | null = null
     const runSession = async (sessionPrompt: string) => {
       return await runCodexSession({
         stage: stage as Parameters<typeof runCodexSession>[0]['stage'],
@@ -2272,54 +1890,11 @@ export const runCodexImplementation = async (eventPath: string) => {
       })
     }
 
-    if (stage === 'judge' && forcedJudgeOutput) {
-      judgeOutput = forcedJudgeOutput
-    } else if (stage === 'judge') {
-      const maxAttempts = Math.max(parseOptionalInt(process.env.CODEX_JUDGE_JSON_RETRIES) ?? 2, 1)
-      const retrySuffix = [
-        '',
-        'Your previous response was not valid JSON.',
-        'Return ONLY a JSON object with fields: decision, requirements_coverage, missing_items, suggested_fixes, next_prompt, prompt_tuning_suggestions, system_improvement_suggestions.',
-        'Do not include markdown or extra commentary.',
-      ].join('\n')
-      let attempt = 0
-      let parsedOutput: Record<string, unknown> | null = null
-
-      while (attempt < maxAttempts) {
-        attempt += 1
-        const attemptPrompt = attempt === 1 ? prompt : `${prompt}\n\n${retrySuffix}`
-        sessionResult = await runSession(attemptPrompt)
-        lastAssistantMessage =
-          sessionResult.agentMessages.length > 0
-            ? sessionResult.agentMessages[sessionResult.agentMessages.length - 1]
-            : null
-        const candidate = safeParseJson(lastAssistantMessage ?? '')
-        if (candidate && isValidJudgeOutput(candidate)) {
-          parsedOutput = candidate
-          break
-        }
-        logger.warn(`Judge output invalid JSON (attempt ${attempt}/${maxAttempts})`)
-      }
-
-      if (!parsedOutput) {
-        forcedJudgeOutput = {
-          decision: 'fail',
-          requirements_coverage: [],
-          missing_items: ['judge_output_invalid_json'],
-          suggested_fixes: ['Ensure the judge outputs valid JSON in the required schema.'],
-          next_prompt: 'Judge output invalid JSON. Re-run the judge with valid JSON output.',
-          prompt_tuning_suggestions: [],
-          system_improvement_suggestions: ['Add stricter JSON-mode enforcement to the judge prompt.'],
-        }
-      }
-      judgeOutput = parsedOutput ?? forcedJudgeOutput
-    } else {
-      sessionResult = await runSession(prompt)
-      lastAssistantMessage =
-        sessionResult.agentMessages.length > 0
-          ? sessionResult.agentMessages[sessionResult.agentMessages.length - 1]
-          : null
-    }
+    sessionResult = await runSession(prompt)
+    lastAssistantMessage =
+      sessionResult.agentMessages.length > 0
+        ? sessionResult.agentMessages[sessionResult.agentMessages.length - 1]
+        : null
 
     capturedSessionId =
       sessionResult.sessionId ?? resumeContext?.metadata.sessionId ?? capturedSessionId ?? resumeSessionId
@@ -2368,9 +1943,6 @@ export const runCodexImplementation = async (eventPath: string) => {
     )
 
     const commitSha = await resolveHeadSha(worktree, logger)
-    if (stage === 'judge') {
-      judgeOutput = judgeOutput ?? forcedJudgeOutput ?? safeParseJson(lastAssistantMessage ?? '')
-    }
 
     if (stage === 'implementation') {
       prInfo = await ensurePullRequest({
@@ -2382,26 +1954,6 @@ export const runCodexImplementation = async (eventPath: string) => {
         lastAssistantMessage,
         logger,
       })
-    } else if (stage === 'judge' && !prInfo) {
-      try {
-        prInfo = await listPullRequestByHead(repository, headBranch)
-      } catch (error) {
-        logger.warn('Failed to resolve PR for judge stage', error)
-      }
-    }
-    if (stage === 'judge' && !prInfo?.number && !forcedJudgeOutput) {
-      forcedJudgeOutput = {
-        decision: 'fail',
-        requirements_coverage: [],
-        missing_items: ['missing_pull_request'],
-        suggested_fixes: ['Ensure a PR exists for the branch before running the judge.'],
-        next_prompt: 'Open or restore the PR for this branch, then rerun the judge.',
-        prompt_tuning_suggestions: [],
-        system_improvement_suggestions: ['Ensure implementation runs always create/update a PR before judge begins.'],
-      }
-    }
-    if (stage === 'judge' && forcedJudgeOutput) {
-      judgeOutput = forcedJudgeOutput
     }
     const prNumber = prInfo?.number ?? null
     const prUrl = prInfo?.url ?? null
@@ -2413,7 +1965,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       logger.warn('Failed to persist head sha output', error)
     }
 
-    if (stage === 'implementation' || stage === 'judge') {
+    if (stage === 'implementation') {
       try {
         await ensureFileDirectory(commitShaPath)
         await writeFile(commitShaPath, commitSha ?? '', 'utf8')
@@ -2432,17 +1984,6 @@ export const runCodexImplementation = async (eventPath: string) => {
       } catch (error) {
         logger.warn('Failed to persist PR url output', error)
       }
-    }
-
-    if (stage === 'judge') {
-      const decisionValue = typeof judgeOutput?.decision === 'string' ? judgeOutput.decision : 'fail'
-      const nextPromptValue =
-        typeof judgeOutput?.next_prompt === 'string' && judgeOutput.next_prompt.trim().length > 0
-          ? judgeOutput.next_prompt
-          : 'Re-run the implementation cycle with the latest context and address any missing requirements.'
-      await writeFile(judgeOutputPath, JSON.stringify(judgeOutput ?? {}, null, 2), 'utf8')
-      await writeFile(judgeDecisionPath, decisionValue, 'utf8')
-      await writeFile(judgeNextPromptPath, nextPromptValue, 'utf8')
     }
 
     const notifyPayload = buildNotifyPayload({
@@ -2472,7 +2013,6 @@ export const runCodexImplementation = async (eventPath: string) => {
       headSha,
       prNumber,
       prUrl,
-      judgeOutput,
       contextSoak: natsContext,
       memorySoak,
       iteration,
@@ -2500,9 +2040,8 @@ export const runCodexImplementation = async (eventPath: string) => {
     const summary = extractSummary(lastAssistantMessage)
     const tests = extractTests(lastAssistantMessage)
     const gaps = extractKnownGaps(lastAssistantMessage)
-    const decision = stage === 'judge' && typeof judgeOutput?.decision === 'string' ? judgeOutput.decision : 'pass'
-    const nextPrompt =
-      stage === 'judge' && typeof judgeOutput?.next_prompt === 'string' ? judgeOutput.next_prompt : 'None'
+    const decision = 'pass'
+    const nextPrompt = 'None'
     await publishNatsEvent(logger, {
       kind: 'run-summary',
       content: summary ?? `${stage} run completed`,
