@@ -167,7 +167,7 @@ Key components evolve from the current codebase:
 
 4. **Integration Template (New)**
    - Actions: rebase, ensure status checks, merge to target branch, tag release.  
-   - Runs `codex-integration.ts` script that we will create within `apps/froussard/src/codex/cli`.
+   - Runs `codex-integration.ts` script that we will create within `services/jangar/scripts/codex`.
 
 5. **Deploy Template (New)**
    - Wrap existing deployment scripts (`packages/scripts/src/froussard/deploy-service.ts`, etc.) inside Argo steps.
@@ -276,7 +276,7 @@ This design builds directly on the current codebase, evolving Froussard and Fact
 
 ## 16. Docker-Enabled Codex Workflows
 
-- **Image tooling:** `apps/froussard/Dockerfile.codex` now bakes Docker CLI, Buildx, and Compose with default `DOCKER_HOST=tcp://localhost:2375`. `DOCKER_TLS_VERIFY` should be unset for the in-pod daemon (bootstrap treats `0`/`false` as unset). `DOCKER_ENABLED` defaults to `0` in the image and is set to `1` only on WorkflowTemplates that attach the Docker sidecar so non-docker workflows stay untouched.
+- **Image tooling:** `services/jangar/Dockerfile.codex` now bakes Docker CLI, Buildx, and Compose with default `DOCKER_HOST=tcp://localhost:2375`. `DOCKER_TLS_VERIFY` should be unset for the in-pod daemon (bootstrap treats `0`/`false` as unset). `DOCKER_ENABLED` defaults to `0` in the image and is set to `1` only on WorkflowTemplates that attach the Docker sidecar so non-docker workflows stay untouched.
 - **Rootless sidecar:** Every GitHub Codex WorkflowTemplate attaches a `docker:25.0-dind-rootless` sidecar listening on 2375, backed by an `emptyDir` at `/var/lib/docker` that is mounted read-only into the main Codex container to make image layers visible across steps without exposing write access.
 - **Bootstrap changes:** `codex-bootstrap` skips redundant `bun install` when `DOCKER_ENABLED=1` and cached modules exist, and it waits for `docker info` only when `DOCKER_ENABLED=1` so docker-ready workflows fail fast while other workflows proceed without delay.
 - **Policy guardrails:** A dedicated RBAC binding (`codex-docker-privileged` role in `argocd/applications/argo-workflows/codex-docker-policy.yaml`) scopes privileged pod usage to the Codex workflow service account; review namespace pod-security posture before promotion.

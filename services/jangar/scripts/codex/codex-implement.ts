@@ -1718,7 +1718,7 @@ export const runCodexImplementation = async (eventPath: string) => {
 
   const envChannelScript = sanitizeNullableString(process.env.CHANNEL_SCRIPT ?? '')
   const imageChannelScript = '/usr/local/bin/discord-channel.ts'
-  const repoChannelScript = 'apps/froussard/scripts/discord-channel.ts'
+  const repoChannelScript = 'services/jangar/scripts/discord-channel.ts'
   const channelScript =
     envChannelScript || ((await pathExists(imageChannelScript)) ? imageChannelScript : repoChannelScript)
   const channelTimestamp = timestampUtc()

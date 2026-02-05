@@ -623,7 +623,7 @@ Each system-improvement PR must include:
 - If failure is due to workflow config: PR targets `argocd/applications/froussard/`.
 - If failure is due to judge logic: PR targets `services/jangar/src/server/`.
 - If failure is due to missing artifacts: PR targets workflow template outputs.
-- If failure is due to PR creation: PR targets `apps/froussard/src/codex/cli/`.
+- If failure is due to PR creation: PR targets `services/jangar/scripts/codex/`.
 
 ## 10) PR Creation Guarantees
 

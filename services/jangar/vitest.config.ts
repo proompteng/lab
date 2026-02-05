@@ -24,7 +24,7 @@ export default defineConfig({
       '@proompteng/codex/*': codexStub,
       bun: bunStub,
     },
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    include: ['src/**/*.{test,spec}.{ts,tsx}', 'scripts/**/*.{test,spec}.{ts,tsx}'],
     exclude: ['tests/ui/**', '**/node_modules/**'],
   },
 })

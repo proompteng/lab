@@ -1,20 +1,20 @@
 # Codex Image Asset Rehome (Froussard -> Jangar)
 
-Status: Draft (2026-02-05)
+Status: Implemented (2026-02-05)
 
 ## Summary
 
-Move the Codex Docker image assets (Dockerfile, runtime scripts, and build helper) out of `apps/froussard` and into
+Moved the Codex Docker image assets (Dockerfile, runtime scripts, and build helper) out of `apps/froussard` and into
 `services/jangar` so the control-plane service owns the agent runtime image. This eliminates cross-service coupling,
-reduces duplicate Codex CLI sources, and aligns the image build flow with the Jangar-managed agent workflows.
+reduces duplicate Codex CLI sources in Froussard, and aligns the image build flow with the Jangar-managed workflows.
 
 ## Background
 
-Today the Codex runtime image is built from `apps/froussard/Dockerfile.codex`, and the build helper lives under
-`apps/froussard/src/codex/cli/build-codex-image.ts`. The Dockerfile copies multiple Codex CLI scripts and config files
-from the Froussard tree. Jangar already carries parallel copies of some of these scripts (for example
+Previously the Codex runtime image was built from `apps/froussard/Dockerfile.codex`, and the build helper lived under
+`apps/froussard/src/codex/cli/build-codex-image.ts`. The Dockerfile copied multiple Codex CLI scripts and config files
+from the Froussard tree. Jangar already carried parallel copies of some of these scripts (for example
 `services/jangar/scripts/codex-implement.ts` and `services/jangar/scripts/agent-runner.ts`) plus a richer
-`codex-config-container.toml`, which is already diverged from the Froussard copy.
+`codex-config-container.toml`, which had already diverged from the Froussard copy.
 
 The Codex image is a Jangar/agents concern, not a Froussard concern. Keeping its build assets in Froussard makes it
 harder to evolve Jangar without touching unrelated webhook code and increases risk of drift between duplicate scripts.
@@ -32,28 +32,29 @@ harder to evolve Jangar without touching unrelated webhook code and increases ri
 - Redesign Codex runtime behavior, logging, or environment contracts.
 - Refactor Froussard webhook logic or Codex task parsing.
 
-## Current State
+## Current State (Post-move)
 
-- Dockerfile: `apps/froussard/Dockerfile.codex`.
-- Build helper: `apps/froussard/src/codex/cli/build-codex-image.ts`.
-- Container config: `apps/froussard/scripts/codex-config-container.toml`.
-- Runtime scripts copied into the image from Froussard:
-  - `apps/froussard/src/codex/cli/codex-bootstrap.ts`
-  - `apps/froussard/src/codex/cli/agent-runner.ts`
-  - `apps/froussard/src/codex/cli/codex-implement.ts`
-  - `apps/froussard/src/codex/cli/codex-research.ts`
-  - `apps/froussard/src/codex/cli/codex-graf.ts`
-  - `apps/froussard/src/codex/cli/lib/**`
-  - `apps/froussard/scripts/codex-nats-publish.ts`
-  - `apps/froussard/scripts/codex-nats-soak.ts`
-  - `apps/froussard/scripts/discord-channel.ts`
-- Jangar already has overlapping scripts and a newer container config in `services/jangar/scripts/`.
+- Dockerfile: `services/jangar/Dockerfile.codex`.
+- Build helper: `services/jangar/scripts/build-codex-image.ts`.
+- Container config: `services/jangar/scripts/codex-config-container.toml`.
+- Runtime scripts copied into the image:
+  - `services/jangar/scripts/codex/codex-bootstrap.ts`
+  - `services/jangar/scripts/codex/agent-runner.ts`
+  - `services/jangar/scripts/codex/codex-implement.ts`
+  - `services/jangar/scripts/codex/codex-research.ts`
+  - `services/jangar/scripts/codex/codex-graf.ts`
+  - `services/jangar/scripts/codex/lib/**`
+  - `services/jangar/scripts/codex-nats-publish.ts`
+  - `services/jangar/scripts/codex-nats-soak.ts`
+  - `services/jangar/scripts/discord-channel.ts`
+- Jangar service runtime still uses its own `services/jangar/scripts/agent-runner.ts` and
+  `services/jangar/scripts/codex-implement.ts` for the control-plane container image.
 
-## Proposed Changes
+## Implemented Changes
 
 ### New ownership and layout
 
-Move Codex image assets to `services/jangar` and treat Jangar as the only source of truth.
+Moved Codex image assets to `services/jangar` and treat Jangar as the only source of truth for the Codex runtime image.
 
 Recommended layout:
 
@@ -66,7 +67,7 @@ Recommended layout:
 This keeps the image inputs co-located with Jangar while preserving a clear boundary between image assets and the
 primary Jangar app code.
 
-### File move map (proposed)
+### File move map
 
 | Current path | New path |
 | --- | --- |
@@ -82,10 +83,10 @@ primary Jangar app code.
 
 ### Consolidate duplicate scripts
 
-- Use the Jangar versions of `agent-runner.ts`, `codex-implement.ts`, and `codex-config-container.toml` as the
-  canonical implementation.
-- Diff the Froussard and Jangar copies and merge any missing features into the Jangar versions before deleting the
-  Froussard copies.
+- Codex runtime image now uses the relocated scripts under `services/jangar/scripts/codex/` to preserve existing
+  behavior.
+- The Jangar service container continues to use `services/jangar/scripts/agent-runner.ts` and
+  `services/jangar/scripts/codex-implement.ts` for control-plane tasks.
 
 ### Update Dockerfile references
 
@@ -108,16 +109,12 @@ Update references to the Dockerfile and build helper in:
 - `docs/agents/agents-helm-chart-design.md`
 - `apps/froussard/README.md`
 
-## Plan
+## Implementation Notes
 
-1. Inventory and diff Codex CLI duplicates in `apps/froussard/src/codex/cli` vs `services/jangar/scripts`.
-2. Move `Dockerfile.codex` to `services/jangar` and update `COPY` paths to the new script locations.
-3. Move Codex CLI entrypoints and lib helpers into `services/jangar/scripts/codex/`.
-4. Merge any missing features from the Froussard CLI into the Jangar scripts, then delete the Froussard copies.
-5. Move the Docker build helper into `services/jangar/scripts/build-codex-image.ts` and update paths.
-6. Update tests to live under `services/jangar/scripts/codex/__tests__` and ensure Jangar vitest config picks them up.
-7. Update docs and runbooks to reference the new paths.
-8. Run the build helper and a lightweight image smoke test to confirm unchanged behavior.
+- Moved Dockerfile, build helper, CLI scripts, and NATS/Discord helpers into `services/jangar`.
+- Updated the Codex image Dockerfile `COPY` statements to the new Jangar paths.
+- Moved CLI tests under `services/jangar/scripts/codex/__tests__` and extended Jangar Vitest config to include scripts.
+- Updated docs and runbooks to reference the new paths.
 
 ## Validation
 

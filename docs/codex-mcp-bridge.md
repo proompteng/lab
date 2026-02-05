@@ -15,7 +15,7 @@ Copy the repo’s template config so Codex runs with the expected defaults (mode
 
 ```bash
 install -d ~/.codex
-cp ~/github.com/lab/apps/froussard/scripts/codex-config-container.toml ~/.codex/config.toml
+cp ~/github.com/lab/services/jangar/scripts/codex-config-container.toml ~/.codex/config.toml
 ```
 
 The template pins `gpt-5.2-codex`, disables approvals, and trusts `/home/kalmyk/github.com/lab`.
