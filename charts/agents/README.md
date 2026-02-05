@@ -136,9 +136,7 @@ mounts the secret file at `auth.json` inside it. It also sets `CODEX_HOME` and `
 
 Example:
 ```bash
-helm upgrade agents charts/agents --namespace agents --reuse-values \
-  --set controller.authSecret.name=codex-auth \
-  --set controller.authSecret.key=auth.json
+helm upgrade agents charts/agents --namespace agents --reuse-values   --set controller.authSecret.name=codex-auth   --set controller.authSecret.key=auth.json
 ```
 
 ### Admission control policy
@@ -168,6 +166,17 @@ controller:
       blocked:
         - prod-kubeconfig
 ```
+
+### AgentRun runner defaults (optional)
+Set defaults for AgentRun and Schedule workload images when the CRD does not specify one:
+- `runtime.agentRunnerImage` → `JANGAR_AGENT_RUNNER_IMAGE`
+- `runtime.agentImage` → `JANGAR_AGENT_IMAGE`
+- `runtime.scheduleRunnerImage` → `JANGAR_SCHEDULE_RUNNER_IMAGE`
+- `runtime.scheduleServiceAccount` → `JANGAR_SCHEDULE_SERVICE_ACCOUNT`
+
+### Agent comms subjects (optional)
+Override the default NATS subject filters (comma-separated) used by the agent comms subscriber:
+- `agentComms.subjects`
 
 ### Version control providers
 Define a VersionControlProvider resource to decouple repo access from issue intake. This is required for
@@ -204,7 +213,7 @@ controller:
 ```
 
 Branch naming defaults (VersionControlProvider `spec.defaults`):
-- `branchTemplate` controls deterministic head branch names (e.g. `codex/{{issueNumber}}`).
+- `branchTemplate` controls deterministic head branch names (e.g., `codex/{{issueNumber}}`).
 - `branchConflictSuffixTemplate` appends a suffix when another active run uses the same branch.
 
 Example token auth (GitHub fine-grained PAT):
@@ -269,6 +278,7 @@ controller:
         maxRequests: 10
         backoffSeconds: 20
 ```
+
 
 ## Example production values
 ```yaml

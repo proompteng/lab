@@ -137,6 +137,12 @@ workflowRuntime:
     systemImprovementOrchestration: ""
     systemImprovementOrchestrationNamespace: ""
 
+runtime:
+  agentRunnerImage: ""
+  agentImage: ""
+  scheduleRunnerImage: ""
+  scheduleServiceAccount: ""
+
 envFromSecretRefs: []
 envFromConfigMapRefs: []
 
@@ -250,6 +256,7 @@ supportingController:
 
 agentComms:
   enabled: false
+  subjects: []
   nats:
     url: ""
     user: ""
