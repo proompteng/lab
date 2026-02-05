@@ -146,6 +146,8 @@ spec:
                 properties:
                   baseBranch:
                     type: string
+                  branchConflictSuffixTemplate:
+                    type: string
                   branchTemplate:
                     type: string
                   commitAuthorEmail:

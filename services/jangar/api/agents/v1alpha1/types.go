@@ -447,11 +447,12 @@ type VersionControlProviderCapabilities struct {
 }
 
 type VersionControlProviderDefaults struct {
-	BaseBranch        string                                     `json:"baseBranch,omitempty"`
-	BranchTemplate    string                                     `json:"branchTemplate,omitempty"`
-	CommitAuthorName  string                                     `json:"commitAuthorName,omitempty"`
-	CommitAuthorEmail string                                     `json:"commitAuthorEmail,omitempty"`
-	PullRequest       *VersionControlProviderPullRequestDefaults `json:"pullRequest,omitempty"`
+	BaseBranch                   string                                     `json:"baseBranch,omitempty"`
+	BranchTemplate               string                                     `json:"branchTemplate,omitempty"`
+	BranchConflictSuffixTemplate string                                     `json:"branchConflictSuffixTemplate,omitempty"`
+	CommitAuthorName             string                                     `json:"commitAuthorName,omitempty"`
+	CommitAuthorEmail            string                                     `json:"commitAuthorEmail,omitempty"`
+	PullRequest                  *VersionControlProviderPullRequestDefaults `json:"pullRequest,omitempty"`
 }
 
 type VersionControlProviderPullRequestDefaults struct {
