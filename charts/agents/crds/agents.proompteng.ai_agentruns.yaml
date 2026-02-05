@@ -305,6 +305,7 @@ spec:
                           type: integer
                         timeoutSeconds:
                           format: int32
+                          minimum: 0
                           type: integer
                         workload:
                           properties:
