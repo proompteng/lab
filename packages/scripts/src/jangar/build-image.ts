@@ -14,6 +14,7 @@ export type BuildImageOptions = {
   tag?: string
   context?: string
   dockerfile?: string
+  target?: string
   version?: string
   commit?: string
   codexAuthPath?: string
@@ -67,6 +68,7 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
     repoRoot,
     options.dockerfile ?? process.env.JANGAR_DOCKERFILE ?? 'services/jangar/Dockerfile',
   )
+  const target = options.target ?? process.env.JANGAR_DOCKER_TARGET ?? undefined
   const version = options.version ?? process.env.JANGAR_VERSION ?? tag
   const commit = options.commit ?? process.env.JANGAR_COMMIT ?? execGit(['rev-parse', 'HEAD'])
   const codexAuthPath =
@@ -104,6 +106,7 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
       tag,
       context,
       dockerfile,
+      target,
       buildArgs,
       codexAuthPath: codexAuthPathForDocker,
       cacheRef,
