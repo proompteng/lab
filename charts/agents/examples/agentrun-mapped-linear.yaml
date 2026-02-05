@@ -1,0 +1,35 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: codex-run-linear-mapped
+spec:
+  agentRef:
+    name: codex-agent
+  implementationSpecRef:
+    name: codex-impl-sample
+  memoryRef:
+    name: default-memory
+  runtime:
+    type: workflow
+    config:
+      ttlSecondsAfterFinished: 600
+  workflow:
+    steps:
+      - name: plan
+        parameters:
+          stage: plan
+      - name: implement
+        parameters:
+          stage: implement
+  workload:
+    image: registry.ide-newton.ts.net/lab/codex-universal:latest
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+  parameters:
+    linearRepo: proompteng/lab
+    linearIssue: "1234"
+    linearUrl: https://linear.app/proompteng/issue/ENG-1234
+    base: main
+    head: codex/onboarding-flow

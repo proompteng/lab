@@ -2,8 +2,8 @@ replicaCount: 1
 
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: "2516da73"
-  digest: sha256:ae58f187c0cd4c8b15e706593993aa9bb19c3036e6ee317ed4981f3a1b168d37
+  tag: "67ff73d6f"
+  digest: sha256:a2b12daca868ca656e872424a37c78f7903b8319a7d08fc18ad6085dd9037bf0
   pullPolicy: IfNotPresent
 
 grpc:
@@ -21,6 +21,8 @@ resources:
 controller:
   namespaces:
     - agents-ci
+  vcsProviders:
+    enabled: false
 
 orchestrationController:
   namespaces:

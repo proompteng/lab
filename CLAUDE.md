@@ -108,7 +108,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 
 ### Application Patterns
 
-- **Next.js apps** (proompteng): Use App Router, TypeScript, Tailwind CSS, shadcn/ui components
+- **Next.js apps** (proompteng): Use App Router, TypeScript, Tailwind CSS, @proompteng/design components
 - **React apps** (kitty-krew): TanStack Start with TanStack Router and tRPC for type-safe APIs
 - **Python apps** (alchimie): Dagster for data pipelines, UV for dependency management
 - **Go services** (prt): Temporal workflows, PostgreSQL integration, database migrations

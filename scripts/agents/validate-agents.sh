@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHART_DIR="${ROOT_DIR}/charts/agents"
+ARGOCD_AGENTS_DIR="${ROOT_DIR}/argocd/applications/agents"
 
 go generate "${ROOT_DIR}/services/jangar/api/agents"
 
@@ -36,6 +37,23 @@ render_and_check "${CHART_DIR}/values-local.yaml"
 render_and_check "${CHART_DIR}/values-ci.yaml"
 render_and_check "${CHART_DIR}/values-prod.yaml"
 
+render_kustomize() {
+  if command -v kustomize >/dev/null 2>&1; then
+    kustomize build --enable-helm "${ARGOCD_AGENTS_DIR}" >/dev/null
+    return 0
+  fi
+
+  if command -v kubectl >/dev/null 2>&1; then
+    kubectl kustomize --enable-helm "${ARGOCD_AGENTS_DIR}" >/dev/null
+    return 0
+  fi
+
+  echo "kustomize (or kubectl) is required to render ${ARGOCD_AGENTS_DIR}" >&2
+  exit 1
+}
+
+render_kustomize
+
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_agents.yaml" agents.proompteng.ai v1alpha1 Agent
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_agentruns.yaml" agents.proompteng.ai v1alpha1 AgentRun
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/agents.proompteng.ai_agentproviders.yaml" agents.proompteng.ai v1alpha1 AgentProvider
@@ -54,6 +72,11 @@ python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/tools.pr
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/schedules.proompteng.ai_schedules.yaml" schedules.proompteng.ai v1alpha1 Schedule
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/artifacts.proompteng.ai_artifacts.yaml" artifacts.proompteng.ai v1alpha1 Artifact
 python3 "${ROOT_DIR}/scripts/download_crd_schema.py" "${CHART_DIR}/crds/workspaces.proompteng.ai_workspaces.yaml" workspaces.proompteng.ai v1alpha1 Workspace
+
+if ! git -C "${ROOT_DIR}" diff --exit-code -- "${ROOT_DIR}/schemas/custom"; then
+  echo "schemas/custom is out of date; regenerate and commit the CRD schemas." >&2
+  exit 1
+fi
 
 python3 - <<'PY'
 import sys

@@ -31,8 +31,22 @@ export type PrimitiveListResult =
   | { ok: false; message: string; status?: number; raw?: unknown }
 
 export type PrimitiveDetailResult =
-  | { ok: true; resource: Record<string, unknown>; kind: AgentPrimitiveKind; namespace: string }
+  | { ok: true; resource: PrimitiveResource; kind: AgentPrimitiveKind; namespace: string }
   | { ok: false; message: string; status?: number; raw?: unknown }
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+
+const normalizePrimitiveResource = (value: unknown): PrimitiveResource => {
+  const record = asRecord(value)
+  return {
+    apiVersion: typeof record.apiVersion === 'string' ? record.apiVersion : null,
+    kind: typeof record.kind === 'string' ? record.kind : null,
+    metadata: asRecord(record.metadata),
+    spec: asRecord(record.spec),
+    status: asRecord(record.status),
+  }
+}
 
 export type PrimitiveEventItem = {
   name: string | null
@@ -55,6 +69,30 @@ export type PrimitiveEventsResult =
       kind: AgentPrimitiveKind
       namespace: string
       name: string
+    }
+  | { ok: false; message: string; status?: number; raw?: unknown }
+
+export type AgentRunLogContainer = {
+  name: string
+  type: 'main' | 'init'
+}
+
+export type AgentRunLogPod = {
+  name: string
+  phase: string | null
+  containers: AgentRunLogContainer[]
+}
+
+export type AgentRunLogsResult =
+  | {
+      ok: true
+      name: string
+      namespace: string
+      pods: AgentRunLogPod[]
+      logs: string
+      pod: string | null
+      container: string | null
+      tailLines: number | null
     }
   | { ok: false; message: string; status?: number; raw?: unknown }
 
@@ -217,8 +255,38 @@ export const fetchPrimitiveDetail = async (params: {
     }
   }
   const record = payload as Record<string, unknown>
-  const resource =
-    record.resource && typeof record.resource === 'object' ? (record.resource as Record<string, unknown>) : {}
+  const resource = normalizePrimitiveResource(record.resource)
+  const namespace = typeof record.namespace === 'string' ? record.namespace : params.namespace
+  return { ok: true, resource, kind: params.kind, namespace }
+}
+
+export const deletePrimitiveResource = async (params: {
+  kind: AgentPrimitiveKind
+  name: string
+  namespace: string
+}): Promise<PrimitiveDetailResult> => {
+  const searchParams = new URLSearchParams({
+    kind: params.kind,
+    name: params.name,
+    namespace: params.namespace,
+  })
+  const response = await fetch(`/api/agents/control-plane/resource?${searchParams.toString()}`, {
+    method: 'DELETE',
+  })
+  const payload = await parseResponse(response)
+  if (!payload || typeof payload !== 'object') {
+    return { ok: false, message: 'Invalid response payload', status: response.status }
+  }
+  if ('ok' in payload && payload.ok === false) {
+    return {
+      ok: false,
+      message: extractErrorMessage(payload) ?? 'Request failed',
+      status: response.status,
+      raw: payload,
+    }
+  }
+  const record = payload as Record<string, unknown>
+  const resource = normalizePrimitiveResource(record.resource)
   const namespace = typeof record.namespace === 'string' ? record.namespace : params.namespace
   return { ok: true, resource, kind: params.kind, namespace }
 }
@@ -263,6 +331,62 @@ export const fetchPrimitiveEvents = async (params: {
   const namespace = typeof record.namespace === 'string' ? record.namespace : params.namespace
   const name = typeof record.name === 'string' ? record.name : params.name
   return { ok: true, items, kind: params.kind, namespace, name }
+}
+
+export const fetchAgentRunLogs = async (params: {
+  name: string
+  namespace: string
+  pod?: string | null
+  container?: string | null
+  tailLines?: number | null
+  signal?: AbortSignal
+}): Promise<AgentRunLogsResult> => {
+  const searchParams = new URLSearchParams({
+    name: params.name,
+    namespace: params.namespace,
+  })
+  if (params.pod) {
+    searchParams.set('pod', params.pod)
+  }
+  if (params.container) {
+    searchParams.set('container', params.container)
+  }
+  if (params.tailLines && Number.isFinite(params.tailLines)) {
+    searchParams.set('tailLines', Math.max(1, Math.floor(params.tailLines)).toString())
+  }
+
+  const response = await fetch(`/api/agents/control-plane/logs?${searchParams.toString()}`, {
+    signal: params.signal,
+  })
+  const payload = await parseResponse(response)
+  if (!payload || typeof payload !== 'object') {
+    return { ok: false, message: 'Invalid response payload', status: response.status }
+  }
+  if ('ok' in payload && payload.ok === false) {
+    return {
+      ok: false,
+      message: extractErrorMessage(payload) ?? 'Request failed',
+      status: response.status,
+      raw: payload,
+    }
+  }
+
+  const record = payload as Record<string, unknown>
+  const pods = Array.isArray(record.pods) ? (record.pods as AgentRunLogPod[]) : []
+  const logs = typeof record.logs === 'string' ? record.logs : ''
+  const pod = typeof record.pod === 'string' ? record.pod : null
+  const container = typeof record.container === 'string' ? record.container : null
+  const tailLines = typeof record.tailLines === 'number' ? record.tailLines : null
+  return {
+    ok: true,
+    name: typeof record.name === 'string' ? record.name : params.name,
+    namespace: typeof record.namespace === 'string' ? record.namespace : params.namespace,
+    pods,
+    logs,
+    pod,
+    container,
+    tailLines,
+  }
 }
 
 export const fetchControlPlaneStatus = async (params: {

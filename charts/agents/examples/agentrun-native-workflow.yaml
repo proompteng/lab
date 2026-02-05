@@ -24,6 +24,11 @@ spec:
         memory: 512Mi
   secrets:
     - codex-github-token
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
   parameters:
     repository: proompteng/lab
     issueNumber: "2614"

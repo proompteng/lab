@@ -35,8 +35,16 @@ spec:
               resources:
                 requests:
                   storage: 60Gi
+          listenerTemplate:
+            spec:
+              hostNetwork: true
+              dnsPolicy: ClusterFirstWithHostNet
+              containers:
+                - name: listener
           template:
             spec:
+              hostNetwork: true
+              dnsPolicy: ClusterFirstWithHostNet
               nodeSelector:
                 github.com/arc-runner: 'true'
               tolerations:

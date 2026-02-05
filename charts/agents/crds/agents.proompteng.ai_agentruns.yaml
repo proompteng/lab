@@ -77,6 +77,29 @@ spec:
                           type: string
                         maxItems: 50
                         type: array
+                      contract:
+                        properties:
+                          mappings:
+                            items:
+                              properties:
+                                from:
+                                  maxLength: 256
+                                  type: string
+                                to:
+                                  maxLength: 256
+                                  type: string
+                              required:
+                              - from
+                              - to
+                              type: object
+                            maxItems: 100
+                            type: array
+                          requiredKeys:
+                            items:
+                              type: string
+                            maxItems: 50
+                            type: array
+                        type: object
                       description:
                         maxLength: 131072
                         type: string
@@ -106,6 +129,13 @@ spec:
                       text:
                         maxLength: 131072
                         type: string
+                      vcsRef:
+                        properties:
+                          name:
+                            type: string
+                        required:
+                        - name
+                        type: object
                     required:
                     - text
                     type: object
@@ -152,6 +182,28 @@ spec:
                 items:
                   type: string
                 type: array
+              ttlSecondsAfterFinished:
+                format: int32
+                minimum: 0
+                type: integer
+              vcsPolicy:
+                properties:
+                  mode:
+                    enum:
+                    - read-write
+                    - read-only
+                    - none
+                    type: string
+                  required:
+                    type: boolean
+                type: object
+              vcsRef:
+                properties:
+                  name:
+                    type: string
+                required:
+                - name
+                type: object
               workflow:
                 properties:
                   steps:
@@ -166,6 +218,29 @@ spec:
                                     type: string
                                   maxItems: 50
                                   type: array
+                                contract:
+                                  properties:
+                                    mappings:
+                                      items:
+                                        properties:
+                                          from:
+                                            maxLength: 256
+                                            type: string
+                                          to:
+                                            maxLength: 256
+                                            type: string
+                                        required:
+                                        - from
+                                        - to
+                                        type: object
+                                      maxItems: 100
+                                      type: array
+                                    requiredKeys:
+                                      items:
+                                        type: string
+                                      maxItems: 50
+                                      type: array
+                                  type: object
                                 description:
                                   maxLength: 131072
                                   type: string
@@ -195,6 +270,13 @@ spec:
                                 text:
                                   maxLength: 131072
                                   type: string
+                                vcsRef:
+                                  properties:
+                                    name:
+                                      type: string
+                                  required:
+                                  - name
+                                  type: object
                               required:
                               - text
                               type: object
@@ -417,6 +499,23 @@ spec:
               updatedAt:
                 format: date-time
                 type: string
+              vcs:
+                properties:
+                  baseBranch:
+                    type: string
+                  headBranch:
+                    type: string
+                  mode:
+                    enum:
+                    - read-write
+                    - read-only
+                    - none
+                    type: string
+                  provider:
+                    type: string
+                  repository:
+                    type: string
+                type: object
               workflow:
                 properties:
                   lastTransitionTime:

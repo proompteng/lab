@@ -29,6 +29,11 @@ service AgentctlService {
   rpc ApplyImplementationSource(ApplyImplementationSourceRequest) returns (ApplyImplementationSourceResponse);
   rpc DeleteImplementationSource(DeleteImplementationSourceRequest) returns (DeleteImplementationSourceResponse);
 
+  rpc ListVersionControlProviders(ListVersionControlProvidersRequest) returns (ListVersionControlProvidersResponse);
+  rpc GetVersionControlProvider(GetVersionControlProviderRequest) returns (GetVersionControlProviderResponse);
+  rpc ApplyVersionControlProvider(ApplyVersionControlProviderRequest) returns (ApplyVersionControlProviderResponse);
+  rpc DeleteVersionControlProvider(DeleteVersionControlProviderRequest) returns (DeleteVersionControlProviderResponse);
+
   rpc ListMemories(ListMemoriesRequest) returns (ListMemoriesResponse);
   rpc GetMemory(GetMemoryRequest) returns (GetMemoryResponse);
   rpc ApplyMemory(ApplyMemoryRequest) returns (ApplyMemoryResponse);
@@ -266,6 +271,9 @@ message SubmitAgentRunRequest {
   string idempotency_key = 7;
   WorkloadSpecInput workload = 8;
   string memory_ref = 9;
+  string vcs_ref = 10;
+  string vcs_policy_mode = 11;
+  bool vcs_policy_required = 12;
 }
 
 message SubmitAgentRunResponse {
@@ -317,6 +325,44 @@ message DeleteImplementationSourceRequest {
 }
 
 message DeleteImplementationSourceResponse {
+  bool ok = 1;
+  string message = 2;
+  string json = 3;
+}
+
+message ListVersionControlProvidersRequest {
+  string namespace = 1;
+  string label_selector = 2;
+}
+
+message ListVersionControlProvidersResponse {
+  string json = 1;
+}
+
+message GetVersionControlProviderRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetVersionControlProviderResponse {
+  string json = 1;
+}
+
+message ApplyVersionControlProviderRequest {
+  string namespace = 1;
+  string manifest_yaml = 2;
+}
+
+message ApplyVersionControlProviderResponse {
+  string json = 1;
+}
+
+message DeleteVersionControlProviderRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message DeleteVersionControlProviderResponse {
   bool ok = 1;
   string message = 2;
   string json = 3;

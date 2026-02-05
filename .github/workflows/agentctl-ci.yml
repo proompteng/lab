@@ -34,6 +34,9 @@ jobs:
       - name: Lint
         run: bun run --filter @proompteng/agentctl lint
 
+      - name: Test
+        run: bun run --filter @proompteng/agentctl test
+
       - name: Validate npm metadata
         run: bun run --filter @proompteng/agentctl validate:metadata
 

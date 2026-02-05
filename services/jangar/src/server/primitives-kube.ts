@@ -15,6 +15,12 @@ export type KubernetesClient = {
   get: (resource: string, name: string, namespace: string) => Promise<Record<string, unknown> | null>
   list: (resource: string, namespace: string, labelSelector?: string) => Promise<Record<string, unknown>>
   listEvents: (namespace: string, fieldSelector?: string) => Promise<Record<string, unknown>>
+  logs: (params: {
+    pod: string
+    namespace: string
+    container?: string | null
+    tailLines?: number | null
+  }) => Promise<string>
 }
 
 type CommandResult = {
@@ -109,6 +115,15 @@ export const createKubernetesClient = (): KubernetesClient => ({
       return parseJson(output, 'kubectl delete')
     } catch (error) {
       if (notFound(error)) return null
+      const message = error instanceof Error ? error.message : String(error)
+      if (message.includes("only support '-o name'") || message.includes('unexpected -o output mode')) {
+        const output = await kubectl(
+          ['delete', resource, name, '-n', namespace, '-o', 'name'],
+          undefined,
+          'kubectl delete',
+        )
+        return { name, namespace, resource, output }
+      }
       throw error
     }
   },
@@ -145,6 +160,16 @@ export const createKubernetesClient = (): KubernetesClient => ({
     const output = await kubectl(args, undefined, 'kubectl events')
     return parseJson(output, 'kubectl events')
   },
+  logs: async ({ pod, namespace, container, tailLines }) => {
+    const args = ['logs', pod, '-n', namespace]
+    if (container) {
+      args.push('-c', container)
+    }
+    if (tailLines && Number.isFinite(tailLines)) {
+      args.push('--tail', Math.max(1, Math.floor(tailLines)).toString())
+    }
+    return kubectl(args, undefined, 'kubectl logs')
+  },
 })
 
 export const RESOURCE_MAP = {
@@ -153,6 +178,7 @@ export const RESOURCE_MAP = {
   AgentProvider: 'agentproviders.agents.proompteng.ai',
   ImplementationSpec: 'implementationspecs.agents.proompteng.ai',
   ImplementationSource: 'implementationsources.agents.proompteng.ai',
+  VersionControlProvider: 'versioncontrolproviders.agents.proompteng.ai',
   Memory: 'memories.agents.proompteng.ai',
   Tool: 'tools.tools.proompteng.ai',
   ToolRun: 'toolruns.tools.proompteng.ai',

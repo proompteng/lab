@@ -29,6 +29,10 @@ describe('parseBrokerList', () => {
 
 describe('KafkaProducerLayer', () => {
   const baseConfig: AppConfig = {
+    idempotency: {
+      ttlMs: 60_000,
+      maxEntries: 200,
+    },
     githubWebhookSecret: 'secret',
     atlas: {
       baseUrl: 'http://jangar',

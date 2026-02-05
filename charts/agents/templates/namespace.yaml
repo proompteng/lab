@@ -1,0 +1,8 @@
+{{- if and .Values.podSecurityAdmission.enabled .Values.podSecurityAdmission.createNamespace (gt (len .Values.podSecurityAdmission.labels) 0) -}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  labels:
+    {{- toYaml .Values.podSecurityAdmission.labels | nindent 4 }}
+{{- end }}

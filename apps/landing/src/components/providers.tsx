@@ -1,9 +1,9 @@
 'use client'
 
+import { Toaster } from '@proompteng/design/ui'
 import { ConvexProvider, ConvexReactClient } from 'convex/react'
 import { ThemeProvider } from 'next-themes'
 import { type ReactNode, useMemo } from 'react'
-import { Toaster } from '@/components/ui/sonner'
 
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL
 

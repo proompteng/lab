@@ -17,6 +17,7 @@ import type { KafkaProducer } from '@/services/kafka'
 import { handleIssueCommentCreated, handleIssueOpened } from './github/events/issues'
 import { handlePullRequestEvent } from './github/events/pull-request'
 import type { WorkflowExecutionContext, WorkflowStage } from './github/workflow'
+import type { IdempotencyStore } from './idempotency-store'
 import type { WebhookConfig } from './types'
 import { publishKafkaMessage } from './utils'
 
@@ -35,6 +36,7 @@ export interface GithubWebhookDependencies {
   runtime: AppRuntime
   webhooks: Webhooks
   config: WebhookConfig
+  idempotencyStore: IdempotencyStore
 }
 
 const buildHeaders = (
@@ -353,7 +355,12 @@ const triggerAtlasEnrichment = async (options: {
   }
 }
 
-export const createGithubWebhookHandler = ({ runtime, webhooks, config }: GithubWebhookDependencies) => {
+export const createGithubWebhookHandler = ({
+  runtime,
+  webhooks,
+  config,
+  idempotencyStore,
+}: GithubWebhookDependencies) => {
   const githubService = runtime.runSync(
     Effect.gen(function* (_) {
       return yield* GithubService
@@ -373,10 +380,25 @@ export const createGithubWebhookHandler = ({ runtime, webhooks, config }: Github
     }
 
     const deliveryId = request.headers.get('x-github-delivery') || randomUUID()
+    const eventName = request.headers.get('x-github-event') ?? 'unknown'
+    const actionHeader = request.headers.get('x-github-action')
 
     if (!(await webhooks.verify(rawBody, signatureHeader))) {
       logger.error({ deliveryId, signatureHeader }, 'github webhook signature verification failed')
       return new Response('Unauthorized', { status: 401 })
+    }
+
+    if (idempotencyStore.isDuplicate(`github:${deliveryId}`)) {
+      logger.warn({ deliveryId, eventName, action: actionHeader ?? null }, 'duplicate github webhook delivery ignored')
+      return new Response(
+        JSON.stringify({
+          status: 'duplicate',
+          deliveryId,
+          event: eventName,
+          action: actionHeader ?? null,
+        }),
+        { status: 202, headers: { 'Content-Type': 'application/json' } },
+      )
     }
 
     let parsedPayload: unknown
@@ -387,7 +409,6 @@ export const createGithubWebhookHandler = ({ runtime, webhooks, config }: Github
       return new Response('Invalid JSON body', { status: 400 })
     }
 
-    const eventName = request.headers.get('x-github-event') ?? 'unknown'
     const actionValue =
       typeof (parsedPayload as { action?: unknown }).action === 'string'
         ? (parsedPayload as { action: string }).action

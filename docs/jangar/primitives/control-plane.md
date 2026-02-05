@@ -5,6 +5,10 @@
 Jangar is the control plane for all primitives in `*.proompteng.ai`. It is the only external API
 surface for creating and managing Agent, Memory, Orchestration, and supporting primitives.
 
+## Related docs
+
+- `docs/jangar/agents-control-plane-new-primitives.md`
+
 ## Responsibilities
 
 - Create/update/delete primitives (CRDs) on behalf of users
@@ -56,3 +60,12 @@ Use `jangar-db` (CNPG) as source of truth for:
 
 All Jangar endpoints must accept an idempotency key (`deliveryId`), stored in the database,
 and return consistent results on retries.
+
+## UI surface
+
+- [Agents UI: YAML inspector + revision timeline](../agents-ui-yaml-inspector.md)
+
+## Related docs
+
+- [Agents control-plane filters (labels + phase)](../agents-control-plane-filters.md)
+- [Agents control-plane UI polish](../agents-control-plane-polish.md)

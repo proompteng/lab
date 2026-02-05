@@ -1,0 +1,34 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: VersionControlProvider
+metadata:
+  name: github
+spec:
+  provider: github
+  apiBaseUrl: https://api.github.com
+  cloneBaseUrl: https://github.com
+  webBaseUrl: https://github.com
+  auth:
+    method: token
+    token:
+      secretRef:
+        name: codex-github-token
+        key: token
+      type: fine_grained
+  repositoryPolicy:
+    allow:
+      - proompteng/*
+  capabilities:
+    read: true
+    write: true
+    pullRequests: true
+  defaults:
+    baseBranch: main
+    branchTemplate: codex/{{issueNumber}}
+    branchConflictSuffixTemplate: "{{agentRun.name}}"
+    commitAuthorName: codex
+    commitAuthorEmail: codex@proompt.com
+    pullRequest:
+      enabled: true
+      draft: false
+      titleTemplate: "Codex: {{repository}}"
+      bodyTemplate: "Closes #{{issueNumber}}"

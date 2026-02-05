@@ -1,10 +1,3 @@
-import { IconHome2, IconTrash } from '@tabler/icons-react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute, Link, useRouterState } from '@tanstack/react-router'
-import { useServerFn } from '@tanstack/react-start'
-import type { KeyboardEvent } from 'react'
-import { useState } from 'react'
-
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,12 +7,27 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '~/components/ui/alert-dialog'
-import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage } from '~/components/ui/breadcrumb'
-import { Button } from '~/components/ui/button'
-import { ScrollArea } from '~/components/ui/scroll-area'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
-import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbList,
+  BreadcrumbPage,
+  Button,
+  ScrollArea,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@proompteng/design/ui'
+import { IconHome2, IconTrash } from '@tabler/icons-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { createFileRoute, Link, useRouterState } from '@tanstack/react-router'
+import { useServerFn } from '@tanstack/react-start'
+import { type KeyboardEvent, useState } from 'react'
 import { encodeRepositoryParam, formatSize } from '~/lib/registry'
 import { deleteTagServerFn } from '~/server/delete-tag'
 import { type RegistryImagesResponse, registryImagesServerFn } from '~/server/registry-images'

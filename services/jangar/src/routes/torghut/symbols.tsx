@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 
-import { Button } from '@/components/ui/button'
+import { Button } from '@proompteng/design/ui'
 import {
   Dialog,
   DialogClose,
@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from '@/components/ui/dialog'
+} from '@proompteng/design/ui'
 import { randomUuid } from '@/lib/uuid'
 
 type SymbolItem = {

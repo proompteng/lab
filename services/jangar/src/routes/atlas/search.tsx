@@ -2,8 +2,8 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { AtlasSectionHeader } from '@/components/atlas-results-table'
-import { Button, buttonVariants } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Button, buttonVariants } from '@proompteng/design/ui'
+import { Input } from '@proompteng/design/ui'
 import {
   Pagination,
   PaginationContent,
@@ -11,9 +11,9 @@ import {
   PaginationLink,
   PaginationNext,
   PaginationPrevious,
-} from '@/components/ui/pagination'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+} from '@proompteng/design/ui'
+import { ScrollArea } from '@proompteng/design/ui'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@proompteng/design/ui'
 import type { AtlasAstPreview, AtlasFileItem, AtlasFilePreview, AtlasSearchParams } from '@/data/atlas'
 import { getAtlasAstPreview, getAtlasFilePreview, searchAtlas } from '@/data/atlas'
 import { cn } from '@/lib/utils'

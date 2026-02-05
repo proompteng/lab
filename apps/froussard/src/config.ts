@@ -8,7 +8,14 @@ const requireEnv = (env: NodeJS.ProcessEnv, name: string): string => {
   return value
 }
 
+const DEFAULT_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000
+const DEFAULT_IDEMPOTENCY_MAX_ENTRIES = 10_000
+
 export interface AppConfig {
+  idempotency: {
+    ttlMs: number
+    maxEntries: number
+  }
   githubWebhookSecret: string
   atlas: {
     baseUrl: string
@@ -50,6 +57,17 @@ export interface AppConfig {
   }
 }
 
+const parseNonNegativeInt = (value: string | undefined, fallback: number): number => {
+  if (typeof value !== 'string') {
+    return fallback
+  }
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isFinite(parsed) || Number.isNaN(parsed) || parsed < 0) {
+    return fallback
+  }
+  return parsed
+}
+
 export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
   const brokers = parseBrokerList(requireEnv(env, 'KAFKA_BROKERS'))
   if (brokers.length === 0) {
@@ -57,8 +75,21 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
   }
 
   const atlasBaseUrl = requireEnv(env, 'JANGAR_BASE_URL').replace(/\/+$/, '')
+  const idempotencyTtlSecondsRaw = env.FROUSSARD_WEBHOOK_IDEMPOTENCY_TTL_SECONDS
+  const idempotencyTtlMs =
+    typeof idempotencyTtlSecondsRaw === 'string' && idempotencyTtlSecondsRaw.trim() !== ''
+      ? parseNonNegativeInt(idempotencyTtlSecondsRaw, DEFAULT_IDEMPOTENCY_TTL_MS / 1000) * 1000
+      : parseNonNegativeInt(env.FROUSSARD_WEBHOOK_IDEMPOTENCY_TTL_MS, DEFAULT_IDEMPOTENCY_TTL_MS)
+  const idempotencyMaxEntries = parseNonNegativeInt(
+    env.FROUSSARD_WEBHOOK_IDEMPOTENCY_MAX_ENTRIES,
+    DEFAULT_IDEMPOTENCY_MAX_ENTRIES,
+  )
 
   return {
+    idempotency: {
+      ttlMs: idempotencyTtlMs,
+      maxEntries: idempotencyMaxEntries,
+    },
     githubWebhookSecret: requireEnv(env, 'GITHUB_WEBHOOK_SECRET'),
     atlas: {
       baseUrl: atlasBaseUrl,

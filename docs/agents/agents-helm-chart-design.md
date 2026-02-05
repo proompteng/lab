@@ -16,6 +16,7 @@ We want a minimal, provider-agnostic control plane chart that installs cleanly o
 - Provide a minimal, installable Helm chart for the Jangar control plane plus CRDs.
 - Keep the base chart portable across minikube, kind, and managed clusters.
 - Remove GitHub-only coupling from CRDs; support GitHub Issues and Linear via an abstract ImplementationSpec.
+- Add a first-class VersionControlProvider concept for repo operations (see `docs/agents/version-control-provider-design.md`).
 - Make memory provider-agnostic via a Memory CRD.
 - Move SQL migrations into the Jangar image (not shipped in the chart).
 - Follow Helm and Artifact Hub best practices for a public chart.
@@ -351,6 +352,9 @@ Key values (conceptual):
 - `env` and `envFromSecretRefs`.
 - `resources`.
 - `crds.install` (optional flag for `--skip-crds` parity).
+
+Scheduling defaults for AgentRun pods (nodeSelector, tolerations, affinity, topology spread) are documented in
+`docs/agents/topology-spread-constraints.md`.
 
 No values for embedded database, migrations jobs, backups, or ingress.
 

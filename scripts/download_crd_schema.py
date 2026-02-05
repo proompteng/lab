@@ -36,23 +36,28 @@ for version_entry in crd.get("spec", {}).get("versions", []):
         }
         # kubeconform resolution differs across kinds; emit multiple naming styles.
         out_paths = [
-            Path(f"schemas/custom/{group}_{version}_{kind_slug}.json"),
             Path(f"schemas/custom/{group}_{version}_{kind}.json"),
             Path(f"schemas/custom/{kind}{kind_suffix}.json"),
-            Path(f"schemas/custom/{kind_slug}{kind_suffix}.json"),
             Path(f"schemas/custom/{kind}-{version}.json"),
-            Path(f"schemas/custom/{kind_slug}-{version}.json"),
             Path(f"schemas/custom/{kind}_{version}.json"),
-            Path(f"schemas/custom/{kind_slug}_{version}.json"),
             Path(f"schemas/custom/{kind}_{group}_{version}.json"),
-            Path(f"schemas/custom/{kind_slug}_{group}_{version}.json"),
             Path(f"schemas/custom/{kind}.json"),
-            Path(f"schemas/custom/{kind_slug}.json"),
             Path(f"schemas/custom/{group}/{version}/{kind}.json"),
-            Path(f"schemas/custom/{group}/{version}/{kind_slug}.json"),
             Path(f"schemas/custom/{group}/{kind}_{version}.json"),
+        ]
+        legacy_paths = [
+            Path(f"schemas/custom/{group}_{version}_{kind_slug}.json"),
+            Path(f"schemas/custom/{kind_slug}{kind_suffix}.json"),
+            Path(f"schemas/custom/{kind_slug}-{version}.json"),
+            Path(f"schemas/custom/{kind_slug}_{version}.json"),
+            Path(f"schemas/custom/{kind_slug}_{group}_{version}.json"),
+            Path(f"schemas/custom/{kind_slug}.json"),
+            Path(f"schemas/custom/{group}/{version}/{kind_slug}.json"),
             Path(f"schemas/custom/{group}/{kind_slug}_{version}.json"),
         ]
+        for legacy_path in legacy_paths:
+            if legacy_path.exists():
+                legacy_path.unlink()
         for out_path in out_paths:
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(json.dumps(output))

@@ -44,6 +44,9 @@ annotations:
     - kind: ImplementationSource
       version: v1alpha1
       name: implementationsources.agents.proompteng.ai
+    - kind: VersionControlProvider
+      version: v1alpha1
+      name: versioncontrolproviders.agents.proompteng.ai
     - kind: Memory
       version: v1alpha1
       name: memories.agents.proompteng.ai
@@ -122,6 +125,14 @@ annotations:
           secretRef:
             name: memory-postgres
     - apiVersion: agents.proompteng.ai/v1alpha1
+      kind: VersionControlProvider
+      metadata:
+        name: github
+      spec:
+        provider: github
+        cloneBaseUrl: https://github.com
+        webBaseUrl: https://github.com
+    - apiVersion: agents.proompteng.ai/v1alpha1
       kind: Agent
       metadata:
         name: codex-agent
@@ -163,6 +174,8 @@ annotations:
           repository: proompteng/lab
           issueNumber: "1234"
   artifacthub.io/changes: |
+    - kind: added
+      description: "Add VersionControlProvider CRD for provider-agnostic repo access."
     - kind: added
       description: "Add native CRDs for orchestration, tools, signals, schedules, artifacts, and workspaces."
     - kind: added

@@ -1,13 +1,20 @@
 'use client'
 
 import { api } from '@proompteng/backend/convex/_generated/api'
+import {
+  Alert,
+  AlertDescription,
+  Badge,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Skeleton,
+} from '@proompteng/design/ui'
 import { useQuery } from 'convex/react'
 import { useMemo } from 'react'
 import { Icon, type IconName } from '@/components/icon'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL

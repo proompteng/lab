@@ -1,8 +1,8 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Button } from '@proompteng/design/ui'
+import { Input } from '@proompteng/design/ui'
 import {
   Pagination,
   PaginationContent,
@@ -10,8 +10,8 @@ import {
   PaginationLink,
   PaginationNext,
   PaginationPrevious,
-} from '@/components/ui/pagination'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+} from '@proompteng/design/ui'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@proompteng/design/ui'
 import { type CodexRunSummaryRecord, fetchCodexRecentRuns, fetchCodexRunsPage } from '@/data/codex'
 import { cn } from '@/lib/utils'
 

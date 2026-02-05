@@ -14,6 +14,7 @@ import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '~/s
 
 const DEFAULT_NAMESPACE = 'agents'
 const DEFAULT_GRPC_PORT = 50051
+const DEFAULT_WORKFLOW_STEP = 'implement'
 const SERVICE_NAME = 'jangar'
 
 type AgentctlServer = {
@@ -51,6 +52,9 @@ type SubmitRunRequest = {
   idempotency_key?: string
   workload?: { image?: string; cpu?: string; memory?: string }
   memory_ref?: string
+  vcs_ref?: string
+  vcs_policy_mode?: string
+  vcs_policy_required?: boolean
 }
 type LogsRequest = { namespace?: string; name?: string; follow?: boolean }
 type StatusStreamRequest = { namespace?: string; name?: string }
@@ -546,6 +550,19 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
       }
     },
 
+    ListVersionControlProviders: createListHandler(kube, RESOURCE_MAP.VersionControlProvider),
+    GetVersionControlProvider: createGetHandler(
+      kube,
+      RESOURCE_MAP.VersionControlProvider,
+      'VersionControlProvider not found',
+    ),
+    ApplyVersionControlProvider: createApplyHandler(kube),
+    DeleteVersionControlProvider: createDeleteHandler(
+      kube,
+      RESOURCE_MAP.VersionControlProvider,
+      'VersionControlProvider not found',
+    ),
+
     ListMemories: async (call: UnaryCall<ListRequest>, callback: UnaryCallback) => {
       const authError = requireAuth(call)
       if (authError) return callback(authError, null)
@@ -743,6 +760,13 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
         const idempotencyKey = call.request?.idempotency_key ?? ''
         const runtimeConfig = parseEntryMap(call.request?.runtime_config ?? [])
         const parameters = parseEntryMap(call.request?.parameters ?? [])
+        let stageValue: string | null = null
+        if (runtimeType === 'workflow') {
+          stageValue = asString(parameters.stage) ?? asString(runtimeConfig.stage) ?? DEFAULT_WORKFLOW_STEP
+          if (!asString(parameters.stage)) {
+            parameters.stage = stageValue
+          }
+        }
 
         const workload = call.request?.workload
         const payload: Record<string, unknown> = {
@@ -754,6 +778,17 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
             ...(Object.keys(runtimeConfig).length > 0 ? { config: runtimeConfig } : {}),
           },
           ...(Object.keys(parameters).length > 0 ? { parameters } : {}),
+        }
+
+        if (runtimeType === 'workflow') {
+          payload.workflow = {
+            steps: [
+              {
+                name: stageValue ?? DEFAULT_WORKFLOW_STEP,
+                parameters: { stage: stageValue ?? DEFAULT_WORKFLOW_STEP },
+              },
+            ],
+          }
         }
 
         if (workload?.image || workload?.cpu || workload?.memory) {
@@ -771,6 +806,21 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
 
         if (call.request?.memory_ref) {
           payload.memoryRef = { name: call.request.memory_ref }
+        }
+
+        if (call.request?.vcs_ref) {
+          payload.vcsRef = { name: call.request.vcs_ref }
+        }
+
+        const vcsPolicy: Record<string, unknown> = {}
+        if (call.request?.vcs_policy_mode) {
+          vcsPolicy.mode = call.request.vcs_policy_mode
+        }
+        if (call.request?.vcs_policy_required) {
+          vcsPolicy.required = true
+        }
+        if (Object.keys(vcsPolicy).length > 0) {
+          payload.vcsPolicy = vcsPolicy
         }
 
         const request = new Request('http://localhost/v1/agent-runs', {

@@ -108,12 +108,71 @@ spec:
             {{- end }}
             - name: JANGAR_IMAGE
               value: "{{ .Values.image.repository }}:{{ .Values.image.tag }}{{- if .Values.image.digest }}@{{ .Values.image.digest }}{{ end }}"
+            {{- if .Values.runner.image.repository }}
+            - name: JANGAR_AGENT_RUNNER_IMAGE
+              value: "{{ .Values.runner.image.repository }}:{{ .Values.runner.image.tag }}{{- if .Values.runner.image.digest }}@{{ .Values.runner.image.digest }}{{ end }}"
+            {{- end }}
+            {{- if hasKey .Values.controller "jobTtlSecondsAfterFinished" }}
+            - name: JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS
+              value: {{ .Values.controller.jobTtlSecondsAfterFinished | quote }}
+            {{- end }}
             - name: JANGAR_SERVICE_ACCOUNT_NAME
               value: {{ include "agents.serviceAccountName" . | quote }}
+            {{- $runnerServiceAccount := include "agents.runnerServiceAccountName" . }}
+            {{- $defaultRunnerServiceAccount := .Values.controller.defaultWorkload.serviceAccountName | default "" }}
+            {{- if $defaultRunnerServiceAccount }}
+            - name: JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT
+              value: {{ $defaultRunnerServiceAccount | quote }}
+            {{- else if and $runnerServiceAccount .Values.runnerServiceAccount.setAsDefault }}
+            - name: JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT
+              value: {{ $runnerServiceAccount | quote }}
+            {{- end }}
+            {{- if and .Values.controller.defaultWorkload.nodeSelector (gt (len .Values.controller.defaultWorkload.nodeSelector) 0) }}
+            - name: JANGAR_AGENT_RUNNER_NODE_SELECTOR
+              value: {{ .Values.controller.defaultWorkload.nodeSelector | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.defaultWorkload.tolerations (gt (len .Values.controller.defaultWorkload.tolerations) 0) }}
+            - name: JANGAR_AGENT_RUNNER_TOLERATIONS
+              value: {{ .Values.controller.defaultWorkload.tolerations | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.defaultWorkload.topologySpreadConstraints (gt (len .Values.controller.defaultWorkload.topologySpreadConstraints) 0) }}
+            - name: JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS
+              value: {{ .Values.controller.defaultWorkload.topologySpreadConstraints | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.defaultWorkload.affinity (gt (len .Values.controller.defaultWorkload.affinity) 0) }}
+            - name: JANGAR_AGENT_RUNNER_AFFINITY
+              value: {{ .Values.controller.defaultWorkload.affinity | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.defaultWorkload.podSecurityContext (gt (len .Values.controller.defaultWorkload.podSecurityContext) 0) }}
+            - name: JANGAR_AGENT_RUNNER_POD_SECURITY_CONTEXT
+              value: {{ .Values.controller.defaultWorkload.podSecurityContext | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.defaultWorkload.imagePullSecrets (gt (len .Values.controller.defaultWorkload.imagePullSecrets) 0) }}
+            - name: JANGAR_AGENT_RUNNER_IMAGE_PULL_SECRETS
+              value: {{ .Values.controller.defaultWorkload.imagePullSecrets | toJson | quote }}
+            {{- end }}
+            {{- if .Values.controller.defaultWorkload.priorityClassName }}
+            - name: JANGAR_AGENT_RUNNER_PRIORITY_CLASS
+              value: {{ .Values.controller.defaultWorkload.priorityClassName | quote }}
+            {{- end }}
+            {{- if .Values.controller.defaultWorkload.schedulerName }}
+            - name: JANGAR_AGENT_RUNNER_SCHEDULER_NAME
+              value: {{ .Values.controller.defaultWorkload.schedulerName | quote }}
+            {{- end }}
+            {{- if .Values.kubernetesApi.host }}
+            - name: KUBERNETES_SERVICE_HOST
+              value: {{ .Values.kubernetesApi.host | quote }}
+            {{- end }}
+            {{- if .Values.kubernetesApi.port }}
+            - name: KUBERNETES_SERVICE_PORT
+              value: {{ .Values.kubernetesApi.port | quote }}
+            {{- end }}
             - name: JANGAR_POD_NAMESPACE
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: JANGAR_RBAC_CLUSTER_SCOPED
+              value: {{ .Values.rbac.clusterScoped | default false | quote }}
             - name: JANGAR_PRIMITIVES_NAMESPACES
               value: {{ include "agents.controllerNamespaces" . | quote }}
             {{- if .Values.controller.enabled }}
@@ -127,6 +186,64 @@ spec:
               value: {{ .Values.controller.concurrency.perAgent | default 5 | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER
               value: {{ .Values.controller.concurrency.cluster | default 100 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE
+              value: {{ .Values.controller.queue.perNamespace | default 200 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_QUEUE_REPO
+              value: {{ .Values.controller.queue.perRepo | default 50 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_QUEUE_CLUSTER
+              value: {{ .Values.controller.queue.cluster | default 1000 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS
+              value: {{ .Values.controller.rate.windowSeconds | default 60 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE
+              value: {{ .Values.controller.rate.perNamespace | default 120 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_RATE_REPO
+              value: {{ .Values.controller.rate.perRepo | default 30 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER
+              value: {{ .Values.controller.rate.cluster | default 600 | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+              value: {{ .Values.controller.agentRunRetentionSeconds | default 2592000 | quote }}
+            {{- if and .Values.controller.admissionPolicy.labels.required (gt (len .Values.controller.admissionPolicy.labels.required) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED
+              value: {{ .Values.controller.admissionPolicy.labels.required | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.labels.allowed (gt (len .Values.controller.admissionPolicy.labels.allowed) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_LABELS_ALLOWED
+              value: {{ .Values.controller.admissionPolicy.labels.allowed | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.labels.denied (gt (len .Values.controller.admissionPolicy.labels.denied) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_LABELS_DENIED
+              value: {{ .Values.controller.admissionPolicy.labels.denied | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.images.allowed (gt (len .Values.controller.admissionPolicy.images.allowed) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_IMAGES_ALLOWED
+              value: {{ .Values.controller.admissionPolicy.images.allowed | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.images.denied (gt (len .Values.controller.admissionPolicy.images.denied) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED
+              value: {{ .Values.controller.admissionPolicy.images.denied | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.admissionPolicy.secrets.blocked (gt (len .Values.controller.admissionPolicy.secrets.blocked) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS
+              value: {{ .Values.controller.admissionPolicy.secrets.blocked | toJson | quote }}
+            {{- end }}
+            - name: JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED
+              value: {{ .Values.controller.vcsProviders.enabled | default true | quote }}
+            {{- if .Values.controller.vcsProviders.deprecatedTokenTypes }}
+            - name: JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
+              value: {{ .Values.controller.vcsProviders.deprecatedTokenTypes | toJson | quote }}
+            {{- end }}
+            {{- if and .Values.controller.vcsProviders.prRateLimits (gt (len .Values.controller.vcsProviders.prRateLimits) 0) }}
+            - name: JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS
+              value: {{ .Values.controller.vcsProviders.prRateLimits | toJson | quote }}
+            {{- end }}
+            {{- if .Values.controller.authSecret.name }}
+            - name: JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
+              value: {{ .Values.controller.authSecret.name | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_KEY
+              value: {{ .Values.controller.authSecret.key | default "auth.json" | quote }}
+            - name: JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
+              value: {{ .Values.controller.authSecret.mountPath | default "/root/.codex" | quote }}
+            {{- end }}
             {{- else }}
             - name: JANGAR_AGENTS_CONTROLLER_ENABLED
               value: "0"

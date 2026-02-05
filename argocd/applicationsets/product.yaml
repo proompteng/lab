@@ -48,6 +48,14 @@ spec:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
                 enabled: true
+              - name: homepage
+                path: argocd/applications/homepage
+                namespace: homepage
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "5"
+                automation: auto
+                enabled: true
               - name: discourse
                 path: argocd/applications/discourse
                 namespace: discourse

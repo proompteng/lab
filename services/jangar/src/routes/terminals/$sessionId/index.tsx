@@ -13,9 +13,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
-import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
+} from '@proompteng/design/ui'
+import { Button } from '@proompteng/design/ui'
+import { Skeleton } from '@proompteng/design/ui'
 
 export const Route = createFileRoute('/terminals/$sessionId/')({
   component: TerminalSessionPage,

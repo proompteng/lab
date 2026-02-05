@@ -28,4 +28,8 @@ export interface WebhookConfig {
     publicKey: string
     response: DiscordResponseConfig
   }
+  idempotency: {
+    ttlMs: number
+    maxEntries: number
+  }
 }

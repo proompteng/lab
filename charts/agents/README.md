@@ -22,11 +22,40 @@ kubectl apply -n agents -f charts/agents/examples/agentprovider-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/agent-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/memory-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/implementationspec-sample.yaml
+kubectl apply -n agents -f charts/agents/examples/versioncontrolprovider-github.yaml
+kubectl apply -n agents -f charts/agents/examples/versioncontrolprovider-github-app.yaml
 kubectl apply -n agents -f charts/agents/examples/agentrun-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/tool-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/orchestration-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/orchestrationrun-sample.yaml
 ```
+
+## Kind quickstart (end-to-end)
+Spin up a local kind cluster, install Postgres, deploy the chart, and run the
+smoke AgentRun with a single command:
+
+```bash
+scripts/agents/kind-e2e.sh
+```
+
+The script builds a local Jangar image first (running `bun install` + `bun run build`
+if `.output` is missing), then loads the image into kind.
+
+Environment variables you can override:
+- `CLUSTER_NAME` (default: `agents`)
+- `NAMESPACE` (default: `agents`)
+- `POSTGRES_RELEASE` (default: `agents-postgres`)
+- `POSTGRES_USER` (default: `agents`)
+- `POSTGRES_PASSWORD` (default: `agents`)
+- `POSTGRES_DB` (default: `agents`)
+- `CHART_PATH` (default: `charts/agents`)
+- `VALUES_FILE` (default: `charts/agents/values-kind.yaml`)
+- `SECRET_NAME` (default: `jangar-db-app`)
+- `SECRET_KEY` (default: `uri`)
+- `KUBECTL_CONTEXT` (default: `kind-<cluster>`)
+- `IMAGE_REPOSITORY` (default: `jangar-local`)
+- `IMAGE_TAG` (default: `kind`)
+- `BUILD_IMAGE` (default: `1`, set to `0` to skip the Docker build)
 
 ## Why teams use this chart
 - **Operator-native orchestration**: run workflows with Kubernetes Jobs/Pods (no external workflow engine required).
@@ -39,6 +68,7 @@ kubectl apply -n agents -f charts/agents/examples/orchestrationrun-sample.yaml
 - Jangar control-plane Deployment + Service
 - Controllers and CRDs for:
   - Agents (Agent, AgentRun, AgentProvider)
+  - Version control providers (VersionControlProvider)
   - Orchestration (Orchestration, OrchestrationRun)
   - Tools (Tool, ToolRun)
   - Signals (Signal, SignalDelivery)
@@ -70,6 +100,26 @@ Agent memory backends are configured separately via the `Memory` CRD.
 ### Controller scope
 - Single namespace: default
 - Multi-namespace: set `controller.namespaces` and `rbac.clusterScoped=true`
+- Wildcard: set `controller.namespaces=["*"]` and `rbac.clusterScoped=true`
+
+#### Namespaced vs cluster-scoped install matrix
+| Install mode | controller.namespaces | rbac.clusterScoped | RBAC scope |
+| --- | --- | --- | --- |
+| Namespaced (single) | `[]` or `["agents"]` | `false` | Role + RoleBinding |
+| Multi-namespace (explicit) | `["team-a", "team-b"]` | `true` | ClusterRole + ClusterRoleBinding |
+| Wildcard (all namespaces) | `["*"]` | `true` | ClusterRole + ClusterRoleBinding (namespace list/watch) |
+
+### Default scheduling for job pods
+Set controller-wide defaults for Job pods using `controller.defaultWorkload`. These defaults apply when the
+AgentRun runtime config does not specify a value.
+
+Common fields:
+- `controller.defaultWorkload.nodeSelector`
+- `controller.defaultWorkload.affinity`
+- `controller.defaultWorkload.priorityClassName`
+- `controller.defaultWorkload.schedulerName`
+
+Per-run overrides live under `spec.runtime.config` on the AgentRun and take precedence over defaults.
 
 ### gRPC service (optional)
 Enable gRPC for agentctl or in-cluster clients:
@@ -79,6 +129,43 @@ Enable gRPC for agentctl or in-cluster clients:
 ### Migrations
 Automatic migrations are enabled by default. To skip:
 - `env.vars.JANGAR_MIGRATIONS=skip`
+
+### Codex auth secret (optional)
+The controller mounts a writable `emptyDir` at `controller.authSecret.mountPath` (default `/root/.codex`) and then
+mounts the secret file at `auth.json` inside it. It also sets `CODEX_HOME` and `CODEX_AUTH` for the runner pods.
+
+Example:
+```bash
+helm upgrade agents charts/agents --namespace agents --reuse-values   --set controller.authSecret.name=codex-auth   --set controller.authSecret.key=auth.json
+```
+
+### Admission control policy
+Use admission policy values to reject unsafe AgentRuns before submission. Rejections surface as `InvalidSpec`.
+
+Supported checks (pattern lists accept `*` wildcards):
+- `controller.admissionPolicy.labels.required`: label keys that must exist on AgentRuns.
+- `controller.admissionPolicy.labels.allowed`: allowed label key patterns (deny-by-default when set).
+- `controller.admissionPolicy.labels.denied`: blocked label key patterns (deny wins).
+- `controller.admissionPolicy.images.allowed`: allowed workload image patterns.
+- `controller.admissionPolicy.images.denied`: blocked workload image patterns (deny wins).
+- `controller.admissionPolicy.secrets.blocked`: secret names blocked by controller policy.
+
+Example:
+```yaml
+controller:
+  admissionPolicy:
+    labels:
+      required:
+        - team
+      denied:
+        - "internal/*"
+    images:
+      allowed:
+        - "registry.ide-newton.ts.net/lab/*"
+    secrets:
+      blocked:
+        - prod-kubeconfig
+```
 
 ### AgentRun runner defaults (optional)
 Set defaults for AgentRun and Schedule workload images when the CRD does not specify one:
@@ -90,6 +177,108 @@ Set defaults for AgentRun and Schedule workload images when the CRD does not spe
 ### Agent comms subjects (optional)
 Override the default NATS subject filters (comma-separated) used by the agent comms subscriber:
 - `agentComms.subjects`
+
+### Version control providers
+Define a VersionControlProvider resource to decouple repo access from issue intake. This is required for
+agent runtimes that clone, commit, push, or open pull requests. Pair it with a SecretBinding that
+allows the provider's secret.
+
+Auth options (VersionControlProvider `spec.auth`):
+- `method: token` with `token.type: pat | fine_grained | api_token | access_token`
+- `method: app` (GitHub only) with `appId`, `installationId`, and `privateKeySecretRef`
+- `method: ssh` with `privateKeySecretRef` (optional `knownHostsConfigMapRef`)
+
+Repository policy (VersionControlProvider `spec.repositoryPolicy`):
+- `allow` and `deny` accept `*` wildcards (for example, `acme/*`).
+- Deny rules win. When an allow list is set, repositories must match it.
+- Runs with `spec.vcsPolicy.mode` other than `none` are blocked if the repository is not allowed.
+
+Token scopes & expiry guidance:
+- GitHub App installation tokens expire after ~1 hour (default 3600s). Use `spec.auth.app.tokenTtlSeconds` if you need a shorter TTL.
+- GitHub fine-grained PATs should include repository contents + pull request scopes for write flows.
+- GitLab tokens must include `read_repository` for read-only workflows and `write_repository` for pushes/merges.
+- Bitbucket access tokens should include repository read/write scopes matching your intended mode.
+- Gitea API tokens need repo access; set `spec.auth.username` if your HTTPS auth requires a specific account name.
+- If `spec.auth.token.type` is omitted, the controller applies the provider default (e.g., `fine_grained` for GitHub).
+- Deprecated token types surface Warning conditions on the provider and runs; configure overrides in values.
+
+Values example (deprecated token types):
+```yaml
+controller:
+  vcsProviders:
+    enabled: true
+    deprecatedTokenTypes:
+      github:
+        - pat
+```
+
+Branch naming defaults (VersionControlProvider `spec.defaults`):
+- `branchTemplate` controls deterministic head branch names (e.g., `codex/{{issueNumber}}`).
+- `branchConflictSuffixTemplate` appends a suffix when another active run uses the same branch.
+
+Example token auth (GitHub fine-grained PAT):
+```yaml
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: VersionControlProvider
+metadata:
+  name: github
+spec:
+  provider: github
+  apiBaseUrl: https://api.github.com
+  cloneBaseUrl: https://github.com
+  webBaseUrl: https://github.com
+  auth:
+    method: token
+    token:
+      secretRef:
+        name: codex-github-token
+        key: token
+      type: fine_grained
+```
+
+Example GitHub App auth (short-lived tokens):
+```yaml
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: VersionControlProvider
+metadata:
+  name: github-app
+spec:
+  provider: github
+  apiBaseUrl: https://api.github.com
+  cloneBaseUrl: https://github.com
+  webBaseUrl: https://github.com
+  auth:
+    method: app
+    app:
+      appId: "12345"
+      installationId: "7890"
+      privateKeySecretRef:
+        name: github-app-key
+        key: privateKey
+      tokenTtlSeconds: 3600
+```
+See `charts/agents/examples/versioncontrolprovider-github-app.yaml` for a full example with repository policy and
+pull request defaults.
+
+### PR rate limits
+To smooth bursts when creating pull requests, configure per-provider rate limits in the chart values. Limits are
+passed to agent runtimes and applied before PR creation with backoff on rate-limit responses.
+
+Example:
+```yaml
+controller:
+  vcsProviders:
+    prRateLimits:
+      github:
+        windowSeconds: 60
+        maxRequests: 15
+        backoffSeconds: 30
+      default:
+        windowSeconds: 60
+        maxRequests: 10
+        backoffSeconds: 20
+```
+
 
 ## Example production values
 ```yaml
@@ -105,6 +294,11 @@ database:
 controller:
   namespaces:
     - agents
+  vcsProviders:
+    enabled: true
+    deprecatedTokenTypes:
+      github:
+        - pat
 
 rbac:
   clusterScoped: false
@@ -132,6 +326,16 @@ agentctl run submit \
 Replace the workload image with your own agent-runner build.
 If your agent-runner uses NATS for context streaming, set `NATS_URL` in the AgentProvider `envTemplate`.
 
+## Runner image defaults
+The chart sets `JANGAR_AGENT_RUNNER_IMAGE` from `runner.image.*` to avoid missing workload image errors.
+Override `runner.image.repository`, `runner.image.tag`, or `runner.image.digest` to point at your own build.
+
+## Job TTL behavior
+Jobs launched by the controller use `controller.jobTtlSecondsAfterFinished` as the default TTL (seconds).
+The controller applies TTL only after it records the AgentRun/workflow status to avoid cleanup races.
+Set `controller.jobTtlSecondsAfterFinished=0` to disable job cleanup, or override per run via
+`spec.runtime.config.ttlSecondsAfterFinished`. Values are clamped to 30s–7d for safety.
+
 ## Native orchestration
 Native orchestration runs in-cluster and supports:
 - `AgentRun`
@@ -147,6 +351,10 @@ Enable reruns or system-improvement flows using:
 - Use `database.secretRef` and dedicated DB credentials per environment.
 - Scope controllers to specific namespaces unless you need cluster-wide control.
 - Prefer image digests in production (`values-prod.yaml`).
+
+## Admission control
+- Configure backpressure with `controller.queue.*` and `controller.rate.*` in `values.yaml`.
+- Queue limits cap pending AgentRuns; rate limits cap submit throughput.
 
 ## Publishing (OCI)
 ```bash

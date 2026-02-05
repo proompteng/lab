@@ -44,6 +44,14 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 {{- end -}}
 
+{{- define "agents.runnerServiceAccountName" -}}
+{{- if .Values.runnerServiceAccount.name -}}
+{{- .Values.runnerServiceAccount.name -}}
+{{- else if .Values.runnerServiceAccount.create -}}
+{{- printf "%s-runner" (include "agents.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "agents.databaseSecretName" -}}
 {{- if .Values.database.createSecret.enabled -}}
 {{- if .Values.database.createSecret.name -}}

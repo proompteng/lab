@@ -1,7 +1,10 @@
 import { spawn } from 'node:child_process'
+
 import { startResourceWatch } from '~/server/kube-watch'
+import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import { shouldApplyStatus } from '~/server/status-utils'
 
 const DEFAULT_NAMESPACES = ['agents']
 
@@ -69,7 +72,9 @@ const parseNamespaces = () => {
     .split(',')
     .map((value) => value.trim())
     .filter((value) => value.length > 0)
-  return list.length > 0 ? list : DEFAULT_NAMESPACES
+  const namespaces = list.length > 0 ? list : DEFAULT_NAMESPACES
+  assertClusterScopedForWildcard(namespaces, 'supporting controller')
+  return namespaces
 }
 
 const runKubectl = (args: string[]) =>
@@ -339,16 +344,15 @@ const setStatus = async (
   for (const update of standardUpdates) {
     conditions = upsertCondition(conditions, update)
   }
-  await kube.applyStatus({
-    apiVersion,
-    kind,
-    metadata: { name, namespace },
-    status: {
-      ...status,
-      updatedAt: nowIso(),
-      conditions,
-    },
-  })
+  const nextStatus = {
+    ...status,
+    updatedAt: nowIso(),
+    conditions,
+  }
+  if (!shouldApplyStatus(asRecord(resource.status), nextStatus)) {
+    return
+  }
+  await kube.applyStatus({ apiVersion, kind, metadata: { name, namespace }, status: nextStatus })
 }
 
 const listItems = (payload: Record<string, unknown>) => {

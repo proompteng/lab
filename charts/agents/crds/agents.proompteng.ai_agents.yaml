@@ -97,6 +97,13 @@ spec:
                       type: string
                     type: array
                 type: object
+              vcsRef:
+                properties:
+                  name:
+                    type: string
+                required:
+                - name
+                type: object
             required:
             - providerRef
             type: object

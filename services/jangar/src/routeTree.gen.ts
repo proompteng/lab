@@ -14,9 +14,9 @@ import { Route as McpRouteImport } from './routes/mcp'
 import { Route as HealthRouteImport } from './routes/health'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TerminalsIndexRouteImport } from './routes/terminals/index'
+import { Route as ControlPlaneIndexRouteImport } from './routes/control-plane/index'
 import { Route as AtlasIndexRouteImport } from './routes/atlas/index'
 import { Route as AgentsIndexRouteImport } from './routes/agents/index'
-import { Route as AgentsControlPlaneIndexRouteImport } from './routes/agents-control-plane/index'
 import { Route as V1OrchestrationsRouteImport } from './routes/v1/orchestrations'
 import { Route as V1OrchestrationRunsRouteImport } from './routes/v1/orchestration-runs'
 import { Route as V1MemoryQueriesRouteImport } from './routes/v1/memory-queries'
@@ -42,24 +42,25 @@ import { Route as AgentsGeneralRouteImport } from './routes/agents/general'
 import { Route as AgentsRunIdRouteImport } from './routes/agents/$runId'
 import { Route as TerminalsSessionIdIndexRouteImport } from './routes/terminals/$sessionId/index'
 import { Route as GithubPullsIndexRouteImport } from './routes/github/pulls/index'
-import { Route as AgentsControlPlaneWorkspacesIndexRouteImport } from './routes/agents-control-plane/workspaces/index'
-import { Route as AgentsControlPlaneToolsIndexRouteImport } from './routes/agents-control-plane/tools/index'
-import { Route as AgentsControlPlaneToolRunsIndexRouteImport } from './routes/agents-control-plane/tool-runs/index'
-import { Route as AgentsControlPlaneSignalsIndexRouteImport } from './routes/agents-control-plane/signals/index'
-import { Route as AgentsControlPlaneSignalDeliveriesIndexRouteImport } from './routes/agents-control-plane/signal-deliveries/index'
-import { Route as AgentsControlPlaneSecretBindingsIndexRouteImport } from './routes/agents-control-plane/secret-bindings/index'
-import { Route as AgentsControlPlaneSchedulesIndexRouteImport } from './routes/agents-control-plane/schedules/index'
-import { Route as AgentsControlPlaneOrchestrationsIndexRouteImport } from './routes/agents-control-plane/orchestrations/index'
-import { Route as AgentsControlPlaneOrchestrationRunsIndexRouteImport } from './routes/agents-control-plane/orchestration-runs/index'
-import { Route as AgentsControlPlaneMemoriesIndexRouteImport } from './routes/agents-control-plane/memories/index'
-import { Route as AgentsControlPlaneImplementationSpecsIndexRouteImport } from './routes/agents-control-plane/implementation-specs/index'
-import { Route as AgentsControlPlaneImplementationSourcesIndexRouteImport } from './routes/agents-control-plane/implementation-sources/index'
-import { Route as AgentsControlPlaneBudgetsIndexRouteImport } from './routes/agents-control-plane/budgets/index'
-import { Route as AgentsControlPlaneArtifactsIndexRouteImport } from './routes/agents-control-plane/artifacts/index'
-import { Route as AgentsControlPlaneApprovalsIndexRouteImport } from './routes/agents-control-plane/approvals/index'
-import { Route as AgentsControlPlaneAgentsIndexRouteImport } from './routes/agents-control-plane/agents/index'
-import { Route as AgentsControlPlaneAgentRunsIndexRouteImport } from './routes/agents-control-plane/agent-runs/index'
-import { Route as AgentsControlPlaneAgentProvidersIndexRouteImport } from './routes/agents-control-plane/agent-providers/index'
+import { Route as ControlPlaneWorkspacesIndexRouteImport } from './routes/control-plane/workspaces/index'
+import { Route as ControlPlaneToolsIndexRouteImport } from './routes/control-plane/tools/index'
+import { Route as ControlPlaneToolRunsIndexRouteImport } from './routes/control-plane/tool-runs/index'
+import { Route as ControlPlaneSignalsIndexRouteImport } from './routes/control-plane/signals/index'
+import { Route as ControlPlaneSignalDeliveriesIndexRouteImport } from './routes/control-plane/signal-deliveries/index'
+import { Route as ControlPlaneSecretBindingsIndexRouteImport } from './routes/control-plane/secret-bindings/index'
+import { Route as ControlPlaneSchedulesIndexRouteImport } from './routes/control-plane/schedules/index'
+import { Route as ControlPlaneRunsIndexRouteImport } from './routes/control-plane/runs/index'
+import { Route as ControlPlaneOrchestrationsIndexRouteImport } from './routes/control-plane/orchestrations/index'
+import { Route as ControlPlaneOrchestrationRunsIndexRouteImport } from './routes/control-plane/orchestration-runs/index'
+import { Route as ControlPlaneMemoriesIndexRouteImport } from './routes/control-plane/memories/index'
+import { Route as ControlPlaneImplementationSpecsIndexRouteImport } from './routes/control-plane/implementation-specs/index'
+import { Route as ControlPlaneImplementationSourcesIndexRouteImport } from './routes/control-plane/implementation-sources/index'
+import { Route as ControlPlaneBudgetsIndexRouteImport } from './routes/control-plane/budgets/index'
+import { Route as ControlPlaneArtifactsIndexRouteImport } from './routes/control-plane/artifacts/index'
+import { Route as ControlPlaneApprovalsIndexRouteImport } from './routes/control-plane/approvals/index'
+import { Route as ControlPlaneAgentsIndexRouteImport } from './routes/control-plane/agents/index'
+import { Route as ControlPlaneAgentRunsIndexRouteImport } from './routes/control-plane/agent-runs/index'
+import { Route as ControlPlaneAgentProvidersIndexRouteImport } from './routes/control-plane/agent-providers/index'
 import { Route as V1RunsIdRouteImport } from './routes/v1/runs/$id'
 import { Route as V1OrchestrationsIdRouteImport } from './routes/v1/orchestrations/$id'
 import { Route as V1OrchestrationRunsIdRouteImport } from './routes/v1/orchestration-runs/$id'
@@ -68,10 +69,30 @@ import { Route as V1AgentsIdRouteImport } from './routes/v1/agents/$id'
 import { Route as V1AgentRunsIdRouteImport } from './routes/v1/agent-runs/$id'
 import { Route as TerminalsSessionIdFullscreenRouteImport } from './routes/terminals/$sessionId/fullscreen'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
+import { Route as ControlPlaneWorkspacesNameRouteImport } from './routes/control-plane/workspaces/$name'
+import { Route as ControlPlaneToolsNameRouteImport } from './routes/control-plane/tools/$name'
+import { Route as ControlPlaneToolRunsNameRouteImport } from './routes/control-plane/tool-runs/$name'
+import { Route as ControlPlaneSignalsNameRouteImport } from './routes/control-plane/signals/$name'
+import { Route as ControlPlaneSignalDeliveriesNameRouteImport } from './routes/control-plane/signal-deliveries/$name'
+import { Route as ControlPlaneSecretBindingsNameRouteImport } from './routes/control-plane/secret-bindings/$name'
+import { Route as ControlPlaneSchedulesNameRouteImport } from './routes/control-plane/schedules/$name'
+import { Route as ControlPlaneOrchestrationsNameRouteImport } from './routes/control-plane/orchestrations/$name'
+import { Route as ControlPlaneOrchestrationRunsNameRouteImport } from './routes/control-plane/orchestration-runs/$name'
+import { Route as ControlPlaneMemoriesNameRouteImport } from './routes/control-plane/memories/$name'
+import { Route as ControlPlaneImplementationSpecsNewRouteImport } from './routes/control-plane/implementation-specs/new'
+import { Route as ControlPlaneImplementationSpecsNameRouteImport } from './routes/control-plane/implementation-specs/$name'
+import { Route as ControlPlaneImplementationSourcesNameRouteImport } from './routes/control-plane/implementation-sources/$name'
+import { Route as ControlPlaneBudgetsNameRouteImport } from './routes/control-plane/budgets/$name'
+import { Route as ControlPlaneArtifactsNameRouteImport } from './routes/control-plane/artifacts/$name'
+import { Route as ControlPlaneApprovalsNameRouteImport } from './routes/control-plane/approvals/$name'
+import { Route as ControlPlaneAgentsNameRouteImport } from './routes/control-plane/agents/$name'
+import { Route as ControlPlaneAgentRunsNameRouteImport } from './routes/control-plane/agent-runs/$name'
+import { Route as ControlPlaneAgentProvidersNameRouteImport } from './routes/control-plane/agent-providers/$name'
 import { Route as ApiTorghutSymbolsRouteImport } from './routes/api/torghut/symbols'
 import { Route as ApiTerminalsSessionIdRouteImport } from './routes/api/terminals/$sessionId'
 import { Route as ApiMemoriesCountRouteImport } from './routes/api/memories/count'
 import { Route as ApiGithubPullsRouteImport } from './routes/api/github/pulls'
+import { Route as ApiGithubIssuesRouteImport } from './routes/api/github/issues'
 import { Route as ApiCodexRunsRouteImport } from './routes/api/codex/runs'
 import { Route as ApiCodexRunCompleteRouteImport } from './routes/api/codex/run-complete'
 import { Route as ApiCodexRerunRouteImport } from './routes/api/codex/rerun'
@@ -83,24 +104,6 @@ import { Route as ApiAtlasIndexedRouteImport } from './routes/api/atlas/indexed'
 import { Route as ApiAtlasFileRouteImport } from './routes/api/atlas/file'
 import { Route as ApiAtlasAstRouteImport } from './routes/api/atlas/ast'
 import { Route as ApiAgentsEventsRouteImport } from './routes/api/agents/events'
-import { Route as AgentsControlPlaneWorkspacesNameRouteImport } from './routes/agents-control-plane/workspaces/$name'
-import { Route as AgentsControlPlaneToolsNameRouteImport } from './routes/agents-control-plane/tools/$name'
-import { Route as AgentsControlPlaneToolRunsNameRouteImport } from './routes/agents-control-plane/tool-runs/$name'
-import { Route as AgentsControlPlaneSignalsNameRouteImport } from './routes/agents-control-plane/signals/$name'
-import { Route as AgentsControlPlaneSignalDeliveriesNameRouteImport } from './routes/agents-control-plane/signal-deliveries/$name'
-import { Route as AgentsControlPlaneSecretBindingsNameRouteImport } from './routes/agents-control-plane/secret-bindings/$name'
-import { Route as AgentsControlPlaneSchedulesNameRouteImport } from './routes/agents-control-plane/schedules/$name'
-import { Route as AgentsControlPlaneOrchestrationsNameRouteImport } from './routes/agents-control-plane/orchestrations/$name'
-import { Route as AgentsControlPlaneOrchestrationRunsNameRouteImport } from './routes/agents-control-plane/orchestration-runs/$name'
-import { Route as AgentsControlPlaneMemoriesNameRouteImport } from './routes/agents-control-plane/memories/$name'
-import { Route as AgentsControlPlaneImplementationSpecsNameRouteImport } from './routes/agents-control-plane/implementation-specs/$name'
-import { Route as AgentsControlPlaneImplementationSourcesNameRouteImport } from './routes/agents-control-plane/implementation-sources/$name'
-import { Route as AgentsControlPlaneBudgetsNameRouteImport } from './routes/agents-control-plane/budgets/$name'
-import { Route as AgentsControlPlaneArtifactsNameRouteImport } from './routes/agents-control-plane/artifacts/$name'
-import { Route as AgentsControlPlaneApprovalsNameRouteImport } from './routes/agents-control-plane/approvals/$name'
-import { Route as AgentsControlPlaneAgentsNameRouteImport } from './routes/agents-control-plane/agents/$name'
-import { Route as AgentsControlPlaneAgentRunsNameRouteImport } from './routes/agents-control-plane/agent-runs/$name'
-import { Route as AgentsControlPlaneAgentProvidersNameRouteImport } from './routes/agents-control-plane/agent-providers/$name'
 import { Route as OpenaiV1ChatCompletionsRouteImport } from './routes/openai/v1/chat/completions'
 import { Route as ApiTorghutTaSignalsRouteImport } from './routes/api/torghut/ta/signals'
 import { Route as ApiTorghutTaLatestRouteImport } from './routes/api/torghut/ta/latest'
@@ -119,6 +122,7 @@ import { Route as ApiAgentsControlPlaneStreamRouteImport } from './routes/api/ag
 import { Route as ApiAgentsControlPlaneStatusRouteImport } from './routes/api/agents/control-plane/status'
 import { Route as ApiAgentsControlPlaneResourcesRouteImport } from './routes/api/agents/control-plane/resources'
 import { Route as ApiAgentsControlPlaneResourceRouteImport } from './routes/api/agents/control-plane/resource'
+import { Route as ApiAgentsControlPlaneLogsRouteImport } from './routes/api/agents/control-plane/logs'
 import { Route as ApiAgentsControlPlaneEventsRouteImport } from './routes/api/agents/control-plane/events'
 import { Route as GithubPullsOwnerRepoNumberRouteImport } from './routes/github/pulls/$owner/$repo/$number'
 import { Route as ApiAgentsImplementationSourcesWebhooksProviderRouteImport } from './routes/api/agents/implementation-sources/webhooks/$provider'
@@ -157,6 +161,11 @@ const TerminalsIndexRoute = TerminalsIndexRouteImport.update({
   path: '/terminals/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ControlPlaneIndexRoute = ControlPlaneIndexRouteImport.update({
+  id: '/control-plane/',
+  path: '/control-plane/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AtlasIndexRoute = AtlasIndexRouteImport.update({
   id: '/atlas/',
   path: '/atlas/',
@@ -165,11 +174,6 @@ const AtlasIndexRoute = AtlasIndexRouteImport.update({
 const AgentsIndexRoute = AgentsIndexRouteImport.update({
   id: '/agents/',
   path: '/agents/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AgentsControlPlaneIndexRoute = AgentsControlPlaneIndexRouteImport.update({
-  id: '/agents-control-plane/',
-  path: '/agents-control-plane/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const V1OrchestrationsRoute = V1OrchestrationsRouteImport.update({
@@ -297,112 +301,115 @@ const GithubPullsIndexRoute = GithubPullsIndexRouteImport.update({
   path: '/',
   getParentRoute: () => GithubPullsRoute,
 } as any)
-const AgentsControlPlaneWorkspacesIndexRoute =
-  AgentsControlPlaneWorkspacesIndexRouteImport.update({
-    id: '/agents-control-plane/workspaces/',
-    path: '/agents-control-plane/workspaces/',
+const ControlPlaneWorkspacesIndexRoute =
+  ControlPlaneWorkspacesIndexRouteImport.update({
+    id: '/control-plane/workspaces/',
+    path: '/control-plane/workspaces/',
     getParentRoute: () => rootRouteImport,
   } as any)
-const AgentsControlPlaneToolsIndexRoute =
-  AgentsControlPlaneToolsIndexRouteImport.update({
-    id: '/agents-control-plane/tools/',
-    path: '/agents-control-plane/tools/',
+const ControlPlaneToolsIndexRoute = ControlPlaneToolsIndexRouteImport.update({
+  id: '/control-plane/tools/',
+  path: '/control-plane/tools/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ControlPlaneToolRunsIndexRoute =
+  ControlPlaneToolRunsIndexRouteImport.update({
+    id: '/control-plane/tool-runs/',
+    path: '/control-plane/tool-runs/',
     getParentRoute: () => rootRouteImport,
   } as any)
-const AgentsControlPlaneToolRunsIndexRoute =
-  AgentsControlPlaneToolRunsIndexRouteImport.update({
-    id: '/agents-control-plane/tool-runs/',
-    path: '/agents-control-plane/tool-runs/',
+const ControlPlaneSignalsIndexRoute =
+  ControlPlaneSignalsIndexRouteImport.update({
+    id: '/control-plane/signals/',
+    path: '/control-plane/signals/',
     getParentRoute: () => rootRouteImport,
   } as any)
-const AgentsControlPlaneSignalsIndexRoute =
-  AgentsControlPlaneSignalsIndexRouteImport.update({
-    id: '/agents-control-plane/signals/',
-    path: '/agents-control-plane/signals/',
+const ControlPlaneSignalDeliveriesIndexRoute =
+  ControlPlaneSignalDeliveriesIndexRouteImport.update({
+    id: '/control-plane/signal-deliveries/',
+    path: '/control-plane/signal-deliveries/',
     getParentRoute: () => rootRouteImport,
   } as any)
-const AgentsControlPlaneSignalDeliveriesIndexRoute =
-  AgentsControlPlaneSignalDeliveriesIndexRouteImport.update({
-    id: '/agents-control-plane/signal-deliveries/',
-    path: '/agents-control-plane/signal-deliveries/',
+const ControlPlaneSecretBindingsIndexRoute =
+  ControlPlaneSecretBindingsIndexRouteImport.update({
+    id: '/control-plane/secret-bindings/',
+    path: '/control-plane/secret-bindings/',
     getParentRoute: () => rootRouteImport,
   } as any)
-const AgentsControlPlaneSecretBindingsIndexRoute =
-  AgentsControlPlaneSecretBindingsIndexRouteImport.update({
-    id: '/agents-control-plane/secret-bindings/',
-    path: '/agents-control-plane/secret-bindings/',
+const ControlPlaneSchedulesIndexRoute =
+  ControlPlaneSchedulesIndexRouteImport.update({
+    id: '/control-plane/schedules/',
+    path: '/control-plane/schedules/',
     getParentRoute: () => rootRouteImport,
   } as any)
-const AgentsControlPlaneSchedulesIndexRoute =
-  AgentsControlPlaneSchedulesIndexRouteImport.update({
-    id: '/agents-control-plane/schedules/',
-    path: '/agents-control-plane/schedules/',
+const ControlPlaneRunsIndexRoute = ControlPlaneRunsIndexRouteImport.update({
+  id: '/control-plane/runs/',
+  path: '/control-plane/runs/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ControlPlaneOrchestrationsIndexRoute =
+  ControlPlaneOrchestrationsIndexRouteImport.update({
+    id: '/control-plane/orchestrations/',
+    path: '/control-plane/orchestrations/',
     getParentRoute: () => rootRouteImport,
   } as any)
-const AgentsControlPlaneOrchestrationsIndexRoute =
-  AgentsControlPlaneOrchestrationsIndexRouteImport.update({
-    id: '/agents-control-plane/orchestrations/',
-    path: '/agents-control-plane/orchestrations/',
+const ControlPlaneOrchestrationRunsIndexRoute =
+  ControlPlaneOrchestrationRunsIndexRouteImport.update({
+    id: '/control-plane/orchestration-runs/',
+    path: '/control-plane/orchestration-runs/',
     getParentRoute: () => rootRouteImport,
   } as any)
-const AgentsControlPlaneOrchestrationRunsIndexRoute =
-  AgentsControlPlaneOrchestrationRunsIndexRouteImport.update({
-    id: '/agents-control-plane/orchestration-runs/',
-    path: '/agents-control-plane/orchestration-runs/',
+const ControlPlaneMemoriesIndexRoute =
+  ControlPlaneMemoriesIndexRouteImport.update({
+    id: '/control-plane/memories/',
+    path: '/control-plane/memories/',
     getParentRoute: () => rootRouteImport,
   } as any)
-const AgentsControlPlaneMemoriesIndexRoute =
-  AgentsControlPlaneMemoriesIndexRouteImport.update({
-    id: '/agents-control-plane/memories/',
-    path: '/agents-control-plane/memories/',
+const ControlPlaneImplementationSpecsIndexRoute =
+  ControlPlaneImplementationSpecsIndexRouteImport.update({
+    id: '/control-plane/implementation-specs/',
+    path: '/control-plane/implementation-specs/',
     getParentRoute: () => rootRouteImport,
   } as any)
-const AgentsControlPlaneImplementationSpecsIndexRoute =
-  AgentsControlPlaneImplementationSpecsIndexRouteImport.update({
-    id: '/agents-control-plane/implementation-specs/',
-    path: '/agents-control-plane/implementation-specs/',
+const ControlPlaneImplementationSourcesIndexRoute =
+  ControlPlaneImplementationSourcesIndexRouteImport.update({
+    id: '/control-plane/implementation-sources/',
+    path: '/control-plane/implementation-sources/',
     getParentRoute: () => rootRouteImport,
   } as any)
-const AgentsControlPlaneImplementationSourcesIndexRoute =
-  AgentsControlPlaneImplementationSourcesIndexRouteImport.update({
-    id: '/agents-control-plane/implementation-sources/',
-    path: '/agents-control-plane/implementation-sources/',
+const ControlPlaneBudgetsIndexRoute =
+  ControlPlaneBudgetsIndexRouteImport.update({
+    id: '/control-plane/budgets/',
+    path: '/control-plane/budgets/',
     getParentRoute: () => rootRouteImport,
   } as any)
-const AgentsControlPlaneBudgetsIndexRoute =
-  AgentsControlPlaneBudgetsIndexRouteImport.update({
-    id: '/agents-control-plane/budgets/',
-    path: '/agents-control-plane/budgets/',
+const ControlPlaneArtifactsIndexRoute =
+  ControlPlaneArtifactsIndexRouteImport.update({
+    id: '/control-plane/artifacts/',
+    path: '/control-plane/artifacts/',
     getParentRoute: () => rootRouteImport,
   } as any)
-const AgentsControlPlaneArtifactsIndexRoute =
-  AgentsControlPlaneArtifactsIndexRouteImport.update({
-    id: '/agents-control-plane/artifacts/',
-    path: '/agents-control-plane/artifacts/',
+const ControlPlaneApprovalsIndexRoute =
+  ControlPlaneApprovalsIndexRouteImport.update({
+    id: '/control-plane/approvals/',
+    path: '/control-plane/approvals/',
     getParentRoute: () => rootRouteImport,
   } as any)
-const AgentsControlPlaneApprovalsIndexRoute =
-  AgentsControlPlaneApprovalsIndexRouteImport.update({
-    id: '/agents-control-plane/approvals/',
-    path: '/agents-control-plane/approvals/',
+const ControlPlaneAgentsIndexRoute = ControlPlaneAgentsIndexRouteImport.update({
+  id: '/control-plane/agents/',
+  path: '/control-plane/agents/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ControlPlaneAgentRunsIndexRoute =
+  ControlPlaneAgentRunsIndexRouteImport.update({
+    id: '/control-plane/agent-runs/',
+    path: '/control-plane/agent-runs/',
     getParentRoute: () => rootRouteImport,
   } as any)
-const AgentsControlPlaneAgentsIndexRoute =
-  AgentsControlPlaneAgentsIndexRouteImport.update({
-    id: '/agents-control-plane/agents/',
-    path: '/agents-control-plane/agents/',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneAgentRunsIndexRoute =
-  AgentsControlPlaneAgentRunsIndexRouteImport.update({
-    id: '/agents-control-plane/agent-runs/',
-    path: '/agents-control-plane/agent-runs/',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneAgentProvidersIndexRoute =
-  AgentsControlPlaneAgentProvidersIndexRouteImport.update({
-    id: '/agents-control-plane/agent-providers/',
-    path: '/agents-control-plane/agent-providers/',
+const ControlPlaneAgentProvidersIndexRoute =
+  ControlPlaneAgentProvidersIndexRouteImport.update({
+    id: '/control-plane/agent-providers/',
+    path: '/control-plane/agent-providers/',
     getParentRoute: () => rootRouteImport,
   } as any)
 const V1RunsIdRoute = V1RunsIdRouteImport.update({
@@ -446,6 +453,116 @@ const OpenaiV1ModelsRoute = OpenaiV1ModelsRouteImport.update({
   path: '/openai/v1/models',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ControlPlaneWorkspacesNameRoute =
+  ControlPlaneWorkspacesNameRouteImport.update({
+    id: '/control-plane/workspaces/$name',
+    path: '/control-plane/workspaces/$name',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ControlPlaneToolsNameRoute = ControlPlaneToolsNameRouteImport.update({
+  id: '/control-plane/tools/$name',
+  path: '/control-plane/tools/$name',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ControlPlaneToolRunsNameRoute =
+  ControlPlaneToolRunsNameRouteImport.update({
+    id: '/control-plane/tool-runs/$name',
+    path: '/control-plane/tool-runs/$name',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ControlPlaneSignalsNameRoute = ControlPlaneSignalsNameRouteImport.update({
+  id: '/control-plane/signals/$name',
+  path: '/control-plane/signals/$name',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ControlPlaneSignalDeliveriesNameRoute =
+  ControlPlaneSignalDeliveriesNameRouteImport.update({
+    id: '/control-plane/signal-deliveries/$name',
+    path: '/control-plane/signal-deliveries/$name',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ControlPlaneSecretBindingsNameRoute =
+  ControlPlaneSecretBindingsNameRouteImport.update({
+    id: '/control-plane/secret-bindings/$name',
+    path: '/control-plane/secret-bindings/$name',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ControlPlaneSchedulesNameRoute =
+  ControlPlaneSchedulesNameRouteImport.update({
+    id: '/control-plane/schedules/$name',
+    path: '/control-plane/schedules/$name',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ControlPlaneOrchestrationsNameRoute =
+  ControlPlaneOrchestrationsNameRouteImport.update({
+    id: '/control-plane/orchestrations/$name',
+    path: '/control-plane/orchestrations/$name',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ControlPlaneOrchestrationRunsNameRoute =
+  ControlPlaneOrchestrationRunsNameRouteImport.update({
+    id: '/control-plane/orchestration-runs/$name',
+    path: '/control-plane/orchestration-runs/$name',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ControlPlaneMemoriesNameRoute =
+  ControlPlaneMemoriesNameRouteImport.update({
+    id: '/control-plane/memories/$name',
+    path: '/control-plane/memories/$name',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ControlPlaneImplementationSpecsNewRoute =
+  ControlPlaneImplementationSpecsNewRouteImport.update({
+    id: '/control-plane/implementation-specs/new',
+    path: '/control-plane/implementation-specs/new',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ControlPlaneImplementationSpecsNameRoute =
+  ControlPlaneImplementationSpecsNameRouteImport.update({
+    id: '/control-plane/implementation-specs/$name',
+    path: '/control-plane/implementation-specs/$name',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ControlPlaneImplementationSourcesNameRoute =
+  ControlPlaneImplementationSourcesNameRouteImport.update({
+    id: '/control-plane/implementation-sources/$name',
+    path: '/control-plane/implementation-sources/$name',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ControlPlaneBudgetsNameRoute = ControlPlaneBudgetsNameRouteImport.update({
+  id: '/control-plane/budgets/$name',
+  path: '/control-plane/budgets/$name',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ControlPlaneArtifactsNameRoute =
+  ControlPlaneArtifactsNameRouteImport.update({
+    id: '/control-plane/artifacts/$name',
+    path: '/control-plane/artifacts/$name',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ControlPlaneApprovalsNameRoute =
+  ControlPlaneApprovalsNameRouteImport.update({
+    id: '/control-plane/approvals/$name',
+    path: '/control-plane/approvals/$name',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ControlPlaneAgentsNameRoute = ControlPlaneAgentsNameRouteImport.update({
+  id: '/control-plane/agents/$name',
+  path: '/control-plane/agents/$name',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ControlPlaneAgentRunsNameRoute =
+  ControlPlaneAgentRunsNameRouteImport.update({
+    id: '/control-plane/agent-runs/$name',
+    path: '/control-plane/agent-runs/$name',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ControlPlaneAgentProvidersNameRoute =
+  ControlPlaneAgentProvidersNameRouteImport.update({
+    id: '/control-plane/agent-providers/$name',
+    path: '/control-plane/agent-providers/$name',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiTorghutSymbolsRoute = ApiTorghutSymbolsRouteImport.update({
   id: '/api/torghut/symbols',
   path: '/api/torghut/symbols',
@@ -464,6 +581,11 @@ const ApiMemoriesCountRoute = ApiMemoriesCountRouteImport.update({
 const ApiGithubPullsRoute = ApiGithubPullsRouteImport.update({
   id: '/api/github/pulls',
   path: '/api/github/pulls',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGithubIssuesRoute = ApiGithubIssuesRouteImport.update({
+  id: '/api/github/issues',
+  path: '/api/github/issues',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiCodexRunsRoute = ApiCodexRunsRouteImport.update({
@@ -521,114 +643,6 @@ const ApiAgentsEventsRoute = ApiAgentsEventsRouteImport.update({
   path: '/api/agents/events',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AgentsControlPlaneWorkspacesNameRoute =
-  AgentsControlPlaneWorkspacesNameRouteImport.update({
-    id: '/agents-control-plane/workspaces/$name',
-    path: '/agents-control-plane/workspaces/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneToolsNameRoute =
-  AgentsControlPlaneToolsNameRouteImport.update({
-    id: '/agents-control-plane/tools/$name',
-    path: '/agents-control-plane/tools/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneToolRunsNameRoute =
-  AgentsControlPlaneToolRunsNameRouteImport.update({
-    id: '/agents-control-plane/tool-runs/$name',
-    path: '/agents-control-plane/tool-runs/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneSignalsNameRoute =
-  AgentsControlPlaneSignalsNameRouteImport.update({
-    id: '/agents-control-plane/signals/$name',
-    path: '/agents-control-plane/signals/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneSignalDeliveriesNameRoute =
-  AgentsControlPlaneSignalDeliveriesNameRouteImport.update({
-    id: '/agents-control-plane/signal-deliveries/$name',
-    path: '/agents-control-plane/signal-deliveries/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneSecretBindingsNameRoute =
-  AgentsControlPlaneSecretBindingsNameRouteImport.update({
-    id: '/agents-control-plane/secret-bindings/$name',
-    path: '/agents-control-plane/secret-bindings/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneSchedulesNameRoute =
-  AgentsControlPlaneSchedulesNameRouteImport.update({
-    id: '/agents-control-plane/schedules/$name',
-    path: '/agents-control-plane/schedules/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneOrchestrationsNameRoute =
-  AgentsControlPlaneOrchestrationsNameRouteImport.update({
-    id: '/agents-control-plane/orchestrations/$name',
-    path: '/agents-control-plane/orchestrations/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneOrchestrationRunsNameRoute =
-  AgentsControlPlaneOrchestrationRunsNameRouteImport.update({
-    id: '/agents-control-plane/orchestration-runs/$name',
-    path: '/agents-control-plane/orchestration-runs/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneMemoriesNameRoute =
-  AgentsControlPlaneMemoriesNameRouteImport.update({
-    id: '/agents-control-plane/memories/$name',
-    path: '/agents-control-plane/memories/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneImplementationSpecsNameRoute =
-  AgentsControlPlaneImplementationSpecsNameRouteImport.update({
-    id: '/agents-control-plane/implementation-specs/$name',
-    path: '/agents-control-plane/implementation-specs/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneImplementationSourcesNameRoute =
-  AgentsControlPlaneImplementationSourcesNameRouteImport.update({
-    id: '/agents-control-plane/implementation-sources/$name',
-    path: '/agents-control-plane/implementation-sources/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneBudgetsNameRoute =
-  AgentsControlPlaneBudgetsNameRouteImport.update({
-    id: '/agents-control-plane/budgets/$name',
-    path: '/agents-control-plane/budgets/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneArtifactsNameRoute =
-  AgentsControlPlaneArtifactsNameRouteImport.update({
-    id: '/agents-control-plane/artifacts/$name',
-    path: '/agents-control-plane/artifacts/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneApprovalsNameRoute =
-  AgentsControlPlaneApprovalsNameRouteImport.update({
-    id: '/agents-control-plane/approvals/$name',
-    path: '/agents-control-plane/approvals/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneAgentsNameRoute =
-  AgentsControlPlaneAgentsNameRouteImport.update({
-    id: '/agents-control-plane/agents/$name',
-    path: '/agents-control-plane/agents/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneAgentRunsNameRoute =
-  AgentsControlPlaneAgentRunsNameRouteImport.update({
-    id: '/agents-control-plane/agent-runs/$name',
-    path: '/agents-control-plane/agent-runs/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AgentsControlPlaneAgentProvidersNameRoute =
-  AgentsControlPlaneAgentProvidersNameRouteImport.update({
-    id: '/agents-control-plane/agent-providers/$name',
-    path: '/agents-control-plane/agent-providers/$name',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 const OpenaiV1ChatCompletionsRoute = OpenaiV1ChatCompletionsRouteImport.update({
   id: '/openai/v1/chat/completions',
   path: '/openai/v1/chat/completions',
@@ -727,6 +741,12 @@ const ApiAgentsControlPlaneResourceRoute =
   ApiAgentsControlPlaneResourceRouteImport.update({
     id: '/api/agents/control-plane/resource',
     path: '/api/agents/control-plane/resource',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiAgentsControlPlaneLogsRoute =
+  ApiAgentsControlPlaneLogsRouteImport.update({
+    id: '/api/agents/control-plane/logs',
+    path: '/api/agents/control-plane/logs',
     getParentRoute: () => rootRouteImport,
   } as any)
 const ApiAgentsControlPlaneEventsRoute =
@@ -830,28 +850,10 @@ export interface FileRoutesByFullPath {
   '/v1/memory-queries': typeof V1MemoryQueriesRoute
   '/v1/orchestration-runs': typeof V1OrchestrationRunsRouteWithChildren
   '/v1/orchestrations': typeof V1OrchestrationsRouteWithChildren
-  '/agents-control-plane': typeof AgentsControlPlaneIndexRoute
   '/agents': typeof AgentsIndexRoute
   '/atlas': typeof AtlasIndexRoute
+  '/control-plane': typeof ControlPlaneIndexRoute
   '/terminals': typeof TerminalsIndexRoute
-  '/agents-control-plane/agent-providers/$name': typeof AgentsControlPlaneAgentProvidersNameRoute
-  '/agents-control-plane/agent-runs/$name': typeof AgentsControlPlaneAgentRunsNameRoute
-  '/agents-control-plane/agents/$name': typeof AgentsControlPlaneAgentsNameRoute
-  '/agents-control-plane/approvals/$name': typeof AgentsControlPlaneApprovalsNameRoute
-  '/agents-control-plane/artifacts/$name': typeof AgentsControlPlaneArtifactsNameRoute
-  '/agents-control-plane/budgets/$name': typeof AgentsControlPlaneBudgetsNameRoute
-  '/agents-control-plane/implementation-sources/$name': typeof AgentsControlPlaneImplementationSourcesNameRoute
-  '/agents-control-plane/implementation-specs/$name': typeof AgentsControlPlaneImplementationSpecsNameRoute
-  '/agents-control-plane/memories/$name': typeof AgentsControlPlaneMemoriesNameRoute
-  '/agents-control-plane/orchestration-runs/$name': typeof AgentsControlPlaneOrchestrationRunsNameRoute
-  '/agents-control-plane/orchestrations/$name': typeof AgentsControlPlaneOrchestrationsNameRoute
-  '/agents-control-plane/schedules/$name': typeof AgentsControlPlaneSchedulesNameRoute
-  '/agents-control-plane/secret-bindings/$name': typeof AgentsControlPlaneSecretBindingsNameRoute
-  '/agents-control-plane/signal-deliveries/$name': typeof AgentsControlPlaneSignalDeliveriesNameRoute
-  '/agents-control-plane/signals/$name': typeof AgentsControlPlaneSignalsNameRoute
-  '/agents-control-plane/tool-runs/$name': typeof AgentsControlPlaneToolRunsNameRoute
-  '/agents-control-plane/tools/$name': typeof AgentsControlPlaneToolsNameRoute
-  '/agents-control-plane/workspaces/$name': typeof AgentsControlPlaneWorkspacesNameRoute
   '/api/agents/events': typeof ApiAgentsEventsRoute
   '/api/atlas/ast': typeof ApiAtlasAstRoute
   '/api/atlas/file': typeof ApiAtlasFileRoute
@@ -863,10 +865,30 @@ export interface FileRoutesByFullPath {
   '/api/codex/rerun': typeof ApiCodexRerunRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
+  '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/memories/count': typeof ApiMemoriesCountRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
+  '/control-plane/agent-providers/$name': typeof ControlPlaneAgentProvidersNameRoute
+  '/control-plane/agent-runs/$name': typeof ControlPlaneAgentRunsNameRoute
+  '/control-plane/agents/$name': typeof ControlPlaneAgentsNameRoute
+  '/control-plane/approvals/$name': typeof ControlPlaneApprovalsNameRoute
+  '/control-plane/artifacts/$name': typeof ControlPlaneArtifactsNameRoute
+  '/control-plane/budgets/$name': typeof ControlPlaneBudgetsNameRoute
+  '/control-plane/implementation-sources/$name': typeof ControlPlaneImplementationSourcesNameRoute
+  '/control-plane/implementation-specs/$name': typeof ControlPlaneImplementationSpecsNameRoute
+  '/control-plane/implementation-specs/new': typeof ControlPlaneImplementationSpecsNewRoute
+  '/control-plane/memories/$name': typeof ControlPlaneMemoriesNameRoute
+  '/control-plane/orchestration-runs/$name': typeof ControlPlaneOrchestrationRunsNameRoute
+  '/control-plane/orchestrations/$name': typeof ControlPlaneOrchestrationsNameRoute
+  '/control-plane/schedules/$name': typeof ControlPlaneSchedulesNameRoute
+  '/control-plane/secret-bindings/$name': typeof ControlPlaneSecretBindingsNameRoute
+  '/control-plane/signal-deliveries/$name': typeof ControlPlaneSignalDeliveriesNameRoute
+  '/control-plane/signals/$name': typeof ControlPlaneSignalsNameRoute
+  '/control-plane/tool-runs/$name': typeof ControlPlaneToolRunsNameRoute
+  '/control-plane/tools/$name': typeof ControlPlaneToolsNameRoute
+  '/control-plane/workspaces/$name': typeof ControlPlaneWorkspacesNameRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/v1/agent-runs/$id': typeof V1AgentRunsIdRoute
@@ -875,27 +897,29 @@ export interface FileRoutesByFullPath {
   '/v1/orchestration-runs/$id': typeof V1OrchestrationRunsIdRoute
   '/v1/orchestrations/$id': typeof V1OrchestrationsIdRoute
   '/v1/runs/$id': typeof V1RunsIdRoute
-  '/agents-control-plane/agent-providers': typeof AgentsControlPlaneAgentProvidersIndexRoute
-  '/agents-control-plane/agent-runs': typeof AgentsControlPlaneAgentRunsIndexRoute
-  '/agents-control-plane/agents': typeof AgentsControlPlaneAgentsIndexRoute
-  '/agents-control-plane/approvals': typeof AgentsControlPlaneApprovalsIndexRoute
-  '/agents-control-plane/artifacts': typeof AgentsControlPlaneArtifactsIndexRoute
-  '/agents-control-plane/budgets': typeof AgentsControlPlaneBudgetsIndexRoute
-  '/agents-control-plane/implementation-sources': typeof AgentsControlPlaneImplementationSourcesIndexRoute
-  '/agents-control-plane/implementation-specs': typeof AgentsControlPlaneImplementationSpecsIndexRoute
-  '/agents-control-plane/memories': typeof AgentsControlPlaneMemoriesIndexRoute
-  '/agents-control-plane/orchestration-runs': typeof AgentsControlPlaneOrchestrationRunsIndexRoute
-  '/agents-control-plane/orchestrations': typeof AgentsControlPlaneOrchestrationsIndexRoute
-  '/agents-control-plane/schedules': typeof AgentsControlPlaneSchedulesIndexRoute
-  '/agents-control-plane/secret-bindings': typeof AgentsControlPlaneSecretBindingsIndexRoute
-  '/agents-control-plane/signal-deliveries': typeof AgentsControlPlaneSignalDeliveriesIndexRoute
-  '/agents-control-plane/signals': typeof AgentsControlPlaneSignalsIndexRoute
-  '/agents-control-plane/tool-runs': typeof AgentsControlPlaneToolRunsIndexRoute
-  '/agents-control-plane/tools': typeof AgentsControlPlaneToolsIndexRoute
-  '/agents-control-plane/workspaces': typeof AgentsControlPlaneWorkspacesIndexRoute
+  '/control-plane/agent-providers': typeof ControlPlaneAgentProvidersIndexRoute
+  '/control-plane/agent-runs': typeof ControlPlaneAgentRunsIndexRoute
+  '/control-plane/agents': typeof ControlPlaneAgentsIndexRoute
+  '/control-plane/approvals': typeof ControlPlaneApprovalsIndexRoute
+  '/control-plane/artifacts': typeof ControlPlaneArtifactsIndexRoute
+  '/control-plane/budgets': typeof ControlPlaneBudgetsIndexRoute
+  '/control-plane/implementation-sources': typeof ControlPlaneImplementationSourcesIndexRoute
+  '/control-plane/implementation-specs': typeof ControlPlaneImplementationSpecsIndexRoute
+  '/control-plane/memories': typeof ControlPlaneMemoriesIndexRoute
+  '/control-plane/orchestration-runs': typeof ControlPlaneOrchestrationRunsIndexRoute
+  '/control-plane/orchestrations': typeof ControlPlaneOrchestrationsIndexRoute
+  '/control-plane/runs': typeof ControlPlaneRunsIndexRoute
+  '/control-plane/schedules': typeof ControlPlaneSchedulesIndexRoute
+  '/control-plane/secret-bindings': typeof ControlPlaneSecretBindingsIndexRoute
+  '/control-plane/signal-deliveries': typeof ControlPlaneSignalDeliveriesIndexRoute
+  '/control-plane/signals': typeof ControlPlaneSignalsIndexRoute
+  '/control-plane/tool-runs': typeof ControlPlaneToolRunsIndexRoute
+  '/control-plane/tools': typeof ControlPlaneToolsIndexRoute
+  '/control-plane/workspaces': typeof ControlPlaneWorkspacesIndexRoute
   '/github/pulls/': typeof GithubPullsIndexRoute
   '/terminals/$sessionId/': typeof TerminalsSessionIdIndexRoute
   '/api/agents/control-plane/events': typeof ApiAgentsControlPlaneEventsRoute
+  '/api/agents/control-plane/logs': typeof ApiAgentsControlPlaneLogsRoute
   '/api/agents/control-plane/resource': typeof ApiAgentsControlPlaneResourceRoute
   '/api/agents/control-plane/resources': typeof ApiAgentsControlPlaneResourcesRoute
   '/api/agents/control-plane/status': typeof ApiAgentsControlPlaneStatusRoute
@@ -952,28 +976,10 @@ export interface FileRoutesByTo {
   '/v1/memory-queries': typeof V1MemoryQueriesRoute
   '/v1/orchestration-runs': typeof V1OrchestrationRunsRouteWithChildren
   '/v1/orchestrations': typeof V1OrchestrationsRouteWithChildren
-  '/agents-control-plane': typeof AgentsControlPlaneIndexRoute
   '/agents': typeof AgentsIndexRoute
   '/atlas': typeof AtlasIndexRoute
+  '/control-plane': typeof ControlPlaneIndexRoute
   '/terminals': typeof TerminalsIndexRoute
-  '/agents-control-plane/agent-providers/$name': typeof AgentsControlPlaneAgentProvidersNameRoute
-  '/agents-control-plane/agent-runs/$name': typeof AgentsControlPlaneAgentRunsNameRoute
-  '/agents-control-plane/agents/$name': typeof AgentsControlPlaneAgentsNameRoute
-  '/agents-control-plane/approvals/$name': typeof AgentsControlPlaneApprovalsNameRoute
-  '/agents-control-plane/artifacts/$name': typeof AgentsControlPlaneArtifactsNameRoute
-  '/agents-control-plane/budgets/$name': typeof AgentsControlPlaneBudgetsNameRoute
-  '/agents-control-plane/implementation-sources/$name': typeof AgentsControlPlaneImplementationSourcesNameRoute
-  '/agents-control-plane/implementation-specs/$name': typeof AgentsControlPlaneImplementationSpecsNameRoute
-  '/agents-control-plane/memories/$name': typeof AgentsControlPlaneMemoriesNameRoute
-  '/agents-control-plane/orchestration-runs/$name': typeof AgentsControlPlaneOrchestrationRunsNameRoute
-  '/agents-control-plane/orchestrations/$name': typeof AgentsControlPlaneOrchestrationsNameRoute
-  '/agents-control-plane/schedules/$name': typeof AgentsControlPlaneSchedulesNameRoute
-  '/agents-control-plane/secret-bindings/$name': typeof AgentsControlPlaneSecretBindingsNameRoute
-  '/agents-control-plane/signal-deliveries/$name': typeof AgentsControlPlaneSignalDeliveriesNameRoute
-  '/agents-control-plane/signals/$name': typeof AgentsControlPlaneSignalsNameRoute
-  '/agents-control-plane/tool-runs/$name': typeof AgentsControlPlaneToolRunsNameRoute
-  '/agents-control-plane/tools/$name': typeof AgentsControlPlaneToolsNameRoute
-  '/agents-control-plane/workspaces/$name': typeof AgentsControlPlaneWorkspacesNameRoute
   '/api/agents/events': typeof ApiAgentsEventsRoute
   '/api/atlas/ast': typeof ApiAtlasAstRoute
   '/api/atlas/file': typeof ApiAtlasFileRoute
@@ -985,10 +991,30 @@ export interface FileRoutesByTo {
   '/api/codex/rerun': typeof ApiCodexRerunRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
+  '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/memories/count': typeof ApiMemoriesCountRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
+  '/control-plane/agent-providers/$name': typeof ControlPlaneAgentProvidersNameRoute
+  '/control-plane/agent-runs/$name': typeof ControlPlaneAgentRunsNameRoute
+  '/control-plane/agents/$name': typeof ControlPlaneAgentsNameRoute
+  '/control-plane/approvals/$name': typeof ControlPlaneApprovalsNameRoute
+  '/control-plane/artifacts/$name': typeof ControlPlaneArtifactsNameRoute
+  '/control-plane/budgets/$name': typeof ControlPlaneBudgetsNameRoute
+  '/control-plane/implementation-sources/$name': typeof ControlPlaneImplementationSourcesNameRoute
+  '/control-plane/implementation-specs/$name': typeof ControlPlaneImplementationSpecsNameRoute
+  '/control-plane/implementation-specs/new': typeof ControlPlaneImplementationSpecsNewRoute
+  '/control-plane/memories/$name': typeof ControlPlaneMemoriesNameRoute
+  '/control-plane/orchestration-runs/$name': typeof ControlPlaneOrchestrationRunsNameRoute
+  '/control-plane/orchestrations/$name': typeof ControlPlaneOrchestrationsNameRoute
+  '/control-plane/schedules/$name': typeof ControlPlaneSchedulesNameRoute
+  '/control-plane/secret-bindings/$name': typeof ControlPlaneSecretBindingsNameRoute
+  '/control-plane/signal-deliveries/$name': typeof ControlPlaneSignalDeliveriesNameRoute
+  '/control-plane/signals/$name': typeof ControlPlaneSignalsNameRoute
+  '/control-plane/tool-runs/$name': typeof ControlPlaneToolRunsNameRoute
+  '/control-plane/tools/$name': typeof ControlPlaneToolsNameRoute
+  '/control-plane/workspaces/$name': typeof ControlPlaneWorkspacesNameRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/v1/agent-runs/$id': typeof V1AgentRunsIdRoute
@@ -997,27 +1023,29 @@ export interface FileRoutesByTo {
   '/v1/orchestration-runs/$id': typeof V1OrchestrationRunsIdRoute
   '/v1/orchestrations/$id': typeof V1OrchestrationsIdRoute
   '/v1/runs/$id': typeof V1RunsIdRoute
-  '/agents-control-plane/agent-providers': typeof AgentsControlPlaneAgentProvidersIndexRoute
-  '/agents-control-plane/agent-runs': typeof AgentsControlPlaneAgentRunsIndexRoute
-  '/agents-control-plane/agents': typeof AgentsControlPlaneAgentsIndexRoute
-  '/agents-control-plane/approvals': typeof AgentsControlPlaneApprovalsIndexRoute
-  '/agents-control-plane/artifacts': typeof AgentsControlPlaneArtifactsIndexRoute
-  '/agents-control-plane/budgets': typeof AgentsControlPlaneBudgetsIndexRoute
-  '/agents-control-plane/implementation-sources': typeof AgentsControlPlaneImplementationSourcesIndexRoute
-  '/agents-control-plane/implementation-specs': typeof AgentsControlPlaneImplementationSpecsIndexRoute
-  '/agents-control-plane/memories': typeof AgentsControlPlaneMemoriesIndexRoute
-  '/agents-control-plane/orchestration-runs': typeof AgentsControlPlaneOrchestrationRunsIndexRoute
-  '/agents-control-plane/orchestrations': typeof AgentsControlPlaneOrchestrationsIndexRoute
-  '/agents-control-plane/schedules': typeof AgentsControlPlaneSchedulesIndexRoute
-  '/agents-control-plane/secret-bindings': typeof AgentsControlPlaneSecretBindingsIndexRoute
-  '/agents-control-plane/signal-deliveries': typeof AgentsControlPlaneSignalDeliveriesIndexRoute
-  '/agents-control-plane/signals': typeof AgentsControlPlaneSignalsIndexRoute
-  '/agents-control-plane/tool-runs': typeof AgentsControlPlaneToolRunsIndexRoute
-  '/agents-control-plane/tools': typeof AgentsControlPlaneToolsIndexRoute
-  '/agents-control-plane/workspaces': typeof AgentsControlPlaneWorkspacesIndexRoute
+  '/control-plane/agent-providers': typeof ControlPlaneAgentProvidersIndexRoute
+  '/control-plane/agent-runs': typeof ControlPlaneAgentRunsIndexRoute
+  '/control-plane/agents': typeof ControlPlaneAgentsIndexRoute
+  '/control-plane/approvals': typeof ControlPlaneApprovalsIndexRoute
+  '/control-plane/artifacts': typeof ControlPlaneArtifactsIndexRoute
+  '/control-plane/budgets': typeof ControlPlaneBudgetsIndexRoute
+  '/control-plane/implementation-sources': typeof ControlPlaneImplementationSourcesIndexRoute
+  '/control-plane/implementation-specs': typeof ControlPlaneImplementationSpecsIndexRoute
+  '/control-plane/memories': typeof ControlPlaneMemoriesIndexRoute
+  '/control-plane/orchestration-runs': typeof ControlPlaneOrchestrationRunsIndexRoute
+  '/control-plane/orchestrations': typeof ControlPlaneOrchestrationsIndexRoute
+  '/control-plane/runs': typeof ControlPlaneRunsIndexRoute
+  '/control-plane/schedules': typeof ControlPlaneSchedulesIndexRoute
+  '/control-plane/secret-bindings': typeof ControlPlaneSecretBindingsIndexRoute
+  '/control-plane/signal-deliveries': typeof ControlPlaneSignalDeliveriesIndexRoute
+  '/control-plane/signals': typeof ControlPlaneSignalsIndexRoute
+  '/control-plane/tool-runs': typeof ControlPlaneToolRunsIndexRoute
+  '/control-plane/tools': typeof ControlPlaneToolsIndexRoute
+  '/control-plane/workspaces': typeof ControlPlaneWorkspacesIndexRoute
   '/github/pulls': typeof GithubPullsIndexRoute
   '/terminals/$sessionId': typeof TerminalsSessionIdIndexRoute
   '/api/agents/control-plane/events': typeof ApiAgentsControlPlaneEventsRoute
+  '/api/agents/control-plane/logs': typeof ApiAgentsControlPlaneLogsRoute
   '/api/agents/control-plane/resource': typeof ApiAgentsControlPlaneResourceRoute
   '/api/agents/control-plane/resources': typeof ApiAgentsControlPlaneResourcesRoute
   '/api/agents/control-plane/status': typeof ApiAgentsControlPlaneStatusRoute
@@ -1077,28 +1105,10 @@ export interface FileRoutesById {
   '/v1/memory-queries': typeof V1MemoryQueriesRoute
   '/v1/orchestration-runs': typeof V1OrchestrationRunsRouteWithChildren
   '/v1/orchestrations': typeof V1OrchestrationsRouteWithChildren
-  '/agents-control-plane/': typeof AgentsControlPlaneIndexRoute
   '/agents/': typeof AgentsIndexRoute
   '/atlas/': typeof AtlasIndexRoute
+  '/control-plane/': typeof ControlPlaneIndexRoute
   '/terminals/': typeof TerminalsIndexRoute
-  '/agents-control-plane/agent-providers/$name': typeof AgentsControlPlaneAgentProvidersNameRoute
-  '/agents-control-plane/agent-runs/$name': typeof AgentsControlPlaneAgentRunsNameRoute
-  '/agents-control-plane/agents/$name': typeof AgentsControlPlaneAgentsNameRoute
-  '/agents-control-plane/approvals/$name': typeof AgentsControlPlaneApprovalsNameRoute
-  '/agents-control-plane/artifacts/$name': typeof AgentsControlPlaneArtifactsNameRoute
-  '/agents-control-plane/budgets/$name': typeof AgentsControlPlaneBudgetsNameRoute
-  '/agents-control-plane/implementation-sources/$name': typeof AgentsControlPlaneImplementationSourcesNameRoute
-  '/agents-control-plane/implementation-specs/$name': typeof AgentsControlPlaneImplementationSpecsNameRoute
-  '/agents-control-plane/memories/$name': typeof AgentsControlPlaneMemoriesNameRoute
-  '/agents-control-plane/orchestration-runs/$name': typeof AgentsControlPlaneOrchestrationRunsNameRoute
-  '/agents-control-plane/orchestrations/$name': typeof AgentsControlPlaneOrchestrationsNameRoute
-  '/agents-control-plane/schedules/$name': typeof AgentsControlPlaneSchedulesNameRoute
-  '/agents-control-plane/secret-bindings/$name': typeof AgentsControlPlaneSecretBindingsNameRoute
-  '/agents-control-plane/signal-deliveries/$name': typeof AgentsControlPlaneSignalDeliveriesNameRoute
-  '/agents-control-plane/signals/$name': typeof AgentsControlPlaneSignalsNameRoute
-  '/agents-control-plane/tool-runs/$name': typeof AgentsControlPlaneToolRunsNameRoute
-  '/agents-control-plane/tools/$name': typeof AgentsControlPlaneToolsNameRoute
-  '/agents-control-plane/workspaces/$name': typeof AgentsControlPlaneWorkspacesNameRoute
   '/api/agents/events': typeof ApiAgentsEventsRoute
   '/api/atlas/ast': typeof ApiAtlasAstRoute
   '/api/atlas/file': typeof ApiAtlasFileRoute
@@ -1110,10 +1120,30 @@ export interface FileRoutesById {
   '/api/codex/rerun': typeof ApiCodexRerunRoute
   '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/codex/runs': typeof ApiCodexRunsRouteWithChildren
+  '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/memories/count': typeof ApiMemoriesCountRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
+  '/control-plane/agent-providers/$name': typeof ControlPlaneAgentProvidersNameRoute
+  '/control-plane/agent-runs/$name': typeof ControlPlaneAgentRunsNameRoute
+  '/control-plane/agents/$name': typeof ControlPlaneAgentsNameRoute
+  '/control-plane/approvals/$name': typeof ControlPlaneApprovalsNameRoute
+  '/control-plane/artifacts/$name': typeof ControlPlaneArtifactsNameRoute
+  '/control-plane/budgets/$name': typeof ControlPlaneBudgetsNameRoute
+  '/control-plane/implementation-sources/$name': typeof ControlPlaneImplementationSourcesNameRoute
+  '/control-plane/implementation-specs/$name': typeof ControlPlaneImplementationSpecsNameRoute
+  '/control-plane/implementation-specs/new': typeof ControlPlaneImplementationSpecsNewRoute
+  '/control-plane/memories/$name': typeof ControlPlaneMemoriesNameRoute
+  '/control-plane/orchestration-runs/$name': typeof ControlPlaneOrchestrationRunsNameRoute
+  '/control-plane/orchestrations/$name': typeof ControlPlaneOrchestrationsNameRoute
+  '/control-plane/schedules/$name': typeof ControlPlaneSchedulesNameRoute
+  '/control-plane/secret-bindings/$name': typeof ControlPlaneSecretBindingsNameRoute
+  '/control-plane/signal-deliveries/$name': typeof ControlPlaneSignalDeliveriesNameRoute
+  '/control-plane/signals/$name': typeof ControlPlaneSignalsNameRoute
+  '/control-plane/tool-runs/$name': typeof ControlPlaneToolRunsNameRoute
+  '/control-plane/tools/$name': typeof ControlPlaneToolsNameRoute
+  '/control-plane/workspaces/$name': typeof ControlPlaneWorkspacesNameRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
   '/v1/agent-runs/$id': typeof V1AgentRunsIdRoute
@@ -1122,27 +1152,29 @@ export interface FileRoutesById {
   '/v1/orchestration-runs/$id': typeof V1OrchestrationRunsIdRoute
   '/v1/orchestrations/$id': typeof V1OrchestrationsIdRoute
   '/v1/runs/$id': typeof V1RunsIdRoute
-  '/agents-control-plane/agent-providers/': typeof AgentsControlPlaneAgentProvidersIndexRoute
-  '/agents-control-plane/agent-runs/': typeof AgentsControlPlaneAgentRunsIndexRoute
-  '/agents-control-plane/agents/': typeof AgentsControlPlaneAgentsIndexRoute
-  '/agents-control-plane/approvals/': typeof AgentsControlPlaneApprovalsIndexRoute
-  '/agents-control-plane/artifacts/': typeof AgentsControlPlaneArtifactsIndexRoute
-  '/agents-control-plane/budgets/': typeof AgentsControlPlaneBudgetsIndexRoute
-  '/agents-control-plane/implementation-sources/': typeof AgentsControlPlaneImplementationSourcesIndexRoute
-  '/agents-control-plane/implementation-specs/': typeof AgentsControlPlaneImplementationSpecsIndexRoute
-  '/agents-control-plane/memories/': typeof AgentsControlPlaneMemoriesIndexRoute
-  '/agents-control-plane/orchestration-runs/': typeof AgentsControlPlaneOrchestrationRunsIndexRoute
-  '/agents-control-plane/orchestrations/': typeof AgentsControlPlaneOrchestrationsIndexRoute
-  '/agents-control-plane/schedules/': typeof AgentsControlPlaneSchedulesIndexRoute
-  '/agents-control-plane/secret-bindings/': typeof AgentsControlPlaneSecretBindingsIndexRoute
-  '/agents-control-plane/signal-deliveries/': typeof AgentsControlPlaneSignalDeliveriesIndexRoute
-  '/agents-control-plane/signals/': typeof AgentsControlPlaneSignalsIndexRoute
-  '/agents-control-plane/tool-runs/': typeof AgentsControlPlaneToolRunsIndexRoute
-  '/agents-control-plane/tools/': typeof AgentsControlPlaneToolsIndexRoute
-  '/agents-control-plane/workspaces/': typeof AgentsControlPlaneWorkspacesIndexRoute
+  '/control-plane/agent-providers/': typeof ControlPlaneAgentProvidersIndexRoute
+  '/control-plane/agent-runs/': typeof ControlPlaneAgentRunsIndexRoute
+  '/control-plane/agents/': typeof ControlPlaneAgentsIndexRoute
+  '/control-plane/approvals/': typeof ControlPlaneApprovalsIndexRoute
+  '/control-plane/artifacts/': typeof ControlPlaneArtifactsIndexRoute
+  '/control-plane/budgets/': typeof ControlPlaneBudgetsIndexRoute
+  '/control-plane/implementation-sources/': typeof ControlPlaneImplementationSourcesIndexRoute
+  '/control-plane/implementation-specs/': typeof ControlPlaneImplementationSpecsIndexRoute
+  '/control-plane/memories/': typeof ControlPlaneMemoriesIndexRoute
+  '/control-plane/orchestration-runs/': typeof ControlPlaneOrchestrationRunsIndexRoute
+  '/control-plane/orchestrations/': typeof ControlPlaneOrchestrationsIndexRoute
+  '/control-plane/runs/': typeof ControlPlaneRunsIndexRoute
+  '/control-plane/schedules/': typeof ControlPlaneSchedulesIndexRoute
+  '/control-plane/secret-bindings/': typeof ControlPlaneSecretBindingsIndexRoute
+  '/control-plane/signal-deliveries/': typeof ControlPlaneSignalDeliveriesIndexRoute
+  '/control-plane/signals/': typeof ControlPlaneSignalsIndexRoute
+  '/control-plane/tool-runs/': typeof ControlPlaneToolRunsIndexRoute
+  '/control-plane/tools/': typeof ControlPlaneToolsIndexRoute
+  '/control-plane/workspaces/': typeof ControlPlaneWorkspacesIndexRoute
   '/github/pulls/': typeof GithubPullsIndexRoute
   '/terminals/$sessionId/': typeof TerminalsSessionIdIndexRoute
   '/api/agents/control-plane/events': typeof ApiAgentsControlPlaneEventsRoute
+  '/api/agents/control-plane/logs': typeof ApiAgentsControlPlaneLogsRoute
   '/api/agents/control-plane/resource': typeof ApiAgentsControlPlaneResourceRoute
   '/api/agents/control-plane/resources': typeof ApiAgentsControlPlaneResourcesRoute
   '/api/agents/control-plane/status': typeof ApiAgentsControlPlaneStatusRoute
@@ -1203,28 +1235,10 @@ export interface FileRouteTypes {
     | '/v1/memory-queries'
     | '/v1/orchestration-runs'
     | '/v1/orchestrations'
-    | '/agents-control-plane'
     | '/agents'
     | '/atlas'
+    | '/control-plane'
     | '/terminals'
-    | '/agents-control-plane/agent-providers/$name'
-    | '/agents-control-plane/agent-runs/$name'
-    | '/agents-control-plane/agents/$name'
-    | '/agents-control-plane/approvals/$name'
-    | '/agents-control-plane/artifacts/$name'
-    | '/agents-control-plane/budgets/$name'
-    | '/agents-control-plane/implementation-sources/$name'
-    | '/agents-control-plane/implementation-specs/$name'
-    | '/agents-control-plane/memories/$name'
-    | '/agents-control-plane/orchestration-runs/$name'
-    | '/agents-control-plane/orchestrations/$name'
-    | '/agents-control-plane/schedules/$name'
-    | '/agents-control-plane/secret-bindings/$name'
-    | '/agents-control-plane/signal-deliveries/$name'
-    | '/agents-control-plane/signals/$name'
-    | '/agents-control-plane/tool-runs/$name'
-    | '/agents-control-plane/tools/$name'
-    | '/agents-control-plane/workspaces/$name'
     | '/api/agents/events'
     | '/api/atlas/ast'
     | '/api/atlas/file'
@@ -1236,10 +1250,30 @@ export interface FileRouteTypes {
     | '/api/codex/rerun'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
+    | '/api/github/issues'
     | '/api/github/pulls'
     | '/api/memories/count'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
+    | '/control-plane/agent-providers/$name'
+    | '/control-plane/agent-runs/$name'
+    | '/control-plane/agents/$name'
+    | '/control-plane/approvals/$name'
+    | '/control-plane/artifacts/$name'
+    | '/control-plane/budgets/$name'
+    | '/control-plane/implementation-sources/$name'
+    | '/control-plane/implementation-specs/$name'
+    | '/control-plane/implementation-specs/new'
+    | '/control-plane/memories/$name'
+    | '/control-plane/orchestration-runs/$name'
+    | '/control-plane/orchestrations/$name'
+    | '/control-plane/schedules/$name'
+    | '/control-plane/secret-bindings/$name'
+    | '/control-plane/signal-deliveries/$name'
+    | '/control-plane/signals/$name'
+    | '/control-plane/tool-runs/$name'
+    | '/control-plane/tools/$name'
+    | '/control-plane/workspaces/$name'
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
     | '/v1/agent-runs/$id'
@@ -1248,27 +1282,29 @@ export interface FileRouteTypes {
     | '/v1/orchestration-runs/$id'
     | '/v1/orchestrations/$id'
     | '/v1/runs/$id'
-    | '/agents-control-plane/agent-providers'
-    | '/agents-control-plane/agent-runs'
-    | '/agents-control-plane/agents'
-    | '/agents-control-plane/approvals'
-    | '/agents-control-plane/artifacts'
-    | '/agents-control-plane/budgets'
-    | '/agents-control-plane/implementation-sources'
-    | '/agents-control-plane/implementation-specs'
-    | '/agents-control-plane/memories'
-    | '/agents-control-plane/orchestration-runs'
-    | '/agents-control-plane/orchestrations'
-    | '/agents-control-plane/schedules'
-    | '/agents-control-plane/secret-bindings'
-    | '/agents-control-plane/signal-deliveries'
-    | '/agents-control-plane/signals'
-    | '/agents-control-plane/tool-runs'
-    | '/agents-control-plane/tools'
-    | '/agents-control-plane/workspaces'
+    | '/control-plane/agent-providers'
+    | '/control-plane/agent-runs'
+    | '/control-plane/agents'
+    | '/control-plane/approvals'
+    | '/control-plane/artifacts'
+    | '/control-plane/budgets'
+    | '/control-plane/implementation-sources'
+    | '/control-plane/implementation-specs'
+    | '/control-plane/memories'
+    | '/control-plane/orchestration-runs'
+    | '/control-plane/orchestrations'
+    | '/control-plane/runs'
+    | '/control-plane/schedules'
+    | '/control-plane/secret-bindings'
+    | '/control-plane/signal-deliveries'
+    | '/control-plane/signals'
+    | '/control-plane/tool-runs'
+    | '/control-plane/tools'
+    | '/control-plane/workspaces'
     | '/github/pulls/'
     | '/terminals/$sessionId/'
     | '/api/agents/control-plane/events'
+    | '/api/agents/control-plane/logs'
     | '/api/agents/control-plane/resource'
     | '/api/agents/control-plane/resources'
     | '/api/agents/control-plane/status'
@@ -1325,28 +1361,10 @@ export interface FileRouteTypes {
     | '/v1/memory-queries'
     | '/v1/orchestration-runs'
     | '/v1/orchestrations'
-    | '/agents-control-plane'
     | '/agents'
     | '/atlas'
+    | '/control-plane'
     | '/terminals'
-    | '/agents-control-plane/agent-providers/$name'
-    | '/agents-control-plane/agent-runs/$name'
-    | '/agents-control-plane/agents/$name'
-    | '/agents-control-plane/approvals/$name'
-    | '/agents-control-plane/artifacts/$name'
-    | '/agents-control-plane/budgets/$name'
-    | '/agents-control-plane/implementation-sources/$name'
-    | '/agents-control-plane/implementation-specs/$name'
-    | '/agents-control-plane/memories/$name'
-    | '/agents-control-plane/orchestration-runs/$name'
-    | '/agents-control-plane/orchestrations/$name'
-    | '/agents-control-plane/schedules/$name'
-    | '/agents-control-plane/secret-bindings/$name'
-    | '/agents-control-plane/signal-deliveries/$name'
-    | '/agents-control-plane/signals/$name'
-    | '/agents-control-plane/tool-runs/$name'
-    | '/agents-control-plane/tools/$name'
-    | '/agents-control-plane/workspaces/$name'
     | '/api/agents/events'
     | '/api/atlas/ast'
     | '/api/atlas/file'
@@ -1358,10 +1376,30 @@ export interface FileRouteTypes {
     | '/api/codex/rerun'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
+    | '/api/github/issues'
     | '/api/github/pulls'
     | '/api/memories/count'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
+    | '/control-plane/agent-providers/$name'
+    | '/control-plane/agent-runs/$name'
+    | '/control-plane/agents/$name'
+    | '/control-plane/approvals/$name'
+    | '/control-plane/artifacts/$name'
+    | '/control-plane/budgets/$name'
+    | '/control-plane/implementation-sources/$name'
+    | '/control-plane/implementation-specs/$name'
+    | '/control-plane/implementation-specs/new'
+    | '/control-plane/memories/$name'
+    | '/control-plane/orchestration-runs/$name'
+    | '/control-plane/orchestrations/$name'
+    | '/control-plane/schedules/$name'
+    | '/control-plane/secret-bindings/$name'
+    | '/control-plane/signal-deliveries/$name'
+    | '/control-plane/signals/$name'
+    | '/control-plane/tool-runs/$name'
+    | '/control-plane/tools/$name'
+    | '/control-plane/workspaces/$name'
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
     | '/v1/agent-runs/$id'
@@ -1370,27 +1408,29 @@ export interface FileRouteTypes {
     | '/v1/orchestration-runs/$id'
     | '/v1/orchestrations/$id'
     | '/v1/runs/$id'
-    | '/agents-control-plane/agent-providers'
-    | '/agents-control-plane/agent-runs'
-    | '/agents-control-plane/agents'
-    | '/agents-control-plane/approvals'
-    | '/agents-control-plane/artifacts'
-    | '/agents-control-plane/budgets'
-    | '/agents-control-plane/implementation-sources'
-    | '/agents-control-plane/implementation-specs'
-    | '/agents-control-plane/memories'
-    | '/agents-control-plane/orchestration-runs'
-    | '/agents-control-plane/orchestrations'
-    | '/agents-control-plane/schedules'
-    | '/agents-control-plane/secret-bindings'
-    | '/agents-control-plane/signal-deliveries'
-    | '/agents-control-plane/signals'
-    | '/agents-control-plane/tool-runs'
-    | '/agents-control-plane/tools'
-    | '/agents-control-plane/workspaces'
+    | '/control-plane/agent-providers'
+    | '/control-plane/agent-runs'
+    | '/control-plane/agents'
+    | '/control-plane/approvals'
+    | '/control-plane/artifacts'
+    | '/control-plane/budgets'
+    | '/control-plane/implementation-sources'
+    | '/control-plane/implementation-specs'
+    | '/control-plane/memories'
+    | '/control-plane/orchestration-runs'
+    | '/control-plane/orchestrations'
+    | '/control-plane/runs'
+    | '/control-plane/schedules'
+    | '/control-plane/secret-bindings'
+    | '/control-plane/signal-deliveries'
+    | '/control-plane/signals'
+    | '/control-plane/tool-runs'
+    | '/control-plane/tools'
+    | '/control-plane/workspaces'
     | '/github/pulls'
     | '/terminals/$sessionId'
     | '/api/agents/control-plane/events'
+    | '/api/agents/control-plane/logs'
     | '/api/agents/control-plane/resource'
     | '/api/agents/control-plane/resources'
     | '/api/agents/control-plane/status'
@@ -1449,28 +1489,10 @@ export interface FileRouteTypes {
     | '/v1/memory-queries'
     | '/v1/orchestration-runs'
     | '/v1/orchestrations'
-    | '/agents-control-plane/'
     | '/agents/'
     | '/atlas/'
+    | '/control-plane/'
     | '/terminals/'
-    | '/agents-control-plane/agent-providers/$name'
-    | '/agents-control-plane/agent-runs/$name'
-    | '/agents-control-plane/agents/$name'
-    | '/agents-control-plane/approvals/$name'
-    | '/agents-control-plane/artifacts/$name'
-    | '/agents-control-plane/budgets/$name'
-    | '/agents-control-plane/implementation-sources/$name'
-    | '/agents-control-plane/implementation-specs/$name'
-    | '/agents-control-plane/memories/$name'
-    | '/agents-control-plane/orchestration-runs/$name'
-    | '/agents-control-plane/orchestrations/$name'
-    | '/agents-control-plane/schedules/$name'
-    | '/agents-control-plane/secret-bindings/$name'
-    | '/agents-control-plane/signal-deliveries/$name'
-    | '/agents-control-plane/signals/$name'
-    | '/agents-control-plane/tool-runs/$name'
-    | '/agents-control-plane/tools/$name'
-    | '/agents-control-plane/workspaces/$name'
     | '/api/agents/events'
     | '/api/atlas/ast'
     | '/api/atlas/file'
@@ -1482,10 +1504,30 @@ export interface FileRouteTypes {
     | '/api/codex/rerun'
     | '/api/codex/run-complete'
     | '/api/codex/runs'
+    | '/api/github/issues'
     | '/api/github/pulls'
     | '/api/memories/count'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
+    | '/control-plane/agent-providers/$name'
+    | '/control-plane/agent-runs/$name'
+    | '/control-plane/agents/$name'
+    | '/control-plane/approvals/$name'
+    | '/control-plane/artifacts/$name'
+    | '/control-plane/budgets/$name'
+    | '/control-plane/implementation-sources/$name'
+    | '/control-plane/implementation-specs/$name'
+    | '/control-plane/implementation-specs/new'
+    | '/control-plane/memories/$name'
+    | '/control-plane/orchestration-runs/$name'
+    | '/control-plane/orchestrations/$name'
+    | '/control-plane/schedules/$name'
+    | '/control-plane/secret-bindings/$name'
+    | '/control-plane/signal-deliveries/$name'
+    | '/control-plane/signals/$name'
+    | '/control-plane/tool-runs/$name'
+    | '/control-plane/tools/$name'
+    | '/control-plane/workspaces/$name'
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
     | '/v1/agent-runs/$id'
@@ -1494,27 +1536,29 @@ export interface FileRouteTypes {
     | '/v1/orchestration-runs/$id'
     | '/v1/orchestrations/$id'
     | '/v1/runs/$id'
-    | '/agents-control-plane/agent-providers/'
-    | '/agents-control-plane/agent-runs/'
-    | '/agents-control-plane/agents/'
-    | '/agents-control-plane/approvals/'
-    | '/agents-control-plane/artifacts/'
-    | '/agents-control-plane/budgets/'
-    | '/agents-control-plane/implementation-sources/'
-    | '/agents-control-plane/implementation-specs/'
-    | '/agents-control-plane/memories/'
-    | '/agents-control-plane/orchestration-runs/'
-    | '/agents-control-plane/orchestrations/'
-    | '/agents-control-plane/schedules/'
-    | '/agents-control-plane/secret-bindings/'
-    | '/agents-control-plane/signal-deliveries/'
-    | '/agents-control-plane/signals/'
-    | '/agents-control-plane/tool-runs/'
-    | '/agents-control-plane/tools/'
-    | '/agents-control-plane/workspaces/'
+    | '/control-plane/agent-providers/'
+    | '/control-plane/agent-runs/'
+    | '/control-plane/agents/'
+    | '/control-plane/approvals/'
+    | '/control-plane/artifacts/'
+    | '/control-plane/budgets/'
+    | '/control-plane/implementation-sources/'
+    | '/control-plane/implementation-specs/'
+    | '/control-plane/memories/'
+    | '/control-plane/orchestration-runs/'
+    | '/control-plane/orchestrations/'
+    | '/control-plane/runs/'
+    | '/control-plane/schedules/'
+    | '/control-plane/secret-bindings/'
+    | '/control-plane/signal-deliveries/'
+    | '/control-plane/signals/'
+    | '/control-plane/tool-runs/'
+    | '/control-plane/tools/'
+    | '/control-plane/workspaces/'
     | '/github/pulls/'
     | '/terminals/$sessionId/'
     | '/api/agents/control-plane/events'
+    | '/api/agents/control-plane/logs'
     | '/api/agents/control-plane/resource'
     | '/api/agents/control-plane/resources'
     | '/api/agents/control-plane/status'
@@ -1574,28 +1618,10 @@ export interface RootRouteChildren {
   V1MemoryQueriesRoute: typeof V1MemoryQueriesRoute
   V1OrchestrationRunsRoute: typeof V1OrchestrationRunsRouteWithChildren
   V1OrchestrationsRoute: typeof V1OrchestrationsRouteWithChildren
-  AgentsControlPlaneIndexRoute: typeof AgentsControlPlaneIndexRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
   AtlasIndexRoute: typeof AtlasIndexRoute
+  ControlPlaneIndexRoute: typeof ControlPlaneIndexRoute
   TerminalsIndexRoute: typeof TerminalsIndexRoute
-  AgentsControlPlaneAgentProvidersNameRoute: typeof AgentsControlPlaneAgentProvidersNameRoute
-  AgentsControlPlaneAgentRunsNameRoute: typeof AgentsControlPlaneAgentRunsNameRoute
-  AgentsControlPlaneAgentsNameRoute: typeof AgentsControlPlaneAgentsNameRoute
-  AgentsControlPlaneApprovalsNameRoute: typeof AgentsControlPlaneApprovalsNameRoute
-  AgentsControlPlaneArtifactsNameRoute: typeof AgentsControlPlaneArtifactsNameRoute
-  AgentsControlPlaneBudgetsNameRoute: typeof AgentsControlPlaneBudgetsNameRoute
-  AgentsControlPlaneImplementationSourcesNameRoute: typeof AgentsControlPlaneImplementationSourcesNameRoute
-  AgentsControlPlaneImplementationSpecsNameRoute: typeof AgentsControlPlaneImplementationSpecsNameRoute
-  AgentsControlPlaneMemoriesNameRoute: typeof AgentsControlPlaneMemoriesNameRoute
-  AgentsControlPlaneOrchestrationRunsNameRoute: typeof AgentsControlPlaneOrchestrationRunsNameRoute
-  AgentsControlPlaneOrchestrationsNameRoute: typeof AgentsControlPlaneOrchestrationsNameRoute
-  AgentsControlPlaneSchedulesNameRoute: typeof AgentsControlPlaneSchedulesNameRoute
-  AgentsControlPlaneSecretBindingsNameRoute: typeof AgentsControlPlaneSecretBindingsNameRoute
-  AgentsControlPlaneSignalDeliveriesNameRoute: typeof AgentsControlPlaneSignalDeliveriesNameRoute
-  AgentsControlPlaneSignalsNameRoute: typeof AgentsControlPlaneSignalsNameRoute
-  AgentsControlPlaneToolRunsNameRoute: typeof AgentsControlPlaneToolRunsNameRoute
-  AgentsControlPlaneToolsNameRoute: typeof AgentsControlPlaneToolsNameRoute
-  AgentsControlPlaneWorkspacesNameRoute: typeof AgentsControlPlaneWorkspacesNameRoute
   ApiAgentsEventsRoute: typeof ApiAgentsEventsRoute
   ApiAtlasAstRoute: typeof ApiAtlasAstRoute
   ApiAtlasFileRoute: typeof ApiAtlasFileRoute
@@ -1607,29 +1633,51 @@ export interface RootRouteChildren {
   ApiCodexRerunRoute: typeof ApiCodexRerunRoute
   ApiCodexRunCompleteRoute: typeof ApiCodexRunCompleteRoute
   ApiCodexRunsRoute: typeof ApiCodexRunsRouteWithChildren
+  ApiGithubIssuesRoute: typeof ApiGithubIssuesRoute
   ApiGithubPullsRoute: typeof ApiGithubPullsRouteWithChildren
   ApiTorghutSymbolsRoute: typeof ApiTorghutSymbolsRouteWithChildren
+  ControlPlaneAgentProvidersNameRoute: typeof ControlPlaneAgentProvidersNameRoute
+  ControlPlaneAgentRunsNameRoute: typeof ControlPlaneAgentRunsNameRoute
+  ControlPlaneAgentsNameRoute: typeof ControlPlaneAgentsNameRoute
+  ControlPlaneApprovalsNameRoute: typeof ControlPlaneApprovalsNameRoute
+  ControlPlaneArtifactsNameRoute: typeof ControlPlaneArtifactsNameRoute
+  ControlPlaneBudgetsNameRoute: typeof ControlPlaneBudgetsNameRoute
+  ControlPlaneImplementationSourcesNameRoute: typeof ControlPlaneImplementationSourcesNameRoute
+  ControlPlaneImplementationSpecsNameRoute: typeof ControlPlaneImplementationSpecsNameRoute
+  ControlPlaneImplementationSpecsNewRoute: typeof ControlPlaneImplementationSpecsNewRoute
+  ControlPlaneMemoriesNameRoute: typeof ControlPlaneMemoriesNameRoute
+  ControlPlaneOrchestrationRunsNameRoute: typeof ControlPlaneOrchestrationRunsNameRoute
+  ControlPlaneOrchestrationsNameRoute: typeof ControlPlaneOrchestrationsNameRoute
+  ControlPlaneSchedulesNameRoute: typeof ControlPlaneSchedulesNameRoute
+  ControlPlaneSecretBindingsNameRoute: typeof ControlPlaneSecretBindingsNameRoute
+  ControlPlaneSignalDeliveriesNameRoute: typeof ControlPlaneSignalDeliveriesNameRoute
+  ControlPlaneSignalsNameRoute: typeof ControlPlaneSignalsNameRoute
+  ControlPlaneToolRunsNameRoute: typeof ControlPlaneToolRunsNameRoute
+  ControlPlaneToolsNameRoute: typeof ControlPlaneToolsNameRoute
+  ControlPlaneWorkspacesNameRoute: typeof ControlPlaneWorkspacesNameRoute
   OpenaiV1ModelsRoute: typeof OpenaiV1ModelsRoute
   V1RunsIdRoute: typeof V1RunsIdRoute
-  AgentsControlPlaneAgentProvidersIndexRoute: typeof AgentsControlPlaneAgentProvidersIndexRoute
-  AgentsControlPlaneAgentRunsIndexRoute: typeof AgentsControlPlaneAgentRunsIndexRoute
-  AgentsControlPlaneAgentsIndexRoute: typeof AgentsControlPlaneAgentsIndexRoute
-  AgentsControlPlaneApprovalsIndexRoute: typeof AgentsControlPlaneApprovalsIndexRoute
-  AgentsControlPlaneArtifactsIndexRoute: typeof AgentsControlPlaneArtifactsIndexRoute
-  AgentsControlPlaneBudgetsIndexRoute: typeof AgentsControlPlaneBudgetsIndexRoute
-  AgentsControlPlaneImplementationSourcesIndexRoute: typeof AgentsControlPlaneImplementationSourcesIndexRoute
-  AgentsControlPlaneImplementationSpecsIndexRoute: typeof AgentsControlPlaneImplementationSpecsIndexRoute
-  AgentsControlPlaneMemoriesIndexRoute: typeof AgentsControlPlaneMemoriesIndexRoute
-  AgentsControlPlaneOrchestrationRunsIndexRoute: typeof AgentsControlPlaneOrchestrationRunsIndexRoute
-  AgentsControlPlaneOrchestrationsIndexRoute: typeof AgentsControlPlaneOrchestrationsIndexRoute
-  AgentsControlPlaneSchedulesIndexRoute: typeof AgentsControlPlaneSchedulesIndexRoute
-  AgentsControlPlaneSecretBindingsIndexRoute: typeof AgentsControlPlaneSecretBindingsIndexRoute
-  AgentsControlPlaneSignalDeliveriesIndexRoute: typeof AgentsControlPlaneSignalDeliveriesIndexRoute
-  AgentsControlPlaneSignalsIndexRoute: typeof AgentsControlPlaneSignalsIndexRoute
-  AgentsControlPlaneToolRunsIndexRoute: typeof AgentsControlPlaneToolRunsIndexRoute
-  AgentsControlPlaneToolsIndexRoute: typeof AgentsControlPlaneToolsIndexRoute
-  AgentsControlPlaneWorkspacesIndexRoute: typeof AgentsControlPlaneWorkspacesIndexRoute
+  ControlPlaneAgentProvidersIndexRoute: typeof ControlPlaneAgentProvidersIndexRoute
+  ControlPlaneAgentRunsIndexRoute: typeof ControlPlaneAgentRunsIndexRoute
+  ControlPlaneAgentsIndexRoute: typeof ControlPlaneAgentsIndexRoute
+  ControlPlaneApprovalsIndexRoute: typeof ControlPlaneApprovalsIndexRoute
+  ControlPlaneArtifactsIndexRoute: typeof ControlPlaneArtifactsIndexRoute
+  ControlPlaneBudgetsIndexRoute: typeof ControlPlaneBudgetsIndexRoute
+  ControlPlaneImplementationSourcesIndexRoute: typeof ControlPlaneImplementationSourcesIndexRoute
+  ControlPlaneImplementationSpecsIndexRoute: typeof ControlPlaneImplementationSpecsIndexRoute
+  ControlPlaneMemoriesIndexRoute: typeof ControlPlaneMemoriesIndexRoute
+  ControlPlaneOrchestrationRunsIndexRoute: typeof ControlPlaneOrchestrationRunsIndexRoute
+  ControlPlaneOrchestrationsIndexRoute: typeof ControlPlaneOrchestrationsIndexRoute
+  ControlPlaneRunsIndexRoute: typeof ControlPlaneRunsIndexRoute
+  ControlPlaneSchedulesIndexRoute: typeof ControlPlaneSchedulesIndexRoute
+  ControlPlaneSecretBindingsIndexRoute: typeof ControlPlaneSecretBindingsIndexRoute
+  ControlPlaneSignalDeliveriesIndexRoute: typeof ControlPlaneSignalDeliveriesIndexRoute
+  ControlPlaneSignalsIndexRoute: typeof ControlPlaneSignalsIndexRoute
+  ControlPlaneToolRunsIndexRoute: typeof ControlPlaneToolRunsIndexRoute
+  ControlPlaneToolsIndexRoute: typeof ControlPlaneToolsIndexRoute
+  ControlPlaneWorkspacesIndexRoute: typeof ControlPlaneWorkspacesIndexRoute
   ApiAgentsControlPlaneEventsRoute: typeof ApiAgentsControlPlaneEventsRoute
+  ApiAgentsControlPlaneLogsRoute: typeof ApiAgentsControlPlaneLogsRoute
   ApiAgentsControlPlaneResourceRoute: typeof ApiAgentsControlPlaneResourceRoute
   ApiAgentsControlPlaneResourcesRoute: typeof ApiAgentsControlPlaneResourcesRoute
   ApiAgentsControlPlaneStatusRoute: typeof ApiAgentsControlPlaneStatusRoute
@@ -1679,6 +1727,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TerminalsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/control-plane/': {
+      id: '/control-plane/'
+      path: '/control-plane'
+      fullPath: '/control-plane'
+      preLoaderRoute: typeof ControlPlaneIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/atlas/': {
       id: '/atlas/'
       path: '/atlas'
@@ -1691,13 +1746,6 @@ declare module '@tanstack/react-router' {
       path: '/agents'
       fullPath: '/agents'
       preLoaderRoute: typeof AgentsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/': {
-      id: '/agents-control-plane/'
-      path: '/agents-control-plane'
-      fullPath: '/agents-control-plane'
-      preLoaderRoute: typeof AgentsControlPlaneIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/v1/orchestrations': {
@@ -1875,130 +1923,137 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GithubPullsIndexRouteImport
       parentRoute: typeof GithubPullsRoute
     }
-    '/agents-control-plane/workspaces/': {
-      id: '/agents-control-plane/workspaces/'
-      path: '/agents-control-plane/workspaces'
-      fullPath: '/agents-control-plane/workspaces'
-      preLoaderRoute: typeof AgentsControlPlaneWorkspacesIndexRouteImport
+    '/control-plane/workspaces/': {
+      id: '/control-plane/workspaces/'
+      path: '/control-plane/workspaces'
+      fullPath: '/control-plane/workspaces'
+      preLoaderRoute: typeof ControlPlaneWorkspacesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents-control-plane/tools/': {
-      id: '/agents-control-plane/tools/'
-      path: '/agents-control-plane/tools'
-      fullPath: '/agents-control-plane/tools'
-      preLoaderRoute: typeof AgentsControlPlaneToolsIndexRouteImport
+    '/control-plane/tools/': {
+      id: '/control-plane/tools/'
+      path: '/control-plane/tools'
+      fullPath: '/control-plane/tools'
+      preLoaderRoute: typeof ControlPlaneToolsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents-control-plane/tool-runs/': {
-      id: '/agents-control-plane/tool-runs/'
-      path: '/agents-control-plane/tool-runs'
-      fullPath: '/agents-control-plane/tool-runs'
-      preLoaderRoute: typeof AgentsControlPlaneToolRunsIndexRouteImport
+    '/control-plane/tool-runs/': {
+      id: '/control-plane/tool-runs/'
+      path: '/control-plane/tool-runs'
+      fullPath: '/control-plane/tool-runs'
+      preLoaderRoute: typeof ControlPlaneToolRunsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents-control-plane/signals/': {
-      id: '/agents-control-plane/signals/'
-      path: '/agents-control-plane/signals'
-      fullPath: '/agents-control-plane/signals'
-      preLoaderRoute: typeof AgentsControlPlaneSignalsIndexRouteImport
+    '/control-plane/signals/': {
+      id: '/control-plane/signals/'
+      path: '/control-plane/signals'
+      fullPath: '/control-plane/signals'
+      preLoaderRoute: typeof ControlPlaneSignalsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents-control-plane/signal-deliveries/': {
-      id: '/agents-control-plane/signal-deliveries/'
-      path: '/agents-control-plane/signal-deliveries'
-      fullPath: '/agents-control-plane/signal-deliveries'
-      preLoaderRoute: typeof AgentsControlPlaneSignalDeliveriesIndexRouteImport
+    '/control-plane/signal-deliveries/': {
+      id: '/control-plane/signal-deliveries/'
+      path: '/control-plane/signal-deliveries'
+      fullPath: '/control-plane/signal-deliveries'
+      preLoaderRoute: typeof ControlPlaneSignalDeliveriesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents-control-plane/secret-bindings/': {
-      id: '/agents-control-plane/secret-bindings/'
-      path: '/agents-control-plane/secret-bindings'
-      fullPath: '/agents-control-plane/secret-bindings'
-      preLoaderRoute: typeof AgentsControlPlaneSecretBindingsIndexRouteImport
+    '/control-plane/secret-bindings/': {
+      id: '/control-plane/secret-bindings/'
+      path: '/control-plane/secret-bindings'
+      fullPath: '/control-plane/secret-bindings'
+      preLoaderRoute: typeof ControlPlaneSecretBindingsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents-control-plane/schedules/': {
-      id: '/agents-control-plane/schedules/'
-      path: '/agents-control-plane/schedules'
-      fullPath: '/agents-control-plane/schedules'
-      preLoaderRoute: typeof AgentsControlPlaneSchedulesIndexRouteImport
+    '/control-plane/schedules/': {
+      id: '/control-plane/schedules/'
+      path: '/control-plane/schedules'
+      fullPath: '/control-plane/schedules'
+      preLoaderRoute: typeof ControlPlaneSchedulesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents-control-plane/orchestrations/': {
-      id: '/agents-control-plane/orchestrations/'
-      path: '/agents-control-plane/orchestrations'
-      fullPath: '/agents-control-plane/orchestrations'
-      preLoaderRoute: typeof AgentsControlPlaneOrchestrationsIndexRouteImport
+    '/control-plane/runs/': {
+      id: '/control-plane/runs/'
+      path: '/control-plane/runs'
+      fullPath: '/control-plane/runs'
+      preLoaderRoute: typeof ControlPlaneRunsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents-control-plane/orchestration-runs/': {
-      id: '/agents-control-plane/orchestration-runs/'
-      path: '/agents-control-plane/orchestration-runs'
-      fullPath: '/agents-control-plane/orchestration-runs'
-      preLoaderRoute: typeof AgentsControlPlaneOrchestrationRunsIndexRouteImport
+    '/control-plane/orchestrations/': {
+      id: '/control-plane/orchestrations/'
+      path: '/control-plane/orchestrations'
+      fullPath: '/control-plane/orchestrations'
+      preLoaderRoute: typeof ControlPlaneOrchestrationsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents-control-plane/memories/': {
-      id: '/agents-control-plane/memories/'
-      path: '/agents-control-plane/memories'
-      fullPath: '/agents-control-plane/memories'
-      preLoaderRoute: typeof AgentsControlPlaneMemoriesIndexRouteImport
+    '/control-plane/orchestration-runs/': {
+      id: '/control-plane/orchestration-runs/'
+      path: '/control-plane/orchestration-runs'
+      fullPath: '/control-plane/orchestration-runs'
+      preLoaderRoute: typeof ControlPlaneOrchestrationRunsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents-control-plane/implementation-specs/': {
-      id: '/agents-control-plane/implementation-specs/'
-      path: '/agents-control-plane/implementation-specs'
-      fullPath: '/agents-control-plane/implementation-specs'
-      preLoaderRoute: typeof AgentsControlPlaneImplementationSpecsIndexRouteImport
+    '/control-plane/memories/': {
+      id: '/control-plane/memories/'
+      path: '/control-plane/memories'
+      fullPath: '/control-plane/memories'
+      preLoaderRoute: typeof ControlPlaneMemoriesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents-control-plane/implementation-sources/': {
-      id: '/agents-control-plane/implementation-sources/'
-      path: '/agents-control-plane/implementation-sources'
-      fullPath: '/agents-control-plane/implementation-sources'
-      preLoaderRoute: typeof AgentsControlPlaneImplementationSourcesIndexRouteImport
+    '/control-plane/implementation-specs/': {
+      id: '/control-plane/implementation-specs/'
+      path: '/control-plane/implementation-specs'
+      fullPath: '/control-plane/implementation-specs'
+      preLoaderRoute: typeof ControlPlaneImplementationSpecsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents-control-plane/budgets/': {
-      id: '/agents-control-plane/budgets/'
-      path: '/agents-control-plane/budgets'
-      fullPath: '/agents-control-plane/budgets'
-      preLoaderRoute: typeof AgentsControlPlaneBudgetsIndexRouteImport
+    '/control-plane/implementation-sources/': {
+      id: '/control-plane/implementation-sources/'
+      path: '/control-plane/implementation-sources'
+      fullPath: '/control-plane/implementation-sources'
+      preLoaderRoute: typeof ControlPlaneImplementationSourcesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents-control-plane/artifacts/': {
-      id: '/agents-control-plane/artifacts/'
-      path: '/agents-control-plane/artifacts'
-      fullPath: '/agents-control-plane/artifacts'
-      preLoaderRoute: typeof AgentsControlPlaneArtifactsIndexRouteImport
+    '/control-plane/budgets/': {
+      id: '/control-plane/budgets/'
+      path: '/control-plane/budgets'
+      fullPath: '/control-plane/budgets'
+      preLoaderRoute: typeof ControlPlaneBudgetsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents-control-plane/approvals/': {
-      id: '/agents-control-plane/approvals/'
-      path: '/agents-control-plane/approvals'
-      fullPath: '/agents-control-plane/approvals'
-      preLoaderRoute: typeof AgentsControlPlaneApprovalsIndexRouteImport
+    '/control-plane/artifacts/': {
+      id: '/control-plane/artifacts/'
+      path: '/control-plane/artifacts'
+      fullPath: '/control-plane/artifacts'
+      preLoaderRoute: typeof ControlPlaneArtifactsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents-control-plane/agents/': {
-      id: '/agents-control-plane/agents/'
-      path: '/agents-control-plane/agents'
-      fullPath: '/agents-control-plane/agents'
-      preLoaderRoute: typeof AgentsControlPlaneAgentsIndexRouteImport
+    '/control-plane/approvals/': {
+      id: '/control-plane/approvals/'
+      path: '/control-plane/approvals'
+      fullPath: '/control-plane/approvals'
+      preLoaderRoute: typeof ControlPlaneApprovalsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents-control-plane/agent-runs/': {
-      id: '/agents-control-plane/agent-runs/'
-      path: '/agents-control-plane/agent-runs'
-      fullPath: '/agents-control-plane/agent-runs'
-      preLoaderRoute: typeof AgentsControlPlaneAgentRunsIndexRouteImport
+    '/control-plane/agents/': {
+      id: '/control-plane/agents/'
+      path: '/control-plane/agents'
+      fullPath: '/control-plane/agents'
+      preLoaderRoute: typeof ControlPlaneAgentsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents-control-plane/agent-providers/': {
-      id: '/agents-control-plane/agent-providers/'
-      path: '/agents-control-plane/agent-providers'
-      fullPath: '/agents-control-plane/agent-providers'
-      preLoaderRoute: typeof AgentsControlPlaneAgentProvidersIndexRouteImport
+    '/control-plane/agent-runs/': {
+      id: '/control-plane/agent-runs/'
+      path: '/control-plane/agent-runs'
+      fullPath: '/control-plane/agent-runs'
+      preLoaderRoute: typeof ControlPlaneAgentRunsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/agent-providers/': {
+      id: '/control-plane/agent-providers/'
+      path: '/control-plane/agent-providers'
+      fullPath: '/control-plane/agent-providers'
+      preLoaderRoute: typeof ControlPlaneAgentProvidersIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/v1/runs/$id': {
@@ -2057,6 +2112,139 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OpenaiV1ModelsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/control-plane/workspaces/$name': {
+      id: '/control-plane/workspaces/$name'
+      path: '/control-plane/workspaces/$name'
+      fullPath: '/control-plane/workspaces/$name'
+      preLoaderRoute: typeof ControlPlaneWorkspacesNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/tools/$name': {
+      id: '/control-plane/tools/$name'
+      path: '/control-plane/tools/$name'
+      fullPath: '/control-plane/tools/$name'
+      preLoaderRoute: typeof ControlPlaneToolsNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/tool-runs/$name': {
+      id: '/control-plane/tool-runs/$name'
+      path: '/control-plane/tool-runs/$name'
+      fullPath: '/control-plane/tool-runs/$name'
+      preLoaderRoute: typeof ControlPlaneToolRunsNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/signals/$name': {
+      id: '/control-plane/signals/$name'
+      path: '/control-plane/signals/$name'
+      fullPath: '/control-plane/signals/$name'
+      preLoaderRoute: typeof ControlPlaneSignalsNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/signal-deliveries/$name': {
+      id: '/control-plane/signal-deliveries/$name'
+      path: '/control-plane/signal-deliveries/$name'
+      fullPath: '/control-plane/signal-deliveries/$name'
+      preLoaderRoute: typeof ControlPlaneSignalDeliveriesNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/secret-bindings/$name': {
+      id: '/control-plane/secret-bindings/$name'
+      path: '/control-plane/secret-bindings/$name'
+      fullPath: '/control-plane/secret-bindings/$name'
+      preLoaderRoute: typeof ControlPlaneSecretBindingsNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/schedules/$name': {
+      id: '/control-plane/schedules/$name'
+      path: '/control-plane/schedules/$name'
+      fullPath: '/control-plane/schedules/$name'
+      preLoaderRoute: typeof ControlPlaneSchedulesNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/orchestrations/$name': {
+      id: '/control-plane/orchestrations/$name'
+      path: '/control-plane/orchestrations/$name'
+      fullPath: '/control-plane/orchestrations/$name'
+      preLoaderRoute: typeof ControlPlaneOrchestrationsNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/orchestration-runs/$name': {
+      id: '/control-plane/orchestration-runs/$name'
+      path: '/control-plane/orchestration-runs/$name'
+      fullPath: '/control-plane/orchestration-runs/$name'
+      preLoaderRoute: typeof ControlPlaneOrchestrationRunsNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/memories/$name': {
+      id: '/control-plane/memories/$name'
+      path: '/control-plane/memories/$name'
+      fullPath: '/control-plane/memories/$name'
+      preLoaderRoute: typeof ControlPlaneMemoriesNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/implementation-specs/new': {
+      id: '/control-plane/implementation-specs/new'
+      path: '/control-plane/implementation-specs/new'
+      fullPath: '/control-plane/implementation-specs/new'
+      preLoaderRoute: typeof ControlPlaneImplementationSpecsNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/implementation-specs/$name': {
+      id: '/control-plane/implementation-specs/$name'
+      path: '/control-plane/implementation-specs/$name'
+      fullPath: '/control-plane/implementation-specs/$name'
+      preLoaderRoute: typeof ControlPlaneImplementationSpecsNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/implementation-sources/$name': {
+      id: '/control-plane/implementation-sources/$name'
+      path: '/control-plane/implementation-sources/$name'
+      fullPath: '/control-plane/implementation-sources/$name'
+      preLoaderRoute: typeof ControlPlaneImplementationSourcesNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/budgets/$name': {
+      id: '/control-plane/budgets/$name'
+      path: '/control-plane/budgets/$name'
+      fullPath: '/control-plane/budgets/$name'
+      preLoaderRoute: typeof ControlPlaneBudgetsNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/artifacts/$name': {
+      id: '/control-plane/artifacts/$name'
+      path: '/control-plane/artifacts/$name'
+      fullPath: '/control-plane/artifacts/$name'
+      preLoaderRoute: typeof ControlPlaneArtifactsNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/approvals/$name': {
+      id: '/control-plane/approvals/$name'
+      path: '/control-plane/approvals/$name'
+      fullPath: '/control-plane/approvals/$name'
+      preLoaderRoute: typeof ControlPlaneApprovalsNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/agents/$name': {
+      id: '/control-plane/agents/$name'
+      path: '/control-plane/agents/$name'
+      fullPath: '/control-plane/agents/$name'
+      preLoaderRoute: typeof ControlPlaneAgentsNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/agent-runs/$name': {
+      id: '/control-plane/agent-runs/$name'
+      path: '/control-plane/agent-runs/$name'
+      fullPath: '/control-plane/agent-runs/$name'
+      preLoaderRoute: typeof ControlPlaneAgentRunsNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane/agent-providers/$name': {
+      id: '/control-plane/agent-providers/$name'
+      path: '/control-plane/agent-providers/$name'
+      fullPath: '/control-plane/agent-providers/$name'
+      preLoaderRoute: typeof ControlPlaneAgentProvidersNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/torghut/symbols': {
       id: '/api/torghut/symbols'
       path: '/api/torghut/symbols'
@@ -2083,6 +2271,13 @@ declare module '@tanstack/react-router' {
       path: '/api/github/pulls'
       fullPath: '/api/github/pulls'
       preLoaderRoute: typeof ApiGithubPullsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/github/issues': {
+      id: '/api/github/issues'
+      path: '/api/github/issues'
+      fullPath: '/api/github/issues'
+      preLoaderRoute: typeof ApiGithubIssuesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/codex/runs': {
@@ -2160,132 +2355,6 @@ declare module '@tanstack/react-router' {
       path: '/api/agents/events'
       fullPath: '/api/agents/events'
       preLoaderRoute: typeof ApiAgentsEventsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/workspaces/$name': {
-      id: '/agents-control-plane/workspaces/$name'
-      path: '/agents-control-plane/workspaces/$name'
-      fullPath: '/agents-control-plane/workspaces/$name'
-      preLoaderRoute: typeof AgentsControlPlaneWorkspacesNameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/tools/$name': {
-      id: '/agents-control-plane/tools/$name'
-      path: '/agents-control-plane/tools/$name'
-      fullPath: '/agents-control-plane/tools/$name'
-      preLoaderRoute: typeof AgentsControlPlaneToolsNameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/tool-runs/$name': {
-      id: '/agents-control-plane/tool-runs/$name'
-      path: '/agents-control-plane/tool-runs/$name'
-      fullPath: '/agents-control-plane/tool-runs/$name'
-      preLoaderRoute: typeof AgentsControlPlaneToolRunsNameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/signals/$name': {
-      id: '/agents-control-plane/signals/$name'
-      path: '/agents-control-plane/signals/$name'
-      fullPath: '/agents-control-plane/signals/$name'
-      preLoaderRoute: typeof AgentsControlPlaneSignalsNameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/signal-deliveries/$name': {
-      id: '/agents-control-plane/signal-deliveries/$name'
-      path: '/agents-control-plane/signal-deliveries/$name'
-      fullPath: '/agents-control-plane/signal-deliveries/$name'
-      preLoaderRoute: typeof AgentsControlPlaneSignalDeliveriesNameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/secret-bindings/$name': {
-      id: '/agents-control-plane/secret-bindings/$name'
-      path: '/agents-control-plane/secret-bindings/$name'
-      fullPath: '/agents-control-plane/secret-bindings/$name'
-      preLoaderRoute: typeof AgentsControlPlaneSecretBindingsNameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/schedules/$name': {
-      id: '/agents-control-plane/schedules/$name'
-      path: '/agents-control-plane/schedules/$name'
-      fullPath: '/agents-control-plane/schedules/$name'
-      preLoaderRoute: typeof AgentsControlPlaneSchedulesNameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/orchestrations/$name': {
-      id: '/agents-control-plane/orchestrations/$name'
-      path: '/agents-control-plane/orchestrations/$name'
-      fullPath: '/agents-control-plane/orchestrations/$name'
-      preLoaderRoute: typeof AgentsControlPlaneOrchestrationsNameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/orchestration-runs/$name': {
-      id: '/agents-control-plane/orchestration-runs/$name'
-      path: '/agents-control-plane/orchestration-runs/$name'
-      fullPath: '/agents-control-plane/orchestration-runs/$name'
-      preLoaderRoute: typeof AgentsControlPlaneOrchestrationRunsNameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/memories/$name': {
-      id: '/agents-control-plane/memories/$name'
-      path: '/agents-control-plane/memories/$name'
-      fullPath: '/agents-control-plane/memories/$name'
-      preLoaderRoute: typeof AgentsControlPlaneMemoriesNameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/implementation-specs/$name': {
-      id: '/agents-control-plane/implementation-specs/$name'
-      path: '/agents-control-plane/implementation-specs/$name'
-      fullPath: '/agents-control-plane/implementation-specs/$name'
-      preLoaderRoute: typeof AgentsControlPlaneImplementationSpecsNameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/implementation-sources/$name': {
-      id: '/agents-control-plane/implementation-sources/$name'
-      path: '/agents-control-plane/implementation-sources/$name'
-      fullPath: '/agents-control-plane/implementation-sources/$name'
-      preLoaderRoute: typeof AgentsControlPlaneImplementationSourcesNameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/budgets/$name': {
-      id: '/agents-control-plane/budgets/$name'
-      path: '/agents-control-plane/budgets/$name'
-      fullPath: '/agents-control-plane/budgets/$name'
-      preLoaderRoute: typeof AgentsControlPlaneBudgetsNameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/artifacts/$name': {
-      id: '/agents-control-plane/artifacts/$name'
-      path: '/agents-control-plane/artifacts/$name'
-      fullPath: '/agents-control-plane/artifacts/$name'
-      preLoaderRoute: typeof AgentsControlPlaneArtifactsNameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/approvals/$name': {
-      id: '/agents-control-plane/approvals/$name'
-      path: '/agents-control-plane/approvals/$name'
-      fullPath: '/agents-control-plane/approvals/$name'
-      preLoaderRoute: typeof AgentsControlPlaneApprovalsNameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/agents/$name': {
-      id: '/agents-control-plane/agents/$name'
-      path: '/agents-control-plane/agents/$name'
-      fullPath: '/agents-control-plane/agents/$name'
-      preLoaderRoute: typeof AgentsControlPlaneAgentsNameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/agent-runs/$name': {
-      id: '/agents-control-plane/agent-runs/$name'
-      path: '/agents-control-plane/agent-runs/$name'
-      fullPath: '/agents-control-plane/agent-runs/$name'
-      preLoaderRoute: typeof AgentsControlPlaneAgentRunsNameRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents-control-plane/agent-providers/$name': {
-      id: '/agents-control-plane/agent-providers/$name'
-      path: '/agents-control-plane/agent-providers/$name'
-      fullPath: '/agents-control-plane/agent-providers/$name'
-      preLoaderRoute: typeof AgentsControlPlaneAgentProvidersNameRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/openai/v1/chat/completions': {
@@ -2412,6 +2481,13 @@ declare module '@tanstack/react-router' {
       path: '/api/agents/control-plane/resource'
       fullPath: '/api/agents/control-plane/resource'
       preLoaderRoute: typeof ApiAgentsControlPlaneResourceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/agents/control-plane/logs': {
+      id: '/api/agents/control-plane/logs'
+      path: '/api/agents/control-plane/logs'
+      fullPath: '/api/agents/control-plane/logs'
+      preLoaderRoute: typeof ApiAgentsControlPlaneLogsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/agents/control-plane/events': {
@@ -2747,35 +2823,10 @@ const rootRouteChildren: RootRouteChildren = {
   V1MemoryQueriesRoute: V1MemoryQueriesRoute,
   V1OrchestrationRunsRoute: V1OrchestrationRunsRouteWithChildren,
   V1OrchestrationsRoute: V1OrchestrationsRouteWithChildren,
-  AgentsControlPlaneIndexRoute: AgentsControlPlaneIndexRoute,
   AgentsIndexRoute: AgentsIndexRoute,
   AtlasIndexRoute: AtlasIndexRoute,
+  ControlPlaneIndexRoute: ControlPlaneIndexRoute,
   TerminalsIndexRoute: TerminalsIndexRoute,
-  AgentsControlPlaneAgentProvidersNameRoute:
-    AgentsControlPlaneAgentProvidersNameRoute,
-  AgentsControlPlaneAgentRunsNameRoute: AgentsControlPlaneAgentRunsNameRoute,
-  AgentsControlPlaneAgentsNameRoute: AgentsControlPlaneAgentsNameRoute,
-  AgentsControlPlaneApprovalsNameRoute: AgentsControlPlaneApprovalsNameRoute,
-  AgentsControlPlaneArtifactsNameRoute: AgentsControlPlaneArtifactsNameRoute,
-  AgentsControlPlaneBudgetsNameRoute: AgentsControlPlaneBudgetsNameRoute,
-  AgentsControlPlaneImplementationSourcesNameRoute:
-    AgentsControlPlaneImplementationSourcesNameRoute,
-  AgentsControlPlaneImplementationSpecsNameRoute:
-    AgentsControlPlaneImplementationSpecsNameRoute,
-  AgentsControlPlaneMemoriesNameRoute: AgentsControlPlaneMemoriesNameRoute,
-  AgentsControlPlaneOrchestrationRunsNameRoute:
-    AgentsControlPlaneOrchestrationRunsNameRoute,
-  AgentsControlPlaneOrchestrationsNameRoute:
-    AgentsControlPlaneOrchestrationsNameRoute,
-  AgentsControlPlaneSchedulesNameRoute: AgentsControlPlaneSchedulesNameRoute,
-  AgentsControlPlaneSecretBindingsNameRoute:
-    AgentsControlPlaneSecretBindingsNameRoute,
-  AgentsControlPlaneSignalDeliveriesNameRoute:
-    AgentsControlPlaneSignalDeliveriesNameRoute,
-  AgentsControlPlaneSignalsNameRoute: AgentsControlPlaneSignalsNameRoute,
-  AgentsControlPlaneToolRunsNameRoute: AgentsControlPlaneToolRunsNameRoute,
-  AgentsControlPlaneToolsNameRoute: AgentsControlPlaneToolsNameRoute,
-  AgentsControlPlaneWorkspacesNameRoute: AgentsControlPlaneWorkspacesNameRoute,
   ApiAgentsEventsRoute: ApiAgentsEventsRoute,
   ApiAtlasAstRoute: ApiAtlasAstRoute,
   ApiAtlasFileRoute: ApiAtlasFileRoute,
@@ -2787,37 +2838,59 @@ const rootRouteChildren: RootRouteChildren = {
   ApiCodexRerunRoute: ApiCodexRerunRoute,
   ApiCodexRunCompleteRoute: ApiCodexRunCompleteRoute,
   ApiCodexRunsRoute: ApiCodexRunsRouteWithChildren,
+  ApiGithubIssuesRoute: ApiGithubIssuesRoute,
   ApiGithubPullsRoute: ApiGithubPullsRouteWithChildren,
   ApiTorghutSymbolsRoute: ApiTorghutSymbolsRouteWithChildren,
+  ControlPlaneAgentProvidersNameRoute: ControlPlaneAgentProvidersNameRoute,
+  ControlPlaneAgentRunsNameRoute: ControlPlaneAgentRunsNameRoute,
+  ControlPlaneAgentsNameRoute: ControlPlaneAgentsNameRoute,
+  ControlPlaneApprovalsNameRoute: ControlPlaneApprovalsNameRoute,
+  ControlPlaneArtifactsNameRoute: ControlPlaneArtifactsNameRoute,
+  ControlPlaneBudgetsNameRoute: ControlPlaneBudgetsNameRoute,
+  ControlPlaneImplementationSourcesNameRoute:
+    ControlPlaneImplementationSourcesNameRoute,
+  ControlPlaneImplementationSpecsNameRoute:
+    ControlPlaneImplementationSpecsNameRoute,
+  ControlPlaneImplementationSpecsNewRoute:
+    ControlPlaneImplementationSpecsNewRoute,
+  ControlPlaneMemoriesNameRoute: ControlPlaneMemoriesNameRoute,
+  ControlPlaneOrchestrationRunsNameRoute:
+    ControlPlaneOrchestrationRunsNameRoute,
+  ControlPlaneOrchestrationsNameRoute: ControlPlaneOrchestrationsNameRoute,
+  ControlPlaneSchedulesNameRoute: ControlPlaneSchedulesNameRoute,
+  ControlPlaneSecretBindingsNameRoute: ControlPlaneSecretBindingsNameRoute,
+  ControlPlaneSignalDeliveriesNameRoute: ControlPlaneSignalDeliveriesNameRoute,
+  ControlPlaneSignalsNameRoute: ControlPlaneSignalsNameRoute,
+  ControlPlaneToolRunsNameRoute: ControlPlaneToolRunsNameRoute,
+  ControlPlaneToolsNameRoute: ControlPlaneToolsNameRoute,
+  ControlPlaneWorkspacesNameRoute: ControlPlaneWorkspacesNameRoute,
   OpenaiV1ModelsRoute: OpenaiV1ModelsRoute,
   V1RunsIdRoute: V1RunsIdRoute,
-  AgentsControlPlaneAgentProvidersIndexRoute:
-    AgentsControlPlaneAgentProvidersIndexRoute,
-  AgentsControlPlaneAgentRunsIndexRoute: AgentsControlPlaneAgentRunsIndexRoute,
-  AgentsControlPlaneAgentsIndexRoute: AgentsControlPlaneAgentsIndexRoute,
-  AgentsControlPlaneApprovalsIndexRoute: AgentsControlPlaneApprovalsIndexRoute,
-  AgentsControlPlaneArtifactsIndexRoute: AgentsControlPlaneArtifactsIndexRoute,
-  AgentsControlPlaneBudgetsIndexRoute: AgentsControlPlaneBudgetsIndexRoute,
-  AgentsControlPlaneImplementationSourcesIndexRoute:
-    AgentsControlPlaneImplementationSourcesIndexRoute,
-  AgentsControlPlaneImplementationSpecsIndexRoute:
-    AgentsControlPlaneImplementationSpecsIndexRoute,
-  AgentsControlPlaneMemoriesIndexRoute: AgentsControlPlaneMemoriesIndexRoute,
-  AgentsControlPlaneOrchestrationRunsIndexRoute:
-    AgentsControlPlaneOrchestrationRunsIndexRoute,
-  AgentsControlPlaneOrchestrationsIndexRoute:
-    AgentsControlPlaneOrchestrationsIndexRoute,
-  AgentsControlPlaneSchedulesIndexRoute: AgentsControlPlaneSchedulesIndexRoute,
-  AgentsControlPlaneSecretBindingsIndexRoute:
-    AgentsControlPlaneSecretBindingsIndexRoute,
-  AgentsControlPlaneSignalDeliveriesIndexRoute:
-    AgentsControlPlaneSignalDeliveriesIndexRoute,
-  AgentsControlPlaneSignalsIndexRoute: AgentsControlPlaneSignalsIndexRoute,
-  AgentsControlPlaneToolRunsIndexRoute: AgentsControlPlaneToolRunsIndexRoute,
-  AgentsControlPlaneToolsIndexRoute: AgentsControlPlaneToolsIndexRoute,
-  AgentsControlPlaneWorkspacesIndexRoute:
-    AgentsControlPlaneWorkspacesIndexRoute,
+  ControlPlaneAgentProvidersIndexRoute: ControlPlaneAgentProvidersIndexRoute,
+  ControlPlaneAgentRunsIndexRoute: ControlPlaneAgentRunsIndexRoute,
+  ControlPlaneAgentsIndexRoute: ControlPlaneAgentsIndexRoute,
+  ControlPlaneApprovalsIndexRoute: ControlPlaneApprovalsIndexRoute,
+  ControlPlaneArtifactsIndexRoute: ControlPlaneArtifactsIndexRoute,
+  ControlPlaneBudgetsIndexRoute: ControlPlaneBudgetsIndexRoute,
+  ControlPlaneImplementationSourcesIndexRoute:
+    ControlPlaneImplementationSourcesIndexRoute,
+  ControlPlaneImplementationSpecsIndexRoute:
+    ControlPlaneImplementationSpecsIndexRoute,
+  ControlPlaneMemoriesIndexRoute: ControlPlaneMemoriesIndexRoute,
+  ControlPlaneOrchestrationRunsIndexRoute:
+    ControlPlaneOrchestrationRunsIndexRoute,
+  ControlPlaneOrchestrationsIndexRoute: ControlPlaneOrchestrationsIndexRoute,
+  ControlPlaneRunsIndexRoute: ControlPlaneRunsIndexRoute,
+  ControlPlaneSchedulesIndexRoute: ControlPlaneSchedulesIndexRoute,
+  ControlPlaneSecretBindingsIndexRoute: ControlPlaneSecretBindingsIndexRoute,
+  ControlPlaneSignalDeliveriesIndexRoute:
+    ControlPlaneSignalDeliveriesIndexRoute,
+  ControlPlaneSignalsIndexRoute: ControlPlaneSignalsIndexRoute,
+  ControlPlaneToolRunsIndexRoute: ControlPlaneToolRunsIndexRoute,
+  ControlPlaneToolsIndexRoute: ControlPlaneToolsIndexRoute,
+  ControlPlaneWorkspacesIndexRoute: ControlPlaneWorkspacesIndexRoute,
   ApiAgentsControlPlaneEventsRoute: ApiAgentsControlPlaneEventsRoute,
+  ApiAgentsControlPlaneLogsRoute: ApiAgentsControlPlaneLogsRoute,
   ApiAgentsControlPlaneResourceRoute: ApiAgentsControlPlaneResourceRoute,
   ApiAgentsControlPlaneResourcesRoute: ApiAgentsControlPlaneResourcesRoute,
   ApiAgentsControlPlaneStatusRoute: ApiAgentsControlPlaneStatusRoute,

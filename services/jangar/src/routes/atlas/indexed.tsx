@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { AtlasResultsTable, AtlasSectionHeader } from '@/components/atlas-results-table'
-import { Button } from '@/components/ui/button'
+import { Button } from '@proompteng/design/ui'
 import type { AtlasFileItem } from '@/data/atlas'
 import { listAtlasIndexedFiles } from '@/data/atlas'
 

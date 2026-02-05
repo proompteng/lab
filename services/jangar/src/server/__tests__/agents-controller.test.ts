@@ -19,7 +19,7 @@ const buildAgentRun = (overrides: Record<string, unknown> = {}) => ({
     implementationSpecRef: { name: 'impl-1' },
     runtime: { type: 'job', config: {} },
     workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
-  },
+  } as Record<string, unknown>,
   status: {},
   ...overrides,
 })
@@ -31,6 +31,7 @@ const buildKube = (overrides: Record<string, unknown> = {}) => ({
     return { ...resource, metadata: { ...metadata, uid } }
   }),
   applyStatus: vi.fn(async (resource: Record<string, unknown>) => resource),
+  delete: vi.fn(async () => ({})),
   patch: vi.fn(async () => ({})),
   get: vi.fn(async () => null),
   list: vi.fn(async () => ({ items: [] })),
@@ -71,6 +72,31 @@ const buildMemory = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
+const buildVcsProvider = (overrides: Record<string, unknown> = {}) => ({
+  apiVersion: 'agents.proompteng.ai/v1alpha1',
+  kind: 'VersionControlProvider',
+  metadata: {
+    name: 'vcs-1',
+    namespace: 'agents',
+    generation: 1,
+  },
+  spec: {
+    provider: 'github',
+    auth: {
+      method: 'token',
+      token: {
+        secretRef: {
+          name: 'vcs-token',
+          key: 'token',
+        },
+        type: 'pat',
+      },
+    },
+  },
+  status: {},
+  ...overrides,
+})
+
 describe('agents controller reconcileAgentRun', () => {
   it('marks AgentRun failed when provider is missing', async () => {
     const kube = buildKube({
@@ -94,6 +120,7 @@ describe('agents controller reconcileAgentRun', () => {
       kube as never,
       agentRun,
       'agents',
+      [],
       [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
@@ -139,6 +166,7 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -147,6 +175,235 @@ describe('agents controller reconcileAgentRun', () => {
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
     expect(condition?.reason).toBe('MissingMemory')
+  })
+
+  it('marks AgentRun failed when repository is not in allow list', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: {} }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === RESOURCE_MAP.VersionControlProvider) {
+          return {
+            metadata: { name: 'github' },
+            spec: {
+              provider: 'github',
+              repositoryPolicy: {
+                allow: ['allowed/*'],
+              },
+            },
+          }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        parameters: { repository: 'blocked/repo' },
+        vcsRef: { name: 'github' },
+        vcsPolicy: { mode: 'read-write' },
+      },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const status = getLastStatus(kube)
+    const condition = findCondition(status, 'InvalidSpec')
+    expect(condition?.reason).toBe('VcsPolicyDenied')
+  })
+
+  it('marks AgentRun failed when repository is denied by policy', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: {} }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === RESOURCE_MAP.VersionControlProvider) {
+          return {
+            metadata: { name: 'github' },
+            spec: {
+              provider: 'github',
+              repositoryPolicy: {
+                deny: ['blocked/*'],
+              },
+            },
+          }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        parameters: { repository: 'blocked/repo' },
+        vcsRef: { name: 'github' },
+        vcsPolicy: { mode: 'read-write' },
+      },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const status = getLastStatus(kube)
+    const condition = findCondition(status, 'InvalidSpec')
+    expect(condition?.reason).toBe('VcsPolicyDenied')
+  })
+
+  it('marks AgentRun failed when required metadata keys are missing', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return {
+            metadata: { name: 'impl-1' },
+            spec: {
+              text: 'demo',
+              contract: {
+                requiredKeys: ['repository', 'issueNumber'],
+              },
+            },
+          }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun()
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const status = getLastStatus(kube)
+    const condition = findCondition(status, 'InvalidSpec')
+    expect(condition?.reason).toBe('MissingRequiredMetadata')
+  })
+
+  it('accepts mapped metadata keys for required contract fields', async () => {
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      return { ...resource, metadata: { ...metadata, uid } }
+    })
+
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return {
+            metadata: { name: 'impl-1' },
+            spec: {
+              text: 'demo',
+              contract: {
+                requiredKeys: ['repository', 'issueNumber'],
+                mappings: [
+                  { from: 'linearRepo', to: 'repository' },
+                  { from: 'linearIssue', to: 'issueNumber' },
+                ],
+              },
+            },
+          }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        parameters: {
+          linearRepo: 'proompteng/lab',
+          linearIssue: '1234',
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const status = getLastStatus(kube)
+    const condition = findCondition(status, 'InvalidSpec')
+    expect(condition).toBeUndefined()
+    expect(apply).toHaveBeenCalled()
+    const appliedKinds = apply.mock.calls.map((call) => (call[0] as Record<string, unknown>).kind)
+    expect(appliedKinds).toContain('Job')
   })
 
   it('marks AgentRun failed when job runtime lacks an image', async () => {
@@ -168,6 +425,7 @@ describe('agents controller reconcileAgentRun', () => {
       kube as never,
       agentRun,
       'agents',
+      [],
       [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
@@ -197,6 +455,7 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -222,6 +481,7 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -230,6 +490,147 @@ describe('agents controller reconcileAgentRun', () => {
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
     expect(condition?.reason).toBe('MissingEndpoint')
+  })
+
+  it('deletes completed AgentRun after retention window', async () => {
+    const previousRetention = process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
+
+    try {
+      const kube = buildKube()
+      const finishedAt = new Date(Date.now() - 120_000).toISOString()
+      const agentRun = buildAgentRun({
+        status: { phase: 'Succeeded', finishedAt },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      expect(kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents')
+    } finally {
+      if (previousRetention === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+      }
+    }
+  })
+
+  it('respects per-run ttlSecondsAfterFinished override', async () => {
+    const previousRetention = process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '3600'
+
+    try {
+      const kube = buildKube()
+      const finishedAt = new Date(Date.now() - 120_000).toISOString()
+      const agentRun = buildAgentRun({
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'job', config: {} },
+          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+          ttlSecondsAfterFinished: 60,
+        },
+        status: { phase: 'Failed', finishedAt },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      expect(kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents')
+    } finally {
+      if (previousRetention === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+      }
+    }
+  })
+
+  it('disables retention when per-run ttlSecondsAfterFinished is zero', async () => {
+    const previousRetention = process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
+
+    try {
+      const kube = buildKube()
+      const finishedAt = new Date(Date.now() - 120_000).toISOString()
+      const agentRun = buildAgentRun({
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'job', config: {} },
+          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+          ttlSecondsAfterFinished: 0,
+        },
+        status: { phase: 'Succeeded', finishedAt },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      expect(kube.delete).not.toHaveBeenCalled()
+    } finally {
+      if (previousRetention === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+      }
+    }
+  })
+
+  it('keeps completed AgentRun before retention window', async () => {
+    const previousRetention = process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '3600'
+
+    try {
+      const kube = buildKube()
+      const agentRun = buildAgentRun({
+        status: { phase: 'Succeeded', finishedAt: new Date().toISOString() },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      expect(kube.delete).not.toHaveBeenCalled()
+    } finally {
+      if (previousRetention === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+      }
+    }
   })
 
   it('creates job and configmaps for job runtime', async () => {
@@ -267,6 +668,7 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -285,6 +687,511 @@ describe('agents controller reconcileAgentRun', () => {
     expect(jobLabels?.['agents.proompteng.ai/agent-run']).toBe('run-1')
     expect(jobLabels?.['agents.proompteng.ai/agent']).toBe('agent-1')
     expect(jobLabels?.['agents.proompteng.ai/provider']).toBe('provider-1')
+  })
+
+  it('defers job ttl until status is recorded', async () => {
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      return { ...resource, metadata: { ...metadata, uid } }
+    })
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun()
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const jobCall = apply.mock.calls.find((call) => (call[0] as Record<string, unknown>).kind === 'Job')
+    expect(jobCall).toBeTruthy()
+    const jobSpec = (jobCall?.[0] as Record<string, unknown>)?.spec as Record<string, unknown>
+    expect(jobSpec?.ttlSecondsAfterFinished).toBeUndefined()
+  })
+
+  it('applies a safe job ttl after completion', async () => {
+    const previousTtl = process.env.JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS
+    process.env.JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS = '5'
+
+    try {
+      const patch = vi.fn(async () => ({}))
+      const kube = buildKube({
+        patch,
+        get: vi.fn(async (resource: string) => {
+          if (resource === 'job') {
+            return {
+              metadata: { name: 'run-job', namespace: 'agents' },
+              spec: {},
+              status: {
+                succeeded: 1,
+                startTime: new Date(Date.now() - 60_000).toISOString(),
+                completionTime: new Date().toISOString(),
+              },
+            }
+          }
+          return null
+        }),
+      })
+
+      const agentRun = buildAgentRun({
+        status: {
+          phase: 'Running',
+          runtimeRef: { type: 'job', name: 'run-job', namespace: 'agents' },
+        },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      expect(patch).toHaveBeenCalledWith(
+        'job',
+        'run-job',
+        'agents',
+        expect.objectContaining({ spec: { ttlSecondsAfterFinished: 30 } }),
+      )
+    } finally {
+      if (previousTtl === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS = previousTtl
+      }
+    }
+  })
+
+  it('injects auth secret volume and CODEX_AUTH env var', async () => {
+    const previousName = process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
+    const previousKey = process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_KEY
+    const previousMountPath = process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
+    process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME = 'codex-auth'
+    process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_KEY = 'auth.json'
+    process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
+
+    try {
+      const apply = vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        return { ...resource, metadata: { ...metadata, uid } }
+      })
+      const kube = buildKube({
+        apply,
+        get: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return {
+              metadata: { name: 'provider-1' },
+              spec: { binary: '/usr/local/bin/agent-runner' },
+            }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          return null
+        }),
+      })
+
+      const agentRun = buildAgentRun()
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
+      const job = appliedResources.find((resource) => resource.kind === 'Job')
+      const podSpec = (job?.spec as Record<string, unknown> | undefined)?.template as
+        | Record<string, unknown>
+        | undefined
+      const podSpecSpec = (podSpec?.spec as Record<string, unknown> | undefined) ?? {}
+      const containers = (podSpecSpec.containers as Record<string, unknown>[] | undefined) ?? []
+      const container = containers[0] ?? {}
+      const env = (container.env as Record<string, unknown>[] | undefined) ?? []
+      const volumes = (podSpecSpec.volumes as Record<string, unknown>[] | undefined) ?? []
+      const volumeMounts = (container.volumeMounts as Record<string, unknown>[] | undefined) ?? []
+
+      const codexHomeEnv = env.find((entry) => entry.name === 'CODEX_HOME') as Record<string, unknown> | undefined
+      expect(codexHomeEnv?.value).toBe('/root/.codex')
+      const codexEnv = env.find((entry) => entry.name === 'CODEX_AUTH') as Record<string, unknown> | undefined
+      expect(codexEnv?.value).toBe('/root/.codex/auth.json')
+
+      const authHomeVolume = volumes.find((volume) => volume.name === 'run-1-auth-home') as
+        | Record<string, unknown>
+        | undefined
+      const authHomeEmptyDir = (authHomeVolume?.emptyDir as Record<string, unknown> | undefined) ?? {}
+      expect(authHomeEmptyDir).toEqual({})
+
+      const authVolume = volumes.find((volume) => volume.name === 'run-1-auth-secret') as
+        | Record<string, unknown>
+        | undefined
+      const authSecret = (authVolume?.secret as Record<string, unknown> | undefined) ?? {}
+      expect(authSecret.secretName).toBe('codex-auth')
+      const items = (authSecret.items as Record<string, unknown>[] | undefined) ?? []
+      expect(items[0]?.key).toBe('auth.json')
+
+      const authHomeMount = volumeMounts.find((mount) => mount.mountPath === '/root/.codex') as
+        | Record<string, unknown>
+        | undefined
+      expect(authHomeMount?.readOnly).toBeUndefined()
+
+      const authMount = volumeMounts.find((mount) => mount.mountPath === '/root/.codex/auth.json') as
+        | Record<string, unknown>
+        | undefined
+      expect(authMount?.subPath).toBe('auth.json')
+      expect(authMount?.readOnly).toBe(true)
+    } finally {
+      if (previousName === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME = previousName
+      }
+      if (previousKey === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_KEY
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_KEY = previousKey
+      }
+      if (previousMountPath === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH = previousMountPath
+      }
+    }
+  })
+
+  it('applies default scheduling config and allows per-run overrides', async () => {
+    const previousEnv = {
+      nodeSelector: process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR,
+      affinity: process.env.JANGAR_AGENT_RUNNER_AFFINITY,
+      priorityClass: process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS,
+      schedulerName: process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME,
+    }
+    const defaultAffinity = {
+      nodeAffinity: {
+        requiredDuringSchedulingIgnoredDuringExecution: {
+          nodeSelectorTerms: [
+            {
+              matchExpressions: [{ key: 'tier', operator: 'In', values: ['default'] }],
+            },
+          ],
+        },
+      },
+    }
+    process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR = JSON.stringify({ disktype: 'ssd' })
+    process.env.JANGAR_AGENT_RUNNER_AFFINITY = JSON.stringify(defaultAffinity)
+    process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS = 'default-priority'
+    process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME = 'default-scheduler'
+
+    try {
+      let lastJob: Record<string, unknown> | null = null
+      const apply = vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        const applied = { ...resource, metadata: { ...metadata, uid } }
+        if (resource.kind === 'Job') {
+          lastJob = applied
+        }
+        return applied
+      })
+      const kube = buildKube({
+        apply,
+        get: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          return null
+        }),
+      })
+
+      const agentRun = buildAgentRun()
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      const defaultPodSpec = ((lastJob?.spec as Record<string, unknown>)?.template as Record<string, unknown>)
+        ?.spec as Record<string, unknown>
+      expect(defaultPodSpec.nodeSelector).toEqual({ disktype: 'ssd' })
+      expect(defaultPodSpec.affinity).toEqual(defaultAffinity)
+      expect(defaultPodSpec.priorityClassName).toBe('default-priority')
+      expect(defaultPodSpec.schedulerName).toBe('default-scheduler')
+
+      const overrideAffinity = {
+        nodeAffinity: {
+          preferredDuringSchedulingIgnoredDuringExecution: [
+            {
+              weight: 1,
+              preference: { matchExpressions: [{ key: 'tier', operator: 'In', values: ['override'] }] },
+            },
+          ],
+        },
+      }
+      const overrideRun = buildAgentRun()
+      overrideRun.metadata = { ...(overrideRun.metadata as Record<string, unknown>), name: 'run-2' }
+      overrideRun.spec = {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: {
+          type: 'job',
+          config: {
+            nodeSelector: { disktype: 'gpu' },
+            affinity: overrideAffinity,
+            priorityClassName: 'run-priority',
+            schedulerName: 'run-scheduler',
+          },
+        },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+      }
+
+      lastJob = null
+      await __test.reconcileAgentRun(
+        kube as never,
+        overrideRun,
+        'agents',
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      const overridePodSpec = ((lastJob?.spec as Record<string, unknown>)?.template as Record<string, unknown>)
+        ?.spec as Record<string, unknown>
+      expect(overridePodSpec.nodeSelector).toEqual({ disktype: 'gpu' })
+      expect(overridePodSpec.affinity).toEqual(overrideAffinity)
+      expect(overridePodSpec.priorityClassName).toBe('run-priority')
+      expect(overridePodSpec.schedulerName).toBe('run-scheduler')
+    } finally {
+      if (previousEnv.nodeSelector === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR = previousEnv.nodeSelector
+      }
+      if (previousEnv.affinity === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_AFFINITY
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_AFFINITY = previousEnv.affinity
+      }
+      if (previousEnv.priorityClass === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS = previousEnv.priorityClass
+      }
+      if (previousEnv.schedulerName === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME = previousEnv.schedulerName
+      }
+    }
+  })
+
+  it('marks AgentRun failed when controller blocks secrets', async () => {
+    const previousBlocked = process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS
+    process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS = 'blocked-secret'
+
+    try {
+      const kube = buildKube({
+        get: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          return null
+        }),
+      })
+      const agentRun = buildAgentRun({
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'job', config: {} },
+          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+          secrets: ['blocked-secret'],
+        },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      const status = getLastStatus(kube)
+      const condition = findCondition(status, 'InvalidSpec')
+      expect(condition?.reason).toBe('SecretBlocked')
+    } finally {
+      if (previousBlocked === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS = previousBlocked
+      }
+    }
+  })
+
+  it('marks AgentRun failed when required labels are missing', async () => {
+    const previousRequired = process.env.JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED
+    process.env.JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED = '["team"]'
+
+    try {
+      const kube = buildKube()
+      const agentRun = buildAgentRun()
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      const status = getLastStatus(kube)
+      const condition = findCondition(status, 'InvalidSpec')
+      expect(condition?.reason).toBe('MissingRequiredLabels')
+    } finally {
+      if (previousRequired === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED = previousRequired
+      }
+    }
+  })
+
+  it('marks AgentRun failed when image is denied by policy', async () => {
+    const previousDenied = process.env.JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED
+    process.env.JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED = '["registry.ide-newton.ts.net/lab/*"]'
+
+    try {
+      const kube = buildKube()
+      const agentRun = buildAgentRun()
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      const status = getLastStatus(kube)
+      const condition = findCondition(status, 'InvalidSpec')
+      expect(condition?.reason).toBe('ImageBlocked')
+    } finally {
+      if (previousDenied === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED = previousDenied
+      }
+    }
+  })
+
+  it('marks AgentRun failed when auth secret is not allowlisted', async () => {
+    const previousName = process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
+    process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME = 'codex-auth'
+
+    try {
+      const kube = buildKube({
+        get: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return {
+              metadata: { name: 'agent-1' },
+              spec: {
+                providerRef: { name: 'provider-1' },
+                security: { allowedSecrets: ['some-other-secret'] },
+              },
+            }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          return null
+        }),
+      })
+
+      const agentRun = buildAgentRun()
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      const status = getLastStatus(kube)
+      const condition = findCondition(status, 'InvalidSpec')
+      expect(condition?.reason).toBe('SecretNotAllowed')
+    } finally {
+      if (previousName === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME = previousName
+      }
+    }
   })
 
   it('advances workflow steps and completes', async () => {
@@ -340,6 +1247,7 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -366,6 +1274,7 @@ describe('agents controller reconcileAgentRun', () => {
       secondAgentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -388,6 +1297,7 @@ describe('agents controller reconcileAgentRun', () => {
       kube as never,
       thirdAgentRun,
       'agents',
+      [],
       [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
@@ -456,6 +1366,7 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -475,6 +1386,7 @@ describe('agents controller reconcileAgentRun', () => {
       kube as never,
       secondAgentRun,
       'agents',
+      [],
       [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
@@ -505,6 +1417,7 @@ describe('agents controller reconcileAgentRun', () => {
       thirdAgentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -515,6 +1428,248 @@ describe('agents controller reconcileAgentRun', () => {
     const thirdSteps = (thirdWorkflow.steps as Record<string, unknown>[]) ?? []
     expect(thirdSteps[0]?.attempt).toBe(2)
     expect(thirdSteps[0]?.phase).toBe('Running')
+  })
+
+  it('deletes completed AgentRun after retention window', async () => {
+    const deleteMock = vi.fn(async () => ({}))
+    const kube = buildKube({ delete: deleteMock })
+    const finishedAt = new Date(Date.now() - 120_000).toISOString()
+    const agentRun = buildAgentRun()
+    agentRun.spec = { ...(agentRun.spec as Record<string, unknown>), ttlSecondsAfterFinished: 30 }
+    agentRun.status = { phase: 'Succeeded', finishedAt }
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    expect(deleteMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents')
+  })
+
+  it('uses controller retention default when spec override is missing', async () => {
+    const previousRetention = process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
+
+    try {
+      const deleteMock = vi.fn(async () => ({}))
+      const kube = buildKube({ delete: deleteMock })
+      const finishedAt = new Date(Date.now() - 120_000).toISOString()
+      const agentRun = buildAgentRun({
+        status: { phase: 'Failed', finishedAt },
+      })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      expect(deleteMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents')
+    } finally {
+      if (previousRetention === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+      }
+    }
+  })
+})
+
+describe('agents controller resolveVcsContext', () => {
+  it('suffixes the head branch when a conflict exists', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.VersionControlProvider) {
+          return buildVcsProvider({
+            spec: {
+              provider: 'github',
+              auth: { method: 'none' },
+              defaults: {
+                branchTemplate: 'codex/{{issueNumber}}',
+                branchConflictSuffixTemplate: '{{agentRun.name}}',
+              },
+            },
+          })
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        vcsRef: { name: 'vcs-1' },
+        parameters: {
+          repository: 'proompteng/lab',
+          issueNumber: '123',
+        },
+      },
+    })
+
+    const result = await __test.resolveVcsContext({
+      kube: kube as never,
+      namespace: 'agents',
+      agentRun,
+      agent: { metadata: { name: 'agent-1' }, spec: {} },
+      implementation: {},
+      parameters: {
+        repository: 'proompteng/lab',
+        issueNumber: '123',
+      },
+      allowedSecrets: [],
+      existingRuns: [
+        {
+          metadata: { name: 'run-2' },
+          status: {
+            phase: 'Running',
+            vcs: { repository: 'proompteng/lab', headBranch: 'codex/123' },
+          },
+        },
+      ],
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.context?.headBranch).toBe('codex/123-run-1')
+  })
+})
+
+describe('agents controller reconcileVersionControlProvider', () => {
+  it('surfaces deprecation warnings for github token types', async () => {
+    const kube = buildKube({
+      get: vi.fn(async () => ({
+        stringData: { token: 'value' },
+      })),
+    })
+    const provider = buildVcsProvider()
+
+    await __test.reconcileVersionControlProvider(kube as never, provider, 'agents')
+
+    const status = getLastStatus(kube)
+    const warning = findCondition(status, 'Warning')
+    expect(warning?.status).toBe('True')
+    expect(warning?.reason).toBe('DeprecatedAuth')
+  })
+
+  it('uses provider defaults when token type is omitted', async () => {
+    const previous = process.env.JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
+    process.env.JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES = JSON.stringify({
+      github: ['fine_grained'],
+    })
+
+    try {
+      const kube = buildKube({
+        get: vi.fn(async () => ({
+          stringData: { token: 'value' },
+        })),
+      })
+      const provider = buildVcsProvider({
+        spec: {
+          provider: 'github',
+          auth: {
+            method: 'token',
+            token: {
+              secretRef: {
+                name: 'vcs-token',
+                key: 'token',
+              },
+            },
+          },
+        },
+      })
+
+      await __test.reconcileVersionControlProvider(kube as never, provider, 'agents')
+
+      const status = getLastStatus(kube)
+      const warning = findCondition(status, 'Warning')
+      expect(warning?.status).toBe('True')
+      expect(warning?.reason).toBe('DeprecatedAuth')
+    } finally {
+      if (previous === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES = previous
+      }
+    }
+  })
+
+  it('rejects unsupported auth methods for non-github providers', async () => {
+    const kube = buildKube()
+    const provider = buildVcsProvider({
+      spec: {
+        provider: 'gitlab',
+        auth: {
+          method: 'app',
+          app: {
+            appId: '1',
+            installationId: '2',
+            privateKeySecretRef: { name: 'app-secret' },
+          },
+        },
+      },
+    })
+
+    await __test.reconcileVersionControlProvider(kube as never, provider, 'agents')
+
+    const status = getLastStatus(kube)
+    const invalid = findCondition(status, 'InvalidSpec')
+    expect(invalid?.reason).toBe('UnsupportedAuth')
+  })
+
+  it('rejects token types that are not supported by the provider', async () => {
+    const kube = buildKube()
+    const provider = buildVcsProvider({
+      spec: {
+        provider: 'bitbucket',
+        auth: {
+          method: 'token',
+          token: {
+            secretRef: { name: 'bitbucket-token', key: 'token' },
+            type: 'pat',
+          },
+        },
+      },
+    })
+
+    await __test.reconcileVersionControlProvider(kube as never, provider, 'agents')
+
+    const status = getLastStatus(kube)
+    const invalid = findCondition(status, 'InvalidSpec')
+    expect(invalid?.reason).toBe('UnsupportedAuth')
+  })
+})
+
+describe('agents controller vcs pr rate limits', () => {
+  it('parses PR rate limits from env', () => {
+    const previous = process.env.JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS
+    process.env.JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS = JSON.stringify({
+      github: { windowSeconds: 60, maxRequests: 10, backoffSeconds: 30 },
+    })
+
+    try {
+      expect(__test.resolveVcsPrRateLimits()).toEqual({
+        github: { windowSeconds: 60, maxRequests: 10, backoffSeconds: 30 },
+      })
+    } finally {
+      if (previous === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS = previous
+      }
+    }
   })
 })
 

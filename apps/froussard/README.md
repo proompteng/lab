@@ -66,6 +66,8 @@ The local runtime exposes:
   `KAFKA_DISCORD_COMMAND_TOPIC` to control the output topic for normalized command events.
 - The structured stream is configured via `KAFKA_CODEX_TOPIC_STRUCTURED` (defaulting to `github.issues.codex.tasks`).
 - The Codex judge stream is configured via `KAFKA_CODEX_JUDGE_TOPIC` (defaulting to `github.webhook.codex.judge`).
+- Webhook idempotency defaults to a 10 minute TTL with 10,000 entries. Override via
+  `FROUSSARD_WEBHOOK_IDEMPOTENCY_TTL_MS` and `FROUSSARD_WEBHOOK_IDEMPOTENCY_MAX_ENTRIES`.
 
 ### Local Deploy Script
 

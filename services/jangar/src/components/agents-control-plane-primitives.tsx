@@ -21,9 +21,9 @@ import {
 } from '@/components/agents-control-plane'
 import { DEFAULT_NAMESPACE, type NamespaceSearchState } from '@/components/agents-control-plane-search'
 import { useControlPlaneReload, useControlPlaneStream } from '@/components/agents-control-plane-stream'
-import { Button, buttonVariants } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Button, buttonVariants } from '@proompteng/design/ui'
+import { Input } from '@proompteng/design/ui'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@proompteng/design/ui'
 import {
   type AgentPrimitiveKind,
   fetchPrimitiveDetail,

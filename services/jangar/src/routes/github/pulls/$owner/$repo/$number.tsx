@@ -2,9 +2,9 @@ import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
 
 import { type FileTreeNode, FileTreeView } from '@/components/file-tree'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Button } from '@proompteng/design/ui'
+import { Input } from '@proompteng/design/ui'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@proompteng/design/ui'
 import type { CodexRunRecord } from '@/data/codex'
 import {
   fetchGithubPull,

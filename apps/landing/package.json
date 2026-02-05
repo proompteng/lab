@@ -60,10 +60,11 @@
     "vaul": "^1.1.2",
     "zod": "^3.24.2",
     "@proompteng/backend": "workspace:*",
+    "@proompteng/design": "workspace:*",
     "convex": "^1.27.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.2.4",
+    "@biomejs/biome": "2.3.8",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "19.2.8",

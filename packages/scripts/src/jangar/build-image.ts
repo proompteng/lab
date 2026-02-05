@@ -43,8 +43,12 @@ const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void
       cpSync(agentctlSource, resolve(dir, 'json/services/jangar/agentctl'), { recursive: true })
     }
     const outputSource = resolve(repoRoot, 'services/jangar/.output')
-    if (existsSync(outputSource)) {
+    const outputEntry = resolve(outputSource, 'server/index.mjs')
+    const outputProto = resolve(outputSource, 'server/proto/proompteng/jangar/v1/agentctl.proto')
+    if (existsSync(outputEntry) && existsSync(outputProto)) {
       cpSync(outputSource, resolve(dir, 'full/services/jangar/.output'), { recursive: true })
+    } else if (existsSync(outputSource)) {
+      console.warn('Skipping prebuilt .output: missing services/jangar/.output/server/index.mjs or agentctl.proto')
     }
     return { dir, cleanup }
   } catch (error) {

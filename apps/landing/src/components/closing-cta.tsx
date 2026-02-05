@@ -1,6 +1,6 @@
+import { Button } from '@proompteng/design/ui'
 import { ArrowRight } from 'lucide-react'
 import type { LandingContent } from '@/app/config'
-import { Button } from '@/components/ui/button'
 
 type ClosingCtaProps = LandingContent['closingCta']
 

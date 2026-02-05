@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process'
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 
+import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import { asRecord, asString, errorResponse, okResponse, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import { shouldApplyStatus } from '~/server/status-utils'
 
 const DEFAULT_NAMESPACES = ['agents']
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
@@ -48,7 +50,9 @@ const parseNamespaces = () => {
     .split(',')
     .map((value) => value.trim())
     .filter((value) => value.length > 0)
-  return list.length > 0 ? list : DEFAULT_NAMESPACES
+  const namespaces = list.length > 0 ? list : DEFAULT_NAMESPACES
+  assertClusterScopedForWildcard(namespaces, 'implementation source webhooks')
+  return namespaces
 }
 
 const runKubectl = (args: string[]) =>
@@ -171,6 +175,9 @@ const setStatus = async (
   const apiVersion = asString(resource.apiVersion)
   const kind = asString(resource.kind)
   if (!apiVersion || !kind) return
+  if (!shouldApplyStatus(asRecord(resource.status), status)) {
+    return
+  }
   await kube.applyStatus({ apiVersion, kind, metadata: { name, namespace }, status })
 }
 
