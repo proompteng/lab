@@ -23,6 +23,7 @@ kubectl apply -n agents -f charts/agents/examples/agent-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/memory-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/implementationspec-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/versioncontrolprovider-github.yaml
+kubectl apply -n agents -f charts/agents/examples/versioncontrolprovider-github-app.yaml
 kubectl apply -n agents -f charts/agents/examples/agentrun-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/tool-sample.yaml
 kubectl apply -n agents -f charts/agents/examples/orchestration-sample.yaml
@@ -135,10 +136,47 @@ mounts the secret file at `auth.json` inside it. It also sets `CODEX_HOME` and `
 
 Example:
 ```bash
-helm upgrade agents charts/agents --namespace agents --reuse-values \
-  --set controller.authSecret.name=codex-auth \
-  --set controller.authSecret.key=auth.json
+helm upgrade agents charts/agents --namespace agents --reuse-values   --set controller.authSecret.name=codex-auth   --set controller.authSecret.key=auth.json
 ```
+
+### Admission control policy
+Use admission policy values to reject unsafe AgentRuns before submission. Rejections surface as `InvalidSpec`.
+
+Supported checks (pattern lists accept `*` wildcards):
+- `controller.admissionPolicy.labels.required`: label keys that must exist on AgentRuns.
+- `controller.admissionPolicy.labels.allowed`: allowed label key patterns (deny-by-default when set).
+- `controller.admissionPolicy.labels.denied`: blocked label key patterns (deny wins).
+- `controller.admissionPolicy.images.allowed`: allowed workload image patterns.
+- `controller.admissionPolicy.images.denied`: blocked workload image patterns (deny wins).
+- `controller.admissionPolicy.secrets.blocked`: secret names blocked by controller policy.
+
+Example:
+```yaml
+controller:
+  admissionPolicy:
+    labels:
+      required:
+        - team
+      denied:
+        - "internal/*"
+    images:
+      allowed:
+        - "registry.ide-newton.ts.net/lab/*"
+    secrets:
+      blocked:
+        - prod-kubeconfig
+```
+
+### AgentRun runner defaults (optional)
+Set defaults for AgentRun and Schedule workload images when the CRD does not specify one:
+- `runtime.agentRunnerImage` → `JANGAR_AGENT_RUNNER_IMAGE`
+- `runtime.agentImage` → `JANGAR_AGENT_IMAGE`
+- `runtime.scheduleRunnerImage` → `JANGAR_SCHEDULE_RUNNER_IMAGE`
+- `runtime.scheduleServiceAccount` → `JANGAR_SCHEDULE_SERVICE_ACCOUNT`
+
+### Agent comms subjects (optional)
+Override the default NATS subject filters (comma-separated) used by the agent comms subscriber:
+- `agentComms.subjects`
 
 ### Version control providers
 Define a VersionControlProvider resource to decouple repo access from issue intake. This is required for
@@ -175,7 +213,7 @@ controller:
 ```
 
 Branch naming defaults (VersionControlProvider `spec.defaults`):
-- `branchTemplate` controls deterministic head branch names (e.g. `codex/{{issueNumber}}`).
+- `branchTemplate` controls deterministic head branch names (e.g., `codex/{{issueNumber}}`).
 - `branchConflictSuffixTemplate` appends a suffix when another active run uses the same branch.
 
 Example token auth (GitHub fine-grained PAT):
@@ -219,6 +257,28 @@ spec:
         key: privateKey
       tokenTtlSeconds: 3600
 ```
+See `charts/agents/examples/versioncontrolprovider-github-app.yaml` for a full example with repository policy and
+pull request defaults.
+
+### PR rate limits
+To smooth bursts when creating pull requests, configure per-provider rate limits in the chart values. Limits are
+passed to agent runtimes and applied before PR creation with backoff on rate-limit responses.
+
+Example:
+```yaml
+controller:
+  vcsProviders:
+    prRateLimits:
+      github:
+        windowSeconds: 60
+        maxRequests: 15
+        backoffSeconds: 30
+      default:
+        windowSeconds: 60
+        maxRequests: 10
+        backoffSeconds: 20
+```
+
 
 ## Example production values
 ```yaml
@@ -294,6 +354,12 @@ Enable reruns or system-improvement flows using:
 - Use `database.secretRef` and dedicated DB credentials per environment.
 - Scope controllers to specific namespaces unless you need cluster-wide control.
 - Prefer image digests in production (`values-prod.yaml`).
+
+## Pod Security Admission
+Configure PSA labels via `podSecurityAdmission.labels` and enable them with `podSecurityAdmission.enabled=true`.
+Set `podSecurityAdmission.createNamespace=true` when the chart should create and label the namespace.
+For existing namespaces, keep `createNamespace=false` and apply the PSA labels out-of-band to avoid
+Helm ownership conflicts.
 
 ## Admission control
 - Configure backpressure with `controller.queue.*` and `controller.rate.*` in `values.yaml`.
