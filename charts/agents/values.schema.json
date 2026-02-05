@@ -247,6 +247,16 @@
       },
       "additionalProperties": false
     },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "agentRunnerImage": { "type": "string" },
+        "agentImage": { "type": "string" },
+        "scheduleRunnerImage": { "type": "string" },
+        "scheduleServiceAccount": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
     "envFromSecretRefs": { "type": "array", "items": { "type": "string" } },
     "envFromConfigMapRefs": { "type": "array", "items": { "type": "string" } },
     "controller": {
@@ -505,6 +515,7 @@
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" },
+        "subjects": { "type": "array", "items": { "type": "string" } },
         "nats": {
           "type": "object",
           "properties": {

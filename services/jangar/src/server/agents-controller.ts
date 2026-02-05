@@ -94,6 +94,12 @@ type VcsMode = 'read-write' | 'read-only' | 'none'
 type VcsAuthMethod = 'token' | 'app' | 'ssh' | 'none'
 type VcsTokenType = 'pat' | 'fine_grained' | 'api_token' | 'access_token'
 
+type EnvVar = {
+  name: string
+  value?: string
+  valueFrom?: Record<string, unknown>
+}
+
 type VcsAuthAdapter = {
   provider: string
   allowedMethods: VcsAuthMethod[]
@@ -114,7 +120,7 @@ type VcsAuthValidation =
     }
 
 type VcsRuntimeConfig = {
-  env: Array<Record<string, unknown>>
+  env: EnvVar[]
   volumes: Array<{ name: string; spec: Record<string, unknown> }>
   volumeMounts: Array<Record<string, unknown>>
 }
@@ -1112,8 +1118,7 @@ const validateVcsAuthConfig = (providerType: string | null, auth: Record<string,
   const warnings: Array<{ reason: string; message: string }> = []
   let resolvedTokenType: VcsTokenType | null = null
   if (method === 'token') {
-    resolvedTokenType =
-      normalizeTokenType(readNested(auth, ['token', 'type'])) ?? adapter.defaultTokenType ?? null
+    resolvedTokenType = normalizeTokenType(readNested(auth, ['token', 'type'])) ?? adapter.defaultTokenType ?? null
     if (resolvedTokenType && adapter.tokenTypes && !adapter.tokenTypes.includes(resolvedTokenType)) {
       return {
         ok: false as const,
@@ -1982,8 +1987,7 @@ const appendBranchSuffix = (branch: string, suffix: string) => {
   return `${branch}${separator}${cleaned}`
 }
 
-const hasParameterValue = (parameters: Record<string, string>, keys: string[]) =>
-  resolveParam(parameters, keys) !== ''
+const hasParameterValue = (parameters: Record<string, string>, keys: string[]) => resolveParam(parameters, keys) !== ''
 
 const applyVcsMetadataToParameters = (
   parameters: Record<string, string>,
@@ -2355,7 +2359,7 @@ const resolveVcsContext = async ({
     effectiveMode = 'none'
   }
 
-  if (required && desiredMode !== effectiveMode && desiredMode !== 'none') {
+  if (required && desiredMode !== effectiveMode) {
     return {
       ok: false,
       skip: false,
@@ -2424,7 +2428,7 @@ const resolveVcsContext = async ({
 
   const authValidation = validateVcsAuthConfig(providerType, auth)
   if (!authValidation.ok) {
-    if (required && desiredMode !== 'none') {
+    if (required) {
       return {
         ok: false,
         skip: false,
@@ -2459,7 +2463,7 @@ const resolveVcsContext = async ({
     const secretName = asString(secretRef.name)
     const secretKey = asString(secretRef.key) ?? 'token'
     if (!secretName) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2482,7 +2486,7 @@ const resolveVcsContext = async ({
     }
     const blocked = collectBlockedSecrets([secretName])
     if (blocked.length > 0) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2504,7 +2508,7 @@ const resolveVcsContext = async ({
       }
     }
     if (allowedSecrets.length > 0 && !allowedSecrets.includes(secretName)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2527,7 +2531,7 @@ const resolveVcsContext = async ({
     }
     const secret = await kube.get('secret', secretName, namespace)
     if (!secret || !secretHasKey(secret, secretKey)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2566,7 +2570,7 @@ const resolveVcsContext = async ({
     const secretKey = asString(secretRef.key) ?? 'privateKey'
     const tokenTtlSeconds = Number(appSpec.tokenTtlSeconds)
     if (!appId || !installationId || !secretName) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2589,7 +2593,7 @@ const resolveVcsContext = async ({
     }
     const blocked = collectBlockedSecrets([secretName])
     if (blocked.length > 0) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2611,7 +2615,7 @@ const resolveVcsContext = async ({
       }
     }
     if (allowedSecrets.length > 0 && !allowedSecrets.includes(secretName)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2634,7 +2638,7 @@ const resolveVcsContext = async ({
     }
     const secret = await kube.get('secret', secretName, namespace)
     if (!secret || !secretHasKey(secret, secretKey)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2657,7 +2661,7 @@ const resolveVcsContext = async ({
     }
     const privateKey = resolveSecretValue(secret, secretKey)
     if (!privateKey) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2701,7 +2705,7 @@ const resolveVcsContext = async ({
     const knownHostsName = asString(knownHostsRef.name)
     const knownHostsKey = asString(knownHostsRef.key) ?? 'known_hosts'
     if (!secretName) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2724,7 +2728,7 @@ const resolveVcsContext = async ({
     }
     const blocked = collectBlockedSecrets([secretName])
     if (blocked.length > 0) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2746,7 +2750,7 @@ const resolveVcsContext = async ({
       }
     }
     if (allowedSecrets.length > 0 && !allowedSecrets.includes(secretName)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2769,7 +2773,7 @@ const resolveVcsContext = async ({
     }
     const secret = await kube.get('secret', secretName, namespace)
     if (!secret || !secretHasKey(secret, secretKey)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -3177,7 +3181,7 @@ const submitJobRun = async (
   const args = argsTemplate.map((arg) => renderTemplate(String(arg), context))
 
   const envTemplate = asRecord(providerSpec.envTemplate) ?? {}
-  const env = Object.entries(envTemplate).map(([key, value]) => ({
+  const env: EnvVar[] = Object.entries(envTemplate).map(([key, value]) => ({
     name: key,
     value: renderTemplate(String(value), context),
   }))
@@ -3755,15 +3759,15 @@ const reconcileWorkflowRun = async (
     return
   }
 
-  const imageCandidates = workflowSteps
-    .map((step) => {
-      const workload = step.workload ?? baseWorkload
-      const image = workload ? resolveJobImage(workload) : null
-      if (!image) return null
-      return { image, context: `workflow step ${step.name}` }
-    })
-    .filter((candidate): candidate is ImagePolicyCandidate => Boolean(candidate))
-  const imagePolicy = validateImagePolicy(imageCandidates)
+	  const imageCandidates = workflowSteps
+	    .map((step) => {
+	      const workload = step.workload ?? baseWorkload
+	      const image = workload ? resolveJobImage(workload) : null
+	      if (!image) return null
+	      return { image, context: `workflow step ${step.name}` }
+	    })
+	    .filter((candidate): candidate is ImagePolicyCandidate => candidate !== null)
+	  const imagePolicy = validateImagePolicy(imageCandidates)
   if (!imagePolicy.ok) {
     const updated = upsertCondition(conditions, {
       type: 'InvalidSpec',
@@ -4601,12 +4605,7 @@ const reconcileAgentRun = async (
         conditions: updated,
         vcs: asRecord(status.vcs) ?? undefined,
       })
-      await applyJobTtlAfterStatus(
-        kube,
-        job,
-        asString(runtimeRef.namespace) ?? namespace,
-        runtimeConfig,
-      )
+      await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
     } else if (failed > 0 && isJobFailed(job)) {
       const updated = upsertCondition(conditions, {
         type: 'Failed',
@@ -4621,12 +4620,7 @@ const reconcileAgentRun = async (
         conditions: updated,
         vcs: asRecord(status.vcs) ?? undefined,
       })
-      await applyJobTtlAfterStatus(
-        kube,
-        job,
-        asString(runtimeRef.namespace) ?? namespace,
-        runtimeConfig,
-      )
+      await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
     }
   }
 
@@ -4694,16 +4688,7 @@ const reconcileRunWithState = async (
     total: counts.total,
     perAgent: counts.perAgent,
   }
-  await reconcileAgentRun(
-    kube,
-    run,
-    namespace,
-    snapshot.memories,
-    snapshot.runs,
-    concurrency,
-    inFlight,
-    counts.cluster,
-  )
+  await reconcileAgentRun(kube, run, namespace, snapshot.memories, snapshot.runs, concurrency, inFlight, counts.cluster)
 }
 
 const reconcileNamespaceState = async (

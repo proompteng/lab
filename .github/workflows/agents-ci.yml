@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - 'charts/agents/**'
-      - 'docs/agents/**'
       - 'services/jangar/**'
       - 'scripts/agents/**'
       - 'scripts/download_crd_schema.py'
@@ -14,7 +13,6 @@ on:
       - main
     paths:
       - 'charts/agents/**'
-      - 'docs/agents/**'
       - 'services/jangar/**'
       - 'scripts/agents/**'
       - 'scripts/download_crd_schema.py'
@@ -114,10 +112,10 @@ jobs:
         with:
           version: v3.14.4
 
-      - name: Configure in-cluster kubeconfig
-        env:
-          KUBE_NAMESPACE: agents-ci
-        run: bun run packages/scripts/src/agents/setup-kubeconfig.ts
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: agents-ci-${{ github.run_id }}
 
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
@@ -141,3 +139,4 @@ jobs:
           helm uninstall agents-ci -n agents-ci || true
           kubectl -n agents-ci delete deployment agents-ci-postgres --ignore-not-found
           kubectl -n agents-ci delete service agents-ci-postgres --ignore-not-found
+          kubectl delete namespace agents-ci --ignore-not-found --wait=false
