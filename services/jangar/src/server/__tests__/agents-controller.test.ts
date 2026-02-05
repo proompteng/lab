@@ -1486,6 +1486,111 @@ describe('agents controller reconcileAgentRun', () => {
   })
 })
 
+describe('agents controller queue and rate limits', () => {
+  it('blocks AgentRun when queue limit is exceeded', async () => {
+    const previousQueue = process.env.JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE
+    process.env.JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE = '1'
+
+    try {
+      const kube = buildKube()
+      const agentRun = buildAgentRun()
+      const existingRuns = [
+        buildAgentRun({
+          metadata: {
+            name: 'run-queued',
+            namespace: 'agents',
+            generation: 1,
+            finalizers: [finalizer],
+          },
+          status: { phase: 'Pending' },
+        }),
+      ]
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        existingRuns,
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      const status = getLastStatus(kube)
+      const condition = findCondition(status, 'Blocked')
+      expect(condition?.reason).toBe('QueueLimit')
+      expect(condition?.message).toContain('queue limit')
+    } finally {
+      if (previousQueue) {
+        process.env.JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE = previousQueue
+      } else {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE
+      }
+    }
+  })
+
+  it('blocks AgentRun when rate limit is exceeded', async () => {
+    const previousWindow = process.env.JANGAR_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS
+    const previousNamespace = process.env.JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE
+    const previousCluster = process.env.JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER
+
+    process.env.JANGAR_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS = '60'
+    process.env.JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE = '1'
+    process.env.JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER = '1'
+    __test.resetControllerRateState()
+
+    try {
+      const kube = buildKube()
+      const agentRun = buildAgentRun({ metadata: { name: 'run-rate-1', namespace: 'agents', generation: 1 } })
+      const agentRunTwo = buildAgentRun({ metadata: { name: 'run-rate-2', namespace: 'agents', generation: 1 } })
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRunTwo,
+        'agents',
+        [],
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      const status = getLastStatus(kube)
+      const condition = findCondition(status, 'Blocked')
+      expect(condition?.reason).toBe('RateLimit')
+      expect(condition?.message).toContain('rate limit')
+    } finally {
+      if (previousWindow) {
+        process.env.JANGAR_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS = previousWindow
+      } else {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS
+      }
+      if (previousNamespace) {
+        process.env.JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE = previousNamespace
+      } else {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE
+      }
+      if (previousCluster) {
+        process.env.JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER = previousCluster
+      } else {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER
+      }
+    }
+  })
+})
+
 describe('agents controller resolveVcsContext', () => {
   it('suffixes the head branch when a conflict exists', async () => {
     const kube = buildKube({

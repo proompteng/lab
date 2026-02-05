@@ -6,8 +6,8 @@ Status: Draft (2026-02-05)
 
 - Code: `/v1/agent-runs` admission enforces queue caps per namespace/cluster/repo and returns 429 when exceeded. It
   does not enforce per-repo in-flight concurrency or fairness in scheduling.
-- Controller reconciliation does not enforce queue limits for direct AgentRun CRs; per-agent concurrency is the
-  only fairness control on that path.
+- Controller reconciliation enforces queue limits for direct AgentRun CRs; per-agent concurrency remains the only
+  fairness control on that path.
 - Chart: `controller.queue.*` values map to `JANGAR_AGENTS_CONTROLLER_QUEUE_*` envs used by the API admission path.
 - Cluster: queue env vars are set (200/50/1000), so API admission uses explicit caps today.
 
