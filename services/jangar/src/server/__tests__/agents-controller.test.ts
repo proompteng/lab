@@ -224,6 +224,7 @@ describe('agents controller reconcileAgentRun', () => {
       agentRun,
       'agents',
       [],
+      [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
       0,
@@ -280,6 +281,7 @@ describe('agents controller reconcileAgentRun', () => {
       kube as never,
       agentRun,
       'agents',
+      [],
       [],
       { perNamespace: 10, perAgent: 5, cluster: 100 },
       { total: 0, perAgent: new Map() },
@@ -931,13 +933,13 @@ describe('agents controller reconcileAgentRun', () => {
     process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME = 'default-scheduler'
 
     try {
-      let lastJob: Record<string, unknown> | null = null
+      const jobs: Record<string, unknown>[] = []
       const apply = vi.fn(async (resource: Record<string, unknown>) => {
         const metadata = (resource.metadata ?? {}) as Record<string, unknown>
         const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
         const applied = { ...resource, metadata: { ...metadata, uid } }
         if (resource.kind === 'Job') {
-          lastJob = applied
+          jobs.push(applied)
         }
         return applied
       })
@@ -963,12 +965,15 @@ describe('agents controller reconcileAgentRun', () => {
         agentRun,
         'agents',
         [],
+        [],
         { perNamespace: 10, perAgent: 5, cluster: 100 },
         { total: 0, perAgent: new Map() },
         0,
       )
 
-      const defaultPodSpec = ((lastJob?.spec as Record<string, unknown>)?.template as Record<string, unknown>)
+      const defaultJob = jobs[jobs.length - 1]
+      if (!defaultJob) throw new Error('expected reconcileAgentRun to create a Job')
+      const defaultPodSpec = ((defaultJob.spec as Record<string, unknown>)?.template as Record<string, unknown>)
         ?.spec as Record<string, unknown>
       expect(defaultPodSpec.nodeSelector).toEqual({ disktype: 'ssd' })
       expect(defaultPodSpec.affinity).toEqual(defaultAffinity)
@@ -994,7 +999,7 @@ describe('agents controller reconcileAgentRun', () => {
         },
       ]
       const overrideRun = buildAgentRun()
-      overrideRun.metadata = { ...(overrideRun.metadata as Record<string, unknown>), name: 'run-2' }
+      overrideRun.metadata = { ...overrideRun.metadata, name: 'run-2' }
       overrideRun.spec = {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
@@ -1011,18 +1016,20 @@ describe('agents controller reconcileAgentRun', () => {
         workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
       }
 
-      lastJob = null
       await __test.reconcileAgentRun(
         kube as never,
         overrideRun,
         'agents',
+        [],
         [],
         { perNamespace: 10, perAgent: 5, cluster: 100 },
         { total: 0, perAgent: new Map() },
         0,
       )
 
-      const overridePodSpec = ((lastJob?.spec as Record<string, unknown>)?.template as Record<string, unknown>)
+      const overrideJob = jobs[jobs.length - 1]
+      if (!overrideJob) throw new Error('expected reconcileAgentRun to create a Job')
+      const overridePodSpec = ((overrideJob.spec as Record<string, unknown>)?.template as Record<string, unknown>)
         ?.spec as Record<string, unknown>
       expect(overridePodSpec.nodeSelector).toEqual({ disktype: 'gpu' })
       expect(overridePodSpec.affinity).toEqual(overrideAffinity)
@@ -1106,6 +1113,68 @@ describe('agents controller reconcileAgentRun', () => {
         delete process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS
       } else {
         process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS = previousBlocked
+      }
+    }
+  })
+
+  it('marks AgentRun failed when required labels are missing', async () => {
+    const previousRequired = process.env.JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED
+    process.env.JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED = '["team"]'
+
+    try {
+      const kube = buildKube()
+      const agentRun = buildAgentRun()
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      const status = getLastStatus(kube)
+      const condition = findCondition(status, 'InvalidSpec')
+      expect(condition?.reason).toBe('MissingRequiredLabels')
+    } finally {
+      if (previousRequired === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED = previousRequired
+      }
+    }
+  })
+
+  it('marks AgentRun failed when image is denied by policy', async () => {
+    const previousDenied = process.env.JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED
+    process.env.JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED = '["registry.ide-newton.ts.net/lab/*"]'
+
+    try {
+      const kube = buildKube()
+      const agentRun = buildAgentRun()
+
+      await __test.reconcileAgentRun(
+        kube as never,
+        agentRun,
+        'agents',
+        [],
+        [],
+        { perNamespace: 10, perAgent: 5, cluster: 100 },
+        { total: 0, perAgent: new Map() },
+        0,
+      )
+
+      const status = getLastStatus(kube)
+      const condition = findCondition(status, 'InvalidSpec')
+      expect(condition?.reason).toBe('ImageBlocked')
+    } finally {
+      if (previousDenied === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED = previousDenied
       }
     }
   })
@@ -1616,6 +1685,27 @@ describe('agents controller reconcileVersionControlProvider', () => {
     const status = getLastStatus(kube)
     const invalid = findCondition(status, 'InvalidSpec')
     expect(invalid?.reason).toBe('UnsupportedAuth')
+  })
+})
+
+describe('agents controller vcs pr rate limits', () => {
+  it('parses PR rate limits from env', () => {
+    const previous = process.env.JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS
+    process.env.JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS = JSON.stringify({
+      github: { windowSeconds: 60, maxRequests: 10, backoffSeconds: 30 },
+    })
+
+    try {
+      expect(__test.resolveVcsPrRateLimits()).toEqual({
+        github: { windowSeconds: 60, maxRequests: 10, backoffSeconds: 30 },
+      })
+    } finally {
+      if (previous === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS = previous
+      }
+    }
   })
 })
 
