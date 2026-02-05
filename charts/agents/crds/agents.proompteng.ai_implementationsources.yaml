@@ -162,7 +162,6 @@ spec:
                 properties:
                   attempts:
                     format: int32
-                    minimum: 0
                     type: integer
                   deliveryId:
                     type: string
