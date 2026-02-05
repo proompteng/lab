@@ -2,10 +2,13 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: agents
 resources:
+  - codex-secretbinding.yaml
+  - codex-versioncontrolprovider.yaml
   - sample-approvalpolicy.yaml
   - sample-budget.yaml
   - sample-signal.yaml
   - tailscale-service.yaml
+  - tailscale-networkpolicy.yaml
 helmGlobals:
   chartHome: ../../../charts
 helmCharts:
