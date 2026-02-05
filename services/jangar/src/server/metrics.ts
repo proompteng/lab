@@ -25,6 +25,7 @@ type JangarMetrics = {
   githubReviewsSubmitted: Counter
   githubMergeAttempts: Counter
   githubMergeFailures: Counter
+  agentQueueDepth: Histogram
 }
 
 type MetricsState = {
@@ -96,6 +97,13 @@ export const recordGithubMergeAttempt = () => {
 export const recordGithubMergeFailure = () => {
   if (!metricsState.enabled) return
   recordCounter(metricsState.metrics?.githubMergeFailures, 1)
+}
+
+export const recordAgentQueueDepth = (depth: number, attributes?: MetricsAttributes) => {
+  if (!metricsState.enabled) return
+  if (Number.isFinite(depth)) {
+    recordHistogram(metricsState.metrics?.agentQueueDepth, depth, attributes)
+  }
 }
 
 type OtlpProtocol = 'http/json' | 'http/protobuf' | 'grpc'
@@ -270,6 +278,9 @@ const createMetricsState = (): MetricsState => {
       }),
       githubMergeFailures: meter.createCounter('jangar_github_merge_failures_total', {
         description: 'Count of GitHub merge attempts that failed.',
+      }),
+      agentQueueDepth: meter.createHistogram('jangar_agents_queue_depth', {
+        description: 'Observed queue depth for AgentRun admission control.',
       }),
     }
 

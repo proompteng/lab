@@ -10,7 +10,7 @@ export interface DiscordChannelOptions {
 }
 
 export interface RunCodexSessionOptions {
-  stage: 'planning' | 'implementation' | 'review' | 'research' | 'judge' | 'verify'
+  stage: 'planning' | 'implementation' | 'review' | 'research' | 'verify'
   prompt: string
   outputPath: string
   jsonOutputPath: string

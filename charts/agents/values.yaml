@@ -19,6 +19,14 @@ image:
   pullPolicy: IfNotPresent
   pullSecrets: []
 
+runner:
+  image:
+    repository: registry.ide-newton.ts.net/lab/codex-universal
+    tag: latest
+    digest: ""
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+
 serviceAccount:
   create: true
   name: ""
@@ -129,6 +137,12 @@ workflowRuntime:
     systemImprovementOrchestration: ""
     systemImprovementOrchestrationNamespace: ""
 
+runtime:
+  agentRunnerImage: ""
+  agentImage: ""
+  scheduleRunnerImage: ""
+  scheduleServiceAccount: ""
+
 envFromSecretRefs: []
 envFromConfigMapRefs: []
 
@@ -143,16 +157,37 @@ controller:
     enabled: false
     default: 0
     overrides: {}
+  queue:
+    perNamespace: 200
+    perRepo: 50
+    cluster: 1000
+  rate:
+    windowSeconds: 60
+    perNamespace: 120
+    perRepo: 30
+    cluster: 600
   agentRunRetentionSeconds: 2592000
+  jobTtlSecondsAfterFinished: 600
   authSecret:
     name: ""
     key: auth.json
     mountPath: /root/.codex
+  admissionPolicy:
+    labels:
+      required: []
+      allowed: []
+      denied: []
+    images:
+      allowed: []
+      denied: []
+    secrets:
+      blocked: []
   vcsProviders:
     enabled: true
     deprecatedTokenTypes:
       github:
         - pat
+    prRateLimits: {}
   defaultWorkload:
     serviceAccountName: ""
     nodeSelector: {}
@@ -164,6 +199,57 @@ controller:
     priorityClassName: ""
     schedulerName: ""
 
+versionControlProvider:
+  enabled: false
+  name: github
+  namespace: ""
+  provider: github
+  apiBaseUrl: https://api.github.com
+  cloneBaseUrl: https://github.com
+  webBaseUrl: https://github.com
+  cloneProtocol: ""
+  sshHost: ""
+  sshUser: ""
+  auth:
+    method: token
+    username: ""
+    token:
+      secretRef:
+        name: ""
+        key: token
+      type: ""
+    app:
+      appId: ""
+      installationId: ""
+      privateKeySecretRef:
+        name: ""
+        key: privateKey
+      tokenTtlSeconds: 0
+    ssh:
+      privateKeySecretRef:
+        name: ""
+        key: privateKey
+      knownHostsConfigMapRef:
+        name: ""
+        key: known_hosts
+  repositoryPolicy:
+    allow: []
+    deny: []
+  capabilities:
+    read: true
+    write: true
+    pullRequests: true
+  defaults:
+    baseBranch: main
+    branchTemplate: codex/{{issueNumber}}
+    commitAuthorName: codex
+    commitAuthorEmail: codex@proompt.com
+    pullRequest:
+      enabled: true
+      draft: false
+      titleTemplate: "Codex: {{repository}}"
+      bodyTemplate: "Closes #{{issueNumber}}"
+
 orchestrationController:
   enabled: true
   namespaces: []
@@ -174,6 +260,7 @@ supportingController:
 
 agentComms:
   enabled: false
+  subjects: []
   nats:
     url: ""
     user: ""

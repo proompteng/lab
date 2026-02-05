@@ -51,7 +51,10 @@ const createStoreMock = (): PrimitivesStore =>
     getRunById: vi.fn(async () => null),
   }) as PrimitivesStore
 
-const createKubeMock = (resources: Record<string, Record<string, unknown> | null>): KubernetesClient => ({
+const createKubeMock = (
+  resources: Record<string, Record<string, unknown> | null>,
+  lists: Record<string, Record<string, unknown>[]> = {},
+): KubernetesClient => ({
   apply: vi.fn(async (resource) => resource),
   applyManifest: vi.fn(async () => ({})),
   applyStatus: vi.fn(async (resource) => resource),
@@ -59,10 +62,31 @@ const createKubeMock = (resources: Record<string, Record<string, unknown> | null
   delete: vi.fn(async () => ({})),
   patch: vi.fn(async (_resource, _name, _namespace, patch) => patch as Record<string, unknown>),
   get: vi.fn(async (resource, name, namespace) => resources[`${resource}:${namespace}:${name}`] ?? null),
-  list: vi.fn(async () => ({ items: [] })),
+  list: vi.fn(async (resource, namespace) => ({ items: lists[`${resource}:${namespace}`] ?? [] })),
   logs: vi.fn(async () => ''),
   listEvents: vi.fn(async () => ({ items: [] })),
 })
+
+const setEnv = (values: Record<string, string | undefined>) => {
+  const previous: Record<string, string | undefined> = {}
+  for (const [key, value] of Object.entries(values)) {
+    previous[key] = process.env[key]
+    if (value === undefined) {
+      delete process.env[key]
+    } else {
+      process.env[key] = value
+    }
+  }
+  return () => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key]
+      } else {
+        process.env[key] = value
+      }
+    }
+  }
+}
 
 const buildRequest = (url: string, payload: Record<string, unknown>, headers?: Record<string, string>) =>
   new Request(url, {
@@ -155,6 +179,91 @@ describe('primitives endpoints', () => {
     expect(response.status).toBe(403)
     const body = (await response.json()) as { error?: string }
     expect(body.error).toContain('secretBindingRef is required')
+  })
+
+  it('rejects agent runs when namespace queue limit is exceeded', async () => {
+    const restoreEnv = setEnv({
+      JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE: '1',
+      JANGAR_AGENTS_CONTROLLER_QUEUE_CLUSTER: '0',
+      JANGAR_AGENTS_CONTROLLER_QUEUE_REPO: '0',
+      JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE: '0',
+      JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER: '0',
+      JANGAR_AGENTS_CONTROLLER_RATE_REPO: '0',
+    })
+    try {
+      const store = createStoreMock()
+      const kube = createKubeMock(
+        {
+          'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
+        },
+        {
+          'agentruns.agents.proompteng.ai:jangar': [{ status: { phase: 'Pending' }, spec: { parameters: {} } }],
+        },
+      )
+
+      const request = buildRequest(
+        'http://localhost/v1/agent-runs',
+        {
+          agentRef: { name: 'demo-agent' },
+          namespace: 'jangar',
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'job', config: {} },
+        },
+        { 'Idempotency-Key': 'demo-agent-run-queue-1' },
+      )
+
+      const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
+
+      expect(response.status).toBe(429)
+      const body = (await response.json()) as { error?: string }
+      expect(body.error).toContain('queue limit')
+    } finally {
+      restoreEnv()
+    }
+  })
+
+  it('rejects agent runs when repository queue limit is exceeded', async () => {
+    const restoreEnv = setEnv({
+      JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE: '10',
+      JANGAR_AGENTS_CONTROLLER_QUEUE_CLUSTER: '0',
+      JANGAR_AGENTS_CONTROLLER_QUEUE_REPO: '1',
+      JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE: '0',
+      JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER: '0',
+      JANGAR_AGENTS_CONTROLLER_RATE_REPO: '0',
+    })
+    try {
+      const store = createStoreMock()
+      const kube = createKubeMock(
+        {
+          'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
+        },
+        {
+          'agentruns.agents.proompteng.ai:jangar': [
+            { status: { phase: 'Pending' }, spec: { parameters: { repository: 'acme/demo' } } },
+          ],
+        },
+      )
+
+      const request = buildRequest(
+        'http://localhost/v1/agent-runs',
+        {
+          agentRef: { name: 'demo-agent' },
+          namespace: 'jangar',
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'job', config: {} },
+          parameters: { repository: 'acme/demo' },
+        },
+        { 'Idempotency-Key': 'demo-agent-run-queue-2' },
+      )
+
+      const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
+
+      expect(response.status).toBe(429)
+      const body = (await response.json()) as { error?: string }
+      expect(body.error).toContain('Repository acme/demo')
+    } finally {
+      restoreEnv()
+    }
   })
 
   it('rejects orchestration creation when approval policy is denied', async () => {

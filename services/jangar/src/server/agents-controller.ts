@@ -4,6 +4,7 @@ import { createHash, createPrivateKey, createSign } from 'node:crypto'
 import { createTemporalClient, loadTemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
 
 import { startResourceWatch } from '~/server/kube-watch'
+import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { shouldApplyStatus } from '~/server/status-utils'
@@ -28,6 +29,11 @@ const PARAMETERS_MAX_VALUE_BYTES = 2048
 const DEFAULT_AUTH_SECRET_KEY = 'auth.json'
 const DEFAULT_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
 const DEFAULT_GITHUB_APP_TOKEN_TTL_SECONDS = 3600
+const DEFAULT_RUNNER_JOB_TTL_SECONDS = 600
+const MIN_RUNNER_JOB_TTL_SECONDS = 30
+const MAX_RUNNER_JOB_TTL_SECONDS = 7 * 24 * 60 * 60
+const DEFAULT_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 300
+const MIN_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 30
 
 const BASE_REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -98,6 +104,12 @@ type VcsMode = 'read-write' | 'read-only' | 'none'
 type VcsAuthMethod = 'token' | 'app' | 'ssh' | 'none'
 type VcsTokenType = 'pat' | 'fine_grained' | 'api_token' | 'access_token'
 
+type EnvVar = {
+  name: string
+  value?: string
+  valueFrom?: Record<string, unknown>
+}
+
 type VcsAuthAdapter = {
   provider: string
   allowedMethods: VcsAuthMethod[]
@@ -107,8 +119,18 @@ type VcsAuthAdapter = {
   defaultTokenType?: VcsTokenType
 }
 
+type VcsAuthValidation =
+  | { ok: false; reason: string; message: string }
+  | {
+      ok: true
+      method: VcsAuthMethod
+      warnings: Array<{ reason: string; message: string }>
+      defaultUsername: string | null
+      tokenType: VcsTokenType | null
+    }
+
 type VcsRuntimeConfig = {
-  env: Array<Record<string, unknown>>
+  env: EnvVar[]
   volumes: Array<{ name: string; spec: Record<string, unknown> }>
   volumeMounts: Array<Record<string, unknown>>
 }
@@ -122,6 +144,7 @@ type VcsResolution = {
   status?: Record<string, unknown> | null
   context?: Record<string, unknown> | null
   runtime?: VcsRuntimeConfig | null
+  warnings?: Array<{ reason: string; message: string }>
   requiredSecrets: string[]
 }
 
@@ -173,7 +196,7 @@ let temporalClientPromise: ReturnType<typeof createTemporalClient> | null = null
 let watchHandles: Array<{ stop: () => void }> = []
 let _controllerState: ControllerState | null = null
 const namespaceQueues = new Map<string, Promise<void>>()
-const githubAppTokenCache = new Map<string, { token: string; expiresAt: number }>()
+const githubAppTokenCache = new Map<string, { token: string; expiresAt: number; refreshAfter: number }>()
 
 const nowIso = () => new Date().toISOString()
 
@@ -204,7 +227,9 @@ const parseNamespaces = () => {
     .split(',')
     .map((value) => value.trim())
     .filter((value) => value.length > 0)
-  return list.length > 0 ? list : DEFAULT_NAMESPACES
+  const namespaces = list.length > 0 ? list : DEFAULT_NAMESPACES
+  assertClusterScopedForWildcard(namespaces, 'agents controller')
+  return namespaces
 }
 
 const resolveCrdCheckNamespace = () => {
@@ -672,6 +697,37 @@ const parseOptionalNumber = (value: unknown): number | undefined => {
   return undefined
 }
 
+const normalizeRunnerJobTtlSeconds = (value: number, source: string) => {
+  if (!Number.isFinite(value)) return null
+  if (value <= 0) return null
+  const floored = Math.floor(value)
+  if (floored < MIN_RUNNER_JOB_TTL_SECONDS) {
+    console.warn(
+      `[jangar] runner job ttl ${floored}s from ${source} below minimum; clamping to ${MIN_RUNNER_JOB_TTL_SECONDS}s`,
+    )
+    return MIN_RUNNER_JOB_TTL_SECONDS
+  }
+  if (floored > MAX_RUNNER_JOB_TTL_SECONDS) {
+    console.warn(
+      `[jangar] runner job ttl ${floored}s from ${source} above maximum; clamping to ${MAX_RUNNER_JOB_TTL_SECONDS}s`,
+    )
+    return MAX_RUNNER_JOB_TTL_SECONDS
+  }
+  return floored
+}
+
+const resolveRunnerJobTtlSeconds = (runtimeConfig: Record<string, unknown>) => {
+  const override = parseOptionalNumber(runtimeConfig.ttlSecondsAfterFinished)
+  if (override !== undefined) {
+    return normalizeRunnerJobTtlSeconds(override, 'spec.runtime.config.ttlSecondsAfterFinished')
+  }
+  const envDefault = parseOptionalNumber(process.env.JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS)
+  if (envDefault !== undefined) {
+    return normalizeRunnerJobTtlSeconds(envDefault, 'JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS')
+  }
+  return normalizeRunnerJobTtlSeconds(DEFAULT_RUNNER_JOB_TTL_SECONDS, 'default')
+}
+
 const parseAgentRunRetentionSeconds = () => {
   const parsed = parseOptionalNumber(process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS)
   if (parsed === undefined || parsed < 0) return DEFAULT_AGENTRUN_RETENTION_SECONDS
@@ -815,6 +871,18 @@ const parseEnvList = (name: string) => {
     .filter((value) => value.length > 0)
 }
 
+const normalizeStringList = (values: unknown[]) =>
+  values
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+
+const parseEnvStringList = (name: string) => {
+  const parsed = parseEnvArray(name)
+  if (Array.isArray(parsed)) return normalizeStringList(parsed)
+  return parseEnvList(name)
+}
+
 const resolveRunnerServiceAccount = (runtimeConfig: Record<string, unknown>) =>
   asString(runtimeConfig.serviceAccount) ?? asString(process.env.JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT)
 
@@ -839,10 +907,99 @@ const buildAuthSecretPath = (config: AuthSecretConfig) => {
 }
 
 const collectBlockedSecrets = (secrets: string[]) => {
-  const blocked = parseEnvList('JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS')
+  const blocked = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS')
   if (blocked.length === 0) return []
   const blockedSet = new Set(blocked)
   return Array.from(new Set(secrets.filter((secret) => blockedSet.has(secret))))
+}
+
+const normalizeLabelMap = (labels: Record<string, unknown>) => {
+  const output: Record<string, string> = {}
+  for (const [key, value] of Object.entries(labels)) {
+    if (!key) continue
+    if (typeof value !== 'string') continue
+    const trimmed = value.trim()
+    if (!trimmed) continue
+    output[key] = trimmed
+  }
+  return output
+}
+
+const validateLabelPolicy = (labels: Record<string, string>) => {
+  const required = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED')
+  const allowed = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_LABELS_ALLOWED')
+  const denied = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_LABELS_DENIED')
+
+  if (required.length > 0) {
+    const missing = required.filter((key) => !labels[key])
+    if (missing.length > 0) {
+      return {
+        ok: false as const,
+        reason: 'MissingRequiredLabels',
+        message: `missing required labels: ${missing.join(', ')}`,
+      }
+    }
+  }
+
+  const labelKeys = Object.keys(labels)
+  if (denied.length > 0) {
+    const blocked = labelKeys.filter((key) => matchesAnyPattern(key, denied))
+    if (blocked.length > 0) {
+      return {
+        ok: false as const,
+        reason: 'LabelBlocked',
+        message: `labels blocked by controller policy: ${blocked.join(', ')}`,
+      }
+    }
+  }
+
+  if (allowed.length > 0) {
+    const disallowed = labelKeys.filter((key) => !matchesAnyPattern(key, allowed))
+    if (disallowed.length > 0) {
+      return {
+        ok: false as const,
+        reason: 'LabelNotAllowed',
+        message: `labels not allowed by controller policy: ${disallowed.join(', ')}`,
+      }
+    }
+  }
+
+  return { ok: true as const }
+}
+
+type ImagePolicyCandidate = {
+  image: string
+  context?: string
+}
+
+const validateImagePolicy = (images: ImagePolicyCandidate[]) => {
+  const allowed = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_IMAGES_ALLOWED')
+  const denied = parseEnvStringList('JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED')
+  if (images.length === 0) return { ok: true as const }
+
+  for (const entry of images) {
+    const { image, context } = entry
+    if (denied.length > 0 && matchesAnyPattern(image, denied)) {
+      return {
+        ok: false as const,
+        reason: 'ImageBlocked',
+        message: context
+          ? `image ${image} for ${context} is blocked by controller policy`
+          : `image ${image} is blocked by controller policy`,
+      }
+    }
+    if (allowed.length > 0 && !matchesAnyPattern(image, allowed)) {
+      return {
+        ok: false as const,
+        reason: 'ImageNotAllowed',
+        message: context
+          ? `image ${image} for ${context} is not allowed by controller policy`
+          : `image ${image} is not allowed by controller policy`,
+      }
+    }
+  }
+
+  return { ok: true as const }
 }
 
 const validateAuthSecretPolicy = (allowedSecrets: string[], authSecret: AuthSecretConfig | null) => {
@@ -999,7 +1156,7 @@ const resolveVcsAuthAdapter = (providerType: string | null) => {
   }
 }
 
-const validateVcsAuthConfig = (providerType: string | null, auth: Record<string, unknown>) => {
+const validateVcsAuthConfig = (providerType: string | null, auth: Record<string, unknown>): VcsAuthValidation => {
   const adapter = resolveVcsAuthAdapter(providerType)
   const method = resolveVcsAuthMethod(auth)
   if (!adapter.allowedMethods.includes(method)) {
@@ -1011,19 +1168,20 @@ const validateVcsAuthConfig = (providerType: string | null, auth: Record<string,
   }
 
   const warnings: Array<{ reason: string; message: string }> = []
+  let resolvedTokenType: VcsTokenType | null = null
   if (method === 'token') {
-    const tokenType = normalizeTokenType(readNested(auth, ['token', 'type']))
-    if (tokenType && adapter.tokenTypes && !adapter.tokenTypes.includes(tokenType)) {
+    resolvedTokenType = normalizeTokenType(readNested(auth, ['token', 'type'])) ?? adapter.defaultTokenType ?? null
+    if (resolvedTokenType && adapter.tokenTypes && !adapter.tokenTypes.includes(resolvedTokenType)) {
       return {
         ok: false as const,
         reason: 'UnsupportedAuth',
-        message: `auth.token.type=${tokenType} is not supported for ${adapter.provider} providers`,
+        message: `auth.token.type=${resolvedTokenType} is not supported for ${adapter.provider} providers`,
       }
     }
-    if (tokenType && (adapter.deprecatedTokenTypes ?? []).includes(tokenType)) {
+    if (resolvedTokenType && (adapter.deprecatedTokenTypes ?? []).includes(resolvedTokenType)) {
       warnings.push({
         reason: 'DeprecatedAuth',
-        message: `auth.token.type=${tokenType} is deprecated for ${adapter.provider} providers`,
+        message: `auth.token.type=${resolvedTokenType} is deprecated for ${adapter.provider} providers`,
       })
     }
   }
@@ -1033,6 +1191,7 @@ const validateVcsAuthConfig = (providerType: string | null, auth: Record<string,
     method,
     warnings,
     defaultUsername: adapter.defaultUsername ?? null,
+    tokenType: resolvedTokenType,
   }
 }
 
@@ -1046,7 +1205,7 @@ const fetchGithubAppToken = async (input: {
   const cacheKey = `${input.apiBaseUrl}|${input.installationId}`
   const cached = githubAppTokenCache.get(cacheKey)
   const now = Date.now()
-  if (cached && cached.expiresAt - now > 30_000) {
+  if (cached && now < cached.refreshAfter) {
     return cached.token
   }
 
@@ -1088,14 +1247,25 @@ const fetchGithubAppToken = async (input: {
 
   const expiresAtRaw = asString(payloadResponse.expires_at)
   const ttlSeconds = typeof input.ttlSeconds === 'number' && input.ttlSeconds > 0 ? input.ttlSeconds : undefined
-  const expiresAtMs = expiresAtRaw
-    ? Date.parse(expiresAtRaw)
-    : now + (ttlSeconds ?? DEFAULT_GITHUB_APP_TOKEN_TTL_SECONDS) * 1000
+  const fallbackExpiresAt = now + (ttlSeconds ?? DEFAULT_GITHUB_APP_TOKEN_TTL_SECONDS) * 1000
+  const parsedExpiresAt = expiresAtRaw ? Date.parse(expiresAtRaw) : NaN
+  const expiresAtMs = Number.isNaN(parsedExpiresAt) ? fallbackExpiresAt : parsedExpiresAt
+  const ttlMs = Math.max(0, expiresAtMs - now)
+  const refreshWindowMs = Math.min(
+    DEFAULT_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS * 1000,
+    Math.max(MIN_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS * 1000, Math.floor(ttlMs * 0.1)),
+  )
+  const refreshAfter = Math.max(now, expiresAtMs - refreshWindowMs)
   githubAppTokenCache.set(cacheKey, {
     token,
-    expiresAt: Number.isNaN(expiresAtMs) ? now + 30 * 60 * 1000 : expiresAtMs,
+    expiresAt: expiresAtMs,
+    refreshAfter,
   })
   return token
+}
+
+const clearGithubAppTokenCache = () => {
+  githubAppTokenCache.clear()
 }
 
 const parseJsonEnv = (name: string) => {
@@ -1115,6 +1285,14 @@ const parseEnvRecord = (name: string) => asRecord(parseJsonEnv(name))
 const parseEnvArray = (name: string) => {
   const parsed = parseJsonEnv(name)
   return Array.isArray(parsed) ? parsed : null
+}
+
+const resolveVcsPrRateLimits = () => {
+  const parsed = parseJsonEnv('JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS')
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  const record = parsed as Record<string, unknown>
+  if (Object.keys(record).length === 0) return null
+  return record
 }
 
 const validateParameters = (params: Record<string, unknown>) => {
@@ -1819,6 +1997,86 @@ const resolveParam = (params: Record<string, string>, keys: string[]) => {
   return ''
 }
 
+const resolveRunParam = (run: Record<string, unknown>, keys: string[]) => {
+  const raw = asRecord(readNested(run, ['spec', 'parameters'])) ?? {}
+  const params: Record<string, string> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value !== 'string') continue
+    params[key] = value
+  }
+  return resolveParam(params, keys)
+}
+
+const normalizeRepository = (value: string) => value.trim().toLowerCase()
+
+const normalizeBranchName = (value: string) => value.trim()
+
+const isActiveRun = (run: Record<string, unknown>) => {
+  const phase = asString(readNested(run, ['status', 'phase'])) ?? 'Pending'
+  return phase !== 'Succeeded' && phase !== 'Failed' && phase !== 'Cancelled'
+}
+
+const resolveRunRepository = (run: Record<string, unknown>) =>
+  asString(readNested(run, ['status', 'vcs', 'repository'])) ??
+  resolveRunParam(run, ['repository', 'repo', 'issueRepository'])
+
+const resolveRunHeadBranch = (run: Record<string, unknown>) =>
+  asString(readNested(run, ['status', 'vcs', 'headBranch'])) ??
+  asString(readNested(run, ['status', 'vcs', 'branch'])) ??
+  resolveRunParam(run, ['head', 'headBranch', 'head_ref', 'headRef', 'branch'])
+
+const hasBranchConflict = (
+  runs: Record<string, unknown>[],
+  currentRunName: string,
+  repository: string,
+  headBranch: string,
+) => {
+  if (!repository || !headBranch) return false
+  const normalizedRepo = normalizeRepository(repository)
+  const normalizedBranch = normalizeBranchName(headBranch)
+  return runs.some((run) => {
+    const runName = asString(readNested(run, ['metadata', 'name'])) ?? ''
+    if (!runName || runName === currentRunName) return false
+    if (!isActiveRun(run)) return false
+    const runRepo = resolveRunRepository(run)
+    if (!runRepo || normalizeRepository(runRepo) !== normalizedRepo) return false
+    const runBranch = resolveRunHeadBranch(run)
+    if (!runBranch) return false
+    return normalizeBranchName(runBranch) === normalizedBranch
+  })
+}
+
+const appendBranchSuffix = (branch: string, suffix: string) => {
+  const trimmed = suffix.trim()
+  if (!trimmed) return branch
+  const cleaned = trimmed.replace(/^[-/]+/, '')
+  if (!cleaned) return branch
+  const separator = branch.endsWith('/') || branch.endsWith('-') ? '' : '-'
+  return `${branch}${separator}${cleaned}`
+}
+
+const hasParameterValue = (parameters: Record<string, string>, keys: string[]) => resolveParam(parameters, keys) !== ''
+
+const applyVcsMetadataToParameters = (
+  parameters: Record<string, string>,
+  vcsContext: Record<string, unknown> | null,
+) => {
+  if (!vcsContext) return parameters
+  const baseBranch = asString(readNested(vcsContext, ['baseBranch'])) ?? ''
+  const headBranch = asString(readNested(vcsContext, ['headBranch'])) ?? ''
+  let updated = false
+  const next = { ...parameters }
+  if (baseBranch && !hasParameterValue(parameters, ['base', 'baseBranch', 'base_ref', 'baseRef'])) {
+    next.base = baseBranch
+    updated = true
+  }
+  if (headBranch && !hasParameterValue(parameters, ['head', 'headBranch', 'head_ref', 'headRef', 'branch'])) {
+    next.head = headBranch
+    updated = true
+  }
+  return updated ? next : parameters
+}
+
 const parseGithubExternalId = (externalId: string) => {
   const trimmed = externalId.trim()
   const [repo, number] = trimmed.split('#')
@@ -1987,6 +2245,7 @@ const resolveVcsContext = async ({
   implementation,
   parameters,
   allowedSecrets,
+  existingRuns,
 }: {
   kube: ReturnType<typeof createKubernetesClient>
   namespace: string
@@ -1995,6 +2254,7 @@ const resolveVcsContext = async ({
   implementation: Record<string, unknown>
   parameters: Record<string, string>
   allowedSecrets: string[]
+  existingRuns?: Record<string, unknown>[]
 }): Promise<VcsResolution> => {
   if (!isVcsProvidersEnabled()) {
     return {
@@ -2098,7 +2358,7 @@ const resolveVcsContext = async ({
   const allowList = parseStringList(repositoryPolicy.allow)
   const denyList = parseStringList(repositoryPolicy.deny)
   if (matchesAnyPattern(repository, denyList)) {
-    if (required && desiredMode !== 'none') {
+    if (desiredMode !== 'none') {
       return {
         ok: false,
         skip: false,
@@ -2120,7 +2380,7 @@ const resolveVcsContext = async ({
     }
   }
   if (allowList.length > 0 && !matchesAnyPattern(repository, allowList)) {
-    if (required && desiredMode !== 'none') {
+    if (desiredMode !== 'none') {
       return {
         ok: false,
         skip: false,
@@ -2167,7 +2427,7 @@ const resolveVcsContext = async ({
     effectiveMode = 'none'
   }
 
-  if (required && desiredMode !== effectiveMode && desiredMode !== 'none') {
+  if (required && desiredMode !== effectiveMode) {
     return {
       ok: false,
       skip: false,
@@ -2184,16 +2444,31 @@ const resolveVcsContext = async ({
   const baseBranch = asString(metadata.base) ?? asString(defaults.baseBranch) ?? ''
   let headBranch = asString(metadata.head) ?? ''
   const branchTemplate = asString(defaults.branchTemplate)
+  const conflictSuffixTemplate = asString(defaults.branchConflictSuffixTemplate)
+  const templateContext = {
+    ...metadata,
+    ...parameters,
+    agentRun: {
+      name: runName,
+      namespace: asString(runMetadata.namespace) ?? namespace,
+    },
+    parameters,
+    metadata,
+    event: eventContext.payload,
+  }
   if (!headBranch && branchTemplate) {
-    headBranch = renderTemplate(branchTemplate, {
-      agentRun: {
-        name: runName,
-        namespace: asString(runMetadata.namespace) ?? namespace,
-      },
-      parameters,
-      metadata,
-      event: eventContext.payload,
-    })
+    headBranch = renderTemplate(branchTemplate, templateContext)
+  }
+  if (headBranch && conflictSuffixTemplate) {
+    const conflictRuns = existingRuns ?? []
+    if (hasBranchConflict(conflictRuns, runName, repository, headBranch)) {
+      const conflictSuffix = renderTemplate(conflictSuffixTemplate, {
+        ...templateContext,
+        branch: headBranch,
+        headBranch,
+      })
+      headBranch = appendBranchSuffix(headBranch, conflictSuffix)
+    }
   }
 
   const auth = asRecord(providerSpec.auth) ?? {}
@@ -2221,7 +2496,7 @@ const resolveVcsContext = async ({
 
   const authValidation = validateVcsAuthConfig(providerType, auth)
   if (!authValidation.ok) {
-    if (required && desiredMode !== 'none') {
+    if (required) {
       return {
         ok: false,
         skip: false,
@@ -2243,6 +2518,11 @@ const resolveVcsContext = async ({
     }
   }
 
+  setMetadataIfMissing(metadata, 'vcsAuthMethod', authValidation.method)
+  if (authValidation.tokenType) {
+    setMetadataIfMissing(metadata, 'vcsTokenType', authValidation.tokenType)
+  }
+
   const resolvedUsername =
     (method === 'token' || method === 'app') && !username ? authValidation.defaultUsername : username
 
@@ -2251,7 +2531,7 @@ const resolveVcsContext = async ({
     const secretName = asString(secretRef.name)
     const secretKey = asString(secretRef.key) ?? 'token'
     if (!secretName) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2274,7 +2554,7 @@ const resolveVcsContext = async ({
     }
     const blocked = collectBlockedSecrets([secretName])
     if (blocked.length > 0) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2296,7 +2576,7 @@ const resolveVcsContext = async ({
       }
     }
     if (allowedSecrets.length > 0 && !allowedSecrets.includes(secretName)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2319,7 +2599,7 @@ const resolveVcsContext = async ({
     }
     const secret = await kube.get('secret', secretName, namespace)
     if (!secret || !secretHasKey(secret, secretKey)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2358,7 +2638,7 @@ const resolveVcsContext = async ({
     const secretKey = asString(secretRef.key) ?? 'privateKey'
     const tokenTtlSeconds = Number(appSpec.tokenTtlSeconds)
     if (!appId || !installationId || !secretName) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2381,7 +2661,7 @@ const resolveVcsContext = async ({
     }
     const blocked = collectBlockedSecrets([secretName])
     if (blocked.length > 0) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2403,7 +2683,7 @@ const resolveVcsContext = async ({
       }
     }
     if (allowedSecrets.length > 0 && !allowedSecrets.includes(secretName)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2426,7 +2706,7 @@ const resolveVcsContext = async ({
     }
     const secret = await kube.get('secret', secretName, namespace)
     if (!secret || !secretHasKey(secret, secretKey)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2449,7 +2729,7 @@ const resolveVcsContext = async ({
     }
     const privateKey = resolveSecretValue(secret, secretKey)
     if (!privateKey) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2493,7 +2773,7 @@ const resolveVcsContext = async ({
     const knownHostsName = asString(knownHostsRef.name)
     const knownHostsKey = asString(knownHostsRef.key) ?? 'known_hosts'
     if (!secretName) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2516,7 +2796,7 @@ const resolveVcsContext = async ({
     }
     const blocked = collectBlockedSecrets([secretName])
     if (blocked.length > 0) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2538,7 +2818,7 @@ const resolveVcsContext = async ({
       }
     }
     if (allowedSecrets.length > 0 && !allowedSecrets.includes(secretName)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2561,7 +2841,7 @@ const resolveVcsContext = async ({
     }
     const secret = await kube.get('secret', secretName, namespace)
     if (!secret || !secretHasKey(secret, secretKey)) {
-      if (required && desiredMode !== 'none') {
+      if (required) {
         return {
           ok: false,
           skip: false,
@@ -2668,6 +2948,7 @@ const resolveVcsContext = async ({
     pushEnv('GIT_ASKPASS_USERNAME', resolvedUsername)
   }
   pushEnv('VCS_BRANCH_TEMPLATE', branchTemplate)
+  pushEnv('VCS_BRANCH_CONFLICT_SUFFIX_TEMPLATE', conflictSuffixTemplate)
   pushEnv('VCS_COMMIT_AUTHOR_NAME', asString(defaults.commitAuthorName))
   pushEnv('VCS_COMMIT_AUTHOR_EMAIL', asString(defaults.commitAuthorEmail))
   if (asString(defaults.commitAuthorName)) {
@@ -2680,6 +2961,10 @@ const resolveVcsContext = async ({
   }
   pushEnv('VCS_PR_TITLE_TEMPLATE', prTitleTemplate)
   pushEnv('VCS_PR_BODY_TEMPLATE', prBodyTemplate)
+  const prRateLimits = resolveVcsPrRateLimits()
+  if (prRateLimits) {
+    pushEnv('VCS_PR_RATE_LIMITS', JSON.stringify(prRateLimits))
+  }
   pushEnvBool('VCS_PR_DRAFT', prDraft)
   pushEnvBool('VCS_WRITE_ENABLED', writeEnabled)
   pushEnvBool('VCS_PULL_REQUESTS_ENABLED', pullRequestsEnabled)
@@ -2703,6 +2988,7 @@ const resolveVcsContext = async ({
     defaults: {
       baseBranch: asString(defaults.baseBranch),
       branchTemplate,
+      branchConflictSuffixTemplate: conflictSuffixTemplate,
       commitAuthorName: asString(defaults.commitAuthorName),
       commitAuthorEmail: asString(defaults.commitAuthorEmail),
       pullRequest: {
@@ -2729,6 +3015,7 @@ const resolveVcsContext = async ({
     status,
     context,
     runtime,
+    warnings: authValidation.warnings,
     requiredSecrets,
   }
 }
@@ -2908,6 +3195,21 @@ const buildAgentRunnerSpec = (
   },
 })
 
+const applyJobTtlAfterStatus = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  job: Record<string, unknown>,
+  namespace: string,
+  runtimeConfig: Record<string, unknown>,
+) => {
+  const ttlSeconds = resolveRunnerJobTtlSeconds(runtimeConfig)
+  if (ttlSeconds === null) return
+  const name = asString(readNested(job, ['metadata', 'name'])) ?? ''
+  if (!name) return
+  const currentTtl = parseOptionalNumber(readNested(job, ['spec', 'ttlSecondsAfterFinished']))
+  if (currentTtl === ttlSeconds) return
+  await kube.patch('job', name, namespace, { spec: { ttlSecondsAfterFinished: ttlSeconds } })
+}
+
 const submitJobRun = async (
   kube: ReturnType<typeof createKubernetesClient>,
   agentRun: Record<string, unknown>,
@@ -2947,7 +3249,7 @@ const submitJobRun = async (
   const args = argsTemplate.map((arg) => renderTemplate(String(arg), context))
 
   const envTemplate = asRecord(providerSpec.envTemplate) ?? {}
-  const env = Object.entries(envTemplate).map(([key, value]) => ({
+  const env: EnvVar[] = Object.entries(envTemplate).map(([key, value]) => ({
     name: key,
     value: renderTemplate(String(value), context),
   }))
@@ -3014,8 +3316,6 @@ const submitJobRun = async (
       .filter((entry): entry is { name: string } => Boolean(entry))
     return resolved.length > 0 ? resolved : null
   })()
-  const ttlSeconds = runtimeConfig.ttlSecondsAfterFinished
-
   const metadata = asRecord(agentRun.metadata) ?? {}
   const runName = asString(metadata.name) ?? 'agentrun'
   const runUid = asString(metadata.uid)
@@ -3196,7 +3496,6 @@ const submitJobRun = async (
         : {}),
     },
     spec: {
-      ttlSecondsAfterFinished: typeof ttlSeconds === 'number' ? ttlSeconds : undefined,
       template: {
         metadata: {
           labels: mergedLabels,
@@ -3249,6 +3548,7 @@ const submitTemporalRun = async (
   implementation: Record<string, unknown>,
   memory: Record<string, unknown> | null,
   vcs?: Record<string, unknown> | null,
+  parametersOverride?: Record<string, string>,
 ) => {
   const runtimeConfig = asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
   const workflowType = asString(runtimeConfig.workflowType)
@@ -3268,7 +3568,7 @@ const submitTemporalRun = async (
 
   const timeouts = asRecord(runtimeConfig.timeouts) ?? {}
 
-  const parameters = resolveParameters(agentRun)
+  const parameters = parametersOverride ?? resolveParameters(agentRun)
   const providerSpec = asRecord(provider.spec) ?? {}
   const providerName = asString(readNested(provider, ['metadata', 'name'])) ?? ''
   const outputArtifacts = Array.isArray(providerSpec.outputArtifacts) ? providerSpec.outputArtifacts : []
@@ -3507,6 +3807,7 @@ const reconcileWorkflowRun = async (
   const observedGeneration = asRecord(agentRun.metadata)?.generation ?? 0
   const runtimeConfig = asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
   const workflowSteps = parseWorkflowSteps(agentRun)
+  const baseWorkload = asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
   const workflowValidation = validateWorkflowSteps(workflowSteps)
   const conditions = buildConditions(agentRun)
 
@@ -3516,6 +3817,31 @@ const reconcileWorkflowRun = async (
       status: 'True',
       reason: workflowValidation.reason,
       message: workflowValidation.message,
+    })
+    await setStatus(kube, agentRun, {
+      observedGeneration,
+      phase: 'Failed',
+      finishedAt: nowIso(),
+      conditions: updated,
+    })
+    return
+  }
+
+  const imageCandidates = workflowSteps
+    .map((step) => {
+      const workload = step.workload ?? baseWorkload
+      const image = workload ? resolveJobImage(workload) : null
+      if (!image) return null
+      return { image, context: `workflow step ${step.name}` }
+    })
+    .filter((candidate): candidate is { image: string; context: string } => candidate !== null)
+  const imagePolicy = validateImagePolicy(imageCandidates)
+  if (!imagePolicy.ok) {
+    const updated = upsertCondition(conditions, {
+      type: 'InvalidSpec',
+      status: 'True',
+      reason: imagePolicy.reason,
+      message: imagePolicy.message,
     })
     await setStatus(kube, agentRun, {
       observedGeneration,
@@ -3547,13 +3873,13 @@ const reconcileWorkflowRun = async (
   let vcsStatus: Record<string, unknown> | undefined
 
   const baseParameters = resolveParameters(agentRun)
-  const baseWorkload = asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
   const allowedSecrets = dependencies.allowedSecrets
   const workflowStatus = normalizeWorkflowStatus(asRecord(status.workflow) ?? null, workflowSteps)
   let runtimeRefUpdate: RuntimeRef | null = null
   let workflowFailure: { reason: string; message: string } | null = null
   let workflowRunning = false
   const now = Date.now()
+  const completedJobs: Array<{ job: Record<string, unknown>; namespace: string }> = []
 
   for (let index = 0; index < workflowSteps.length; index += 1) {
     const stepSpec = workflowSteps[index]
@@ -3747,6 +4073,7 @@ const reconcileWorkflowRun = async (
         stepStatus.startedAt = asString(jobStatus.startTime) ?? stepStatus.startedAt ?? undefined
         stepStatus.finishedAt = asString(jobStatus.completionTime) ?? nowIso()
         stepStatus.nextRetryAt = undefined
+        completedJobs.push({ job, namespace: jobNamespace })
         continue
       }
       if (failed > 0 && isJobFailed(job)) {
@@ -3757,11 +4084,13 @@ const reconcileWorkflowRun = async (
             stepSpec.retryBackoffSeconds > 0
               ? new Date(now + stepSpec.retryBackoffSeconds * 1000).toISOString()
               : nowIso()
+          completedJobs.push({ job, namespace: jobNamespace })
           workflowRunning = true
           break
         }
         setWorkflowStepPhase(stepStatus, 'Failed', 'Step failed')
         stepStatus.finishedAt = nowIso()
+        completedJobs.push({ job, namespace: jobNamespace })
         workflowFailure = {
           reason: 'WorkflowStepFailed',
           message: `workflow step ${stepSpec.name} failed`,
@@ -3795,6 +4124,9 @@ const reconcileWorkflowRun = async (
       conditions: updated,
       vcs: vcsStatus ?? undefined,
     })
+    for (const entry of completedJobs) {
+      await applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
+    }
     return
   }
 
@@ -3815,6 +4147,9 @@ const reconcileWorkflowRun = async (
       conditions: updated,
       vcs: vcsStatus ?? undefined,
     })
+    for (const entry of completedJobs) {
+      await applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
+    }
     return
   }
 
@@ -3834,6 +4169,9 @@ const reconcileWorkflowRun = async (
       conditions: updated,
       vcs: vcsStatus ?? undefined,
     })
+    for (const entry of completedJobs) {
+      await applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
+    }
   }
 }
 
@@ -3842,6 +4180,7 @@ const reconcileAgentRun = async (
   agentRun: Record<string, unknown>,
   namespace: string,
   memories: Record<string, unknown>[],
+  existingRuns: Record<string, unknown>[],
   concurrency: ReturnType<typeof parseConcurrency>,
   inFlight: { total: number; perAgent: Map<string, number>; perRepository: Map<string, number> },
   globalInFlight: number,
@@ -3980,6 +4319,17 @@ const reconcileAgentRun = async (
       await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
       return
     }
+    const labelPolicy = validateLabelPolicy(normalizeLabelMap(asRecord(metadata.labels) ?? {}))
+    if (!labelPolicy.ok) {
+      const updated = upsertCondition(conditions, {
+        type: 'InvalidSpec',
+        status: 'True',
+        reason: labelPolicy.reason,
+        message: labelPolicy.message,
+      })
+      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      return
+    }
     const parameters = resolveParameters(agentRun)
 
     if (runtimeType === 'job') {
@@ -3990,6 +4340,17 @@ const reconcileAgentRun = async (
           status: 'True',
           reason: 'MissingWorkloadImage',
           message: 'spec.workload.image, JANGAR_AGENT_RUNNER_IMAGE, or JANGAR_AGENT_IMAGE is required for job runtime',
+        })
+        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        return
+      }
+      const imagePolicy = validateImagePolicy([{ image: workloadImage, context: 'job runtime' }])
+      if (!imagePolicy.ok) {
+        const updated = upsertCondition(conditions, {
+          type: 'InvalidSpec',
+          status: 'True',
+          reason: imagePolicy.reason,
+          message: imagePolicy.message,
         })
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
         return
@@ -4197,6 +4558,7 @@ const reconcileAgentRun = async (
       implementation: implResource,
       parameters,
       allowedSecrets,
+      existingRuns,
     })
     if (!vcsResolution.ok) {
       const updated = upsertCondition(conditions, {
@@ -4214,17 +4576,27 @@ const reconcileAgentRun = async (
       })
       return
     }
+    let warnedConditions =
+      (vcsResolution.warnings ?? []).length > 0
+        ? upsertCondition(conditions, {
+            type: 'Warning',
+            status: 'True',
+            reason: vcsResolution.warnings?.[0]?.reason ?? 'Warning',
+            message: (vcsResolution.warnings ?? []).map((warning) => warning.message).join('; '),
+          })
+        : upsertCondition(conditions, { type: 'Warning', status: 'False', reason: 'None', message: '' })
     const baseConditions =
       vcsResolution.skip && vcsResolution.reason
-        ? upsertCondition(conditions, {
+        ? upsertCondition(warnedConditions, {
             type: 'VcsSkipped',
             status: 'True',
             reason: vcsResolution.reason,
             message: vcsResolution.message ?? '',
           })
-        : conditions
+        : warnedConditions
     const vcsContext = vcsResolution.context ?? null
     const vcsStatus = vcsResolution.status ?? undefined
+    const resolvedParameters = applyVcsMetadataToParameters(parameters, vcsContext)
 
     let newRuntimeRef: RuntimeRef | null = null
     try {
@@ -4241,12 +4613,21 @@ const reconcileAgentRun = async (
           runtimeType,
           {
             vcs: vcsResolution,
+            parameters: resolvedParameters,
           },
         )
       } else if (runtimeType === 'custom') {
         newRuntimeRef = await submitCustomRun(agentRun, implResource, memory)
       } else if (runtimeType === 'temporal') {
-        newRuntimeRef = await submitTemporalRun(agentRun, agent, provider, implResource, memory, vcsContext)
+        newRuntimeRef = await submitTemporalRun(
+          agentRun,
+          agent,
+          provider,
+          implResource,
+          memory,
+          vcsContext,
+          resolvedParameters,
+        )
       } else {
         throw new Error(`unknown runtime type: ${runtimeType}`)
       }
@@ -4308,6 +4689,7 @@ const reconcileAgentRun = async (
         conditions: updated,
         vcs: asRecord(status.vcs) ?? undefined,
       })
+      await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
     } else if (failed > 0 && isJobFailed(job)) {
       const updated = upsertCondition(conditions, {
         type: 'Failed',
@@ -4322,6 +4704,7 @@ const reconcileAgentRun = async (
         conditions: updated,
         vcs: asRecord(status.vcs) ?? undefined,
       })
+      await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
     }
   }
 
@@ -4373,7 +4756,7 @@ const reconcileNamespaceSnapshot = async (
   }
 
   for (const run of runs) {
-    await reconcileAgentRun(kube, run, namespace, memories, concurrency, inFlight, counts.cluster)
+    await reconcileAgentRun(kube, run, namespace, memories, runs, concurrency, inFlight, counts.cluster)
   }
 }
 
@@ -4391,7 +4774,7 @@ const reconcileRunWithState = async (
     perAgent: counts.perAgent,
     perRepository: counts.perRepository,
   }
-  await reconcileAgentRun(kube, run, namespace, snapshot.memories, concurrency, inFlight, counts.cluster)
+  await reconcileAgentRun(kube, run, namespace, snapshot.memories, snapshot.runs, concurrency, inFlight, counts.cluster)
 }
 
 const reconcileNamespaceState = async (
@@ -4635,8 +5018,12 @@ export const stopAgentsController = () => {
 
 export const __test = {
   checkCrds,
+  clearGithubAppTokenCache,
+  fetchGithubAppToken,
   reconcileAgentRun,
   reconcileVersionControlProvider,
   reconcileMemory,
+  resolveVcsPrRateLimits,
   resolveJobImage,
+  resolveVcsContext,
 }
