@@ -662,27 +662,6 @@ const extractKnownGaps = (message?: string | null) => {
   return altLines.map((line) => line.replace(/^[-*]\s*/, '')).filter(Boolean)
 }
 
-const buildPrBody = (input: { issueNumber: string; summary: string | null; tests: string[]; knownGaps: string[] }) => {
-  const summary = input.summary ?? `Implementation for #${input.issueNumber}.`
-  const tests = input.tests.length > 0 ? input.tests : ['Not run (not provided).']
-  const gaps = input.knownGaps.length > 0 ? input.knownGaps : ['None.']
-
-  return [
-    '## Summary',
-    `- ${summary}`,
-    '',
-    '## Related Issues',
-    `- #${input.issueNumber}`,
-    '',
-    '## Testing',
-    ...tests.map((test) => `- ${test}`),
-    '',
-    '## Known Gaps',
-    ...gaps.map((gap) => `- ${gap}`),
-    '',
-  ].join('\n')
-}
-
 const buildDefaultJudgePrompt = (input: {
   repository: string
   issueNumber: string
@@ -919,16 +898,8 @@ const ensurePullRequest = async (input: {
     input.logger.debug('Skipping pull request create/update (CODEX_SKIP_PR_CHECK=1)')
     return null
   }
-  const summary = extractSummary(input.lastAssistantMessage)
-  const tests = extractTests(input.lastAssistantMessage)
-  const gaps = extractKnownGaps(input.lastAssistantMessage)
   const title = input.issueTitle?.trim() || `Codex: Issue #${input.issueNumber}`
-  const body = buildPrBody({
-    issueNumber: input.issueNumber,
-    summary,
-    tests,
-    knownGaps: gaps,
-  })
+  const body = input.lastAssistantMessage?.trim() || `Implementation for #${input.issueNumber}.`
 
   const existing = await listPullRequestByHead(input.repository, input.headBranch)
   if (existing) {
