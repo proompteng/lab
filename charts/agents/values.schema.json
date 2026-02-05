@@ -290,6 +290,16 @@
       },
       "additionalProperties": false
     },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "agentRunnerImage": { "type": "string" },
+        "agentImage": { "type": "string" },
+        "scheduleRunnerImage": { "type": "string" },
+        "scheduleServiceAccount": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
     "envFromSecretRefs": { "type": "array", "items": { "type": "string" } },
     "envFromConfigMapRefs": { "type": "array", "items": { "type": "string" } },
     "controller": {
@@ -336,6 +346,36 @@
           },
           "additionalProperties": false
         },
+        "admissionPolicy": {
+          "type": "object",
+          "properties": {
+            "labels": {
+              "type": "object",
+              "properties": {
+                "required": { "type": "array", "items": { "type": "string" } },
+                "allowed": { "type": "array", "items": { "type": "string" } },
+                "denied": { "type": "array", "items": { "type": "string" } }
+              },
+              "additionalProperties": false
+            },
+            "images": {
+              "type": "object",
+              "properties": {
+                "allowed": { "type": "array", "items": { "type": "string" } },
+                "denied": { "type": "array", "items": { "type": "string" } }
+              },
+              "additionalProperties": false
+            },
+            "secrets": {
+              "type": "object",
+              "properties": {
+                "blocked": { "type": "array", "items": { "type": "string" } }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
         "vcsProviders": {
           "type": "object",
           "properties": {
@@ -344,7 +384,22 @@
               "type": "object",
               "additionalProperties": {
                 "type": "array",
-                "items": { "type": "string", "enum": ["pat", "fine_grained", "api_token", "access_token"] }
+                "items": {
+                  "type": "string",
+                  "enum": ["pat", "fine_grained", "api_token", "access_token"]
+                }
+              }
+            },
+            "prRateLimits": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "windowSeconds": { "type": "integer", "minimum": 1 },
+                  "maxRequests": { "type": "integer", "minimum": 1 },
+                  "backoffSeconds": { "type": "integer", "minimum": 0 }
+                },
+                "additionalProperties": false
               }
             }
           },
@@ -362,6 +417,121 @@
             "imagePullSecrets": { "type": "array", "items": { "type": "string" } },
             "priorityClassName": { "type": "string" },
             "schedulerName": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "versionControlProvider": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "name": { "type": "string" },
+        "namespace": { "type": "string" },
+        "provider": { "type": "string" },
+        "apiBaseUrl": { "type": "string" },
+        "cloneBaseUrl": { "type": "string" },
+        "webBaseUrl": { "type": "string" },
+        "cloneProtocol": { "type": "string" },
+        "sshHost": { "type": "string" },
+        "sshUser": { "type": "string" },
+        "auth": {
+          "type": "object",
+          "properties": {
+            "method": { "type": "string" },
+            "username": { "type": "string" },
+            "token": {
+              "type": "object",
+              "properties": {
+                "secretRef": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "key": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                },
+                "type": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            "app": {
+              "type": "object",
+              "properties": {
+                "appId": { "type": ["string", "integer"] },
+                "installationId": { "type": ["string", "integer"] },
+                "privateKeySecretRef": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "key": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                },
+                "tokenTtlSeconds": { "type": "integer", "minimum": 0 }
+              },
+              "additionalProperties": false
+            },
+            "ssh": {
+              "type": "object",
+              "properties": {
+                "privateKeySecretRef": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "key": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                },
+                "knownHostsConfigMapRef": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "key": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "repositoryPolicy": {
+          "type": "object",
+          "properties": {
+            "allow": { "type": "array", "items": { "type": "string" } },
+            "deny": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "capabilities": {
+          "type": "object",
+          "properties": {
+            "read": { "type": "boolean" },
+            "write": { "type": "boolean" },
+            "pullRequests": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "defaults": {
+          "type": "object",
+          "properties": {
+            "baseBranch": { "type": "string" },
+            "branchTemplate": { "type": "string" },
+            "commitAuthorName": { "type": "string" },
+            "commitAuthorEmail": { "type": "string" },
+            "pullRequest": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "draft": { "type": "boolean" },
+                "titleTemplate": { "type": "string" },
+                "bodyTemplate": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
           },
           "additionalProperties": false
         }
@@ -388,6 +558,7 @@
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" },
+        "subjects": { "type": "array", "items": { "type": "string" } },
         "nats": {
           "type": "object",
           "properties": {
