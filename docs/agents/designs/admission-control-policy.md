@@ -6,6 +6,7 @@ Status: Current (2026-02-05)
 Reject unsafe or invalid AgentRuns before runtime submission by enforcing controller-level policies.
 
 ## Current State
+
 - Label policy: `JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED`, `..._ALLOWED`, `..._DENIED`.
 - Image policy: `JANGAR_AGENTS_CONTROLLER_IMAGES_ALLOWED`, `..._DENIED`.
 - Secret policy: `JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS`.
@@ -19,6 +20,7 @@ Reject unsafe or invalid AgentRuns before runtime submission by enforcing contro
   permissive defaults.
 
 ## Design
+
 - Validate AgentRun labels, workload images, and requested secrets before creating runtime Jobs.
 - Surface policy failures as `InvalidSpec` conditions with clear `reason` values.
 - Keep policy configuration centralized in Helm values and rendered into env vars.
@@ -33,15 +35,33 @@ Reject unsafe or invalid AgentRuns before runtime submission by enforcing contro
 - `controller.admissionPolicy.secrets.blocked` → `JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS`
 
 ## Enforcement Behavior
+
 - Label violations return `InvalidSpec` with `MissingRequiredLabels`, `LabelNotAllowed`, or `LabelBlocked`.
 - Image violations return `InvalidSpec` with `ImageNotAllowed` or `ImageBlocked`.
 - Secret violations return `InvalidSpec` with `SecretNotAllowed` or `SecretBlocked`.
 
 ## Related Policy Systems
+
 - Orchestration submissions enforce ApprovalPolicies and Budgets via
   `services/jangar/src/server/primitives-policy.ts` and `orchestration-submit.ts`.
 - SecretBindings restrict which Secrets can be referenced by Agents and Orchestrations.
 
 ## Validation
+
 - Create an AgentRun with a forbidden label or image and confirm `InvalidSpec` status.
 - Create an AgentRun with a disallowed secret and confirm it is blocked.
+
+## Operational Considerations
+
+- Keep configuration in the appropriate control plane (Helm values, CI, or code) and document overrides.
+- Update runbooks with enable/disable steps, rollback guidance, and expected failure modes.
+
+## Rollout
+
+- Ship behind feature flags or conservative defaults; validate in non-prod or CI first.
+- Verify deployment health (CI checks, ArgoCD sync, logs/metrics) before widening rollout.
+
+## Risks and Mitigations
+
+- Misconfiguration can cause deployment or runtime regressions; mitigate with schema validation and safe defaults.
+- Additional load or latency can impact controller throughput or CI runtime; mitigate with caps and monitoring.
