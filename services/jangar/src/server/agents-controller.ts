@@ -4,6 +4,7 @@ import { createHash, createPrivateKey, createSign } from 'node:crypto'
 import { createTemporalClient, loadTemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
 
 import { startResourceWatch } from '~/server/kube-watch'
+import { recordAgentRunOutcome, recordReconcileDurationMs } from '~/server/metrics'
 import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
@@ -532,6 +533,16 @@ const setStatus = async (
   }
   if (!shouldApplyStatus(asRecord(resource.status), nextStatus)) {
     return
+  }
+  if (kind === 'AgentRun') {
+    const previousPhase = asString(asRecord(resource.status)?.phase)
+    const nextPhase = asString(status.phase)
+    if (nextPhase && ['Succeeded', 'Failed', 'Cancelled'].includes(nextPhase) && previousPhase !== nextPhase) {
+      const runtimeRef = asRecord(status.runtimeRef) ?? asRecord(readNested(resource, ['status', 'runtimeRef'])) ?? {}
+      const runtimeType =
+        asString(runtimeRef.type) ?? asString(readNested(resource, ['spec', 'runtime', 'type'])) ?? 'unknown'
+      recordAgentRunOutcome(nextPhase, { runtime: runtimeType })
+    }
   }
   await kube.applyStatus({ apiVersion, kind, metadata: { name, namespace }, status: nextStatus })
 }
@@ -4889,6 +4900,25 @@ const reconcileAgentRun = async (
   }
 }
 
+const reconcileAgentRunWithMetrics = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  agentRun: Record<string, unknown>,
+  namespace: string,
+  memories: Record<string, unknown>[],
+  existingRuns: Record<string, unknown>[],
+  concurrency: ReturnType<typeof parseConcurrency>,
+  inFlight: { total: number; perAgent: Map<string, number> },
+  globalInFlight: number,
+) => {
+  const reconcileStartedAt = Date.now()
+  try {
+    await reconcileAgentRun(kube, agentRun, namespace, memories, existingRuns, concurrency, inFlight, globalInFlight)
+  } finally {
+    const durationMs = Date.now() - reconcileStartedAt
+    recordReconcileDurationMs(durationMs, { kind: 'agentrun', namespace })
+  }
+}
+
 const reconcileNamespaceSnapshot = async (
   kube: ReturnType<typeof createKubernetesClient>,
   namespace: string,
@@ -4932,7 +4962,7 @@ const reconcileNamespaceSnapshot = async (
   }
 
   for (const run of runs) {
-    await reconcileAgentRun(kube, run, namespace, memories, runs, concurrency, inFlight, counts.cluster)
+    await reconcileAgentRunWithMetrics(kube, run, namespace, memories, runs, concurrency, inFlight, counts.cluster)
   }
 }
 
@@ -4950,7 +4980,16 @@ const reconcileRunWithState = async (
     perAgent: counts.perAgent,
     perRepository: counts.perRepository,
   }
-  await reconcileAgentRun(kube, run, namespace, snapshot.memories, snapshot.runs, concurrency, inFlight, counts.cluster)
+  await reconcileAgentRunWithMetrics(
+    kube,
+    run,
+    namespace,
+    snapshot.memories,
+    snapshot.runs,
+    concurrency,
+    inFlight,
+    counts.cluster,
+  )
 }
 
 const reconcileNamespaceState = async (
@@ -5196,7 +5235,7 @@ export const __test = {
   checkCrds,
   clearGithubAppTokenCache,
   fetchGithubAppToken,
-  reconcileAgentRun,
+  reconcileAgentRun: reconcileAgentRunWithMetrics,
   reconcileVersionControlProvider,
   reconcileMemory,
   resolveVcsPrRateLimits,

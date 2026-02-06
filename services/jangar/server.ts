@@ -1,6 +1,12 @@
 import { defineEventHandler } from 'h3'
 import serverEntry from 'virtual:tanstack-start-server-entry'
 
+import {
+  getPrometheusMetricsPath,
+  getPrometheusMetricsRequestHandler,
+  isPrometheusMetricsEnabled,
+} from './src/server/metrics'
+
 const toRequest = (event: any) => {
   if (event?.web?.request instanceof Request) {
     return event.web.request
@@ -29,5 +35,16 @@ const toRequest = (event: any) => {
 
 export default defineEventHandler((event) => {
   const request = toRequest(event)
+  if (isPrometheusMetricsEnabled()) {
+    const metricsPath = getPrometheusMetricsPath()
+    const url = new URL(request.url)
+    if (url.pathname === metricsPath && event?.node?.req && event?.node?.res) {
+      const handler = getPrometheusMetricsRequestHandler()
+      if (handler) {
+        handler(event.node.req, event.node.res)
+        return
+      }
+    }
+  }
   return serverEntry.fetch(request)
 })
