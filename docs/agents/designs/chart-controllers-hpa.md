@@ -21,7 +21,6 @@ The chart’s HPA template targets only the control plane Deployment (`agents`).
 ## Design
 ### Proposed values
 Add:
-- `controlPlane.autoscaling` (defaults to existing `autoscaling`)
 - `controllers.autoscaling` (new)
 
 ### Defaults
@@ -58,4 +57,3 @@ kubectl -n agents get hpa
 
 ## References
 - Kubernetes HPA v2: https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/
-

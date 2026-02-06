@@ -18,6 +18,7 @@
 {{- $imagePullSecrets := $controllersImage.pullSecrets | default .Values.image.pullSecrets -}}
 {{- $replicas := .Values.controllers.replicaCount | default 1 -}}
 {{- $resources := .Values.controllers.resources | default .Values.resources -}}
+{{- $autoscaling := .Values.controllers.autoscaling | default dict -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,7 +27,9 @@ metadata:
   labels:
     {{- include "agents.labels" . | nindent 4 }}
 spec:
+  {{- if not $autoscaling.enabled }}
   replicas: {{ $replicas }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "agents.controllersSelectorLabels" . | nindent 6 }}
@@ -414,4 +417,3 @@ spec:
           {{- toYaml .volume | nindent 10 }}
         {{- end }}
 {{- end }}
-
