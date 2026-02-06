@@ -168,6 +168,8 @@ spec:
               value: "1"
             - name: CODEX_INTERNAL_ORIGINATOR_OVERRIDE
               value: codex
+            - name: JANGAR_STATEFUL_CHAT_MODE
+              value: "1"
             - name: JANGAR_REDIS_URL
               value: redis://jangar-openwebui-redis:6379/1
             - name: NATS_URL
