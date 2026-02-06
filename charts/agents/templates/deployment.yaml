@@ -122,9 +122,17 @@ spec:
             - name: JANGAR_AGENT_RUNNER_IMAGE
               value: "{{ .Values.runner.image.repository }}:{{ .Values.runner.image.tag }}{{- if .Values.runner.image.digest }}@{{ .Values.runner.image.digest }}{{ end }}"
             {{- end }}
-            {{- if hasKey .Values.controller "jobTtlSecondsAfterFinished" }}
+            {{- $jobTtl := .Values.controller.jobTtlSecondsAfterFinished }}
+            {{- if hasKey .Values.controller "jobTtlSeconds" }}
+            {{- $jobTtl = .Values.controller.jobTtlSeconds }}
+            {{- end }}
+            {{- if not (eq $jobTtl nil) }}
             - name: JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS
-              value: {{ .Values.controller.jobTtlSecondsAfterFinished | quote }}
+              value: {{ $jobTtl | quote }}
+            {{- end }}
+            {{- if hasKey .Values.controller "logRetentionSeconds" }}
+            - name: JANGAR_AGENT_RUNNER_LOG_RETENTION_SECONDS
+              value: {{ .Values.controller.logRetentionSeconds | quote }}
             {{- end }}
             - name: JANGAR_SERVICE_ACCOUNT_NAME
               value: {{ include "agents.serviceAccountName" . | quote }}

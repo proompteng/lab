@@ -30,6 +30,7 @@ const DEFAULT_AUTH_SECRET_KEY = 'auth.json'
 const DEFAULT_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
 const DEFAULT_GITHUB_APP_TOKEN_TTL_SECONDS = 3600
 const DEFAULT_RUNNER_JOB_TTL_SECONDS = 600
+const DEFAULT_RUNNER_LOG_RETENTION_SECONDS = 7 * 24 * 60 * 60
 const MIN_RUNNER_JOB_TTL_SECONDS = 30
 const MAX_RUNNER_JOB_TTL_SECONDS = 7 * 24 * 60 * 60
 const DEFAULT_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 300
@@ -167,6 +168,7 @@ type WorkflowStepStatus = {
   lastTransitionTime: string
   message?: string
   jobRef?: Record<string, unknown>
+  jobObservedAt?: string
   nextRetryAt?: string
 }
 
@@ -629,6 +631,7 @@ const normalizeWorkflowStatus = (
         lastTransitionTime: asString(current.lastTransitionTime) ?? nowIso(),
         message: asString(current.message) ?? undefined,
         jobRef: asRecord(current.jobRef) ?? undefined,
+        jobObservedAt: asString(current.jobObservedAt) ?? undefined,
         nextRetryAt: asString(current.nextRetryAt) ?? undefined,
       }
     }),
@@ -733,6 +736,18 @@ const resolveRunnerJobTtlSeconds = (runtimeConfig: Record<string, unknown>) => {
     return normalizeRunnerJobTtlSeconds(envDefault, 'JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS')
   }
   return normalizeRunnerJobTtlSeconds(DEFAULT_RUNNER_JOB_TTL_SECONDS, 'default')
+}
+
+const resolveRunnerLogRetentionSeconds = (runtimeConfig: Record<string, unknown>) => {
+  const override = parseOptionalNumber(runtimeConfig.logRetentionSeconds)
+  if (override !== undefined) {
+    return Math.max(0, Math.floor(override))
+  }
+  const envDefault = parseOptionalNumber(process.env.JANGAR_AGENT_RUNNER_LOG_RETENTION_SECONDS)
+  if (envDefault !== undefined) {
+    return Math.max(0, Math.floor(envDefault))
+  }
+  return DEFAULT_RUNNER_LOG_RETENTION_SECONDS
 }
 
 const parseAgentRunRetentionSeconds = () => {
@@ -3244,6 +3259,7 @@ const buildAgentRunnerSpec = (
   _runSpec: Record<string, unknown>,
   parameters: Record<string, string>,
   providerName: string,
+  logRetentionSeconds: number,
 ) => ({
   provider: providerName,
   inputs: parameters,
@@ -3253,6 +3269,7 @@ const buildAgentRunnerSpec = (
   artifacts: {
     statusPath: '/workspace/.agent/status.json',
     logPath: '/workspace/.agent/runner.log',
+    logRetentionSeconds,
   },
 })
 
@@ -3331,7 +3348,10 @@ const submitJobRun = async (
     providerName,
     vcsContext,
   )
-  const agentRunnerSpec = providerName ? buildAgentRunnerSpec(runSpec, parameters, providerName) : null
+  const logRetentionSeconds = resolveRunnerLogRetentionSeconds(runtimeConfig)
+  const agentRunnerSpec = providerName
+    ? buildAgentRunnerSpec(runSpec, parameters, providerName, logRetentionSeconds)
+    : null
   const runSecrets = parseStringList(readNested(agentRun, ['spec', 'secrets']))
   const envFrom = runSecrets.map((name) => ({ secretRef: { name } }))
   const authSecret = resolveAuthSecretConfig()
@@ -4113,6 +4133,21 @@ const reconcileWorkflowRun = async (
       const jobNamespace = asString(stepStatus.jobRef?.namespace) ?? namespace
       const job = await kube.get('job', jobName, jobNamespace)
       if (!job) {
+        if (!stepStatus.jobObservedAt) {
+          setWorkflowStepPhase(stepStatus, 'Running', 'Waiting for job to be created')
+          runtimeRefUpdate = buildRuntimeRef('workflow', jobName, jobNamespace, {
+            runName,
+            stepName: stepSpec.name,
+          })
+          workflowRunning = true
+          break
+        }
+        baseConditions = upsertCondition(baseConditions, {
+          type: 'Warning',
+          status: 'True',
+          reason: 'WorkflowJobMissing',
+          message: `workflow step ${stepSpec.name} job ${jobName} not found`,
+        })
         if (stepStatus.attempt < maxAttempts) {
           setWorkflowStepPhase(stepStatus, 'Retrying', 'Job missing; retrying')
           stepStatus.finishedAt = nowIso()
@@ -4132,6 +4167,9 @@ const reconcileWorkflowRun = async (
         break
       }
       const jobStatus = asRecord(job.status) ?? {}
+      if (!stepStatus.jobObservedAt) {
+        stepStatus.jobObservedAt = nowIso()
+      }
       const succeeded = Number(jobStatus.succeeded ?? 0)
       const failed = Number(jobStatus.failed ?? 0)
       if (succeeded > 0 || isJobComplete(job)) {
@@ -4780,7 +4818,27 @@ const reconcileAgentRun = async (
 
   if (runtimeRef.type === 'job') {
     const job = await kube.get('job', asString(runtimeRef.name) ?? '', asString(runtimeRef.namespace) ?? namespace)
-    if (!job) return
+    const runtimeRefRecord = asRecord(status.runtimeRef) ?? {}
+    const jobObservedAt = asString(runtimeRefRecord.jobObservedAt)
+    if (!job) {
+      if (jobObservedAt) {
+        const updated = upsertCondition(conditions, {
+          type: 'Warning',
+          status: 'True',
+          reason: 'JobMissing',
+          message: `job ${asString(runtimeRef.name) ?? 'unknown'} not found`,
+        })
+        await setStatus(kube, agentRun, {
+          observedGeneration,
+          phase: 'Running',
+          startedAt: asString(status.startedAt) ?? nowIso(),
+          runtimeRef,
+          conditions: updated,
+          vcs: asRecord(status.vcs) ?? undefined,
+        })
+      }
+      return
+    }
     const jobStatus = asRecord(job.status) ?? {}
     const succeeded = Number(jobStatus.succeeded ?? 0)
     const failed = Number(jobStatus.failed ?? 0)
@@ -4802,17 +4860,29 @@ const reconcileAgentRun = async (
         status: 'True',
         reason: 'JobFailed',
       })
-      await setStatus(kube, agentRun, {
-        observedGeneration,
-        phase: 'Failed',
-        finishedAt: nowIso(),
-        runtimeRef,
-        conditions: updated,
-        vcs: asRecord(status.vcs) ?? undefined,
-      })
-      await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
-    }
-  }
+	      await setStatus(kube, agentRun, {
+	        observedGeneration,
+	        phase: 'Failed',
+	        finishedAt: nowIso(),
+	        runtimeRef,
+	        conditions: updated,
+	        vcs: asRecord(status.vcs) ?? undefined,
+	      })
+	      await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
+	    } else if (!jobObservedAt) {
+	      await setStatus(kube, agentRun, {
+	        observedGeneration,
+	        phase: 'Running',
+	        startedAt: asString(status.startedAt) ?? nowIso(),
+        runtimeRef: {
+          ...runtimeRef,
+          jobObservedAt: nowIso(),
+	        },
+	        conditions,
+	        vcs: asRecord(status.vcs) ?? undefined,
+	      })
+	    }
+	  }
 
   if (runtimeRef.type === 'temporal') {
     await reconcileTemporalRun(kube, agentRun, runtimeRef)
