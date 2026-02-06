@@ -340,6 +340,15 @@
           },
           "additionalProperties": false
         },
+        "repoConcurrency": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "default": { "type": "integer", "minimum": 0 },
+            "overrides": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } }
+          },
+          "additionalProperties": false
+        },
         "queue": {
           "type": "object",
           "properties": {

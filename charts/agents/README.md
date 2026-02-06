@@ -121,6 +121,10 @@ Common fields:
 
 Per-run overrides live under `spec.runtime.config` on the AgentRun and take precedence over defaults.
 
+### Concurrency limits
+- `controller.concurrency.perNamespace`, `controller.concurrency.perAgent`, `controller.concurrency.cluster`
+- `controller.repoConcurrency.enabled` with `controller.repoConcurrency.default` and optional `controller.repoConcurrency.overrides` per repo
+
 ### gRPC service (optional)
 Enable gRPC for agentctl or in-cluster clients:
 - `grpc.enabled=true`

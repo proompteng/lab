@@ -15,6 +15,10 @@ const DEFAULT_CONCURRENCY = {
   perAgent: 5,
   cluster: 100,
 }
+const DEFAULT_REPO_CONCURRENCY = {
+  enabled: false,
+  defaultLimit: 0,
+}
 const DEFAULT_AGENTRUN_RETENTION_SECONDS = 30 * 24 * 60 * 60
 const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
@@ -65,6 +69,12 @@ type CrdCheckState = {
 type ControllerHealthState = {
   started: boolean
   crdCheckState: CrdCheckState | null
+}
+
+type RepoConcurrencyConfig = {
+  enabled: boolean
+  defaultLimit: number
+  overrides: Map<string, number>
 }
 
 const globalState = globalThis as typeof globalThis & {
@@ -252,6 +262,31 @@ const resolveNamespaces = async () => {
   return resolved
 }
 
+const normalizeRepositoryKey = (value: string) => value.trim().toLowerCase()
+
+const parseRepoConcurrencyOverrides = () => {
+  const rawOverrides = parseEnvRecord('JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES')
+  const overrides = new Map<string, number>()
+  for (const [key, value] of Object.entries(rawOverrides)) {
+    const parsed = parseOptionalNumber(value)
+    if (parsed === undefined || parsed < 0) continue
+    overrides.set(normalizeRepositoryKey(key), Math.floor(parsed))
+  }
+  return overrides
+}
+
+const parseRepoConcurrency = (): RepoConcurrencyConfig => {
+  const enabled = parseBooleanEnv(process.env.JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_ENABLED, false)
+  const parsedDefault = parseOptionalNumber(process.env.JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_DEFAULT)
+  const defaultLimit =
+    parsedDefault === undefined || parsedDefault < 0 ? DEFAULT_REPO_CONCURRENCY.defaultLimit : Math.floor(parsedDefault)
+  return {
+    enabled,
+    defaultLimit,
+    overrides: parseRepoConcurrencyOverrides(),
+  }
+}
+
 const parseConcurrency = () => ({
   perNamespace:
     Number.parseInt(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE ?? '', 10) ||
@@ -260,6 +295,7 @@ const parseConcurrency = () => ({
     Number.parseInt(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_AGENT ?? '', 10) || DEFAULT_CONCURRENCY.perAgent,
   cluster:
     Number.parseInt(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER ?? '', 10) || DEFAULT_CONCURRENCY.cluster,
+  repoConcurrency: parseRepoConcurrency(),
 })
 
 const runKubectl = (args: string[]) =>
@@ -802,6 +838,22 @@ const resolveParameters = (agentRun: Record<string, unknown>) => {
   return output
 }
 
+const resolveRepositoryFromParameters = (parameters: Record<string, string>) => {
+  const candidates = ['repository', 'repo', 'issueRepository']
+  for (const key of candidates) {
+    const value = parameters[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
+const resolveRunRepository = (agentRun: Record<string, unknown>) => {
+  const statusRepo = asString(readNested(agentRun, ['status', 'vcs', 'repository'])) ?? ''
+  if (statusRepo.trim()) return statusRepo.trim()
+  const parameters = resolveParameters(agentRun)
+  return resolveRepositoryFromParameters(parameters)
+}
+
 const parseStringList = (value: unknown) =>
   Array.isArray(value)
     ? value
@@ -1340,6 +1392,7 @@ const snapshotNamespace = (state: NamespaceState) => ({
 
 const buildInFlightCounts = (state: ControllerState, namespace: string) => {
   const perAgent = new Map<string, number>()
+  const perRepository = new Map<string, number>()
   let total = 0
   let cluster = 0
   for (const [ns, nsState] of state.namespaces.entries()) {
@@ -1347,13 +1400,28 @@ const buildInFlightCounts = (state: ControllerState, namespace: string) => {
       const phase = asString(readNested(run, ['status', 'phase'])) ?? 'Pending'
       if (phase !== 'Running') continue
       cluster += 1
+      const repository = resolveRunRepository(run)
+      if (repository) {
+        const key = normalizeRepositoryKey(repository)
+        perRepository.set(key, (perRepository.get(key) ?? 0) + 1)
+      }
       if (ns !== namespace) continue
       total += 1
       const agentName = asString(readNested(run, ['spec', 'agentRef', 'name'])) ?? 'unknown'
       perAgent.set(agentName, (perAgent.get(agentName) ?? 0) + 1)
     }
   }
-  return { total, perAgent, cluster }
+  return { total, perAgent, perRepository, cluster }
+}
+
+const resolveRepoConcurrencyLimit = (repository: string, config: RepoConcurrencyConfig) => {
+  if (!config.enabled) return null
+  if (!repository.trim()) return null
+  const key = normalizeRepositoryKey(repository)
+  const override = config.overrides.get(key)
+  const limit = override ?? config.defaultLimit
+  if (!limit || limit <= 0) return null
+  return limit
 }
 
 const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
@@ -4114,7 +4182,7 @@ const reconcileAgentRun = async (
   memories: Record<string, unknown>[],
   existingRuns: Record<string, unknown>[],
   concurrency: ReturnType<typeof parseConcurrency>,
-  inFlight: { total: number; perAgent: Map<string, number> },
+  inFlight: { total: number; perAgent: Map<string, number>; perRepository: Map<string, number> },
   globalInFlight: number,
 ) => {
   const metadata = asRecord(agentRun.metadata) ?? {}
@@ -4137,6 +4205,7 @@ const reconcileAgentRun = async (
   const runtimeConfig = asRecord(readNested(spec, ['runtime', 'config'])) ?? {}
   const workload = asRecord(readNested(spec, ['workload'])) ?? {}
   let workloadImage: string | null = null
+  const repository = resolveRunRepository(agentRun)
 
   if (deleting) {
     if (hasFinalizer) {
@@ -4188,6 +4257,21 @@ const reconcileAgentRun = async (
     })
     await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Pending' })
     return
+  }
+
+  const repoLimit = resolveRepoConcurrencyLimit(repository, concurrency.repoConcurrency)
+  if (shouldSubmit && repoLimit !== null) {
+    const repoKey = normalizeRepositoryKey(repository)
+    if ((inFlight.perRepository.get(repoKey) ?? 0) >= repoLimit) {
+      const updated = upsertCondition(conditions, {
+        type: 'Blocked',
+        status: 'True',
+        reason: 'ConcurrencyLimit',
+        message: `Repository ${repository} reached concurrency limit`,
+      })
+      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Pending' })
+      return
+    }
   }
 
   if (shouldSubmit && inFlight.total >= concurrency.perNamespace) {
@@ -4668,6 +4752,7 @@ const reconcileNamespaceSnapshot = async (
   const inFlight = {
     total: counts.total,
     perAgent: counts.perAgent,
+    perRepository: counts.perRepository,
   }
 
   for (const run of runs) {
@@ -4687,6 +4772,7 @@ const reconcileRunWithState = async (
   const inFlight = {
     total: counts.total,
     perAgent: counts.perAgent,
+    perRepository: counts.perRepository,
   }
   await reconcileAgentRun(kube, run, namespace, snapshot.memories, snapshot.runs, concurrency, inFlight, counts.cluster)
 }

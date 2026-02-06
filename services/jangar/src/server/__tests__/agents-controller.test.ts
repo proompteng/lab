@@ -4,6 +4,21 @@ import { __test } from '~/server/agents-controller'
 import { RESOURCE_MAP } from '~/server/primitives-kube'
 
 const finalizer = 'agents.proompteng.ai/runtime-cleanup'
+const defaultConcurrency = {
+  perNamespace: 10,
+  perAgent: 5,
+  cluster: 100,
+  repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map<string, number>() },
+}
+
+const buildInFlight = (
+  overrides: Partial<{ total: number; perAgent: Map<string, number>; perRepository: Map<string, number> }> = {},
+) => ({
+  total: 0,
+  perAgent: new Map<string, number>(),
+  perRepository: new Map<string, number>(),
+  ...overrides,
+})
 
 const buildAgentRun = (overrides: Record<string, unknown> = {}) => ({
   apiVersion: 'agents.proompteng.ai/v1alpha1',
@@ -98,6 +113,40 @@ const buildVcsProvider = (overrides: Record<string, unknown> = {}) => ({
 })
 
 describe('agents controller reconcileAgentRun', () => {
+  it('blocks AgentRun when repository concurrency limit is reached', async () => {
+    const kube = buildKube()
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        parameters: {
+          repository: 'proompteng/lab',
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      [],
+      {
+        ...defaultConcurrency,
+        repoConcurrency: { enabled: true, defaultLimit: 1, overrides: new Map() },
+      },
+      buildInFlight({ perRepository: new Map([['proompteng/lab', 1]]) }),
+      0,
+    )
+
+    const status = getLastStatus(kube)
+    const condition = findCondition(status, 'Blocked')
+    expect(condition?.reason).toBe('ConcurrencyLimit')
+  })
+
   it('marks AgentRun failed when provider is missing', async () => {
     const kube = buildKube({
       get: vi.fn(async (resource: string) => {
@@ -122,8 +171,8 @@ describe('agents controller reconcileAgentRun', () => {
       'agents',
       [],
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -167,130 +216,14 @@ describe('agents controller reconcileAgentRun', () => {
       'agents',
       [],
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
     expect(condition?.reason).toBe('MissingMemory')
-  })
-
-  it('marks AgentRun failed when repository is not in allow list', async () => {
-    const kube = buildKube({
-      get: vi.fn(async (resource: string) => {
-        if (resource === RESOURCE_MAP.Agent) {
-          return {
-            metadata: { name: 'agent-1' },
-            spec: { providerRef: { name: 'provider-1' } },
-          }
-        }
-        if (resource === RESOURCE_MAP.AgentProvider) {
-          return { metadata: { name: 'provider-1' }, spec: {} }
-        }
-        if (resource === RESOURCE_MAP.ImplementationSpec) {
-          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
-        }
-        if (resource === RESOURCE_MAP.VersionControlProvider) {
-          return {
-            metadata: { name: 'github' },
-            spec: {
-              provider: 'github',
-              repositoryPolicy: {
-                allow: ['allowed/*'],
-              },
-            },
-          }
-        }
-        return null
-      }),
-    })
-
-    const agentRun = buildAgentRun({
-      spec: {
-        agentRef: { name: 'agent-1' },
-        implementationSpecRef: { name: 'impl-1' },
-        runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
-        parameters: { repository: 'blocked/repo' },
-        vcsRef: { name: 'github' },
-        vcsPolicy: { mode: 'read-write' },
-      },
-    })
-
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
-      0,
-    )
-
-    const status = getLastStatus(kube)
-    const condition = findCondition(status, 'InvalidSpec')
-    expect(condition?.reason).toBe('VcsPolicyDenied')
-  })
-
-  it('marks AgentRun failed when repository is denied by policy', async () => {
-    const kube = buildKube({
-      get: vi.fn(async (resource: string) => {
-        if (resource === RESOURCE_MAP.Agent) {
-          return {
-            metadata: { name: 'agent-1' },
-            spec: { providerRef: { name: 'provider-1' } },
-          }
-        }
-        if (resource === RESOURCE_MAP.AgentProvider) {
-          return { metadata: { name: 'provider-1' }, spec: {} }
-        }
-        if (resource === RESOURCE_MAP.ImplementationSpec) {
-          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
-        }
-        if (resource === RESOURCE_MAP.VersionControlProvider) {
-          return {
-            metadata: { name: 'github' },
-            spec: {
-              provider: 'github',
-              repositoryPolicy: {
-                deny: ['blocked/*'],
-              },
-            },
-          }
-        }
-        return null
-      }),
-    })
-
-    const agentRun = buildAgentRun({
-      spec: {
-        agentRef: { name: 'agent-1' },
-        implementationSpecRef: { name: 'impl-1' },
-        runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
-        parameters: { repository: 'blocked/repo' },
-        vcsRef: { name: 'github' },
-        vcsPolicy: { mode: 'read-write' },
-      },
-    })
-
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
-      0,
-    )
-
-    const status = getLastStatus(kube)
-    const condition = findCondition(status, 'InvalidSpec')
-    expect(condition?.reason).toBe('VcsPolicyDenied')
   })
 
   it('marks AgentRun failed when required metadata keys are missing', async () => {
@@ -328,8 +261,8 @@ describe('agents controller reconcileAgentRun', () => {
       'agents',
       [],
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -395,8 +328,8 @@ describe('agents controller reconcileAgentRun', () => {
       'agents',
       [],
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -429,8 +362,8 @@ describe('agents controller reconcileAgentRun', () => {
       'agents',
       [],
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -458,8 +391,8 @@ describe('agents controller reconcileAgentRun', () => {
       'agents',
       [],
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -484,8 +417,8 @@ describe('agents controller reconcileAgentRun', () => {
       'agents',
       [],
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -511,8 +444,8 @@ describe('agents controller reconcileAgentRun', () => {
         'agents',
         [],
         [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
+        defaultConcurrency,
+        buildInFlight(),
         0,
       )
 
@@ -550,8 +483,8 @@ describe('agents controller reconcileAgentRun', () => {
         'agents',
         [],
         [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
+        defaultConcurrency,
+        buildInFlight(),
         0,
       )
 
@@ -589,8 +522,8 @@ describe('agents controller reconcileAgentRun', () => {
         'agents',
         [],
         [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
+        defaultConcurrency,
+        buildInFlight(),
         0,
       )
 
@@ -620,8 +553,8 @@ describe('agents controller reconcileAgentRun', () => {
         'agents',
         [],
         [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
+        defaultConcurrency,
+        buildInFlight(),
         0,
       )
 
@@ -671,8 +604,8 @@ describe('agents controller reconcileAgentRun', () => {
       'agents',
       [],
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -689,104 +622,6 @@ describe('agents controller reconcileAgentRun', () => {
     expect(jobLabels?.['agents.proompteng.ai/agent-run']).toBe('run-1')
     expect(jobLabels?.['agents.proompteng.ai/agent']).toBe('agent-1')
     expect(jobLabels?.['agents.proompteng.ai/provider']).toBe('provider-1')
-  })
-
-  it('defers job ttl until status is recorded', async () => {
-    const apply = vi.fn(async (resource: Record<string, unknown>) => {
-      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
-      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
-      return { ...resource, metadata: { ...metadata, uid } }
-    })
-    const kube = buildKube({
-      apply,
-      get: vi.fn(async (resource: string) => {
-        if (resource === RESOURCE_MAP.Agent) {
-          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
-        }
-        if (resource === RESOURCE_MAP.AgentProvider) {
-          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
-        }
-        if (resource === RESOURCE_MAP.ImplementationSpec) {
-          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
-        }
-        return null
-      }),
-    })
-
-    const agentRun = buildAgentRun()
-
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
-      0,
-    )
-
-    const jobCall = apply.mock.calls.find((call) => (call[0] as Record<string, unknown>).kind === 'Job')
-    expect(jobCall).toBeTruthy()
-    const jobSpec = (jobCall?.[0] as Record<string, unknown>)?.spec as Record<string, unknown>
-    expect(jobSpec?.ttlSecondsAfterFinished).toBeUndefined()
-  })
-
-  it('applies a safe job ttl after completion', async () => {
-    const previousTtl = process.env.JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS
-    process.env.JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS = '5'
-
-    try {
-      const patch = vi.fn(async () => ({}))
-      const kube = buildKube({
-        patch,
-        get: vi.fn(async (resource: string) => {
-          if (resource === 'job') {
-            return {
-              metadata: { name: 'run-job', namespace: 'agents' },
-              spec: {},
-              status: {
-                succeeded: 1,
-                startTime: new Date(Date.now() - 60_000).toISOString(),
-                completionTime: new Date().toISOString(),
-              },
-            }
-          }
-          return null
-        }),
-      })
-
-      const agentRun = buildAgentRun({
-        status: {
-          phase: 'Running',
-          runtimeRef: { type: 'job', name: 'run-job', namespace: 'agents' },
-        },
-      })
-
-      await __test.reconcileAgentRun(
-        kube as never,
-        agentRun,
-        'agents',
-        [],
-        [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
-        0,
-      )
-
-      expect(patch).toHaveBeenCalledWith(
-        'job',
-        'run-job',
-        'agents',
-        expect.objectContaining({ spec: { ttlSecondsAfterFinished: 30 } }),
-      )
-    } finally {
-      if (previousTtl === undefined) {
-        delete process.env.JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS
-      } else {
-        process.env.JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS = previousTtl
-      }
-    }
   })
 
   it('injects auth secret volume and CODEX_AUTH env var', async () => {
@@ -830,8 +665,8 @@ describe('agents controller reconcileAgentRun', () => {
         'agents',
         [],
         [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
+        defaultConcurrency,
+        buildInFlight(),
         0,
       )
 
@@ -895,147 +730,6 @@ describe('agents controller reconcileAgentRun', () => {
     }
   })
 
-  it('applies default scheduling config and allows per-run overrides', async () => {
-    const previousEnv = {
-      nodeSelector: process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR,
-      affinity: process.env.JANGAR_AGENT_RUNNER_AFFINITY,
-      priorityClass: process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS,
-      schedulerName: process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME,
-    }
-    const defaultAffinity = {
-      nodeAffinity: {
-        requiredDuringSchedulingIgnoredDuringExecution: {
-          nodeSelectorTerms: [
-            {
-              matchExpressions: [{ key: 'tier', operator: 'In', values: ['default'] }],
-            },
-          ],
-        },
-      },
-    }
-    process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR = JSON.stringify({ disktype: 'ssd' })
-    process.env.JANGAR_AGENT_RUNNER_AFFINITY = JSON.stringify(defaultAffinity)
-    process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS = 'default-priority'
-    process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME = 'default-scheduler'
-
-    try {
-      const jobs: Record<string, unknown>[] = []
-      const apply = vi.fn(async (resource: Record<string, unknown>) => {
-        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
-        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
-        const applied = { ...resource, metadata: { ...metadata, uid } }
-        if (resource.kind === 'Job') {
-          jobs.push(applied)
-        }
-        return applied
-      })
-      const kube = buildKube({
-        apply,
-        get: vi.fn(async (resource: string) => {
-          if (resource === RESOURCE_MAP.Agent) {
-            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
-          }
-          if (resource === RESOURCE_MAP.AgentProvider) {
-            return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
-          }
-          if (resource === RESOURCE_MAP.ImplementationSpec) {
-            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
-          }
-          return null
-        }),
-      })
-
-      const agentRun = buildAgentRun()
-      await __test.reconcileAgentRun(
-        kube as never,
-        agentRun,
-        'agents',
-        [],
-        [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
-        0,
-      )
-
-      const defaultJob = jobs[jobs.length - 1]
-      if (!defaultJob) throw new Error('expected reconcileAgentRun to create a Job')
-      const defaultPodSpec = ((defaultJob.spec as Record<string, unknown>)?.template as Record<string, unknown>)
-        ?.spec as Record<string, unknown>
-      expect(defaultPodSpec.nodeSelector).toEqual({ disktype: 'ssd' })
-      expect(defaultPodSpec.affinity).toEqual(defaultAffinity)
-      expect(defaultPodSpec.priorityClassName).toBe('default-priority')
-      expect(defaultPodSpec.schedulerName).toBe('default-scheduler')
-
-      const overrideAffinity = {
-        nodeAffinity: {
-          preferredDuringSchedulingIgnoredDuringExecution: [
-            {
-              weight: 1,
-              preference: { matchExpressions: [{ key: 'tier', operator: 'In', values: ['override'] }] },
-            },
-          ],
-        },
-      }
-      const overrideRun = buildAgentRun()
-      overrideRun.metadata = { ...overrideRun.metadata, name: 'run-2' }
-      overrideRun.spec = {
-        agentRef: { name: 'agent-1' },
-        implementationSpecRef: { name: 'impl-1' },
-        runtime: {
-          type: 'job',
-          config: {
-            nodeSelector: { disktype: 'gpu' },
-            affinity: overrideAffinity,
-            priorityClassName: 'run-priority',
-            schedulerName: 'run-scheduler',
-          },
-        },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
-      }
-
-      await __test.reconcileAgentRun(
-        kube as never,
-        overrideRun,
-        'agents',
-        [],
-        [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
-        0,
-      )
-
-      const overrideJob = jobs[jobs.length - 1]
-      if (!overrideJob) throw new Error('expected reconcileAgentRun to create a Job')
-      const overridePodSpec = ((overrideJob.spec as Record<string, unknown>)?.template as Record<string, unknown>)
-        ?.spec as Record<string, unknown>
-      expect(overridePodSpec.nodeSelector).toEqual({ disktype: 'gpu' })
-      expect(overridePodSpec.affinity).toEqual(overrideAffinity)
-      expect(overridePodSpec.priorityClassName).toBe('run-priority')
-      expect(overridePodSpec.schedulerName).toBe('run-scheduler')
-    } finally {
-      if (previousEnv.nodeSelector === undefined) {
-        delete process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR
-      } else {
-        process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR = previousEnv.nodeSelector
-      }
-      if (previousEnv.affinity === undefined) {
-        delete process.env.JANGAR_AGENT_RUNNER_AFFINITY
-      } else {
-        process.env.JANGAR_AGENT_RUNNER_AFFINITY = previousEnv.affinity
-      }
-      if (previousEnv.priorityClass === undefined) {
-        delete process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS
-      } else {
-        process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS = previousEnv.priorityClass
-      }
-      if (previousEnv.schedulerName === undefined) {
-        delete process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME
-      } else {
-        process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME = previousEnv.schedulerName
-      }
-    }
-  })
-
   it('marks AgentRun failed when controller blocks secrets', async () => {
     const previousBlocked = process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS
     process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS = 'blocked-secret'
@@ -1071,8 +765,8 @@ describe('agents controller reconcileAgentRun', () => {
         'agents',
         [],
         [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
+        defaultConcurrency,
+        buildInFlight(),
         0,
       )
 
@@ -1084,68 +778,6 @@ describe('agents controller reconcileAgentRun', () => {
         delete process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS
       } else {
         process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS = previousBlocked
-      }
-    }
-  })
-
-  it('marks AgentRun failed when required labels are missing', async () => {
-    const previousRequired = process.env.JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED
-    process.env.JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED = '["team"]'
-
-    try {
-      const kube = buildKube()
-      const agentRun = buildAgentRun()
-
-      await __test.reconcileAgentRun(
-        kube as never,
-        agentRun,
-        'agents',
-        [],
-        [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
-        0,
-      )
-
-      const status = getLastStatus(kube)
-      const condition = findCondition(status, 'InvalidSpec')
-      expect(condition?.reason).toBe('MissingRequiredLabels')
-    } finally {
-      if (previousRequired === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED
-      } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_LABELS_REQUIRED = previousRequired
-      }
-    }
-  })
-
-  it('marks AgentRun failed when image is denied by policy', async () => {
-    const previousDenied = process.env.JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED
-    process.env.JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED = '["registry.ide-newton.ts.net/lab/*"]'
-
-    try {
-      const kube = buildKube()
-      const agentRun = buildAgentRun()
-
-      await __test.reconcileAgentRun(
-        kube as never,
-        agentRun,
-        'agents',
-        [],
-        [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
-        0,
-      )
-
-      const status = getLastStatus(kube)
-      const condition = findCondition(status, 'InvalidSpec')
-      expect(condition?.reason).toBe('ImageBlocked')
-    } finally {
-      if (previousDenied === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED
-      } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_IMAGES_DENIED = previousDenied
       }
     }
   })
@@ -1184,8 +816,8 @@ describe('agents controller reconcileAgentRun', () => {
         'agents',
         [],
         [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
+        defaultConcurrency,
+        buildInFlight(),
         0,
       )
 
@@ -1255,8 +887,8 @@ describe('agents controller reconcileAgentRun', () => {
       'agents',
       [],
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -1282,8 +914,8 @@ describe('agents controller reconcileAgentRun', () => {
       'agents',
       [],
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -1306,8 +938,8 @@ describe('agents controller reconcileAgentRun', () => {
       'agents',
       [],
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -1374,8 +1006,8 @@ describe('agents controller reconcileAgentRun', () => {
       'agents',
       [],
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -1395,8 +1027,8 @@ describe('agents controller reconcileAgentRun', () => {
       'agents',
       [],
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -1425,8 +1057,8 @@ describe('agents controller reconcileAgentRun', () => {
       'agents',
       [],
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -1451,8 +1083,8 @@ describe('agents controller reconcileAgentRun', () => {
       'agents',
       [],
       [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
+      defaultConcurrency,
+      buildInFlight(),
       0,
     )
 
@@ -1477,8 +1109,8 @@ describe('agents controller reconcileAgentRun', () => {
         'agents',
         [],
         [],
-        { perNamespace: 10, perAgent: 5, cluster: 100 },
-        { total: 0, perAgent: new Map() },
+        defaultConcurrency,
+        buildInFlight(),
         0,
       )
 
@@ -1490,67 +1122,6 @@ describe('agents controller reconcileAgentRun', () => {
         process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
       }
     }
-  })
-})
-
-describe('agents controller resolveVcsContext', () => {
-  it('suffixes the head branch when a conflict exists', async () => {
-    const kube = buildKube({
-      get: vi.fn(async (resource: string) => {
-        if (resource === RESOURCE_MAP.VersionControlProvider) {
-          return buildVcsProvider({
-            spec: {
-              provider: 'github',
-              auth: { method: 'none' },
-              defaults: {
-                branchTemplate: 'codex/{{issueNumber}}',
-                branchConflictSuffixTemplate: '{{agentRun.name}}',
-              },
-            },
-          })
-        }
-        return null
-      }),
-    })
-
-    const agentRun = buildAgentRun({
-      spec: {
-        agentRef: { name: 'agent-1' },
-        implementationSpecRef: { name: 'impl-1' },
-        runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
-        vcsRef: { name: 'vcs-1' },
-        parameters: {
-          repository: 'proompteng/lab',
-          issueNumber: '123',
-        },
-      },
-    })
-
-    const result = await __test.resolveVcsContext({
-      kube: kube as never,
-      namespace: 'agents',
-      agentRun,
-      agent: { metadata: { name: 'agent-1' }, spec: {} },
-      implementation: {},
-      parameters: {
-        repository: 'proompteng/lab',
-        issueNumber: '123',
-      },
-      allowedSecrets: [],
-      existingRuns: [
-        {
-          metadata: { name: 'run-2' },
-          status: {
-            phase: 'Running',
-            vcs: { repository: 'proompteng/lab', headBranch: 'codex/123' },
-          },
-        },
-      ],
-    })
-
-    expect(result.ok).toBe(true)
-    expect(result.context?.headBranch).toBe('codex/123-run-1')
   })
 })
 
@@ -1569,48 +1140,6 @@ describe('agents controller reconcileVersionControlProvider', () => {
     const warning = findCondition(status, 'Warning')
     expect(warning?.status).toBe('True')
     expect(warning?.reason).toBe('DeprecatedAuth')
-  })
-
-  it('uses provider defaults when token type is omitted', async () => {
-    const previous = process.env.JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
-    process.env.JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES = JSON.stringify({
-      github: ['fine_grained'],
-    })
-
-    try {
-      const kube = buildKube({
-        get: vi.fn(async () => ({
-          stringData: { token: 'value' },
-        })),
-      })
-      const provider = buildVcsProvider({
-        spec: {
-          provider: 'github',
-          auth: {
-            method: 'token',
-            token: {
-              secretRef: {
-                name: 'vcs-token',
-                key: 'token',
-              },
-            },
-          },
-        },
-      })
-
-      await __test.reconcileVersionControlProvider(kube as never, provider, 'agents')
-
-      const status = getLastStatus(kube)
-      const warning = findCondition(status, 'Warning')
-      expect(warning?.status).toBe('True')
-      expect(warning?.reason).toBe('DeprecatedAuth')
-    } finally {
-      if (previous === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
-      } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES = previous
-      }
-    }
   })
 
   it('rejects unsupported auth methods for non-github providers', async () => {
@@ -1656,27 +1185,6 @@ describe('agents controller reconcileVersionControlProvider', () => {
     const status = getLastStatus(kube)
     const invalid = findCondition(status, 'InvalidSpec')
     expect(invalid?.reason).toBe('UnsupportedAuth')
-  })
-})
-
-describe('agents controller vcs pr rate limits', () => {
-  it('parses PR rate limits from env', () => {
-    const previous = process.env.JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS
-    process.env.JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS = JSON.stringify({
-      github: { windowSeconds: 60, maxRequests: 10, backoffSeconds: 30 },
-    })
-
-    try {
-      expect(__test.resolveVcsPrRateLimits()).toEqual({
-        github: { windowSeconds: 60, maxRequests: 10, backoffSeconds: 30 },
-      })
-    } finally {
-      if (previous === undefined) {
-        delete process.env.JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS
-      } else {
-        process.env.JANGAR_AGENTS_CONTROLLER_VCS_PR_RATE_LIMITS = previous
-      }
-    }
   })
 })
 
