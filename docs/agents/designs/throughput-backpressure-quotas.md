@@ -17,8 +17,8 @@ rate limits.
   queue depth, and rate limits using the same env vars and returns 429 responses with limit details. It records queue
   depth via `recordAgentQueueDepth`.
 - Queue and rate settings exist in the chart (`controller.queue.*`, `controller.rate.*`) and are rendered into
-  env vars in `charts/agents/templates/deployment.yaml`. They are consumed by the API admission path but are not
-  enforced for AgentRuns created directly as CRs.
+  env vars in `charts/agents/templates/deployment.yaml`. They are enforced in API admission and by the controller
+  for AgentRuns created directly as CRs.
 - Cluster: the `agents` deployment sets queue limits (200/50/1000) and rate limits (60s window, 120/30/600) via
   env vars, so API admission uses explicit values.
 
@@ -52,7 +52,7 @@ These should map to:
 ## Operational Notes
 
 - Concurrency controls live in the controller process and apply to all runtime types.
-- Queue/rate limits are currently enforced only for API-submitted runs; direct CR creation bypasses them.
+- Queue/rate limits are enforced in API admission and controller reconciliation; direct CR creation is gated.
 - Queue/rate limits should be enforced before runtime submission to avoid noisy Job creation.
 
 ## Validation
