@@ -10,6 +10,11 @@ const DEFAULT_NAMESPACES = ['agents']
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
 const IMPLEMENTATION_SUMMARY_LIMIT = 256
 const LINEAR_TIMESTAMP_TOLERANCE_MS = 60_000
+const DEFAULT_WEBHOOK_QUEUE_SIZE = 1000
+const DEFAULT_WEBHOOK_RETRY_BASE_DELAY_MS = 1_000
+const DEFAULT_WEBHOOK_RETRY_MAX_DELAY_MS = 60_000
+const DEFAULT_WEBHOOK_RETRY_MAX_ATTEMPTS = 5
+const DEFAULT_WEBHOOK_DEDUPE_TTL_MS = 60 * 60_000
 
 type Condition = {
   type: string
@@ -41,7 +46,192 @@ type SourceMatch = {
   namespace: string
 }
 
+type WebhookRetrySettings = {
+  baseDelayMs: number
+  maxDelayMs: number
+  maxAttempts: number
+}
+
+type WebhookQueueSettings = {
+  maxSize: number
+  retry: WebhookRetrySettings
+  dedupeTtlMs: number
+}
+
+type WebhookQueueItem = {
+  key: string
+  idempotencyKey: string
+  provider: WebhookProvider
+  event: ParsedWebhookEvent
+  source: Record<string, unknown>
+  namespace: string
+  receivedAt: string
+  deliveryId?: string
+  attempt: number
+  nextRunAt: number
+  kube: ReturnType<typeof createKubernetesClient>
+  now: () => string
+}
+
+type WebhookQueue = {
+  enqueue: (item: WebhookQueueItem, options?: { allowDuplicate?: boolean }) => { status: 'queued' | 'deduped' | 'full' }
+  drain: () => Promise<void>
+  size: () => number
+  clear: () => void
+  settings: WebhookQueueSettings
+}
+
+type WebhookStatus = {
+  idempotencyKey: string
+  deliveryId?: string
+  provider: WebhookProvider
+  externalId: string
+  sourceVersion?: string
+  receivedAt: string
+  processedAt?: string
+  attempts: number
+  status: 'queued' | 'synced' | 'retrying' | 'failed'
+  error?: string
+}
+
 const nowIso = () => new Date().toISOString()
+
+const parseOptionalNumber = (value: string | undefined) => {
+  if (!value) return null
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+const resolveWebhookQueueSettings = (): WebhookQueueSettings => {
+  const maxSize =
+    parseOptionalNumber(process.env.JANGAR_AGENTS_CONTROLLER_WEBHOOK_QUEUE_SIZE) ?? DEFAULT_WEBHOOK_QUEUE_SIZE
+  const baseDelaySeconds =
+    parseOptionalNumber(process.env.JANGAR_AGENTS_CONTROLLER_WEBHOOK_RETRY_BASE_DELAY_SECONDS) ??
+    DEFAULT_WEBHOOK_RETRY_BASE_DELAY_MS / 1000
+  const maxDelaySeconds =
+    parseOptionalNumber(process.env.JANGAR_AGENTS_CONTROLLER_WEBHOOK_RETRY_MAX_DELAY_SECONDS) ??
+    DEFAULT_WEBHOOK_RETRY_MAX_DELAY_MS / 1000
+  const maxAttempts =
+    parseOptionalNumber(process.env.JANGAR_AGENTS_CONTROLLER_WEBHOOK_RETRY_MAX_ATTEMPTS) ??
+    DEFAULT_WEBHOOK_RETRY_MAX_ATTEMPTS
+
+  return {
+    maxSize: Math.max(1, maxSize),
+    retry: {
+      baseDelayMs: Math.max(0, baseDelaySeconds) * 1000,
+      maxDelayMs: Math.max(0, maxDelaySeconds) * 1000,
+      maxAttempts: Math.max(1, maxAttempts),
+    },
+    dedupeTtlMs: DEFAULT_WEBHOOK_DEDUPE_TTL_MS,
+  }
+}
+
+export const createWebhookQueue = (
+  processor: (item: WebhookQueueItem) => Promise<void>,
+  overrides: Partial<WebhookQueueSettings> = {},
+): WebhookQueue => {
+  const baseSettings = resolveWebhookQueueSettings()
+  const settings: WebhookQueueSettings = {
+    ...baseSettings,
+    ...overrides,
+    retry: {
+      ...baseSettings.retry,
+      ...(overrides.retry ?? {}),
+    },
+  }
+
+  const queue: WebhookQueueItem[] = []
+  const dedupe = new Map<string, number>()
+  let processing = false
+  let timer: NodeJS.Timeout | null = null
+  let idleResolvers: Array<() => void> = []
+
+  const pruneDedupe = (nowMs: number) => {
+    for (const [key, expiry] of dedupe.entries()) {
+      if (expiry <= nowMs) dedupe.delete(key)
+    }
+  }
+
+  const resolveNextDelay = () => {
+    if (queue.length === 0) return null
+    const next = Math.min(...queue.map((item) => item.nextRunAt))
+    const delay = Math.max(0, next - Date.now())
+    return delay
+  }
+
+  const resolveIdle = () => {
+    if (processing || queue.length > 0) return
+    if (idleResolvers.length === 0) return
+    const resolvers = idleResolvers
+    idleResolvers = []
+    for (const resolve of resolvers) resolve()
+  }
+
+  const schedule = () => {
+    if (processing || timer) return
+    const delay = resolveNextDelay()
+    if (delay == null) return
+    timer = setTimeout(() => {
+      timer = null
+      void processQueue(false)
+    }, delay)
+  }
+
+  const processQueue = async (force: boolean) => {
+    if (processing) return
+    processing = true
+    if (timer) {
+      clearTimeout(timer)
+      timer = null
+    }
+    try {
+      while (queue.length > 0) {
+        const nowMs = Date.now()
+        pruneDedupe(nowMs)
+        const index = force ? 0 : queue.findIndex((item) => item.nextRunAt <= nowMs)
+        if (index === -1) break
+        const [item] = queue.splice(index, 1)
+        await processor(item)
+      }
+    } finally {
+      processing = false
+      schedule()
+      resolveIdle()
+    }
+  }
+
+  return {
+    enqueue: (item, options = {}) => {
+      const nowMs = Date.now()
+      pruneDedupe(nowMs)
+      if (!options.allowDuplicate && dedupe.has(item.key)) return { status: 'deduped' }
+      if (queue.length >= settings.maxSize) return { status: 'full' }
+      if (!options.allowDuplicate) {
+        dedupe.set(item.key, nowMs + settings.dedupeTtlMs)
+      }
+      queue.push(item)
+      schedule()
+      return { status: 'queued' }
+    },
+    drain: async () => {
+      await processQueue(true)
+      if (processing || queue.length > 0) {
+        await new Promise<void>((resolve) => idleResolvers.push(resolve))
+      }
+    },
+    size: () => queue.length,
+    clear: () => {
+      queue.length = 0
+      dedupe.clear()
+      if (timer) {
+        clearTimeout(timer)
+        timer = null
+      }
+      resolveIdle()
+    },
+    settings,
+  }
+}
 
 const parseNamespaces = () => {
   const raw = process.env.JANGAR_AGENTS_CONTROLLER_NAMESPACES
@@ -457,6 +647,7 @@ const updateSourceStatus = async (
     reason: string
     message?: string
     lastSyncedAt?: string
+    lastWebhook?: WebhookStatus
   },
 ) => {
   const metadata = asRecord(source.metadata) ?? {}
@@ -470,6 +661,7 @@ const updateSourceStatus = async (
     observedGeneration: asRecord(metadata)?.generation ?? 0,
     cursor: asString(readNested(source, ['status', 'cursor'])) ?? undefined,
     lastSyncedAt: status.lastSyncedAt ?? asString(readNested(source, ['status', 'lastSyncedAt'])) ?? undefined,
+    lastWebhook: status.lastWebhook ?? readNested(source, ['status', 'lastWebhook']) ?? undefined,
     conditions,
   })
 }
@@ -535,10 +727,113 @@ const isIssueEvent = (provider: WebhookProvider, eventName: string) => {
   return eventName === 'issue'
 }
 
+const resolveDeliveryId = (provider: WebhookProvider, headers: Headers, payload: Record<string, unknown>) => {
+  if (provider === 'github') return asString(headers.get('x-github-delivery'))
+  if (provider === 'linear') {
+    const headerId = asString(headers.get('linear-delivery'))
+    if (headerId) return headerId
+    return asString(readNested(payload, ['data', 'id']))
+  }
+  return null
+}
+
+const resolveIdempotencyKey = (
+  provider: WebhookProvider,
+  headers: Headers,
+  payload: Record<string, unknown>,
+  event: ParsedWebhookEvent,
+) => {
+  const deliveryId = resolveDeliveryId(provider, headers, payload)
+  if (deliveryId) return `${provider}:${deliveryId}`
+  if (event.sourceVersion) return `${provider}:${event.externalId}:${event.sourceVersion}`
+  return `${provider}:${event.externalId}`
+}
+
+const resolveSourceName = (source: Record<string, unknown>) =>
+  asString(readNested(source, ['metadata', 'name'])) ?? 'unknown'
+
+const buildWebhookStatus = (item: WebhookQueueItem, status: WebhookStatus['status'], error?: string): WebhookStatus => ({
+  idempotencyKey: item.idempotencyKey,
+  deliveryId: item.deliveryId ?? undefined,
+  provider: item.provider,
+  externalId: item.event.externalId,
+  sourceVersion: item.event.sourceVersion ?? undefined,
+  receivedAt: item.receivedAt,
+  processedAt: item.now(),
+  attempts: item.attempt,
+  status,
+  error,
+})
+
+const computeWebhookRetryDelayMs = (settings: WebhookRetrySettings, attempt: number) => {
+  if (settings.baseDelayMs <= 0) return 0
+  const delay = settings.baseDelayMs * Math.pow(2, Math.max(0, attempt - 1))
+  return Math.min(delay, settings.maxDelayMs)
+}
+
+export const processWebhookItem = async (item: WebhookQueueItem, queue: WebhookQueue) => {
+  const attempt = item.attempt + 1
+  const processedAt = item.now()
+  try {
+    await syncImplementationSpec(item.kube, item.namespace, {
+      name: buildImplementationName(item.event),
+      source: toSourceRef(item.event),
+      summary: item.event.summary,
+      text: item.event.text,
+      labels: item.event.labels,
+      sourceVersion: item.event.sourceVersion ?? undefined,
+    })
+
+    await updateSourceStatus(item.kube, item.source, {
+      type: 'Ready',
+      status: 'True',
+      reason: 'WebhookSynced',
+      lastSyncedAt: processedAt,
+      lastWebhook: buildWebhookStatus({ ...item, attempt }, 'synced'),
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const shouldRetry = attempt < queue.settings.retry.maxAttempts
+    await updateSourceStatus(item.kube, item.source, {
+      type: 'Error',
+      status: 'True',
+      reason: 'WebhookFailed',
+      message,
+      lastWebhook: buildWebhookStatus({ ...item, attempt }, shouldRetry ? 'retrying' : 'failed', message),
+    })
+    if (!shouldRetry) return
+    const delayMs = computeWebhookRetryDelayMs(queue.settings.retry, attempt)
+    const nextRunAt = Date.now() + delayMs
+    const retryResult = queue.enqueue({
+      ...item,
+      attempt,
+      nextRunAt,
+    }, { allowDuplicate: true })
+    if (retryResult.status === 'full') {
+      await updateSourceStatus(item.kube, item.source, {
+        type: 'Error',
+        status: 'True',
+        reason: 'WebhookRetryDropped',
+        message: 'Webhook retry queue full',
+        lastWebhook: buildWebhookStatus({ ...item, attempt }, 'failed', 'Webhook retry queue full'),
+      })
+    }
+  }
+}
+
+const defaultWebhookQueue = createWebhookQueue(async (item) => {
+  await processWebhookItem(item, defaultWebhookQueue)
+})
+
 export const postImplementationSourceWebhookHandler = async (
   provider: string,
   request: Request,
-  deps: { kubeClient?: ReturnType<typeof createKubernetesClient>; now?: () => string } = {},
+  deps: {
+    kubeClient?: ReturnType<typeof createKubernetesClient>
+    now?: () => string
+    queue?: WebhookQueue
+    flushQueue?: boolean
+  } = {},
 ) => {
   const normalizedProvider = provider.trim().toLowerCase()
   if (normalizedProvider !== 'github' && normalizedProvider !== 'linear') {
@@ -602,26 +897,42 @@ export const postImplementationSourceWebhookHandler = async (
     return errorResponse('No matching ImplementationSource for webhook payload', 404)
   }
 
-  const specName = buildImplementationName(event)
-  const sourceRef = toSourceRef(event)
+  const queue = deps.queue ?? defaultWebhookQueue
+  const providerKey = normalizedProvider as WebhookProvider
+  const idempotencyKey = resolveIdempotencyKey(providerKey, request.headers, payload, event)
+  const deliveryId = resolveDeliveryId(providerKey, request.headers, payload) ?? undefined
+  const receivedAt = now()
+
+  let queued = 0
+  let deduped = 0
 
   for (const match of matching) {
-    await syncImplementationSpec(kube, match.namespace, {
-      name: specName,
-      source: sourceRef,
-      summary: event.summary,
-      text: event.text,
-      labels: event.labels,
-      sourceVersion: event.sourceVersion ?? undefined,
+    const sourceName = resolveSourceName(match.source)
+    const key = `${match.namespace}/${sourceName}:${idempotencyKey}`
+    const result = queue.enqueue({
+      key,
+      idempotencyKey,
+      provider: event.provider,
+      event,
+      source: match.source,
+      namespace: match.namespace,
+      receivedAt,
+      deliveryId,
+      attempt: 0,
+      nextRunAt: Date.now(),
+      kube,
+      now,
     })
-
-    await updateSourceStatus(kube, match.source, {
-      type: 'Ready',
-      status: 'True',
-      reason: 'WebhookSynced',
-      lastSyncedAt: now(),
-    })
+    if (result.status === 'queued') queued += 1
+    if (result.status === 'deduped') deduped += 1
+    if (result.status === 'full') {
+      return errorResponse('Webhook queue full', 503, { queued, deduped })
+    }
   }
 
-  return okResponse({ ok: true, processed: matching.length })
+  if (deps.flushQueue) {
+    await queue.drain()
+  }
+
+  return okResponse({ ok: true, queued, deduped })
 }

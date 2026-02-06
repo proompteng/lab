@@ -32,6 +32,15 @@ app.kubernetes.io/name: {{ include "agents.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{- define "agents.controllersName" -}}
+{{- printf "%s-controllers" (include "agents.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "agents.controllersSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "agents.controllersName" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
 {{- define "agents.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create -}}
 {{- if .Values.serviceAccount.name -}}

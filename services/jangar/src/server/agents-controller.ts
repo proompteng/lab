@@ -15,6 +15,10 @@ const DEFAULT_CONCURRENCY = {
   perAgent: 5,
   cluster: 100,
 }
+const DEFAULT_REPO_CONCURRENCY = {
+  enabled: false,
+  defaultLimit: 0,
+}
 const DEFAULT_AGENTRUN_RETENTION_SECONDS = 30 * 24 * 60 * 60
 const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
@@ -26,6 +30,7 @@ const DEFAULT_AUTH_SECRET_KEY = 'auth.json'
 const DEFAULT_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
 const DEFAULT_GITHUB_APP_TOKEN_TTL_SECONDS = 3600
 const DEFAULT_RUNNER_JOB_TTL_SECONDS = 600
+const DEFAULT_RUNNER_LOG_RETENTION_SECONDS = 7 * 24 * 60 * 60
 const MIN_RUNNER_JOB_TTL_SECONDS = 30
 const MAX_RUNNER_JOB_TTL_SECONDS = 7 * 24 * 60 * 60
 const DEFAULT_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 300
@@ -65,6 +70,12 @@ type CrdCheckState = {
 type ControllerHealthState = {
   started: boolean
   crdCheckState: CrdCheckState | null
+}
+
+type RepoConcurrencyConfig = {
+  enabled: boolean
+  defaultLimit: number
+  overrides: Map<string, number>
 }
 
 const globalState = globalThis as typeof globalThis & {
@@ -158,6 +169,7 @@ type WorkflowStepStatus = {
   lastTransitionTime: string
   message?: string
   jobRef?: Record<string, unknown>
+  jobObservedAt?: string
   nextRetryAt?: string
 }
 
@@ -253,6 +265,31 @@ const resolveNamespaces = async () => {
   return resolved
 }
 
+const normalizeRepositoryKey = (value: string) => value.trim().toLowerCase()
+
+const parseRepoConcurrencyOverrides = () => {
+  const rawOverrides = parseEnvRecord('JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES')
+  const overrides = new Map<string, number>()
+  for (const [key, value] of Object.entries(rawOverrides)) {
+    const parsed = parseOptionalNumber(value)
+    if (parsed === undefined || parsed < 0) continue
+    overrides.set(normalizeRepositoryKey(key), Math.floor(parsed))
+  }
+  return overrides
+}
+
+const parseRepoConcurrency = (): RepoConcurrencyConfig => {
+  const enabled = parseBooleanEnv(process.env.JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_ENABLED, false)
+  const parsedDefault = parseOptionalNumber(process.env.JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_DEFAULT)
+  const defaultLimit =
+    parsedDefault === undefined || parsedDefault < 0 ? DEFAULT_REPO_CONCURRENCY.defaultLimit : Math.floor(parsedDefault)
+  return {
+    enabled,
+    defaultLimit,
+    overrides: parseRepoConcurrencyOverrides(),
+  }
+}
+
 const parseConcurrency = () => ({
   perNamespace:
     Number.parseInt(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE ?? '', 10) ||
@@ -261,6 +298,7 @@ const parseConcurrency = () => ({
     Number.parseInt(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_AGENT ?? '', 10) || DEFAULT_CONCURRENCY.perAgent,
   cluster:
     Number.parseInt(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER ?? '', 10) || DEFAULT_CONCURRENCY.cluster,
+  repoConcurrency: parseRepoConcurrency(),
 })
 
 const runKubectl = (args: string[]) =>
@@ -474,6 +512,13 @@ const setStatus = async (
   const apiVersion = asString(resource.apiVersion)
   const kind = asString(resource.kind)
   if (!apiVersion || !kind) return
+  let nextStatusBase = status
+  if (kind === 'AgentRun' && status.contract === undefined) {
+    const existingContract = readNested(resource, ['status', 'contract'])
+    if (existingContract) {
+      nextStatusBase = { ...status, contract: existingContract }
+    }
+  }
   const phase = asString(status.phase) ?? null
   const baseConditions = normalizeConditions(status.conditions)
   const standardUpdates = deriveStandardConditionUpdates(baseConditions, phase)
@@ -482,7 +527,7 @@ const setStatus = async (
     conditions = upsertCondition(conditions, update)
   }
   const nextStatus = {
-    ...status,
+    ...nextStatusBase,
     updatedAt: nowIso(),
     conditions,
   }
@@ -589,6 +634,7 @@ const normalizeWorkflowStatus = (
         lastTransitionTime: asString(current.lastTransitionTime) ?? nowIso(),
         message: asString(current.message) ?? undefined,
         jobRef: asRecord(current.jobRef) ?? undefined,
+        jobObservedAt: asString(current.jobObservedAt) ?? undefined,
         nextRetryAt: asString(current.nextRetryAt) ?? undefined,
       }
     }),
@@ -693,6 +739,18 @@ const resolveRunnerJobTtlSeconds = (runtimeConfig: Record<string, unknown>) => {
     return normalizeRunnerJobTtlSeconds(envDefault, 'JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS')
   }
   return normalizeRunnerJobTtlSeconds(DEFAULT_RUNNER_JOB_TTL_SECONDS, 'default')
+}
+
+const resolveRunnerLogRetentionSeconds = (runtimeConfig: Record<string, unknown>) => {
+  const override = parseOptionalNumber(runtimeConfig.logRetentionSeconds)
+  if (override !== undefined) {
+    return Math.max(0, Math.floor(override))
+  }
+  const envDefault = parseOptionalNumber(process.env.JANGAR_AGENT_RUNNER_LOG_RETENTION_SECONDS)
+  if (envDefault !== undefined) {
+    return Math.max(0, Math.floor(envDefault))
+  }
+  return DEFAULT_RUNNER_LOG_RETENTION_SECONDS
 }
 
 const parseAgentRunRetentionSeconds = () => {
@@ -803,6 +861,22 @@ const resolveParameters = (agentRun: Record<string, unknown>) => {
     output[key] = value
   }
   return output
+}
+
+const resolveRepositoryFromParameters = (parameters: Record<string, string>) => {
+  const candidates = ['repository', 'repo', 'issueRepository']
+  for (const key of candidates) {
+    const value = parameters[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
+const resolveRunRepository = (agentRun: Record<string, unknown>) => {
+  const statusRepo = asString(readNested(agentRun, ['status', 'vcs', 'repository'])) ?? ''
+  if (statusRepo.trim()) return statusRepo.trim()
+  const parameters = resolveParameters(agentRun)
+  return resolveRepositoryFromParameters(parameters)
 }
 
 const parseStringList = (value: unknown) =>
@@ -1343,6 +1417,7 @@ const snapshotNamespace = (state: NamespaceState) => ({
 
 const buildInFlightCounts = (state: ControllerState, namespace: string) => {
   const perAgent = new Map<string, number>()
+  const perRepository = new Map<string, number>()
   let total = 0
   let cluster = 0
   for (const [ns, nsState] of state.namespaces.entries()) {
@@ -1350,13 +1425,28 @@ const buildInFlightCounts = (state: ControllerState, namespace: string) => {
       const phase = asString(readNested(run, ['status', 'phase'])) ?? 'Pending'
       if (phase !== 'Running') continue
       cluster += 1
+      const repository = resolveRunRepository(run)
+      if (repository) {
+        const key = normalizeRepositoryKey(repository)
+        perRepository.set(key, (perRepository.get(key) ?? 0) + 1)
+      }
       if (ns !== namespace) continue
       total += 1
       const agentName = asString(readNested(run, ['spec', 'agentRef', 'name'])) ?? 'unknown'
       perAgent.set(agentName, (perAgent.get(agentName) ?? 0) + 1)
     }
   }
-  return { total, perAgent, cluster }
+  return { total, perAgent, perRepository, cluster }
+}
+
+const resolveRepoConcurrencyLimit = (repository: string, config: RepoConcurrencyConfig) => {
+  if (!config.enabled) return null
+  if (!repository.trim()) return null
+  const key = normalizeRepositoryKey(repository)
+  const override = config.overrides.get(key)
+  const limit = override ?? config.defaultLimit
+  if (!limit || limit <= 0) return null
+  return limit
 }
 
 const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
@@ -1951,10 +2041,6 @@ const isActiveRun = (run: Record<string, unknown>) => {
   return phase !== 'Succeeded' && phase !== 'Failed' && phase !== 'Cancelled'
 }
 
-const resolveRunRepository = (run: Record<string, unknown>) =>
-  asString(readNested(run, ['status', 'vcs', 'repository'])) ??
-  resolveRunParam(run, ['repository', 'repo', 'issueRepository'])
-
 const resolveRunHeadBranch = (run: Record<string, unknown>) =>
   asString(readNested(run, ['status', 'vcs', 'headBranch'])) ??
   asString(readNested(run, ['status', 'vcs', 'branch'])) ??
@@ -2064,6 +2150,19 @@ const normalizeRequiredKeys = (value: unknown) => {
   return Array.from(new Set(keys))
 }
 
+const hasInvalidRequiredKeys = (value: unknown) =>
+  Array.isArray(value) && value.some((key) => typeof key !== 'string' || key.trim().length === 0)
+
+const hasInvalidContractMappings = (value: unknown) =>
+  Array.isArray(value) &&
+  value.some((entry) => {
+    const record = asRecord(entry)
+    if (!record) return true
+    const from = asString(record.from)?.trim()
+    const to = asString(record.to)?.trim()
+    return !from || !to
+  })
+
 const applyMetadataMappings = (metadata: Record<string, string>, mappings: ImplementationContractMapping[]) => {
   for (const mapping of mappings) {
     const fromValue = metadata[mapping.from]
@@ -2077,15 +2176,19 @@ const setMetadataIfMissing = (metadata: Record<string, string>, key: string, val
   metadata[key] = value
 }
 
-const buildEventContext = (implementation: Record<string, unknown>, parameters: Record<string, string>) => {
+const buildEventContext = (
+  implementation: Record<string, unknown>,
+  parameters: Record<string, string>,
+  contractOverride?: { requiredKeys?: string[]; mappings?: ImplementationContractMapping[] },
+) => {
   const source = asRecord(implementation.source) ?? {}
   const provider = asString(source.provider) ?? ''
   const externalId = asString(source.externalId) ?? ''
   const sourceUrl = asString(source.url) ?? ''
 
   const contract = asRecord(implementation.contract) ?? {}
-  const contractMappings = normalizeContractMappings(contract.mappings)
-  const requiredKeys = normalizeRequiredKeys(contract.requiredKeys)
+  const contractMappings = contractOverride?.mappings ?? normalizeContractMappings(contract.mappings)
+  const requiredKeys = contractOverride?.requiredKeys ?? normalizeRequiredKeys(contract.requiredKeys)
 
   const summary = asString(implementation.summary) ?? ''
   const text = asString(implementation.text) ?? ''
@@ -2151,7 +2254,7 @@ const buildEventContext = (implementation: Record<string, unknown>, parameters: 
 
   const missingRequiredKeys = requiredKeys.filter((key) => !metadata[key])
 
-  return { payload, metadata, missingRequiredKeys }
+  return { payload, metadata, missingRequiredKeys, requiredKeys }
 }
 
 const buildEventPayload = (implementation: Record<string, unknown>, parameters: Record<string, string>) =>
@@ -2161,15 +2264,52 @@ const validateImplementationContract = (
   implementation: Record<string, unknown>,
   parameters: Record<string, string>,
 ) => {
-  const { missingRequiredKeys } = buildEventContext(implementation, parameters)
+  const contract = asRecord(implementation.contract) ?? {}
+  if (hasInvalidRequiredKeys(contract.requiredKeys)) {
+    return {
+      ok: false as const,
+      reason: 'InvalidContract',
+      requiredKeys: normalizeRequiredKeys(contract.requiredKeys),
+      message: 'spec.contract.requiredKeys must be non-empty strings',
+    }
+  }
+  if (hasInvalidContractMappings(contract.mappings)) {
+    return {
+      ok: false as const,
+      reason: 'InvalidContract',
+      requiredKeys: normalizeRequiredKeys(contract.requiredKeys),
+      message: 'spec.contract.mappings entries must include non-empty from and to',
+    }
+  }
+
+  const requiredKeys = normalizeRequiredKeys(contract.requiredKeys)
+  const { missingRequiredKeys } = buildEventContext(implementation, parameters, {
+    requiredKeys,
+    mappings: normalizeContractMappings(contract.mappings),
+  })
   if (missingRequiredKeys.length === 0) {
-    return { ok: true as const }
+    return { ok: true as const, requiredKeys }
   }
   return {
     ok: false as const,
+    reason: 'MissingRequiredMetadata',
+    requiredKeys,
     missing: missingRequiredKeys,
     message: `missing required metadata keys: ${missingRequiredKeys.join(', ')}`,
   }
+}
+
+const buildContractStatus = (contractCheck: {
+  ok: boolean
+  requiredKeys: string[]
+  missing?: string[]
+}) => {
+  if (contractCheck.requiredKeys.length === 0) return undefined
+  const status: Record<string, unknown> = { requiredKeys: contractCheck.requiredKeys }
+  if (!contractCheck.ok && contractCheck.missing && contractCheck.missing.length > 0) {
+    status.missingKeys = contractCheck.missing
+  }
+  return status
 }
 
 const resolveVcsContext = async ({
@@ -3118,6 +3258,7 @@ const buildAgentRunnerSpec = (
   _runSpec: Record<string, unknown>,
   parameters: Record<string, string>,
   providerName: string,
+  logRetentionSeconds: number,
 ) => ({
   provider: providerName,
   inputs: parameters,
@@ -3127,6 +3268,7 @@ const buildAgentRunnerSpec = (
   artifacts: {
     statusPath: '/workspace/.agent/status.json',
     logPath: '/workspace/.agent/runner.log',
+    logRetentionSeconds,
   },
 })
 
@@ -3205,7 +3347,10 @@ const submitJobRun = async (
     providerName,
     vcsContext,
   )
-  const agentRunnerSpec = providerName ? buildAgentRunnerSpec(runSpec, parameters, providerName) : null
+  const logRetentionSeconds = resolveRunnerLogRetentionSeconds(runtimeConfig)
+  const agentRunnerSpec = providerName
+    ? buildAgentRunnerSpec(runSpec, parameters, providerName, logRetentionSeconds)
+    : null
   const runSecrets = parseStringList(readNested(agentRun, ['spec', 'secrets']))
   const envFrom = runSecrets.map((name) => ({ secretRef: { name } }))
   const authSecret = resolveAuthSecretConfig()
@@ -3762,15 +3907,15 @@ const reconcileWorkflowRun = async (
     return
   }
 
-  const imageCandidates = workflowSteps
-    .map((step) => {
-      const workload = step.workload ?? baseWorkload
-      const image = workload ? resolveJobImage(workload) : null
-      if (!image) return null
-      return { image, context: `workflow step ${step.name}` }
-    })
-    .filter((candidate): candidate is { image: string; context: string } => candidate !== null)
-  const imagePolicy = validateImagePolicy(imageCandidates)
+	  const imageCandidates = workflowSteps
+	    .map((step) => {
+	      const workload = step.workload ?? baseWorkload
+	      const image = workload ? resolveJobImage(workload) : null
+	      if (!image) return null
+	      return { image, context: `workflow step ${step.name}` }
+	    })
+	    .filter((candidate): candidate is ImagePolicyCandidate => candidate !== null)
+	  const imagePolicy = validateImagePolicy(imageCandidates)
   if (!imagePolicy.ok) {
     const updated = upsertCondition(conditions, {
       type: 'InvalidSpec',
@@ -3806,6 +3951,7 @@ const reconcileWorkflowRun = async (
 
   let baseConditions = conditions
   let vcsStatus: Record<string, unknown> | undefined
+  let workflowContractStatus: Record<string, unknown> | undefined
 
   const baseParameters = resolveParameters(agentRun)
   const allowedSecrets = dependencies.allowedSecrets
@@ -3885,11 +4031,15 @@ const reconcileWorkflowRun = async (
 
       const stepParameters = { ...baseParameters, ...stepSpec.parameters }
       const contractCheck = validateImplementationContract(implementation, stepParameters)
+      const contractStatus = buildContractStatus(contractCheck)
+      if (contractStatus) {
+        workflowContractStatus = contractStatus
+      }
       if (!contractCheck.ok) {
         setWorkflowStepPhase(stepStatus, 'Failed', contractCheck.message)
         stepStatus.finishedAt = nowIso()
         workflowFailure = {
-          reason: 'MissingRequiredMetadata',
+          reason: contractCheck.reason,
           message: `workflow step ${stepSpec.name} ${contractCheck.message}`,
         }
         break
@@ -4005,6 +4155,21 @@ const reconcileWorkflowRun = async (
       const jobNamespace = asString(stepStatus.jobRef?.namespace) ?? namespace
       const job = await kube.get('job', jobName, jobNamespace)
       if (!job) {
+        if (!stepStatus.jobObservedAt) {
+          setWorkflowStepPhase(stepStatus, 'Running', 'Waiting for job to be created')
+          runtimeRefUpdate = buildRuntimeRef('workflow', jobName, jobNamespace, {
+            runName,
+            stepName: stepSpec.name,
+          })
+          workflowRunning = true
+          break
+        }
+        baseConditions = upsertCondition(baseConditions, {
+          type: 'Warning',
+          status: 'True',
+          reason: 'WorkflowJobMissing',
+          message: `workflow step ${stepSpec.name} job ${jobName} not found`,
+        })
         if (stepStatus.attempt < maxAttempts) {
           setWorkflowStepPhase(stepStatus, 'Retrying', 'Job missing; retrying')
           stepStatus.finishedAt = nowIso()
@@ -4024,6 +4189,9 @@ const reconcileWorkflowRun = async (
         break
       }
       const jobStatus = asRecord(job.status) ?? {}
+      if (!stepStatus.jobObservedAt) {
+        stepStatus.jobObservedAt = nowIso()
+      }
       const succeeded = Number(jobStatus.succeeded ?? 0)
       const failed = Number(jobStatus.failed ?? 0)
       if (succeeded > 0 || isJobComplete(job)) {
@@ -4067,8 +4235,12 @@ const reconcileWorkflowRun = async (
 
   if (workflowFailure) {
     setWorkflowPhase(workflowStatus, 'Failed')
+    const failureType =
+      workflowFailure.reason === 'MissingRequiredMetadata' || workflowFailure.reason === 'InvalidContract'
+        ? 'InvalidSpec'
+        : 'Failed'
     const updated = upsertCondition(baseConditions, {
-      type: 'Failed',
+      type: failureType,
       status: 'True',
       reason: workflowFailure.reason,
       message: workflowFailure.message,
@@ -4081,6 +4253,7 @@ const reconcileWorkflowRun = async (
       workflow: workflowStatus,
       conditions: updated,
       vcs: vcsStatus ?? undefined,
+      contract: workflowContractStatus,
     })
     for (const entry of completedJobs) {
       await applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
@@ -4126,6 +4299,7 @@ const reconcileWorkflowRun = async (
       workflow: workflowStatus,
       conditions: updated,
       vcs: vcsStatus ?? undefined,
+      contract: workflowContractStatus,
     })
     for (const entry of completedJobs) {
       await applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
@@ -4140,7 +4314,7 @@ const reconcileAgentRun = async (
   memories: Record<string, unknown>[],
   existingRuns: Record<string, unknown>[],
   concurrency: ReturnType<typeof parseConcurrency>,
-  inFlight: { total: number; perAgent: Map<string, number> },
+  inFlight: { total: number; perAgent: Map<string, number>; perRepository: Map<string, number> },
   globalInFlight: number,
 ) => {
   const metadata = asRecord(agentRun.metadata) ?? {}
@@ -4163,6 +4337,7 @@ const reconcileAgentRun = async (
   const runtimeConfig = asRecord(readNested(spec, ['runtime', 'config'])) ?? {}
   const workload = asRecord(readNested(spec, ['workload'])) ?? {}
   let workloadImage: string | null = null
+  const repository = resolveRunRepository(agentRun)
 
   if (deleting) {
     if (hasFinalizer) {
@@ -4214,6 +4389,21 @@ const reconcileAgentRun = async (
     })
     await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Pending' })
     return
+  }
+
+  const repoLimit = resolveRepoConcurrencyLimit(repository, concurrency.repoConcurrency)
+  if (shouldSubmit && repoLimit !== null) {
+    const repoKey = normalizeRepositoryKey(repository)
+    if ((inFlight.perRepository.get(repoKey) ?? 0) >= repoLimit) {
+      const updated = upsertCondition(conditions, {
+        type: 'Blocked',
+        status: 'True',
+        reason: 'ConcurrencyLimit',
+        message: `Repository ${repository} reached concurrency limit`,
+      })
+      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Pending' })
+      return
+    }
   }
 
   if (shouldSubmit && inFlight.total >= concurrency.perNamespace) {
@@ -4416,14 +4606,20 @@ const reconcileAgentRun = async (
     }
 
     const contractCheck = validateImplementationContract(implResource, parameters)
+    const contractStatus = buildContractStatus(contractCheck)
     if (!contractCheck.ok) {
       const updated = upsertCondition(conditions, {
         type: 'InvalidSpec',
         status: 'True',
-        reason: 'MissingRequiredMetadata',
+        reason: contractCheck.reason,
         message: contractCheck.message,
       })
-      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      await setStatus(kube, agentRun, {
+        observedGeneration,
+        conditions: updated,
+        phase: 'Failed',
+        contract: contractStatus,
+      })
       return
     }
 
@@ -4438,7 +4634,12 @@ const reconcileAgentRun = async (
         reason: 'MissingMemory',
         message: `memory ${missingName} not found`,
       })
-      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      await setStatus(kube, agentRun, {
+        observedGeneration,
+        conditions: updated,
+        phase: 'Failed',
+        contract: contractStatus,
+      })
       return
     }
     const memorySecretName = asString(readNested(memory, ['spec', 'connection', 'secretRef', 'name']))
@@ -4454,7 +4655,12 @@ const reconcileAgentRun = async (
         reason: 'SecretBlocked',
         message: `secrets blocked by controller policy: ${blockedSecrets.join(', ')}`,
       })
-      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      await setStatus(kube, agentRun, {
+        observedGeneration,
+        conditions: updated,
+        phase: 'Failed',
+        contract: contractStatus,
+      })
       return
     }
 
@@ -4466,7 +4672,12 @@ const reconcileAgentRun = async (
         reason: authSecretPolicy.reason,
         message: authSecretPolicy.message,
       })
-      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+      await setStatus(kube, agentRun, {
+        observedGeneration,
+        conditions: updated,
+        phase: 'Failed',
+        contract: contractStatus,
+      })
       return
     }
     if (memorySecretName) {
@@ -4477,7 +4688,12 @@ const reconcileAgentRun = async (
           reason: 'SecretNotAllowed',
           message: `memory secret ${memorySecretName} is not allowlisted by the Agent`,
         })
-        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        await setStatus(kube, agentRun, {
+          observedGeneration,
+          conditions: updated,
+          phase: 'Failed',
+          contract: contractStatus,
+        })
         return
       }
       if (runSecrets.length > 0 && !runSecrets.includes(memorySecretName)) {
@@ -4487,7 +4703,12 @@ const reconcileAgentRun = async (
           reason: 'SecretNotAllowed',
           message: `memory secret ${memorySecretName} is not included in spec.secrets`,
         })
-        await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+        await setStatus(kube, agentRun, {
+          observedGeneration,
+          conditions: updated,
+          phase: 'Failed',
+          contract: contractStatus,
+        })
         return
       }
     }
@@ -4515,6 +4736,7 @@ const reconcileAgentRun = async (
         finishedAt: nowIso(),
         conditions: updated,
         vcs: vcsResolution.status ?? undefined,
+        contract: contractStatus,
       })
       return
     }
@@ -4586,6 +4808,7 @@ const reconcileAgentRun = async (
         startedAt: nowIso(),
         conditions: upsertCondition(updated, { type: 'InProgress', status: 'True', reason: 'Running' }),
         vcs: vcsStatus ?? undefined,
+        contract: contractStatus,
       })
     } catch (error) {
       const updated = upsertCondition(baseConditions, {
@@ -4600,6 +4823,7 @@ const reconcileAgentRun = async (
         finishedAt: nowIso(),
         conditions: updated,
         vcs: vcsStatus ?? undefined,
+        contract: contractStatus,
       })
     }
     return
@@ -4616,7 +4840,27 @@ const reconcileAgentRun = async (
 
   if (runtimeRef.type === 'job') {
     const job = await kube.get('job', asString(runtimeRef.name) ?? '', asString(runtimeRef.namespace) ?? namespace)
-    if (!job) return
+    const runtimeRefRecord = asRecord(status.runtimeRef) ?? {}
+    const jobObservedAt = asString(runtimeRefRecord.jobObservedAt)
+    if (!job) {
+      if (jobObservedAt) {
+        const updated = upsertCondition(conditions, {
+          type: 'Warning',
+          status: 'True',
+          reason: 'JobMissing',
+          message: `job ${asString(runtimeRef.name) ?? 'unknown'} not found`,
+        })
+        await setStatus(kube, agentRun, {
+          observedGeneration,
+          phase: 'Running',
+          startedAt: asString(status.startedAt) ?? nowIso(),
+          runtimeRef,
+          conditions: updated,
+          vcs: asRecord(status.vcs) ?? undefined,
+        })
+      }
+      return
+    }
     const jobStatus = asRecord(job.status) ?? {}
     const succeeded = Number(jobStatus.succeeded ?? 0)
     const failed = Number(jobStatus.failed ?? 0)
@@ -4638,17 +4882,29 @@ const reconcileAgentRun = async (
         status: 'True',
         reason: 'JobFailed',
       })
-      await setStatus(kube, agentRun, {
-        observedGeneration,
-        phase: 'Failed',
-        finishedAt: nowIso(),
-        runtimeRef,
-        conditions: updated,
-        vcs: asRecord(status.vcs) ?? undefined,
-      })
-      await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
-    }
-  }
+	      await setStatus(kube, agentRun, {
+	        observedGeneration,
+	        phase: 'Failed',
+	        finishedAt: nowIso(),
+	        runtimeRef,
+	        conditions: updated,
+	        vcs: asRecord(status.vcs) ?? undefined,
+	      })
+	      await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
+	    } else if (!jobObservedAt) {
+	      await setStatus(kube, agentRun, {
+	        observedGeneration,
+	        phase: 'Running',
+	        startedAt: asString(status.startedAt) ?? nowIso(),
+        runtimeRef: {
+          ...runtimeRef,
+          jobObservedAt: nowIso(),
+	        },
+	        conditions,
+	        vcs: asRecord(status.vcs) ?? undefined,
+	      })
+	    }
+	  }
 
   if (runtimeRef.type === 'temporal') {
     await reconcileTemporalRun(kube, agentRun, runtimeRef)
@@ -4694,6 +4950,7 @@ const reconcileNamespaceSnapshot = async (
   const inFlight = {
     total: counts.total,
     perAgent: counts.perAgent,
+    perRepository: counts.perRepository,
   }
 
   for (const run of runs) {
@@ -4713,6 +4970,7 @@ const reconcileRunWithState = async (
   const inFlight = {
     total: counts.total,
     perAgent: counts.perAgent,
+    perRepository: counts.perRepository,
   }
   await reconcileAgentRun(kube, run, namespace, snapshot.memories, snapshot.runs, concurrency, inFlight, counts.cluster)
 }

@@ -121,6 +121,10 @@ Common fields:
 
 Per-run overrides live under `spec.runtime.config` on the AgentRun and take precedence over defaults.
 
+### Concurrency limits
+- `controller.concurrency.perNamespace`, `controller.concurrency.perAgent`, `controller.concurrency.cluster`
+- `controller.repoConcurrency.enabled` with `controller.repoConcurrency.default` and optional `controller.repoConcurrency.overrides` per repo
+
 ### gRPC service (optional)
 Enable gRPC for agentctl or in-cluster clients:
 - `grpc.enabled=true`
@@ -177,7 +181,6 @@ Set defaults for AgentRun and Schedule workload images when the CRD does not spe
 ### Agent comms subjects (optional)
 Override the default NATS subject filters (comma-separated) used by the agent comms subscriber:
 - `agentComms.subjects`
-
 ### Version control providers
 Define a VersionControlProvider resource to decouple repo access from issue intake. This is required for
 agent runtimes that clone, commit, push, or open pull requests. Pair it with a SecretBinding that
@@ -279,7 +282,6 @@ controller:
         backoffSeconds: 20
 ```
 
-
 ## Example production values
 ```yaml
 image:
@@ -331,10 +333,13 @@ The chart sets `JANGAR_AGENT_RUNNER_IMAGE` from `runner.image.*` to avoid missin
 Override `runner.image.repository`, `runner.image.tag`, or `runner.image.digest` to point at your own build.
 
 ## Job TTL behavior
-Jobs launched by the controller use `controller.jobTtlSecondsAfterFinished` as the default TTL (seconds).
+Jobs launched by the controller use `controller.jobTtlSeconds` (or `controller.jobTtlSecondsAfterFinished`) as the
+default TTL (seconds).
 The controller applies TTL only after it records the AgentRun/workflow status to avoid cleanup races.
-Set `controller.jobTtlSecondsAfterFinished=0` to disable job cleanup, or override per run via
-`spec.runtime.config.ttlSecondsAfterFinished`. Values are clamped to 30s–7d for safety.
+Set `controller.jobTtlSeconds=0` (or `controller.jobTtlSecondsAfterFinished=0`) to disable job cleanup, or override per
+run via `spec.runtime.config.ttlSecondsAfterFinished`. Values are clamped to 30s–7d for safety.
+Log retention hints default to `controller.logRetentionSeconds` (overridable via
+`spec.runtime.config.logRetentionSeconds`).
 
 ## Native orchestration
 Native orchestration runs in-cluster and supports:
@@ -361,6 +366,22 @@ Helm ownership conflicts.
 ## Admission control
 - Configure backpressure with `controller.queue.*` and `controller.rate.*` in `values.yaml`.
 - Queue limits cap pending AgentRuns; rate limits cap submit throughput.
+- Webhook ingestion uses `controller.webhook.queueSize` and `controller.webhook.retry.*` for buffering and retries.
+
+## Pod Security Admission
+Opt in to Pod Security Admission (PSA) labels by enabling the feature and defining labels:
+
+```yaml
+podSecurityAdmission:
+  enabled: true
+  createNamespace: true
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+```
+
+If the namespace already exists, set `podSecurityAdmission.createNamespace=false` and apply the labels to the namespace
+out of band (for example, via your GitOps workflow or `kubectl label`). The chart only labels namespaces it creates.
 
 ## Publishing (OCI)
 ```bash
