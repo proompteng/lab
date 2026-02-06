@@ -92,6 +92,10 @@ spec:
               value: "true"
             - name: JANGAR_WEBSOCKETS_ENABLED
               value: "true"
+            - name: JANGAR_MODELS
+              value: gpt-5.3-codex
+            - name: JANGAR_DEFAULT_MODEL
+              value: gpt-5.3-codex
             - name: JANGAR_GIT_LOCK_RETRY_ATTEMPTS
               value: "6"
             - name: JANGAR_GIT_LOCK_RETRY_DELAY_MS
