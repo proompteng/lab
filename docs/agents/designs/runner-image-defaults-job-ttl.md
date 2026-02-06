@@ -79,7 +79,7 @@ As of 2026-02-06 (repo `main`):
 - Namespaced reconciliation: `controller.namespaces: [agents]` and `rbac.clusterScoped: false`. See `argocd/applications/agents/values.yaml`.
 - Runner RBAC for CI: `agents-ci` namespace resources in `argocd/applications/agents-ci/`.
 
-Note: this workspace does not ship a kubeconfig; treat the above as the desired state. To verify live cluster state, run:
+Note: Treat `charts/agents/**` and `argocd/applications/**` as the desired state. To verify live cluster state, run:
 
 ```bash
 kubectl get application -n argocd agents
