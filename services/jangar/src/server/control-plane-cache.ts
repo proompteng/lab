@@ -123,8 +123,10 @@ const extractFields = (resourceKind: CacheKind, summary: ReturnType<typeof toSum
 
 const listOnce = async (namespace: string, store: ReturnType<typeof createControlPlaneCacheStore>) => {
   const kube = createKubernetesClient()
+  const cluster = resolveClusterId()
 
   for (const entry of CACHE_RESOURCES) {
+    const syncStartedAt = await store.getDbNow()
     try {
       const list = await kube.list(entry.resource, namespace)
       const items = Array.isArray(list.items) ? list.items : []
@@ -158,6 +160,13 @@ const listOnce = async (namespace: string, store: ReturnType<typeof createContro
           specLabels: fields.specLabels,
         })
       }
+
+      await store.markNotSeenSince({
+        cluster,
+        kind: entry.kind,
+        namespace,
+        since: syncStartedAt,
+      })
     } catch (error) {
       console.warn('[jangar][control-plane-cache] list failed', { kind: entry.kind, namespace, error })
     }
@@ -233,6 +242,11 @@ export const startControlPlaneCache = async () => {
     }
   } catch (error) {
     console.warn('[jangar][control-plane-cache] failed to start', error)
+    try {
+      stopControlPlaneCache()
+    } catch {
+      // ignore
+    }
     try {
       await store?.close()
     } catch {
