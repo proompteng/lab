@@ -18,11 +18,10 @@ spec:
         preferred_auth_method = "apikey"
         approval_policy = "never"
         sandbox_mode = "danger-full-access"
+        web_search = "live"
 
         [features]
         undo = true
-        web_search_request = true
-        web_search_cached = true
         enable_request_compression = true
         apply_patch_freeform = true
         unified_exec = true
@@ -46,4 +45,3 @@ spec:
       path: /workspace/.agent/runner.log
     - name: runner-status
       path: /workspace/.agent/status.json
-

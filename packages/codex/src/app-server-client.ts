@@ -253,8 +253,7 @@ export class CodexAppServerClient {
     this.approval = normalizeApprovalPolicy(approval)
     this.defaultModel = defaultModel
     this.defaultEffort = defaultEffort
-    this.threadConfig =
-      threadConfig === undefined ? { mcp_servers: {}, 'features.web_search_request': true } : threadConfig
+    this.threadConfig = threadConfig === undefined ? { mcp_servers: {}, web_search: 'live' } : threadConfig
     this.experimentalRawEvents = experimentalRawEvents
     this.bootstrapTimeoutMs = bootstrapTimeoutMs
 
