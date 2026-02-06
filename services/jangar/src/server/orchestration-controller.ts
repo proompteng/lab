@@ -913,6 +913,7 @@ const submitAgentRunStep = async (
   const runtimeType = asString(runtime.type) ?? 'job'
   const runtimeConfig = asRecord(runtime.config) ?? {}
   const workload = asRecord(readNested(step, ['workload'])) ?? undefined
+  const workflow = asRecord(readNested(step, ['workflow'])) ?? asRecord(readNested(step, ['with', 'workflow'])) ?? null
   const memoryRefName = asString(readNested(step, ['memoryRef', 'name'])) ?? asString(step.memoryRef)
   const secrets = Array.isArray(step.secrets)
     ? step.secrets.filter((val): val is string => typeof val === 'string')
@@ -940,6 +941,14 @@ const submitAgentRunStep = async (
       ...(memoryRefName ? { memoryRef: { name: memoryRefName } } : {}),
       ...(secrets.length > 0 ? { secrets } : {}),
       runtime: { type: runtimeType, ...(Object.keys(runtimeConfig).length > 0 ? { config: runtimeConfig } : {}) },
+      ...(runtimeType === 'workflow'
+        ? {
+            workflow:
+              workflow && Object.prototype.hasOwnProperty.call(workflow, 'steps')
+                ? workflow
+                : { ...(workflow ?? {}), steps: [{ name: 'main' }] },
+          }
+        : {}),
       ...(workload ? { workload } : {}),
     },
   }
