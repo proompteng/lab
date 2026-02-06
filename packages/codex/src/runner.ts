@@ -280,7 +280,8 @@ export class CodexRunner {
       commandArgs.push('--config', `sandbox_workspace_write.network_access=${networkAccessEnabled}`)
     }
     if (webSearchEnabled !== undefined) {
-      commandArgs.push('--config', `features.web_search_request=${webSearchEnabled}`)
+      // `features.web_search_request` is deprecated; `web_search` controls mode.
+      commandArgs.push('--config', `web_search="${webSearchEnabled ? 'live' : 'disabled'}"`)
     }
     if (approvalPolicy) {
       commandArgs.push('--config', `approval_policy="${approvalPolicy}"`)

@@ -16,7 +16,7 @@ const defaultFactory: Factory = (options) =>
     defaultModel: options?.defaultModel,
     threadConfig: {
       'features.rmcp_client': true,
-      'features.web_search_request': true,
+      web_search: 'live',
       mcp_servers: {
         memories: {
           url: resolveMcpUrl(),

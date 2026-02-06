@@ -82,7 +82,8 @@ export class CodexExec {
     }
 
     if (args.webSearchEnabled !== undefined) {
-      commandArgs.push('--config', `features.web_search_request=${args.webSearchEnabled}`)
+      // `features.web_search_request` is deprecated; `web_search` controls mode.
+      commandArgs.push('--config', `web_search="${args.webSearchEnabled ? 'live' : 'disabled'}"`)
     }
 
     if (args.approvalPolicy) {
