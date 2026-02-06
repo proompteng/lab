@@ -158,12 +158,18 @@ type AgentRunStatus struct {
 	Vcs                *AgentRunVcsStatus              `json:"vcs,omitempty"`
 	Conditions         []metav1.Condition              `json:"conditions,omitempty"`
 	ObservedGeneration int64                           `json:"observedGeneration,omitempty"`
+	Contract           *AgentRunContractStatus         `json:"contract,omitempty"`
 }
 
 type VcsPolicy struct {
 	Required bool `json:"required,omitempty"`
 	// +kubebuilder:validation:Enum=read-write;read-only;none
 	Mode string `json:"mode,omitempty"`
+}
+
+type AgentRunContractStatus struct {
+	RequiredKeys []string `json:"requiredKeys,omitempty"`
+	MissingKeys  []string `json:"missingKeys,omitempty"`
 }
 
 type AgentRunVcsStatus struct {

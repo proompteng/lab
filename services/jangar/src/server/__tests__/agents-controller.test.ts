@@ -269,6 +269,54 @@ describe('agents controller reconcileAgentRun', () => {
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
     expect(condition?.reason).toBe('MissingRequiredMetadata')
+    const contract = status.contract as Record<string, unknown>
+    expect(contract.requiredKeys).toEqual(['repository', 'issueNumber'])
+    expect(contract.missingKeys).toEqual(['repository', 'issueNumber'])
+  })
+
+  it('marks AgentRun failed when contract mappings are invalid', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return {
+            metadata: { name: 'impl-1' },
+            spec: {
+              text: 'demo',
+              contract: {
+                requiredKeys: ['repository'],
+                mappings: [{ from: '', to: 'repository' }],
+              },
+            },
+          }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun()
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const status = getLastStatus(kube)
+    const condition = findCondition(status, 'InvalidSpec')
+    expect(condition?.reason).toBe('InvalidContract')
   })
 
   it('accepts mapped metadata keys for required contract fields', async () => {
