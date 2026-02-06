@@ -121,6 +121,8 @@ type WorkflowStep struct {
 	Workload            *WorkloadSpec     `json:"workload,omitempty"`
 	Retries             int32             `json:"retries,omitempty"`
 	RetryBackoffSeconds int32             `json:"retryBackoffSeconds,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	TimeoutSeconds int32 `json:"timeoutSeconds,omitempty"`
 }
 
 type WorkloadSpec struct {

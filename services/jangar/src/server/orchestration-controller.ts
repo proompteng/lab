@@ -507,6 +507,9 @@ const resolveRetryConfig = (step: Record<string, unknown>) => {
   return { maxAttempts: retries + 1, retryBackoffSeconds }
 }
 
+const resolveTimeoutSeconds = (step: Record<string, unknown>) =>
+  Math.max(0, Math.floor(parseOptionalNumber(step.timeoutSeconds) ?? 0))
+
 const shouldRetryStep = (status: StepStatus, now: number) => {
   if (!status.nextRetryAt) return true
   const retryAt = Date.parse(status.nextRetryAt)
@@ -1225,6 +1228,7 @@ const reconcileOrchestrationRun = async (
     const dependsOn = resolveDependsOn(step)
     const canStart = depsSatisfied(dependsOn, statusIndex)
     const retryConfig = resolveRetryConfig(step)
+    const timeoutSeconds = resolveTimeoutSeconds(step)
     const now = Date.now()
 
     if (current.phase === 'Succeeded') {
@@ -1289,6 +1293,37 @@ const reconcileOrchestrationRun = async (
     }
 
     try {
+      if (current.phase === 'Running' && timeoutSeconds > 0) {
+        const startedAt = current.startedAt
+        const startTime = startedAt ? Date.parse(startedAt) : Number.NaN
+        if (Number.isFinite(startTime) && now >= startTime + timeoutSeconds * 1000) {
+          const failed = setStepPhase(current, 'Failed', 'Step timed out')
+          failed.finishedAt = nowIso()
+          if (currentAttempt < retryConfig.maxAttempts) {
+            const retryAt =
+              retryConfig.retryBackoffSeconds > 0
+                ? new Date(now + retryConfig.retryBackoffSeconds * 1000).toISOString()
+                : nowIso()
+            const retrying = setStepPhase(failed, 'Retrying', failed.message)
+            retrying.nextRetryAt = retryAt
+            anyRunning = true
+            allSucceeded = false
+            scheduledRetryAt = recordRetryAt(scheduledRetryAt, retryAt)
+            nextStatusMap.set(stepName, retrying)
+            statusIndex.set(stepName, retrying)
+          } else {
+            anyFailed = true
+            allSucceeded = false
+            if (!failureMessage) {
+              failureMessage = failed.message ?? `step ${stepName} timed out`
+              failureReason = 'StepTimedOut'
+            }
+            nextStatusMap.set(stepName, failed)
+            statusIndex.set(stepName, failed)
+          }
+          continue
+        }
+      }
       if (stepKind === 'ApprovalGate') {
         const policyName = asString(step.policyRef) ?? asString(readNested(step, ['with', 'policyRef']))
         if (!policyName) {

@@ -158,6 +158,7 @@ type WorkflowStepSpec = {
   workload: Record<string, unknown> | null
   retries: number
   retryBackoffSeconds: number
+  timeoutSeconds: number
 }
 
 type WorkflowStepStatus = {
@@ -566,6 +567,7 @@ const parseWorkflowSteps = (agentRun: Record<string, unknown>): WorkflowStepSpec
       }
       const retries = parseOptionalNumber(step.retries)
       const retryBackoffSeconds = parseOptionalNumber(step.retryBackoffSeconds)
+      const timeoutSeconds = parseOptionalNumber(step.timeoutSeconds)
       return {
         name,
         implementationSpecRefName: asString(readNested(step, ['implementationSpecRef', 'name'])) ?? null,
@@ -576,6 +578,7 @@ const parseWorkflowSteps = (agentRun: Record<string, unknown>): WorkflowStepSpec
         retryBackoffSeconds: Number.isFinite(retryBackoffSeconds)
           ? Math.max(0, Math.trunc(retryBackoffSeconds ?? 0))
           : 0,
+        timeoutSeconds: Number.isFinite(timeoutSeconds) ? Math.max(0, Math.trunc(timeoutSeconds ?? 0)) : 0,
       }
     })
     .filter((step) => step.name.length > 0)
@@ -2048,10 +2051,6 @@ const isActiveRun = (run: Record<string, unknown>) => {
   const phase = asString(readNested(run, ['status', 'phase'])) ?? 'Pending'
   return phase !== 'Succeeded' && phase !== 'Failed' && phase !== 'Cancelled'
 }
-
-const resolveRunRepository = (run: Record<string, unknown>) =>
-  asString(readNested(run, ['status', 'vcs', 'repository'])) ??
-  resolveRunParam(run, ['repository', 'repo', 'issueRepository'])
 
 const resolveRunHeadBranch = (run: Record<string, unknown>) =>
   asString(readNested(run, ['status', 'vcs', 'headBranch'])) ??
@@ -4131,6 +4130,29 @@ const reconcileWorkflowRun = async (
     }
 
     if (stepStatus.phase === 'Running') {
+      if (stepSpec.timeoutSeconds > 0) {
+        const startedAt = stepStatus.startedAt
+        const startTime = startedAt ? Date.parse(startedAt) : Number.NaN
+        if (Number.isFinite(startTime) && now >= startTime + stepSpec.timeoutSeconds * 1000) {
+          if (stepStatus.attempt < maxAttempts) {
+            setWorkflowStepPhase(stepStatus, 'Retrying', 'Step timed out; retrying')
+            stepStatus.finishedAt = nowIso()
+            stepStatus.nextRetryAt =
+              stepSpec.retryBackoffSeconds > 0
+                ? new Date(now + stepSpec.retryBackoffSeconds * 1000).toISOString()
+                : nowIso()
+            workflowRunning = true
+            break
+          }
+          setWorkflowStepPhase(stepStatus, 'Failed', 'Step timed out')
+          stepStatus.finishedAt = nowIso()
+          workflowFailure = {
+            reason: 'WorkflowStepTimedOut',
+            message: `workflow step ${stepSpec.name} timed out`,
+          }
+          break
+        }
+      }
       const jobName = asString(stepStatus.jobRef?.name) ?? ''
       if (!jobName) {
         setWorkflowStepPhase(stepStatus, 'Failed', 'Job reference missing')
