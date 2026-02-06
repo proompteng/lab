@@ -98,6 +98,53 @@ describe('orchestration controller', () => {
     expect(tool?.phase).toBe('Running')
   })
 
+  it('defaults workflow steps for workflow AgentRun steps', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const generateName = typeof metadata.generateName === 'string' ? metadata.generateName : ''
+      const name = typeof metadata.name === 'string' ? metadata.name : generateName ? `${generateName}unit` : 'unit'
+      return { ...resource, metadata: { ...metadata, name } }
+    })
+    const get = vi.fn(async (resource: string) => {
+      if (resource === 'orchestrations.orchestration.proompteng.ai') {
+        return {
+          apiVersion: 'orchestration.proompteng.ai/v1alpha1',
+          kind: 'Orchestration',
+          metadata: { name: 'workflow-orchestration', namespace: 'agents' },
+          spec: {
+            steps: [
+              {
+                name: 'run-agent',
+                kind: 'AgentRun',
+                agentRef: { name: 'agent-a' },
+                implementationSpecRef: { name: 'impl-a' },
+                runtime: { type: 'workflow' },
+              },
+            ],
+          },
+        }
+      }
+      return null
+    })
+    const kube = { applyStatus, apply, get } as unknown as KubernetesClient
+
+    const orchestrationRun = {
+      apiVersion: 'orchestration.proompteng.ai/v1alpha1',
+      kind: 'OrchestrationRun',
+      metadata: { name: 'workflow-run', namespace: 'agents', generation: 1 },
+      spec: { orchestrationRef: { name: 'workflow-orchestration' } },
+    }
+
+    await __test__.reconcileOrchestrationRun(kube, orchestrationRun, 'agents')
+
+    expect(apply).toHaveBeenCalledTimes(1)
+    const submitted = apply.mock.calls[0]?.[0] as { spec?: Record<string, unknown> }
+    const spec = submitted.spec ?? {}
+    expect((spec.runtime as Record<string, unknown> | undefined)?.type).toBe('workflow')
+    expect((spec.workflow as Record<string, unknown> | undefined)?.steps).toEqual([{ name: 'main' }])
+  })
+
   it('sets retry metadata when a step fails with retries remaining', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
