@@ -240,7 +240,7 @@ export class CodexAppServerClient {
     cwd,
     sandbox = 'danger-full-access',
     approval = 'never',
-    defaultModel = 'gpt-5.2-codex',
+    defaultModel = 'gpt-5.3-codex',
     defaultEffort = DEFAULT_EFFORT,
     threadConfig,
     experimentalRawEvents = false,
@@ -412,7 +412,6 @@ export class CodexAppServerClient {
         developerInstructions: null,
         personality: null,
         ephemeral: null,
-        dynamicTools: null,
         experimentalRawEvents: this.experimentalRawEvents,
       }
 

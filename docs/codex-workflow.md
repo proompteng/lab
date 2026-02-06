@@ -52,7 +52,7 @@ Codex now mirrors implementation output into a per-run Discord channel when the 
    - Exercise the channel flow without touching Discord by piping sample output:
      ```bash
      printf 'hello discord\nthis is a dry run\n' | \
-       bunx tsx apps/froussard/scripts/discord-channel.ts \
+       bunx tsx services/jangar/scripts/discord-channel.ts \
          --stage implementation \
          --repo proompteng/lab \
          --issue 999 \
@@ -65,7 +65,7 @@ Codex now mirrors implementation output into a per-run Discord channel when the 
 
 ### Implementation Progress Comment Lifecycle
 
-- Codex owns a single issue comment anchored by `<!-- codex:progress -->`; the helper at `apps/froussard/src/codex/cli/codex-progress-comment.ts` keeps it consistent.
+- Codex owns a single issue comment anchored by `<!-- codex:progress -->`; the helper at `services/jangar/scripts/codex/codex-progress-comment.ts` keeps it consistent.
 - On implementation kickoff the helper seeds a checklist from the issue context/template, marks the active step, and appends a short status section (tests run, blockers, next action).
 - After every meaningful milestone the comment is updated in-place so reviewers can follow along without reading the Argo logs.
 - When work finishes, the checklist is fully checked, the transient status block is replaced with the final summary/validation notes, and the same comment becomes the permanent implementation recap.

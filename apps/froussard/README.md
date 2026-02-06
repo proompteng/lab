@@ -88,13 +88,13 @@ The local runtime exposes:
 ## Codex Automation Image
 
 The Codex implementation workflow uses a derived container built from
-`apps/froussard/Dockerfile.codex`. The helper script below copies the local
+`services/jangar/Dockerfile.codex`. The helper script below copies the local
 Codex auth (`~/.codex/auth.json`), Codex configuration (`~/.codex/config.toml`),
 and your GitHub CLI token into the image before pushing it to the shared
 registry.
 
 ```bash
-bun apps/froussard/src/codex/cli/build-codex-image.ts
+bun services/jangar/scripts/build-codex-image.ts
 ```
 
 - Override `IMAGE_TAG` to publish a different tag or registry.

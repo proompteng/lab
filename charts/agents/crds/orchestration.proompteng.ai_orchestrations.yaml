@@ -91,6 +91,9 @@ spec:
                       retryBackoffSeconds:
                         format: int32
                         type: integer
+                      timeoutSeconds:
+                        format: int32
+                        type: integer
                     required:
                       - name
                       - kind

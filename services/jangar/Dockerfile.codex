@@ -1,0 +1,143 @@
+# syntax=docker/dockerfile:1.6
+FROM ghcr.io/openai/codex-universal:latest
+
+ARG ARGO_VERSION=v3.6.3
+ARG KUBECONFORM_VERSION=v0.6.7
+ARG NATSCLI_VERSION=v0.3.0
+ARG TARGETARCH=arm64
+ARG TEMPORAL_VERSION=v1.5.1
+ARG CODEX_AUTH_CHECKSUM=unspecified
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    WORKSPACE=/workspace \
+    WORKTREE=/workspace/lab \
+    IMPLEMENTATION_OUTPUT_PATH=/workspace/lab/.codex-implementation.log \
+    GIT_TERMINAL_PROMPT=0 \
+    BUN_INSTALL=/usr/local \
+    BUN_INSTALL_CACHE_DIR=/opt/bun/install/cache \
+    BUN_INSTALL_CACHE_SEED_DIR=/opt/bun/install/cache \
+    DOCKER_HOST=tcp://localhost:2375 \
+    DOCKER_ENABLED=0
+
+ENV CODEX_ENV_NODE_VERSION=24.11.1 \
+    CODEX_ENV_GO_VERSION=1.25.4 \
+    CODEX_ENV_JAVA_VERSION=21 \
+    BUN_VERSION=1.3.5
+
+# Preinstall requested Node version to avoid nvm cache misses during setup.
+RUN bash -lc 'source /root/.nvm/nvm.sh && nvm install ${CODEX_ENV_NODE_VERSION}'
+
+RUN set -eux; \
+    apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Debug::Acquire::http=true \
+    && apt-get install -y -V --no-install-recommends ca-certificates curl gnupg git gh jq python3 xz-utils protobuf-compiler libprotobuf-dev build-essential pkg-config unzip \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release; echo \"$VERSION_CODENAME\") stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Debug::Acquire::http=true \
+    && apt-get install -y -V --no-install-recommends docker-ce docker-ce-cli docker-ce-rootless-extras docker-buildx-plugin docker-compose-plugin \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN CODEX_ENV_NODE_VERSION="$CODEX_ENV_NODE_VERSION" CODEX_ENV_GO_VERSION="$CODEX_ENV_GO_VERSION" /opt/codex/setup_universal.sh
+
+RUN mise use --global "bun@${BUN_VERSION}" \
+    && mise cache clear \
+    && rm -rf "$HOME/.cache/mise" "$HOME/.local/share/mise/downloads"
+
+RUN set -eux; \
+    ARCH=${TARGETARCH:-arm64}; \
+    case "${ARCH}" in \
+      amd64|arm64) \
+        ;; \
+      *) \
+        echo "Unsupported TARGETARCH: ${ARCH}" >&2; \
+        exit 1; \
+        ;; \
+    esac; \
+    ARGO_ARCHIVE="/tmp/argo-linux-${ARCH}.gz"; \
+    KUBECONFORM_ARCHIVE="/tmp/kubeconform-linux-${ARCH}.tar.gz"; \
+    curl -fsSL -o "${ARGO_ARCHIVE}" "https://github.com/argoproj/argo-workflows/releases/download/${ARGO_VERSION}/argo-linux-${ARCH}.gz"; \
+    gunzip -c "${ARGO_ARCHIVE}" > /tmp/argo; \
+    install -m 0755 /tmp/argo /usr/local/bin/argo; \
+    rm -f "${ARGO_ARCHIVE}" /tmp/argo; \
+    curl -fsSL -o "${KUBECONFORM_ARCHIVE}" "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-${ARCH}.tar.gz"; \
+    tar -xzf "${KUBECONFORM_ARCHIVE}" -C /tmp kubeconform; \
+    install -m 0755 /tmp/kubeconform /usr/local/bin/kubeconform; \
+    rm -f "${KUBECONFORM_ARCHIVE}" /tmp/kubeconform
+
+RUN set -eux; \
+    ARCH="${TARGETARCH:-arm64}"; \
+    case "${ARCH}" in \
+      amd64|arm64) \
+        ;; \
+      *) \
+        echo "Unsupported TARGETARCH: ${ARCH}" >&2; \
+        exit 1; \
+        ;; \
+    esac; \
+    NATS_VERSION="${NATSCLI_VERSION#v}"; \
+    NATS_ARCHIVE="/tmp/nats-${NATS_VERSION}-linux-${ARCH}.zip"; \
+    curl -fsSL -o "${NATS_ARCHIVE}" "https://github.com/nats-io/natscli/releases/download/${NATSCLI_VERSION}/nats-${NATS_VERSION}-linux-${ARCH}.zip"; \
+    unzip -q "${NATS_ARCHIVE}" -d /tmp; \
+    install -m 0755 "/tmp/nats-${NATS_VERSION}-linux-${ARCH}/nats" /usr/local/bin/nats; \
+    rm -rf "${NATS_ARCHIVE}" "/tmp/nats-${NATS_VERSION}-linux-${ARCH}"
+
+RUN set -eux; \
+    ARCH="${TARGETARCH:-arm64}"; \
+    case "${ARCH}" in \
+      amd64|arm64) \
+        ;; \
+      *) \
+        echo "Unsupported TARGETARCH: ${ARCH}" >&2; \
+        exit 1; \
+        ;; \
+    esac; \
+    TEMPORAL_URL="https://temporal.download/cli/archive/${TEMPORAL_VERSION}?platform=linux&arch=${ARCH}"; \
+    TEMPORAL_TMPDIR="$(mktemp -d)"; \
+    curl -fsSL "${TEMPORAL_URL}" | tar -xz -C "${TEMPORAL_TMPDIR}" -f -; \
+    install -m 0755 "${TEMPORAL_TMPDIR}/temporal" /usr/local/bin/temporal; \
+    rm -rf "${TEMPORAL_TMPDIR}"
+
+RUN bash -lc 'source /root/.nvm/nvm.sh && npm install -g @openai/codex@latest node-gyp && ln -sf "$(command -v codex)" /usr/local/bin/codex && ln -sf "$(command -v node)" /usr/local/bin/node && ln -sf "$(command -v npm)" /usr/local/bin/npm && ln -sf "$(command -v node-gyp)" /usr/local/bin/node-gyp'
+
+RUN mkdir -p "$WORKSPACE" /root/.codex "$BUN_INSTALL_CACHE_DIR"
+
+# Copy Codex auth secret during build (requires BuildKit secret)
+RUN --mount=type=secret,id=codex_auth,target=/tmp/codex_auth.json \
+    cp /tmp/codex_auth.json /root/.codex/auth.json \
+    && printf '%s\n' "${CODEX_AUTH_CHECKSUM}" > /root/.codex/auth.checksum
+
+COPY services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml
+COPY skills/ /root/.codex/skills/
+
+RUN git config --global user.name "gregkonush" \
+    && git config --global user.email "12027037+gregkonush@users.noreply.github.com"
+
+RUN rm -rf "$WORKTREE" \
+    && git clone --depth 1 https://github.com/proompteng/lab "$WORKTREE" \
+    && cd "$WORKTREE" \
+    && bun install --frozen-lockfile --ignore-scripts
+
+COPY services/jangar/scripts/codex/codex-bootstrap.ts /usr/local/bin/codex-bootstrap
+COPY services/jangar/scripts/codex/agent-runner.ts /usr/local/bin/agent-runner
+COPY services/jangar/scripts/codex/codex-implement.ts /usr/local/bin/codex-implement
+COPY services/jangar/scripts/codex/codex-research.ts /usr/local/bin/codex-research
+COPY services/jangar/scripts/codex/codex-graf.ts /usr/local/bin/codex-graf
+COPY services/jangar/scripts/codex-nats-publish.ts /usr/local/bin/codex-nats-publish
+COPY services/jangar/scripts/codex-nats-soak.ts /usr/local/bin/codex-nats-soak
+COPY services/jangar/scripts/discord-channel.ts /usr/local/bin/discord-channel.ts
+COPY services/jangar/scripts/codex/lib /usr/local/bin/lib
+# Provide @proompteng/codex for the CLI helpers at runtime.
+COPY packages/codex /opt/proompteng/packages/codex
+COPY packages/discord /opt/proompteng/packages/discord
+COPY tsconfig.base.json /opt/proompteng/tsconfig.base.json
+RUN bash -lc 'cd /opt/proompteng/packages/codex && bun install --no-save && bun run build'
+RUN bash -lc 'cd /opt/proompteng/packages/discord && bun install --no-save && bun run build'
+RUN mkdir -p /usr/local/node_modules/@proompteng \
+    && cp -R /opt/proompteng/packages/codex /usr/local/node_modules/@proompteng/codex \
+    && cp -R /opt/proompteng/packages/discord /usr/local/node_modules/@proompteng/discord
+RUN chmod +x /usr/local/bin/codex-bootstrap /usr/local/bin/agent-runner /usr/local/bin/codex-implement /usr/local/bin/codex-research /usr/local/bin/codex-graf /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak /usr/local/bin/discord-channel.ts
+
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/codex-bootstrap"]
+CMD ["bash"]

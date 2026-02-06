@@ -1,7 +1,11 @@
 import { createHmac } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 
-import { postImplementationSourceWebhookHandler } from '~/server/implementation-source-webhooks'
+import {
+  createWebhookQueue,
+  postImplementationSourceWebhookHandler,
+  processWebhookItem,
+} from '~/server/implementation-source-webhooks'
 
 const buildSecret = (value: string) => ({
   apiVersion: 'v1',
@@ -31,8 +35,13 @@ const buildKube = (options: {
 }
 
 const findStatus = (calls: Array<[Record<string, unknown>]>, kind: string) => {
-  const match = calls.find(([resource]) => resource.kind === kind)
-  return (match?.[0]?.status ?? {}) as Record<string, unknown>
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const [resource] = calls[index] ?? []
+    if (resource?.kind === kind) {
+      return (resource.status ?? {}) as Record<string, unknown>
+    }
+  }
+  return {}
 }
 
 const findCondition = (status: Record<string, unknown>, type: string) => {
@@ -40,6 +49,15 @@ const findCondition = (status: Record<string, unknown>, type: string) => {
   return conditions.find((condition) => (condition as Record<string, unknown>).type === type) as
     | Record<string, unknown>
     | undefined
+}
+
+const buildQueue = () => {
+  const queue = createWebhookQueue(async (item) => processWebhookItem(item, queue), {
+    maxSize: 5,
+    retry: { baseDelayMs: 0, maxDelayMs: 0, maxAttempts: 2 },
+    dedupeTtlMs: 10_000,
+  })
+  return queue
 }
 
 describe('ImplementationSource webhook handler', () => {
@@ -61,6 +79,7 @@ describe('ImplementationSource webhook handler', () => {
     const apply = vi.fn(async (resource: Record<string, unknown>) => resource)
     const applyStatus = vi.fn(async (resource: Record<string, unknown>) => resource)
     const kube = buildKube({ source, secretValue, applySpy: apply, applyStatusSpy: applyStatus })
+    const queue = buildQueue()
 
     const payload = {
       action: 'opened',
@@ -83,15 +102,16 @@ describe('ImplementationSource webhook handler', () => {
         method: 'POST',
         headers: {
           'x-github-event': 'issues',
+          'x-github-delivery': 'delivery-2519',
           'x-hub-signature-256': `sha256=${signature}`,
         },
         body: rawBody,
       }),
-      { kubeClient: kube as never, now: () => '2026-01-19T00:00:00Z' },
+      { kubeClient: kube as never, now: () => '2026-01-19T00:00:00Z', queue, flushQueue: true },
     )
 
     expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toMatchObject({ ok: true, processed: 1 })
+    await expect(response.json()).resolves.toMatchObject({ ok: true, queued: 1, deduped: 0 })
 
     expect(apply).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -104,6 +124,12 @@ describe('ImplementationSource webhook handler', () => {
     const status = findStatus(applyStatus.mock.calls as Array<[Record<string, unknown>]>, 'ImplementationSource')
     const condition = findCondition(status, 'Ready')
     expect(condition?.reason).toBe('WebhookSynced')
+    expect(status.lastWebhook).toMatchObject({
+      idempotencyKey: 'github:delivery-2519',
+      provider: 'github',
+      externalId: 'proompteng/lab#2519',
+      status: 'synced',
+    })
   })
 
   it('ingests Linear issue webhook and updates status', async () => {
@@ -124,6 +150,7 @@ describe('ImplementationSource webhook handler', () => {
     const apply = vi.fn(async (resource: Record<string, unknown>) => resource)
     const applyStatus = vi.fn(async (resource: Record<string, unknown>) => resource)
     const kube = buildKube({ source, secretValue, applySpy: apply, applyStatusSpy: applyStatus })
+    const queue = buildQueue()
 
     const now = '2026-01-19T00:00:00Z'
     const timestamp = Date.parse(now)
@@ -153,11 +180,11 @@ describe('ImplementationSource webhook handler', () => {
         },
         body: rawBody,
       }),
-      { kubeClient: kube as never, now: () => now },
+      { kubeClient: kube as never, now: () => now, queue, flushQueue: true },
     )
 
     expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toMatchObject({ ok: true, processed: 1 })
+    await expect(response.json()).resolves.toMatchObject({ ok: true, queued: 1, deduped: 0 })
 
     expect(apply).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -170,5 +197,71 @@ describe('ImplementationSource webhook handler', () => {
     const status = findStatus(applyStatus.mock.calls as Array<[Record<string, unknown>]>, 'ImplementationSource')
     const condition = findCondition(status, 'Ready')
     expect(condition?.reason).toBe('WebhookSynced')
+    expect(status.lastWebhook).toMatchObject({
+      provider: 'linear',
+      externalId: 'ENG-42',
+      status: 'synced',
+    })
+  })
+
+  it('retries on failures with backoff', async () => {
+    const source = {
+      apiVersion: 'agents.proompteng.ai/v1alpha1',
+      kind: 'ImplementationSource',
+      metadata: { name: 'github-issues', namespace: 'agents', generation: 1 },
+      spec: {
+        provider: 'github',
+        auth: { secretRef: { name: 'webhook-secret', key: 'token' } },
+        webhook: { enabled: true },
+        scope: { repository: 'proompteng/lab', labels: [] },
+      },
+      status: {},
+    }
+
+    const secretValue = 'retry-secret'
+    const apply = vi.fn(async (resource: Record<string, unknown>) => resource)
+    apply.mockRejectedValueOnce(new Error('boom'))
+    const applyStatus = vi.fn(async (resource: Record<string, unknown>) => resource)
+    const kube = buildKube({ source, secretValue, applySpy: apply, applyStatusSpy: applyStatus })
+    const queue = buildQueue()
+
+    const payload = {
+      action: 'opened',
+      issue: {
+        number: 9,
+        title: 'Retry webhook',
+        body: 'Details',
+        labels: [],
+        updated_at: '2026-01-20T00:00:00Z',
+        html_url: 'https://github.com/proompteng/lab/issues/9',
+      },
+      repository: { full_name: 'proompteng/lab' },
+    }
+
+    const rawBody = JSON.stringify(payload)
+    const signature = createHmac('sha256', secretValue).update(rawBody, 'utf8').digest('hex')
+    const response = await postImplementationSourceWebhookHandler(
+      'github',
+      new Request('http://localhost/api/agents/implementation-sources/webhooks/github', {
+        method: 'POST',
+        headers: {
+          'x-github-event': 'issues',
+          'x-github-delivery': 'delivery-9',
+          'x-hub-signature-256': `sha256=${signature}`,
+        },
+        body: rawBody,
+      }),
+      { kubeClient: kube as never, now: () => '2026-01-20T00:00:00Z', queue, flushQueue: true },
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({ ok: true, queued: 1, deduped: 0 })
+    expect(apply).toHaveBeenCalledTimes(2)
+    const status = findStatus(applyStatus.mock.calls as Array<[Record<string, unknown>]>, 'ImplementationSource')
+    expect(status.lastWebhook).toMatchObject({
+      idempotencyKey: 'github:delivery-9',
+      status: 'synced',
+      attempts: 2,
+    })
   })
 })

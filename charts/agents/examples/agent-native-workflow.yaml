@@ -6,7 +6,7 @@ spec:
   providerRef:
     name: codex
   config:
-    model: gpt-5
+    model: gpt-5.3-codex
   env:
     - name: CODEX_MODE
       value: autonomous
