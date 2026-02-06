@@ -27,6 +27,8 @@ type JangarMetrics = {
   githubMergeAttempts: Counter
   githubMergeFailures: Counter
   agentQueueDepth: Histogram
+  agentRateLimitRejections: Counter
+  agentConcurrency: Histogram
   agentRunOutcomes: Counter
   reconcileDurationMs: Histogram
 }
@@ -109,6 +111,18 @@ export const recordAgentQueueDepth = (depth: number, attributes?: MetricsAttribu
   if (!metricsState.enabled) return
   if (Number.isFinite(depth)) {
     recordHistogram(metricsState.metrics?.agentQueueDepth, depth, attributes)
+  }
+}
+
+export const recordAgentRateLimitRejection = (scope: string, attributes?: MetricsAttributes) => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.agentRateLimitRejections, 1, { scope, ...attributes })
+}
+
+export const recordAgentConcurrency = (count: number, attributes?: MetricsAttributes) => {
+  if (!metricsState.enabled) return
+  if (Number.isFinite(count)) {
+    recordHistogram(metricsState.metrics?.agentConcurrency, count, attributes)
   }
 }
 
@@ -335,6 +349,12 @@ const createMetricsState = (): MetricsState => {
       }),
       agentQueueDepth: meter.createHistogram('jangar_agents_queue_depth', {
         description: 'Observed queue depth for AgentRun admission control.',
+      }),
+      agentRateLimitRejections: meter.createCounter('jangar_agents_rate_limit_rejections_total', {
+        description: 'Count of AgentRun submissions rejected due to rate limits.',
+      }),
+      agentConcurrency: meter.createHistogram('jangar_agents_active_concurrency', {
+        description: 'Observed active AgentRun concurrency.',
       }),
       agentRunOutcomes: meter.createCounter('jangar_agent_run_outcomes_total', {
         description: 'Count of AgentRun terminal outcomes by phase.',

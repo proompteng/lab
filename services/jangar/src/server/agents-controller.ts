@@ -4,8 +4,14 @@ import { createHash, createPrivateKey, createSign } from 'node:crypto'
 import { createTemporalClient, loadTemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
 
 import { startResourceWatch } from '~/server/kube-watch'
-import { recordAgentRunOutcome, recordReconcileDurationMs } from '~/server/metrics'
 import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
+import {
+  recordAgentConcurrency,
+  recordAgentQueueDepth,
+  recordAgentRateLimitRejection,
+  recordAgentRunOutcome,
+  recordReconcileDurationMs,
+} from '~/server/metrics'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { shouldApplyStatus } from '~/server/status-utils'
@@ -15,6 +21,17 @@ const DEFAULT_CONCURRENCY = {
   perNamespace: 10,
   perAgent: 5,
   cluster: 100,
+}
+const DEFAULT_QUEUE_LIMITS = {
+  perNamespace: 200,
+  perRepo: 50,
+  cluster: 1000,
+}
+const DEFAULT_RATE_LIMITS = {
+  windowSeconds: 60,
+  perNamespace: 120,
+  perRepo: 30,
+  cluster: 600,
 }
 const DEFAULT_REPO_CONCURRENCY = {
   enabled: false,
@@ -36,6 +53,7 @@ const MIN_RUNNER_JOB_TTL_SECONDS = 30
 const MAX_RUNNER_JOB_TTL_SECONDS = 7 * 24 * 60 * 60
 const DEFAULT_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 300
 const MIN_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 30
+const QUEUED_PHASES = new Set(['pending', 'queued', 'progressing', 'inprogress'])
 
 const BASE_REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -73,6 +91,8 @@ type ControllerHealthState = {
   crdCheckState: CrdCheckState | null
 }
 
+type RateBucket = { count: number; resetAt: number }
+
 type RepoConcurrencyConfig = {
   enabled: boolean
   defaultLimit: number
@@ -89,6 +109,12 @@ const controllerState = (() => {
   globalState.__jangarAgentsControllerState = initial
   return initial
 })()
+
+const controllerRateState = {
+  cluster: { count: 0, resetAt: 0 } as RateBucket,
+  perNamespace: new Map<string, RateBucket>(),
+  perRepo: new Map<string, RateBucket>(),
+}
 
 let _crdCheckState: CrdCheckState | null = controllerState.crdCheckState
 
@@ -266,6 +292,13 @@ const resolveNamespaces = async () => {
   return resolved
 }
 
+const parseNumberEnv = (value: string | undefined, fallback: number, min = 0) => {
+  if (!value) return fallback
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isFinite(parsed) || parsed < min) return fallback
+  return parsed
+}
+
 const normalizeRepositoryKey = (value: string) => value.trim().toLowerCase()
 
 const parseRepoConcurrencyOverrides = () => {
@@ -292,14 +325,31 @@ const parseRepoConcurrency = (): RepoConcurrencyConfig => {
 }
 
 const parseConcurrency = () => ({
-  perNamespace:
-    Number.parseInt(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE ?? '', 10) ||
+  perNamespace: parseNumberEnv(
+    process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE,
     DEFAULT_CONCURRENCY.perNamespace,
-  perAgent:
-    Number.parseInt(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_AGENT ?? '', 10) || DEFAULT_CONCURRENCY.perAgent,
-  cluster:
-    Number.parseInt(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER ?? '', 10) || DEFAULT_CONCURRENCY.cluster,
+    1,
+  ),
+  perAgent: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_AGENT, DEFAULT_CONCURRENCY.perAgent, 1),
+  cluster: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER, DEFAULT_CONCURRENCY.cluster, 1),
   repoConcurrency: parseRepoConcurrency(),
+})
+
+const parseQueueLimits = () => ({
+  perNamespace: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE, DEFAULT_QUEUE_LIMITS.perNamespace),
+  perRepo: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_QUEUE_REPO, DEFAULT_QUEUE_LIMITS.perRepo),
+  cluster: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_QUEUE_CLUSTER, DEFAULT_QUEUE_LIMITS.cluster),
+})
+
+const parseRateLimits = () => ({
+  windowSeconds: parseNumberEnv(
+    process.env.JANGAR_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS,
+    DEFAULT_RATE_LIMITS.windowSeconds,
+    1,
+  ),
+  perNamespace: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE, DEFAULT_RATE_LIMITS.perNamespace),
+  perRepo: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_RATE_REPO, DEFAULT_RATE_LIMITS.perRepo),
+  cluster: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER, DEFAULT_RATE_LIMITS.cluster),
 })
 
 const runKubectl = (args: string[]) =>
@@ -1331,6 +1381,35 @@ const resolveVcsPrRateLimits = () => {
   return record
 }
 
+const getRateBucket = (map: Map<string, RateBucket>, key: string) => {
+  const existing = map.get(key)
+  if (existing) return existing
+  const created = { count: 0, resetAt: 0 }
+  map.set(key, created)
+  return created
+}
+
+const checkRateLimit = (bucket: RateBucket, limit: number, windowMs: number, now: number) => {
+  if (limit <= 0) return { ok: true as const }
+  if (now >= bucket.resetAt) {
+    bucket.count = 0
+    bucket.resetAt = now + windowMs
+  }
+  if (bucket.count >= limit) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))
+    return { ok: false as const, retryAfterSeconds }
+  }
+  bucket.count += 1
+  return { ok: true as const }
+}
+
+const resetControllerRateState = () => {
+  controllerRateState.cluster.count = 0
+  controllerRateState.cluster.resetAt = 0
+  controllerRateState.perNamespace.clear()
+  controllerRateState.perRepo.clear()
+}
+
 const validateParameters = (params: Record<string, unknown>) => {
   const entries = Object.entries(params)
   if (entries.length > PARAMETERS_MAX_ENTRIES) {
@@ -2052,10 +2131,103 @@ const isActiveRun = (run: Record<string, unknown>) => {
   return phase !== 'Succeeded' && phase !== 'Failed' && phase !== 'Cancelled'
 }
 
+const isQueuedRun = (run: Record<string, unknown>) => {
+  const phase = asString(readNested(run, ['status', 'phase'])) ?? 'Pending'
+  return QUEUED_PHASES.has(phase.trim().toLowerCase())
+}
 const resolveRunHeadBranch = (run: Record<string, unknown>) =>
   asString(readNested(run, ['status', 'vcs', 'headBranch'])) ??
   asString(readNested(run, ['status', 'vcs', 'branch'])) ??
   resolveRunParam(run, ['head', 'headBranch', 'head_ref', 'headRef', 'branch'])
+
+type RateLimitDecision =
+  | { ok: true }
+  | { ok: false; scope: 'cluster' | 'namespace' | 'repo'; retryAfterSeconds: number; message: string }
+
+const checkControllerRateLimits = (namespace: string, repository: string | null) => {
+  const limits = parseRateLimits()
+  const windowMs = limits.windowSeconds * 1000
+  const now = Date.now()
+
+  const clusterResult = checkRateLimit(controllerRateState.cluster, limits.cluster, windowMs, now)
+  if (!clusterResult.ok) {
+    return {
+      ok: false,
+      scope: 'cluster',
+      retryAfterSeconds: clusterResult.retryAfterSeconds,
+      message: 'Cluster rate limit reached',
+    } as RateLimitDecision
+  }
+
+  const namespaceBucket = getRateBucket(controllerRateState.perNamespace, namespace)
+  const namespaceResult = checkRateLimit(namespaceBucket, limits.perNamespace, windowMs, now)
+  if (!namespaceResult.ok) {
+    return {
+      ok: false,
+      scope: 'namespace',
+      retryAfterSeconds: namespaceResult.retryAfterSeconds,
+      message: `Namespace ${namespace} rate limit reached`,
+    } as RateLimitDecision
+  }
+
+  if (repository) {
+    const repoKey = normalizeRepository(repository)
+    const repoBucket = getRateBucket(controllerRateState.perRepo, repoKey)
+    const repoResult = checkRateLimit(repoBucket, limits.perRepo, windowMs, now)
+    if (!repoResult.ok) {
+      return {
+        ok: false,
+        scope: 'repo',
+        retryAfterSeconds: repoResult.retryAfterSeconds,
+        message: `Repository ${repository} rate limit reached`,
+      } as RateLimitDecision
+    }
+  }
+
+  return { ok: true } as RateLimitDecision
+}
+
+const buildQueueCounts = (
+  namespace: string,
+  runName: string,
+  normalizedRepo: string,
+  namespaceRuns: Record<string, unknown>[],
+) => {
+  const state = _controllerState
+  let queuedNamespace = 0
+  let queuedCluster = 0
+  let queuedRepo = 0
+
+  const visitRun = (run: Record<string, unknown>, runNamespace: string) => {
+    const itemName = asString(readNested(run, ['metadata', 'name'])) ?? ''
+    if (!itemName || itemName === runName) return
+    if (!isQueuedRun(run)) return
+    queuedCluster += 1
+    if (runNamespace === namespace) {
+      queuedNamespace += 1
+    }
+    if (normalizedRepo) {
+      const runRepo = resolveRunRepository(run)
+      if (runRepo && normalizeRepository(runRepo) === normalizedRepo) {
+        queuedRepo += 1
+      }
+    }
+  }
+
+  if (state) {
+    for (const [runNamespace, nsState] of state.namespaces.entries()) {
+      for (const run of nsState.runs.values()) {
+        visitRun(run, runNamespace)
+      }
+    }
+  } else {
+    for (const run of namespaceRuns) {
+      visitRun(run, namespace)
+    }
+  }
+
+  return { queuedNamespace, queuedCluster, queuedRepo }
+}
 
 const hasBranchConflict = (
   runs: Record<string, unknown>[],
@@ -4436,6 +4608,69 @@ const reconcileAgentRun = async (
   }
 
   if (shouldSubmit) {
+    const queueLimits = parseQueueLimits()
+    const repository = resolveRunRepository(agentRun)
+    const normalizedRepo = repository ? normalizeRepository(repository) : ''
+    const queueCounts = buildQueueCounts(namespace, name, normalizedRepo, existingRuns)
+
+    recordAgentQueueDepth(queueCounts.queuedNamespace, { scope: 'namespace', namespace })
+    recordAgentQueueDepth(queueCounts.queuedCluster, { scope: 'cluster' })
+    if (normalizedRepo) {
+      recordAgentQueueDepth(queueCounts.queuedRepo, { scope: 'repo', repository: normalizedRepo, namespace })
+    }
+
+    if (queueLimits.perNamespace > 0 && queueCounts.queuedNamespace >= queueLimits.perNamespace) {
+      const updated = upsertCondition(conditions, {
+        type: 'Blocked',
+        status: 'True',
+        reason: 'QueueLimit',
+        message: `Namespace ${namespace} reached queue limit`,
+      })
+      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Pending' })
+      return
+    }
+
+    if (queueLimits.cluster > 0 && queueCounts.queuedCluster >= queueLimits.cluster) {
+      const updated = upsertCondition(conditions, {
+        type: 'Blocked',
+        status: 'True',
+        reason: 'QueueLimit',
+        message: 'Cluster queue limit reached',
+      })
+      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Pending' })
+      return
+    }
+
+    if (normalizedRepo && queueLimits.perRepo > 0 && queueCounts.queuedRepo >= queueLimits.perRepo) {
+      const updated = upsertCondition(conditions, {
+        type: 'Blocked',
+        status: 'True',
+        reason: 'QueueLimit',
+        message: `Repository ${repository} reached queue limit`,
+      })
+      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Pending' })
+      return
+    }
+
+    const rateDecision = checkControllerRateLimits(namespace, repository || null)
+    if (!rateDecision.ok) {
+      const rateAttributes: Record<string, string> = { namespace }
+      if (normalizedRepo) {
+        rateAttributes.repository = normalizedRepo
+      }
+      recordAgentRateLimitRejection(rateDecision.scope, rateAttributes)
+      const updated = upsertCondition(conditions, {
+        type: 'Blocked',
+        status: 'True',
+        reason: 'RateLimit',
+        message: `${rateDecision.message} (retry after ${rateDecision.retryAfterSeconds}s)`,
+      })
+      await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Pending' })
+      return
+    }
+  }
+
+  if (shouldSubmit) {
     if (!runtimeType) {
       const updated = upsertCondition(conditions, {
         type: 'InvalidSpec',
@@ -4978,6 +5213,8 @@ const reconcileNamespaceSnapshot = async (
     perAgent: counts.perAgent,
     perRepository: counts.perRepository,
   }
+  recordAgentConcurrency(counts.total, { scope: 'namespace', namespace })
+  recordAgentConcurrency(counts.cluster, { scope: 'cluster' })
 
   for (const run of runs) {
     await reconcileAgentRunWithMetrics(kube, run, namespace, memories, runs, concurrency, inFlight, counts.cluster)
@@ -5252,6 +5489,7 @@ export const stopAgentsController = () => {
 export const __test = {
   checkCrds,
   clearGithubAppTokenCache,
+  resetControllerRateState,
   fetchGithubAppToken,
   reconcileAgentRun: reconcileAgentRunWithMetrics,
   reconcileVersionControlProvider,
