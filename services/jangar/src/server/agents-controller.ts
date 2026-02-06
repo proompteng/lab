@@ -2310,11 +2310,7 @@ const validateImplementationContract = (
   }
 }
 
-const buildContractStatus = (contractCheck: {
-  ok: boolean
-  requiredKeys: string[]
-  missing?: string[]
-}) => {
+const buildContractStatus = (contractCheck: { ok: boolean; requiredKeys: string[]; missing?: string[] }) => {
   if (contractCheck.requiredKeys.length === 0) return undefined
   const status: Record<string, unknown> = { requiredKeys: contractCheck.requiredKeys }
   if (!contractCheck.ok && contractCheck.missing && contractCheck.missing.length > 0) {
@@ -3358,10 +3354,6 @@ const submitJobRun = async (
     providerName,
     vcsContext,
   )
-  const logRetentionSeconds = resolveRunnerLogRetentionSeconds(runtimeConfig)
-  const agentRunnerSpec = providerName
-    ? buildAgentRunnerSpec(runSpec, parameters, providerName, logRetentionSeconds)
-    : null
   const runSecrets = parseStringList(readNested(agentRun, ['spec', 'secrets']))
   const envFrom = runSecrets.map((name) => ({ secretRef: { name } }))
   const authSecret = resolveAuthSecretConfig()
@@ -3374,6 +3366,10 @@ const submitJobRun = async (
     .filter((file) => file.path && file.content)
 
   const runtimeConfig = options.runtimeConfig ?? asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
+  const logRetentionSeconds = resolveRunnerLogRetentionSeconds(runtimeConfig)
+  const agentRunnerSpec = providerName
+    ? buildAgentRunnerSpec(runSpec, parameters, providerName, logRetentionSeconds)
+    : null
   const serviceAccount = resolveRunnerServiceAccount(runtimeConfig)
   const nodeSelector = asRecord(runtimeConfig.nodeSelector) ?? parseEnvRecord('JANGAR_AGENT_RUNNER_NODE_SELECTOR')
   const tolerations =
@@ -3918,15 +3914,15 @@ const reconcileWorkflowRun = async (
     return
   }
 
-	  const imageCandidates = workflowSteps
-	    .map((step) => {
-	      const workload = step.workload ?? baseWorkload
-	      const image = workload ? resolveJobImage(workload) : null
-	      if (!image) return null
-	      return { image, context: `workflow step ${step.name}` }
-	    })
-	    .filter((candidate): candidate is ImagePolicyCandidate => candidate !== null)
-	  const imagePolicy = validateImagePolicy(imageCandidates)
+  const imageCandidates = workflowSteps
+    .map((step) => {
+      const workload = step.workload ?? baseWorkload
+      const image = workload ? resolveJobImage(workload) : null
+      if (!image) return null
+      return { image, context: `workflow step ${step.name}` }
+    })
+    .filter((candidate): candidate is ImagePolicyCandidate => candidate !== null)
+  const imagePolicy = validateImagePolicy(imageCandidates)
   if (!imagePolicy.ok) {
     const updated = upsertCondition(conditions, {
       type: 'InvalidSpec',
@@ -4893,29 +4889,29 @@ const reconcileAgentRun = async (
         status: 'True',
         reason: 'JobFailed',
       })
-	      await setStatus(kube, agentRun, {
-	        observedGeneration,
-	        phase: 'Failed',
-	        finishedAt: nowIso(),
-	        runtimeRef,
-	        conditions: updated,
-	        vcs: asRecord(status.vcs) ?? undefined,
-	      })
-	      await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
-	    } else if (!jobObservedAt) {
-	      await setStatus(kube, agentRun, {
-	        observedGeneration,
-	        phase: 'Running',
-	        startedAt: asString(status.startedAt) ?? nowIso(),
+      await setStatus(kube, agentRun, {
+        observedGeneration,
+        phase: 'Failed',
+        finishedAt: nowIso(),
+        runtimeRef,
+        conditions: updated,
+        vcs: asRecord(status.vcs) ?? undefined,
+      })
+      await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
+    } else if (!jobObservedAt) {
+      await setStatus(kube, agentRun, {
+        observedGeneration,
+        phase: 'Running',
+        startedAt: asString(status.startedAt) ?? nowIso(),
         runtimeRef: {
           ...runtimeRef,
           jobObservedAt: nowIso(),
-	        },
-	        conditions,
-	        vcs: asRecord(status.vcs) ?? undefined,
-	      })
-	    }
-	  }
+        },
+        conditions,
+        vcs: asRecord(status.vcs) ?? undefined,
+      })
+    }
+  }
 
   if (runtimeRef.type === 'temporal') {
     await reconcileTemporalRun(kube, agentRun, runtimeRef)

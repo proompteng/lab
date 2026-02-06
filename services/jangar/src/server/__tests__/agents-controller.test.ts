@@ -174,16 +174,7 @@ describe('agents controller reconcileAgentRun', () => {
 
     const agentRun = buildAgentRun()
 
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      [],
-      defaultConcurrency,
-      buildInFlight(),
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
@@ -219,16 +210,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      [],
-      defaultConcurrency,
-      buildInFlight(),
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
@@ -264,16 +246,7 @@ describe('agents controller reconcileAgentRun', () => {
 
     const agentRun = buildAgentRun()
 
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      [],
-      defaultConcurrency,
-      buildInFlight(),
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
@@ -313,15 +286,7 @@ describe('agents controller reconcileAgentRun', () => {
 
     const agentRun = buildAgentRun()
 
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
@@ -379,16 +344,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      [],
-      defaultConcurrency,
-      buildInFlight(),
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
@@ -413,16 +369,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      [],
-      defaultConcurrency,
-      buildInFlight(),
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
@@ -442,16 +389,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      [],
-      defaultConcurrency,
-      buildInFlight(),
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
@@ -468,16 +406,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      [],
-      defaultConcurrency,
-      buildInFlight(),
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const status = getLastStatus(kube)
     const condition = findCondition(status, 'InvalidSpec')
@@ -495,16 +424,7 @@ describe('agents controller reconcileAgentRun', () => {
         status: { phase: 'Succeeded', finishedAt },
       })
 
-      await __test.reconcileAgentRun(
-        kube as never,
-        agentRun,
-        'agents',
-        [],
-        [],
-        defaultConcurrency,
-        buildInFlight(),
-        0,
-      )
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
       expect(kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents')
     } finally {
@@ -534,16 +454,7 @@ describe('agents controller reconcileAgentRun', () => {
         status: { phase: 'Failed', finishedAt },
       })
 
-      await __test.reconcileAgentRun(
-        kube as never,
-        agentRun,
-        'agents',
-        [],
-        [],
-        defaultConcurrency,
-        buildInFlight(),
-        0,
-      )
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
       expect(kube.delete).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents')
     } finally {
@@ -573,16 +484,7 @@ describe('agents controller reconcileAgentRun', () => {
         status: { phase: 'Succeeded', finishedAt },
       })
 
-      await __test.reconcileAgentRun(
-        kube as never,
-        agentRun,
-        'agents',
-        [],
-        [],
-        defaultConcurrency,
-        buildInFlight(),
-        0,
-      )
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
       expect(kube.delete).not.toHaveBeenCalled()
     } finally {
@@ -604,16 +506,7 @@ describe('agents controller reconcileAgentRun', () => {
         status: { phase: 'Succeeded', finishedAt: new Date().toISOString() },
       })
 
-      await __test.reconcileAgentRun(
-        kube as never,
-        agentRun,
-        'agents',
-        [],
-        [],
-        defaultConcurrency,
-        buildInFlight(),
-        0,
-      )
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
       expect(kube.delete).not.toHaveBeenCalled()
     } finally {
@@ -655,16 +548,7 @@ describe('agents controller reconcileAgentRun', () => {
 
     const agentRun = buildAgentRun()
 
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      [],
-      defaultConcurrency,
-      buildInFlight(),
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
     const job = appliedResources.find((resource) => resource.kind === 'Job')
@@ -716,16 +600,7 @@ describe('agents controller reconcileAgentRun', () => {
 
       const agentRun = buildAgentRun()
 
-      await __test.reconcileAgentRun(
-        kube as never,
-        agentRun,
-        'agents',
-        [],
-        [],
-        defaultConcurrency,
-        buildInFlight(),
-        0,
-      )
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
       const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
       const job = appliedResources.find((resource) => resource.kind === 'Job')
@@ -787,6 +662,212 @@ describe('agents controller reconcileAgentRun', () => {
     }
   })
 
+  it('applies default scheduling config and allows per-run overrides', async () => {
+    const previousEnv = {
+      nodeSelector: process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR,
+      affinity: process.env.JANGAR_AGENT_RUNNER_AFFINITY,
+      topologySpread: process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS,
+      priorityClass: process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS,
+      schedulerName: process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME,
+    }
+    const defaultAffinity = {
+      nodeAffinity: {
+        requiredDuringSchedulingIgnoredDuringExecution: {
+          nodeSelectorTerms: [
+            {
+              matchExpressions: [{ key: 'tier', operator: 'In', values: ['default'] }],
+            },
+          ],
+        },
+      },
+    }
+    const defaultTopology = [
+      {
+        maxSkew: 1,
+        topologyKey: 'topology.kubernetes.io/zone',
+        whenUnsatisfiable: 'ScheduleAnyway',
+      },
+    ]
+    process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR = JSON.stringify({ disktype: 'ssd' })
+    process.env.JANGAR_AGENT_RUNNER_AFFINITY = JSON.stringify(defaultAffinity)
+    process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = JSON.stringify(defaultTopology)
+    process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS = 'default-priority'
+    process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME = 'default-scheduler'
+
+    try {
+      let lastJob: Record<string, unknown> | null = null
+      const apply = vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        const applied = { ...resource, metadata: { ...metadata, uid } }
+        if (resource.kind === 'Job') {
+          lastJob = applied
+        }
+        return applied
+      })
+      const kube = buildKube({
+        apply,
+        get: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          return null
+        }),
+      })
+
+      const agentRun = buildAgentRun()
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+      const defaultPodSpec = ((lastJob?.spec as Record<string, unknown>)?.template as Record<string, unknown>)
+        ?.spec as Record<string, unknown>
+      expect(defaultPodSpec.nodeSelector).toEqual({ disktype: 'ssd' })
+      expect(defaultPodSpec.affinity).toEqual(defaultAffinity)
+      expect(defaultPodSpec.topologySpreadConstraints).toEqual(defaultTopology)
+      expect(defaultPodSpec.priorityClassName).toBe('default-priority')
+      expect(defaultPodSpec.schedulerName).toBe('default-scheduler')
+
+      const overrideAffinity = {
+        nodeAffinity: {
+          preferredDuringSchedulingIgnoredDuringExecution: [
+            {
+              weight: 1,
+              preference: { matchExpressions: [{ key: 'tier', operator: 'In', values: ['override'] }] },
+            },
+          ],
+        },
+      }
+      const overrideRun = buildAgentRun()
+      overrideRun.metadata = { ...(overrideRun.metadata as Record<string, unknown>), name: 'run-2' }
+      overrideRun.spec = {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: {
+          type: 'job',
+          config: {
+            nodeSelector: { disktype: 'gpu' },
+            affinity: overrideAffinity,
+            topologySpreadConstraints: [
+              {
+                maxSkew: 1,
+                topologyKey: 'kubernetes.io/hostname',
+                whenUnsatisfiable: 'DoNotSchedule',
+              },
+            ],
+            priorityClassName: 'run-priority',
+            schedulerName: 'run-scheduler',
+          },
+        },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+      }
+
+      lastJob = null
+      await __test.reconcileAgentRun(
+        kube as never,
+        overrideRun,
+        'agents',
+        [],
+        [],
+        defaultConcurrency,
+        buildInFlight(),
+        0,
+      )
+
+      const overridePodSpec = ((lastJob?.spec as Record<string, unknown>)?.template as Record<string, unknown>)
+        ?.spec as Record<string, unknown>
+      expect(overridePodSpec.nodeSelector).toEqual({ disktype: 'gpu' })
+      expect(overridePodSpec.affinity).toEqual(overrideAffinity)
+      expect(overridePodSpec.topologySpreadConstraints).toEqual([
+        {
+          maxSkew: 1,
+          topologyKey: 'kubernetes.io/hostname',
+          whenUnsatisfiable: 'DoNotSchedule',
+        },
+      ])
+      expect(overridePodSpec.priorityClassName).toBe('run-priority')
+      expect(overridePodSpec.schedulerName).toBe('run-scheduler')
+    } finally {
+      if (previousEnv.nodeSelector === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_NODE_SELECTOR = previousEnv.nodeSelector
+      }
+      if (previousEnv.affinity === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_AFFINITY
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_AFFINITY = previousEnv.affinity
+      }
+      if (previousEnv.topologySpread === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = previousEnv.topologySpread
+      }
+      if (previousEnv.priorityClass === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS = previousEnv.priorityClass
+      }
+      if (previousEnv.schedulerName === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME = previousEnv.schedulerName
+      }
+    }
+  })
+
+  it('ignores invalid topology spread env JSON with warnings', async () => {
+    const previousEnv = process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS
+    process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = '{invalid'
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      let lastJob: Record<string, unknown> | null = null
+      const apply = vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        const applied = { ...resource, metadata: { ...metadata, uid } }
+        if (resource.kind === 'Job') {
+          lastJob = applied
+        }
+        return applied
+      })
+      const kube = buildKube({
+        apply,
+        get: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          return null
+        }),
+      })
+
+      const agentRun = buildAgentRun()
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+      const defaultPodSpec = ((lastJob?.spec as Record<string, unknown>)?.template as Record<string, unknown>)
+        ?.spec as Record<string, unknown>
+      expect(defaultPodSpec.topologySpreadConstraints).toBeUndefined()
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS'))
+    } finally {
+      warnSpy.mockRestore()
+      if (previousEnv === undefined) {
+        delete process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS
+      } else {
+        process.env.JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS = previousEnv
+      }
+    }
+  })
   it('marks AgentRun failed when controller blocks secrets', async () => {
     const previousBlocked = process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS
     process.env.JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS = 'blocked-secret'
@@ -816,16 +897,7 @@ describe('agents controller reconcileAgentRun', () => {
         },
       })
 
-      await __test.reconcileAgentRun(
-        kube as never,
-        agentRun,
-        'agents',
-        [],
-        [],
-        defaultConcurrency,
-        buildInFlight(),
-        0,
-      )
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
       const status = getLastStatus(kube)
       const condition = findCondition(status, 'InvalidSpec')
@@ -867,16 +939,7 @@ describe('agents controller reconcileAgentRun', () => {
 
       const agentRun = buildAgentRun()
 
-      await __test.reconcileAgentRun(
-        kube as never,
-        agentRun,
-        'agents',
-        [],
-        [],
-        defaultConcurrency,
-        buildInFlight(),
-        0,
-      )
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
       const status = getLastStatus(kube)
       const condition = findCondition(status, 'InvalidSpec')
@@ -938,16 +1001,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      [],
-      defaultConcurrency,
-      buildInFlight(),
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const firstStatus = getLastStatus(kube)
     expect(firstStatus.phase).toBe('Running')
@@ -1058,16 +1112,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const status = getLastStatus(kube)
     const workflow = status.workflow as Record<string, unknown>
@@ -1126,16 +1171,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      [],
-      { perNamespace: 10, perAgent: 5, cluster: 100 },
-      { total: 0, perAgent: new Map() },
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const status = getLastStatus(kube)
     const warning = findCondition(status, 'Warning')
@@ -1190,16 +1226,7 @@ describe('agents controller reconcileAgentRun', () => {
       },
     })
 
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      [],
-      defaultConcurrency,
-      buildInFlight(),
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     const firstStatus = getLastStatus(kube)
     const firstWorkflow = firstStatus.workflow as Record<string, unknown>
@@ -1340,16 +1367,7 @@ describe('agents controller reconcileAgentRun', () => {
     agentRun.spec = { ...(agentRun.spec as Record<string, unknown>), ttlSecondsAfterFinished: 30 }
     agentRun.status = { phase: 'Succeeded', finishedAt }
 
-    await __test.reconcileAgentRun(
-      kube as never,
-      agentRun,
-      'agents',
-      [],
-      [],
-      defaultConcurrency,
-      buildInFlight(),
-      0,
-    )
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
     expect(deleteMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents')
   })
@@ -1366,16 +1384,7 @@ describe('agents controller reconcileAgentRun', () => {
         status: { phase: 'Failed', finishedAt },
       })
 
-      await __test.reconcileAgentRun(
-        kube as never,
-        agentRun,
-        'agents',
-        [],
-        [],
-        defaultConcurrency,
-        buildInFlight(),
-        0,
-      )
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
       expect(deleteMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents')
     } finally {
