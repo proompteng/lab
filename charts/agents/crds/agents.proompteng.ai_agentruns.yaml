@@ -182,6 +182,25 @@ spec:
                 items:
                   type: string
                 type: array
+              systemPrompt:
+                maxLength: 16384
+                type: string
+              systemPromptRef:
+                properties:
+                  key:
+                    type: string
+                  kind:
+                    enum:
+                    - Secret
+                    - ConfigMap
+                    type: string
+                  name:
+                    type: string
+                required:
+                - key
+                - kind
+                - name
+                type: object
               ttlSecondsAfterFinished:
                 format: int32
                 minimum: 0
@@ -411,6 +430,9 @@ spec:
             x-kubernetes-validations:
             - message: spec.implementationSpecRef or spec.implementation is required
               rule: has(self.implementationSpecRef) || has(self.implementation)
+            - message: Only one of spec.systemPrompt or spec.systemPromptRef may be
+                set
+              rule: '!(has(self.systemPrompt) && has(self.systemPromptRef))'
           status:
             properties:
               artifacts:
@@ -510,6 +532,8 @@ spec:
                 x-kubernetes-preserve-unknown-fields: true
               startedAt:
                 format: date-time
+                type: string
+              systemPromptHash:
                 type: string
               updatedAt:
                 format: date-time

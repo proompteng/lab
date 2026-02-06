@@ -169,6 +169,26 @@ describe('codex-runner', () => {
     expect(capturedResume).toBe('last')
   })
 
+  it('forwards systemPrompt into the runner invocation', async () => {
+    let capturedSystemPrompt: string | undefined
+
+    runnerMocks.run.mockImplementation(async (options) => {
+      capturedSystemPrompt = options.systemPrompt as string | undefined
+      return { agentMessages: [], sessionId: 'session-sp', exitCode: 0, forcedTermination: false }
+    })
+
+    await runCodexSession({
+      stage: 'implementation',
+      prompt: 'Continue',
+      systemPrompt: 'You are a strict system prompt.',
+      outputPath: join(workspace, 'output.log'),
+      jsonOutputPath: join(workspace, 'events.jsonl'),
+      agentOutputPath: join(workspace, 'agent.log'),
+    })
+
+    expect(capturedSystemPrompt).toBe('You are a strict system prompt.')
+  })
+
   it('streams agent messages and tool calls to a Discord channel when configured', async () => {
     const channelSink: string[] = []
     const discordProcess = createDiscordProcess(channelSink)

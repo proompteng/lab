@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { spawn as spawnChild } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { copyFile, lstat, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,6 +20,7 @@ import { type CodexLogger, consoleLogger, createCodexLogger } from './lib/logger
 
 interface ImplementationEventPayload {
   prompt?: string
+  systemPrompt?: string | null
   repository?: string
   issueNumber?: number | string
   issueTitle?: string | null
@@ -53,6 +55,18 @@ const sanitizeNullableString = (value: string | null | undefined) => {
   }
   return value
 }
+
+const normalizeOptionalString = (value: string | null | undefined) => {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  if (value.trim().length === 0) {
+    return undefined
+  }
+  return value
+}
+
+const sha256Hex = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex')
 
 const safeParseJson = (value: string | null | undefined) => {
   if (!value) return null
@@ -1758,6 +1772,36 @@ export const runCodexImplementation = async (eventPath: string) => {
     },
   })
 
+  const systemPromptPath = normalizeOptionalString(sanitizeNullableString(process.env.CODEX_SYSTEM_PROMPT_PATH))
+  const payloadSystemPrompt = normalizeOptionalString(sanitizeNullableString(event.systemPrompt))
+  let systemPromptSource: 'path' | 'payload' | undefined
+  let systemPrompt: string | undefined
+  if (systemPromptPath && (await pathExists(systemPromptPath))) {
+    try {
+      const content = await readFile(systemPromptPath, 'utf8')
+      if (content.trim().length > 0) {
+        systemPromptSource = 'path'
+        systemPrompt = content
+      } else {
+        logger.warn('System prompt file was empty; ignoring', { systemPromptPath })
+      }
+    } catch (error) {
+      logger.warn('Failed to read system prompt file; ignoring', { systemPromptPath }, error)
+    }
+  }
+  if (!systemPrompt && payloadSystemPrompt) {
+    systemPromptSource = 'payload'
+    systemPrompt = payloadSystemPrompt
+  }
+  const systemPromptHash = systemPrompt ? sha256Hex(systemPrompt) : undefined
+  if (systemPrompt && systemPromptHash) {
+    logger.info('System prompt configured', {
+      source: systemPromptSource,
+      systemPromptLength: systemPrompt.length,
+      systemPromptHash,
+    })
+  }
+
   const natsSoakRequired =
     (process.env.CODEX_NATS_SOAK_REQUIRED ?? 'true').trim().toLowerCase() !== 'false' &&
     (process.env.CODEX_NATS_SOAK_REQUIRED ?? 'true').trim() !== '0'
@@ -1793,10 +1837,14 @@ export const runCodexImplementation = async (eventPath: string) => {
   await ensureEmptyFile(runtimeLogPath)
 
   if (process.env.CODEX_SKIP_RUN_STARTED !== '1') {
+    const attrs: Record<string, unknown> = { stage, iteration, iterationCycle }
+    if (systemPromptHash) {
+      attrs.systemPromptHash = systemPromptHash
+    }
     await publishNatsEvent(logger, {
       kind: 'run-started',
       content: `${stage} started`,
-      attrs: { stage, iteration, iterationCycle },
+      attrs,
     })
   }
 
@@ -1876,6 +1924,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       return await runCodexSession({
         stage: stage as Parameters<typeof runCodexSession>[0]['stage'],
         prompt: sessionPrompt,
+        systemPrompt,
         outputPath,
         jsonOutputPath,
         agentOutputPath,

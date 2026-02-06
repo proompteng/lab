@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import { describe, expect, it, vi } from 'vitest'
 
 const metricsMocks = vi.hoisted(() => ({
@@ -568,6 +570,348 @@ describe('agents controller reconcileAgentRun', () => {
     expect(jobLabels?.['agents.proompteng.ai/provider']).toBe('provider-1')
   })
 
+  it('includes inline systemPrompt in run payload and stores hash', async () => {
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      return { ...resource, metadata: { ...metadata, uid } }
+    })
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: {
+              providerRef: { name: 'provider-1' },
+              defaults: { systemPrompt: 'from-agent' },
+            },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'provider-1' },
+            spec: { binary: '/usr/local/bin/agent-runner' },
+          }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        systemPrompt: 'from-run',
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
+    const job = appliedResources.find((resource) => resource.kind === 'Job')
+    const specConfigMap = appliedResources.find(
+      (resource) => resource.kind === 'ConfigMap' && Boolean((resource.data as Record<string, unknown>)?.['run.json']),
+    )
+
+    expect(job).toBeTruthy()
+    expect(specConfigMap).toBeTruthy()
+    const runJson = JSON.parse(
+      String((specConfigMap?.data as Record<string, unknown>)?.['run.json'] ?? '{}'),
+    ) as Record<string, unknown>
+    expect(runJson.systemPrompt).toBe('from-run')
+
+    const status = getLastStatus(kube)
+    expect(status.systemPromptHash).toBe(createHash('sha256').update('from-run').digest('hex'))
+
+    const podSpec = (job?.spec as Record<string, unknown> | undefined)?.template as Record<string, unknown> | undefined
+    const podSpecSpec = (podSpec?.spec as Record<string, unknown> | undefined) ?? {}
+    const containers = (podSpecSpec.containers as Record<string, unknown>[] | undefined) ?? []
+    const container = containers[0] ?? {}
+    const env = (container.env as Record<string, unknown>[] | undefined) ?? []
+    expect(env.some((entry) => entry.name === 'CODEX_SYSTEM_PROMPT_PATH')).toBe(false)
+  })
+
+  it('mounts ConfigMap systemPromptRef and stores hash without inline prompt leakage', async () => {
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      return { ...resource, metadata: { ...metadata, uid } }
+    })
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'provider-1' },
+            spec: { binary: '/usr/local/bin/agent-runner' },
+          }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === 'configmap' && name === 'prompt-config') {
+          return { data: { prompt: 'prompt-from-configmap' } }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        systemPrompt: 'inline-ignored',
+        systemPromptRef: {
+          kind: 'ConfigMap',
+          name: 'prompt-config',
+          key: 'prompt',
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
+    const job = appliedResources.find((resource) => resource.kind === 'Job')
+    const specConfigMap = appliedResources.find(
+      (resource) => resource.kind === 'ConfigMap' && Boolean((resource.data as Record<string, unknown>)?.['run.json']),
+    )
+
+    expect(job).toBeTruthy()
+    expect(specConfigMap).toBeTruthy()
+    const runJson = JSON.parse(
+      String((specConfigMap?.data as Record<string, unknown>)?.['run.json'] ?? '{}'),
+    ) as Record<string, unknown>
+    expect(runJson.systemPrompt).toBeUndefined()
+
+    const status = getLastStatus(kube)
+    expect(status.systemPromptHash).toBe(createHash('sha256').update('prompt-from-configmap').digest('hex'))
+
+    const podSpec = (job?.spec as Record<string, unknown> | undefined)?.template as Record<string, unknown> | undefined
+    const podSpecSpec = (podSpec?.spec as Record<string, unknown> | undefined) ?? {}
+    const containers = (podSpecSpec.containers as Record<string, unknown>[] | undefined) ?? []
+    const container = containers[0] ?? {}
+    const env = (container.env as Record<string, unknown>[] | undefined) ?? []
+    const volumes = (podSpecSpec.volumes as Record<string, unknown>[] | undefined) ?? []
+    const volumeMounts = (container.volumeMounts as Record<string, unknown>[] | undefined) ?? []
+
+    const envVar = env.find((entry) => entry.name === 'CODEX_SYSTEM_PROMPT_PATH') as Record<string, unknown> | undefined
+    expect(envVar?.value).toBe('/workspace/.codex/system-prompt.txt')
+
+    const promptVolume = volumes.find((volume) => {
+      const configMap = volume.configMap as Record<string, unknown> | undefined
+      return configMap?.name === 'prompt-config'
+    }) as Record<string, unknown> | undefined
+    expect(promptVolume).toBeTruthy()
+    const configMap = (promptVolume?.configMap as Record<string, unknown> | undefined) ?? {}
+    const items = (configMap.items as Record<string, unknown>[] | undefined) ?? []
+    expect(items[0]?.key).toBe('prompt')
+    expect(items[0]?.path).toBe('system-prompt.txt')
+
+    const mount = volumeMounts.find((entry) => entry.mountPath === '/workspace/.codex') as
+      | Record<string, unknown>
+      | undefined
+    expect(mount?.readOnly).toBe(true)
+  })
+
+  it('mounts Secret systemPromptRef when allowlisted and included in spec.secrets', async () => {
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      return { ...resource, metadata: { ...metadata, uid } }
+    })
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: {
+              providerRef: { name: 'provider-1' },
+              security: { allowedSecrets: ['prompt-secret'] },
+            },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'provider-1' },
+            spec: { binary: '/usr/local/bin/agent-runner' },
+          }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === 'secret' && name === 'prompt-secret') {
+          return { data: { prompt: Buffer.from('prompt-from-secret', 'utf8').toString('base64') } }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        secrets: ['prompt-secret'],
+        systemPromptRef: {
+          kind: 'Secret',
+          name: 'prompt-secret',
+          key: 'prompt',
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
+    const job = appliedResources.find((resource) => resource.kind === 'Job')
+    const specConfigMap = appliedResources.find(
+      (resource) => resource.kind === 'ConfigMap' && Boolean((resource.data as Record<string, unknown>)?.['run.json']),
+    )
+
+    expect(job).toBeTruthy()
+    expect(specConfigMap).toBeTruthy()
+    const runJson = JSON.parse(
+      String((specConfigMap?.data as Record<string, unknown>)?.['run.json'] ?? '{}'),
+    ) as Record<string, unknown>
+    expect(runJson.systemPrompt).toBeUndefined()
+
+    const status = getLastStatus(kube)
+    expect(status.systemPromptHash).toBe(createHash('sha256').update('prompt-from-secret').digest('hex'))
+
+    const podSpec = (job?.spec as Record<string, unknown> | undefined)?.template as Record<string, unknown> | undefined
+    const podSpecSpec = (podSpec?.spec as Record<string, unknown> | undefined) ?? {}
+    const containers = (podSpecSpec.containers as Record<string, unknown>[] | undefined) ?? []
+    const container = containers[0] ?? {}
+    const env = (container.env as Record<string, unknown>[] | undefined) ?? []
+    const volumes = (podSpecSpec.volumes as Record<string, unknown>[] | undefined) ?? []
+
+    const envVar = env.find((entry) => entry.name === 'CODEX_SYSTEM_PROMPT_PATH') as Record<string, unknown> | undefined
+    expect(envVar?.value).toBe('/workspace/.codex/system-prompt.txt')
+
+    const promptVolume = volumes.find((volume) => {
+      const secret = volume.secret as Record<string, unknown> | undefined
+      return secret?.secretName === 'prompt-secret'
+    }) as Record<string, unknown> | undefined
+    expect(promptVolume).toBeTruthy()
+    const secret = (promptVolume?.secret as Record<string, unknown> | undefined) ?? {}
+    const items = (secret.items as Record<string, unknown>[] | undefined) ?? []
+    expect(items[0]?.key).toBe('prompt')
+    expect(items[0]?.path).toBe('system-prompt.txt')
+  })
+
+  it('rejects Secret systemPromptRef when not included in spec.secrets', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: {
+              providerRef: { name: 'provider-1' },
+              security: { allowedSecrets: ['prompt-secret'] },
+            },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'provider-1' },
+            spec: { binary: '/usr/local/bin/agent-runner' },
+          }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        systemPromptRef: {
+          kind: 'Secret',
+          name: 'prompt-secret',
+          key: 'prompt',
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    expect(status.phase).toBe('Failed')
+    const condition = findCondition(status, 'InvalidSpec')
+    expect(condition?.reason).toBe('SecretNotAllowed')
+    expect(condition?.message).toContain('system prompt secret prompt-secret is not included in spec.secrets')
+    expect(kube.apply).not.toHaveBeenCalled()
+  })
+
+  it('rejects Secret systemPromptRef when secret is not allowlisted by the Agent', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: {
+              providerRef: { name: 'provider-1' },
+              security: { allowedSecrets: ['some-other-secret'] },
+            },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return {
+            metadata: { name: 'provider-1' },
+            spec: { binary: '/usr/local/bin/agent-runner' },
+          }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        secrets: ['prompt-secret'],
+        systemPromptRef: {
+          kind: 'Secret',
+          name: 'prompt-secret',
+          key: 'prompt',
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    expect(status.phase).toBe('Failed')
+    const condition = findCondition(status, 'InvalidSpec')
+    expect(condition?.reason).toBe('SecretNotAllowed')
+    expect(condition?.message).toContain('spec.secrets contains disallowed entries: prompt-secret')
+    expect(kube.apply).not.toHaveBeenCalled()
+  })
+
   it('injects auth secret volume and CODEX_AUTH env var', async () => {
     const previousName = process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME
     const previousKey = process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_KEY
@@ -954,6 +1298,80 @@ describe('agents controller reconcileAgentRun', () => {
         process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME = previousName
       }
     }
+  })
+
+  it('mounts ConfigMap systemPromptRef for workflow step jobs and stores hash', async () => {
+    let lastJob: Record<string, unknown> | null = null
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      const applied = { ...resource, metadata: { ...metadata, uid } }
+      if (resource.kind === 'Job') {
+        lastJob = applied
+      }
+      return applied
+    })
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === 'configmap' && name === 'prompt-config') {
+          return { data: { prompt: 'workflow-prompt' } }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'workflow', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workflow: { steps: [{ name: 'step-one' }] },
+        systemPromptRef: { kind: 'ConfigMap', name: 'prompt-config', key: 'prompt' },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    expect(lastJob).toBeTruthy()
+
+    const status = getLastStatus(kube)
+    expect(status.phase).toBe('Running')
+    expect(status.systemPromptHash).toBe(createHash('sha256').update('workflow-prompt').digest('hex'))
+
+    const podSpec = (lastJob?.spec as Record<string, unknown> | undefined)?.template as
+      | Record<string, unknown>
+      | undefined
+    const podSpecSpec = (podSpec?.spec as Record<string, unknown> | undefined) ?? {}
+    const containers = (podSpecSpec.containers as Record<string, unknown>[] | undefined) ?? []
+    const container = containers[0] ?? {}
+    const env = (container.env as Record<string, unknown>[] | undefined) ?? []
+    const volumes = (podSpecSpec.volumes as Record<string, unknown>[] | undefined) ?? []
+    const volumeMounts = (container.volumeMounts as Record<string, unknown>[] | undefined) ?? []
+
+    const envVar = env.find((entry) => entry.name === 'CODEX_SYSTEM_PROMPT_PATH') as Record<string, unknown> | undefined
+    expect(envVar?.value).toBe('/workspace/.codex/system-prompt.txt')
+
+    const promptVolume = volumes.find((volume) => {
+      const configMap = volume.configMap as Record<string, unknown> | undefined
+      return configMap?.name === 'prompt-config'
+    }) as Record<string, unknown> | undefined
+    expect(promptVolume).toBeTruthy()
+
+    const mount = volumeMounts.find((entry) => entry.mountPath === '/workspace/.codex') as
+      | Record<string, unknown>
+      | undefined
+    expect(mount?.readOnly).toBe(true)
   })
 
   it('advances workflow steps and completes', async () => {

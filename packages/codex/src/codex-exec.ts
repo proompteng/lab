@@ -5,6 +5,7 @@ import type { ApprovalMode, SandboxMode } from './options'
 
 export interface CodexExecArgs {
   input: string
+  systemPrompt?: string
   threadId?: string | null
   images?: string[]
   model?: string
@@ -29,6 +30,8 @@ export interface CodexExecArgs {
 
 const INTERNAL_ORIGINATOR_ENV = 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE'
 const ORIGINATOR_VALUE = 'lab_codex_sdk'
+
+const toTomlString = (value: string): string => JSON.stringify(value)
 
 export class CodexExec {
   private executablePath: string
@@ -87,6 +90,10 @@ export class CodexExec {
 
     if (args.approvalPolicy) {
       commandArgs.push('--config', `approval_policy="${args.approvalPolicy}"`)
+    }
+
+    if (typeof args.systemPrompt === 'string' && args.systemPrompt.trim().length > 0) {
+      commandArgs.push('--config', `developer_instructions=${toTomlString(args.systemPrompt)}`)
     }
 
     if (args.images?.length) {

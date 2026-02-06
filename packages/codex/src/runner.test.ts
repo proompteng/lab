@@ -112,6 +112,31 @@ describe('CodexRunner', () => {
     await rm(workdir, { recursive: true, force: true })
   })
 
+  it('adds developer_instructions config when system prompt is provided', async () => {
+    const { proc } = createMockProcess([
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'ok' } }),
+    ])
+    spawnMock.mockReturnValue(proc as never)
+
+    const workdir = await mkdtemp(join(tmpdir(), 'codex-runner-test-'))
+    const runner = new CodexRunner({ codexPathOverride: 'codex' })
+    const systemPrompt = 'You are a test system prompt.\nBe strict.'
+
+    await runner.run({
+      input: 'prompt',
+      lastMessagePath: join(workdir, 'last.txt'),
+      systemPrompt,
+    })
+
+    const args = spawnMock.mock.calls[0]?.[1] as string[] | undefined
+    const expectedConfig = `developer_instructions=${JSON.stringify(systemPrompt)}`
+    const configIndex = args?.findIndex((arg) => arg === expectedConfig) ?? -1
+    expect(configIndex).toBeGreaterThan(-1)
+    expect(args?.[configIndex - 1]).toBe('--config')
+
+    await rm(workdir, { recursive: true, force: true })
+  })
+
   it('uses resume --last without stdin dash', async () => {
     const { proc } = createMockProcess([
       JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'ok' } }),

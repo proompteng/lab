@@ -44,6 +44,7 @@ const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PO
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
 const PARAMETERS_MAX_ENTRIES = 100
 const PARAMETERS_MAX_VALUE_BYTES = 2048
+const SYSTEM_PROMPT_INLINE_MAX_LENGTH = 16_384
 const DEFAULT_AUTH_SECRET_KEY = 'auth.json'
 const DEFAULT_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
 const DEFAULT_GITHUB_APP_TOKEN_TTL_SECONDS = 3600
@@ -136,6 +137,12 @@ type EnvVar = {
   name: string
   value?: string
   valueFrom?: Record<string, unknown>
+}
+
+type SystemPromptRef = {
+  kind: 'Secret' | 'ConfigMap'
+  name: string
+  key: string
 }
 
 type VcsAuthAdapter = {
@@ -570,6 +577,12 @@ const setStatus = async (
       nextStatusBase = { ...status, contract: existingContract }
     }
   }
+  if (kind === 'AgentRun' && status.systemPromptHash === undefined) {
+    const existingHash = readNested(resource, ['status', 'systemPromptHash'])
+    if (existingHash) {
+      nextStatusBase = { ...nextStatusBase, systemPromptHash: existingHash }
+    }
+  }
   const phase = asString(status.phase) ?? null
   const baseConditions = normalizeConditions(status.conditions)
   const standardUpdates = deriveStandardConditionUpdates(baseConditions, phase)
@@ -938,6 +951,158 @@ const resolveRunRepository = (agentRun: Record<string, unknown>) => {
   if (statusRepo.trim()) return statusRepo.trim()
   const parameters = resolveParameters(agentRun)
   return resolveRepositoryFromParameters(parameters)
+}
+
+const isNonBlankString = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0
+
+const sha256Hex = (value: string) => createHash('sha256').update(value).digest('hex')
+
+const normalizeSystemPromptKind = (value: string): SystemPromptRef['kind'] | null => {
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'secret') return 'Secret'
+  if (normalized === 'configmap' || normalized === 'config-map') return 'ConfigMap'
+  return null
+}
+
+const parseSystemPromptRef = (raw: unknown) => {
+  const record = asRecord(raw)
+  if (!record) {
+    return {
+      ok: false as const,
+      reason: 'InvalidSystemPromptRef',
+      message: 'systemPromptRef must be an object',
+    }
+  }
+  const kindRaw = asString(record.kind) ?? ''
+  const kind = kindRaw ? normalizeSystemPromptKind(kindRaw) : null
+  const name = asString(record.name)
+  const key = asString(record.key)
+  if (!kind || !name || !key) {
+    return {
+      ok: false as const,
+      reason: 'InvalidSystemPromptRef',
+      message: 'systemPromptRef.kind (Secret|ConfigMap), systemPromptRef.name, and systemPromptRef.key are required',
+    }
+  }
+  return { ok: true as const, ref: { kind, name, key } satisfies SystemPromptRef }
+}
+
+const resolveSystemPrompt = async (options: {
+  kube: ReturnType<typeof createKubernetesClient>
+  namespace: string
+  agentRun: Record<string, unknown>
+  agent: Record<string, unknown> | null
+  runSecrets: string[]
+  allowedSecrets: string[]
+}) => {
+  const spec = asRecord(options.agentRun.spec) ?? {}
+  const defaults = asRecord(readNested(options.agent, ['spec', 'defaults'])) ?? {}
+
+  const candidates: Array<{ type: 'ref'; raw: unknown } | { type: 'inline'; raw: unknown }> = [
+    { type: 'ref', raw: spec.systemPromptRef },
+    { type: 'inline', raw: spec.systemPrompt },
+    { type: 'ref', raw: defaults.systemPromptRef },
+    { type: 'inline', raw: defaults.systemPrompt },
+  ]
+
+  for (const candidate of candidates) {
+    if (candidate.raw == null) continue
+
+    if (candidate.type === 'inline') {
+      if (typeof candidate.raw !== 'string') {
+        return {
+          ok: false as const,
+          reason: 'InvalidSystemPrompt',
+          message: 'systemPrompt must be a string',
+        }
+      }
+      const value = candidate.raw
+      if (!isNonBlankString(value)) continue
+      if (value.length > SYSTEM_PROMPT_INLINE_MAX_LENGTH) {
+        return {
+          ok: false as const,
+          reason: 'SystemPromptTooLong',
+          message: `systemPrompt exceeds ${SYSTEM_PROMPT_INLINE_MAX_LENGTH} characters`,
+        }
+      }
+      return {
+        ok: true as const,
+        systemPrompt: value,
+        systemPromptRef: null,
+        systemPromptHash: sha256Hex(value),
+      }
+    }
+
+    const parsed = parseSystemPromptRef(candidate.raw)
+    if (!parsed.ok) return parsed
+    const ref = parsed.ref
+
+    if (ref.kind === 'Secret') {
+      if (!options.runSecrets.includes(ref.name)) {
+        return {
+          ok: false as const,
+          reason: 'SecretNotAllowed',
+          message: `system prompt secret ${ref.name} is not included in spec.secrets`,
+        }
+      }
+      if (options.allowedSecrets.length > 0 && !options.allowedSecrets.includes(ref.name)) {
+        return {
+          ok: false as const,
+          reason: 'SecretNotAllowed',
+          message: `system prompt secret ${ref.name} is not allowlisted by the Agent`,
+        }
+      }
+    }
+
+    const resource = await options.kube.get(ref.kind === 'Secret' ? 'secret' : 'configmap', ref.name, options.namespace)
+    if (!resource) {
+      return {
+        ok: false as const,
+        reason: 'MissingSystemPromptRef',
+        message: `${ref.kind} ${ref.name} not found`,
+      }
+    }
+
+    const contents = (() => {
+      if (ref.kind === 'ConfigMap') {
+        const data = asRecord(resource.data) ?? {}
+        const value = data[ref.key]
+        return typeof value === 'string' ? value : null
+      }
+
+      const stringData = asRecord(resource.stringData) ?? null
+      const fromStringData = stringData ? stringData[ref.key] : null
+      if (typeof fromStringData === 'string') {
+        return fromStringData
+      }
+      const data = asRecord(resource.data) ?? {}
+      const encoded = data[ref.key]
+      if (typeof encoded !== 'string' || encoded.length === 0) return null
+      return Buffer.from(encoded, 'base64').toString('utf8')
+    })()
+
+    if (!isNonBlankString(contents)) {
+      return {
+        ok: false as const,
+        reason: 'MissingSystemPromptRef',
+        message: `${ref.kind} ${ref.name} is missing key ${ref.key}`,
+      }
+    }
+
+    return {
+      ok: true as const,
+      systemPrompt: null,
+      systemPromptRef: ref,
+      systemPromptHash: sha256Hex(contents),
+    }
+  }
+
+  return {
+    ok: true as const,
+    systemPrompt: null,
+    systemPromptRef: null,
+    systemPromptHash: null,
+  }
 }
 
 const parseStringList = (value: unknown) =>
@@ -3283,6 +3448,7 @@ const buildRunSpec = (
   artifacts?: Array<Record<string, unknown>>,
   providerName?: string,
   vcs?: Record<string, unknown> | null,
+  systemPrompt?: string | null,
 ) => {
   const context = buildRunSpecContext(agentRun, agent, implementation, parameters, memory, vcs ?? null)
   const eventPayload = buildEventPayload(implementation, parameters)
@@ -3300,6 +3466,7 @@ const buildRunSpec = (
           },
     artifacts: artifacts ?? [],
     ...(vcs ? { vcs } : {}),
+    ...(systemPrompt ? { systemPrompt } : {}),
     ...eventPayload,
   }
 }
@@ -3483,6 +3650,8 @@ const submitJobRun = async (
     parameters?: Record<string, string>
     runtimeConfig?: Record<string, unknown>
     vcs?: VcsResolution
+    systemPrompt?: string | null
+    systemPromptRef?: SystemPromptRef | null
   } = {},
 ) => {
   const workload = options.workload ?? asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
@@ -3525,6 +3694,7 @@ const submitJobRun = async (
     Array.isArray(outputArtifacts) ? outputArtifacts : [],
     providerName,
     vcsContext,
+    options.systemPrompt ?? null,
   )
   const runSecrets = parseStringList(readNested(agentRun, ['spec', 'secrets']))
   const envFrom = runSecrets.map((name) => ({ secretRef: { name } }))
@@ -3641,6 +3811,34 @@ const submitJobRun = async (
     })
   }
 
+  const systemPromptRef = options.systemPromptRef ?? null
+  if (systemPromptRef) {
+    const volumeName = makeName(runName, options.nameSuffix ? `system-prompt-${options.nameSuffix}` : 'system-prompt')
+    const item = { key: systemPromptRef.key, path: 'system-prompt.txt' }
+    volumes.push({
+      name: volumeName,
+      spec:
+        systemPromptRef.kind === 'Secret'
+          ? {
+              secret: {
+                secretName: systemPromptRef.name,
+                items: [item],
+              },
+            }
+          : {
+              configMap: {
+                name: systemPromptRef.name,
+                items: [item],
+              },
+            },
+    })
+    configVolumeMounts.push({
+      name: volumeName,
+      mountPath: '/workspace/.codex',
+      readOnly: true,
+    })
+  }
+
   if (authSecret) {
     const authHomeVolumeName = makeName(runName, options.nameSuffix ? `auth-home-${options.nameSuffix}` : 'auth-home')
     const authSecretVolumeName = makeName(
@@ -3700,6 +3898,9 @@ const submitJobRun = async (
               ]
             : []),
           ...env,
+          ...(systemPromptRef
+            ? [{ name: 'CODEX_SYSTEM_PROMPT_PATH', value: '/workspace/.codex/system-prompt.txt' }]
+            : []),
         ],
         envFrom: envFrom.length > 0 ? envFrom : undefined,
         resources: buildJobResources(workload),
@@ -3808,6 +4009,7 @@ const submitTemporalRun = async (
   memory: Record<string, unknown> | null,
   vcs?: Record<string, unknown> | null,
   parametersOverride?: Record<string, string>,
+  systemPrompt?: string | null,
 ) => {
   const runtimeConfig = asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
   const workflowType = asString(runtimeConfig.workflowType)
@@ -3831,7 +4033,17 @@ const submitTemporalRun = async (
   const providerSpec = asRecord(provider.spec) ?? {}
   const providerName = asString(readNested(provider, ['metadata', 'name'])) ?? ''
   const outputArtifacts = Array.isArray(providerSpec.outputArtifacts) ? providerSpec.outputArtifacts : []
-  const payload = buildRunSpec(agentRun, agent, implementation, parameters, memory, outputArtifacts, providerName, vcs)
+  const payload = buildRunSpec(
+    agentRun,
+    agent,
+    implementation,
+    parameters,
+    memory,
+    outputArtifacts,
+    providerName,
+    vcs,
+    systemPrompt ?? null,
+  )
 
   const client = await getTemporalClient()
   const result = await client.workflow.start({
@@ -4134,6 +4346,34 @@ const reconcileWorkflowRun = async (
 
   const baseParameters = resolveParameters(agentRun)
   const allowedSecrets = dependencies.allowedSecrets
+  const runSecrets = parseStringList(readNested(agentRun, ['spec', 'secrets']))
+  const systemPromptResolution = await resolveSystemPrompt({
+    kube,
+    namespace,
+    agentRun,
+    agent: dependencies.agent,
+    runSecrets,
+    allowedSecrets,
+  })
+  if (!systemPromptResolution.ok) {
+    const updated = upsertCondition(conditions, {
+      type: 'InvalidSpec',
+      status: 'True',
+      reason: systemPromptResolution.reason,
+      message: systemPromptResolution.message,
+    })
+    await setStatus(kube, agentRun, {
+      observedGeneration,
+      phase: 'Failed',
+      finishedAt: nowIso(),
+      conditions: updated,
+    })
+    return
+  }
+  const systemPromptHashUpdate =
+    asString(readNested(status, ['systemPromptHash'])) || !systemPromptResolution.systemPromptHash
+      ? undefined
+      : systemPromptResolution.systemPromptHash
   const workflowStatus = normalizeWorkflowStatus(asRecord(status.workflow) ?? null, workflowSteps)
   let runtimeRefUpdate: RuntimeRef | null = null
   let workflowFailure: { reason: string; message: string } | null = null
@@ -4275,6 +4515,8 @@ const reconcileWorkflowRun = async (
           parameters: stepParameters,
           runtimeConfig,
           vcs: stepVcs,
+          systemPrompt: systemPromptResolution.systemPrompt,
+          systemPromptRef: systemPromptResolution.systemPromptRef,
         },
       )
 
@@ -4433,6 +4675,7 @@ const reconcileWorkflowRun = async (
       conditions: updated,
       vcs: vcsStatus ?? undefined,
       contract: workflowContractStatus,
+      ...(systemPromptHashUpdate ? { systemPromptHash: systemPromptHashUpdate } : {}),
     })
     for (const entry of completedJobs) {
       await applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
@@ -4456,6 +4699,7 @@ const reconcileWorkflowRun = async (
       workflow: workflowStatus,
       conditions: updated,
       vcs: vcsStatus ?? undefined,
+      ...(systemPromptHashUpdate ? { systemPromptHash: systemPromptHashUpdate } : {}),
     })
     for (const entry of completedJobs) {
       await applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
@@ -4479,6 +4723,7 @@ const reconcileWorkflowRun = async (
       conditions: updated,
       vcs: vcsStatus ?? undefined,
       contract: workflowContractStatus,
+      ...(systemPromptHashUpdate ? { systemPromptHash: systemPromptHashUpdate } : {}),
     })
     for (const entry of completedJobs) {
       await applyJobTtlAfterStatus(kube, entry.job, entry.namespace, runtimeConfig)
@@ -4955,6 +5200,30 @@ const reconcileAgentRun = async (
       }
     }
 
+    const systemPromptResolution = await resolveSystemPrompt({
+      kube,
+      namespace,
+      agentRun,
+      agent,
+      runSecrets,
+      allowedSecrets,
+    })
+    if (!systemPromptResolution.ok) {
+      const updated = upsertCondition(conditions, {
+        type: 'InvalidSpec',
+        status: 'True',
+        reason: systemPromptResolution.reason,
+        message: systemPromptResolution.message,
+      })
+      await setStatus(kube, agentRun, {
+        observedGeneration,
+        conditions: updated,
+        phase: 'Failed',
+        contract: contractStatus,
+      })
+      return
+    }
+
     const vcsResolution = await resolveVcsContext({
       kube,
       namespace,
@@ -5020,6 +5289,8 @@ const reconcileAgentRun = async (
           {
             vcs: vcsResolution,
             parameters: resolvedParameters,
+            systemPrompt: systemPromptResolution.systemPrompt,
+            systemPromptRef: systemPromptResolution.systemPromptRef,
           },
         )
       } else if (runtimeType === 'custom') {
@@ -5033,6 +5304,7 @@ const reconcileAgentRun = async (
           memory,
           vcsContext,
           resolvedParameters,
+          systemPromptResolution.systemPrompt,
         )
       } else {
         throw new Error(`unknown runtime type: ${runtimeType}`)
@@ -5051,6 +5323,9 @@ const reconcileAgentRun = async (
         conditions: upsertCondition(updated, { type: 'InProgress', status: 'True', reason: 'Running' }),
         vcs: vcsStatus ?? undefined,
         contract: contractStatus,
+        ...(systemPromptResolution.systemPromptHash
+          ? { systemPromptHash: systemPromptResolution.systemPromptHash }
+          : {}),
       })
     } catch (error) {
       const updated = upsertCondition(baseConditions, {

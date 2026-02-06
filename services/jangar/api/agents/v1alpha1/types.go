@@ -41,11 +41,15 @@ type AgentSecurity struct {
 	AllowedSecrets         []string `json:"allowedSecrets,omitempty"`
 }
 
+// +kubebuilder:validation:XValidation:rule="!(has(self.systemPrompt) && has(self.systemPromptRef))",message="Only one of systemPrompt or systemPromptRef may be set"
 type AgentRunDefaults struct {
 	// +kubebuilder:validation:Minimum=0
 	TimeoutSeconds int32 `json:"timeoutSeconds,omitempty"`
 	// +kubebuilder:validation:Minimum=0
 	RetryLimit int32 `json:"retryLimit,omitempty"`
+	// +kubebuilder:validation:MaxLength=16384
+	SystemPrompt    string           `json:"systemPrompt,omitempty"`
+	SystemPromptRef *SystemPromptRef `json:"systemPromptRef,omitempty"`
 }
 
 type AgentStatus struct {
@@ -79,6 +83,7 @@ type AgentRun struct {
 }
 
 // +kubebuilder:validation:XValidation:rule="has(self.implementationSpecRef) || has(self.implementation)",message="spec.implementationSpecRef or spec.implementation is required"
+// +kubebuilder:validation:XValidation:rule="!(has(self.systemPrompt) && has(self.systemPromptRef))",message="Only one of spec.systemPrompt or spec.systemPromptRef may be set"
 type AgentRunSpec struct {
 	AgentRef              LocalRef              `json:"agentRef"`
 	ImplementationSpecRef *LocalRef             `json:"implementationSpecRef,omitempty"`
@@ -87,12 +92,15 @@ type AgentRunSpec struct {
 	Workflow              *WorkflowSpec         `json:"workflow,omitempty"`
 	Workload              *WorkloadSpec         `json:"workload,omitempty"`
 	// +kubebuilder:validation:MaxProperties=100
-	Parameters     map[string]string `json:"parameters,omitempty"`
-	Secrets        []string          `json:"secrets,omitempty"`
-	MemoryRef      *LocalRef         `json:"memoryRef,omitempty"`
-	VcsRef         *LocalRef         `json:"vcsRef,omitempty"`
-	VcsPolicy      *VcsPolicy        `json:"vcsPolicy,omitempty"`
-	IdempotencyKey string            `json:"idempotencyKey,omitempty"`
+	Parameters map[string]string `json:"parameters,omitempty"`
+	Secrets    []string          `json:"secrets,omitempty"`
+	// +kubebuilder:validation:MaxLength=16384
+	SystemPrompt    string           `json:"systemPrompt,omitempty"`
+	SystemPromptRef *SystemPromptRef `json:"systemPromptRef,omitempty"`
+	MemoryRef       *LocalRef        `json:"memoryRef,omitempty"`
+	VcsRef          *LocalRef        `json:"vcsRef,omitempty"`
+	VcsPolicy       *VcsPolicy       `json:"vcsPolicy,omitempty"`
+	IdempotencyKey  string           `json:"idempotencyKey,omitempty"`
 	// +kubebuilder:validation:Minimum=0
 	TTLSecondsAfterFinished *int32 `json:"ttlSecondsAfterFinished,omitempty"`
 }
@@ -158,6 +166,7 @@ type AgentRunStatus struct {
 	UpdatedAt          *metav1.Time                    `json:"updatedAt,omitempty"`
 	Artifacts          []Artifact                      `json:"artifacts,omitempty"`
 	Vcs                *AgentRunVcsStatus              `json:"vcs,omitempty"`
+	SystemPromptHash   string                          `json:"systemPromptHash,omitempty"`
 	Conditions         []metav1.Condition              `json:"conditions,omitempty"`
 	ObservedGeneration int64                           `json:"observedGeneration,omitempty"`
 	Contract           *AgentRunContractStatus         `json:"contract,omitempty"`
@@ -541,6 +550,13 @@ type SecretRef struct {
 type ConfigMapRef struct {
 	Name string `json:"name"`
 	Key  string `json:"key,omitempty"`
+}
+
+type SystemPromptRef struct {
+	// +kubebuilder:validation:Enum=Secret;ConfigMap
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+	Key  string `json:"key"`
 }
 
 type LocalRef struct {
