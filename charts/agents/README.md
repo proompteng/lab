@@ -371,8 +371,20 @@ Enable reruns or system-improvement flows using:
 ## Pod Security Admission
 Configure PSA labels via `podSecurityAdmission.labels` and enable them with `podSecurityAdmission.enabled=true`.
 Set `podSecurityAdmission.createNamespace=true` when the chart should create and label the namespace.
-For existing namespaces, keep `createNamespace=false` and apply the PSA labels out-of-band to avoid
-Helm ownership conflicts.
+
+Example:
+
+```yaml
+podSecurityAdmission:
+  enabled: true
+  createNamespace: true
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+```
+
+For existing namespaces, keep `createNamespace=false` and apply the PSA labels out-of-band to avoid Helm ownership
+conflicts (for example, via your GitOps workflow or `kubectl label`). The chart only labels namespaces it creates.
 
 ## Admission control
 - Configure backpressure with `controller.queue.*` and `controller.rate.*` in `values.yaml`.
