@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 
+const metricsMocks = vi.hoisted(() => ({
+  recordReconcileDurationMs: vi.fn(),
+  recordAgentRunOutcome: vi.fn(),
+}))
+
+vi.mock('~/server/metrics', () => metricsMocks)
+
+const { recordReconcileDurationMs, recordAgentRunOutcome } = metricsMocks
+
 import { __test } from '~/server/agents-controller'
 import { RESOURCE_MAP } from '~/server/primitives-kube'
 
@@ -1251,6 +1260,79 @@ describe('agents controller reconcileAgentRun', () => {
     expect(thirdSteps[0]?.phase).toBe('Running')
   })
 
+  it('fails workflow steps when timeout is exceeded', async () => {
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      return { ...resource, metadata: { ...metadata, uid } }
+    })
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === 'job') {
+          return { metadata: { name }, status: { active: 1 } }
+        }
+        return null
+      }),
+    })
+
+    const startedAt = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'workflow', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workflow: {
+          steps: [{ name: 'timeout-step', timeoutSeconds: 60 }],
+        },
+      },
+      status: {
+        phase: 'Running',
+        workflow: {
+          phase: 'Running',
+          steps: [
+            {
+              name: 'timeout-step',
+              phase: 'Running',
+              attempt: 1,
+              startedAt,
+              jobRef: { name: 'timeout-job', namespace: 'agents' },
+            },
+          ],
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    const status = getLastStatus(kube)
+    const workflow = status.workflow as Record<string, unknown>
+    const steps = (workflow.steps as Record<string, unknown>[]) ?? []
+    expect(status.phase).toBe('Failed')
+    expect(workflow.phase).toBe('Failed')
+    expect(steps[0]?.phase).toBe('Failed')
+    expect(steps[0]?.message).toBe('Step timed out')
+  })
+
   it('deletes completed AgentRun after retention window', async () => {
     const deleteMock = vi.fn(async () => ({}))
     const kube = buildKube({ delete: deleteMock })
@@ -1304,6 +1386,24 @@ describe('agents controller reconcileAgentRun', () => {
         process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
       }
     }
+  })
+
+  it('records reconcile duration metrics', async () => {
+    const kube = buildKube()
+    recordReconcileDurationMs.mockClear()
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      buildAgentRun(),
+      'agents',
+      [],
+      [],
+      { perNamespace: 10, perAgent: 5, cluster: 100 },
+      { total: 0, perAgent: new Map() },
+      0,
+    )
+
+    expect(recordReconcileDurationMs).toHaveBeenCalled()
   })
 })
 

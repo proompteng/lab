@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { runBuildCodexImage } from '../build-codex-image'
+import { runBuildCodexImage } from '../../build-codex-image'
 
 const bunMocks = vi.hoisted(() => {
   const execMock = vi.fn(async (_command: string) => ({ text: async () => '' }))

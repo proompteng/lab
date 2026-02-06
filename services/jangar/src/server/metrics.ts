@@ -14,6 +14,7 @@ import {
   SEMRESATTRS_SERVICE_NAME,
   SEMRESATTRS_SERVICE_NAMESPACE,
 } from '@proompteng/otel/semantic-conventions'
+import { PrometheusExporter } from '@opentelemetry/exporter-prometheus'
 
 type JangarMetrics = {
   sseConnections: Counter
@@ -28,12 +29,17 @@ type JangarMetrics = {
   agentQueueDepth: Histogram
   agentRateLimitRejections: Counter
   agentConcurrency: Histogram
+  agentRunOutcomes: Counter
+  reconcileDurationMs: Histogram
 }
 
 type MetricsState = {
   enabled: boolean
   metrics?: JangarMetrics
   shutdown?: () => void
+  prometheusEnabled?: boolean
+  prometheusPath?: string
+  prometheusExporter?: PrometheusExporter
 }
 
 type SseStream = 'chat' | 'agent-events' | 'control-plane'
@@ -117,6 +123,18 @@ export const recordAgentConcurrency = (count: number, attributes?: MetricsAttrib
   if (!metricsState.enabled) return
   if (Number.isFinite(count)) {
     recordHistogram(metricsState.metrics?.agentConcurrency, count, attributes)
+  }
+}
+
+export const recordAgentRunOutcome = (outcome: string, attributes?: MetricsAttributes) => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.agentRunOutcomes, 1, { outcome, ...attributes })
+}
+
+export const recordReconcileDurationMs = (durationMs: number, attributes?: MetricsAttributes) => {
+  if (!metricsState.enabled) return
+  if (Number.isFinite(durationMs) && durationMs >= 0) {
+    recordHistogram(metricsState.metrics?.reconcileDurationMs, durationMs, attributes)
   }
 }
 
@@ -204,21 +222,43 @@ const parseTimeoutMillis = (value?: string) => {
   return parsed
 }
 
+const resolveBoolean = (value: string | undefined, fallback: boolean) => {
+  if (!value) return fallback
+  const normalized = value.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'y', 'on', 'enabled'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'n', 'off', 'disabled'].includes(normalized)) return false
+  return fallback
+}
+
+const normalizePrometheusPath = (value: string) => {
+  const trimmed = value.trim()
+  if (!trimmed) return '/metrics'
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`
+}
+
 const createMetricsState = (): MetricsState => {
   if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
     return { enabled: false }
   }
 
+  const prometheusEnabled = resolveBoolean(process.env.JANGAR_PROMETHEUS_METRICS_ENABLED, true)
+  const prometheusPath = normalizePrometheusPath(process.env.JANGAR_PROMETHEUS_METRICS_PATH ?? '/metrics')
+
   const exporter = (process.env.OTEL_METRICS_EXPORTER ?? '').trim().toLowerCase()
-  if (exporter === 'none' || exporter === 'false' || exporter === '0') {
-    return { enabled: false }
+  let otlpEnabled = !(exporter === 'none' || exporter === 'false' || exporter === '0')
+  let metricsProtocol: OtlpProtocol = 'http/json'
+  let metricsEndpoint: string | null = null
+  if (otlpEnabled) {
+    metricsProtocol = resolveOtlpProtocol(
+      process.env.OTEL_EXPORTER_OTLP_METRICS_PROTOCOL ?? process.env.OTEL_EXPORTER_OTLP_PROTOCOL,
+    )
+    metricsEndpoint = resolveMetricsEndpoint(metricsProtocol)
+    if (!metricsEndpoint) {
+      otlpEnabled = false
+    }
   }
 
-  const metricsProtocol = resolveOtlpProtocol(
-    process.env.OTEL_EXPORTER_OTLP_METRICS_PROTOCOL ?? process.env.OTEL_EXPORTER_OTLP_PROTOCOL,
-  )
-  const metricsEndpoint = resolveMetricsEndpoint(metricsProtocol)
-  if (!metricsEndpoint) {
+  if (!otlpEnabled && !prometheusEnabled) {
     return { enabled: false }
   }
 
@@ -246,20 +286,34 @@ const createMetricsState = (): MetricsState => {
     const timeoutMillis =
       parseTimeoutMillis(process.env.OTEL_EXPORTER_OTLP_METRICS_TIMEOUT) ??
       parseTimeoutMillis(process.env.OTEL_EXPORTER_OTLP_TIMEOUT)
-    const exporterInstance = new OTLPMetricExporter({
-      url: metricsEndpoint,
-      headers: metricHeaders,
-      protocol: metricsProtocol,
-      ...(timeoutMillis ? { timeoutMillis } : {}),
-    })
-
-    const reader = new PeriodicExportingMetricReader({
-      exporter: exporterInstance,
-      exportIntervalMillis,
-    })
-
     const meterProvider = new MeterProvider({ resource })
-    meterProvider.addMetricReader(reader)
+    let exporterInstance: OTLPMetricExporter | null = null
+    let reader: PeriodicExportingMetricReader | null = null
+    if (otlpEnabled && metricsEndpoint) {
+      exporterInstance = new OTLPMetricExporter({
+        url: metricsEndpoint,
+        headers: metricHeaders,
+        protocol: metricsProtocol,
+        ...(timeoutMillis ? { timeoutMillis } : {}),
+      })
+
+      reader = new PeriodicExportingMetricReader({
+        exporter: exporterInstance,
+        exportIntervalMillis,
+      })
+
+      meterProvider.addMetricReader(reader)
+    }
+
+    const prometheusExporter = prometheusEnabled
+      ? new PrometheusExporter({
+          preventServerStart: true,
+          endpoint: prometheusPath,
+        })
+      : null
+    if (prometheusExporter) {
+      meterProvider.addMetricReader(prometheusExporter)
+    }
     otelMetrics.setGlobalMeterProvider(meterProvider)
 
     const meter = otelMetrics.getMeter('jangar')
@@ -302,15 +356,24 @@ const createMetricsState = (): MetricsState => {
       agentConcurrency: meter.createHistogram('jangar_agents_active_concurrency', {
         description: 'Observed active AgentRun concurrency.',
       }),
+      agentRunOutcomes: meter.createCounter('jangar_agent_run_outcomes_total', {
+        description: 'Count of AgentRun terminal outcomes by phase.',
+      }),
+      reconcileDurationMs: meter.createHistogram('jangar_reconcile_duration_ms', {
+        description: 'Time spent reconciling agents controller resources.',
+        unit: 'ms',
+      }),
     }
 
     let shuttingDown = false
     const shutdown = () => {
       if (shuttingDown) return
       shuttingDown = true
-      void meterProvider.shutdown().catch((error) => {
-        diag.error('failed to shutdown metrics provider', error)
-      })
+      void meterProvider
+        .shutdown()
+        .catch((error) => {
+          diag.error('failed to shutdown metrics provider', error)
+        })
     }
 
     process.once('SIGTERM', shutdown)
@@ -320,6 +383,9 @@ const createMetricsState = (): MetricsState => {
       enabled: true,
       metrics,
       shutdown,
+      prometheusEnabled,
+      prometheusPath,
+      prometheusExporter: prometheusExporter ?? undefined,
     }
   } catch (error) {
     diag.error('failed to initialize metrics', error)
@@ -331,3 +397,10 @@ const metricsState = globalState.__jangarMetrics ?? createMetricsState()
 if (!globalState.__jangarMetrics) {
   globalState.__jangarMetrics = metricsState
 }
+
+export const isPrometheusMetricsEnabled = () => Boolean(metricsState.prometheusExporter)
+
+export const getPrometheusMetricsPath = () => metricsState.prometheusPath ?? '/metrics'
+
+export const getPrometheusMetricsRequestHandler = () =>
+  metricsState.prometheusExporter?.getMetricsRequestHandler()

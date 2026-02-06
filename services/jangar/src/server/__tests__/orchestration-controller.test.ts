@@ -162,6 +162,63 @@ describe('orchestration controller', () => {
     expect(step?.nextRetryAt).toBe('2026-01-20T00:00:30.000Z')
   })
 
+  it('fails running steps when timeout is exceeded', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === 'orchestrations.orchestration.proompteng.ai') {
+        return {
+          apiVersion: 'orchestration.proompteng.ai/v1alpha1',
+          kind: 'Orchestration',
+          metadata: { name: 'timeout-orchestration', namespace: 'agents' },
+          spec: {
+            steps: [
+              {
+                name: 'run-agent',
+                kind: 'AgentRun',
+                timeoutSeconds: 30,
+                agentRef: { name: 'agent-a' },
+                implementationSpecRef: { name: 'impl-a' },
+              },
+            ],
+          },
+        }
+      }
+      return null
+    })
+    const kube = { applyStatus, apply, get } as unknown as KubernetesClient
+
+    const orchestrationRun = {
+      apiVersion: 'orchestration.proompteng.ai/v1alpha1',
+      kind: 'OrchestrationRun',
+      metadata: { name: 'timeout-run', namespace: 'agents', generation: 1 },
+      spec: { orchestrationRef: { name: 'timeout-orchestration' } },
+      status: {
+        phase: 'Running',
+        stepStatuses: [
+          {
+            name: 'run-agent',
+            kind: 'AgentRun',
+            phase: 'Running',
+            attempt: 1,
+            startedAt: '2026-01-19T23:58:00.000Z',
+            resourceRef: { name: 'agent-run-1', namespace: 'agents' },
+          },
+        ],
+      },
+    }
+
+    await __test__.reconcileOrchestrationRun(kube, orchestrationRun, 'agents')
+
+    const payload = applyStatus.mock.calls[0]?.[0] as { status?: Record<string, unknown> }
+    const status = payload.status ?? {}
+    const stepStatuses = Array.isArray(status.stepStatuses) ? status.stepStatuses : []
+    const step = stepStatuses.find((entry) => entry.name === 'run-agent')
+    expect(step?.phase).toBe('Failed')
+    expect(step?.message).toBe('Step timed out')
+    expect(status.phase).toBe('Failed')
+  })
+
   it('emits an event when a step fails without retries', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})

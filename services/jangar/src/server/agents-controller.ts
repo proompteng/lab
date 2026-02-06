@@ -5,7 +5,13 @@ import { createTemporalClient, loadTemporalConfig, temporalCallOptions } from '@
 
 import { startResourceWatch } from '~/server/kube-watch'
 import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
-import { recordAgentConcurrency, recordAgentQueueDepth, recordAgentRateLimitRejection } from '~/server/metrics'
+import {
+  recordAgentConcurrency,
+  recordAgentQueueDepth,
+  recordAgentRateLimitRejection,
+  recordAgentRunOutcome,
+  recordReconcileDurationMs,
+} from '~/server/metrics'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { shouldApplyStatus } from '~/server/status-utils'
@@ -178,6 +184,7 @@ type WorkflowStepSpec = {
   workload: Record<string, unknown> | null
   retries: number
   retryBackoffSeconds: number
+  timeoutSeconds: number
 }
 
 type WorkflowStepStatus = {
@@ -589,6 +596,16 @@ const setStatus = async (
   if (!shouldApplyStatus(asRecord(resource.status), nextStatus)) {
     return
   }
+  if (kind === 'AgentRun') {
+    const previousPhase = asString(asRecord(resource.status)?.phase)
+    const nextPhase = asString(status.phase)
+    if (nextPhase && ['Succeeded', 'Failed', 'Cancelled'].includes(nextPhase) && previousPhase !== nextPhase) {
+      const runtimeRef = asRecord(status.runtimeRef) ?? asRecord(readNested(resource, ['status', 'runtimeRef'])) ?? {}
+      const runtimeType =
+        asString(runtimeRef.type) ?? asString(readNested(resource, ['spec', 'runtime', 'type'])) ?? 'unknown'
+      recordAgentRunOutcome(nextPhase, { runtime: runtimeType })
+    }
+  }
   await kube.applyStatus({ apiVersion, kind, metadata: { name, namespace }, status: nextStatus })
 }
 
@@ -611,6 +628,7 @@ const parseWorkflowSteps = (agentRun: Record<string, unknown>): WorkflowStepSpec
       }
       const retries = parseOptionalNumber(step.retries)
       const retryBackoffSeconds = parseOptionalNumber(step.retryBackoffSeconds)
+      const timeoutSeconds = parseOptionalNumber(step.timeoutSeconds)
       return {
         name,
         implementationSpecRefName: asString(readNested(step, ['implementationSpecRef', 'name'])) ?? null,
@@ -621,6 +639,7 @@ const parseWorkflowSteps = (agentRun: Record<string, unknown>): WorkflowStepSpec
         retryBackoffSeconds: Number.isFinite(retryBackoffSeconds)
           ? Math.max(0, Math.trunc(retryBackoffSeconds ?? 0))
           : 0,
+        timeoutSeconds: Number.isFinite(timeoutSeconds) ? Math.max(0, Math.trunc(timeoutSeconds ?? 0)) : 0,
       }
     })
     .filter((step) => step.name.length > 0)
@@ -2127,7 +2146,6 @@ const isQueuedRun = (run: Record<string, unknown>) => {
   const phase = asString(readNested(run, ['status', 'phase'])) ?? 'Pending'
   return QUEUED_PHASES.has(phase.trim().toLowerCase())
 }
-
 const resolveRunHeadBranch = (run: Record<string, unknown>) =>
   asString(readNested(run, ['status', 'vcs', 'headBranch'])) ??
   asString(readNested(run, ['status', 'vcs', 'branch'])) ??
@@ -4294,6 +4312,29 @@ const reconcileWorkflowRun = async (
     }
 
     if (stepStatus.phase === 'Running') {
+      if (stepSpec.timeoutSeconds > 0) {
+        const startedAt = stepStatus.startedAt
+        const startTime = startedAt ? Date.parse(startedAt) : Number.NaN
+        if (Number.isFinite(startTime) && now >= startTime + stepSpec.timeoutSeconds * 1000) {
+          if (stepStatus.attempt < maxAttempts) {
+            setWorkflowStepPhase(stepStatus, 'Retrying', 'Step timed out; retrying')
+            stepStatus.finishedAt = nowIso()
+            stepStatus.nextRetryAt =
+              stepSpec.retryBackoffSeconds > 0
+                ? new Date(now + stepSpec.retryBackoffSeconds * 1000).toISOString()
+                : nowIso()
+            workflowRunning = true
+            break
+          }
+          setWorkflowStepPhase(stepStatus, 'Failed', 'Step timed out')
+          stepStatus.finishedAt = nowIso()
+          workflowFailure = {
+            reason: 'WorkflowStepTimedOut',
+            message: `workflow step ${stepSpec.name} timed out`,
+          }
+          break
+        }
+      }
       const jobName = asString(stepStatus.jobRef?.name) ?? ''
       if (!jobName) {
         setWorkflowStepPhase(stepStatus, 'Failed', 'Job reference missing')
@@ -5126,6 +5167,25 @@ const reconcileAgentRun = async (
   }
 }
 
+const reconcileAgentRunWithMetrics = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  agentRun: Record<string, unknown>,
+  namespace: string,
+  memories: Record<string, unknown>[],
+  existingRuns: Record<string, unknown>[],
+  concurrency: ReturnType<typeof parseConcurrency>,
+  inFlight: { total: number; perAgent: Map<string, number> },
+  globalInFlight: number,
+) => {
+  const reconcileStartedAt = Date.now()
+  try {
+    await reconcileAgentRun(kube, agentRun, namespace, memories, existingRuns, concurrency, inFlight, globalInFlight)
+  } finally {
+    const durationMs = Date.now() - reconcileStartedAt
+    recordReconcileDurationMs(durationMs, { kind: 'agentrun', namespace })
+  }
+}
+
 const reconcileNamespaceSnapshot = async (
   kube: ReturnType<typeof createKubernetesClient>,
   namespace: string,
@@ -5171,7 +5231,7 @@ const reconcileNamespaceSnapshot = async (
   recordAgentConcurrency(counts.cluster, { scope: 'cluster' })
 
   for (const run of runs) {
-    await reconcileAgentRun(kube, run, namespace, memories, runs, concurrency, inFlight, counts.cluster)
+    await reconcileAgentRunWithMetrics(kube, run, namespace, memories, runs, concurrency, inFlight, counts.cluster)
   }
 }
 
@@ -5189,7 +5249,16 @@ const reconcileRunWithState = async (
     perAgent: counts.perAgent,
     perRepository: counts.perRepository,
   }
-  await reconcileAgentRun(kube, run, namespace, snapshot.memories, snapshot.runs, concurrency, inFlight, counts.cluster)
+  await reconcileAgentRunWithMetrics(
+    kube,
+    run,
+    namespace,
+    snapshot.memories,
+    snapshot.runs,
+    concurrency,
+    inFlight,
+    counts.cluster,
+  )
 }
 
 const reconcileNamespaceState = async (
@@ -5436,7 +5505,7 @@ export const __test = {
   clearGithubAppTokenCache,
   resetControllerRateState,
   fetchGithubAppToken,
-  reconcileAgentRun,
+  reconcileAgentRun: reconcileAgentRunWithMetrics,
   reconcileVersionControlProvider,
   reconcileMemory,
   resolveVcsPrRateLimits,
