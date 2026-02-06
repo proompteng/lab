@@ -90,6 +90,7 @@ import { Route as ControlPlaneAgentRunsNameRouteImport } from './routes/control-
 import { Route as ControlPlaneAgentProvidersNameRouteImport } from './routes/control-plane/agent-providers/$name'
 import { Route as ApiTorghutSymbolsRouteImport } from './routes/api/torghut/symbols'
 import { Route as ApiTerminalsSessionIdRouteImport } from './routes/api/terminals/$sessionId'
+import { Route as ApiMemoriesStatsRouteImport } from './routes/api/memories/stats'
 import { Route as ApiMemoriesCountRouteImport } from './routes/api/memories/count'
 import { Route as ApiGithubPullsRouteImport } from './routes/api/github/pulls'
 import { Route as ApiGithubIssuesRouteImport } from './routes/api/github/issues'
@@ -573,6 +574,11 @@ const ApiTerminalsSessionIdRoute = ApiTerminalsSessionIdRouteImport.update({
   path: '/$sessionId',
   getParentRoute: () => ApiTerminalsRoute,
 } as any)
+const ApiMemoriesStatsRoute = ApiMemoriesStatsRouteImport.update({
+  id: '/stats',
+  path: '/stats',
+  getParentRoute: () => ApiMemoriesRoute,
+} as any)
 const ApiMemoriesCountRoute = ApiMemoriesCountRouteImport.update({
   id: '/count',
   path: '/count',
@@ -868,6 +874,7 @@ export interface FileRoutesByFullPath {
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/memories/count': typeof ApiMemoriesCountRoute
+  '/api/memories/stats': typeof ApiMemoriesStatsRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/control-plane/agent-providers/$name': typeof ControlPlaneAgentProvidersNameRoute
@@ -994,6 +1001,7 @@ export interface FileRoutesByTo {
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/memories/count': typeof ApiMemoriesCountRoute
+  '/api/memories/stats': typeof ApiMemoriesStatsRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/control-plane/agent-providers/$name': typeof ControlPlaneAgentProvidersNameRoute
@@ -1123,6 +1131,7 @@ export interface FileRoutesById {
   '/api/github/issues': typeof ApiGithubIssuesRoute
   '/api/github/pulls': typeof ApiGithubPullsRouteWithChildren
   '/api/memories/count': typeof ApiMemoriesCountRoute
+  '/api/memories/stats': typeof ApiMemoriesStatsRoute
   '/api/terminals/$sessionId': typeof ApiTerminalsSessionIdRouteWithChildren
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/control-plane/agent-providers/$name': typeof ControlPlaneAgentProvidersNameRoute
@@ -1253,6 +1262,7 @@ export interface FileRouteTypes {
     | '/api/github/issues'
     | '/api/github/pulls'
     | '/api/memories/count'
+    | '/api/memories/stats'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/control-plane/agent-providers/$name'
@@ -1379,6 +1389,7 @@ export interface FileRouteTypes {
     | '/api/github/issues'
     | '/api/github/pulls'
     | '/api/memories/count'
+    | '/api/memories/stats'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/control-plane/agent-providers/$name'
@@ -1507,6 +1518,7 @@ export interface FileRouteTypes {
     | '/api/github/issues'
     | '/api/github/pulls'
     | '/api/memories/count'
+    | '/api/memories/stats'
     | '/api/terminals/$sessionId'
     | '/api/torghut/symbols'
     | '/control-plane/agent-providers/$name'
@@ -2259,6 +2271,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTerminalsSessionIdRouteImport
       parentRoute: typeof ApiTerminalsRoute
     }
+    '/api/memories/stats': {
+      id: '/api/memories/stats'
+      path: '/stats'
+      fullPath: '/api/memories/stats'
+      preLoaderRoute: typeof ApiMemoriesStatsRouteImport
+      parentRoute: typeof ApiMemoriesRoute
+    }
     '/api/memories/count': {
       id: '/api/memories/count'
       path: '/count'
@@ -2579,10 +2598,12 @@ declare module '@tanstack/react-router' {
 
 interface ApiMemoriesRouteChildren {
   ApiMemoriesCountRoute: typeof ApiMemoriesCountRoute
+  ApiMemoriesStatsRoute: typeof ApiMemoriesStatsRoute
 }
 
 const ApiMemoriesRouteChildren: ApiMemoriesRouteChildren = {
   ApiMemoriesCountRoute: ApiMemoriesCountRoute,
+  ApiMemoriesStatsRoute: ApiMemoriesStatsRoute,
 }
 
 const ApiMemoriesRouteWithChildren = ApiMemoriesRoute._addFileChildren(

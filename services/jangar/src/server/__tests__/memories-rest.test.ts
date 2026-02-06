@@ -32,6 +32,16 @@ const makeService = (): { service: MemoriesService; saved: MemoryRecord[] } => {
       ),
     count: ({ namespace } = {}) =>
       Effect.sync(() => saved.filter((mem) => (namespace ? mem.namespace === namespace : true)).length),
+    stats: ({ days } = {}) =>
+      Effect.sync(() => {
+        const resolvedDays = days ?? 30
+        const today = new Date().toISOString().slice(0, 10)
+        return {
+          range: { days: resolvedDays, from: today, to: today },
+          byDay: [],
+          topNamespaces: [],
+        }
+      }),
   }
 
   return { service, saved }
@@ -110,6 +120,7 @@ describe('memories REST handlers', () => {
       persist: () => Effect.fail(new Error('DATABASE_URL is required for MCP memories storage')),
       retrieve: () => Effect.fail(new Error('DATABASE_URL is required for MCP memories storage')),
       count: () => Effect.fail(new Error('DATABASE_URL is required for MCP memories storage')),
+      stats: () => Effect.fail(new Error('DATABASE_URL is required for MCP memories storage')),
     }
 
     const request = new Request('http://localhost/api/memories?query=test')
