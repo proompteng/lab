@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - 'charts/agents/**'
-      - 'docs/agents/**'
       - 'services/jangar/**'
       - 'scripts/agents/**'
       - 'scripts/download_crd_schema.py'
@@ -14,7 +13,6 @@ on:
       - main
     paths:
       - 'charts/agents/**'
-      - 'docs/agents/**'
       - 'services/jangar/**'
       - 'scripts/agents/**'
       - 'scripts/download_crd_schema.py'

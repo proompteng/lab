@@ -7,6 +7,14 @@ spec:
     provider: manual
     externalId: manual:native-workflow-e2e
     url: https://example.com/agents/native-workflow-e2e
+  contract:
+    requiredKeys:
+      - repository
+      - issueNumber
+      - issueTitle
+      - issueUrl
+      - base
+      - head
   summary: "Add autoscaling support to Agents chart"
   text: |
     Add optional autoscaling support to the Agents Helm chart. Implement a HorizontalPodAutoscaler
