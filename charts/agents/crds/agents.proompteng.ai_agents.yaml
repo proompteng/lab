@@ -55,11 +55,33 @@ spec:
                     format: int32
                     minimum: 0
                     type: integer
+                  systemPrompt:
+                    maxLength: 16384
+                    type: string
+                  systemPromptRef:
+                    properties:
+                      key:
+                        type: string
+                      kind:
+                        enum:
+                        - Secret
+                        - ConfigMap
+                        type: string
+                      name:
+                        type: string
+                    required:
+                    - key
+                    - kind
+                    - name
+                    type: object
                   timeoutSeconds:
                     format: int32
                     minimum: 0
                     type: integer
                 type: object
+                x-kubernetes-validations:
+                - message: Only one of systemPrompt or systemPromptRef may be set
+                  rule: '!(has(self.systemPrompt) && has(self.systemPromptRef))'
               env:
                 items:
                   properties:

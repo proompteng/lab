@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
-import { lstat, mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -194,6 +195,141 @@ describe('runCodexImplementation', () => {
     const resumeMetadataRaw = await readFile(resumeMetadataPath, 'utf8')
     const resumeMetadata = JSON.parse(resumeMetadataRaw) as Record<string, unknown>
     expect(resumeMetadata.state).toBe('cleared')
+  }, 20_000)
+
+  it('forwards systemPrompt from the payload into runCodexSession', async () => {
+    const systemPrompt = 'You are a strict system prompt.'
+    const payload = {
+      prompt: 'Implementation prompt',
+      systemPrompt,
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      planCommentId: 123,
+      planCommentUrl: 'http://example.com',
+      planCommentBody: '<!-- codex:plan -->',
+    }
+    await writeFile(eventPath, JSON.stringify(payload), 'utf8')
+
+    await runCodexImplementation(eventPath)
+
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.systemPrompt).toBe(systemPrompt)
+  }, 20_000)
+
+  it('prefers CODEX_SYSTEM_PROMPT_PATH over the payload and does not log system prompt contents', async () => {
+    const systemPromptPath = join(workdir, 'system-prompt.txt')
+    const systemPromptFromFile = 'FROM FILE ONLY'
+    await writeFile(systemPromptPath, systemPromptFromFile, 'utf8')
+    process.env.CODEX_SYSTEM_PROMPT_PATH = systemPromptPath
+
+    const payload = {
+      prompt: 'Implementation prompt',
+      systemPrompt: 'FROM PAYLOAD SHOULD NOT BE USED',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      planCommentId: 123,
+      planCommentUrl: 'http://example.com',
+      planCommentBody: '<!-- codex:plan -->',
+    }
+    await writeFile(eventPath, JSON.stringify(payload), 'utf8')
+
+    await runCodexImplementation(eventPath)
+
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.systemPrompt).toBe(systemPromptFromFile)
+
+    const runtimeLogPath = join(workdir, '.codex-implementation-runtime.log')
+    const runtimeLog = await readFile(runtimeLogPath, 'utf8')
+    expect(runtimeLog).not.toContain(systemPromptFromFile)
+  }, 20_000)
+
+  it('includes systemPromptHash in NATS run-started attrs when available', async () => {
+    const binDir = join(workdir, 'bin')
+    await mkdir(binDir, { recursive: true })
+
+    const capturePath = join(workdir, 'nats-publish-capture.jsonl')
+    process.env.CODEX_NATS_PUBLISH_CAPTURE_PATH = capturePath
+    process.env.NATS_URL = 'nats://example'
+    process.env.PATH = `${binDir}:${process.env.PATH ?? ''}`
+
+    const publishScriptPath = join(binDir, 'codex-nats-publish')
+    await writeFile(
+      publishScriptPath,
+      [
+        '#!/usr/bin/env node',
+        'const { appendFileSync } = require("node:fs");',
+        'const path = process.env.CODEX_NATS_PUBLISH_CAPTURE_PATH;',
+        'if (path) { appendFileSync(path, JSON.stringify(process.argv.slice(2)) + "\\n", "utf8"); }',
+        'process.exit(0);',
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+    await chmod(publishScriptPath, 0o755)
+
+    const soakScriptPath = join(binDir, 'codex-nats-soak')
+    await writeFile(
+      soakScriptPath,
+      [
+        '#!/usr/bin/env bash',
+        'set -euo pipefail',
+        'if [ -n "${NATS_CONTEXT_PATH:-}" ]; then',
+        '  printf \'{"fetched":0,"filtered":0,"messages":[]}\\n\' > "${NATS_CONTEXT_PATH}"',
+        'fi',
+        'exit 0',
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+    await chmod(soakScriptPath, 0o755)
+
+    const systemPrompt = 'hash me'
+    const payload = {
+      prompt: 'Implementation prompt',
+      systemPrompt,
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      planCommentId: 123,
+      planCommentUrl: 'http://example.com',
+      planCommentBody: '<!-- codex:plan -->',
+    }
+    await writeFile(eventPath, JSON.stringify(payload), 'utf8')
+
+    await runCodexImplementation(eventPath)
+
+    const captured = (await readFile(capturePath, 'utf8'))
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as string[])
+
+    const runStarted = captured.find((args) => {
+      const kindIndex = args.indexOf('--kind')
+      return kindIndex >= 0 && args[kindIndex + 1] === 'run-started'
+    })
+    expect(runStarted).toBeDefined()
+    if (!runStarted) {
+      throw new Error('Expected at least one run-started publish call')
+    }
+
+    const attrsIndex = runStarted.indexOf('--attrs-json')
+    expect(attrsIndex).toBeGreaterThan(-1)
+    const attrsRaw = runStarted[attrsIndex + 1]
+    expect(typeof attrsRaw).toBe('string')
+    const attrs = JSON.parse(attrsRaw ?? '{}') as Record<string, unknown>
+
+    const expectedHash = createHash('sha256').update(systemPrompt, 'utf8').digest('hex')
+    expect(attrs.systemPromptHash).toBe(expectedHash)
+    expect(attrs.systemPrompt).toBeUndefined()
   }, 20_000)
 
   it('auto-commits when the worktree is dirty', async () => {

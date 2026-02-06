@@ -1,35 +1,32 @@
 # Custom System Prompt for Agent Runs
 
-Status: Draft (2026-02-05)
+Status: Implemented (2026-02-06)
 
-## Problem
-Agent runs cannot set a per-run system prompt. Codex runs currently rely on static config in the AgentProvider and a user prompt embedded in the event payload. Changing the system prompt requires editing provider config and redeploying, and there is no safe way to pass per-run system prompt values from AgentRun or ImplementationSpec.
+Note: Clusters will accept/run the new fields once the updated `charts/agents` CRDs and the relevant controller/runtime deployments (plus Argo templates, if used) are rolled out.
 
-## Goals
-- Support per-run custom system prompt for AgentRun executions, with optional defaults at Agent level.
-- Allow prompts to be supplied inline or by reference (ConfigMap/Secret) for size and sensitivity.
-- Ensure Codex runs (workflow/job/temporal) apply the system prompt without breaking existing runs.
-- Preserve auditability via hashes/metadata without leaking secret prompt contents.
+## Summary
+Agent runs now support per-run system prompts with Agent-level defaults. Prompts can be provided inline or by reference (Secret/ConfigMap). Codex runs apply the resolved prompt and record a SHA-256 hash for audit without logging prompt contents.
+
+## Goals (Shipped)
+- Per-run custom system prompt for AgentRun executions, with optional defaults at Agent level.
+- Prompts can be supplied inline or by reference (ConfigMap/Secret).
+- Codex job/workflow runs apply the system prompt without breaking existing runs.
+- Auditability via hashes/metadata without leaking prompt contents.
 
 ## Non-Goals
 - Redesigning the Codex user prompt builder or issue ingestion flows.
 - Providing a UI for system prompt management in this phase.
 - Expanding behavior for non-Codex providers beyond pass-through availability.
 
-## Current State (Source Code)
-- Jangar builds the run payload from ImplementationSpec text/summary and parameters, placing `prompt` in the event payload used by codex runs. See `services/jangar/src/server/agents-controller.ts`.
-- `codex-implement` reads the event payload, sets `CODEX_PROMPT`, and runs Codex; no system prompt is applied. See `services/jangar/scripts/codex/codex-implement.ts`.
-- `CodexRunner` uses `codex exec` with a limited set of `--config` overrides and does not expose system prompt options. See `packages/codex/src/runner.ts`.
+## Current State (Implemented)
+- CRDs add `systemPrompt` / `systemPromptRef` on `AgentRun.spec` and `Agent.spec.defaults`, plus `status.systemPromptHash` on `AgentRun`. See `services/jangar/api/agents/v1alpha1/types.go` and `charts/agents/crds/`.
+- Jangar resolves a system prompt using precedence rules, applies security checks, and records a SHA-256 hash in `AgentRun.status`. See `services/jangar/src/server/agents-controller.ts`.
+- `codex-implement` resolves system prompt from `CODEX_SYSTEM_PROMPT_PATH` (preferred) or the event payload, logs only hash/length, and passes it to Codex. See `services/jangar/scripts/codex/codex-implement.ts`.
+- `CodexRunner` forwards the system prompt as `--config developer_instructions=<toml-string>` when non-empty. See `packages/codex/src/runner.ts`.
+- Argo templates accept inline + Secret/ConfigMap system prompt inputs and set `CODEX_SYSTEM_PROMPT_PATH` when a ref is supplied. See `argocd/applications/froussard/*workflow-template*.yaml`.
 
-## Cluster State (2026-02-05)
-- `AgentProvider/codex` in namespace `agents` mounts `/root/.codex/config.toml` with model + sandbox config only; no instructions/system prompt keys are present. (kubectl get agentproviders.agents.proompteng.ai codex -n agents)
-- `Agent/codex-agent` and other Codex agents exist in `agents` namespace with no config overrides. (kubectl get agents.agents.proompteng.ai -n agents)
-- `WorkflowTemplate/codex-run` in namespace `jangar` accepts a `prompt` parameter and builds an event JSON with `prompt`, `repository`, `issueNumber`, `base`, `head`, `stage`, and iteration fields; no system prompt parameter is defined. (kubectl get workflowtemplate codex-run -n jangar)
-
-## Design
-
-### API Additions
-Add optional system prompt fields to AgentRun and Agent:
+## API Additions
+Optional system prompt fields are available on AgentRun and Agent defaults:
 
 ```yaml
 spec:
@@ -53,64 +50,101 @@ spec:
 ```
 
 Validation:
-- `systemPrompt` maxLength: 16384 (configurable) to avoid etcd bloat.
-- If `systemPromptRef` is set, the referenced object must be in the same namespace as the AgentRun.
+- `systemPrompt` maxLength: 16384 (CRD + controller enforcement).
+- `systemPrompt` and `systemPromptRef` are mutually exclusive at each level (XValidation).
+- `systemPromptRef` must reference a Secret or ConfigMap in the same namespace.
 - `systemPrompt` is treated as non-secret; sensitive content should use `systemPromptRef`.
 
-### Resolution Order
+## Resolution Order
 1. `AgentRun.spec.systemPromptRef`
 2. `AgentRun.spec.systemPrompt`
 3. `Agent.spec.defaults.systemPromptRef`
 4. `Agent.spec.defaults.systemPrompt`
-5. No system prompt override (current behavior)
+5. No system prompt override
 
-### Controller Changes (Jangar)
-- Resolve system prompt per the precedence above.
-- Inline prompt: include `systemPrompt` in the run payload passed to `agent-runner` (event JSON).
-- Ref prompt: mount the referenced Secret/ConfigMap into the runtime pod at `/workspace/.codex/system-prompt.txt` and set env `CODEX_SYSTEM_PROMPT_PATH` to that file.
-- Record `systemPromptHash` (SHA-256 of prompt contents) in `AgentRun.status` and in NATS run-started metadata to enable audit without leaking content.
+Notes:
+- Empty/blank inline strings are treated as unset and fall through to the next candidate.
+- `systemPromptRef` resolution short-circuits the search even if inline fields exist elsewhere.
 
-### Runtime Changes (Codex)
-- Extend `CodexRunner` to accept `systemPrompt` and pass it as `--config developer_instructions=<toml-string>` to `codex exec`.
-- Update `codex-implement` to read `systemPrompt` from the event payload, prefer `CODEX_SYSTEM_PROMPT_PATH` when set, and pass the resolved prompt to `CodexRunner`.
-- Avoid logging system prompt contents in runtime logs. Log only the hash or length.
+## Controller Behavior (Jangar)
+- Resolves system prompt per the precedence above.
+- Inline prompt: included in the run payload (`systemPrompt` in event JSON).
+- Ref prompt: mounted into the runtime pod as `/workspace/.codex/system-prompt.txt`, and `CODEX_SYSTEM_PROMPT_PATH` is set.
+- Ref prompt: the prompt contents are not injected into the run payload.
+- Records `systemPromptHash` (SHA-256 hex of prompt contents) in `AgentRun.status`.
 
-### Workflow Template Changes
-- Add `system_prompt` parameter to `codex-run` workflow template.
-- Inject `system_prompt` into the event JSON payload so direct Argo runs can set it.
-- Pass `CODEX_SYSTEM_PROMPT_PATH` only when provided via secret reference (future-ready for external triggers).
+Security constraints:
+- Secret references must be present in `AgentRun.spec.secrets`.
+- If `Agent.spec.security.allowedSecrets` is non-empty, Secret references must be allowlisted there.
+- Secret references must not match `JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS` (exact matching, consistent with other secret mounts).
+- ConfigMap references do not require allowlisting.
+- Secret data is read from `stringData` first, then base64-decoded from `data`.
+- Missing refs/keys or invalid types fail the run with `InvalidSpec`.
 
-### Provider Pass-Through
-- Expose `systemPrompt` in the run payload so other providers can use `{{parameters.systemPrompt}}` in their templates if desired. No behavior changes for non-Codex providers in this phase.
+## Runtime Behavior (Codex)
+- `codex-implement` prefers `CODEX_SYSTEM_PROMPT_PATH` when the file exists and is non-empty; otherwise it falls back to `event.systemPrompt`.
+- The resolved system prompt is passed to `CodexRunner` as `--config developer_instructions=<toml-string>`.
+- Prompt contents are never logged; only hash and length are logged. A `systemPromptHash` attribute is attached to the NATS `run-started` event.
+- `developer_instructions` is encoded as a quoted TOML string literal (do not attempt manual shell-escaping).
+
+## Workflow Template Behavior (Argo)
+- `codex-run`, `codex-autonomous`, and `github-codex-implementation` templates accept `system_prompt`.
+- `codex-run`, `codex-autonomous`, and `github-codex-implementation` templates accept `system_prompt_secret_name` and `system_prompt_secret_key`.
+- `codex-run`, `codex-autonomous`, and `github-codex-implementation` templates accept `system_prompt_configmap_name` and `system_prompt_configmap_key`.
+- Secret mounts are exposed at `/workspace/.codex/system-prompt/secret/<key>`.
+- ConfigMap mounts are exposed at `/workspace/.codex/system-prompt/configmap/<key>`.
+- The template copies the selected file to `/workspace/.codex/system-prompt.txt` and sets `CODEX_SYSTEM_PROMPT_PATH`.
+- The inline `system_prompt` is injected into the event JSON when non-empty.
+
+Argo examples:
+
+```bash
+argo submit \
+  --from workflowtemplate/codex-run \
+  -n jangar \
+  -p repository='proompteng/lab' \
+  -p issue_number='1234' \
+  -p head='my-branch' \
+  -p prompt='Implement X' \
+  -p system_prompt='You are a strict reviewer. Prefer minimal diffs.'
+```
+
+```bash
+argo submit \
+  --from workflowtemplate/codex-run \
+  -n jangar \
+  -p repository='proompteng/lab' \
+  -p issue_number='1234' \
+  -p head='my-branch' \
+  -p prompt='Implement X' \
+  -p system_prompt_secret_name='my-system-prompt' \
+  -p system_prompt_secret_key='system-prompt.txt'
+```
+
+## Provider Pass-Through
+- `systemPrompt` is present in the run payload for inline prompts, allowing non-Codex providers to consume it if desired.
 
 ## Data Flow (Codex, Inline Prompt)
 1. AgentRun created with `spec.systemPrompt`.
-2. Jangar resolves system prompt and adds it to the event payload.
+2. Jangar resolves the system prompt and adds it to the event payload.
 3. `agent-runner` writes event JSON to disk.
 4. `codex-implement` reads event JSON and extracts `systemPrompt`.
-5. `CodexRunner` invokes `codex exec -c developer_instructions="<prompt>"`.
+5. `CodexRunner` invokes `codex exec --config developer_instructions="<prompt>"`.
 
 ## Data Flow (Codex, Ref Prompt)
 1. AgentRun created with `spec.systemPromptRef`.
-2. Jangar mounts referenced object as `/workspace/.codex/system-prompt.txt`.
-3. `codex-implement` reads `CODEX_SYSTEM_PROMPT_PATH`.
-4. `CodexRunner` invokes `codex exec -c developer_instructions="<prompt>"`.
+2. Jangar mounts the Secret/ConfigMap into `/workspace/.codex/system-prompt.txt` and exports `CODEX_SYSTEM_PROMPT_PATH`.
+3. `codex-implement` reads `CODEX_SYSTEM_PROMPT_PATH` (preferred) and resolves the prompt.
+4. `CodexRunner` invokes `codex exec --config developer_instructions="<prompt>"`.
 
-## Rollout Plan
-1. Update CRDs and Helm chart schema for Agent and AgentRun.
-2. Implement Jangar controller resolution + hash reporting.
-3. Update `CodexRunner` + `codex-implement` to apply system prompt.
-4. Update Argo workflow templates (`codex-run`, `codex-autonomous`, `github-codex-implementation`) to accept `system_prompt`.
-5. Add docs in `docs/agents/runbooks.md` and `docs/agents/agentctl.md` with examples.
-6. Deploy to `agents-ci`, validate, then roll to `agents`.
+## Hashing and Audit
+- `AgentRun.status.systemPromptHash` stores the SHA-256 hex of the resolved prompt.
+- `codex-implement` computes the hash of the resolved prompt and attaches it to the NATS `run-started` event.
+- Prompt contents are never emitted to logs.
+- Hash drift: if a Secret/ConfigMap changes mid-run, the controller-computed hash (recorded in `AgentRun.status`) and the runtime-computed hash (attached to NATS) can differ.
 
-## Acceptance Criteria
-- AgentRun can specify a system prompt inline or by ref; the resulting Codex run uses it.
-- Existing runs without system prompt behave unchanged.
-- System prompt contents are not logged; only hash or size is recorded.
-- Workflow templates accept `system_prompt` and produce correct event payloads.
-- Controller rejects AgentRuns with missing secret refs or oversized prompts.
-
-## Open Questions
-- Final max length for inline system prompt (16 KB vs 64 KB).
-- Should system prompt also be included in `metadata.map` for contract validation, or excluded by default?
+## Limitations
+- Temporal runtime only receives inline `systemPrompt` in the payload. `systemPromptRef` is not mounted and is ignored for temporal runs.
+- Custom runtime uses `spec.runtime.config.payload` (if set) else `{agentRun, implementation, memory}`. It does not receive the resolved system prompt (after applying Agent defaults or reading refs) unless you include it explicitly.
+- No per-workflow-step system prompt overrides; workflow steps all share the resolved prompt.
+- `systemPrompt` is not injected into any additional contract metadata beyond the event payload and `systemPromptHash` status field.

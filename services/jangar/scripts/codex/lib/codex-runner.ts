@@ -12,6 +12,7 @@ export interface DiscordChannelOptions {
 export interface RunCodexSessionOptions {
   stage: 'planning' | 'implementation' | 'review' | 'research' | 'verify'
   prompt: string
+  systemPrompt?: string
   outputPath: string
   jsonOutputPath: string
   agentOutputPath: string
@@ -153,6 +154,7 @@ const formatDiscordCommandBlock = (command?: string, output?: string, exitCode?:
 export const runCodexSession = async ({
   stage,
   prompt,
+  systemPrompt,
   outputPath,
   jsonOutputPath,
   agentOutputPath,
@@ -564,6 +566,7 @@ export const runCodexSession = async ({
 
   const runResult = await runner.run({
     input: prompt,
+    systemPrompt,
     model: process.env.CODEX_MODEL?.trim() || undefined,
     jsonMode: 'json',
     dangerouslyBypassApprovalsAndSandbox: true,

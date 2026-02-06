@@ -29,6 +29,16 @@ spec:
         value: ''
       - name: base
         value: 'main'
+      - name: system_prompt
+        value: ''
+      - name: system_prompt_secret_name
+        value: '__none__'
+      - name: system_prompt_secret_key
+        value: 'system-prompt.txt'
+      - name: system_prompt_configmap_name
+        value: '__none__'
+      - name: system_prompt_configmap_key
+        value: 'system-prompt.txt'
       - name: implementation_iterations
         value: '1'
       - name: iteration_cycle
@@ -39,6 +49,14 @@ spec:
         sizeLimit: 10Gi
     - name: docker-lib
       emptyDir: {}
+    - name: system-prompt-secret
+      secret:
+        secretName: '{{workflow.parameters.system_prompt_secret_name}}'
+        optional: true
+    - name: system-prompt-configmap
+      configMap:
+        name: '{{workflow.parameters.system_prompt_configmap_name}}'
+        optional: true
   templates:
     - name: implement
       inputs:
@@ -49,6 +67,11 @@ spec:
           - name: eventBody
           - name: head
           - name: base
+          - name: system_prompt
+          - name: system_prompt_secret_name
+          - name: system_prompt_secret_key
+          - name: system_prompt_configmap_name
+          - name: system_prompt_configmap_key
           - name: implementation_iterations
           - name: iteration_cycle
       container:
@@ -279,6 +302,30 @@ spec:
             : > "/workspace/lab/.codex-judge-output.json"
             : > "/workspace/lab/.codex-nats-context.json"
 
+            SYSTEM_PROMPT_SECRET_NAME='{{inputs.parameters.system_prompt_secret_name}}'
+            SYSTEM_PROMPT_SECRET_KEY='{{inputs.parameters.system_prompt_secret_key}}'
+            SYSTEM_PROMPT_CONFIGMAP_NAME='{{inputs.parameters.system_prompt_configmap_name}}'
+            SYSTEM_PROMPT_CONFIGMAP_KEY='{{inputs.parameters.system_prompt_configmap_key}}'
+            SYSTEM_PROMPT_INLINE='{{inputs.parameters.system_prompt}}'
+
+            SYSTEM_PROMPT_FILE=""
+            if [[ "$SYSTEM_PROMPT_SECRET_NAME" != "__none__" ]]; then
+              SYSTEM_PROMPT_FILE="/workspace/.codex/system-prompt/secret/${SYSTEM_PROMPT_SECRET_KEY}"
+            elif [[ "$SYSTEM_PROMPT_CONFIGMAP_NAME" != "__none__" ]]; then
+              SYSTEM_PROMPT_FILE="/workspace/.codex/system-prompt/configmap/${SYSTEM_PROMPT_CONFIGMAP_KEY}"
+            fi
+
+            if [[ -n "$SYSTEM_PROMPT_FILE" && -f "$SYSTEM_PROMPT_FILE" ]]; then
+              cp "$SYSTEM_PROMPT_FILE" "/workspace/.codex/system-prompt.txt"
+              export CODEX_SYSTEM_PROMPT_PATH="/workspace/.codex/system-prompt.txt"
+            fi
+
+            if [[ -n "$SYSTEM_PROMPT_INLINE" && "$SYSTEM_PROMPT_INLINE" != "null" ]]; then
+              TMP_EVENT=$(mktemp)
+              jq --arg systemPrompt "$SYSTEM_PROMPT_INLINE" '.systemPrompt = $systemPrompt' "$EVENT_FILE" > "$TMP_EVENT" \
+                && mv "$TMP_EVENT" "$EVENT_FILE"
+            fi
+
             WORKTREE_DIR="${WORKTREE:-/workspace/lab}"
 
             STAGE=$(jq -r '.stage // ""' "$EVENT_FILE")
@@ -396,6 +443,12 @@ spec:
           - name: docker-lib
             mountPath: /var/lib/docker
             readOnly: true
+          - name: system-prompt-secret
+            mountPath: /workspace/.codex/system-prompt/secret
+            readOnly: true
+          - name: system-prompt-configmap
+            mountPath: /workspace/.codex/system-prompt/configmap
+            readOnly: true
         resources:
           requests:
             cpu: "2"
@@ -488,6 +541,16 @@ spec:
         value: ''
       - name: prompt
         value: ''
+      - name: system_prompt
+        value: ''
+      - name: system_prompt_secret_name
+        value: '__none__'
+      - name: system_prompt_secret_key
+        value: 'system-prompt.txt'
+      - name: system_prompt_configmap_name
+        value: '__none__'
+      - name: system_prompt_configmap_key
+        value: 'system-prompt.txt'
       - name: stage
         value: implementation
       - name: iteration
@@ -509,6 +572,14 @@ spec:
   volumes:
     - name: docker-lib
       emptyDir: {}
+    - name: system-prompt-secret
+      secret:
+        secretName: '{{workflow.parameters.system_prompt_secret_name}}'
+        optional: true
+    - name: system-prompt-configmap
+      configMap:
+        name: '{{workflow.parameters.system_prompt_configmap_name}}'
+        optional: true
   templates:
     - name: codex-run
       inputs:
@@ -518,6 +589,11 @@ spec:
           - name: base
           - name: head
           - name: prompt
+          - name: system_prompt
+          - name: system_prompt_secret_name
+          - name: system_prompt_secret_key
+          - name: system_prompt_configmap_name
+          - name: system_prompt_configmap_key
           - name: stage
           - name: iteration
           - name: iteration_cycle
@@ -708,6 +784,23 @@ spec:
             : > "/workspace/lab/.codex-judge-next-prompt.txt"
             : > "/workspace/lab/.codex-judge-output.json"
 
+            SYSTEM_PROMPT_SECRET_NAME='{{inputs.parameters.system_prompt_secret_name}}'
+            SYSTEM_PROMPT_SECRET_KEY='{{inputs.parameters.system_prompt_secret_key}}'
+            SYSTEM_PROMPT_CONFIGMAP_NAME='{{inputs.parameters.system_prompt_configmap_name}}'
+            SYSTEM_PROMPT_CONFIGMAP_KEY='{{inputs.parameters.system_prompt_configmap_key}}'
+
+            SYSTEM_PROMPT_FILE=""
+            if [[ "$SYSTEM_PROMPT_SECRET_NAME" != "__none__" ]]; then
+              SYSTEM_PROMPT_FILE="/workspace/.codex/system-prompt/secret/${SYSTEM_PROMPT_SECRET_KEY}"
+            elif [[ "$SYSTEM_PROMPT_CONFIGMAP_NAME" != "__none__" ]]; then
+              SYSTEM_PROMPT_FILE="/workspace/.codex/system-prompt/configmap/${SYSTEM_PROMPT_CONFIGMAP_KEY}"
+            fi
+
+            if [[ -n "$SYSTEM_PROMPT_FILE" && -f "$SYSTEM_PROMPT_FILE" ]]; then
+              cp "$SYSTEM_PROMPT_FILE" "/workspace/.codex/system-prompt.txt"
+              export CODEX_SYSTEM_PROMPT_PATH="/workspace/.codex/system-prompt.txt"
+            fi
+
             EVENT_FILE=$(mktemp)
             EVENT_BODY_B64='{{inputs.parameters.eventBody}}'
             if [[ -n "$EVENT_BODY_B64" && "$EVENT_BODY_B64" != "{}" ]]; then
@@ -720,6 +813,7 @@ spec:
               "base": "{{inputs.parameters.base}}",
               "head": "{{inputs.parameters.head}}",
               "prompt": "{{inputs.parameters.prompt}}",
+              "systemPrompt": "{{inputs.parameters.system_prompt}}",
               "stage": "{{inputs.parameters.stage}}",
               "iteration": "{{inputs.parameters.iteration}}",
               "iteration_cycle": "{{inputs.parameters.iteration_cycle}}"
@@ -737,7 +831,15 @@ spec:
                 --arg head "{{inputs.parameters.head}}" \
                 --arg iteration "{{inputs.parameters.iteration}}" \
                 --arg iterationCycle "{{inputs.parameters.iteration_cycle}}" \
-                '.stage = ($stage // .stage) | .repository = ($repo // .repository) | .issueNumber = ($issue // .issueNumber) | .base = ($base // .base) | .head = ($head // .head) | .iteration = (if ($iteration | length) > 0 then ($iteration | tonumber?) else .iteration end) | .iteration_cycle = (if ($iterationCycle | length) > 0 then ($iterationCycle | tonumber?) else .iteration_cycle end)' \
+                --arg systemPrompt "{{inputs.parameters.system_prompt}}" \
+                '.stage = ($stage // .stage)
+                | .repository = ($repo // .repository)
+                | .issueNumber = ($issue // .issueNumber)
+                | .base = ($base // .base)
+                | .head = ($head // .head)
+                | .iteration = (if ($iteration | length) > 0 then ($iteration | tonumber?) else .iteration end)
+                | .iteration_cycle = (if ($iterationCycle | length) > 0 then ($iterationCycle | tonumber?) else .iteration_cycle end)
+                | (if ($systemPrompt | length) > 0 then .systemPrompt = $systemPrompt else . end)' \
                 "$EVENT_FILE" > "$TMP_EVENT" && mv "$TMP_EVENT" "$EVENT_FILE"
             fi
 
@@ -864,6 +966,12 @@ spec:
             mountPath: /workspace
           - name: docker-lib
             mountPath: /var/lib/docker
+            readOnly: true
+          - name: system-prompt-secret
+            mountPath: /workspace/.codex/system-prompt/secret
+            readOnly: true
+          - name: system-prompt-configmap
+            mountPath: /workspace/.codex/system-prompt/configmap
             readOnly: true
         resources:
           requests:

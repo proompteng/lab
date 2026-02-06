@@ -20,6 +20,7 @@ export interface CodexRunnerOptions {
 
 export interface CodexRunOptions {
   input: string
+  systemPrompt?: string
   model?: string
   sandboxMode?: SandboxMode
   workingDirectory?: string
@@ -146,6 +147,8 @@ const readString = (value: unknown): string | undefined => {
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
+const toTomlString = (value: string): string => JSON.stringify(value)
+
 const extractAgentMessage = (parsed: CodexEvent): string | undefined => {
   if (parsed.type !== 'item.completed') {
     return undefined
@@ -205,6 +208,7 @@ export class CodexRunner {
   async run(options: CodexRunOptions): Promise<CodexRunResult> {
     const {
       input,
+      systemPrompt,
       model,
       sandboxMode,
       workingDirectory,
@@ -284,6 +288,9 @@ export class CodexRunner {
     }
     if (approvalPolicy) {
       commandArgs.push('--config', `approval_policy="${approvalPolicy}"`)
+    }
+    if (typeof systemPrompt === 'string' && systemPrompt.trim().length > 0) {
+      commandArgs.push('--config', `developer_instructions=${toTomlString(systemPrompt)}`)
     }
     if (images?.length) {
       for (const image of images) {
