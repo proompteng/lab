@@ -3,7 +3,9 @@ kind: Kustomization
 namespace: agents
 resources:
   - codex-secretbinding.yaml
+  - codex-agent.yaml
   - codex-agentprovider.yaml
+  - codex-agent-system-prompt-configmap.yaml
   - codex-versioncontrolprovider.yaml
   - sample-approvalpolicy.yaml
   - sample-budget.yaml
