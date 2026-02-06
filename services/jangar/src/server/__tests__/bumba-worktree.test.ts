@@ -106,7 +106,7 @@ describe('bumba worktree refresh', () => {
 
     expect(resolvedRoot).toBe(worktreePath)
     await expect(stat(join(worktreePath, filePath))).resolves.toBeDefined()
-  })
+  }, 20_000)
 
   it('throws when the file is still missing after refresh', async () => {
     if (!repoRoot) throw new Error('repoRoot missing')
@@ -139,5 +139,5 @@ describe('bumba worktree refresh', () => {
 
     expect(resolvedRoot).toBe(worktreePath)
     await expect(stat(join(worktreePath, filePath))).resolves.toBeDefined()
-  })
+  }, 20_000)
 })

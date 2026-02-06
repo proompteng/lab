@@ -12,6 +12,7 @@ import * as jangarGithubWorktreesMigration from '~/server/migrations/20260104_ja
 import * as codexJudgeIterationsMigration from '~/server/migrations/20260105_codex_judge_iterations'
 import * as jangarPrimitivesMigration from '~/server/migrations/20260111_jangar_primitives'
 import * as jangarPrimitivesIndexesMigration from '~/server/migrations/20260111_jangar_primitives_indexes'
+import * as agentsControlPlaneCacheMigration from '~/server/migrations/20260205_agents_control_plane_cache'
 
 type MigrationMap = Record<string, Migration>
 
@@ -37,6 +38,7 @@ const migrations: MigrationMap = {
   '20260105_codex_judge_iterations': codexJudgeIterationsMigration,
   '20260111_jangar_primitives': jangarPrimitivesMigration,
   '20260111_jangar_primitives_indexes': jangarPrimitivesIndexesMigration,
+  '20260205_agents_control_plane_cache': agentsControlPlaneCacheMigration,
 }
 
 const migrationProvider = new StaticMigrationProvider(migrations)

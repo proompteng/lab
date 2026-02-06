@@ -19,6 +19,29 @@ image:
   pullPolicy: IfNotPresent
   pullSecrets: []
 
+controlPlane:
+  image:
+    repository: ""
+    tag: ""
+    digest: ""
+    pullPolicy: ""
+    pullSecrets: []
+  env:
+    vars: {}
+
+controllers:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: ""
+    tag: ""
+    digest: ""
+    pullPolicy: ""
+    pullSecrets: []
+  resources: {}
+  env:
+    vars: {}
+
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/codex-universal

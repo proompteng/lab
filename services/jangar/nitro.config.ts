@@ -5,6 +5,7 @@ import { defineNitroConfig } from 'nitro/config'
 const rootDir = dirname(fileURLToPath(import.meta.url))
 const agentsRuntimePlugin = resolve(rootDir, 'server/plugins/agents-runtime')
 const agentctlPlugin = resolve(rootDir, 'server/plugins/agentctl-grpc')
+const controlPlaneCachePlugin = resolve(rootDir, 'server/plugins/control-plane-cache')
 const h3AppAliasPlugin = resolve(rootDir, 'server/plugins/h3-app-alias')
 const websocketResolverPlugin = resolve(rootDir, 'server/plugins/websocket-resolver')
 export default defineNitroConfig({
@@ -24,5 +25,5 @@ export default defineNitroConfig({
   experimental: {
     websocket: true,
   },
-  plugins: [agentsRuntimePlugin, agentctlPlugin, h3AppAliasPlugin, websocketResolverPlugin],
+  plugins: [agentsRuntimePlugin, agentctlPlugin, controlPlaneCachePlugin, h3AppAliasPlugin, websocketResolverPlugin],
 })
