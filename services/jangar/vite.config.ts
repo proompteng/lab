@@ -163,7 +163,7 @@ const tanstackStartNitro = (options?: TanStackStartInputConfig) => [
 
 const config = defineConfig({
   server: {
-    allowedHosts: ['host.docker.internal'],
+    allowedHosts: ['host.docker.internal', 'localhost-docker.internal'],
   },
   resolve: {
     alias: resolveAliases,

@@ -46,7 +46,7 @@ const modelsResponse = {
   object: 'list',
   data: [
     {
-      id: 'gpt-4o-mini',
+      id: 'gpt-5.3-codex',
       object: 'model',
       created: 1717171717,
       owned_by: 'openai',
@@ -421,7 +421,7 @@ test('atlas enrich route screenshot', async ({ page }) => {
 test('api models route screenshot', async ({ page }) => {
   await page.goto('/api/models')
   await expect(page.getByRole('heading', { name: 'Models' })).toBeVisible()
-  await expect(page.getByText('gpt-4o-mini')).toBeVisible()
+  await expect(page.getByText('gpt-5.3-codex')).toBeVisible()
   await expect(page).toHaveScreenshot('api-models.png', { fullPage: true, animations: 'disabled' })
 })
 

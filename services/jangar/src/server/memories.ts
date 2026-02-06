@@ -3,6 +3,8 @@ import { Context, Effect, Layer, pipe } from 'effect'
 import {
   createPostgresMemoriesStore,
   type MemoryRecord,
+  type MemoriesStats,
+  type MemoriesStatsInput,
   type PersistMemoryInput,
   type RetrieveMemoryInput,
 } from './memories-store'
@@ -11,6 +13,7 @@ export type MemoriesService = {
   persist: (input: PersistMemoryInput) => Effect.Effect<MemoryRecord, Error>
   retrieve: (input: RetrieveMemoryInput) => Effect.Effect<MemoryRecord[], Error>
   count: (input?: { namespace?: string }) => Effect.Effect<number, Error>
+  stats: (input?: MemoriesStatsInput) => Effect.Effect<MemoriesStats, Error>
 }
 
 export class Memories extends Context.Tag('Memories')<Memories, MemoriesService>() {}
@@ -75,6 +78,16 @@ export const MemoriesLive = Layer.scoped(
             Effect.tryPromise({
               try: () => resolved.count(input),
               catch: (error) => normalizeError('count memories failed', error),
+            }),
+          ),
+        ),
+      stats: (input) =>
+        pipe(
+          getStore(),
+          Effect.flatMap((resolved) =>
+            Effect.tryPromise({
+              try: () => resolved.stats(input),
+              catch: (error) => normalizeError('memories stats failed', error),
             }),
           ),
         ),

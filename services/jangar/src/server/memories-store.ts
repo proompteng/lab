@@ -28,10 +28,27 @@ export type RetrieveMemoryInput = {
   limit?: number
 }
 
+export type MemoriesStatsInput = {
+  namespace?: string
+  days?: number
+  topNamespaces?: number
+}
+
+export type MemoriesStats = {
+  range: {
+    days: number
+    from: string
+    to: string
+  }
+  byDay: { day: string; count: number }[]
+  topNamespaces: { namespace: string; count: number }[]
+}
+
 export type MemoriesStore = {
   persist: (input: PersistMemoryInput) => Promise<MemoryRecord>
   retrieve: (input: RetrieveMemoryInput) => Promise<MemoryRecord[]>
   count: (input?: { namespace?: string }) => Promise<number>
+  stats: (input?: MemoriesStatsInput) => Promise<MemoriesStats>
   close: () => Promise<void>
 }
 
@@ -48,6 +65,11 @@ const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'
 const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536
 const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding-saigak:0.6b'
 const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 1024
+
+const DEFAULT_STATS_DAYS = 30
+const MAX_STATS_DAYS = 365
+const DEFAULT_STATS_TOP_NAMESPACES = 8
+const MAX_STATS_TOP_NAMESPACES = 25
 
 const SCHEMA = 'memories'
 const TABLE = 'entries'
@@ -345,5 +367,81 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     return Number.isFinite(parsed) ? parsed : 0
   }
 
-  return { persist, retrieve, count, close }
+  const stats: MemoriesStore['stats'] = async (input = {}) => {
+    await ensureSchema()
+
+    const rawDays = typeof input.days === 'number' ? input.days : Number.parseInt(String(input.days ?? ''), 10)
+    const days = Number.isFinite(rawDays)
+      ? Math.max(1, Math.min(MAX_STATS_DAYS, Math.floor(rawDays)))
+      : DEFAULT_STATS_DAYS
+
+    const rawTop =
+      typeof input.topNamespaces === 'number'
+        ? input.topNamespaces
+        : Number.parseInt(String(input.topNamespaces ?? ''), 10)
+    const topNamespaces = Number.isFinite(rawTop)
+      ? Math.max(1, Math.min(MAX_STATS_TOP_NAMESPACES, Math.floor(rawTop)))
+      : DEFAULT_STATS_TOP_NAMESPACES
+
+    const rawNamespace = typeof input.namespace === 'string' ? input.namespace.trim() : ''
+    const resolvedNamespace = rawNamespace.length > 0 ? rawNamespace.slice(0, 200) : null
+
+    const { rows: byDayRows } = await sql<{ day: string; count: string }>`
+      SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day,
+             count(*)::bigint AS count
+      FROM memories.entries
+      WHERE created_at >= now() - make_interval(days => ${days})
+        ${resolvedNamespace ? sql`AND task_name = ${resolvedNamespace}` : sql``}
+      GROUP BY 1
+      ORDER BY 1;
+    `.execute(db)
+
+    const countsByDay = new Map<string, number>()
+    for (const row of byDayRows) {
+      const day = row.day
+      const parsed = Number.parseInt(row.count, 10)
+      countsByDay.set(day, Number.isFinite(parsed) ? parsed : 0)
+    }
+
+    const toDate = new Date()
+    const fromDate = new Date(toDate)
+    fromDate.setUTCDate(fromDate.getUTCDate() - (days - 1))
+    fromDate.setUTCHours(0, 0, 0, 0)
+
+    const byDay: MemoriesStats['byDay'] = []
+    for (let i = 0; i < days; i++) {
+      const current = new Date(fromDate)
+      current.setUTCDate(fromDate.getUTCDate() + i)
+      const day = current.toISOString().slice(0, 10)
+      byDay.push({ day, count: countsByDay.get(day) ?? 0 })
+    }
+
+    const { rows: namespaceRows } = await sql<{ namespace: string; count: string }>`
+      SELECT task_name AS namespace,
+             count(*)::bigint AS count
+      FROM memories.entries
+      WHERE created_at >= now() - make_interval(days => ${days})
+        ${resolvedNamespace ? sql`AND task_name = ${resolvedNamespace}` : sql``}
+      GROUP BY 1
+      ORDER BY count(*) DESC
+      LIMIT ${topNamespaces};
+    `.execute(db)
+
+    const topNamespacesRows = namespaceRows.map((row) => {
+      const parsed = Number.parseInt(row.count, 10)
+      return { namespace: row.namespace, count: Number.isFinite(parsed) ? parsed : 0 }
+    })
+
+    return {
+      range: {
+        days,
+        from: byDay.at(0)?.day ?? fromDate.toISOString().slice(0, 10),
+        to: byDay.at(-1)?.day ?? toDate.toISOString().slice(0, 10),
+      },
+      byDay,
+      topNamespaces: topNamespacesRows,
+    }
+  }
+
+  return { persist, retrieve, count, stats, close }
 }

@@ -2,6 +2,7 @@ FROM oven/bun:1.3.5
 
 ARG NODE_VERSION=24.11.1
 ARG NVM_VERSION=0.39.7
+ARG CODEX_VERSION=latest
 
 ENV DEBIAN_FRONTEND=noninteractive \
     NVM_DIR=/root/.nvm \
@@ -31,7 +32,7 @@ RUN set -euxo pipefail; \
     ln -sf "/root/.nvm/versions/node/v${NODE_VERSION}/bin/node" /usr/local/bin/node; \
     ln -sf "/root/.nvm/versions/node/v${NODE_VERSION}/bin/npm" /usr/local/bin/npm; \
     ln -sf "/root/.nvm/versions/node/v${NODE_VERSION}/bin/npx" /usr/local/bin/npx; \
-    bun add -g @openai/codex
+    bun add -g "@openai/codex@${CODEX_VERSION}"
 
 WORKDIR /workspace
 CMD ["bash"]

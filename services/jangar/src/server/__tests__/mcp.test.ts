@@ -33,6 +33,16 @@ const makeService = (): { service: MemoriesService; saved: MemoryRecord[] } => {
       ),
     count: ({ namespace } = {}) =>
       Effect.sync(() => saved.filter((mem) => (namespace ? mem.namespace === namespace : true)).length),
+    stats: ({ days } = {}) =>
+      Effect.sync(() => {
+        const resolvedDays = days ?? 30
+        const today = new Date().toISOString().slice(0, 10)
+        return {
+          range: { days: resolvedDays, from: today, to: today },
+          byDay: [],
+          topNamespaces: [],
+        }
+      }),
   }
 
   return { service, saved }
@@ -182,6 +192,7 @@ describe('Memories MCP handler', () => {
       persist: () => Effect.fail(new Error('persist failed')),
       retrieve: () => Effect.fail(new Error('retrieve failed')),
       count: () => Effect.fail(new Error('count failed')),
+      stats: () => Effect.fail(new Error('stats failed')),
     }
 
     const persist = await post(failing, {
@@ -210,6 +221,7 @@ describe('Memories MCP handler', () => {
       persist: () => Effect.fail(new Error('persist failed')),
       retrieve: () => Effect.fail(new Error('retrieve failed')),
       count: () => Effect.fail(new Error('count failed')),
+      stats: () => Effect.fail(new Error('stats failed')),
     }
 
     const batch = await post(

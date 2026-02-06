@@ -4,7 +4,6 @@ import { createHash, createPrivateKey, createSign } from 'node:crypto'
 import { createTemporalClient, loadTemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
 
 import { startResourceWatch } from '~/server/kube-watch'
-import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import {
   recordAgentConcurrency,
   recordAgentQueueDepth,
@@ -12,6 +11,7 @@ import {
   recordAgentRunOutcome,
   recordReconcileDurationMs,
 } from '~/server/metrics'
+import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { shouldApplyStatus } from '~/server/status-utils'
@@ -302,7 +302,7 @@ const parseNumberEnv = (value: string | undefined, fallback: number, min = 0) =>
 const normalizeRepositoryKey = (value: string) => value.trim().toLowerCase()
 
 const parseRepoConcurrencyOverrides = () => {
-  const rawOverrides = parseEnvRecord('JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES')
+  const rawOverrides = parseEnvRecord('JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES') ?? {}
   const overrides = new Map<string, number>()
   for (const [key, value] of Object.entries(rawOverrides)) {
     const parsed = parseOptionalNumber(value)
@@ -4982,7 +4982,7 @@ const reconcileAgentRun = async (
       })
       return
     }
-    let warnedConditions =
+    const warnedConditions =
       (vcsResolution.warnings ?? []).length > 0
         ? upsertCondition(conditions, {
             type: 'Warning',
