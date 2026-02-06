@@ -181,7 +181,6 @@ Set defaults for AgentRun and Schedule workload images when the CRD does not spe
 ### Agent comms subjects (optional)
 Override the default NATS subject filters (comma-separated) used by the agent comms subscriber:
 - `agentComms.subjects`
-
 ### Version control providers
 Define a VersionControlProvider resource to decouple repo access from issue intake. This is required for
 agent runtimes that clone, commit, push, or open pull requests. Pair it with a SecretBinding that
@@ -283,7 +282,6 @@ controller:
         backoffSeconds: 20
 ```
 
-
 ## Example production values
 ```yaml
 image:
@@ -369,6 +367,21 @@ Helm ownership conflicts.
 - Configure backpressure with `controller.queue.*` and `controller.rate.*` in `values.yaml`.
 - Queue limits cap pending AgentRuns; rate limits cap submit throughput.
 - Webhook ingestion uses `controller.webhook.queueSize` and `controller.webhook.retry.*` for buffering and retries.
+
+## Pod Security Admission
+Opt in to Pod Security Admission (PSA) labels by enabling the feature and defining labels:
+
+```yaml
+podSecurityAdmission:
+  enabled: true
+  createNamespace: true
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+```
+
+If the namespace already exists, set `podSecurityAdmission.createNamespace=false` and apply the labels to the namespace
+out of band (for example, via your GitOps workflow or `kubectl label`). The chart only labels namespaces it creates.
 
 ## Publishing (OCI)
 ```bash

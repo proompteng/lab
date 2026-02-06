@@ -3908,15 +3908,15 @@ const reconcileWorkflowRun = async (
     return
   }
 
-  const imageCandidates = workflowSteps
-    .map((step) => {
-      const workload = step.workload ?? baseWorkload
-      const image = workload ? resolveJobImage(workload) : null
-      if (!image) return null
-      return { image, context: `workflow step ${step.name}` }
-    })
-    .filter((candidate): candidate is { image: string; context: string } => candidate !== null)
-  const imagePolicy = validateImagePolicy(imageCandidates)
+	  const imageCandidates = workflowSteps
+	    .map((step) => {
+	      const workload = step.workload ?? baseWorkload
+	      const image = workload ? resolveJobImage(workload) : null
+	      if (!image) return null
+	      return { image, context: `workflow step ${step.name}` }
+	    })
+	    .filter((candidate): candidate is ImagePolicyCandidate => candidate !== null)
+	  const imagePolicy = validateImagePolicy(imageCandidates)
   if (!imagePolicy.ok) {
     const updated = upsertCondition(conditions, {
       type: 'InvalidSpec',
