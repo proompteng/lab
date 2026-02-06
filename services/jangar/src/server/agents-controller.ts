@@ -4640,6 +4640,25 @@ const reconcileAgentRun = async (
   }
 }
 
+const reconcileAgentRunWithMetrics = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  agentRun: Record<string, unknown>,
+  namespace: string,
+  memories: Record<string, unknown>[],
+  existingRuns: Record<string, unknown>[],
+  concurrency: ReturnType<typeof parseConcurrency>,
+  inFlight: { total: number; perAgent: Map<string, number> },
+  globalInFlight: number,
+) => {
+  const reconcileStartedAt = Date.now()
+  try {
+    await reconcileAgentRun(kube, agentRun, namespace, memories, existingRuns, concurrency, inFlight, globalInFlight)
+  } finally {
+    const durationMs = Date.now() - reconcileStartedAt
+    recordReconcileDurationMs(durationMs, { kind: 'agentrun', namespace })
+  }
+}
+
 const reconcileNamespaceSnapshot = async (
   kube: ReturnType<typeof createKubernetesClient>,
   namespace: string,
@@ -4682,13 +4701,7 @@ const reconcileNamespaceSnapshot = async (
   }
 
   for (const run of runs) {
-    const reconcileStartedAt = Date.now()
-    try {
-      await reconcileAgentRun(kube, run, namespace, memories, runs, concurrency, inFlight, counts.cluster)
-    } finally {
-      const durationMs = Date.now() - reconcileStartedAt
-      recordReconcileDurationMs(durationMs, { kind: 'agentrun', namespace })
-    }
+    await reconcileAgentRunWithMetrics(kube, run, namespace, memories, runs, concurrency, inFlight, counts.cluster)
   }
 }
 
@@ -4705,13 +4718,16 @@ const reconcileRunWithState = async (
     total: counts.total,
     perAgent: counts.perAgent,
   }
-  const reconcileStartedAt = Date.now()
-  try {
-    await reconcileAgentRun(kube, run, namespace, snapshot.memories, snapshot.runs, concurrency, inFlight, counts.cluster)
-  } finally {
-    const durationMs = Date.now() - reconcileStartedAt
-    recordReconcileDurationMs(durationMs, { kind: 'agentrun', namespace })
-  }
+  await reconcileAgentRunWithMetrics(
+    kube,
+    run,
+    namespace,
+    snapshot.memories,
+    snapshot.runs,
+    concurrency,
+    inFlight,
+    counts.cluster,
+  )
 }
 
 const reconcileNamespaceState = async (
@@ -4957,7 +4973,7 @@ export const __test = {
   checkCrds,
   clearGithubAppTokenCache,
   fetchGithubAppToken,
-  reconcileAgentRun,
+  reconcileAgentRun: reconcileAgentRunWithMetrics,
   reconcileVersionControlProvider,
   reconcileMemory,
   resolveVcsPrRateLimits,

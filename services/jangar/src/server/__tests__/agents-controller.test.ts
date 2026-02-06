@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
-const recordReconcileDurationMs = vi.fn()
-const recordAgentRunOutcome = vi.fn()
-
-vi.mock('~/server/metrics', () => ({
-  recordReconcileDurationMs,
-  recordAgentRunOutcome,
+const metricsMocks = vi.hoisted(() => ({
+  recordReconcileDurationMs: vi.fn(),
+  recordAgentRunOutcome: vi.fn(),
 }))
+
+vi.mock('~/server/metrics', () => metricsMocks)
+
+const { recordReconcileDurationMs, recordAgentRunOutcome } = metricsMocks
 
 import { __test } from '~/server/agents-controller'
 import { RESOURCE_MAP } from '~/server/primitives-kube'
