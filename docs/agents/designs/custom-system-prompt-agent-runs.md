@@ -18,7 +18,7 @@ Agent runs cannot set a per-run system prompt. Codex runs currently rely on stat
 
 ## Current State (Source Code)
 - Jangar builds the run payload from ImplementationSpec text/summary and parameters, placing `prompt` in the event payload used by codex runs. See `services/jangar/src/server/agents-controller.ts`.
-- `codex-implement` reads the event payload, sets `CODEX_PROMPT`, and runs Codex; no system prompt is applied. See `apps/froussard/src/codex/cli/codex-implement.ts`.
+- `codex-implement` reads the event payload, sets `CODEX_PROMPT`, and runs Codex; no system prompt is applied. See `services/jangar/scripts/codex/codex-implement.ts`.
 - `CodexRunner` uses `codex exec` with a limited set of `--config` overrides and does not expose system prompt options. See `packages/codex/src/runner.ts`.
 
 ## Cluster State (2026-02-05)

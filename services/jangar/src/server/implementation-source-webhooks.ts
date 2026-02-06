@@ -752,7 +752,11 @@ const resolveIdempotencyKey = (
 const resolveSourceName = (source: Record<string, unknown>) =>
   asString(readNested(source, ['metadata', 'name'])) ?? 'unknown'
 
-const buildWebhookStatus = (item: WebhookQueueItem, status: WebhookStatus['status'], error?: string): WebhookStatus => ({
+const buildWebhookStatus = (
+  item: WebhookQueueItem,
+  status: WebhookStatus['status'],
+  error?: string,
+): WebhookStatus => ({
   idempotencyKey: item.idempotencyKey,
   deliveryId: item.deliveryId ?? undefined,
   provider: item.provider,
@@ -804,11 +808,14 @@ export const processWebhookItem = async (item: WebhookQueueItem, queue: WebhookQ
     if (!shouldRetry) return
     const delayMs = computeWebhookRetryDelayMs(queue.settings.retry, attempt)
     const nextRunAt = Date.now() + delayMs
-    const retryResult = queue.enqueue({
-      ...item,
-      attempt,
-      nextRunAt,
-    }, { allowDuplicate: true })
+    const retryResult = queue.enqueue(
+      {
+        ...item,
+        attempt,
+        nextRunAt,
+      },
+      { allowDuplicate: true },
+    )
     if (retryResult.status === 'full') {
       await updateSourceStatus(item.kube, item.source, {
         type: 'Error',

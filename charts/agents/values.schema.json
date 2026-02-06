@@ -29,6 +29,73 @@
       },
       "additionalProperties": false
     },
+    "controlPlane": {
+      "type": "object",
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "requests": { "type": "object", "additionalProperties": { "type": "string" } },
+            "limits": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "digest": { "type": "string" },
+            "pullPolicy": { "type": "string" },
+            "pullSecrets": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "env": {
+          "type": "object",
+          "properties": {
+            "vars": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "controllers": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "requests": { "type": "object", "additionalProperties": { "type": "string" } },
+            "limits": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "digest": { "type": "string" },
+            "pullPolicy": { "type": "string" },
+            "pullSecrets": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "env": {
+          "type": "object",
+          "properties": {
+            "vars": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "runner": {
       "type": "object",
       "properties": {
@@ -99,6 +166,49 @@
         "port": { "type": "integer" },
         "servicePort": { "type": "integer" },
         "serviceType": { "type": "string", "enum": ["ClusterIP"] }
+      },
+      "additionalProperties": false
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "path": { "type": "string" },
+        "service": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "type": { "type": "string" },
+            "port": { "type": "integer" },
+            "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+            "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "namespace": { "type": "string" },
+            "interval": { "type": "string" },
+            "scrapeTimeout": { "type": "string" },
+            "honorLabels": { "type": "boolean" },
+            "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+            "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+            "relabelings": { "type": "array", "items": { "type": "object" } },
+            "metricRelabelings": { "type": "array", "items": { "type": "object" } }
+          },
+          "additionalProperties": false
+        },
+        "dashboards": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+            "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },
@@ -273,6 +383,15 @@
           },
           "additionalProperties": false
         },
+        "repoConcurrency": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "default": { "type": "integer", "minimum": 0 },
+            "overrides": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } }
+          },
+          "additionalProperties": false
+        },
         "queue": {
           "type": "object",
           "properties": {
@@ -299,9 +418,9 @@
             "retry": {
               "type": "object",
               "properties": {
-                "maxAttempts": { "type": "integer", "minimum": 1 },
                 "baseDelaySeconds": { "type": "integer", "minimum": 0 },
-                "maxDelaySeconds": { "type": "integer", "minimum": 0 }
+                "maxDelaySeconds": { "type": "integer", "minimum": 0 },
+                "maxAttempts": { "type": "integer", "minimum": 1 }
               },
               "additionalProperties": false
             }
@@ -309,6 +428,8 @@
           "additionalProperties": false
         },
         "agentRunRetentionSeconds": { "type": "integer", "minimum": 0 },
+        "logRetentionSeconds": { "type": "integer", "minimum": 0 },
+        "jobTtlSeconds": { "type": "integer", "minimum": 0 },
         "jobTtlSecondsAfterFinished": { "type": "integer", "minimum": 0 },
         "authSecret": {
           "type": "object",

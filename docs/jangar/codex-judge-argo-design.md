@@ -143,7 +143,7 @@ Notes:
 - Merge conflicts on resume trigger human escalation.
 
 ## Resume State (Codex Implementation)
-The implementation runner (`apps/froussard/src/codex/cli/codex-implement.ts`) persists resume
+The implementation runner (`services/jangar/scripts/codex/codex-implement.ts`) persists resume
 metadata at `.codex/implementation-resume.json` and bundles changed files in
 `.codex-implementation-changes.tar.gz`. On the next run, Codex attempts to restore those changes
 before resuming the session (or falls back to a fresh session). Jangar should treat the presence

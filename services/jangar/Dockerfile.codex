@@ -107,7 +107,7 @@ RUN --mount=type=secret,id=codex_auth,target=/tmp/codex_auth.json \
     cp /tmp/codex_auth.json /root/.codex/auth.json \
     && printf '%s\n' "${CODEX_AUTH_CHECKSUM}" > /root/.codex/auth.checksum
 
-COPY apps/froussard/scripts/codex-config-container.toml /root/.codex/config.toml
+COPY services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml
 COPY skills/ /root/.codex/skills/
 
 RUN git config --global user.name "gregkonush" \
@@ -118,15 +118,15 @@ RUN rm -rf "$WORKTREE" \
     && cd "$WORKTREE" \
     && bun install --frozen-lockfile --ignore-scripts
 
-COPY apps/froussard/src/codex/cli/codex-bootstrap.ts /usr/local/bin/codex-bootstrap
-COPY apps/froussard/src/codex/cli/agent-runner.ts /usr/local/bin/agent-runner
-COPY apps/froussard/src/codex/cli/codex-implement.ts /usr/local/bin/codex-implement
-COPY apps/froussard/src/codex/cli/codex-research.ts /usr/local/bin/codex-research
-COPY apps/froussard/src/codex/cli/codex-graf.ts /usr/local/bin/codex-graf
-COPY apps/froussard/scripts/codex-nats-publish.ts /usr/local/bin/codex-nats-publish
-COPY apps/froussard/scripts/codex-nats-soak.ts /usr/local/bin/codex-nats-soak
-COPY apps/froussard/scripts/discord-channel.ts /usr/local/bin/discord-channel.ts
-COPY apps/froussard/src/codex/cli/lib /usr/local/bin/lib
+COPY services/jangar/scripts/codex/codex-bootstrap.ts /usr/local/bin/codex-bootstrap
+COPY services/jangar/scripts/codex/agent-runner.ts /usr/local/bin/agent-runner
+COPY services/jangar/scripts/codex/codex-implement.ts /usr/local/bin/codex-implement
+COPY services/jangar/scripts/codex/codex-research.ts /usr/local/bin/codex-research
+COPY services/jangar/scripts/codex/codex-graf.ts /usr/local/bin/codex-graf
+COPY services/jangar/scripts/codex-nats-publish.ts /usr/local/bin/codex-nats-publish
+COPY services/jangar/scripts/codex-nats-soak.ts /usr/local/bin/codex-nats-soak
+COPY services/jangar/scripts/discord-channel.ts /usr/local/bin/discord-channel.ts
+COPY services/jangar/scripts/codex/lib /usr/local/bin/lib
 # Provide @proompteng/codex for the CLI helpers at runtime.
 COPY packages/codex /opt/proompteng/packages/codex
 COPY packages/discord /opt/proompteng/packages/discord

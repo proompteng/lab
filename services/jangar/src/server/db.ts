@@ -508,6 +508,36 @@ type JangarAuditEvents = {
   created_at: Generated<Timestamp>
 }
 
+type AgentsControlPlaneResourcesCurrent = {
+  id: Generated<string>
+  cluster: Generated<string>
+  kind: string
+  namespace: string
+  name: string
+  uid: string | null
+  api_version: string | null
+  resource_version: string | null
+  generation: number | null
+  labels: JsonValue
+  annotations: JsonValue
+  resource: JsonValue
+  fingerprint: string
+  resource_created_at: Timestamp | null
+  resource_updated_at: Timestamp | null
+  status_phase: string | null
+  spec_runtime_type: string | null
+  spec_agent_ref_name: string | null
+  spec_implementation_spec_ref_name: string | null
+  spec_source_provider: string | null
+  spec_source_external_id: string | null
+  spec_summary: string | null
+  spec_labels: string[]
+  last_seen_at: Generated<Timestamp>
+  deleted_at: Timestamp | null
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
 export type Database = {
   'atlas.repositories': AtlasRepositories
   'atlas.file_keys': AtlasFileKeys
@@ -540,6 +570,7 @@ export type Database = {
   memory_resources: JangarMemoryResources
   orchestration_runs: JangarOrchestrationRuns
   audit_events: JangarAuditEvents
+  'agents_control_plane.resources_current': AgentsControlPlaneResourcesCurrent
   'codex_judge.runs': CodexJudgeRuns
   'codex_judge.artifacts': CodexJudgeArtifacts
   'codex_judge.evaluations': CodexJudgeEvaluations

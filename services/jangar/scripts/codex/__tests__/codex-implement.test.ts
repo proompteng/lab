@@ -224,13 +224,13 @@ describe('runCodexImplementation', () => {
   it('configures Discord channel streaming when credentials are provided', async () => {
     process.env.DISCORD_BOT_TOKEN = 'token'
     process.env.DISCORD_GUILD_ID = 'guild'
-    process.env.CHANNEL_SCRIPT = 'apps/froussard/scripts/discord-channel.ts'
+    process.env.CHANNEL_SCRIPT = 'services/jangar/scripts/discord-channel.ts'
     utilMocks.pathExists.mockResolvedValue(true)
 
     await runCodexImplementation(eventPath)
 
     expect(buildDiscordChannelCommandMock).toHaveBeenCalledWith(
-      'apps/froussard/scripts/discord-channel.ts',
+      'services/jangar/scripts/discord-channel.ts',
       expect.any(Array),
     )
     const invocation = runCodexSessionMock.mock.calls[0]?.[0]

@@ -412,7 +412,6 @@ export class CodexAppServerClient {
         developerInstructions: null,
         personality: null,
         ephemeral: null,
-        dynamicTools: null,
         experimentalRawEvents: this.experimentalRawEvents,
       }
 

@@ -115,16 +115,31 @@ AgentRun runtime config does not specify a value.
 
 Common fields:
 - `controller.defaultWorkload.nodeSelector`
+- `controller.defaultWorkload.topologySpreadConstraints`
 - `controller.defaultWorkload.affinity`
+- `controller.defaultWorkload.topologySpreadConstraints`
 - `controller.defaultWorkload.priorityClassName`
 - `controller.defaultWorkload.schedulerName`
 
 Per-run overrides live under `spec.runtime.config` on the AgentRun and take precedence over defaults.
+Use `spec.runtime.config.topologySpreadConstraints` (array) to override or set an explicit empty array to clear
+defaults for a single run.
+
+### Concurrency limits
+- `controller.concurrency.perNamespace`, `controller.concurrency.perAgent`, `controller.concurrency.cluster`
+- `controller.repoConcurrency.enabled` with `controller.repoConcurrency.default` and optional `controller.repoConcurrency.overrides` per repo
 
 ### gRPC service (optional)
 Enable gRPC for agentctl or in-cluster clients:
 - `grpc.enabled=true`
 - Set `env.vars.JANGAR_GRPC_TOKEN` to require a shared token
+
+### Observability (Prometheus + Grafana)
+The chart ships a Prometheus scrape endpoint and an optional ServiceMonitor plus a Grafana dashboard ConfigMap.
+- Metrics endpoint: `metrics.enabled=true` (default) exposes `metrics.path` (default `/metrics`).
+- Metrics service: `metrics.service.enabled=true` publishes a `*-metrics` Service on `metrics.service.port`.
+- ServiceMonitor: set `metrics.serviceMonitor.enabled=true` and add labels/annotations as needed.
+- Grafana dashboard: `metrics.dashboards.enabled=true` creates a ConfigMap labeled for Grafana sidecars.
 
 ### Migrations
 Automatic migrations are enabled by default. To skip:
@@ -177,7 +192,6 @@ Set defaults for AgentRun and Schedule workload images when the CRD does not spe
 ### Agent comms subjects (optional)
 Override the default NATS subject filters (comma-separated) used by the agent comms subscriber:
 - `agentComms.subjects`
-
 ### Version control providers
 Define a VersionControlProvider resource to decouple repo access from issue intake. This is required for
 agent runtimes that clone, commit, push, or open pull requests. Pair it with a SecretBinding that
@@ -330,10 +344,13 @@ The chart sets `JANGAR_AGENT_RUNNER_IMAGE` from `runner.image.*` to avoid missin
 Override `runner.image.repository`, `runner.image.tag`, or `runner.image.digest` to point at your own build.
 
 ## Job TTL behavior
-Jobs launched by the controller use `controller.jobTtlSecondsAfterFinished` as the default TTL (seconds).
+Jobs launched by the controller use `controller.jobTtlSeconds` (or `controller.jobTtlSecondsAfterFinished`) as the
+default TTL (seconds).
 The controller applies TTL only after it records the AgentRun/workflow status to avoid cleanup races.
-Set `controller.jobTtlSecondsAfterFinished=0` to disable job cleanup, or override per run via
-`spec.runtime.config.ttlSecondsAfterFinished`. Values are clamped to 30s–7d for safety.
+Set `controller.jobTtlSeconds=0` (or `controller.jobTtlSecondsAfterFinished=0`) to disable job cleanup, or override per
+run via `spec.runtime.config.ttlSecondsAfterFinished`. Values are clamped to 30s–7d for safety.
+Log retention hints default to `controller.logRetentionSeconds` (overridable via
+`spec.runtime.config.logRetentionSeconds`).
 
 ## Native orchestration
 Native orchestration runs in-cluster and supports:

@@ -257,7 +257,7 @@ No GitHub-specific templates in examples.
 
 Custom agent images:
 - AgentRun can supply `spec.workload.image` for the container image that hosts `/usr/local/bin/agent-runner`.
-- Provide a Codex agent Dockerfile for reference at `apps/froussard/Dockerfile.codex`.
+- Provide a Codex agent Dockerfile for reference at `services/jangar/Dockerfile.codex`.
 
 ### ImplementationSpec (new CRD, v1alpha1)
 Purpose: Provider-agnostic description of "what to implement".
