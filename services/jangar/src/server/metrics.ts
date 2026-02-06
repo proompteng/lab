@@ -369,11 +369,9 @@ const createMetricsState = (): MetricsState => {
     const shutdown = () => {
       if (shuttingDown) return
       shuttingDown = true
-      void meterProvider
-        .shutdown()
-        .catch((error) => {
-          diag.error('failed to shutdown metrics provider', error)
-        })
+      void meterProvider.shutdown().catch((error) => {
+        diag.error('failed to shutdown metrics provider', error)
+      })
     }
 
     process.once('SIGTERM', shutdown)
@@ -402,5 +400,4 @@ export const isPrometheusMetricsEnabled = () => Boolean(metricsState.prometheusE
 
 export const getPrometheusMetricsPath = () => metricsState.prometheusPath ?? '/metrics'
 
-export const getPrometheusMetricsRequestHandler = () =>
-  metricsState.prometheusExporter?.getMetricsRequestHandler()
+export const getPrometheusMetricsRequestHandler = () => metricsState.prometheusExporter?.getMetricsRequestHandler()

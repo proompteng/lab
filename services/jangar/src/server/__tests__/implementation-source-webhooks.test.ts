@@ -132,6 +132,75 @@ describe('ImplementationSource webhook handler', () => {
     })
   })
 
+  it('deduplicates webhook deliveries by idempotency key', async () => {
+    const source = {
+      apiVersion: 'agents.proompteng.ai/v1alpha1',
+      kind: 'ImplementationSource',
+      metadata: { name: 'github-issues', namespace: 'agents', generation: 1 },
+      spec: {
+        provider: 'github',
+        auth: { secretRef: { name: 'webhook-secret', key: 'token' } },
+        webhook: { enabled: true },
+        scope: { repository: 'proompteng/lab', labels: ['agents'] },
+      },
+      status: {},
+    }
+
+    const secretValue = 'super-secret'
+    const apply = vi.fn(async (resource: Record<string, unknown>) => resource)
+    const kube = buildKube({ source, secretValue, applySpy: apply })
+    const queue = buildQueue()
+
+    const payload = {
+      action: 'opened',
+      issue: {
+        number: 2501,
+        title: 'Implement webhook ingestion',
+        body: 'Details',
+        labels: [{ name: 'agents' }],
+        updated_at: '2026-01-19T00:00:00Z',
+        html_url: 'https://github.com/proompteng/lab/issues/2501',
+      },
+      repository: { full_name: 'proompteng/lab' },
+    }
+
+    const rawBody = JSON.stringify(payload)
+    const signature = createHmac('sha256', secretValue).update(rawBody, 'utf8').digest('hex')
+    const headers = {
+      'x-github-event': 'issues',
+      'x-github-delivery': 'delivery-1',
+      'x-hub-signature-256': `sha256=${signature}`,
+    }
+
+    const response = await postImplementationSourceWebhookHandler(
+      'github',
+      new Request('http://localhost/api/agents/implementation-sources/webhooks/github', {
+        method: 'POST',
+        headers,
+        body: rawBody,
+      }),
+      { kubeClient: kube as never, now: () => '2026-01-19T00:00:00Z', queue, flushQueue: true },
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({ ok: true, queued: 1, deduped: 0 })
+
+    const duplicate = await postImplementationSourceWebhookHandler(
+      'github',
+      new Request('http://localhost/api/agents/implementation-sources/webhooks/github', {
+        method: 'POST',
+        headers,
+        body: rawBody,
+      }),
+      { kubeClient: kube as never, now: () => '2026-01-19T00:00:00Z', queue, flushQueue: true },
+    )
+
+    expect(duplicate.status).toBe(200)
+    await expect(duplicate.json()).resolves.toMatchObject({ ok: true, queued: 0, deduped: 1 })
+
+    expect(apply).toHaveBeenCalledTimes(1)
+  })
+
   it('ingests Linear issue webhook and updates status', async () => {
     const source = {
       apiVersion: 'agents.proompteng.ai/v1alpha1',

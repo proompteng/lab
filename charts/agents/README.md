@@ -380,20 +380,9 @@ Helm ownership conflicts.
 - The controller enforces queue/rate limits for direct AgentRun CRs with `Blocked` conditions.
 - Webhook ingestion uses `controller.webhook.queueSize` and `controller.webhook.retry.*` for buffering and retries.
 
-## Pod Security Admission
-Opt in to Pod Security Admission (PSA) labels by enabling the feature and defining labels:
-
-```yaml
-podSecurityAdmission:
-  enabled: true
-  createNamespace: true
-  labels:
-    pod-security.kubernetes.io/enforce: baseline
-    pod-security.kubernetes.io/enforce-version: latest
-```
-
-If the namespace already exists, set `podSecurityAdmission.createNamespace=false` and apply the labels to the namespace
-out of band (for example, via your GitOps workflow or `kubectl label`). The chart only labels namespaces it creates.
+## Webhook ingestion
+- Control webhook buffering with `controller.webhook.queueSize`.
+- Tune retry backoff with `controller.webhook.retry.*` (seconds).
 
 ## Publishing (OCI)
 ```bash
