@@ -495,6 +495,41 @@ COPY json/ .
 RUN --mount=type=cache,target=/root/.cache/bun \
   bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar
 
+# Control-plane-only runtime image.
+#
+# - No Codex CLI / skills / dev tooling.
+# - Defaults to controllers + agent comms disabled; can be overridden via env vars.
+# - Still includes `kubectl` because the control plane uses it for list/watch/logs.
+FROM oven/bun:${BUN_VERSION} AS control-plane
+
+COPY --from=tools /usr/local/bin/kubectl /usr/local/bin/kubectl
+
+WORKDIR /app
+COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
+COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
+COPY --from=otel-build /app/packages/otel/package.json /app/packages/otel/package.json
+COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
+COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
+COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
+
+COPY --from=jangar-deps-prod /app/node_modules ./node_modules
+COPY --from=jangar-pty /tmp/node-pty/build /app/node_modules/node-pty/build
+COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/node_modules/node-pty/prebuilds
+
+WORKDIR /app/services/jangar
+COPY --from=jangar-build /app/services/jangar/.output ./.output
+COPY --from=jangar-build /app/services/jangar/package.json ./package.json
+COPY --from=jangar-pty /tmp/node-pty/build /app/services/jangar/.output/server/node_modules/node-pty/build
+COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/server/node_modules/node-pty/prebuilds
+
+ENV JANGAR_AGENTS_CONTROLLER_ENABLED=0 \
+  JANGAR_ORCHESTRATION_CONTROLLER_ENABLED=0 \
+  JANGAR_SUPPORTING_CONTROLLER_ENABLED=0 \
+  JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED=true \
+  JANGAR_PRIMITIVES_RECONCILER=0
+
+CMD ["bun", "run", ".output/server/index.mjs"]
+
 FROM tools AS runtime
 
 ENV PATH="/usr/local/go/bin:${PATH}"

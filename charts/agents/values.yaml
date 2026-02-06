@@ -19,6 +19,29 @@ image:
   pullPolicy: IfNotPresent
   pullSecrets: []
 
+controlPlane:
+  image:
+    repository: ""
+    tag: ""
+    digest: ""
+    pullPolicy: ""
+    pullSecrets: []
+  env:
+    vars: {}
+
+controllers:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: ""
+    tag: ""
+    digest: ""
+    pullPolicy: ""
+    pullSecrets: []
+  resources: {}
+  env:
+    vars: {}
+
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/codex-universal
@@ -153,6 +176,10 @@ controller:
     perNamespace: 10
     perAgent: 5
     cluster: 100
+  repoConcurrency:
+    enabled: false
+    default: 0
+    overrides: {}
   queue:
     perNamespace: 200
     perRepo: 50
@@ -162,6 +189,12 @@ controller:
     perNamespace: 120
     perRepo: 30
     cluster: 600
+  webhook:
+    queueSize: 1000
+    retry:
+      baseDelaySeconds: 1
+      maxDelaySeconds: 60
+      maxAttempts: 5
   agentRunRetentionSeconds: 2592000
   jobTtlSecondsAfterFinished: 600
   authSecret:

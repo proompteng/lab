@@ -29,6 +29,73 @@
       },
       "additionalProperties": false
     },
+    "controlPlane": {
+      "type": "object",
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "requests": { "type": "object", "additionalProperties": { "type": "string" } },
+            "limits": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "digest": { "type": "string" },
+            "pullPolicy": { "type": "string" },
+            "pullSecrets": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "env": {
+          "type": "object",
+          "properties": {
+            "vars": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "controllers": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "requests": { "type": "object", "additionalProperties": { "type": "string" } },
+            "limits": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "digest": { "type": "string" },
+            "pullPolicy": { "type": "string" },
+            "pullSecrets": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "env": {
+          "type": "object",
+          "properties": {
+            "vars": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "runner": {
       "type": "object",
       "properties": {
@@ -273,6 +340,15 @@
           },
           "additionalProperties": false
         },
+        "repoConcurrency": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "default": { "type": "integer", "minimum": 0 },
+            "overrides": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } }
+          },
+          "additionalProperties": false
+        },
         "queue": {
           "type": "object",
           "properties": {
@@ -289,6 +365,22 @@
             "perNamespace": { "type": "integer", "minimum": 0 },
             "perRepo": { "type": "integer", "minimum": 0 },
             "cluster": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "webhook": {
+          "type": "object",
+          "properties": {
+            "queueSize": { "type": "integer", "minimum": 1 },
+            "retry": {
+              "type": "object",
+              "properties": {
+                "baseDelaySeconds": { "type": "integer", "minimum": 0 },
+                "maxDelaySeconds": { "type": "integer", "minimum": 0 },
+                "maxAttempts": { "type": "integer", "minimum": 1 }
+              },
+              "additionalProperties": false
+            }
           },
           "additionalProperties": false
         },

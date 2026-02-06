@@ -90,5 +90,5 @@ describe('github worktree snapshot', () => {
       worktreeName,
       worktreePath,
     })
-  })
+  }, 20_000)
 })

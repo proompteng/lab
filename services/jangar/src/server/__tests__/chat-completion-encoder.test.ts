@@ -13,7 +13,7 @@ const createSession = (options: { includeUsage?: boolean; toolRenderer?: ToolRen
   return chatCompletionEncoderLive.create({
     id: 'chatcmpl-test',
     created: 123,
-    model: 'gpt-5.2-codex',
+    model: 'gpt-5.3-codex',
     includeUsage: options.includeUsage ?? false,
     toolRenderer,
     meta: { threadId: 'thread-1', turnNumber: 1, chatId: 'chat-1' },
