@@ -1,8 +1,10 @@
-{{- if and .Values.podSecurityAdmission.enabled .Values.podSecurityAdmission.createNamespace (gt (len .Values.podSecurityAdmission.labels) 0) -}}
+{{- if and .Values.podSecurityAdmission.enabled .Values.podSecurityAdmission.createNamespace -}}
 apiVersion: v1
 kind: Namespace
 metadata:
   name: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  {{- if gt (len .Values.podSecurityAdmission.labels) 0 }}
   labels:
     {{- toYaml .Values.podSecurityAdmission.labels | nindent 4 }}
+  {{- end }}
 {{- end }}

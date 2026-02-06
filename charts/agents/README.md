@@ -125,6 +125,10 @@ Per-run overrides live under `spec.runtime.config` on the AgentRun and take prec
 Use `spec.runtime.config.topologySpreadConstraints` (array) to override or set an explicit empty array to clear
 defaults for a single run.
 
+### Concurrency limits
+- `controller.concurrency.perNamespace`, `controller.concurrency.perAgent`, `controller.concurrency.cluster`
+- `controller.repoConcurrency.enabled` with `controller.repoConcurrency.default` and optional `controller.repoConcurrency.overrides` per repo
+
 ### gRPC service (optional)
 Enable gRPC for agentctl or in-cluster clients:
 - `grpc.enabled=true`
@@ -140,9 +144,7 @@ mounts the secret file at `auth.json` inside it. It also sets `CODEX_HOME` and `
 
 Example:
 ```bash
-helm upgrade agents charts/agents --namespace agents --reuse-values \
-  --set controller.authSecret.name=codex-auth \
-  --set controller.authSecret.key=auth.json
+helm upgrade agents charts/agents --namespace agents --reuse-values   --set controller.authSecret.name=codex-auth   --set controller.authSecret.key=auth.json
 ```
 
 ### Admission control policy
@@ -173,6 +175,16 @@ controller:
         - prod-kubeconfig
 ```
 
+### AgentRun runner defaults (optional)
+Set defaults for AgentRun and Schedule workload images when the CRD does not specify one:
+- `runtime.agentRunnerImage` → `JANGAR_AGENT_RUNNER_IMAGE`
+- `runtime.agentImage` → `JANGAR_AGENT_IMAGE`
+- `runtime.scheduleRunnerImage` → `JANGAR_SCHEDULE_RUNNER_IMAGE`
+- `runtime.scheduleServiceAccount` → `JANGAR_SCHEDULE_SERVICE_ACCOUNT`
+
+### Agent comms subjects (optional)
+Override the default NATS subject filters (comma-separated) used by the agent comms subscriber:
+- `agentComms.subjects`
 ### Version control providers
 Define a VersionControlProvider resource to decouple repo access from issue intake. This is required for
 agent runtimes that clone, commit, push, or open pull requests. Pair it with a SecretBinding that
@@ -208,7 +220,7 @@ controller:
 ```
 
 Branch naming defaults (VersionControlProvider `spec.defaults`):
-- `branchTemplate` controls deterministic head branch names (e.g. `codex/{{issueNumber}}`).
+- `branchTemplate` controls deterministic head branch names (e.g., `codex/{{issueNumber}}`).
 - `branchConflictSuffixTemplate` appends a suffix when another active run uses the same branch.
 
 Example token auth (GitHub fine-grained PAT):
@@ -325,10 +337,13 @@ The chart sets `JANGAR_AGENT_RUNNER_IMAGE` from `runner.image.*` to avoid missin
 Override `runner.image.repository`, `runner.image.tag`, or `runner.image.digest` to point at your own build.
 
 ## Job TTL behavior
-Jobs launched by the controller use `controller.jobTtlSecondsAfterFinished` as the default TTL (seconds).
+Jobs launched by the controller use `controller.jobTtlSeconds` (or `controller.jobTtlSecondsAfterFinished`) as the
+default TTL (seconds).
 The controller applies TTL only after it records the AgentRun/workflow status to avoid cleanup races.
-Set `controller.jobTtlSecondsAfterFinished=0` to disable job cleanup, or override per run via
-`spec.runtime.config.ttlSecondsAfterFinished`. Values are clamped to 30s–7d for safety.
+Set `controller.jobTtlSeconds=0` (or `controller.jobTtlSecondsAfterFinished=0`) to disable job cleanup, or override per
+run via `spec.runtime.config.ttlSecondsAfterFinished`. Values are clamped to 30s–7d for safety.
+Log retention hints default to `controller.logRetentionSeconds` (overridable via
+`spec.runtime.config.logRetentionSeconds`).
 
 ## Native orchestration
 Native orchestration runs in-cluster and supports:
@@ -355,6 +370,22 @@ Helm ownership conflicts.
 ## Admission control
 - Configure backpressure with `controller.queue.*` and `controller.rate.*` in `values.yaml`.
 - Queue limits cap pending AgentRuns; rate limits cap submit throughput.
+- Webhook ingestion uses `controller.webhook.queueSize` and `controller.webhook.retry.*` for buffering and retries.
+
+## Pod Security Admission
+Opt in to Pod Security Admission (PSA) labels by enabling the feature and defining labels:
+
+```yaml
+podSecurityAdmission:
+  enabled: true
+  createNamespace: true
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+```
+
+If the namespace already exists, set `podSecurityAdmission.createNamespace=false` and apply the labels to the namespace
+out of band (for example, via your GitOps workflow or `kubectl label`). The chart only labels namespaces it creates.
 
 ## Publishing (OCI)
 ```bash
