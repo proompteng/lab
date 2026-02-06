@@ -363,11 +363,11 @@ type ImplementationScope struct {
 }
 
 type ImplementationSourceStatus struct {
-	LastSyncedAt       *metav1.Time                    `json:"lastSyncedAt,omitempty"`
+	LastSyncedAt       *metav1.Time                     `json:"lastSyncedAt,omitempty"`
 	LastWebhook        *ImplementationSourceWebhookSync `json:"lastWebhook,omitempty"`
-	Conditions         []metav1.Condition              `json:"conditions,omitempty"`
-	UpdatedAt          *metav1.Time                    `json:"updatedAt,omitempty"`
-	ObservedGeneration int64                           `json:"observedGeneration,omitempty"`
+	Conditions         []metav1.Condition               `json:"conditions,omitempty"`
+	UpdatedAt          *metav1.Time                     `json:"updatedAt,omitempty"`
+	ObservedGeneration int64                            `json:"observedGeneration,omitempty"`
 }
 
 type ImplementationSourceWebhookSync struct {
