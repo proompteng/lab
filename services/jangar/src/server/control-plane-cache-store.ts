@@ -55,8 +55,10 @@ export type ListControlPlaneCacheResourcesInput = {
 export type ControlPlaneCacheStore = {
   ready: Promise<void>
   close: () => Promise<void>
+  getDbNow: () => Promise<Timestamp>
   upsertResource: (input: UpsertControlPlaneCacheResourceInput) => Promise<void>
   markDeleted: (key: ControlPlaneCacheKey) => Promise<void>
+  markNotSeenSince: (input: { cluster: string; kind: string; namespace: string; since: Timestamp }) => Promise<void>
   getResource: (key: ControlPlaneCacheKey) => Promise<ControlPlaneCacheResource | null>
   listResources: (input: ListControlPlaneCacheResourcesInput) => Promise<{
     items: ControlPlaneCacheResource[]
@@ -90,6 +92,17 @@ export const createControlPlaneCacheStore = (options: StoreOptions = {}): Contro
 
   const close = async () => {
     await db.destroy()
+  }
+
+  const getDbNow: ControlPlaneCacheStore['getDbNow'] = async () => {
+    await ready
+    const result = await sql<{ now: Timestamp }>`select now() as now`.execute(db)
+    const value = result.rows[0]?.now
+    if (!value) {
+      // Should be unreachable, but avoid crashing the cache sync loop.
+      return new Date()
+    }
+    return value
   }
 
   const upsertResource: ControlPlaneCacheStore['upsertResource'] = async (input) => {
@@ -150,6 +163,23 @@ export const createControlPlaneCacheStore = (options: StoreOptions = {}): Contro
           updated_at: sql`now()`,
         }),
       )
+      .execute()
+  }
+
+  const markNotSeenSince: ControlPlaneCacheStore['markNotSeenSince'] = async ({ cluster, kind, namespace, since }) => {
+    await ready
+    await db
+      .updateTable('agents_control_plane.resources_current')
+      .set({
+        deleted_at: sql`now()`,
+        last_seen_at: sql`now()`,
+        updated_at: sql`now()`,
+      })
+      .where('cluster', '=', cluster)
+      .where('kind', '=', kind)
+      .where('namespace', '=', namespace)
+      .where('deleted_at', 'is', null)
+      .where('last_seen_at', '<', since)
       .execute()
   }
 
@@ -227,5 +257,5 @@ export const createControlPlaneCacheStore = (options: StoreOptions = {}): Contro
     }
   }
 
-  return { ready, close, upsertResource, markDeleted, getResource, listResources }
+  return { ready, close, getDbNow, upsertResource, markDeleted, markNotSeenSince, getResource, listResources }
 }
