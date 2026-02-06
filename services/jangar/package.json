@@ -29,6 +29,7 @@
     "@opentelemetry/exporter-prometheus": "^0.203.0",
     "@proompteng/codex": "workspace:*",
     "@proompteng/design": "workspace:*",
+    "@proompteng/discord": "workspace:*",
     "@proompteng/otel": "workspace:*",
     "@proompteng/temporal-bun-sdk": "workspace:*",
     "@tabler/icons-react": "^3.36.1",

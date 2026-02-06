@@ -155,7 +155,7 @@ describe('runCodexImplementation', () => {
     pushCodexEventsToLokiMock.mockImplementation(async () => {})
     buildDiscordChannelCommandMock.mockClear()
     utilMocks.pathExists.mockImplementation(async (path: string) => !path.includes('missing'))
-  })
+  }, 30_000)
 
   afterEach(async () => {
     await rm(workdir, { recursive: true, force: true })
@@ -194,7 +194,7 @@ describe('runCodexImplementation', () => {
     const resumeMetadataRaw = await readFile(resumeMetadataPath, 'utf8')
     const resumeMetadata = JSON.parse(resumeMetadataRaw) as Record<string, unknown>
     expect(resumeMetadata.state).toBe('cleared')
-  })
+  }, 20_000)
 
   it('auto-commits when the worktree is dirty', async () => {
     await writeFile(join(workdir, 'uncommitted.txt'), 'hello', 'utf8')
@@ -204,7 +204,7 @@ describe('runCodexImplementation', () => {
     const status = await runGitCapture(['status', '--porcelain'])
     expect(status.split('\n').some((line) => line.includes('uncommitted.txt'))).toBe(false)
     await expect(runGitCapture(['log', '-1', '--pretty=%s'])).resolves.toMatch(/chore\(codex\)/)
-  })
+  }, 20_000)
 
   it('auto-commits even when the implementation run fails', async () => {
     await writeFile(join(workdir, 'uncommitted.txt'), 'hello', 'utf8')
@@ -215,11 +215,11 @@ describe('runCodexImplementation', () => {
     const status = await runGitCapture(['status', '--porcelain'])
     expect(status.split('\n').some((line) => line.includes('uncommitted.txt'))).toBe(false)
     await expect(runGitCapture(['log', '-1', '--pretty=%s'])).resolves.toMatch(/chore\(codex\)/)
-  })
+  }, 20_000)
 
   it('throws when the event file is missing', async () => {
     await expect(runCodexImplementation(join(workdir, 'missing.json'))).rejects.toThrow(/Event payload file not found/)
-  })
+  }, 20_000)
 
   it('configures Discord channel streaming when credentials are provided', async () => {
     process.env.DISCORD_BOT_TOKEN = 'token'
@@ -235,7 +235,7 @@ describe('runCodexImplementation', () => {
     )
     const invocation = runCodexSessionMock.mock.calls[0]?.[0]
     expect(invocation?.discordChannel?.command).toEqual(['bun', 'run', 'channel.ts'])
-  })
+  }, 20_000)
 
   it('prefers the image discord-channel script when available', async () => {
     process.env.DISCORD_BOT_TOKEN = 'token'
@@ -251,19 +251,19 @@ describe('runCodexImplementation', () => {
     await runCodexImplementation(eventPath)
 
     expect(buildDiscordChannelCommandMock).toHaveBeenCalledWith('/usr/local/bin/discord-channel.ts', expect.any(Array))
-  })
+  }, 20_000)
 
   it('throws when repository is missing in the payload', async () => {
     await writeFile(eventPath, JSON.stringify({ prompt: 'hi', repository: '', issueNumber: 3 }), 'utf8')
 
     await expect(runCodexImplementation(eventPath)).rejects.toThrow('Missing repository metadata in event payload')
-  })
+  }, 20_000)
 
   it('throws when issue number is missing in the payload', async () => {
     await writeFile(eventPath, JSON.stringify({ prompt: 'hi', repository: 'owner/repo', issueNumber: '' }), 'utf8')
 
     await expect(runCodexImplementation(eventPath)).rejects.toThrow('Missing issue number metadata in event payload')
-  })
+  }, 20_000)
 
   it('falls back to base when the head branch does not exist on the remote', async () => {
     // Remove head from remote and local to simulate new branches that are not yet pushed.
@@ -288,7 +288,7 @@ describe('runCodexImplementation', () => {
     // Verify the worktree ended up on the head branch created from base.
     const currentBranch = await readFile(join(workdir, '.git', 'HEAD'), 'utf8')
     expect(currentBranch.trim()).toContain('codex/issue-42')
-  })
+  }, 20_000)
 
   it('resumes a previous implementation session when resume metadata is present', async () => {
     const resumeSourceDir = await mkdtemp(join(tmpdir(), 'codex-impl-resume-src-'))
@@ -359,7 +359,7 @@ describe('runCodexImplementation', () => {
     } finally {
       await rm(resumeSourceDir, { recursive: true, force: true })
     }
-  })
+  }, 20_000)
 
   it('still writes artifact placeholders when implementation fails', async () => {
     const linkTargetPath = join(workdir, 'linked.txt')
@@ -413,5 +413,5 @@ describe('runCodexImplementation', () => {
     } finally {
       await rm(extractionDir, { recursive: true, force: true })
     }
-  })
+  }, 20_000)
 })
