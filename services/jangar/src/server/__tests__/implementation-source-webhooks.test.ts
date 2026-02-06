@@ -31,8 +31,13 @@ const buildKube = (options: {
 }
 
 const findStatus = (calls: Array<[Record<string, unknown>]>, kind: string) => {
-  const match = calls.find(([resource]) => resource.kind === kind)
-  return (match?.[0]?.status ?? {}) as Record<string, unknown>
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const [resource] = calls[index] ?? []
+    if (resource?.kind === kind) {
+      return (resource.status ?? {}) as Record<string, unknown>
+    }
+  }
+  return {}
 }
 
 const findCondition = (status: Record<string, unknown>, type: string) => {

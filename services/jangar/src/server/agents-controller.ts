@@ -2128,10 +2128,6 @@ const isQueuedRun = (run: Record<string, unknown>) => {
   return QUEUED_PHASES.has(phase.trim().toLowerCase())
 }
 
-const resolveRunRepository = (run: Record<string, unknown>) =>
-  asString(readNested(run, ['status', 'vcs', 'repository'])) ??
-  resolveRunParam(run, ['repository', 'repo', 'issueRepository'])
-
 const resolveRunHeadBranch = (run: Record<string, unknown>) =>
   asString(readNested(run, ['status', 'vcs', 'headBranch'])) ??
   asString(readNested(run, ['status', 'vcs', 'branch'])) ??
@@ -3517,6 +3513,7 @@ const submitJobRun = async (
     env.push(...vcsRuntime.env)
   }
 
+  const runtimeConfig = options.runtimeConfig ?? asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
   const runSpec = buildRunSpec(
     agentRun,
     agent,
@@ -3541,8 +3538,6 @@ const submitJobRun = async (
       content: asString(file.content) ?? '',
     }))
     .filter((file) => file.path && file.content)
-
-  const runtimeConfig = options.runtimeConfig ?? asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
   const serviceAccount = resolveRunnerServiceAccount(runtimeConfig)
   const nodeSelector = asRecord(runtimeConfig.nodeSelector) ?? parseEnvRecord('JANGAR_AGENT_RUNNER_NODE_SELECTOR')
   const tolerations =
