@@ -9,4 +9,4 @@ spec:
     systemPromptRef:
       kind: ConfigMap
       name: codex-agent-system-prompt
-      key: system-prompt.txt
+      key: system-prompt.md

@@ -3,7 +3,7 @@ kind: ConfigMap
 metadata:
   name: codex-agent-system-prompt
 data:
-  system-prompt.txt: |-
+  system-prompt.md: |-
     Implement the requested task end to end and open a ready-to-merge PR.
 
     Requirements:
