@@ -75,7 +75,7 @@ const buildImplementationPrompt = ({
     '- Implement the requested changes.',
     '- Do not stop until all issue requirements are fully satisfied and the changes meet production-quality standards.',
     `- Keep the progress comment anchored by ${PROGRESS_COMMENT_MARKER} current using`,
-    '  apps/froussard/src/codex/cli/codex-progress-comment.ts.',
+    '  services/jangar/scripts/codex/codex-progress-comment.ts.',
     '- Run all required formatters/linters/tests per repo instructions; fix and rerun until green.',
     '- To emit workflow updates, use `/usr/local/bin/codex-nats-publish` (see examples below).',
     `- Commit in logical units referencing #${issueNumber}; push the branch.`,

@@ -17,7 +17,7 @@
    ```
 3) Exercise buildx/build cache (uses the shared `/var/lib/docker` layer store):
    ```bash
-   docker build -f apps/froussard/Dockerfile.codex -t codex-universal:test .
+   docker build -f services/jangar/Dockerfile.codex -t codex-universal:test .
    docker images | head
    ```
 
