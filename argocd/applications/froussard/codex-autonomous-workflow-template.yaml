@@ -89,6 +89,16 @@ spec:
                   value: '{{workflow.parameters.head}}'
                 - name: prompt
                   value: '{{workflow.parameters.prompt}}'
+                - name: system_prompt
+                  value: '{{workflow.parameters.system_prompt}}'
+                - name: system_prompt_secret_name
+                  value: '{{workflow.parameters.system_prompt_secret_name}}'
+                - name: system_prompt_secret_key
+                  value: '{{workflow.parameters.system_prompt_secret_key}}'
+                - name: system_prompt_configmap_name
+                  value: '{{workflow.parameters.system_prompt_configmap_name}}'
+                - name: system_prompt_configmap_key
+                  value: '{{workflow.parameters.system_prompt_configmap_key}}'
                 - name: eventBody
                   value: '{{workflow.parameters.eventBody}}'
                 - name: iteration
@@ -103,6 +113,11 @@ spec:
           - name: base
           - name: head
           - name: prompt
+          - name: system_prompt
+          - name: system_prompt_secret_name
+          - name: system_prompt_secret_key
+          - name: system_prompt_configmap_name
+          - name: system_prompt_configmap_key
           - name: eventBody
           - name: iteration
           - name: iteration_cycle
@@ -185,16 +200,61 @@ spec:
               exit 1
             fi
 
+            SYSTEM_PROMPT_SECRET_NAME='{{inputs.parameters.system_prompt_secret_name}}'
+            SYSTEM_PROMPT_SECRET_KEY='{{inputs.parameters.system_prompt_secret_key}}'
+            SYSTEM_PROMPT_CONFIGMAP_NAME='{{inputs.parameters.system_prompt_configmap_name}}'
+            SYSTEM_PROMPT_CONFIGMAP_KEY='{{inputs.parameters.system_prompt_configmap_key}}'
+            SYSTEM_PROMPT_INLINE_B64='{{=sprig.b64enc(inputs.parameters.system_prompt)}}'
+
+            SYSTEM_PROMPT_FILE=""
+            if [[ "$SYSTEM_PROMPT_SECRET_NAME" != "__none__" ]]; then
+              SYSTEM_PROMPT_FILE="/workspace/.codex/system-prompt/secret/${SYSTEM_PROMPT_SECRET_KEY}"
+            elif [[ "$SYSTEM_PROMPT_CONFIGMAP_NAME" != "__none__" ]]; then
+              SYSTEM_PROMPT_FILE="/workspace/.codex/system-prompt/configmap/${SYSTEM_PROMPT_CONFIGMAP_KEY}"
+            fi
+
+            SYSTEM_PROMPT_TOML=""
+            if [[ -n "$SYSTEM_PROMPT_FILE" && -f "$SYSTEM_PROMPT_FILE" ]]; then
+              SYSTEM_PROMPT_TOML=$(node -e 'const fs = require("fs"); const content = fs.readFileSync(process.argv[1], "utf8"); if (content.trim().length === 0) process.exit(1); process.stdout.write(JSON.stringify(content));' "$SYSTEM_PROMPT_FILE" 2>/dev/null || true)
+            fi
+
+            if [[ -z "$SYSTEM_PROMPT_TOML" && -n "$SYSTEM_PROMPT_INLINE_B64" ]]; then
+              SYSTEM_PROMPT_INLINE=$(printf '%s' "$SYSTEM_PROMPT_INLINE_B64" | base64 --decode 2>/dev/null || true)
+              if [[ "$SYSTEM_PROMPT_INLINE" == "null" ]]; then
+                SYSTEM_PROMPT_INLINE=""
+              fi
+              if [[ -n "$(printf '%s' "$SYSTEM_PROMPT_INLINE" | tr -d '[:space:]')" ]]; then
+                SYSTEM_PROMPT_TOML=$(printf '%s' "$SYSTEM_PROMPT_INLINE" | node -e 'const fs = require("fs"); const content = fs.readFileSync(0, "utf8"); process.stdout.write(JSON.stringify(content));' 2>/dev/null || true)
+              fi
+            fi
+
+            if [[ -z "$SYSTEM_PROMPT_TOML" ]]; then
+              SYSTEM_PROMPT_FROM_EVENT=$(printf '%s' "$EVENT_JSON" | node -e 'const fs = require("fs"); const input = fs.readFileSync(0, "utf8"); const parsed = JSON.parse(input); process.stdout.write(parsed.systemPrompt ?? "");' 2>/dev/null || true)
+              if [[ -n "$(printf '%s' "$SYSTEM_PROMPT_FROM_EVENT" | tr -d '[:space:]')" ]]; then
+                SYSTEM_PROMPT_TOML=$(printf '%s' "$SYSTEM_PROMPT_FROM_EVENT" | node -e 'const fs = require("fs"); const content = fs.readFileSync(0, "utf8"); process.stdout.write(JSON.stringify(content));' 2>/dev/null || true)
+              fi
+            fi
+
             PROMPT_FILE=$(mktemp)
             printf '%s' "$PROMPT" > "$PROMPT_FILE"
 
             OUTPUT_PATH="$WORKTREE_DIR/.codex-exec-events.jsonl"
-            /usr/local/bin/codex exec --json --cd "$WORKTREE_DIR" < "$PROMPT_FILE" | tee "$OUTPUT_PATH"
+            CODEX_CMD=(/usr/local/bin/codex exec --json --cd "$WORKTREE_DIR")
+            if [[ -n "$SYSTEM_PROMPT_TOML" ]]; then
+              CODEX_CMD+=(--config "developer_instructions=${SYSTEM_PROMPT_TOML}")
+            fi
+            "${CODEX_CMD[@]}" < "$PROMPT_FILE" | tee "$OUTPUT_PATH"
         volumeMounts:
           - name: workdir
             mountPath: /workspace
           - name: docker-lib
             mountPath: /var/lib/docker
+            readOnly: true
+          - name: system-prompt-secret
+            mountPath: /workspace/.codex/system-prompt/secret
+            readOnly: true
+          - name: system-prompt-configmap
+            mountPath: /workspace/.codex/system-prompt/configmap
             readOnly: true
         resources:
           requests:
