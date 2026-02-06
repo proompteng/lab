@@ -189,6 +189,12 @@ controller:
     perNamespace: 120
     perRepo: 30
     cluster: 600
+  webhook:
+    queueSize: 1000
+    retry:
+      baseDelaySeconds: 1
+      maxDelaySeconds: 60
+      maxAttempts: 5
   agentRunRetentionSeconds: 2592000
   jobTtlSecondsAfterFinished: 600
   authSecret:

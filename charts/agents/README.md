@@ -365,6 +365,7 @@ Helm ownership conflicts.
 ## Admission control
 - Configure backpressure with `controller.queue.*` and `controller.rate.*` in `values.yaml`.
 - Queue limits cap pending AgentRuns; rate limits cap submit throughput.
+- Webhook ingestion uses `controller.webhook.queueSize` and `controller.webhook.retry.*` for buffering and retries.
 
 ## Publishing (OCI)
 ```bash

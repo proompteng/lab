@@ -361,10 +361,24 @@ type ImplementationScope struct {
 }
 
 type ImplementationSourceStatus struct {
-	LastSyncedAt       *metav1.Time       `json:"lastSyncedAt,omitempty"`
-	Conditions         []metav1.Condition `json:"conditions,omitempty"`
-	UpdatedAt          *metav1.Time       `json:"updatedAt,omitempty"`
-	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
+	LastSyncedAt       *metav1.Time                    `json:"lastSyncedAt,omitempty"`
+	LastWebhook        *ImplementationSourceWebhookSync `json:"lastWebhook,omitempty"`
+	Conditions         []metav1.Condition              `json:"conditions,omitempty"`
+	UpdatedAt          *metav1.Time                    `json:"updatedAt,omitempty"`
+	ObservedGeneration int64                           `json:"observedGeneration,omitempty"`
+}
+
+type ImplementationSourceWebhookSync struct {
+	IdempotencyKey string       `json:"idempotencyKey,omitempty"`
+	DeliveryId     string       `json:"deliveryId,omitempty"`
+	Provider       string       `json:"provider,omitempty"`
+	ExternalId     string       `json:"externalId,omitempty"`
+	SourceVersion  string       `json:"sourceVersion,omitempty"`
+	ReceivedAt     *metav1.Time `json:"receivedAt,omitempty"`
+	ProcessedAt    *metav1.Time `json:"processedAt,omitempty"`
+	Attempts       int32        `json:"attempts,omitempty"`
+	Status         string       `json:"status,omitempty"`
+	Error          string       `json:"error,omitempty"`
 }
 
 // +kubebuilder:object:root=true
