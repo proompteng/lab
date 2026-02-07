@@ -1,6 +1,6 @@
 # Runbooks (Agents)
 
-Status: Current (2026-01-20)
+Status: Current (2026-02-07)
 
 ## Install
 1. `helm install agents charts/agents -n agents --create-namespace`
@@ -93,6 +93,11 @@ Expected outcomes:
 This runbook validates the native workflow runtime end-to-end (AgentProvider → Agent → ImplementationSpec → AgentRun)
 and confirms that the Codex implementation step opens a PR against `proompteng/lab`.
 
+Notes on git + PR side effects:
+- The agent workload (Codex) is responsible for `git commit`, `git push`, and PR creation (`gh pr create`).
+- The runner/controller must not “help” by committing/pushing/creating PRs, and should only preserve/forward metadata
+  produced by the agent.
+
 Prereqs:
 - `codex-github-token` secret in the target namespace (GH token with repo permissions).
 - OpenAI key available via `AGENTS_E2E_OPENAI_KEY` or an existing `codex-openai-key` secret
@@ -120,9 +125,13 @@ Expected outputs:
 - Output directory contains:
   - `agentrun.json` (final status snapshot)
   - `jobs.txt` (Job → Pod mapping)
-  - `logs/<job>.log` (job logs)
+ - `logs/<job>.log` (job logs)
   - `artifacts/<job>-runner.log` and `artifacts/<job>-status.json` (agent-runner artifacts)
  - Script summary includes the output paths and, when available, the PR URL.
+
+Where the PR URL comes from:
+- The runner exports `PR_NUMBER_PATH` and `PR_URL_PATH` (paths in the workspace).
+- If the agent writes the PR number/URL to those files, the runner reads them and forwards them in notifications.
 
 Verify the PR was created:
 ```bash
@@ -138,6 +147,8 @@ Notes:
 Troubleshooting:
 - AgentRun failed: `kubectl -n agents get agentrun <name> -o yaml` and inspect job logs in the output directory.
 - No PR created: confirm `codex-github-token` exists and includes `GH_TOKEN`, and the agent image has `gh` + `git`.
+- Duplicate PRs / repeated attempts: confirm the AgentRun Job has `spec.backoffLimit: 0` (default) and that any
+  overrides (`spec.runtime.config.backoffLimit` or `JANGAR_AGENT_RUNNER_BACKOFF_LIMIT`) are intentional.
 - Stuck in Pending/Running: check `kubectl -n agents get job -l agents.proompteng.ai/agent-run=<name>` and controller logs.
 
 ## Codex reruns/system improvements (native)
@@ -148,8 +159,8 @@ Troubleshooting:
 ## Jangar /health 500 (router init error)
 - Symptom: `/health` returns 500 with `ReferenceError: Cannot access 'aE' before initialization`.
 - Root cause: Jangar builds picked up an incompatible Nitro `latest` bundle output.
-- Fix: Pin Nitro to `3.0.0` in `services/jangar/package.json` and deploy a pinned Jangar image digest
-  (avoid `latest`).
+- Fix: Pin Nitro to a known-good version in `services/jangar/package.json` and deploy a pinned Jangar image digest
+  (avoid unconstrained `latest` dependencies).
 
 ## Stuck AgentRun
 - Check status/conditions: `kubectl -n agents get agentrun <name> -o yaml`

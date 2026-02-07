@@ -446,10 +446,12 @@ spec:
   runtime:
     type: custom
   workload:
-    image: registry.ide-newton.ts.net/lab/codex-universal:latest
+    image: registry.ide-newton.ts.net/lab/codex-universal:<tag>
     resources:
       cpu: 2
       memory: 4Gi
 ```
 
-Replace the workload image with your own agent-runner build if you are not using the ProomptEng cluster registry.
+Replace the workload image with your own agent-runner build if you are not using the ProomptEng cluster registry. If
+your install sets a default runner image via `runner.image.*` / `JANGAR_AGENT_RUNNER_IMAGE`, you can omit
+`spec.workload.image` for most runs.

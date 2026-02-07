@@ -170,6 +170,9 @@ Rate limits and backoff:
 - Leader election to prevent duplicate reconciliation.
 - Finalizers on AgentRun to ensure runtime cleanup.
 - Reconcile is idempotent; retries do not duplicate runs.
+- Avoid retry loops for side-effecting AgentRuns (for example, git/PR creation inside the workload). By default,
+  AgentRun Jobs should run with `spec.backoffLimit: 0` and rely on workflow-level retries when needed. Allow opt-in
+  overrides via `spec.runtime.config.backoffLimit` or `JANGAR_AGENT_RUNNER_BACKOFF_LIMIT`.
 - Use per-run de-duplication keys (`spec.idempotencyKey` if set, else `metadata.uid`).
 - Default concurrency limits (configurable):
   - 10 in-flight AgentRuns per namespace.

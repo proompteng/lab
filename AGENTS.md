@@ -66,6 +66,10 @@
 - Use precise code pointers (file paths, identifiers, stack traces) to narrow search.
 - Reproduce issues before changes; keep logs and failing commands.
 - Split large tasks; surface ambiguities early; use the planning tool `functions.update_plan` when appropriate.
+- Git/GitHub side effects in AgentRuns (commit/push/PR) are agent-owned. Controllers/runners must not add “helpful”
+  fallbacks that commit, push, create/update PRs, or inject git workflow “contracts” into prompts.
+- Avoid retry loops for side-effecting AgentRuns. Prefer workflow-level retries; default Kubernetes Job retries should be
+  disabled unless explicitly opted in.
 
 ## Review Guidelines
 - Focus on correctness regressions, error handling, and missing tests.
