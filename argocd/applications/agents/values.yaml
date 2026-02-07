@@ -47,5 +47,8 @@ env:
     JANGAR_GRPC_HOST: 0.0.0.0
     JANGAR_GRPC_PORT: "50051"
     JANGAR_GITHUB_REPOS_ALLOWED: proompteng/lab
+    # Controllers image currently expects this env var to be present; when unset it can crash on startup.
+    # Safe default: no per-repo override map.
+    JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES: "{}"
 envFromSecretRefs:
   - agents-github-token-env
