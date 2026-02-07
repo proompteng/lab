@@ -2,6 +2,8 @@
 
 Status: Implemented (2026-02-03)
 
+Docs index: [README](README.md)
+
 ## Problem
 Today GitHub credentials are implicitly assumed in multiple places (environment variables, secrets, and examples), but there is no explicit model for a version control provider. This couples the control plane and chart deployments to GitHub and makes it hard to:
 - Run agents without version control access.
@@ -299,3 +301,13 @@ spec:
 - Bitbucket project access tokens: https://support.atlassian.com/bitbucket-cloud/docs/using-project-access-tokens/
 - Bitbucket OAuth 2.0 tokens: https://developer.atlassian.com/cloud/bitbucket/oauth-2/
 - Gitea API authentication methods: https://docs.gitea.com/1.20/development/api-usage
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Intake["ImplementationSource<br/>(issue intake)"] --> Spec["ImplementationSpec"]
+  Spec --> Run["AgentRun"]
+  Run --> VCP["VersionControlProvider<br/>(repo operations)"]
+  VCP --> Git["clone/commit/push/PR"]
+```

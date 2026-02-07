@@ -2,6 +2,8 @@
 
 Status: Current (2026-01-29)
 
+Docs index: [README](README.md)
+
 ## Purpose
 Define how Jangar controllers use Kubernetes leader election to support safe horizontal scaling, prevent double
 reconciliation, and provide predictable failover behavior.
@@ -80,3 +82,20 @@ Expose the following values under `controller.leaderElection`:
 - `docs/agents/agents-helm-chart-implementation.md`
 - `docs/agents/jangar-controller-design.md`
 - `docs/agents/production-readiness-design.md`
+
+## Diagram
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant P1 as Pod A
+  participant P2 as Pod B
+  participant L as Lease (coordination.k8s.io)
+
+  P1->>L: acquire/renew lease
+  P2-->>L: observe lease held
+  Note over P2: follower stays not-ready
+  P1-->>L: renew until crash/partition
+  P1-xL: stop renewing
+  P2->>L: acquire lease after timeout
+```

@@ -2,6 +2,8 @@
 
 Status: Current (2026-01-19)
 
+Docs index: [README](README.md)
+
 ## Sources Mapped
 - Workflow engines: generate CRDs from Go types, post-process for size, validate examples.
 - Pipeline systems: keep CRDs as YAML, patch schema with controller-gen, enforce size limits, conversion webhook.
@@ -52,3 +54,13 @@ Status: Current (2026-01-19)
 - [ ] Validate examples against CRDs.
 - [ ] Update printer columns if user-visible fields change.
 - [ ] Review CEL rules for cost and correctness.
+
+## Diagram
+
+```mermaid
+flowchart LR
+  Types["Go types / static YAML"] --> Gen["controller-gen (when applicable)"]
+  Gen --> CRD["CRDs in charts/agents/crds"]
+  CRD --> Helm["Helm installs CRDs"]
+  Helm --> API["Kubernetes API server"]
+```

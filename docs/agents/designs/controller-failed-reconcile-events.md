@@ -1,6 +1,8 @@
 # Controller Failed Reconcile: Kubernetes Events
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Overview
 When reconciles fail, the current primary signal is logs (and possibly status conditions). Kubernetes Events are a useful operational tool (visible via `kubectl describe`) and can improve MTTR, especially for failures like missing secrets, RBAC, or invalid spec fields.
 
@@ -152,3 +154,18 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant CR as Custom Resource
+  participant C as Controller
+  participant K as Kubernetes API
+
+  CR->>C: watch event
+  C->>K: get/patch resources
+  K-->>C: response
+  C-->>CR: status update
+```

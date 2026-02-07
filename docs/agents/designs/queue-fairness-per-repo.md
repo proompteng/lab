@@ -1,6 +1,8 @@
 # Queue Fairness per Repository
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Current State
 
 - Code: `/v1/agent-runs` admission enforces queue caps per namespace/cluster/repo and returns 429 when exceeded. It
@@ -153,3 +155,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Doc["Queue Fairness per Repository"] --> Purpose["Design/contract/behavior"]
+  Purpose --> Impl["Implementation"]
+  Purpose --> Validate["Validation"]
+```

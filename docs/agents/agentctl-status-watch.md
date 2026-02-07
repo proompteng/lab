@@ -2,6 +2,8 @@
 
 Status: Draft (2026-01-30)
 
+Docs index: [README](README.md)
+
 ## Overview
 This document proposes a streaming status watch for the agent control plane, exposed via `agentctl` and backed by
 Jangar APIs. The goal is to let operators watch health changes (controllers, runtimes, CRDs, and dependencies)
@@ -197,3 +199,13 @@ Response event:
 - Should the `diagnose` alias use a different default output format?
 - Do we need server-side aggregation to reduce event noise (debounce window)?
 - Should we persist a rolling status timeline for audit or debugging?
+
+## Diagram
+
+```mermaid
+flowchart LR
+  User["Operator"] --> CLI["agentctl"]
+  CLI -->|"kube mode (default)"| Kube["Kubernetes API"]
+  CLI -->|"gRPC (optional)"| GRPC["Service/agents-grpc"]
+  GRPC --> CP["Jangar control plane"]
+```

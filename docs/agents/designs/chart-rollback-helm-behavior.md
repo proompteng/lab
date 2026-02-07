@@ -1,6 +1,8 @@
 # Chart Rollback Behavior and Safe Defaults
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Overview
 In GitOps, “rollback” typically means reverting values/manifests and letting Argo CD sync. Operators still rely on Helm semantics when debugging template behavior or when performing emergency rollbacks in non-GitOps contexts.
 
@@ -152,3 +154,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart LR
+  Values["Helm values"] --> Render["Chart templates"]
+  Render --> Manifest["Rendered manifests"]
+  Manifest --> Live["Live objects"]
+```

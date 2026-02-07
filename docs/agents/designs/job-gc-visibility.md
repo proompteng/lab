@@ -1,6 +1,8 @@
 # Job GC Visibility and Retention
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Current State
 
 - Code: AgentRun retention via ttlSecondsAfterFinished or JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS; Job TTL via JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS; ToolRun TTL supported.
@@ -148,3 +150,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Doc["Job GC Visibility and Retention"] --> Purpose["Design/contract/behavior"]
+  Purpose --> Impl["Implementation"]
+  Purpose --> Validate["Validation"]
+```

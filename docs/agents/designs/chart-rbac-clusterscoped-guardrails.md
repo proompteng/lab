@@ -1,6 +1,8 @@
 # Chart RBAC Cluster-Scoped Guardrails
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Overview
 The Agents chart can run with cluster-scoped RBAC (`rbac.clusterScoped=true`) or namespaced RBAC (`false`). Misconfiguration can lead to controller errors (insufficient permissions) or excessive permissions (overbroad access).
 
@@ -156,3 +158,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart LR
+  Values["Helm values"] --> Render["Chart templates"]
+  Render --> Manifest["Rendered manifests"]
+  Manifest --> Live["Live objects"]
+```

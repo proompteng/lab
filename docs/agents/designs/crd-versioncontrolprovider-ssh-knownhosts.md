@@ -1,6 +1,8 @@
 # CRD: VersionControlProvider SSH and known_hosts
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Overview
 VersionControlProvider supports SSH configuration (host, user, private key secret, known_hosts ConfigMap ref). This is operationally sensitive: incorrect known_hosts handling can lead to MITM risk, and missing known_hosts can break cloning.
 
@@ -157,3 +159,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Spec["spec (user intent)"] --> Validate["schema + CEL (when used)"]
+  Validate --> Reconcile["controller reconcile"]
+  Reconcile --> Status["status + conditions"]
+```

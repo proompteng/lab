@@ -1,6 +1,8 @@
 # Staging and Production Values Overlays
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Current State
 
 - Chart: values-dev.yaml, values-prod.yaml, values-ci.yaml, values-local.yaml, values-kind.yaml exist.
@@ -148,3 +150,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Doc["Staging and Production Values Overlays"] --> Purpose["Design/contract/behavior"]
+  Purpose --> Impl["Implementation"]
+  Purpose --> Validate["Validation"]
+```

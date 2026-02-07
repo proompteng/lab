@@ -1,6 +1,8 @@
 # Security: SBOM and Signing
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Current State
 
 - Code: no SBOM generation or signing pipeline in repo workflows.
@@ -148,3 +150,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Doc["Security: SBOM and Signing"] --> Purpose["Design/contract/behavior"]
+  Purpose --> Impl["Implementation"]
+  Purpose --> Validate["Validation"]
+```

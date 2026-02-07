@@ -1,6 +1,8 @@
 # Leader Election for HA (Jangar Controllers)
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Purpose
 Define how Jangar controllers use Kubernetes leader election to support safe horizontal scaling, prevent double
 reconciliation, and provide predictable failover behavior.
@@ -185,3 +187,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Doc["Leader Election for HA (Jangar Controllers)"] --> Purpose["Design/contract/behavior"]
+  Purpose --> Impl["Implementation"]
+  Purpose --> Validate["Validation"]
+```

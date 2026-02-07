@@ -1,6 +1,8 @@
 # gRPC Coverage Parity for agentctl
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Current State
 
 - Code: gRPC server in services/jangar/src/server/agentctl-grpc.ts exposes a subset of kube-mode operations; watch streams are missing.
@@ -148,3 +150,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Doc["gRPC Coverage Parity for agentctl"] --> Purpose["Design/contract/behavior"]
+  Purpose --> Impl["Implementation"]
+  Purpose --> Validate["Validation"]
+```

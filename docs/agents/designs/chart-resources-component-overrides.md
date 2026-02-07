@@ -1,6 +1,8 @@
 # Chart Resources: Component Overrides
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Overview
 The Agents chart exposes `resources` as a global default and also supports component-specific overrides (`controlPlane.resources`, `controllers.resources`). These overrides are implemented in templates but not explicitly documented, which increases the chance of accidentally starving controllers or the control plane in production.
 
@@ -161,3 +163,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart LR
+  Values["Helm values"] --> Render["Chart templates"]
+  Render --> Manifest["Rendered manifests"]
+  Manifest --> Live["Live objects"]
+```

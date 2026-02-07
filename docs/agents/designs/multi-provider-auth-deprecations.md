@@ -1,6 +1,8 @@
 # Multi-Provider Auth Standards and Deprecations
 
 Status: Current (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Purpose
 Normalize auth configuration across VCS providers and surface deprecated token types before they break.
 
@@ -155,3 +157,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Doc["Multi-Provider Auth Standards and Deprecations"] --> Purpose["Design/contract/behavior"]
+  Purpose --> Impl["Implementation"]
+  Purpose --> Validate["Validation"]
+```

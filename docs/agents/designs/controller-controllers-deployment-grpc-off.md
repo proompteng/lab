@@ -1,6 +1,8 @@
 # Controllers Deployment: gRPC Disabled by Default
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Overview
 The chart renders a separate controllers deployment that forces `JANGAR_GRPC_ENABLED=0` unless explicitly overridden. This is a good safety default (controllers do not need to expose gRPC externally), but it is undocumented and can be surprising when operators expect agentctl gRPC to be available everywhere.
 
@@ -153,3 +155,18 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant CR as Custom Resource
+  participant C as Controller
+  participant K as Kubernetes API
+
+  CR->>C: watch event
+  C->>K: get/patch resources
+  K-->>C: response
+  C-->>CR: status update
+```

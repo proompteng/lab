@@ -1,6 +1,8 @@
 # Controller Namespace Scope: Parse + Validate
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Overview
 Namespace scoping is a primary safety control for Agents controllers. The controllers accept a namespaces list via env vars (`JANGAR_AGENTS_CONTROLLER_NAMESPACES`, `JANGAR_PRIMITIVES_NAMESPACES`). Invalid JSON or ambiguous inputs can lead to unexpected reconciliation scope.
 
@@ -156,3 +158,18 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant CR as Custom Resource
+  participant C as Controller
+  participant K as Kubernetes API
+
+  CR->>C: watch event
+  C->>K: get/patch resources
+  K-->>C: response
+  C-->>CR: status update
+```

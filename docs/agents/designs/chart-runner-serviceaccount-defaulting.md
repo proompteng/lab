@@ -1,6 +1,8 @@
 # Chart Runner ServiceAccount Defaulting
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Overview
 Agents controllers schedule Kubernetes Jobs for agent runs. The chart includes a `runnerServiceAccount` block and multiple runtime defaults (`runtime.scheduleServiceAccount`, workload defaults, and controller env vars). The defaulting hierarchy must be explicit so operators can ensure jobs run with the intended permissions.
 
@@ -156,3 +158,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart LR
+  Values["Helm values"] --> Render["Chart templates"]
+  Render --> Manifest["Rendered manifests"]
+  Manifest --> Live["Live objects"]
+```

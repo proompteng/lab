@@ -1,6 +1,8 @@
 # Controller Status: Timestamps + observedGeneration
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Overview
 Many Agents CRDs include `status.updatedAt` and `status.observedGeneration`. Consistent semantics across controllers are essential for debugging, automation, and eventual UI/CLI behavior.
 
@@ -157,3 +159,18 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant CR as Custom Resource
+  participant C as Controller
+  participant K as Kubernetes API
+
+  CR->>C: watch event
+  C->>K: get/patch resources
+  K-->>C: response
+  C-->>CR: status update
+```

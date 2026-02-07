@@ -1,6 +1,8 @@
 # Controller Concurrency Tuning
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Current State
 
 - Code: agents-controller enforces per-agent/per-namespace/cluster concurrency; `/v1/agent-runs` admission checks
@@ -149,3 +151,18 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant CR as Custom Resource
+  participant C as Controller
+  participant K as Kubernetes API
+
+  CR->>C: watch event
+  C->>K: get/patch resources
+  K-->>C: response
+  C-->>CR: status update
+```

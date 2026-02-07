@@ -1,6 +1,8 @@
 # Controller Server-Side Apply and Field Ownership
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Overview
 Controllers currently use `kubectl apply` (client-side) for many operations, and `kubectl apply --server-side --subresource=status` for status updates. Server-side apply (SSA) provides clear field ownership and reduces merge conflicts when multiple actors mutate the same objects.
 
@@ -152,3 +154,18 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant CR as Custom Resource
+  participant C as Controller
+  participant K as Kubernetes API
+
+  CR->>C: watch event
+  C->>K: get/patch resources
+  K-->>C: response
+  C-->>CR: status update
+```

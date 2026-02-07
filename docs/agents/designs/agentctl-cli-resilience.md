@@ -1,6 +1,8 @@
 # agentctl CLI Resilience
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Current State
 
 - Code: agentctl lives in services/jangar/agentctl; no retry/backoff logic is implemented in the CLI.
@@ -148,3 +150,13 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart LR
+  User["Operator"] --> CLI["agentctl"]
+  CLI -->|"kube mode (default)"| Kube["Kubernetes API"]
+  CLI -->|"gRPC (optional)"| GRPC["Service/agents-grpc"]
+  GRPC --> CP["Jangar control plane"]
+```

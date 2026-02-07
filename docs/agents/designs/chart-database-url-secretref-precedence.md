@@ -1,6 +1,8 @@
 # Chart Database URL vs SecretRef Precedence
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Overview
 The Agents chart supports multiple ways to provide `DATABASE_URL` to both the control plane and controllers. The precedence is currently implicit in templates; misconfiguration can lead to pods starting without a database connection or using an unintended database.
 
@@ -164,3 +166,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart LR
+  Values["Helm values"] --> Render["Chart templates"]
+  Render --> Manifest["Rendered manifests"]
+  Manifest --> Live["Live objects"]
+```

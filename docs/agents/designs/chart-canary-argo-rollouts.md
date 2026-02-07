@@ -1,6 +1,8 @@
 # Chart Canary with Argo Rollouts (Optional Integration)
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Overview
 Today the Agents chart uses Kubernetes Deployments. For safer production changes (especially to controllers), operators may want progressive delivery. This doc proposes a chart-compatible integration path with Argo Rollouts without making it a hard dependency.
 
@@ -157,3 +159,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart LR
+  Values["Helm values"] --> Render["Chart templates"]
+  Render --> Manifest["Rendered manifests"]
+  Manifest --> Live["Live objects"]
+```

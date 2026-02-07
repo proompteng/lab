@@ -2,6 +2,8 @@
 
 Status: Current (2026-01-19)
 
+Docs index: [README](README.md)
+
 ## Required CRDs
 - Agent
 - AgentRun
@@ -65,3 +67,13 @@ Status: Current (2026-01-19)
 
 ## Status Conditions (standard)
 - All CRDs include `status.conditions[]` with `type`, `status`, `reason`, `message`, `lastTransitionTime`.
+
+## Diagram
+
+```mermaid
+flowchart LR
+  Types["Go types / static YAML"] --> Gen["controller-gen (when applicable)"]
+  Gen --> CRD["CRDs in charts/agents/crds"]
+  CRD --> Helm["Helm installs CRDs"]
+  Helm --> API["Kubernetes API server"]
+```

@@ -2,6 +2,13 @@
 
 Status: Current (2026-01-19)
 
+Docs index: [README](README.md)
+
+See also:
+- `README.md` (docs index)
+- `designs/handoff-common.md` (local render + validation commands)
+- `agents-helm-chart-implementation.md` (what CI is validating)
+
 ## CRD Validation
 - Generate **Agents** CRDs from Go types and verify:
   - Structural schema
@@ -38,3 +45,14 @@ Status: Current (2026-01-19)
 ## Security
 - SBOM generation and vulnerability scan.
 - Image signature verification checks.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Change["Change (CRDs/chart/controllers)"] --> Validate["scripts/agents/validate-agents.sh"]
+  Validate --> CRDGen["CRD generation drift check"]
+  Validate --> Kubeconform["kubeconform CRDs + examples"]
+  Validate --> Helm["helm lint + template render"]
+  Validate --> Pass["Pass/fail gate"]
+```

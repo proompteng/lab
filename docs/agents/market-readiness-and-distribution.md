@@ -2,6 +2,8 @@
 
 Status: Current (2026-01-19)
 
+Docs index: [README](README.md)
+
 ## Artifact Hub Publishability (Required)
 ### Chart & Repo Metadata
 - `Chart.yaml` includes:
@@ -84,3 +86,12 @@ Status: Current (2026-01-19)
 - [ ] Artifact Hub annotations present.
 - [ ] Images signed + SBOM published.
 - [ ] Docs updated.
+
+## Diagram
+
+```mermaid
+flowchart LR
+  Chart["charts/agents"] --> Package["Package/publish"]
+  Package --> OCI["GHCR OCI registry"]
+  OCI --> Hub["Artifact Hub listing"]
+```

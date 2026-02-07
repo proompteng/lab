@@ -2,6 +2,8 @@
 
 Status: Draft (2026-01-30)
 
+Docs index: [README](README.md)
+
 ## Problem
 `agentctl` supports gRPC as an optional transport, but coverage is uneven relative to the Kubernetes API mode. The CLI
 exposes list/watch/describe/apply/delete and run/log/status workflows for most Agents primitives (with newer or
@@ -174,3 +176,13 @@ Adopt `google.rpc.Status` with details to allow CLI-friendly errors:
 - Should gRPC list responses return typed protobuf resources instead of JSON strings?
 - Do we want a single `WatchResources` RPC to reduce proto bloat?
 - Should `Apply` accept JSON/YAML and server-side apply options for merges?
+
+## Diagram
+
+```mermaid
+flowchart LR
+  User["Operator"] --> CLI["agentctl"]
+  CLI -->|"kube mode (default)"| Kube["Kubernetes API"]
+  CLI -->|"gRPC (optional)"| GRPC["Service/agents-grpc"]
+  GRPC --> CP["Jangar control plane"]
+```

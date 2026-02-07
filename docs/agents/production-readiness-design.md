@@ -2,6 +2,15 @@
 
 Status: Current (2026-01-19)
 
+Docs index: [README](README.md)
+
+See also:
+- `README.md` (docs index)
+- `threat-model.md` (security baseline)
+- `rbac-matrix.md` (least-privilege requirements)
+- `ci-validation-plan.md` (validation gate)
+- `runbooks.md` (ops requirements)
+
 ## API & Contracts
 - Full CRD schemas for all resources (spec + status) with defaults and validation rules.
 - Explicit size limits for large fields (ImplementationSpec text/description, summaries, acceptance criteria).
@@ -69,3 +78,15 @@ Status: Current (2026-01-19)
   parameters max 100 entries, 2KB per value.
 - Supply chain: images signed (cosign), SBOMs (SPDX) published per release.
 - Release cadence: monthly minor, patch releases as needed for security fixes.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  PRD["Production readiness"] --> API["API + contracts"]
+  PRD --> Rel["Reliability + scaling"]
+  PRD --> Sec["Security + compliance"]
+  PRD --> Obs["Observability"]
+  PRD --> Test["Testing + validation"]
+  PRD --> Ops["Operations + runbooks"]
+```

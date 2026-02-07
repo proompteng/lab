@@ -1,6 +1,8 @@
 # CRD: AgentRun Spec Immutability Rules
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Overview
 AgentRuns represent a concrete execution request. After a run is accepted and started, mutating most of `spec` should be prohibited to preserve auditability and avoid undefined behavior (e.g., swapping implementation mid-run).
 
@@ -159,3 +161,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Spec["spec (user intent)"] --> Validate["schema + CEL (when used)"]
+  Validate --> Reconcile["controller reconcile"]
+  Reconcile --> Status["status + conditions"]
+```

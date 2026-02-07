@@ -2,6 +2,13 @@
 
 Status: Current (2026-01-19)
 
+Docs index: [README](README.md)
+
+See also:
+- `README.md` (index)
+- `agents-helm-chart-implementation.md` (implementation-grade checklist)
+- `designs/handoff-common.md` (repo/chart/cluster source-of-truth + validation commands)
+
 ## Context
 The current `charts/agents` chart bundles control-plane deployment plus CRDs and several optional add-ons.
 Today it:

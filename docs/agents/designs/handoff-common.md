@@ -2,8 +2,12 @@
 
 Status: Current (2026-02-07)
 
+Docs index: [README](../README.md)
+
 This document centralizes the “always the same” operational facts for the Agents stack so individual design docs
 can stay focused on their specific topic.
+
+See also: `../README.md` (docs index)
 
 ## Production / GitOps (source of truth)
 
@@ -120,3 +124,12 @@ When changing behavior that affects runtime (CRDs, controllers, chart templates,
    - `mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml`
 3. If new config is needed in prod, update `argocd/applications/agents/values.yaml`.
 4. Merge to `main`; Argo CD will reconcile automatically.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Doc["Agents: Shared Handoff Appendix (Repo + Chart + Cluster)"] --> Purpose["Design/contract/behavior"]
+  Purpose --> Impl["Implementation"]
+  Purpose --> Validate["Validation"]
+```

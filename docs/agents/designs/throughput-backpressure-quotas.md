@@ -2,6 +2,8 @@
 
 Status: Partial (2026-02-07)
 
+Docs index: [README](../README.md)
+
 ## Purpose
 Prevent high-volume AgentRuns from overwhelming the controller or the cluster by enforcing concurrency, queue, and
 rate limits.
@@ -166,3 +168,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Doc["Throughput Backpressure and Admission Control"] --> Purpose["Design/contract/behavior"]
+  Purpose --> Impl["Implementation"]
+  Purpose --> Validate["Validation"]
+```

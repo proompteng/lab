@@ -1,6 +1,8 @@
 # Branch Naming and Conflict Strategy
 
 Status: Current (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Purpose
 Provide deterministic branch naming for automated PRs and avoid conflicts when multiple runs target the same repo.
 
@@ -143,3 +145,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Doc["Branch Naming and Conflict Strategy"] --> Purpose["Design/contract/behavior"]
+  Purpose --> Impl["Implementation"]
+  Purpose --> Validate["Validation"]
+```

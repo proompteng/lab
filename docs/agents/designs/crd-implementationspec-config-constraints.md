@@ -1,6 +1,8 @@
 # CRD: ImplementationSpec Runtime Config Constraints
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Overview
 ImplementationSpec contains runtime configuration that is later executed by controllers/runners. Without constraints, it is easy to create specs that are invalid or unsafe (e.g., missing required fields, invalid enum values, or overly large embedded configs).
 
@@ -149,3 +151,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Spec["spec (user intent)"] --> Validate["schema + CEL (when used)"]
+  Validate --> Reconcile["controller reconcile"]
+  Reconcile --> Status["status + conditions"]
+```
