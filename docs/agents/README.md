@@ -10,6 +10,7 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Operational/source-of-truth appendix (repo + chart + cluster): `designs/handoff-common.md`
 - Implementing the Helm chart and controllers (implementation-grade): `agents-helm-chart-implementation.md`
 - Chart intent and scope (high-level design): `agents-helm-chart-design.md`
+- Creating AgentRuns safely (prompt precedence): `agentrun-creation-guide.md`
 - How to validate changes in CI: `ci-validation-plan.md`
 - How to install/upgrade/debug (ops): `runbooks.md`
 - Security baseline: `threat-model.md`
@@ -71,6 +72,7 @@ If you are changing behavior, update 1-3 first, then ensure 4-5 describe the res
 
 ### Top-Level (`docs/agents/*.md`)
 
+- [agentrun-creation-guide.md](agentrun-creation-guide.md)
 - [agent-run-retention-design.md](agent-run-retention-design.md)
 - [agentctl-cli-design.md](agentctl-cli-design.md)
 - [agentctl-grpc-coverage.md](agentctl-grpc-coverage.md)
