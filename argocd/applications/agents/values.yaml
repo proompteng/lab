@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: 74381f4d
-  digest: sha256:6d82b3717b5f14686eb900af3111a16109de983a76c7aad27ed85b63165d1694
+  tag: f978a078
+  digest: sha256:b239fd568287aa7e366607ae1e96f3b61e73a2391021fd148aaa6c7a2f3b2664
   pullPolicy: IfNotPresent
 controlPlane:
   image:
@@ -23,7 +23,6 @@ controllers:
     enabled: false
   env:
     vars:
-      # Used to inject NATS auth into runner Jobs (for codex-nats-publish).
       JANGAR_AGENT_RUNNER_NATS_AUTH_SECRET_NAME: nats-agents-credentials
       JANGAR_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY: username
       JANGAR_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY: password
@@ -53,8 +52,6 @@ env:
     JANGAR_GRPC_HOST: 0.0.0.0
     JANGAR_GRPC_PORT: "50051"
     JANGAR_GITHUB_REPOS_ALLOWED: proompteng/lab
-    # Controllers image currently expects this env var to be present; when unset it can crash on startup.
-    # Safe default: no per-repo override map.
     JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES: "{}"
 envFromSecretRefs:
   - agents-github-token-env
