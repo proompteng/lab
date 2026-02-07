@@ -580,6 +580,9 @@ spec:
                             uid:
                               type: string
                           type: object
+                        jobObservedAt:
+                          format: date-time
+                          type: string
                         lastTransitionTime:
                           format: date-time
                           type: string
