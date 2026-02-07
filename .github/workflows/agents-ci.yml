@@ -112,6 +112,9 @@ jobs:
         with:
           version: v3.14.4
 
+      - name: Ensure kind Docker network
+        run: scripts/agents/ensure-kind-network.sh
+
       - name: Create kind cluster
         uses: helm/kind-action@v1
         with:
@@ -135,8 +138,20 @@ jobs:
 
       - name: Cleanup agents integration release
         if: always()
+        env:
+          KIND_CLUSTER_NAME: agents-ci-${{ github.run_id }}
         run: |
-          helm uninstall agents-ci -n agents-ci || true
-          kubectl -n agents-ci delete deployment agents-ci-postgres --ignore-not-found
-          kubectl -n agents-ci delete service agents-ci-postgres --ignore-not-found
-          kubectl delete namespace agents-ci --ignore-not-found --wait=false
+          set -euo pipefail
+          if command -v kind >/dev/null 2>&1 && kind get clusters | grep -Fxq "${KIND_CLUSTER_NAME}"; then
+            export KUBECONFIG="$(mktemp)"
+            kind get kubeconfig --name "${KIND_CLUSTER_NAME}" > "${KUBECONFIG}"
+
+            helm uninstall agents-ci -n agents-ci || true
+            kubectl -n agents-ci delete deployment agents-ci-postgres --ignore-not-found || true
+            kubectl -n agents-ci delete service agents-ci-postgres --ignore-not-found || true
+            kubectl delete namespace agents-ci --ignore-not-found --wait=false || true
+
+            kind delete cluster --name "${KIND_CLUSTER_NAME}" || true
+          else
+            echo "kind cluster ${KIND_CLUSTER_NAME} not present; skipping cleanup to avoid touching host cluster"
+          fi
