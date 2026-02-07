@@ -197,6 +197,13 @@ describe('runCodexImplementation', () => {
     expect(resumeMetadata.state).toBe('cleared')
   }, 20_000)
 
+  it('does not inject runner git/PR workflow contracts into the prompt', async () => {
+    await runCodexImplementation(eventPath)
+
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.prompt).not.toContain('IMPORTANT git + PR contract')
+  }, 20_000)
+
   it('forwards systemPrompt from the payload into runCodexSession', async () => {
     const systemPrompt = 'You are a strict system prompt.'
     const payload = {
@@ -332,25 +339,24 @@ describe('runCodexImplementation', () => {
     expect(attrs.systemPrompt).toBeUndefined()
   }, 20_000)
 
-  it('auto-commits when the worktree is dirty', async () => {
-    await writeFile(join(workdir, 'uncommitted.txt'), 'hello', 'utf8')
+  it('includes PR metadata from artifact files and does not overwrite them', async () => {
+    const prNumberPath = join(workdir, '.codex-pr-number.txt')
+    const prUrlPath = join(workdir, '.codex-pr-url.txt')
+    await writeFile(prNumberPath, '456\n', 'utf8')
+    await writeFile(prUrlPath, 'https://example.test/pull/456\n', 'utf8')
 
     await runCodexImplementation(eventPath)
 
-    const status = await runGitCapture(['status', '--porcelain'])
-    expect(status.split('\n').some((line) => line.includes('uncommitted.txt'))).toBe(false)
-    await expect(runGitCapture(['log', '-1', '--pretty=%s'])).resolves.toMatch(/chore\(codex\)/)
-  }, 20_000)
+    await expect(readFile(prNumberPath, 'utf8')).resolves.toBe('456\n')
+    await expect(readFile(prUrlPath, 'utf8')).resolves.toBe('https://example.test/pull/456\n')
 
-  it('auto-commits even when the implementation run fails', async () => {
-    await writeFile(join(workdir, 'uncommitted.txt'), 'hello', 'utf8')
-    runCodexSessionMock.mockRejectedValueOnce(new Error('boom'))
-
-    await expect(runCodexImplementation(eventPath)).rejects.toThrow(/boom/)
-
-    const status = await runGitCapture(['status', '--porcelain'])
-    expect(status.split('\n').some((line) => line.includes('uncommitted.txt'))).toBe(false)
-    await expect(runGitCapture(['log', '-1', '--pretty=%s'])).resolves.toMatch(/chore\(codex\)/)
+    const notifyLogPath = join(workdir, '.codex-implementation-notify.json')
+    const notifyRaw = await readFile(notifyLogPath, 'utf8')
+    const notify = JSON.parse(notifyRaw) as Record<string, unknown>
+    expect(notify.prNumber).toBe(456)
+    expect(notify.prUrl).toBe('https://example.test/pull/456')
+    expect(notify.pr_number).toBe(456)
+    expect(notify.pr_url).toBe('https://example.test/pull/456')
   }, 20_000)
 
   it('throws when the event file is missing', async () => {
