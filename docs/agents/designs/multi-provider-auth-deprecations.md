@@ -79,19 +79,25 @@ Normalize auth configuration across VCS providers and surface deprecated token t
   - Supporting primitives: `services/jangar/src/server/supporting-primitives-controller.ts`
   - Policy checks (budgets/approval/etc): `services/jangar/src/server/primitives-policy.ts`
 - Codex runners (when applicable): `services/jangar/scripts/codex/codex-implement.ts`, `packages/codex/src/runner.ts`
-- Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
+- Argo WorkflowTemplates used by Codex (when applicable):
+  - `argocd/applications/froussard/codex-autonomous-workflow-template.yaml`
+  - `argocd/applications/froussard/codex-run-workflow-template-jangar.yaml`
+  - `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
+  - `argocd/applications/froussard/github-codex-post-deploy-workflow-template.yaml`
 
-### Current cluster state (from GitOps manifests)
-As of 2026-02-06 (repo `main`):
+### Current cluster state
+As of 2026-02-07 (repo `main` desired state + best-effort live version):
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
-- Images pinned by GitOps: control plane `registry.ide-newton.ts.net/lab/jangar:4327b1dc@sha256:b836d07da13886d52b79c55178d11724e4a2d6ed8bf2748bcd9e6768bb90da8a` and controllers `registry.ide-newton.ts.net/lab/jangar-control-plane:4327b1dc@sha256:9a6df7a440b7264a5517e07e061c9647864a695e3afa002b06068ac4e6c4d494`. See `argocd/applications/agents/values.yaml`.
+- Images pinned by GitOps: control plane `registry.ide-newton.ts.net/lab/jangar-control-plane:5b72ee1e@sha256:e24ef112b615401150220dc303553f47a3cefe793c0c6c28781e9575b98ab9ae` and controllers `registry.ide-newton.ts.net/lab/jangar:5b72ee1e@sha256:96e72f5e649b1738ba4a48f9e786f5cdcb2ad5d63838d4009f5c71c80c2e6809`. See `argocd/applications/agents/values.yaml`.
 - Namespaced reconciliation: `controller.namespaces: [agents]` and `rbac.clusterScoped: false`. See `argocd/applications/agents/values.yaml`.
+- Live cluster Kubernetes version (from this environment): `v1.35.0+k3s1` (`kubectl version`).
 - Runner RBAC for CI: `agents-ci` namespace resources in `argocd/applications/agents-ci/`.
 
-Note: Treat `charts/agents/**` and `argocd/applications/**` as the desired state. To verify live cluster state, run:
+Note: Treat `charts/agents/**` and `argocd/applications/**` as the desired state. Live inspection may require elevated RBAC. To verify live cluster state, run:
 
 ```bash
+kubectl version --output=yaml | rg -n "serverVersion|gitVersion|platform"
 kubectl get application -n argocd agents
 kubectl get ns | rg '^(agents|agents-ci|jangar)\b'
 kubectl get deploy -n agents
