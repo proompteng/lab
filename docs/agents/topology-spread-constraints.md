@@ -2,6 +2,8 @@
 
 Status: Draft (2026-01-30)
 
+Docs index: [README](README.md)
+
 ## Context
 AgentRun workloads execute as Kubernetes Jobs created by Jangar. Those job pods already support scheduling controls such as node selectors, tolerations, and affinity. We want first-class topology spread constraints so operators can distribute AgentRun pods across zones, nodes, or other topology domains without changing controller code or hand-editing workloads.
 
@@ -125,3 +127,12 @@ spec:
 ## Open Questions
 - Do we want to add a top-level `topologySpreadConstraints` for the controller Deployment pod, or keep this scoped to AgentRun workloads only?
 - Should the chart surface a short helper example in `charts/agents/README.md` once the feature is promoted beyond design stage?
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Doc["Topology Spread Constraints for AgentRun Pods"] --> Purpose["Design/contract/behavior"]
+  Purpose --> Impl["Implementation"]
+  Purpose --> Validate["Validation"]
+```

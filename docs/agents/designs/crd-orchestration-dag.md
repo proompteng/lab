@@ -1,6 +1,8 @@
 # CRD: Orchestration DAG Semantics
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Overview
 Orchestrations represent multi-step workflows. The current schema supports `spec.steps`, but the semantics around ordering, dependency graphs, and partial failure are not explicitly documented. This doc defines a DAG model that controllers can implement consistently.
 
@@ -158,3 +160,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Spec["spec (user intent)"] --> Validate["schema + CEL (when used)"]
+  Validate --> Reconcile["controller reconcile"]
+  Reconcile --> Status["status + conditions"]
+```

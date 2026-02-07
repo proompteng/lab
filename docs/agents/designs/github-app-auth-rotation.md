@@ -1,6 +1,8 @@
 # GitHub App Auth and Token Rotation
 
 Status: Current (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Purpose
 Support GitHub App installation tokens for VCS operations, including safe rotation and caching.
 
@@ -152,3 +154,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Doc["GitHub App Auth and Token Rotation"] --> Purpose["Design/contract/behavior"]
+  Purpose --> Impl["Implementation"]
+  Purpose --> Validate["Validation"]
+```

@@ -1,5 +1,7 @@
 # agentctl CLI
 
+Docs index: [README](README.md)
+
 `agentctl` is the CLI for managing Agents primitives. By default it talks directly to the Kubernetes API
 using your current kube context (argocd/virtctl-style). gRPC is optional and can be used when you need to
 reach Jangar directly.
@@ -98,3 +100,13 @@ bun run --filter @proompteng/agentctl build:bin
 
 The build produces `services/jangar/agentctl/dist/agentctl.js` (Node-bundled CLI). The optional
 `build:bin` step also produces a host binary at `services/jangar/agentctl/dist/agentctl`.
+
+## Diagram
+
+```mermaid
+flowchart LR
+  User["Operator"] --> CLI["agentctl"]
+  CLI -->|"kube mode (default)"| Kube["Kubernetes API"]
+  CLI -->|"gRPC (optional)"| GRPC["Service/agents-grpc"]
+  GRPC --> CP["Jangar control plane"]
+```

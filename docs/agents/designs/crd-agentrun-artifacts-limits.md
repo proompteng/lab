@@ -1,6 +1,8 @@
 # CRD: AgentRun Artifacts Limits and Schema
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Overview
 AgentRun status can accumulate artifacts, logs, and metadata. Without limits and schema conventions, status can grow large, exceed Kubernetes object size limits, and create performance issues for controllers and clients.
 
@@ -158,3 +160,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Spec["spec (user intent)"] --> Validate["schema + CEL (when used)"]
+  Validate --> Reconcile["controller reconcile"]
+  Reconcile --> Status["status + conditions"]
+```

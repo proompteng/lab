@@ -2,12 +2,22 @@
 
 Status: Current (2026-01-19)
 
+Docs index: [README](README.md)
+
+See also:
+- `README.md` (index)
+- `designs/handoff-common.md` (repo/chart/cluster source-of-truth + validation commands)
+- `agents-helm-chart-design.md` (high-level chart intent)
+- `ci-validation-plan.md` (what CI must enforce)
+
 ## Purpose
+
 Define the next iteration required to make `charts/agents` a fully functional, production‑ready Helm chart that installs CRDs, deploys the Jangar control plane, and supports the full primitive lifecycle (Agent, AgentRun, AgentProvider, ImplementationSpec, ImplementationSource, Memory, Orchestration, OrchestrationRun, ApprovalPolicy, Budget, SecretBinding, Signal, SignalDelivery, Tool, ToolRun, Schedule, Artifact, Workspace).
 
 This document is implementation‑grade: it describes *what* needs to exist in the chart, controller, and CI validation to make the chart “complete” and operable in real clusters.
 
 ## Goals
+
 - Ship a single Helm chart that installs all Agents CRDs and deploys Jangar in a usable, production‑safe configuration.
 - Keep CRDs and controller in sync (schema and behavior).
 - Support the full primitive set: Agent, AgentRun, AgentProvider, ImplementationSpec, ImplementationSource, Memory, Orchestration, OrchestrationRun, ApprovalPolicy, Budget, SecretBinding, Signal, SignalDelivery, Tool, ToolRun, Schedule, Artifact, Workspace.
@@ -16,15 +26,91 @@ This document is implementation‑grade: it describes *what* needs to exist in t
 - Ensure artifact hub compliance (README, CRD metadata, examples).
 
 ## Non‑Goals
+
 - Bundling an embedded database, backups, ingress, or migrations job in the chart.
 - Implementing a separate operator beyond Jangar.
 
 ## Current State Summary
+
 - CRDs live under `charts/agents/crds/` and are referenced in `charts/agents/Chart.yaml` annotations.
 - Jangar implements the native v1alpha1 types in `services/jangar/api/agents/v1alpha1` and a controller in `services/jangar/src/server/agents-controller.ts`.
 - The chart is “minimal” but lacks a documented, end‑to‑end implementation plan for completeness and validation.
 
+## Current Chart Topology (Observed 2026-02-07)
+
+This section captures the *current* deployed shape of Agents in the lab cluster (GitOps desired state + live objects)
+so the rest of this document has a concrete reference point when discussing “fully functional”.
+
+### GitOps render + overlays
+
+```mermaid
+flowchart TD
+  Repo["Git repo: proompteng/lab"] --> App["Argo CD Application: agents (argocd/applications/agents)"]
+  App --> Kust["kustomize build --enable-helm (helmCharts includeCRDs=true)"]
+
+  Kust --> HelmChart["Helm chart render: charts/agents (release: agents)"]
+  Kust --> Overlays["Extra manifests in argocd/applications/agents/*.yaml"]
+
+  HelmChart --> NsAgents["Namespace: agents"]
+  Overlays --> NsAgents
+
+  Overlays --> TSvc["Service/agents-tailscale (LoadBalancerClass=tailscale)"]
+  Overlays --> TNetpol["NetworkPolicy/agents-tailscale-ingress"]
+  Overlays --> ExtraCRs["Extra CRs: Agent/AgentProvider/SecretBinding/VersionControlProvider, etc."]
+```
+
+### In-namespace components (release `agents`)
+
+```mermaid
+graph TD
+  subgraph "Namespace: agents"
+    CP["Deployment/agents (control plane)"]
+    CTRL["Deployment/agents-controllers (reconcilers)"]
+    SA["ServiceAccount/agents-sa"]
+    RBAC["RBAC: Role+RoleBinding (or ClusterRole+Binding when rbac.clusterScoped=true)"]
+
+    SvcHTTP["Service/agents (http)"]
+    SvcGRPC["Service/agents-grpc (grpc, ClusterIP)"]
+    SvcMetrics["Service/agents-metrics (metrics, ClusterIP)"]
+    TSvc["Service/agents-tailscale (http+grpc, LoadBalancerClass=tailscale)"]
+    TNetpol["NetworkPolicy/agents-tailscale-ingress (ingress allowlist)"]
+    DashCM["ConfigMap/agents-dashboard (Grafana dashboard JSON)"]
+
+    DbSecret["Secret/jangar-db-app (DATABASE_URL)"]
+    TokenEnv["Secret/agents-github-token-env (envFrom)"]
+
+    RunSpecCM["ConfigMap/<run>-spec-step-<n>-attempt-<n> (created by controller)"]
+    RunInputsCM["ConfigMap/<run>-inputs-step-<n>-attempt-<n> (created by controller)"]
+    Job["Job/<run>-step-<n>-attempt-<n> (created by controller)"]
+  end
+
+  Grafana["Grafana (external)"]
+
+  SA --> CP
+  SA --> CTRL
+  RBAC --> CTRL
+
+  CP --> SvcHTTP
+  CP --> SvcGRPC
+  CP --> SvcMetrics
+  CP --> TSvc
+  TNetpol -. "selects pods" .-> CP
+  DashCM -. "dashboard discovery" .-> Grafana
+
+  DbSecret --> CP
+  DbSecret --> CTRL
+  TokenEnv --> CP
+  TokenEnv --> CTRL
+
+  CTRL --> RunSpecCM
+  CTRL --> RunInputsCM
+  CTRL --> Job
+  RunSpecCM --> Job
+  RunInputsCM --> Job
+```
+
 ## Design Principles
+
 1) **CRDs are installed by Helm, not at runtime**. Jangar should verify CRD availability and emit actionable errors; it should not create CRDs by default. This aligns with Artifact Hub and Helm best practices.
 2) **Controller behavior matches CRD schema**. Any schema change must be reflected in Jangar’s reconciliation logic.
 3) **Vendor-neutral runtime and webhook ingestion**. The workflow runtime is native by default and external adapters are opt-in; ingestion relies on webhooks only (no polling). Agent event streaming is push-based via NATS → Jangar storage → SSE (no periodic polling).
@@ -32,7 +118,9 @@ This document is implementation‑grade: it describes *what* needs to exist in t
 5) **Deterministic upgrades**. CRDs and examples are static YAML, version‑controlled, and validated in CI.
 
 ## Scope: What “Fully Functional” Means
+
 A fully functional chart must provide:
+
 - **CRDs** for all primitives, installed via `charts/agents/crds/`.
 - **Jangar deployment + service** with documented env configuration.
 - **gRPC service port** (ClusterIP only) for optional `agentctl` access within the cluster.
@@ -46,13 +134,16 @@ A fully functional chart must provide:
 - **Supporting primitives controller** for schedules, artifacts, and workspaces with native Kubernetes resources.
 
 ## CRD Lifecycle
+
 ### Source of truth
+
 - Go types in `services/jangar/api/agents/v1alpha1/types.go` are the schema source **for Agents primitives**.
 - Agents CRDs are generated from these types via `controller-gen`, then committed to `charts/agents/crds/`.
 - Non-agent primitives (orchestration/tools/schedules/etc.) are currently maintained as static YAML in
   `charts/agents/crds/` until dedicated Go API packages are added.
 
 ### Requirements
+
 - `subresources.status` on all CRDs.
 - `status.conditions[]` and `status.observedGeneration` on all CRDs.
 - Keep schemas structural and avoid top-level `x-kubernetes-preserve-unknown-fields: false`; only mark specific subtrees as schemaless.
@@ -60,13 +151,17 @@ A fully functional chart must provide:
 - Provide `additionalPrinterColumns` for common status fields.
 
 ### CRD install behavior
+
 - Helm installs CRDs automatically from `crds/`.
 - Jangar should **fail fast** with a clear error if CRDs are missing (e.g., on startup or reconcile loop).
 - Optional future enhancement: a `crds.install` flag that toggles Helm’s `--skip-crds` parity in CI or automation (not a runtime controller responsibility).
 
 ## Controller Responsibilities (Jangar)
+
 ### Core reconcile flow
+
 Jangar is the controller for all primitives and must:
+
 - Reconcile **Agent** and validate provider references.
 - Reconcile **AgentProvider** templates and expose invalid spec errors.
 - Reconcile **ImplementationSpec** and **ImplementationSource** (webhook-only).
@@ -79,7 +174,50 @@ Jangar is the controller for all primitives and must:
 - Reconcile **AgentRun** and submit workloads to the configured runtime adapter.
 - Reconcile **Tool**, **ApprovalPolicy**, **Budget**, **SecretBinding**, **Signal**, **SignalDelivery**, **Schedule**, **Artifact**, and **Workspace** resources.
 
+```mermaid
+flowchart LR
+  subgraph "Reconciler Inputs"
+    CRD["CRDs (installed by chart)"]
+    Values["Helm values -> env vars"]
+    Secrets["Secrets (DB, provider auth, etc.)"]
+  end
+
+  subgraph "Controller (Deployment/agents-controllers)"
+    AgentsCtrl["Agents controller\n(Agent/AgentRun/AgentProvider/Memory/Implementation*)"]
+    OrchCtrl["Orchestration controller\n(Orchestration/OrchestrationRun)"]
+    SupportCtrl["Supporting primitives controller\n(Schedule/Workspace/Artifact/Tool/ToolRun/etc.)"]
+  end
+
+  subgraph "Workloads + Objects"
+    CM["ConfigMaps (run spec/inputs)"]
+    Job["Jobs (runner execution)"]
+    CronJob["CronJobs (Schedule)"]
+    PVC["PVCs (Workspace)"]
+  end
+
+  CRD --> AgentsCtrl
+  Values --> AgentsCtrl
+  Secrets --> AgentsCtrl
+
+  CRD --> OrchCtrl
+  Values --> OrchCtrl
+  Secrets --> OrchCtrl
+
+  CRD --> SupportCtrl
+  Values --> SupportCtrl
+  Secrets --> SupportCtrl
+
+  AgentsCtrl --> CM
+  AgentsCtrl --> Job
+  OrchCtrl --> CM
+  OrchCtrl --> Job
+  SupportCtrl --> CronJob
+  SupportCtrl --> PVC
+  SupportCtrl --> Job
+```
+
 ### AgentRun → Job runtime (required)
+
 - If `spec.runtime.type == "job"`, Jangar submits a Kubernetes Job in the target namespace.
 - Image resolution priority:
   1. `AgentRun.spec.workload.image`
@@ -88,7 +226,29 @@ Jangar is the controller for all primitives and must:
 - Job inputs must include a JSON spec (e.g., `run.json`) and optional provider input files.
 - Job should be labeled with `agents.proompteng.ai/agent-run` for tracking.
 
+```mermaid
+sequenceDiagram
+  autonumber
+  participant AR as AgentRun (CR)
+  participant C as Agents controller
+  participant AG as Agent (CR)
+  participant AP as AgentProvider (CR)
+  participant IM as ImplementationSpec (CR)
+  participant CM as ConfigMaps (run spec/inputs)
+  participant J as Job (runner)
+
+  AR->>C: reconcile AgentRun
+  C->>AG: read Agent defaults
+  C->>AP: read AgentProvider templates
+  C->>IM: read ImplementationSpec text/metadata
+  C->>CM: create/update run spec + inputs
+  C->>J: create Job (image resolved by priority)
+  J-->>C: status via Job watch (success/failure)
+  C-->>AR: update AgentRun.status + conditions
+```
+
 ### AgentRun → Workflow runtime (native)
+
 - If `spec.runtime.type == "workflow"`, Jangar orchestrates a step-based workflow using Kubernetes Jobs.
 - Define steps in `spec.workflow.steps[]`; each step can provide:
   - `name` (required, unique within the workflow)
@@ -105,19 +265,42 @@ Jangar is the controller for all primitives and must:
   - `status.workflow.steps[]` tracks per-step phase, attempt count, timestamps, and job reference.
   - `status.phase` mirrors workflow phase for compatibility with existing clients.
 
+```mermaid
+sequenceDiagram
+  autonumber
+  participant AR as AgentRun (workflow)
+  participant C as Workflow controller
+  participant Step1 as "Job (step 1)"
+  participant Step2 as "Job (step 2)"
+
+  AR->>C: reconcile workflow run
+  C->>Step1: create Job (attempt 1)
+  Step1-->>C: Succeeded/Failed
+  alt failed and retries remain
+    C->>Step1: create Job (attempt 2..N)
+  end
+  C->>Step2: create Job (next step)
+  Step2-->>C: Succeeded/Failed
+  C-->>AR: update status.workflow + status.phase
+```
+
 ### Runtime adapters (expected to exist)
+
 - `workflow` (native step runner), `job`, `temporal`, `custom` adapters with clear error messages when configuration is missing.
 The Helm chart enables the native workflow runtime controllers by default; external adapters are opt-in via explicit
 environment overrides (for example, `env.vars.*`).
 
 ### Orchestration runtime (native)
+
 - Orchestration and OrchestrationRun execute in-cluster by default with no external workflow engine.
 - Native controller currently supports `AgentRun`, `ToolRun`, `SubOrchestration`, and `ApprovalGate` steps; other step kinds require adapters or future extensions.
 - Codex reruns/system-improvements should point at native OrchestrationRuns via `workflowRuntime.native.*`
   values (or the equivalent `JANGAR_CODEX_RERUN_ORCHESTRATION` and `JANGAR_SYSTEM_IMPROVEMENT_ORCHESTRATION` env vars).
 
 ### RBAC alignment
+
 Controller behavior requires permissions to:
+
 - Read/write all Agents CRDs and their `status` subresources.
 - Create/update/delete Jobs for workflow runtime execution.
 - Read Secrets referenced by Agent/Memory/ImplementationSource.
@@ -128,7 +311,9 @@ Controller behavior requires permissions to:
 - Emit Events.
 
 ## Helm Chart Structure
+
 ### Required files
+
 - `charts/agents/Chart.yaml`
 - `charts/agents/values.yaml`
 - `charts/agents/values.schema.json`
@@ -137,7 +322,9 @@ Controller behavior requires permissions to:
 - `charts/agents/templates/*.yaml`
 
 ### Values schema completeness
+
 `values.schema.json` must cover:
+
 - Image configuration (`repository`, `tag`, `digest`, pull policy, pull secrets).
 - Database configuration (URL, secret ref, CA secret).
 - Controller settings (`enabled`, `namespaces`, `concurrency`, `resyncInterval`, `leaderElection.*`).
@@ -150,30 +337,55 @@ Controller behavior requires permissions to:
 - Optional pod disruption budget and network policy settings.
 
 ### Agent comms subject naming
+
 Agent comms publishes vendor-neutral NATS subjects using the following pattern:
+
 - `workflow.<namespace>.<workflow>.<uid>.agent.<agentId>.<kind>` for workflow-scoped agent messages.
 - `workflow.general.<kind>` for general agent status updates.
 
 Legacy compatibility: `agents.workflow.*` subjects are still accepted alongside the `workflow.*` subject family.
 
 ### RBAC modes
+
 Support two modes:
+
 - **Namespaced** (default): Role/RoleBinding in the release namespace. Suitable when `controller.namespaces` is unset or contains only the release namespace.
 - **Cluster‑scoped** (optional): ClusterRole/ClusterRoleBinding when `controller.namespaces` includes multiple namespaces or `"*"`.
 
 Design note: Without cluster‑scoped RBAC, multi‑namespace reconciliation will fail.
 
+```mermaid
+flowchart TB
+  subgraph "Namespaced RBAC (rbac.clusterScoped=false)"
+    SA1["ServiceAccount/agents-sa"]
+    R["Role/agents"]
+    RB["RoleBinding/agents"]
+    SA1 --> RB --> R
+  end
+
+  subgraph "Cluster-scoped RBAC (rbac.clusterScoped=true)"
+    SA2["ServiceAccount/agents-sa"]
+    CR["ClusterRole/agents"]
+    CRB["ClusterRoleBinding/agents"]
+    SA2 --> CRB --> CR
+  end
+```
+
 ### CRDs and Examples
+
 - CRDs are static YAML in `crds/`.
 - Examples live in `charts/agents/examples/` and are referenced in `Chart.yaml` annotations.
 - Examples must be validated in CI against the CRD schemas.
 
 ## Crossplane
+
 Crossplane is not supported by Agents. Uninstall it before deploying the native chart so the native CRDs
 remain the only definitions.
 
 ## CI Validation (Required)
+
 Add or update CI checks to ensure:
+
 - CRDs are generated from Go types and match `charts/agents/crds/`.
 - CRDs pass schema validation and size limits.
 - Examples validate against CRDs.
@@ -182,7 +394,9 @@ Add or update CI checks to ensure:
 Reference: `docs/agents/ci-validation-plan.md`
 
 ## Acceptance Criteria
+
 A release is considered “fully functional” when:
+
 - Helm install succeeds on a clean cluster (minikube/kind) with CRDs installed.
 - Jangar starts and reports healthy readiness/liveness.
 - Sample CRDs apply cleanly and appear in `kubectl get`.
@@ -191,6 +405,7 @@ A release is considered “fully functional” when:
 - CI validates CRDs and examples.
 
 ## Implementation Plan (Next Iteration)
+
 1) **CRD and Schema Lock‑in**
    - Regenerate CRDs from `services/jangar/api/agents/v1alpha1` and commit to `charts/agents/crds/`.
    - Validate schemas and CRD size limits.
@@ -206,9 +421,11 @@ A release is considered “fully functional” when:
    - Document that Crossplane is unsupported and must be uninstalled before deploying the chart.
 
 ## Open Questions
+
 - Should the chart support an optional CRD install guard (e.g., pre‑install job) for clusters that skip `crds/`? Current best practice says no, but some GitOps tools may need explicit handling.
 
 ## References
+
 - `docs/agents/agents-helm-chart-design.md`
 - `docs/agents/ci-validation-plan.md`
 - `docs/agents/crd-yaml-spec.md`

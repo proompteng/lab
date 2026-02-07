@@ -1,6 +1,8 @@
 # CRD Lifecycle Upgrades
 
 Status: Current (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Purpose
 Define the lifecycle and upgrade flow for Agents CRDs, including generation, validation, packaging, rollout,
 compatibility rules, and CI enforcement. This design codifies the existing build and release workflow into a
@@ -187,3 +189,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Spec["spec (user intent)"] --> Validate["schema + CEL (when used)"]
+  Validate --> Reconcile["controller reconcile"]
+  Reconcile --> Status["status + conditions"]
+```

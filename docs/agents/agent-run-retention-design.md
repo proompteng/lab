@@ -2,6 +2,8 @@
 
 Status: Draft (2026-01-28)
 
+Docs index: [README](README.md)
+
 ## Problem
 AgentRun resources can accumulate indefinitely in production clusters. This increases etcd pressure, slows list/watch
 operations, and bloats the control plane over time. Kubernetes only provides TTL cleanup for built-in resources like
@@ -52,3 +54,12 @@ Jobs, so Agents needs a first-class retention policy for its CRDs.
 - Completed AgentRuns are automatically deleted after the configured retention window.
 - Running runs are never deleted by retention logic.
 - Helm chart exposes the retention configuration and passes schema validation.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Doc["AgentRun Retention & Cleanup"] --> Purpose["Design/contract/behavior"]
+  Purpose --> Impl["Implementation"]
+  Purpose --> Validate["Validation"]
+```

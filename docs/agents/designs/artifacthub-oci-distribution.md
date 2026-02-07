@@ -1,6 +1,8 @@
 # Artifact Hub OCI Distribution
 
 Status: Current (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Purpose
 Define how the Agents Helm chart is packaged, published as an OCI artifact, and surfaced on Artifact Hub.
 
@@ -154,3 +156,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Doc["Artifact Hub OCI Distribution"] --> Purpose["Design/contract/behavior"]
+  Purpose --> Impl["Implementation"]
+  Purpose --> Validate["Validation"]
+```

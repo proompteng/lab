@@ -2,6 +2,13 @@
 
 Status: Current (2026-01-19)
 
+Docs index: [README](README.md)
+
+See also:
+- `README.md` (docs index)
+- `rbac-matrix.md` (permissions model)
+- `production-readiness-design.md` (security requirements checklist)
+
 ## Assets
 - Source code repositories and branches
 - Credentials/secrets (GitHub/Linear tokens, runtime credentials)
@@ -37,3 +44,15 @@ Status: Current (2026-01-19)
 ## Residual Risk
 - Large ImplementationSpec content may exhaust etcd or memory if limits ignored.
 - Provider outages cause delayed runs; bounded retries prevent overload.
+
+## Diagram
+
+```mermaid
+flowchart LR
+  Ext["External providers<br/>(GitHub/Linear/etc.)"] --> Webhook["Webhook ingestion"]
+  Webhook --> CP["Jangar control plane"]
+  CP --> Kube["Kubernetes API"]
+  CP --> Runs["Runner Jobs"]
+  Secrets["Secrets"] --> CP
+  Secrets --> Runs
+```

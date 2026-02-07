@@ -2,6 +2,13 @@
 
 Status: Current (2026-01-19)
 
+Docs index: [README](README.md)
+
+See also:
+- `README.md` (docs index)
+- `runbooks.md` (install/upgrade flows that require these permissions)
+- `designs/chart-rbac-clusterscoped-guardrails.md` (multi-namespace/cluster-scoped guidance)
+
 ## Components
 - Jangar controller (namespaced)
 - agentctl (user client)
@@ -44,3 +51,12 @@ If adapters run outside Jangar:
 ## Security Notes
 - Secrets must be allowlisted by Agent or AgentRun.
 - No wildcard access to secrets.
+
+## Diagram
+
+```mermaid
+flowchart LR
+  SA["ServiceAccount"] --> Bind["(Role|ClusterRole)Binding"]
+  Bind --> Role["(Role|ClusterRole)"]
+  Role --> Kube["Kubernetes API resources<br/>(CRDs, Jobs, ConfigMaps, Secrets, ...)"]
+```

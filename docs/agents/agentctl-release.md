@@ -1,5 +1,7 @@
 # agentctl release process
 
+Docs index: [README](README.md)
+
 This document describes how to build and publish `agentctl` (bundled with the Jangar service) for npm and Homebrew.
 For install/usage guidance, see `docs/agents/agentctl.md`.
 `agentctl` ships with Jangar and defaults to Kubernetes API access (gRPC optional).
@@ -108,4 +110,14 @@ Push a semver tag with the `agentctl-` prefix (e.g. `agentctl-v0.1.0`) to trigge
 ```bash
 git tag agentctl-v0.1.0
 git push origin agentctl-v0.1.0
+```
+
+## Diagram
+
+```mermaid
+flowchart LR
+  User["Operator"] --> CLI["agentctl"]
+  CLI -->|"kube mode (default)"| Kube["Kubernetes API"]
+  CLI -->|"gRPC (optional)"| GRPC["Service/agents-grpc"]
+  GRPC --> CP["Jangar control plane"]
 ```

@@ -2,6 +2,8 @@
 
 Status: Current (2026-01-30)
 
+Docs index: [README](README.md)
+
 Location: `services/jangar/agentctl` (ships with the Jangar service; **not** a separate product or service).
 
 ## Purpose
@@ -220,3 +222,13 @@ grpc                     agents     healthy   127.0.0.1:50051
 - Default transport is Kubernetes API; gRPC is optional for direct Jangar access.
 - `agentctl` lives under `services/jangar/**` and is bundled for Node; optional Bun binaries can be published for convenience.
 - Secrets referenced by name only; values never printed.
+
+## Diagram
+
+```mermaid
+flowchart LR
+  User["Operator"] --> CLI["agentctl"]
+  CLI -->|"kube mode (default)"| Kube["Kubernetes API"]
+  CLI -->|"gRPC (optional)"| GRPC["Service/agents-grpc"]
+  GRPC --> CP["Jangar control plane"]
+```

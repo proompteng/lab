@@ -2,6 +2,8 @@
 
 Status: Current (2026-01-19)
 
+Docs index: [README](README.md)
+
 ## Purpose
 Jangar is the control plane and controller for the Agents CRDs. It reconciles AgentRun, ImplementationSpec, ImplementationSource, Memory, and AgentProvider resources and drives execution via runtime adapters.
 
@@ -206,3 +208,14 @@ Rate limits and backoff:
 - Runtime schema: `spec.runtime.type` (enum: `workflow|job|temporal|custom`) plus `spec.runtime.config` (schemaless map for adapter-specific settings).
 - ImplementationSpec text limit: 128KB max; larger payloads must be stored externally and referenced via `spec.source.url`.
 - Memory override: AgentRun may override via `spec.memoryRef`, otherwise it inherits Agent → default Memory.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  CRDs["CRDs (Agent/AgentRun/...)"] --> Ctrl["Jangar controllers"]
+  Ctrl --> CM["ConfigMaps (run spec/inputs)"]
+  Ctrl --> Job["Jobs (runner execution)"]
+  Job --> Ctrl
+  Ctrl --> Status["CR status/conditions"]
+```

@@ -2,6 +2,13 @@
 
 Status: Current (2026-01-20)
 
+Docs index: [README](README.md)
+
+See also:
+- `README.md` (docs index)
+- `designs/handoff-common.md` (GitOps render + live verification commands)
+- `ci-validation-plan.md` (what to run before/after rollout)
+
 ## Install
 1. `helm install agents charts/agents -n agents --create-namespace`
 2. Verify CRDs: `kubectl get crd | rg agents.proompteng.ai`
@@ -169,3 +176,13 @@ Troubleshooting:
 ## CRD Missing
 - Reinstall chart or apply CRD YAMLs directly.
 - Verify `kubectl api-resources | rg agents`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Install["helm install / Argo CD sync"] --> Verify["kubectl get deploy,svc,crd"]
+  Verify --> Smoke["apply examples + wait for Job/AgentRun"]
+  Smoke --> Upgrade["helm upgrade / sync"]
+  Upgrade --> Rollback["helm rollback (if needed)"]
+```

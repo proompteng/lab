@@ -1,6 +1,8 @@
 # CRD: Memory Retention and Compaction
 
 Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
 ## Overview
 The `Memory` CRD represents stored context/embeddings. Without retention controls and compaction, memory stores can grow without bound, increasing storage cost and slowing queries. This doc defines retention and compaction semantics managed by controllers.
 
@@ -160,3 +162,12 @@ Common mappings:
   - `kubectl -n agents get pods`
   - `kubectl -n agents logs deploy/agents-controllers --tail=200`
   - Apply a minimal `Agent`/`AgentRun` from `charts/agents/examples` and confirm it reaches `Succeeded`.
+
+## Diagram
+
+```mermaid
+flowchart TD
+  Spec["spec (user intent)"] --> Validate["schema + CEL (when used)"]
+  Validate --> Reconcile["controller reconcile"]
+  Reconcile --> Status["status + conditions"]
+```
