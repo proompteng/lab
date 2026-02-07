@@ -11,7 +11,9 @@ grpc:
 
 env:
   vars:
-    JANGAR_MIGRATIONS: "skip"
+    # CI runs with a fresh Postgres, so we must run migrations to create schema
+    # (otherwise controllers will fail to reconcile AgentRuns).
+    JANGAR_MIGRATIONS: "auto"
 
 resources:
   requests:
