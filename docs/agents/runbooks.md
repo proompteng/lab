@@ -125,9 +125,9 @@ Expected outputs:
 - Output directory contains:
   - `agentrun.json` (final status snapshot)
   - `jobs.txt` (Job → Pod mapping)
- - `logs/<job>.log` (job logs)
+  - `logs/<job>.log` (job logs)
   - `artifacts/<job>-runner.log` and `artifacts/<job>-status.json` (agent-runner artifacts)
- - Script summary includes the output paths and, when available, the PR URL.
+- Script summary includes the output paths and, when available, the PR URL.
 
 Where the PR URL comes from:
 - The runner exports `PR_NUMBER_PATH` and `PR_URL_PATH` (paths in the workspace).
