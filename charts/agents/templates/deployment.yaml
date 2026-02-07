@@ -189,8 +189,12 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            {{- $metricsEnabled := true }}
+            {{- if and (hasKey .Values "metrics") (hasKey .Values.metrics "enabled") }}
+            {{- $metricsEnabled = .Values.metrics.enabled }}
+            {{- end }}
             - name: JANGAR_PROMETHEUS_METRICS_ENABLED
-              value: {{ .Values.metrics.enabled | default true | quote }}
+              value: {{ $metricsEnabled | quote }}
             - name: JANGAR_PROMETHEUS_METRICS_PATH
               value: {{ .Values.metrics.path | default "/metrics" | quote }}
             - name: JANGAR_RBAC_CLUSTER_SCOPED
@@ -219,10 +223,13 @@ spec:
               value: {{ .Values.controller.repoConcurrency.enabled | default false | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_DEFAULT
               value: {{ .Values.controller.repoConcurrency.default | default 0 | quote }}
-            {{- if and .Values.controller.repoConcurrency.overrides (gt (len .Values.controller.repoConcurrency.overrides) 0) }}
-            - name: JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES
-              value: {{ .Values.controller.repoConcurrency.overrides | toJson | quote }}
+            {{- $repoConcurrencyOverrides := dict -}}
+            {{- if .Values.controller.repoConcurrency.overrides }}
+            {{- $repoConcurrencyOverrides = .Values.controller.repoConcurrency.overrides -}}
             {{- end }}
+            - name: JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES
+              # Default to {} so jangar doesn't crash when the env var is unset.
+              value: {{ $repoConcurrencyOverrides | toJson | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE
               value: {{ .Values.controller.queue.perNamespace | default 200 | quote }}
             - name: JANGAR_AGENTS_CONTROLLER_QUEUE_REPO
@@ -271,8 +278,12 @@ spec:
             - name: JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS
               value: {{ .Values.controller.admissionPolicy.secrets.blocked | toJson | quote }}
             {{- end }}
+            {{- $vcsProvidersEnabled := true }}
+            {{- if and (hasKey .Values "controller") (hasKey .Values.controller "vcsProviders") (hasKey .Values.controller.vcsProviders "enabled") }}
+            {{- $vcsProvidersEnabled = .Values.controller.vcsProviders.enabled }}
+            {{- end }}
             - name: JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED
-              value: {{ .Values.controller.vcsProviders.enabled | default true | quote }}
+              value: {{ $vcsProvidersEnabled | quote }}
             {{- if .Values.controller.vcsProviders.deprecatedTokenTypes }}
             - name: JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
               value: {{ .Values.controller.vcsProviders.deprecatedTokenTypes | toJson | quote }}

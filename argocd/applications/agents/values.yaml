@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: 5436c9d2
-  digest: sha256:d673055eb54af663963dedfee69e63de46059254b830eca2a52e97e641f00349
+  tag: f978a078
+  digest: sha256:b239fd568287aa7e366607ae1e96f3b61e73a2391021fd148aaa6c7a2f3b2664
   pullPolicy: IfNotPresent
 controlPlane:
   image:
@@ -21,6 +21,11 @@ controllers:
   enabled: true
   autoscaling:
     enabled: false
+  env:
+    vars:
+      JANGAR_AGENT_RUNNER_NATS_AUTH_SECRET_NAME: nats-agents-credentials
+      JANGAR_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY: username
+      JANGAR_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY: password
 resources:
   requests:
     cpu: 200m
@@ -47,8 +52,6 @@ env:
     JANGAR_GRPC_HOST: 0.0.0.0
     JANGAR_GRPC_PORT: "50051"
     JANGAR_GITHUB_REPOS_ALLOWED: proompteng/lab
-    # Controllers image currently expects this env var to be present; when unset it can crash on startup.
-    # Safe default: no per-repo override map.
     JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES: "{}"
 envFromSecretRefs:
   - agents-github-token-env

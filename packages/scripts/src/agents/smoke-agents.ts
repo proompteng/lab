@@ -9,6 +9,17 @@ import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+const runInherit = async (cmd: string[], env?: Record<string, string | undefined>) => {
+  console.log(`$ ${cmd.join(' ')}`.trim())
+  const subprocess = Bun.spawn(cmd, {
+    stdin: 'inherit',
+    stdout: 'inherit',
+    stderr: 'inherit',
+    env: buildEnv(env),
+  })
+  return subprocess.exited
+}
+
 const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
   if (value === undefined) return fallback
   const normalized = value.trim().toLowerCase()
@@ -70,6 +81,37 @@ const buildEnv = (env?: Record<string, string | undefined>) =>
   Object.fromEntries(
     Object.entries(env ? { ...process.env, ...env } : process.env).filter(([, value]) => value !== undefined),
   ) as Record<string, string>
+
+const listPodNames = async (namespace: string) => {
+  const result = await execCapture([
+    'kubectl',
+    '-n',
+    namespace,
+    'get',
+    'pods',
+    '-o',
+    'jsonpath={.items[*].metadata.name}',
+  ])
+  if (result.exitCode !== 0) return []
+  return result.stdout.split(/\s+/).filter(Boolean)
+}
+
+const dumpNamespaceDiagnostics = async (namespace: string, releaseName: string) => {
+  console.error(
+    `\n[diagnostics] Dumping agents smoke test diagnostics for namespace=${namespace} release=${releaseName}`,
+  )
+
+  await runInherit(['kubectl', '-n', namespace, 'get', 'deploy,rs,pods,svc', '-o', 'wide'])
+  await runInherit(['kubectl', '-n', namespace, 'describe', 'deployment', releaseName])
+
+  const pods = await listPodNames(namespace)
+  for (const pod of pods) {
+    await runInherit(['kubectl', '-n', namespace, 'describe', 'pod', pod])
+    await runInherit(['kubectl', '-n', namespace, 'logs', pod, '--all-containers=true', '--tail=200'])
+  }
+
+  await runInherit(['kubectl', '-n', namespace, 'get', 'events', '--sort-by=.metadata.creationTimestamp'])
+}
 
 const applyYaml = async (namespace: string, manifest: string) => {
   const subprocess = Bun.spawn(['kubectl', '-n', namespace, 'apply', '-f', '-'], {
@@ -305,7 +347,23 @@ spec:
   }
 
   await run('helm', helmArgs)
-  await run('kubectl', ['-n', namespace, 'rollout', 'status', `deploy/${releaseName}`, `--timeout=${timeoutFlag}`])
+  {
+    const exitCode = await runInherit([
+      'kubectl',
+      '-n',
+      namespace,
+      'rollout',
+      'status',
+      `deploy/${releaseName}`,
+      `--timeout=${timeoutFlag}`,
+    ])
+    if (exitCode !== 0) {
+      await dumpNamespaceDiagnostics(namespace, releaseName)
+      fatal(
+        `Command failed (${exitCode}): kubectl -n ${namespace} rollout status deploy/${releaseName} --timeout=${timeoutFlag}`,
+      )
+    }
+  }
 
   await run('kubectl', [
     '-n',

@@ -3685,6 +3685,54 @@ const submitJobRun = async (
     env.push(...vcsRuntime.env)
   }
 
+  // Allow the controller to inject NATS user/pass for runner pods without requiring every AgentRun
+  // to carry credentials. This is used by codex tooling like `codex-nats-publish`.
+  const runnerNatsAuthSecretName = process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_SECRET_NAME?.trim()
+  if (runnerNatsAuthSecretName) {
+    const alreadyHasUser = env.some((item) => item.name === 'NATS_USER')
+    const alreadyHasPass = env.some((item) => item.name === 'NATS_PASSWORD')
+    if (!alreadyHasUser || !alreadyHasPass) {
+      const usernameKey = process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY?.trim() || 'username'
+      const passwordKey = process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY?.trim() || 'password'
+
+      const security = asRecord(readNested(agent, ['spec', 'security'])) ?? {}
+      const allowedSecrets = parseStringList(security.allowedSecrets)
+      const blocked = collectBlockedSecrets([runnerNatsAuthSecretName])
+      const allowlisted = allowedSecrets.length === 0 || allowedSecrets.includes(runnerNatsAuthSecretName)
+
+      // Only inject if:
+      // - secret isn't blocked by controller policy
+      // - Agent allowlist allows it (or no allowlist is configured)
+      // - secret exists and has both keys (avoid CreateContainerConfigError on missing secrets/keys)
+      if (blocked.length === 0 && allowlisted) {
+        const secret = await kube.get('secret', runnerNatsAuthSecretName, namespace)
+        if (
+          secret &&
+          secretHasKey(secret, usernameKey) &&
+          secretHasKey(secret, passwordKey) &&
+          (!alreadyHasUser || !alreadyHasPass)
+        ) {
+          if (!alreadyHasUser) {
+            env.push({
+              name: 'NATS_USER',
+              valueFrom: {
+                secretKeyRef: { name: runnerNatsAuthSecretName, key: usernameKey },
+              },
+            })
+          }
+          if (!alreadyHasPass) {
+            env.push({
+              name: 'NATS_PASSWORD',
+              valueFrom: {
+                secretKeyRef: { name: runnerNatsAuthSecretName, key: passwordKey },
+              },
+            })
+          }
+        }
+      }
+    }
+  }
+
   const runSpec = buildRunSpec(
     agentRun,
     agent,

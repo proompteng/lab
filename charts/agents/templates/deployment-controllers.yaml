@@ -247,8 +247,12 @@ spec:
             - name: JANGAR_AGENTS_CONTROLLER_BLOCKED_SECRETS
               value: {{ .Values.controller.admissionPolicy.secrets.blocked | toJson | quote }}
             {{- end }}
+            {{- $vcsProvidersEnabled := true }}
+            {{- if and (hasKey .Values "controller") (hasKey .Values.controller "vcsProviders") (hasKey .Values.controller.vcsProviders "enabled") }}
+            {{- $vcsProvidersEnabled = .Values.controller.vcsProviders.enabled }}
+            {{- end }}
             - name: JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED
-              value: {{ .Values.controller.vcsProviders.enabled | default true | quote }}
+              value: {{ $vcsProvidersEnabled | quote }}
             {{- if .Values.controller.vcsProviders.deprecatedTokenTypes }}
             - name: JANGAR_AGENTS_CONTROLLER_VCS_DEPRECATED_TOKEN_TYPES
               value: {{ .Values.controller.vcsProviders.deprecatedTokenTypes | toJson | quote }}

@@ -571,6 +571,12 @@ spec:
                         finishedAt:
                           format: date-time
                           type: string
+                        jobObservedAt:
+                          description: |-
+                            JobObservedAt is the time the controller first observed the Job backing this step.
+                            This must be part of the CRD schema so it is not pruned from status updates.
+                          format: date-time
+                          type: string
                         jobRef:
                           properties:
                             name:
@@ -580,9 +586,6 @@ spec:
                             uid:
                               type: string
                           type: object
-                        jobObservedAt:
-                          format: date-time
-                          type: string
                         lastTransitionTime:
                           format: date-time
                           type: string
