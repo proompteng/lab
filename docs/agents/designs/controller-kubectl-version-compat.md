@@ -1,6 +1,6 @@
 # Controller kubectl Version Compatibility
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 Controllers interact with the Kubernetes API by spawning the `kubectl` binary (`primitives-kube.ts` and `kube-watch.ts`). This implicitly makes controller correctness dependent on the `kubectl` version baked into the image. We should document and enforce a compatibility policy.
@@ -57,4 +57,12 @@ kubectl -n agents logs deploy/agents-controllers | rg -n \"kubectl\"
 
 ## References
 - Kubernetes version skew policy: https://kubernetes.io/releases/version-skew-policy/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Controller code: `services/jangar/src/server/` (see the doc’s **Current State** section for the exact files)
+- Chart wiring (env/args/volumes): `charts/agents/templates/deployment-controllers.yaml`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

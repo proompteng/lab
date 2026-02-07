@@ -1,6 +1,6 @@
 # Controller Reconcile Timeout Budget
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 Agents controllers perform multiple external operations during reconciliation (Kubernetes API calls via `kubectl`, VCS calls, webhook parsing, database operations). Today, timeouts are mostly implicit (subprocess defaults, library defaults), which makes tail-latency and hung reconciles hard to diagnose.
@@ -65,4 +65,12 @@ kubectl -n agents logs deploy/agents-controllers | rg -n \"Timeout:\"
 
 ## References
 - Kubernetes API timeouts (client-side considerations): https://kubernetes.io/docs/reference/using-api/api-concepts/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Controller code: `services/jangar/src/server/` (see the doc’s **Current State** section for the exact files)
+- Chart wiring (env/args/volumes): `charts/agents/templates/deployment-controllers.yaml`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

@@ -1,6 +1,6 @@
 # Controller Finalizer Conventions
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 Finalizers ensure controllers can perform cleanup before an object is fully deleted (e.g., deleting external runtimes). Inconsistent finalizer naming and behavior can cause stuck deletions or skipped cleanup.
@@ -62,4 +62,12 @@ kubectl -n agents get agentrun <name> -o jsonpath='{.metadata.deletionTimestamp}
 
 ## References
 - Kubernetes finalizers: https://kubernetes.io/docs/concepts/overview/working-with-objects/finalizers/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Controller code: `services/jangar/src/server/` (see the doc’s **Current State** section for the exact files)
+- Chart wiring (env/args/volumes): `charts/agents/templates/deployment-controllers.yaml`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

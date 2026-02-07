@@ -1,6 +1,6 @@
 # Chart Controllers Image Override Precedence
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 The Agents chart can run controllers as a separate Deployment (`agents-controllers`) with its own image. Operators need a clear contract for how `controllers.image.*` relates to the root `image.*` and the control plane `controlPlane.image.*`.
@@ -60,4 +60,13 @@ kubectl -n agents get deploy agents-controllers -o jsonpath='{.spec.template.spe
 
 ## References
 - Kubernetes container images: https://kubernetes.io/docs/concepts/containers/images/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Helm chart: `charts/agents/`
+- Primary templates: `charts/agents/templates/` (see the doc’s **Current State** section for the exact files)
+- Values + schema: `charts/agents/values.yaml`, `charts/agents/values.schema.json`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

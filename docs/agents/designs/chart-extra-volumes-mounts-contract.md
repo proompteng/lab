@@ -1,6 +1,6 @@
 # Chart Extra Volumes/Mounts Contract
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 The chart supports `.Values.extraVolumes` and `.Values.extraVolumeMounts`, which are injected into both the control plane and controllers pod specs. This is a powerful escape hatch but needs a documented contract to prevent accidental conflicts with chart-managed volumes (e.g. DB CA cert).
@@ -66,4 +66,13 @@ kubectl -n agents get deploy agents -o yaml | rg -n \"extra|db-ca-cert|volumes:|
 
 ## References
 - Kubernetes volumes: https://kubernetes.io/docs/concepts/storage/volumes/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Helm chart: `charts/agents/`
+- Primary templates: `charts/agents/templates/` (see the doc’s **Current State** section for the exact files)
+- Values + schema: `charts/agents/values.yaml`, `charts/agents/values.schema.json`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

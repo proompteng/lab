@@ -1,6 +1,6 @@
 # Chart Controller Namespaces: Empty Semantics
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 Controllers reconcile CRDs in a set of namespaces. The chart exposes `controller.namespaces`, but it is not documented what an empty list means (disabled? all namespaces? release namespace only?). Ambiguity here creates production risk.
@@ -63,4 +63,13 @@ kubectl -n agents logs deploy/agents-controllers | rg -n \"NAMESPACES|namespace\
 
 ## References
 - Kubernetes controller patterns (namespace scoping best practices): https://kubernetes.io/docs/concepts/architecture/controller/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Helm chart: `charts/agents/`
+- Primary templates: `charts/agents/templates/` (see the doc’s **Current State** section for the exact files)
+- Values + schema: `charts/agents/values.yaml`, `charts/agents/values.schema.json`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

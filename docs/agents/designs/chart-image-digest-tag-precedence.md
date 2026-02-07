@@ -1,6 +1,6 @@
 # Chart Image Digest/Tag Precedence
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 The Agents chart supports image tags and optional digests for both the control plane and controllers. In production GitOps, digests are preferred for immutability. The chart currently concatenates `repo:tag@digest` when a digest is provided, but the operational contract (and failure modes) are not documented.
@@ -75,4 +75,13 @@ kubectl -n agents get deploy agents-controllers -o jsonpath='{.spec.template.spe
 
 ## References
 - Kubernetes container image names (tag/digest): https://kubernetes.io/docs/concepts/containers/images/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Helm chart: `charts/agents/`
+- Primary templates: `charts/agents/templates/` (see the doc’s **Current State** section for the exact files)
+- Values + schema: `charts/agents/values.yaml`, `charts/agents/values.schema.json`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

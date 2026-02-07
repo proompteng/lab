@@ -1,6 +1,6 @@
 # Controller Status: Timestamps + observedGeneration
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 Many Agents CRDs include `status.updatedAt` and `status.observedGeneration`. Consistent semantics across controllers are essential for debugging, automation, and eventual UI/CLI behavior.
@@ -67,4 +67,12 @@ kubectl -n agents get agentrun <name> -o jsonpath='{.metadata.generation} {.stat
 
 ## References
 - Kubernetes generation and status patterns: https://kubernetes.io/docs/concepts/overview/working-with-objects/kubernetes-objects/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Controller code: `services/jangar/src/server/` (see the doc’s **Current State** section for the exact files)
+- Chart wiring (env/args/volumes): `charts/agents/templates/deployment-controllers.yaml`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

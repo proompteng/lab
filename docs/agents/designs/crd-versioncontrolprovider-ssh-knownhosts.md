@@ -1,6 +1,6 @@
 # CRD: VersionControlProvider SSH and known_hosts
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 VersionControlProvider supports SSH configuration (host, user, private key secret, known_hosts ConfigMap ref). This is operationally sensitive: incorrect known_hosts handling can lead to MITM risk, and missing known_hosts can break cloning.
@@ -67,4 +67,12 @@ kubectl -n agents get configmap | rg known-hosts
 ## References
 - OpenSSH `known_hosts` format: https://man.openbsd.org/sshd.8#SSH_KNOWN_HOSTS_FILE_FORMAT
 - Git over SSH: https://git-scm.com/book/en/v2/Git-on-the-Server-The-Protocols
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- CRDs packaged by chart: `charts/agents/crds/`
+- Go types (when generated): `services/jangar/api/agents/v1alpha1/`
+- Validation pipeline: `scripts/agents/validate-agents.sh`
 

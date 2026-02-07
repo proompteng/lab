@@ -1,6 +1,6 @@
 # Controllers Deployment: gRPC Disabled by Default
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 The chart renders a separate controllers deployment that forces `JANGAR_GRPC_ENABLED=0` unless explicitly overridden. This is a good safety default (controllers do not need to expose gRPC externally), but it is undocumented and can be surprising when operators expect agentctl gRPC to be available everywhere.
@@ -63,4 +63,12 @@ kubectl -n agents logs deploy/agents-controllers | rg -n \"gRPC|Agentctl\"
 
 ## References
 - gRPC basics: https://grpc.io/docs/what-is-grpc/introduction/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Controller code: `services/jangar/src/server/` (see the doc’s **Current State** section for the exact files)
+- Chart wiring (env/args/volumes): `charts/agents/templates/deployment-controllers.yaml`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

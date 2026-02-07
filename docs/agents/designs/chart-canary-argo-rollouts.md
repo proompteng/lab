@@ -1,6 +1,6 @@
 # Chart Canary with Argo Rollouts (Optional Integration)
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 Today the Agents chart uses Kubernetes Deployments. For safer production changes (especially to controllers), operators may want progressive delivery. This doc proposes a chart-compatible integration path with Argo Rollouts without making it a hard dependency.
@@ -67,4 +67,13 @@ kubectl -n agents get rollout
 
 ## References
 - Argo Rollouts documentation: https://argo-rollouts.readthedocs.io/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Helm chart: `charts/agents/`
+- Primary templates: `charts/agents/templates/` (see the doc’s **Current State** section for the exact files)
+- Values + schema: `charts/agents/values.yaml`, `charts/agents/values.schema.json`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

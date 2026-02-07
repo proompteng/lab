@@ -1,6 +1,6 @@
 # CRD: ImplementationSource Webhook CEL Invariants
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 ImplementationSource supports webhook-driven ingestion. Certain fields must be present together (e.g., `webhook.enabled` implies a `secretRef`). Today, some of these invariants are enforced in code, but encoding them in CRD CEL rules provides immediate feedback at apply time.
@@ -57,4 +57,12 @@ kubectl -n agents apply -f charts/agents/examples/implementationsource-github.ya
 
 ## References
 - Kubernetes CRD validation rules (CEL): https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definitions/#validation-rules
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- CRDs packaged by chart: `charts/agents/crds/`
+- Go types (when generated): `services/jangar/api/agents/v1alpha1/`
+- Validation pipeline: `scripts/agents/validate-agents.sh`
 

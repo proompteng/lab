@@ -1,6 +1,6 @@
 # Controller ResourceVersion Conflicts and Retry Strategy
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 Controllers patch and apply resources that may also be updated by other actors (users, GitOps, other controllers). Conflicts (HTTP 409) and optimistic concurrency failures should be handled predictably: retry when safe, fail fast when not.
@@ -63,4 +63,12 @@ kubectl -n agents logs deploy/agents-controllers | rg -n \"Conflict|409\"
 
 ## References
 - Kubernetes optimistic concurrency control: https://kubernetes.io/docs/reference/using-api/api-concepts/#resource-versions
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Controller code: `services/jangar/src/server/` (see the doc’s **Current State** section for the exact files)
+- Chart wiring (env/args/volumes): `charts/agents/templates/deployment-controllers.yaml`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

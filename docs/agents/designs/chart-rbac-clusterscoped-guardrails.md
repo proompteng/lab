@@ -1,6 +1,6 @@
 # Chart RBAC Cluster-Scoped Guardrails
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 The Agents chart can run with cluster-scoped RBAC (`rbac.clusterScoped=true`) or namespaced RBAC (`false`). Misconfiguration can lead to controller errors (insufficient permissions) or excessive permissions (overbroad access).
@@ -66,4 +66,13 @@ kubectl -n agents get deploy agents-controllers -o yaml | rg -n \"JANGAR_RBAC_CL
 
 ## References
 - Kubernetes RBAC overview: https://kubernetes.io/docs/reference/access-authn-authz/rbac/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Helm chart: `charts/agents/`
+- Primary templates: `charts/agents/templates/` (see the doc’s **Current State** section for the exact files)
+- Values + schema: `charts/agents/values.yaml`, `charts/agents/values.schema.json`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

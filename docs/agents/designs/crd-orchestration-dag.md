@@ -1,6 +1,6 @@
 # CRD: Orchestration DAG Semantics
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 Orchestrations represent multi-step workflows. The current schema supports `spec.steps`, but the semantics around ordering, dependency graphs, and partial failure are not explicitly documented. This doc defines a DAG model that controllers can implement consistently.
@@ -68,3 +68,12 @@ kubectl -n agents get orchestrationrun -o yaml | rg -n \"phase:|Skipped|Dependen
 
 ## References
 - Argo Workflows DAG concepts (widely used Kubernetes DAG runtime): https://argo-workflows.readthedocs.io/en/latest/walk-through/dag/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- CRDs packaged by chart: `charts/agents/crds/`
+- Go types (when generated): `services/jangar/api/agents/v1alpha1/`
+- Validation pipeline: `scripts/agents/validate-agents.sh`
+

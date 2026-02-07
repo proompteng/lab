@@ -1,6 +1,6 @@
 # Postgres TLS: PGSSLROOTCERT Wiring and Validation
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 The chart supports mounting a Postgres CA bundle via `database.caSecret` and sets `PGSSLROOTCERT` to the mounted path. This is essential for production TLS, but it needs a documented contract (secret key naming, mount paths, rotation).
@@ -61,4 +61,12 @@ kubectl -n agents get deploy agents -o yaml | rg -n \"PGSSLROOTCERT|db-ca-cert\"
 
 ## References
 - Kubernetes Secrets volumes: https://kubernetes.io/docs/concepts/storage/volumes/#secret
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Controller code: `services/jangar/src/server/` (see the doc’s **Current State** section for the exact files)
+- Chart wiring (env/args/volumes): `charts/agents/templates/deployment-controllers.yaml`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

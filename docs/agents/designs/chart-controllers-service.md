@@ -1,6 +1,6 @@
 # Chart Controllers Service (Optional)
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 The controllers Deployment is currently internal-only and has no Service. That is usually fine, but it complicates:
@@ -66,4 +66,13 @@ kubectl -n agents get endpoints agents-controllers
 
 ## References
 - Kubernetes Service type ClusterIP: https://kubernetes.io/docs/concepts/services-networking/service/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Helm chart: `charts/agents/`
+- Primary templates: `charts/agents/templates/` (see the doc’s **Current State** section for the exact files)
+- Values + schema: `charts/agents/values.yaml`, `charts/agents/values.schema.json`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

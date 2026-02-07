@@ -1,6 +1,6 @@
 # Orchestration Submit Deduplication (Delivery ID)
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 Orchestration run submission is triggered by external events (e.g., webhooks). Duplicate deliveries are common. The current system deduplicates submissions by `deliveryId` using the primitives store.
@@ -62,3 +62,12 @@ kubectl -n agents logs deploy/agents-controllers | rg -n \"deliveryId|idempotent
 
 ## References
 - HTTP request idempotency (general definition): https://www.rfc-editor.org/rfc/rfc9110.html#name-idempotent-methods
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Controller code: `services/jangar/src/server/` (see the doc’s **Current State** section for the exact files)
+- Chart wiring (env/args/volumes): `charts/agents/templates/deployment-controllers.yaml`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
+

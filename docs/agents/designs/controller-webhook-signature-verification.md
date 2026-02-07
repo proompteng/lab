@@ -1,6 +1,6 @@
 # Webhook Signature Verification: ImplementationSource
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 ImplementationSource webhooks are an ingress boundary. Signature verification is implemented for GitHub (`x-hub-signature(-256)`) and Linear (`linear-signature`). This doc defines the operational contract: how secrets are stored, rotated, and validated, and how failure is surfaced safely.
@@ -76,4 +76,12 @@ kubectl -n agents logs deploy/agents-controllers | rg -n \"Invalid webhook signa
 ## References
 - GitHub webhook signature docs: https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries
 - Linear webhook security docs: https://developers.linear.app/docs/graphql/webhooks
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Controller code: `services/jangar/src/server/` (see the doc’s **Current State** section for the exact files)
+- Chart wiring (env/args/volumes): `charts/agents/templates/deployment-controllers.yaml`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

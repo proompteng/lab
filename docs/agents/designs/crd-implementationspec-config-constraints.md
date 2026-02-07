@@ -1,6 +1,6 @@
 # CRD: ImplementationSpec Runtime Config Constraints
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 ImplementationSpec contains runtime configuration that is later executed by controllers/runners. Without constraints, it is easy to create specs that are invalid or unsafe (e.g., missing required fields, invalid enum values, or overly large embedded configs).
@@ -59,4 +59,12 @@ kubectl -n agents get implementationspec -o yaml | rg -n \"spec:|x-kubernetes-va
 
 ## References
 - Kubernetes CRD validation rules (CEL): https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definitions/#validation-rules
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- CRDs packaged by chart: `charts/agents/crds/`
+- Go types (when generated): `services/jangar/api/agents/v1alpha1/`
+- Validation pipeline: `scripts/agents/validate-agents.sh`
 

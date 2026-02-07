@@ -1,6 +1,6 @@
 # Chart ServiceAccount Name Resolution
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 The Agents chart supports `serviceAccount.create` and `serviceAccount.name`, plus a separate `runnerServiceAccount` for jobs created by controllers. The naming and resolution rules must be explicit so operators can safely integrate with external IAM (IRSA, Workload Identity) and cluster policy.
@@ -71,4 +71,13 @@ kubectl -n agents get sa
 
 ## References
 - Kubernetes ServiceAccounts: https://kubernetes.io/docs/concepts/security/service-accounts/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Helm chart: `charts/agents/`
+- Primary templates: `charts/agents/templates/` (see the doc’s **Current State** section for the exact files)
+- Values + schema: `charts/agents/values.yaml`, `charts/agents/values.schema.json`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

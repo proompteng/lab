@@ -1,6 +1,6 @@
 # GitHub App Auth and Token Rotation
 
-Status: Current (2026-02-06)
+Status: Current (2026-02-07)
 
 ## Purpose
 Support GitHub App installation tokens for VCS operations, including safe rotation and caching.
@@ -14,7 +14,7 @@ Support GitHub App installation tokens for VCS operations, including safe rotati
   - Caches tokens in memory keyed by `apiBaseUrl|installationId`.
   - Refreshes tokens before expiry using a refresh window (10% of TTL, min 30s, max 5 min).
   - Injects `VCS_TOKEN`, `GITHUB_TOKEN`, and `GH_TOKEN` into the agent runtime env.
-- Cluster: no `VersionControlProvider` resources are present today, so GitHub App auth is not currently in use.
+- GitOps desired state includes `VersionControlProvider/github` using token auth in `argocd/applications/agents/codex-versioncontrolprovider.yaml`; GitHub App auth is not enabled by default but can be introduced by changing the provider `spec.auth` and adding the required Secrets.
 
 ## Design
 
@@ -53,8 +53,7 @@ Support GitHub App installation tokens for VCS operations, including safe rotati
 - Keep configuration in the appropriate control plane (Helm values, CI, or code) and document overrides.
 - Update runbooks with enable/disable steps, rollback guidance, and expected failure modes.
 
-## Rollout
-
+## Rollout Plan
 - Ship behind feature flags or conservative defaults; validate in non-prod or CI first.
 - Verify deployment health (CI checks, ArgoCD sync, logs/metrics) before widening rollout.
 
@@ -79,10 +78,10 @@ Support GitHub App installation tokens for VCS operations, including safe rotati
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (from GitOps manifests)
-As of 2026-02-06 (repo `main`):
+As of 2026-02-07 (repo `main`):
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
-- Images pinned by GitOps: control plane `registry.ide-newton.ts.net/lab/jangar:4327b1dc@sha256:b836d07da13886d52b79c55178d11724e4a2d6ed8bf2748bcd9e6768bb90da8a` and controllers `registry.ide-newton.ts.net/lab/jangar-control-plane:4327b1dc@sha256:9a6df7a440b7264a5517e07e061c9647864a695e3afa002b06068ac4e6c4d494`. See `argocd/applications/agents/values.yaml`.
+- Images pinned by GitOps (from `argocd/applications/agents/values.yaml`): control plane `registry.ide-newton.ts.net/lab/jangar-control-plane:5b72ee1e@sha256:e24ef112b615401150220dc303553f47a3cefe793c0c6c28781e9575b98ab9ae` and controllers `registry.ide-newton.ts.net/lab/jangar:5b72ee1e@sha256:96e72f5e649b1738ba4a48f9e786f5cdcb2ad5d63838d4009f5c71c80c2e6809`.
 - Namespaced reconciliation: `controller.namespaces: [agents]` and `rbac.clusterScoped: false`. See `argocd/applications/agents/values.yaml`.
 - Runner RBAC for CI: `agents-ci` namespace resources in `argocd/applications/agents-ci/`.
 

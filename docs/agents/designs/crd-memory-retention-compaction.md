@@ -1,6 +1,6 @@
 # CRD: Memory Retention and Compaction
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 The `Memory` CRD represents stored context/embeddings. Without retention controls and compaction, memory stores can grow without bound, increasing storage cost and slowing queries. This doc defines retention and compaction semantics managed by controllers.
@@ -70,4 +70,12 @@ kubectl -n agents logs deploy/agents-controllers | rg -n \"compaction|retention\
 
 ## References
 - Kubernetes controllers (background reconciliation): https://kubernetes.io/docs/concepts/architecture/controller/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- CRDs packaged by chart: `charts/agents/crds/`
+- Go types (when generated): `services/jangar/api/agents/v1alpha1/`
+- Validation pipeline: `scripts/agents/validate-agents.sh`
 

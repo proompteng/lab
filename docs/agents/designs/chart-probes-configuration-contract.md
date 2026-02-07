@@ -1,6 +1,6 @@
 # Chart Probes Configuration Contract
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 The chart exposes HTTP liveness/readiness probe settings for the control plane, but probes may not be appropriate for controllers (which may not expose HTTP) and there is no startup probe for long initialization (e.g., cache warmup).
@@ -66,4 +66,13 @@ kubectl -n agents describe pod -l app.kubernetes.io/name=agents | rg -n \"Livene
 
 ## References
 - Kubernetes probes: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Helm chart: `charts/agents/`
+- Primary templates: `charts/agents/templates/` (see the doc’s **Current State** section for the exact files)
+- Values + schema: `charts/agents/values.yaml`, `charts/agents/values.schema.json`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

@@ -1,6 +1,6 @@
 # Chart Runner ServiceAccount Defaulting
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 Agents controllers schedule Kubernetes Jobs for agent runs. The chart includes a `runnerServiceAccount` block and multiple runtime defaults (`runtime.scheduleServiceAccount`, workload defaults, and controller env vars). The defaulting hierarchy must be explicit so operators can ensure jobs run with the intended permissions.
@@ -66,4 +66,13 @@ kubectl -n agents get deploy agents-controllers -o yaml | rg -n \"JANGAR_AGENT_R
 
 ## References
 - Kubernetes ServiceAccounts: https://kubernetes.io/docs/concepts/security/service-accounts/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Helm chart: `charts/agents/`
+- Primary templates: `charts/agents/templates/` (see the doc’s **Current State** section for the exact files)
+- Values + schema: `charts/agents/values.yaml`, `charts/agents/values.schema.json`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

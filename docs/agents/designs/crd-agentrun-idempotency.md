@@ -1,6 +1,6 @@
 # CRD: AgentRun Idempotency Key Contract
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 AgentRun includes `spec.idempotencyKey`. This field is intended to avoid duplicate runs when clients retry requests. Without a contract (scope, retention, collision handling), the field is under-specified.
@@ -61,3 +61,12 @@ kubectl -n agents get agentrun -o json | rg -n \"idempotencyKey\"
 
 ## References
 - HTTP request idempotency (general definition): https://www.rfc-editor.org/rfc/rfc9110.html#name-idempotent-methods
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- CRDs packaged by chart: `charts/agents/crds/`
+- Go types (when generated): `services/jangar/api/agents/v1alpha1/`
+- Validation pipeline: `scripts/agents/validate-agents.sh`
+

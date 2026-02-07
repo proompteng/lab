@@ -1,6 +1,6 @@
 # Chart Database URL vs SecretRef Precedence
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 The Agents chart supports multiple ways to provide `DATABASE_URL` to both the control plane and controllers. The precedence is currently implicit in templates; misconfiguration can lead to pods starting without a database connection or using an unintended database.
@@ -74,4 +74,13 @@ kubectl -n agents get secret jangar-db-app -o yaml
 ## References
 - Kubernetes Secrets as env vars: https://kubernetes.io/docs/concepts/configuration/secret/
 - Helm values best practices: https://helm.sh/docs/chart_best_practices/values/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Helm chart: `charts/agents/`
+- Primary templates: `charts/agents/templates/` (see the doc’s **Current State** section for the exact files)
+- Values + schema: `charts/agents/values.yaml`, `charts/agents/values.schema.json`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

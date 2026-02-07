@@ -1,6 +1,6 @@
 # CRD: AgentRun Spec Immutability Rules
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 AgentRuns represent a concrete execution request. After a run is accepted and started, mutating most of `spec` should be prohibited to preserve auditability and avoid undefined behavior (e.g., swapping implementation mid-run).
@@ -69,4 +69,12 @@ kubectl -n agents get agentrun <name> -o yaml | rg -n \"SpecImmutableViolation|s
 
 ## References
 - Kubernetes immutability patterns (general objects): https://kubernetes.io/docs/concepts/overview/working-with-objects/kubernetes-objects/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- CRDs packaged by chart: `charts/agents/crds/`
+- Go types (when generated): `services/jangar/api/agents/v1alpha1/`
+- Validation pipeline: `scripts/agents/validate-agents.sh`
 

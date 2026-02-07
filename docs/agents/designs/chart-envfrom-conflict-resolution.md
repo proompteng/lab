@@ -1,6 +1,6 @@
 # Chart envFrom Conflict Resolution
 
-Status: Draft (2026-02-06)
+Status: Draft (2026-02-07)
 
 ## Overview
 The Agents chart supports both explicit `env:` entries and bulk import via `envFrom` (Secrets/ConfigMaps). Kubernetes allows both, but precedence can be confusing: explicitly defined `env:` variables take precedence over values from `envFrom`.
@@ -76,4 +76,13 @@ kubectl -n agents get deploy agents -o jsonpath='{.spec.template.spec.containers
 
 ## References
 - Kubernetes: define env vars and `envFrom`: https://kubernetes.io/docs/tasks/inject-data-application/define-environment-variable-container/
+## Handoff Appendix (Repo + Chart + Cluster)
+
+Shared operational details (cluster desired state, render/validate commands): `docs/agents/designs/handoff-common.md`.
+
+### This design’s touchpoints
+- Helm chart: `charts/agents/`
+- Primary templates: `charts/agents/templates/` (see the doc’s **Current State** section for the exact files)
+- Values + schema: `charts/agents/values.yaml`, `charts/agents/values.schema.json`
+- GitOps overlay (prod): `argocd/applications/agents/values.yaml`
 

@@ -1,6 +1,6 @@
 # Repository Allow and Deny Policy
 
-Status: Current (2026-02-06)
+Status: Current (2026-02-07)
 
 ## Purpose
 Constrain repository access for VCS operations using allow and deny lists on VersionControlProvider resources.
@@ -10,7 +10,7 @@ Constrain repository access for VCS operations using allow and deny lists on Ver
 - Policy is implemented in `services/jangar/src/server/agents-controller.ts` during VCS resolution.
 - `VersionControlProvider.spec.repositoryPolicy.allow` and `.deny` accept wildcard patterns (`*`).
 - Repositories are normalized to lowercase before matching; patterns should be lowercase for consistent matches.
-- Cluster: no `VersionControlProvider` resources are currently present, so repository policy enforcement is not
+- GitOps desired state includes `VersionControlProvider/github` with `repositoryPolicy.allow` set in `argocd/applications/agents/codex-versioncontrolprovider.yaml`, so repository allow/deny is enforced for runs routed through that provider.
   active. `argocd/applications/agents/codex-versioncontrolprovider.yaml` defines an allowlist for
   `proompteng/lab`, but the resource is not applied in the cluster.
 
@@ -39,8 +39,7 @@ repositoryPolicy:
 - Keep configuration in the appropriate control plane (Helm values, CI, or code) and document overrides.
 - Update runbooks with enable/disable steps, rollback guidance, and expected failure modes.
 
-## Rollout
-
+## Rollout Plan
 - Ship behind feature flags or conservative defaults; validate in non-prod or CI first.
 - Verify deployment health (CI checks, ArgoCD sync, logs/metrics) before widening rollout.
 
@@ -65,10 +64,10 @@ repositoryPolicy:
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (from GitOps manifests)
-As of 2026-02-06 (repo `main`):
+As of 2026-02-07 (repo `main`):
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
-- Images pinned by GitOps: control plane `registry.ide-newton.ts.net/lab/jangar:4327b1dc@sha256:b836d07da13886d52b79c55178d11724e4a2d6ed8bf2748bcd9e6768bb90da8a` and controllers `registry.ide-newton.ts.net/lab/jangar-control-plane:4327b1dc@sha256:9a6df7a440b7264a5517e07e061c9647864a695e3afa002b06068ac4e6c4d494`. See `argocd/applications/agents/values.yaml`.
+- Images pinned by GitOps (from `argocd/applications/agents/values.yaml`): control plane `registry.ide-newton.ts.net/lab/jangar-control-plane:5b72ee1e@sha256:e24ef112b615401150220dc303553f47a3cefe793c0c6c28781e9575b98ab9ae` and controllers `registry.ide-newton.ts.net/lab/jangar:5b72ee1e@sha256:96e72f5e649b1738ba4a48f9e786f5cdcb2ad5d63838d4009f5c71c80c2e6809`.
 - Namespaced reconciliation: `controller.namespaces: [agents]` and `rbac.clusterScoped: false`. See `argocd/applications/agents/values.yaml`.
 - Runner RBAC for CI: `agents-ci` namespace resources in `argocd/applications/agents-ci/`.
 
