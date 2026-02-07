@@ -500,6 +500,78 @@ describe('chat completions handler', () => {
     expect(threadState.setThreadId).toHaveBeenLastCalledWith('chat-1', 'fresh-thread')
   })
 
+  it('retries on stale thread ids when app-server rejects with thread not found', async () => {
+    const threadState: ThreadStateService = {
+      getThreadId: vi.fn(() => Effect.succeed('stale-thread')),
+      setThreadId: vi.fn(() => Effect.succeed(undefined)),
+      nextTurn: vi.fn(() => Effect.succeed(1)),
+      clearChat: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const worktreeState: WorktreeStateService = {
+      getWorktreeName: vi.fn(() => Effect.succeed('austin')),
+      setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
+      clearWorktree: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const transcriptState: TranscriptStateService = {
+      getTranscript: vi.fn(() => Effect.succeed(null)),
+      setTranscript: vi.fn(() => Effect.succeed(undefined)),
+      clearTranscript: vi.fn(() => Effect.succeed(undefined)),
+    }
+
+    const mockClient = {
+      runTurnStream: vi.fn(async (_prompt: string, opts?: { threadId?: string }) => {
+        if (opts?.threadId === 'stale-thread') {
+          throw { code: -32600, message: 'thread not found: stale-thread' }
+        }
+
+        return {
+          turnId: 'turn-2',
+          threadId: 'fresh-thread',
+          stream: (async function* () {
+            yield { type: 'message', delta: 'hello after retry' }
+            yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+          })(),
+        }
+      }),
+      interruptTurn: vi.fn(async () => {}),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-openwebui-chat-id': 'chat-1',
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    })
+
+    const response = await Effect.runPromise(
+      pipe(
+        handleChatCompletionEffect(request),
+        Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
+        Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
+        Effect.provideService(ThreadState, threadState),
+        Effect.provideService(WorktreeState, worktreeState),
+        Effect.provideService(TranscriptState, transcriptState),
+      ),
+    )
+    const text = await response.text()
+
+    expect(text).toContain('hello after retry')
+    expect(mockClient.runTurnStream).toHaveBeenCalledTimes(2)
+    expect(threadState.clearChat).toHaveBeenCalledWith('chat-1')
+    expect(threadState.setThreadId).toHaveBeenLastCalledWith('chat-1', 'fresh-thread')
+  })
+
   it('sends only new messages when OpenWebUI transcript is append-only', async () => {
     process.env.JANGAR_STATEFUL_CHAT_MODE = '1'
 

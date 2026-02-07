@@ -130,6 +130,53 @@ const parseRequest = async (request: Request): Promise<ChatRequest> => {
 const WORKTREE_DIR_NAME = '.worktrees'
 const WORKTREE_NAME_PATTERN = /^[a-z0-9-]+$/
 
+const MISSING_UPSTREAM_THREAD_MESSAGE_FRAGMENTS = ['conversation not found', 'thread not found'] as const
+
+class MissingUpstreamThreadError extends Error {
+  readonly upstream: unknown
+
+  constructor(upstream: unknown) {
+    super('missing upstream thread')
+    this.upstream = upstream
+  }
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const includesMissingUpstreamThreadMessage = (message: string) => {
+  const normalized = message.toLowerCase()
+  return MISSING_UPSTREAM_THREAD_MESSAGE_FRAGMENTS.some((fragment) => normalized.includes(fragment))
+}
+
+const collectErrorMessages = (error: unknown, maxDepth = 5): string[] => {
+  const messages: string[] = []
+  const seen = new WeakSet<object>()
+
+  const visit = (value: unknown, depth: number) => {
+    if (depth <= 0 || value == null) return
+    if (typeof value === 'string') {
+      messages.push(value)
+      return
+    }
+    if (!isRecord(value)) return
+    if (seen.has(value)) return
+    seen.add(value)
+
+    if (typeof value.message === 'string') messages.push(value.message)
+    if (typeof value.error === 'string') messages.push(value.error)
+
+    // JSON-RPC errors tend to nest under `.error` (and sometimes `.error.error`).
+    if (value.error != null) visit(value.error, depth - 1)
+  }
+
+  visit(error, maxDepth)
+  return messages
+}
+
+const isMissingUpstreamThreadError = (error: unknown): boolean =>
+  collectErrorMessages(error).some((message) => includesMissingUpstreamThreadMessage(message))
+
 const isErrno = (error: unknown): error is NodeJS.ErrnoException =>
   typeof error === 'object' && error !== null && 'code' in error
 
@@ -434,47 +481,6 @@ const toSseResponse = (
         })
         startHeartbeat()
 
-        class ConversationNotFoundError extends Error {
-          readonly upstream: unknown
-
-          constructor(upstream: unknown) {
-            super('conversation not found')
-            this.upstream = upstream
-          }
-        }
-
-        const isConversationNotFoundError = (error: unknown): boolean => {
-          if (!error) return false
-
-          const includesConversationNotFound = (message: string) =>
-            message.toLowerCase().includes('conversation not found')
-
-          if (typeof error === 'string') return includesConversationNotFound(error)
-          if (typeof error !== 'object') return false
-
-          const record = error as Record<string, unknown>
-          const code = record.code
-          const message = record.message
-
-          if (code === -32600 && typeof message === 'string') {
-            return includesConversationNotFound(message)
-          }
-          if (typeof message === 'string' && includesConversationNotFound(message)) return true
-
-          const nested = record.error
-          if (nested && typeof nested === 'object') {
-            const nestedRecord = nested as Record<string, unknown>
-            const nestedCode = nestedRecord.code
-            const nestedMessage = nestedRecord.message
-            if (nestedCode === -32600 && typeof nestedMessage === 'string') {
-              return includesConversationNotFound(nestedMessage)
-            }
-            if (typeof nestedMessage === 'string' && includesConversationNotFound(nestedMessage)) return true
-          }
-
-          return false
-        }
-
         const clearStaleThread = async () => {
           if (!threadContext) return
           try {
@@ -555,9 +561,9 @@ const toSseResponse = (
                 (delta as Record<string, unknown>).type === 'error' &&
                 canRetry &&
                 !session.getState().hasEmittedAnyChunk &&
-                isConversationNotFoundError((delta as Record<string, unknown>).error)
+                isMissingUpstreamThreadError((delta as Record<string, unknown>).error)
               ) {
-                throw new ConversationNotFoundError((delta as Record<string, unknown>).error)
+                throw new MissingUpstreamThreadError((delta as Record<string, unknown>).error)
               }
 
               if (
@@ -588,12 +594,12 @@ const toSseResponse = (
             await runTurnAttempt(resumeThreadId, attempt === 0 && resumeThreadId != null)
             break
           } catch (error) {
-            const upstreamError = error instanceof ConversationNotFoundError ? error.upstream : error
+            const upstreamError = error instanceof MissingUpstreamThreadError ? error.upstream : error
             if (
               attempt === 0 &&
               resumeThreadId != null &&
               !session.getState().hasEmittedAnyChunk &&
-              isConversationNotFoundError(upstreamError)
+              isMissingUpstreamThreadError(upstreamError)
             ) {
               console.warn('[chat] stale thread id detected; starting new thread', {
                 chatId: threadContext?.chatId,
