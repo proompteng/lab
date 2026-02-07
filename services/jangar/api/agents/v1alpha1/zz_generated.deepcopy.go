@@ -1620,6 +1620,10 @@ func (in *WorkflowStepStatus) DeepCopyInto(out *WorkflowStepStatus) {
 		in, out := &in.FinishedAt, &out.FinishedAt
 		*out = (*in).DeepCopy()
 	}
+	if in.JobObservedAt != nil {
+		in, out := &in.JobObservedAt, &out.JobObservedAt
+		*out = (*in).DeepCopy()
+	}
 	if in.LastTransitionTime != nil {
 		in, out := &in.LastTransitionTime, &out.LastTransitionTime
 		*out = (*in).DeepCopy()

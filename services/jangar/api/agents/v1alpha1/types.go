@@ -199,11 +199,14 @@ type WorkflowStatus struct {
 }
 
 type WorkflowStepStatus struct {
-	Name               string       `json:"name,omitempty"`
-	Phase              string       `json:"phase,omitempty"`
-	Attempt            int32        `json:"attempt,omitempty"`
-	StartedAt          *metav1.Time `json:"startedAt,omitempty"`
-	FinishedAt         *metav1.Time `json:"finishedAt,omitempty"`
+	Name       string       `json:"name,omitempty"`
+	Phase      string       `json:"phase,omitempty"`
+	Attempt    int32        `json:"attempt,omitempty"`
+	StartedAt  *metav1.Time `json:"startedAt,omitempty"`
+	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
+	// JobObservedAt is the time the controller first observed the Job backing this step.
+	// This must be part of the CRD schema so it is not pruned from status updates.
+	JobObservedAt      *metav1.Time `json:"jobObservedAt,omitempty"`
 	LastTransitionTime *metav1.Time `json:"lastTransitionTime,omitempty"`
 	Message            string       `json:"message,omitempty"`
 	NextRetryAt        *metav1.Time `json:"nextRetryAt,omitempty"`
