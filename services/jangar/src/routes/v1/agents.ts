@@ -9,6 +9,7 @@ import {
   parseJsonBody,
   requireIdempotencyKey,
 } from '~/server/primitives-http'
+import { requireLeaderForMutationHttp } from '~/server/leader-election'
 import { createKubernetesClient } from '~/server/primitives-kube'
 import { extractRequiredSecrets, validatePolicies } from '~/server/primitives-policy'
 import { createPrimitivesStore } from '~/server/primitives-store'
@@ -42,6 +43,9 @@ export const postAgentsHandler = async (
   request: Request,
   deps: { storeFactory?: typeof createPrimitivesStore; kubeClient?: ReturnType<typeof createKubernetesClient> } = {},
 ) => {
+  const leaderResponse = requireLeaderForMutationHttp()
+  if (leaderResponse) return leaderResponse
+
   const store = (deps.storeFactory ?? createPrimitivesStore)()
   try {
     const deliveryId = requireIdempotencyKey(request)

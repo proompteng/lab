@@ -65,6 +65,8 @@ type StepStatus = {
 }
 
 let started = controllerState.started
+let starting = false
+let lifecycleToken = 0
 let reconciling = false
 let _crdCheckState: CrdCheckState | null = controllerState.crdCheckState
 let watchHandles: Array<{ stop: () => void }> = []
@@ -1887,7 +1889,11 @@ const reconcileAllRunsInNamespace = async (kube: ReturnType<typeof createKuberne
   }
 }
 
-const startNamespaceWatches = (kube: ReturnType<typeof createKubernetesClient>, namespace: string) => {
+const startNamespaceWatches = (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+  handles: Array<{ stop: () => void }>,
+) => {
   const handleOrchestrationRun = (event: { type?: string; object?: Record<string, unknown> }) => {
     const resource = asRecord(event.object)
     if (!resource || event.type === 'DELETED') return
@@ -1945,7 +1951,7 @@ const startNamespaceWatches = (kube: ReturnType<typeof createKubernetesClient>, 
     })
   }
 
-  watchHandles.push(
+  handles.push(
     startResourceWatch({
       resource: RESOURCE_MAP.OrchestrationRun,
       namespace,
@@ -1953,7 +1959,7 @@ const startNamespaceWatches = (kube: ReturnType<typeof createKubernetesClient>, 
       onError: (error) => console.warn('[jangar] orchestration run watch failed', error),
     }),
   )
-  watchHandles.push(
+  handles.push(
     startResourceWatch({
       resource: RESOURCE_MAP.ToolRun,
       namespace,
@@ -1961,7 +1967,7 @@ const startNamespaceWatches = (kube: ReturnType<typeof createKubernetesClient>, 
       onError: (error) => console.warn('[jangar] tool run watch failed', error),
     }),
   )
-  watchHandles.push(
+  handles.push(
     startResourceWatch({
       resource: RESOURCE_MAP.AgentRun,
       namespace,
@@ -1969,7 +1975,7 @@ const startNamespaceWatches = (kube: ReturnType<typeof createKubernetesClient>, 
       onError: (error) => console.warn('[jangar] agent run watch failed', error),
     }),
   )
-  watchHandles.push(
+  handles.push(
     startResourceWatch({
       resource: RESOURCE_MAP.SignalDelivery,
       namespace,
@@ -1977,7 +1983,7 @@ const startNamespaceWatches = (kube: ReturnType<typeof createKubernetesClient>, 
       onError: (error) => console.warn('[jangar] signal delivery watch failed', error),
     }),
   )
-  watchHandles.push(
+  handles.push(
     startResourceWatch({
       resource: RESOURCE_MAP.ApprovalPolicy,
       namespace,
@@ -1985,7 +1991,7 @@ const startNamespaceWatches = (kube: ReturnType<typeof createKubernetesClient>, 
       onError: (error) => console.warn('[jangar] approval policy watch failed', error),
     }),
   )
-  watchHandles.push(
+  handles.push(
     startResourceWatch({
       resource: RESOURCE_MAP.Orchestration,
       namespace,
@@ -1993,7 +1999,7 @@ const startNamespaceWatches = (kube: ReturnType<typeof createKubernetesClient>, 
       onError: (error) => console.warn('[jangar] orchestration watch failed', error),
     }),
   )
-  watchHandles.push(
+  handles.push(
     startResourceWatch({
       resource: 'job',
       namespace,
@@ -2005,23 +2011,43 @@ const startNamespaceWatches = (kube: ReturnType<typeof createKubernetesClient>, 
 }
 
 export const startOrchestrationController = async () => {
-  if (started || !shouldStart()) return
+  if (started || starting || !shouldStart()) return
+  starting = true
+  lifecycleToken += 1
+  const token = lifecycleToken
+  const handles: Array<{ stop: () => void }> = []
   try {
     await checkCrds()
+    if (lifecycleToken !== token) return
     const kube = createKubernetesClient()
     const namespaces = parseNamespaces()
     await reconcileAll(kube, namespaces)
+    if (lifecycleToken !== token) return
     for (const namespace of namespaces) {
-      startNamespaceWatches(kube, namespace)
+      startNamespaceWatches(kube, namespace, handles)
+      if (lifecycleToken !== token) return
     }
+    if (lifecycleToken !== token) return
+    watchHandles = handles
     started = true
     controllerState.started = true
   } catch (error) {
     console.warn('[jangar] orchestration controller failed to start', error)
+  } finally {
+    if (lifecycleToken !== token) {
+      for (const handle of handles) {
+        handle.stop()
+      }
+    }
+    if (lifecycleToken === token) {
+      starting = false
+    }
   }
 }
 
 export const stopOrchestrationController = () => {
+  lifecycleToken += 1
+  starting = false
   for (const handle of watchHandles) {
     handle.stop()
   }

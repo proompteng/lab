@@ -5,6 +5,27 @@ import { postOrchestrationsHandler } from '~/routes/v1/orchestrations'
 import type { KubernetesClient } from '~/server/primitives-kube'
 import type { PrimitivesStore } from '~/server/primitives-store'
 
+const setLeaderElectionFollower = () => {
+  ;(globalThis as unknown as { __jangarLeaderElection?: unknown }).__jangarLeaderElection = {
+    status: {
+      enabled: true,
+      required: true,
+      isLeader: false,
+      leaseName: 'lease',
+      leaseNamespace: 'jangar',
+      identity: 'pod_123',
+      lastTransitionAt: null,
+      lastAttemptAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+    },
+  }
+}
+
+const clearLeaderElection = () => {
+  delete (globalThis as unknown as { __jangarLeaderElection?: unknown }).__jangarLeaderElection
+}
+
 const createStoreMock = (): PrimitivesStore =>
   ({
     ready: Promise.resolve(),
@@ -99,6 +120,36 @@ const buildRequest = (url: string, payload: Record<string, unknown>, headers?: R
   })
 
 describe('primitives endpoints', () => {
+  it('rejects mutations when not leader', async () => {
+    setLeaderElectionFollower()
+    try {
+      const store = createStoreMock()
+      const kube = createKubeMock({
+        'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
+      })
+
+      const request = buildRequest(
+        'http://localhost/v1/agent-runs',
+        {
+          agentRef: { name: 'demo-agent' },
+          namespace: 'jangar',
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'job', config: {} },
+        },
+        { 'Idempotency-Key': 'demo-agent-run-not-leader-1' },
+      )
+
+      const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
+
+      expect(response.status).toBe(503)
+      expect(kube.apply).toHaveBeenCalledTimes(0)
+      const body = (await response.json()) as { error?: string }
+      expect(body.error).toContain('Not leader')
+    } finally {
+      clearLeaderElection()
+    }
+  })
+
   it('passes workflow steps through when submitting workflow agent runs', async () => {
     const store = createStoreMock()
     const kube = createKubeMock({

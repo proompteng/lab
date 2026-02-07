@@ -40,6 +40,7 @@ const DEFAULT_CONFIG: Omit<LeaderElectionConfig, 'leaseNamespace'> & { leaseName
 }
 
 const EXPIRY_SAFETY_MARGIN_MS = 2_000
+const NOT_LEADER_RETRY_AFTER_SECONDS = 5
 
 const globalState = globalThis as typeof globalThis & {
   __jangarLeaderElection?: {
@@ -268,6 +269,13 @@ const setLeaderStatus = (isLeader: boolean, error?: string | null) => {
 
   if (changed) {
     state.status.lastTransitionAt = nowIso()
+    const leaseName = state.status.leaseName
+    const leaseNamespace = state.status.leaseNamespace
+    const identity = state.status.identity
+    const suffix = error ? ` (${error})` : ''
+    console.info(
+      `[jangar] leader election transition: ${isLeader ? 'leader' : 'follower'} lease=${leaseNamespace}/${leaseName} identity=${identity}${suffix}`,
+    )
     try {
       state.metrics?.changesCounter.add(1, { to: isLeader ? 'leader' : 'follower' })
     } catch {
@@ -305,6 +313,25 @@ export const isLeaderForControllers = () => {
   return status.isLeader
 }
 
+export const requireLeaderForMutationHttp = (): Response | null => {
+  const leaderElection = getLeaderElectionStatus()
+  if (!leaderElection.enabled || !leaderElection.required) return null
+  if (leaderElection.isLeader) return null
+
+  const body = JSON.stringify({
+    ok: false,
+    error: 'Not leader; retry on the elected controller replica.',
+  })
+  return new Response(body, {
+    status: 503,
+    headers: {
+      'content-type': 'application/json',
+      'content-length': Buffer.byteLength(body).toString(),
+      'retry-after': String(NOT_LEADER_RETRY_AFTER_SECONDS),
+    },
+  })
+}
+
 export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) => {
   if (process.env.NODE_ENV === 'test') return
   const required = isLeaderElectionRequired()
@@ -329,7 +356,7 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
           lastAttemptAt: null,
           lastSuccessAt: null,
           lastError: null,
-        },
+        } satisfies LeaderElectionStatus,
       }
     }
     callbacks.onLeader()
@@ -358,7 +385,7 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
       lastAttemptAt: null,
       lastSuccessAt: null,
       lastError: null,
-    },
+    } satisfies LeaderElectionStatus,
     lastLease: null as V1Lease | null,
     kube: undefined as { api: CoordinationV1Api } | undefined,
     metrics: undefined as { changesCounter: Counter } | undefined,
@@ -394,16 +421,23 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
 
       let lease: V1Lease | null = null
       try {
-        const response = await api.readNamespacedLease(state.config.leaseName, leaseNamespace)
-        lease = response.body
+        lease = await api.readNamespacedLease({ name: state.config.leaseName, namespace: leaseNamespace })
       } catch (error) {
         const status = getKubeStatusCode(error)
         if (status === 404) {
-          const created = await api.createNamespacedLease(
-            leaseNamespace,
-            buildNewLease(state.config, identity, leaseNamespace, state.config.leaseName),
-          )
-          lease = created.body
+          try {
+            lease = await api.createNamespacedLease({
+              namespace: leaseNamespace,
+              body: buildNewLease(state.config, identity, leaseNamespace, state.config.leaseName),
+            })
+          } catch (createError) {
+            const createStatus = getKubeStatusCode(createError)
+            if (createStatus === 409) {
+              lease = await api.readNamespacedLease({ name: state.config.leaseName, namespace: leaseNamespace })
+            } else {
+              throw createError
+            }
+          }
         } else {
           throw error
         }
@@ -424,8 +458,12 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
         } else {
           const updated = updateLeaseForAcquireOrRenew(lease, state.config, identity, now)
           // Ensure optimistic concurrency: replace will fail with 409 on resourceVersion mismatch.
-          const replaced = await api.replaceNamespacedLease(state.config.leaseName, leaseNamespace, updated)
-          state.lastLease = replaced.body
+          const replaced = await api.replaceNamespacedLease({
+            name: state.config.leaseName,
+            namespace: leaseNamespace,
+            body: updated,
+          })
+          state.lastLease = replaced
           lastSuccessMs = nowMs
           state.status.lastSuccessAt = now.toISOString()
           setLeaderStatus(true, null)
@@ -468,12 +506,15 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
     // Best-effort release: clear holderIdentity so another replica can take leadership sooner.
     const api = snapshot.kube?.api
     if (!api) return
-    const response = await api.readNamespacedLease(snapshot.config.leaseName, leaseNamespace)
-    const lease = response.body
+    const lease = await api.readNamespacedLease({ name: snapshot.config.leaseName, namespace: leaseNamespace })
     const holder = (lease.spec?.holderIdentity ?? '').trim()
     if (holder !== identity) return
     const released = clearLeaseHolder(lease, snapshot.config, new Date())
-    await api.replaceNamespacedLease(snapshot.config.leaseName, leaseNamespace, released)
+    await api.replaceNamespacedLease({
+      name: snapshot.config.leaseName,
+      namespace: leaseNamespace,
+      body: released,
+    })
   }
 
   process.once('SIGTERM', () => {

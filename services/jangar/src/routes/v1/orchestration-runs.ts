@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { requireLeaderForMutationHttp } from '~/server/leader-election'
 import { type SubmitOrchestrationRunDeps, submitOrchestrationRun } from '~/server/orchestration-submit'
 import {
   asRecord,
@@ -71,6 +72,9 @@ export const getOrchestrationRunsHandler = async (
 }
 
 export const postOrchestrationRunsHandler = async (request: Request, deps: SubmitOrchestrationRunDeps = {}) => {
+  const leaderResponse = requireLeaderForMutationHttp()
+  if (leaderResponse) return leaderResponse
+
   try {
     const deliveryId = requireIdempotencyKey(request)
     const payload = await parseJsonBody(request)
