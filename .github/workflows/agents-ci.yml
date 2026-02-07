@@ -112,6 +112,12 @@ jobs:
         with:
           version: v3.14.4
 
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Build agentctl binary
+        run: bun run --filter @proompteng/agentctl build:bin
+
       - name: Ensure kind Docker network
         run: scripts/agents/ensure-kind-network.sh
 
@@ -119,12 +125,10 @@ jobs:
         uses: helm/kind-action@v1
         with:
           cluster_name: agents-ci-${{ github.run_id }}
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
-
-      - name: Build agentctl binary
-        run: bun run --filter @proompteng/agentctl build:bin
+          version: v0.31.0
+          node_image: kindest/node:v1.29.4
+          kubectl_version: v1.29.4
+          wait: 180s
 
       - name: Run agents integration smoke test
         env:
