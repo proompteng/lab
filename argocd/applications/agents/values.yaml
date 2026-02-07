@@ -21,6 +21,12 @@ controllers:
   enabled: true
   autoscaling:
     enabled: false
+  env:
+    vars:
+      # Used to inject NATS auth into runner Jobs (for codex-nats-publish).
+      JANGAR_AGENT_RUNNER_NATS_AUTH_SECRET_NAME: nats-agents-credentials
+      JANGAR_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY: username
+      JANGAR_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY: password
 resources:
   requests:
     cpu: 200m

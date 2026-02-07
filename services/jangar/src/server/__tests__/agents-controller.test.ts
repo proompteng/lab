@@ -573,6 +573,80 @@ describe('agents controller reconcileAgentRun', () => {
     expect(jobSpec.backoffLimit).toBe(0)
   })
 
+  it('injects NATS auth env from configured runner auth secret when allowlisted', async () => {
+    const previousSecretName = process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_SECRET_NAME
+    const previousUsernameKey = process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY
+    const previousPasswordKey = process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY
+    process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_SECRET_NAME = 'codex-nats-credentials'
+    process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY = 'NATS_USER'
+    process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY = 'NATS_PASSWORD'
+    try {
+      const apply = vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        return { ...resource, metadata: { ...metadata, uid } }
+      })
+      const kube = buildKube({
+        apply,
+        get: vi.fn(async (resource: string, name?: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return {
+              metadata: { name: 'agent-1' },
+              spec: {
+                providerRef: { name: 'provider-1' },
+                security: { allowedSecrets: ['codex-nats-credentials'] },
+              },
+            }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return {
+              metadata: { name: 'provider-1' },
+              spec: {
+                binary: '/usr/local/bin/agent-runner',
+              },
+            }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          if (resource === 'secret' && name === 'codex-nats-credentials') {
+            return {
+              metadata: { name: 'codex-nats-credentials' },
+              data: { NATS_USER: 'dXNlcg==', NATS_PASSWORD: 'cGFzcw==' },
+            }
+          }
+          return null
+        }),
+      })
+
+      const agentRun = buildAgentRun()
+
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+      const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
+      const job = appliedResources.find((resource) => resource.kind === 'Job') as Record<string, unknown> | undefined
+      expect(job).toBeTruthy()
+      const jobSpec = (job?.spec ?? {}) as Record<string, unknown>
+      const template = (jobSpec.template ?? {}) as Record<string, unknown>
+      const podSpec = (template.spec ?? {}) as Record<string, unknown>
+      const containers = (podSpec.containers ?? []) as Array<Record<string, unknown>>
+      const env = (containers[0]?.env ?? []) as Array<Record<string, unknown>>
+      const natsUser = env.find((entry) => entry.name === 'NATS_USER')
+      const natsPassword = env.find((entry) => entry.name === 'NATS_PASSWORD')
+      expect(natsUser?.valueFrom).toEqual({ secretKeyRef: { name: 'codex-nats-credentials', key: 'NATS_USER' } })
+      expect(natsPassword?.valueFrom).toEqual({
+        secretKeyRef: { name: 'codex-nats-credentials', key: 'NATS_PASSWORD' },
+      })
+    } finally {
+      if (previousSecretName === undefined) delete process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_SECRET_NAME
+      else process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_SECRET_NAME = previousSecretName
+      if (previousUsernameKey === undefined) delete process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY
+      else process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY = previousUsernameKey
+      if (previousPasswordKey === undefined) delete process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY
+      else process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY = previousPasswordKey
+    }
+  })
+
   it('honors runtime.config.backoffLimit for agent runner jobs', async () => {
     const apply = vi.fn(async (resource: Record<string, unknown>) => {
       const metadata = (resource.metadata ?? {}) as Record<string, unknown>
