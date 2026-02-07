@@ -384,6 +384,18 @@
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" },
+        "leaderElection": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "leaseName": { "type": "string" },
+            "leaseNamespace": { "type": "string" },
+            "leaseDurationSeconds": { "type": "integer", "minimum": 1 },
+            "renewDeadlineSeconds": { "type": "integer", "minimum": 1 },
+            "retryPeriodSeconds": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
         "namespaces": { "type": "array", "items": { "type": "string" } },
         "concurrency": {
           "type": "object",

@@ -9,6 +9,7 @@ import { loadSync } from '@grpc/proto-loader'
 import { postAgentRunsHandler } from '~/routes/v1/agent-runs'
 import { buildControlPlaneStatus, type GrpcStatus as ControlPlaneGrpcStatus } from '~/server/control-plane-status'
 import { startResourceWatch } from '~/server/kube-watch'
+import { getLeaderElectionStatus } from '~/server/leader-election'
 import { asRecord, asString } from '~/server/primitives-http'
 import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 
@@ -161,6 +162,16 @@ const handleUnaryError = (callback: UnaryCallback, error: unknown) => {
   callback({ code: GrpcStatus.INTERNAL, message }, null)
 }
 
+const requireLeaderForMutation = (): grpc.ServiceError | null => {
+  const leaderElection = getLeaderElectionStatus()
+  if (!leaderElection.enabled || !leaderElection.required) return null
+  if (leaderElection.isLeader) return null
+  return {
+    code: GrpcStatus.UNAVAILABLE,
+    message: 'Not leader; retry on the elected controller replica.',
+  } satisfies grpc.ServiceError
+}
+
 const createListHandler =
   (kube: KubernetesClient, resource: string) => async (call: UnaryCall<ListRequest>, callback: UnaryCallback) => {
     const authError = requireAuth(call)
@@ -196,6 +207,8 @@ const createApplyHandler =
   (kube: KubernetesClient) => async (call: UnaryCall<ApplyRequest>, callback: UnaryCallback) => {
     const authError = requireAuth(call)
     if (authError) return callback(authError, null)
+    const leaderError = requireLeaderForMutation()
+    if (leaderError) return callback(leaderError, null)
     try {
       const namespace = call.request?.namespace ? normalizeNamespace(call.request.namespace) : null
       const manifest = call.request?.manifest_yaml ?? ''
@@ -211,6 +224,8 @@ const createDeleteHandler =
   async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
     const authError = requireAuth(call)
     if (authError) return callback(authError, null)
+    const leaderError = requireLeaderForMutation()
+    if (leaderError) return callback(leaderError, null)
     try {
       const namespace = normalizeNamespace(call.request?.namespace)
       const name = call.request?.name ?? ''
@@ -369,6 +384,8 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
     ApplyAgent: async (call: UnaryCall<ApplyRequest>, callback: UnaryCallback) => {
       const authError = requireAuth(call)
       if (authError) return callback(authError, null)
+      const leaderError = requireLeaderForMutation()
+      if (leaderError) return callback(leaderError, null)
       try {
         const namespace = call.request?.namespace ? normalizeNamespace(call.request.namespace) : null
         const manifest = call.request?.manifest_yaml ?? ''
@@ -381,6 +398,8 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
     DeleteAgent: async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
       const authError = requireAuth(call)
       if (authError) return callback(authError, null)
+      const leaderError = requireLeaderForMutation()
+      if (leaderError) return callback(leaderError, null)
       try {
         const namespace = normalizeNamespace(call.request?.namespace)
         const name = call.request?.name ?? ''
@@ -432,6 +451,8 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
     ApplyImplementationSpec: async (call: UnaryCall<ApplyRequest>, callback: UnaryCallback) => {
       const authError = requireAuth(call)
       if (authError) return callback(authError, null)
+      const leaderError = requireLeaderForMutation()
+      if (leaderError) return callback(leaderError, null)
       try {
         const namespace = call.request?.namespace ? normalizeNamespace(call.request.namespace) : null
         const manifest = call.request?.manifest_yaml ?? ''
@@ -444,6 +465,8 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
     DeleteImplementationSpec: async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
       const authError = requireAuth(call)
       if (authError) return callback(authError, null)
+      const leaderError = requireLeaderForMutation()
+      if (leaderError) return callback(leaderError, null)
       try {
         const namespace = normalizeNamespace(call.request?.namespace)
         const name = call.request?.name ?? ''
@@ -459,6 +482,8 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
     CreateImplementationSpec: async (call: UnaryCall<CreateImplRequest>, callback: UnaryCallback) => {
       const authError = requireAuth(call)
       if (authError) return callback(authError, null)
+      const leaderError = requireLeaderForMutation()
+      if (leaderError) return callback(leaderError, null)
       try {
         const namespace = normalizeNamespace(call.request?.namespace)
         const text = call.request?.text ?? ''
@@ -742,6 +767,8 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
     SubmitAgentRun: async (call: UnaryCall<SubmitRunRequest>, callback: UnaryCallback) => {
       const authError = requireAuth(call)
       if (authError) return callback(authError, null)
+      const leaderError = requireLeaderForMutation()
+      if (leaderError) return callback(leaderError, null)
       try {
         const namespace = normalizeNamespace(call.request?.namespace)
         const agentName = call.request?.agent_name ?? ''
@@ -854,6 +881,8 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
     CancelAgentRun: async (call: UnaryCall<NameRequest>, callback: UnaryCallback) => {
       const authError = requireAuth(call)
       if (authError) return callback(authError, null)
+      const leaderError = requireLeaderForMutation()
+      if (leaderError) return callback(leaderError, null)
       try {
         const namespace = normalizeNamespace(call.request?.namespace)
         const name = call.request?.name ?? ''
