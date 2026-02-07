@@ -68,6 +68,28 @@ const normalizeOptionalString = (value: string | null | undefined) => {
 
 const sha256Hex = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex')
 
+const parseOptionalPrNumber = (value: string): number | null => {
+  const match = value.trim().match(/\d+/)
+  if (!match) return null
+  const parsed = Number.parseInt(match[0], 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return null
+  return parsed
+}
+
+const readOptionalTextFile = async (path: string, logger: CodexLogger) => {
+  try {
+    if (!(await pathExists(path))) {
+      return null
+    }
+    const raw = await readFile(path, 'utf8')
+    const trimmed = raw.trim()
+    return trimmed.length > 0 ? trimmed : null
+  } catch (error) {
+    logger.warn(`Failed to read file at ${path}`, error)
+    return null
+  }
+}
+
 const safeParseJson = (value: string | null | undefined) => {
   if (!value) return null
   try {
@@ -422,92 +444,6 @@ interface CommandResult {
   stderr: string
 }
 
-export const ensurePullRequestExists = async (repository: string, headBranch: string, logger: CodexLogger) => {
-  if (process.env.CODEX_SKIP_PR_CHECK === '1') {
-    logger.debug('Skipping pull request verification (CODEX_SKIP_PR_CHECK=1)')
-    return
-  }
-
-  if (!repository || !headBranch) {
-    throw new Error('Repository and head branch are required to verify pull request state')
-  }
-
-  const owner = repository.includes('/') ? (repository.split('/')[0] ?? '') : ''
-  const headSelector = headBranch.includes(':') || !owner ? headBranch : `${owner}:${headBranch}`
-
-  const maxAttempts = Math.max(1, Number.parseInt(process.env.CODEX_PR_CHECK_ATTEMPTS ?? '8', 10))
-  const retryDelayMs = Math.max(0, Number.parseInt(process.env.CODEX_PR_CHECK_RETRY_MS ?? '5000', 10))
-
-  const selectors = Array.from(new Set([headSelector, headBranch].filter((value) => Boolean(value)) as string[]))
-
-  let lastError: Error | undefined
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    for (const selector of selectors) {
-      logger.debug('Verifying pull request existence', { repository, head: selector, attempt })
-      const prResult = await runCommand('gh', [
-        'pr',
-        'list',
-        '--repo',
-        repository,
-        '--state',
-        'all',
-        '--head',
-        selector,
-        '--json',
-        'number,url,state',
-        '--limit',
-        '1',
-      ])
-
-      if (prResult.exitCode === 0) {
-        try {
-          const parsed = JSON.parse(prResult.stdout || '[]')
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            logger.debug('Found pull request for branch', { repository, head: selector, attempt })
-            return
-          }
-          lastError = new Error(`No pull request found for branch '${selector}' in ${repository}`)
-        } catch (error) {
-          lastError = new Error(
-            `Failed to parse gh pr list output: ${error instanceof Error ? error.message : String(error)}`,
-          )
-        }
-      } else {
-        const message = prResult.stderr.trim() || prResult.stdout.trim()
-        lastError = new Error(`Failed to verify pull request for ${repository}#${selector}: ${message}`)
-      }
-    }
-
-    if (attempt < maxAttempts) {
-      logger.info('Retrying pull request verification', {
-        repository,
-        headBranch,
-        attempt,
-        maxAttempts,
-        retryDelayMs,
-      })
-      await sleep(retryDelayMs)
-    }
-  }
-
-  if (lastError) {
-    throw lastError
-  }
-
-  throw new Error(`No pull request found for branch '${headBranch}' in ${repository}`)
-}
-
-type PullRequestInfo = {
-  number: number
-  url: string
-  title?: string | null
-  body?: string | null
-  headSha?: string | null
-  headRef?: string | null
-  baseRef?: string | null
-}
-
 const extractSectionLines = (text: string, header: string) => {
   const lines = text.replace(/\r/g, '').split('\n')
   const headerIndex = lines.findIndex((line) => line.trim().toLowerCase().startsWith(header.toLowerCase()))
@@ -553,144 +489,6 @@ const extractKnownGaps = (message?: string | null) => {
   return altLines.map((line) => line.replace(/^[-*]\s*/, '')).filter(Boolean)
 }
 
-const listPullRequestByHead = async (repository: string, headBranch: string) => {
-  const owner = repository.includes('/') ? (repository.split('/')[0] ?? '') : ''
-  const headSelector = headBranch.includes(':') || !owner ? headBranch : `${owner}:${headBranch}`
-  const selectors = Array.from(new Set([headSelector, headBranch].filter(Boolean)))
-  let lastError: Error | undefined
-
-  for (const selector of selectors) {
-    const result = await runCommand('gh', [
-      'pr',
-      'list',
-      '--repo',
-      repository,
-      '--state',
-      'all',
-      '--head',
-      selector,
-      '--json',
-      'number,url,title,body,headRefOid,headRefName,baseRefName',
-      '--limit',
-      '1',
-    ])
-    if (result.exitCode !== 0) {
-      const message = result.stderr.trim() || result.stdout.trim()
-      lastError = new Error(`Failed to list PR for ${repository}#${selector}: ${message}`)
-      continue
-    }
-    const parsed = JSON.parse(result.stdout || '[]') as Array<
-      PullRequestInfo & { headRefOid?: string | null; headRefName?: string | null; baseRefName?: string | null }
-    >
-    if (parsed.length === 0) {
-      lastError = new Error(`No pull request found for branch '${selector}' in ${repository}`)
-      continue
-    }
-    const entry = parsed[0]
-    return {
-      number: entry.number,
-      url: entry.url,
-      title: entry.title ?? null,
-      body: entry.body ?? null,
-      headSha: entry.headSha ?? entry.headRefOid ?? null,
-      headRef: entry.headRef ?? entry.headRefName ?? null,
-      baseRef: entry.baseRef ?? entry.baseRefName ?? null,
-    }
-  }
-
-  if (lastError) {
-    throw lastError
-  }
-  return null
-}
-
-const updatePullRequest = async (repository: string, pr: PullRequestInfo, title: string, body: string) => {
-  const args = ['pr', 'edit', String(pr.number), '--repo', repository, '--title', title, '--body', body]
-  const result = await runCommand('gh', args)
-  if (result.exitCode === 0) {
-    return
-  }
-  const message = result.stderr.trim() || result.stdout.trim()
-  const payload = JSON.stringify({ title, body })
-  const tmpDir = await mkdtemp(join(tmpdir(), 'codex-pr-update-'))
-  const payloadPath = join(tmpDir, 'payload.json')
-  await writeFile(payloadPath, payload, 'utf8')
-  const apiResult = await runCommand('gh', [
-    'api',
-    `repos/${repository}/pulls/${pr.number}`,
-    '--method',
-    'PATCH',
-    '--input',
-    payloadPath,
-  ])
-  if (apiResult.exitCode !== 0) {
-    const apiMessage = apiResult.stderr.trim() || apiResult.stdout.trim()
-    throw new Error(`Failed to update PR ${pr.number}: ${message || apiMessage}`)
-  }
-}
-
-const createPullRequest = async (
-  repository: string,
-  headBranch: string,
-  baseBranch: string,
-  title: string,
-  body: string,
-) => {
-  const args = [
-    'pr',
-    'create',
-    '--repo',
-    repository,
-    '--head',
-    headBranch,
-    '--base',
-    baseBranch,
-    '--title',
-    title,
-    '--body',
-    body,
-  ]
-  const result = await runCommand('gh', args)
-  if (result.exitCode !== 0) {
-    const message = result.stderr.trim() || result.stdout.trim()
-    const existing = await listPullRequestByHead(repository, headBranch).catch(() => null)
-    if (existing) {
-      return existing
-    }
-    throw new Error(`Failed to create PR for ${headBranch}: ${message}`)
-  }
-  return listPullRequestByHead(repository, headBranch)
-}
-
-const ensurePullRequest = async (input: {
-  repository: string
-  headBranch: string
-  baseBranch: string
-  issueNumber: string
-  issueTitle?: string | null
-  lastAssistantMessage?: string | null
-  logger: CodexLogger
-}) => {
-  if (process.env.CODEX_SKIP_PR_CHECK === '1') {
-    input.logger.debug('Skipping pull request create/update (CODEX_SKIP_PR_CHECK=1)')
-    return null
-  }
-  const title = input.issueTitle?.trim() || `Codex: Issue #${input.issueNumber}`
-  const body = input.lastAssistantMessage?.trim() || `Implementation for #${input.issueNumber}.`
-
-  const existing = await listPullRequestByHead(input.repository, input.headBranch)
-  if (existing) {
-    await updatePullRequest(input.repository, existing, title, body)
-    return existing
-  }
-
-  const created = await createPullRequest(input.repository, input.headBranch, input.baseBranch, title, body)
-  if (!created) {
-    throw new Error(`PR creation did not return a PR for ${input.headBranch}`)
-  }
-  return created
-}
-
 const runCommand = async (command: string, args: string[], options: { cwd?: string } = {}): Promise<CommandResult> => {
   return await new Promise<CommandResult>((resolve, reject) => {
     const child = spawnChild(command, args, {
@@ -723,47 +521,6 @@ const runCommand = async (command: string, args: string[], options: { cwd?: stri
   })
 }
 
-const readGitConfigValue = async (worktree: string, key: string) => {
-  try {
-    const result = await runCommand('git', ['config', '--get', key], { cwd: worktree })
-    if (result.exitCode !== 0) {
-      return null
-    }
-    const value = result.stdout.trim()
-    return value.length > 0 ? value : null
-  } catch {
-    return null
-  }
-}
-
-const ensureGitIdentity = async (worktree: string, logger: CodexLogger) => {
-  const fallbackName = (process.env.CODEX_GIT_AUTHOR_NAME ?? process.env.GIT_AUTHOR_NAME ?? 'Codex').trim()
-  const fallbackEmail = (
-    process.env.CODEX_GIT_AUTHOR_EMAIL ??
-    process.env.GIT_AUTHOR_EMAIL ??
-    'codex@proompteng.ai'
-  ).trim()
-
-  const name = fallbackName.length > 0 ? fallbackName : 'Codex'
-  const email = fallbackEmail.length > 0 ? fallbackEmail : 'codex@proompteng.ai'
-
-  const existingName = await readGitConfigValue(worktree, 'user.name')
-  if (!existingName) {
-    const result = await runCommand('git', ['config', 'user.name', name], { cwd: worktree })
-    if (result.exitCode !== 0) {
-      logger.warn(`Failed to set git user.name (${result.exitCode})`, result.stderr.trim())
-    }
-  }
-
-  const existingEmail = await readGitConfigValue(worktree, 'user.email')
-  if (!existingEmail) {
-    const result = await runCommand('git', ['config', 'user.email', email], { cwd: worktree })
-    if (result.exitCode !== 0) {
-      logger.warn(`Failed to set git user.email (${result.exitCode})`, result.stderr.trim())
-    }
-  }
-}
-
 const resolveBaseRef = async (worktree: string, baseBranch: string, logger: CodexLogger) => {
   const candidates = [baseBranch ? `origin/${baseBranch}` : '', baseBranch, 'HEAD^'].filter(
     (value) => value && value.trim().length > 0,
@@ -776,93 +533,6 @@ const resolveBaseRef = async (worktree: string, baseBranch: string, logger: Code
   }
   logger.warn('Failed to resolve base ref for implementation artifacts', { baseBranch, candidates })
   return null
-}
-
-const commitWorkingTreeIfNeeded = async ({
-  worktree,
-  issueNumber,
-  issueTitle,
-  logger,
-}: {
-  worktree: string
-  issueNumber: string
-  issueTitle?: string | null
-  logger: CodexLogger
-}) => {
-  const isCodexArtifactPath = (value: string) => value.startsWith('.codex')
-  const collectPaths = (raw: string) =>
-    raw
-      .split('\n')
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0 && !isCodexArtifactPath(entry))
-
-  const trackedResult = await runCommand('git', ['diff', '--name-only', '--diff-filter=ACMRTUXB'], { cwd: worktree })
-  if (trackedResult.exitCode !== 0) {
-    logger.warn('git diff --name-only failed; skipping auto-commit', trackedResult.stderr.trim())
-    return false
-  }
-  const deletedResult = await runCommand('git', ['diff', '--name-only', '--diff-filter=D'], { cwd: worktree })
-  if (deletedResult.exitCode !== 0) {
-    logger.warn('git diff --name-only for deletions failed; skipping auto-commit', deletedResult.stderr.trim())
-    return false
-  }
-  const untrackedResult = await runCommand('git', ['ls-files', '--others', '--exclude-standard'], { cwd: worktree })
-  if (untrackedResult.exitCode !== 0) {
-    logger.warn('git ls-files failed; skipping auto-commit', untrackedResult.stderr.trim())
-    return false
-  }
-
-  const paths = new Set([
-    ...collectPaths(trackedResult.stdout),
-    ...collectPaths(deletedResult.stdout),
-    ...collectPaths(untrackedResult.stdout),
-  ])
-  if (paths.size === 0) {
-    return false
-  }
-
-  await ensureGitIdentity(worktree, logger)
-
-  const addResult = await runCommand('git', ['add', '-A', '--', ...paths], { cwd: worktree })
-  if (addResult.exitCode !== 0) {
-    const message = addResult.stderr.trim() || addResult.stdout.trim()
-    throw new Error(`git add failed (${addResult.exitCode}): ${message}`)
-  }
-
-  const defaultMessage = issueTitle?.trim()
-    ? `chore(codex): ${issueTitle.trim()}`
-    : `chore(codex): issue #${issueNumber}`
-  const commitMessage = (process.env.CODEX_COMMIT_MESSAGE ?? defaultMessage).trim() || defaultMessage
-
-  const commitResult = await runCommand('git', ['commit', '-m', commitMessage], { cwd: worktree })
-  if (commitResult.exitCode !== 0) {
-    const message = commitResult.stderr.trim() || commitResult.stdout.trim()
-    throw new Error(`git commit failed (${commitResult.exitCode}): ${message}`)
-  }
-
-  logger.info('Committed implementation changes', { message: commitMessage })
-  return true
-}
-
-const pushHeadBranch = async ({
-  worktree,
-  headBranch,
-  logger,
-}: {
-  worktree: string
-  headBranch: string
-  logger: CodexLogger
-}) => {
-  if (!headBranch) {
-    throw new Error('Head branch is required to push implementation changes')
-  }
-  const pushRef = `HEAD:${headBranch}`
-  const result = await runCommand('git', ['push', '-u', 'origin', pushRef], { cwd: worktree })
-  if (result.exitCode !== 0) {
-    const message = result.stderr.trim() || result.stdout.trim()
-    throw new Error(`git push failed (${result.exitCode}): ${message}`)
-  }
-  logger.info('Pushed implementation branch', { headBranch })
 }
 
 const truncateContextLine = (value: string, max = 400) => {
@@ -1850,7 +1520,6 @@ export const runCodexImplementation = async (eventPath: string) => {
 
   const normalizedIssueNumber = issueNumber
   const supportsResume = stage === 'implementation'
-  let prInfo: PullRequestInfo | null = null
   let resumeContext: ResumeContext | undefined
   let resumeSessionId: string | undefined
   let capturedSessionId: string | undefined
@@ -1970,16 +1639,6 @@ export const runCodexImplementation = async (eventPath: string) => {
       logger,
     })
 
-    if (stage === 'implementation') {
-      await commitWorkingTreeIfNeeded({
-        worktree,
-        issueNumber,
-        issueTitle,
-        logger,
-      })
-      await pushHeadBranch({ worktree, headBranch, logger })
-    }
-
     const logExcerpt = await collectLogExcerpts(
       {
         outputPath,
@@ -1993,20 +1652,11 @@ export const runCodexImplementation = async (eventPath: string) => {
 
     const commitSha = await resolveHeadSha(worktree, logger)
 
-    if (stage === 'implementation') {
-      prInfo = await ensurePullRequest({
-        repository,
-        headBranch,
-        baseBranch,
-        issueNumber,
-        issueTitle,
-        lastAssistantMessage,
-        logger,
-      })
-    }
-    const prNumber = prInfo?.number ?? null
-    const prUrl = prInfo?.url ?? null
-    const headSha = prInfo?.headSha ?? commitSha ?? null
+    const prNumberRaw = await readOptionalTextFile(prNumberPath, logger)
+    const prUrlRaw = await readOptionalTextFile(prUrlPath, logger)
+    const prNumber = prNumberRaw ? parseOptionalPrNumber(prNumberRaw) : null
+    const prUrl = prUrlRaw ? prUrlRaw : null
+    const headSha = commitSha ?? null
     try {
       await ensureFileDirectory(headShaPath)
       await writeFile(headShaPath, headSha ?? '', 'utf8')
@@ -2020,18 +1670,6 @@ export const runCodexImplementation = async (eventPath: string) => {
         await writeFile(commitShaPath, commitSha ?? '', 'utf8')
       } catch (error) {
         logger.warn('Failed to persist commit sha output', error)
-      }
-      try {
-        await ensureFileDirectory(prNumberPath)
-        await writeFile(prNumberPath, prNumber ? String(prNumber) : '', 'utf8')
-      } catch (error) {
-        logger.warn('Failed to persist PR number output', error)
-      }
-      try {
-        await ensureFileDirectory(prUrlPath)
-        await writeFile(prUrlPath, prUrl ?? '', 'utf8')
-      } catch (error) {
-        logger.warn('Failed to persist PR url output', error)
       }
     }
 
@@ -2161,16 +1799,6 @@ export const runCodexImplementation = async (eventPath: string) => {
     await ensureNotifyPlaceholder(notifyPath, logger)
     try {
       if (stage === 'implementation') {
-        try {
-          await commitWorkingTreeIfNeeded({
-            worktree,
-            issueNumber,
-            issueTitle,
-            logger,
-          })
-        } catch (error) {
-          logger.warn('Failed to auto-commit implementation changes during cleanup', error)
-        }
         const baseRef = await resolveBaseRef(worktree, baseBranch, logger)
         await captureImplementationArtifacts({
           worktree,

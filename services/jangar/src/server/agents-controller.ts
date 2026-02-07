@@ -3709,6 +3709,18 @@ const submitJobRun = async (
 
   const runtimeConfig = options.runtimeConfig ?? asRecord(readNested(agentRun, ['spec', 'runtime', 'config'])) ?? {}
   const logRetentionSeconds = resolveRunnerLogRetentionSeconds(runtimeConfig)
+  const backoffLimit = (() => {
+    const explicit = parseOptionalNumber(runtimeConfig.backoffLimit)
+    if (explicit !== undefined) {
+      return Math.max(0, Math.trunc(explicit))
+    }
+    const envValue = parseOptionalNumber(process.env.JANGAR_AGENT_RUNNER_BACKOFF_LIMIT)
+    if (envValue !== undefined) {
+      return Math.max(0, Math.trunc(envValue))
+    }
+    // Avoid retry loops for side-effecting agent runs (e.g. PR creation). Prefer workflow-level retries.
+    return 0
+  })()
   const agentRunnerSpec = providerName
     ? buildAgentRunnerSpec(runSpec, parameters, providerName, logRetentionSeconds)
     : null
@@ -3956,6 +3968,7 @@ const submitJobRun = async (
         : {}),
     },
     spec: {
+      backoffLimit,
       template: {
         metadata: {
           labels: mergedLabels,

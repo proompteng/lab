@@ -568,6 +568,49 @@ describe('agents controller reconcileAgentRun', () => {
     expect(jobLabels?.['agents.proompteng.ai/agent-run']).toBe('run-1')
     expect(jobLabels?.['agents.proompteng.ai/agent']).toBe('agent-1')
     expect(jobLabels?.['agents.proompteng.ai/provider']).toBe('provider-1')
+
+    const jobSpec = (job?.spec as Record<string, unknown> | undefined) ?? {}
+    expect(jobSpec.backoffLimit).toBe(0)
+  })
+
+  it('honors runtime.config.backoffLimit for agent runner jobs', async () => {
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      return { ...resource, metadata: { ...metadata, uid } }
+    })
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: { backoffLimit: 2 } },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
+    const job = appliedResources.find((resource) => resource.kind === 'Job')
+    expect(job).toBeTruthy()
+    const jobSpec = (job?.spec as Record<string, unknown> | undefined) ?? {}
+    expect(jobSpec.backoffLimit).toBe(2)
   })
 
   it('includes inline systemPrompt in run payload and stores hash', async () => {
