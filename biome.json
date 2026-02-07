@@ -20,6 +20,8 @@
       "!**/.venv",
       "!**/.artifacts",
       "!**/.artifacts/**",
+      "!**/.worktrees",
+      "!**/.worktrees/**",
       "!tmp",
       "!**/coverage",
       "!**/bun.lockb",
