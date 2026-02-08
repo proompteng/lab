@@ -73,10 +73,13 @@
 
 ## Sub-agents
 - Use sub-agents for parallelizable work (repo discovery, grepping, reading docs, drafting focused diffs, writing test plans) while you keep a single source of truth for decisions and final changes.
+- Sub-agent tools are `functions.spawn_agent`, `functions.send_input`, `functions.wait`, and `functions.close_agent` (some runtimes also support `resume_agent`).
 - Delegate with a concrete prompt: objective, exact scope, relevant paths, constraints (style/testing/infra), and the expected output format (e.g. "return a patch for `services/torghut/...` plus the command to validate it").
 - Assign clear ownership to avoid merge conflicts: only one agent edits a given file set at a time; other agents should produce findings, notes, or patches against different files.
 - Keep spawned agents from idling: queue work in small chunks; use `functions.wait` with a bounded timeout to poll for results; redirect quickly with `functions.send_input` (set `interrupt: true` when needed); and call `functions.close_agent` once an agent has completed its scope.
-- Prefer a hub-and-spoke workflow: the main agent continuously integrates results, adjusts priorities, and keeps agents fed with the next highest-value task until the overall goal is complete.
+- Prefer a hub-and-spoke workflow: continuously integrate results, adjust priorities, and keep agents fed with the next highest-value task until the overall goal is complete.
+- Operating loop: spawn a small number of agents (start with 2-4); track `agent_id -> lane + next task`; `functions.wait` for updates; integrate results; immediately `functions.send_input` the next chunk; and `functions.close_agent` when a lane is done or blocked.
+- Avoid tight polling: use `functions.wait` with timeouts in the 30-60s range; the runtime may enforce a minimum wait timeout.
 
 ## Review Guidelines
 - Focus on correctness regressions, error handling, and missing tests.
