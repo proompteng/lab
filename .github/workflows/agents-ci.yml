@@ -78,7 +78,6 @@ jobs:
   integration:
     runs-on: arc-arm64
     needs: validate
-    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -100,8 +99,7 @@ jobs:
               exit 1
               ;;
           esac
-          curl -fL --retry 5 --retry-delay 2 --retry-all-errors -o kubectl \
-            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl"
+          curl -fsSL -o kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl"
           chmod +x kubectl
           if command -v sudo >/dev/null 2>&1; then
             sudo mv kubectl /usr/local/bin/
@@ -123,125 +121,14 @@ jobs:
       - name: Ensure kind Docker network
         run: scripts/agents/ensure-kind-network.sh
 
-      - name: Install kind
-        run: |
-          KIND_VERSION="v0.31.0"
-          ARCH="$(uname -m)"
-          case "${ARCH}" in
-            x86_64|amd64) ARCH="amd64" ;;
-            aarch64|arm64) ARCH="arm64" ;;
-            *)
-              echo "Unsupported architecture: ${ARCH}" >&2
-              exit 1
-              ;;
-          esac
-          curl -fL --retry 5 --retry-delay 2 --retry-all-errors -o "kind-linux-${ARCH}" \
-            "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-${ARCH}"
-          curl -fL --retry 5 --retry-delay 2 --retry-all-errors -o "kind-linux-${ARCH}.sha256sum" \
-            "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-${ARCH}.sha256sum"
-          grep "kind-linux-${ARCH}" < "kind-linux-${ARCH}.sha256sum" | sha256sum -c
-          mv "kind-linux-${ARCH}" kind
-          rm -f "kind-linux-${ARCH}.sha256sum"
-          chmod +x kind
-          if command -v sudo >/dev/null 2>&1; then
-            sudo mv kind /usr/local/bin/
-          else
-            mv kind /usr/local/bin/
-          fi
-          kind version
-
       - name: Create kind cluster
-        env:
-          KIND_CLUSTER_NAME: agents-ci-${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          with_timeout() {
-            local timeout_s="$1"
-            shift
-
-            # Prefer coreutils `timeout` when present, but ensure we can actually kill stuck processes.
-            # Fall back to a manual implementation when `timeout -k` isn't supported.
-            if command -v timeout >/dev/null 2>&1; then
-              set +e
-              timeout -k 10s "${timeout_s}s" "$@"
-              local rc="$?"
-              set -e
-              if [ "${rc}" -ne 125 ]; then
-                return "${rc}"
-              fi
-            fi
-
-            local kill_target=""
-            if command -v setsid >/dev/null 2>&1; then
-              # Run in a new session so we can kill the whole process group on timeout.
-              setsid "$@" &
-              local pid="$!"
-              kill_target="-$pid"
-            else
-              "$@" &
-              local pid="$!"
-              kill_target="${pid}"
-            fi
-            local start
-            start="$(date +%s)"
-            while kill -0 "${pid}" >/dev/null 2>&1; do
-              local now
-              now="$(date +%s)"
-              if [ $((now - start)) -ge "${timeout_s}" ]; then
-                echo "Command timed out after ${timeout_s}s: $*" >&2
-                kill -TERM "${kill_target}" >/dev/null 2>&1 || true
-                sleep 5
-                kill -KILL "${kill_target}" >/dev/null 2>&1 || true
-                wait "${pid}" >/dev/null 2>&1 || true
-                return 124
-              fi
-              sleep 2
-            done
-            wait "${pid}"
-          }
-
-          export KUBECONFIG="${RUNNER_TEMP}/kubeconfig"
-          if ! command -v docker >/dev/null 2>&1; then
-            echo "docker is required for kind but was not found on PATH" >&2
-            exit 1
-          fi
-          docker version
-
-          with_timeout 900 kind create cluster --name "${KIND_CLUSTER_NAME}" --image kindest/node:v1.29.4 --wait 180s --kubeconfig "${KUBECONFIG}"
-          echo "KUBECONFIG=${KUBECONFIG}" >> "${GITHUB_ENV}"
-          for i in $(seq 1 30); do
-            if kubectl --request-timeout=10s get nodes -o wide; then
-              exit 0
-            fi
-            echo "kubectl get nodes failed (attempt ${i}/30); retrying..." >&2
-            sleep 2
-          done
-          echo "kubectl could not reach the kind API server after retries" >&2
-          exit 1
-
-      - name: Export kind logs (on failure)
-        if: failure()
-        env:
-          KIND_CLUSTER_NAME: agents-ci-${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          if ! command -v kind >/dev/null 2>&1; then
-            echo "kind not installed; skipping log export" >&2
-            exit 0
-          fi
-          if ! kind get clusters | grep -Fxq "${KIND_CLUSTER_NAME}"; then
-            echo "kind cluster ${KIND_CLUSTER_NAME} not present; skipping log export" >&2
-            exit 0
-          fi
-
-          LOG_DIR="${RUNNER_TEMP}/kind-logs"
-          kind export logs --name "${KIND_CLUSTER_NAME}" "${LOG_DIR}" || true
-          echo "Exported kind logs to ${LOG_DIR}"
-          find "${LOG_DIR}" -maxdepth 3 -type f -print || true
-          if command -v docker >/dev/null 2>&1; then
-            docker ps -a || true
-            docker logs "${KIND_CLUSTER_NAME}-control-plane" 2>/dev/null | tail -n 200 || true
-          fi
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: agents-ci-${{ github.run_id }}
+          version: v0.31.0
+          node_image: kindest/node:v1.29.4
+          kubectl_version: v1.29.4
+          wait: 180s
 
       - name: Run agents integration smoke test
         env:
@@ -259,24 +146,16 @@ jobs:
           KIND_CLUSTER_NAME: agents-ci-${{ github.run_id }}
         run: |
           set -euo pipefail
-          timeout_cmd() {
-            if command -v timeout >/dev/null 2>&1; then
-              timeout "$@"
-              return $?
-            fi
-            shift
-            "$@"
-          }
           if command -v kind >/dev/null 2>&1 && kind get clusters | grep -Fxq "${KIND_CLUSTER_NAME}"; then
             export KUBECONFIG="$(mktemp)"
             kind get kubeconfig --name "${KIND_CLUSTER_NAME}" > "${KUBECONFIG}"
 
-            timeout_cmd 60s helm uninstall agents-ci -n agents-ci || true
-            timeout_cmd 60s kubectl -n agents-ci delete deployment agents-ci-postgres --ignore-not-found || true
-            timeout_cmd 60s kubectl -n agents-ci delete service agents-ci-postgres --ignore-not-found || true
-            timeout_cmd 60s kubectl delete namespace agents-ci --ignore-not-found --wait=false || true
+            helm uninstall agents-ci -n agents-ci || true
+            kubectl -n agents-ci delete deployment agents-ci-postgres --ignore-not-found || true
+            kubectl -n agents-ci delete service agents-ci-postgres --ignore-not-found || true
+            kubectl delete namespace agents-ci --ignore-not-found --wait=false || true
 
-            timeout_cmd 120s kind delete cluster --name "${KIND_CLUSTER_NAME}" || true
+            kind delete cluster --name "${KIND_CLUSTER_NAME}" || true
           else
             echo "kind cluster ${KIND_CLUSTER_NAME} not present; skipping cleanup to avoid touching host cluster"
           fi
