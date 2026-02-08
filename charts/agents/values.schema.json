@@ -180,6 +180,28 @@
       },
       "additionalProperties": false
     },
+    "audit": {
+      "type": "object",
+      "properties": {
+        "sink": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string", "enum": ["none", "stdout", "http"] },
+            "http": {
+              "type": "object",
+              "properties": {
+                "url": { "type": "string" },
+                "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+                "timeoutMs": { "type": "integer" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "metrics": {
       "type": "object",
       "properties": {
