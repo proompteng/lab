@@ -126,6 +126,58 @@ const buildVcsProvider = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
+describe('AgentRun artifacts limits', () => {
+  it('trims artifacts to the max and drops oldest', () => {
+    const result = __test.limitAgentRunStatusArtifacts(
+      [
+        { name: 'a1', url: 'https://example.com/1' },
+        { name: 'a2', url: 'https://example.com/2' },
+        { name: 'a3', url: 'https://example.com/3' },
+        { name: 'a4', url: 'https://example.com/4' },
+        { name: 'a5', url: 'https://example.com/5' },
+      ],
+      { maxEntries: 3, strict: false, urlMaxLength: 2048 },
+    )
+
+    expect(result.strictViolation).toBe(false)
+    expect(result.trimmedCount).toBe(2)
+    expect(result.artifacts.map((item) => item.name)).toEqual(['a3', 'a4', 'a5'])
+  })
+
+  it('strips artifact urls that exceed the limit', () => {
+    const result = __test.limitAgentRunStatusArtifacts([{ name: 'a1', url: '123456' }], {
+      maxEntries: 50,
+      strict: false,
+      urlMaxLength: 5,
+    })
+    expect(result.strictViolation).toBe(false)
+    expect(result.strippedUrlCount).toBe(1)
+    expect(result.artifacts[0]).toEqual({ name: 'a1' })
+  })
+
+  it('fails the status update in strict mode when limits are exceeded', async () => {
+    const kube = buildKube()
+    const agentRun = buildAgentRun()
+
+    process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX = '2'
+    process.env.JANGAR_AGENTRUN_ARTIFACTS_STRICT = 'true'
+
+    try {
+      await __test.setStatus(kube as never, agentRun, {
+        phase: 'Succeeded',
+        artifacts: [{ name: 'a1' }, { name: 'a2' }, { name: 'a3' }],
+      })
+    } finally {
+      delete process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX
+      delete process.env.JANGAR_AGENTRUN_ARTIFACTS_STRICT
+    }
+
+    const status = getLastStatus(kube as never)
+    expect(status.phase).toBe('Failed')
+    expect(findCondition(status, 'ArtifactsLimitExceeded')?.status).toBe('True')
+  })
+})
+
 describe('agents controller reconcileAgentRun', () => {
   it('blocks AgentRun when repository concurrency limit is reached', async () => {
     const kube = buildKube()

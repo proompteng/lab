@@ -102,6 +102,13 @@ Agent memory backends are configured separately via the `Memory` CRD.
 - Multi-namespace: set `controller.namespaces` and `rbac.clusterScoped=true`
 - Wildcard: set `controller.namespaces=["*"]` and `rbac.clusterScoped=true`
 
+### AgentRun status artifact limits
+AgentRun `status.artifacts` is intentionally bounded to keep Kubernetes objects small.
+
+Configure via Helm values (mapped to controller env vars):
+- `controller.agentRunArtifacts.max` → `JANGAR_AGENTRUN_ARTIFACTS_MAX` (default: `50`)
+- `controller.agentRunArtifacts.strict` → `JANGAR_AGENTRUN_ARTIFACTS_STRICT` (default: `false`)
+
 #### Namespaced vs cluster-scoped install matrix
 | Install mode | controller.namespaces | rbac.clusterScoped | RBAC scope |
 | --- | --- | --- | --- |

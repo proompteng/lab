@@ -52,6 +52,8 @@ const DEFAULT_RUNNER_JOB_TTL_SECONDS = 600
 const DEFAULT_RUNNER_LOG_RETENTION_SECONDS = 7 * 24 * 60 * 60
 const MIN_RUNNER_JOB_TTL_SECONDS = 30
 const MAX_RUNNER_JOB_TTL_SECONDS = 7 * 24 * 60 * 60
+const DEFAULT_AGENTRUN_ARTIFACTS_MAX = 50
+const AGENTRUN_ARTIFACT_URL_MAX_LENGTH = 2048
 const DEFAULT_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 300
 const MIN_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 30
 const QUEUED_PHASES = new Set(['pending', 'queued', 'progressing', 'inprogress'])
@@ -128,6 +130,21 @@ type Condition = {
 }
 
 type RuntimeRef = Record<string, unknown>
+
+type AgentRunArtifactsLimitConfig = {
+  maxEntries: number
+  strict: boolean
+  urlMaxLength: number
+}
+
+type AgentRunArtifactsLimitResult = {
+  artifacts: Array<Record<string, unknown>>
+  trimmedCount: number
+  strippedUrlCount: number
+  droppedCount: number
+  strictViolation: boolean
+  reasons: string[]
+}
 
 type VcsMode = 'read-write' | 'read-only' | 'none'
 type VcsAuthMethod = 'token' | 'app' | 'ssh' | 'none'
@@ -585,8 +602,49 @@ const setStatus = async (
       nextStatusBase = { ...nextStatusBase, systemPromptHash: existingHash }
     }
   }
-  const phase = asString(status.phase) ?? null
-  const baseConditions = normalizeConditions(status.conditions)
+  if (kind === 'AgentRun' && status.artifacts === undefined) {
+    const existingArtifacts = readNested(resource, ['status', 'artifacts'])
+    if (existingArtifacts) {
+      nextStatusBase = { ...nextStatusBase, artifacts: existingArtifacts }
+    }
+  }
+
+  let baseConditions = normalizeConditions(nextStatusBase.conditions)
+  if (kind === 'AgentRun') {
+    if (nextStatusBase.artifacts !== undefined) {
+      const config = resolveAgentRunArtifactsLimitConfig()
+      const artifactsResult = limitAgentRunStatusArtifacts(nextStatusBase.artifacts, config)
+      if (artifactsResult.strictViolation) {
+        baseConditions = upsertCondition(baseConditions, {
+          type: 'ArtifactsLimitExceeded',
+          status: 'True',
+          reason: artifactsResult.reasons[0] ?? 'LimitExceeded',
+          message: buildArtifactsLimitMessage(artifactsResult),
+        })
+        if (asString(nextStatusBase.phase) !== 'Failed' && asString(nextStatusBase.phase) !== 'Cancelled') {
+          nextStatusBase = { ...nextStatusBase, phase: 'Failed', finishedAt: nextStatusBase.finishedAt ?? nowIso() }
+        }
+      } else if (artifactsResult.trimmedCount || artifactsResult.strippedUrlCount || artifactsResult.droppedCount) {
+        baseConditions = upsertCondition(baseConditions, {
+          type: 'ArtifactsLimited',
+          status: 'True',
+          reason: artifactsResult.reasons[0] ?? 'Limited',
+          message: buildArtifactsLimitMessage(artifactsResult),
+        })
+      } else {
+        baseConditions = upsertCondition(baseConditions, {
+          type: 'ArtifactsLimited',
+          status: 'False',
+          reason: 'WithinLimits',
+          message: '',
+        })
+      }
+
+      nextStatusBase = { ...nextStatusBase, artifacts: artifactsResult.artifacts }
+    }
+  }
+
+  const phase = asString(nextStatusBase.phase) ?? null
   const standardUpdates = deriveStandardConditionUpdates(baseConditions, phase)
   let conditions = baseConditions
   for (const update of standardUpdates) {
@@ -614,6 +672,112 @@ const setStatus = async (
 }
 
 const parseRuntimeRef = (raw: unknown): RuntimeRef | null => asRecord(raw) ?? null
+
+const resolveAgentRunArtifactsLimitConfig = (
+  overrides: Partial<AgentRunArtifactsLimitConfig> = {},
+): AgentRunArtifactsLimitConfig => {
+  const parsedMax = parseOptionalNumber(process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX)
+  const maxFromEnv =
+    parsedMax === undefined || !Number.isFinite(parsedMax) || parsedMax < 0 ? DEFAULT_AGENTRUN_ARTIFACTS_MAX : parsedMax
+
+  const maxEntries = Math.max(0, Math.floor(overrides.maxEntries ?? maxFromEnv))
+  const strict = overrides.strict ?? parseBooleanEnv(process.env.JANGAR_AGENTRUN_ARTIFACTS_STRICT, false)
+  return {
+    maxEntries,
+    strict,
+    urlMaxLength: overrides.urlMaxLength ?? AGENTRUN_ARTIFACT_URL_MAX_LENGTH,
+  }
+}
+
+const normalizeArtifactString = (value: unknown) => {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+const limitAgentRunStatusArtifacts = (
+  raw: unknown,
+  config: AgentRunArtifactsLimitConfig,
+): AgentRunArtifactsLimitResult => {
+  const artifacts = Array.isArray(raw) ? raw : []
+  const parsed: Array<Record<string, unknown>> = []
+  let strippedUrlCount = 0
+  let droppedCount = 0
+  let strictViolation = false
+  const reasons = new Set<string>()
+
+  for (const item of artifacts) {
+    const record = asRecord(item)
+    if (!record) continue
+    const name = normalizeArtifactString(record.name)
+    if (!name) {
+      droppedCount += 1
+      reasons.add('MissingName')
+      continue
+    }
+    const path = normalizeArtifactString(record.path)
+    const key = normalizeArtifactString(record.key)
+    const url = normalizeArtifactString(record.url)
+
+    const next: Record<string, unknown> = { name }
+    if (path) next.path = path
+    if (key) next.key = key
+
+    if (url) {
+      const isInline = url.startsWith('data:')
+      const tooLong = url.length > config.urlMaxLength
+      if (isInline || tooLong) {
+        strippedUrlCount += 1
+        reasons.add(isInline ? 'InlineUrlDisallowed' : 'UrlTooLong')
+        if (config.strict) strictViolation = true
+      } else {
+        next.url = url
+      }
+    }
+
+    parsed.push(next)
+  }
+
+  if (parsed.length <= config.maxEntries) {
+    return {
+      artifacts: parsed,
+      trimmedCount: 0,
+      strippedUrlCount,
+      droppedCount,
+      strictViolation,
+      reasons: Array.from(reasons),
+    }
+  }
+
+  const overflow = config.maxEntries === 0 ? parsed.length : parsed.length - config.maxEntries
+  reasons.add('TooManyArtifacts')
+  if (config.strict) strictViolation = true
+
+  return {
+    artifacts: overflow > 0 ? parsed.slice(overflow) : parsed,
+    trimmedCount: Math.max(0, overflow),
+    strippedUrlCount,
+    droppedCount,
+    strictViolation,
+    reasons: Array.from(reasons),
+  }
+}
+
+const buildArtifactsLimitMessage = (result: AgentRunArtifactsLimitResult) => {
+  const parts: string[] = []
+  if (result.trimmedCount > 0) {
+    parts.push(`dropped ${result.trimmedCount} oldest artifact(s)`)
+  }
+  if (result.strippedUrlCount > 0) {
+    parts.push(`stripped ${result.strippedUrlCount} artifact url(s)`)
+  }
+  if (result.droppedCount > 0) {
+    parts.push(`dropped ${result.droppedCount} invalid artifact(s)`)
+  }
+  const reasons = result.reasons.length > 0 ? ` (${result.reasons.join(', ')})` : ''
+  if (parts.length === 0) return `artifacts within limits${reasons}`
+  return `${parts.join(', ')}${reasons}`
+}
 
 const resolveJobImage = (workload: Record<string, unknown>) =>
   asString(workload.image) ?? process.env.JANGAR_AGENT_RUNNER_IMAGE ?? process.env.JANGAR_AGENT_IMAGE ?? null
@@ -5851,6 +6015,10 @@ export const __test = {
   clearGithubAppTokenCache,
   resetControllerRateState,
   fetchGithubAppToken,
+  setStatus,
+  resolveAgentRunArtifactsLimitConfig,
+  limitAgentRunStatusArtifacts,
+  buildArtifactsLimitMessage,
   reconcileAgentRun: reconcileAgentRunWithMetrics,
   reconcileVersionControlProvider,
   reconcileMemory,

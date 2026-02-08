@@ -11,6 +11,12 @@
 {{- if not (hasKey $controllersEnvVars "JANGAR_CONTROL_PLANE_CACHE_ENABLED") -}}
 {{- $_ := set $envVars "JANGAR_CONTROL_PLANE_CACHE_ENABLED" "0" -}}
 {{- end -}}
+{{- if not (hasKey $envVars "JANGAR_AGENTRUN_ARTIFACTS_MAX") -}}
+{{- $_ := set $envVars "JANGAR_AGENTRUN_ARTIFACTS_MAX" (.Values.controller.agentRunArtifacts.max | default 50) -}}
+{{- end -}}
+{{- if not (hasKey $envVars "JANGAR_AGENTRUN_ARTIFACTS_STRICT") -}}
+{{- $_ := set $envVars "JANGAR_AGENTRUN_ARTIFACTS_STRICT" (.Values.controller.agentRunArtifacts.strict | default false) -}}
+{{- end -}}
 {{- $imageRepo := $controllersImage.repository | default .Values.image.repository -}}
 {{- $imageTag := $controllersImage.tag | default .Values.image.tag -}}
 {{- $imageDigest := $controllersImage.digest | default .Values.image.digest -}}

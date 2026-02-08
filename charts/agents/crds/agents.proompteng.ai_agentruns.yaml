@@ -445,10 +445,12 @@ spec:
                     path:
                       type: string
                     url:
+                      maxLength: 2048
                       type: string
                   required:
                   - name
                   type: object
+                maxItems: 50
                 type: array
               conditions:
                 items:

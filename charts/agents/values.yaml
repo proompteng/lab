@@ -234,6 +234,9 @@ controller:
       maxDelaySeconds: 60
       maxAttempts: 5
   agentRunRetentionSeconds: 2592000
+  agentRunArtifacts:
+    max: 50
+    strict: false
   logRetentionSeconds: 604800
   jobTtlSeconds: 600
   jobTtlSecondsAfterFinished: 600
