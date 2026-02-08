@@ -13,6 +13,7 @@ import * as codexJudgeIterationsMigration from '~/server/migrations/20260105_cod
 import * as jangarPrimitivesMigration from '~/server/migrations/20260111_jangar_primitives'
 import * as jangarPrimitivesIndexesMigration from '~/server/migrations/20260111_jangar_primitives_indexes'
 import * as agentsControlPlaneCacheMigration from '~/server/migrations/20260205_agents_control_plane_cache'
+import * as jangarAgentRunIdempotencyMigration from '~/server/migrations/20260208_jangar_agentrun_idempotency'
 
 type MigrationMap = Record<string, Migration>
 
@@ -39,6 +40,7 @@ const migrations: MigrationMap = {
   '20260111_jangar_primitives': jangarPrimitivesMigration,
   '20260111_jangar_primitives_indexes': jangarPrimitivesIndexesMigration,
   '20260205_agents_control_plane_cache': agentsControlPlaneCacheMigration,
+  '20260208_jangar_agentrun_idempotency': jangarAgentRunIdempotencyMigration,
 }
 
 const migrationProvider = new StaticMigrationProvider(migrations)
