@@ -8,5 +8,5 @@ resources:
   - secret.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/app
-    newTag: "0d391ce3"
+    newTag: "976f6c7b"
     newName: registry.ide-newton.ts.net/lab/app

@@ -10,7 +10,8 @@ import appCss from '../styles.css?url'
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
     const path = location.pathname
-    if (path === '/login' || path.startsWith('/auth/') || path.startsWith('/api/auth/')) return
+    if (path === '/login' || path === '/robots.txt' || path.startsWith('/auth/') || path.startsWith('/api/auth/'))
+      return
 
     const user = await getCurrentUserServerFn()
     if (!user) {
