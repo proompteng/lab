@@ -98,6 +98,7 @@ const parseBooleanEnv = (value: string | undefined, fallback: boolean) => {
 
 const isVcsProvidersEnabled = () => parseBooleanEnv(process.env.JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED, true)
 const isAgentRunIdempotencyEnabled = () => parseBooleanEnv(process.env.JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED, true)
+const DEFAULT_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS = 10 * 60
 
 const DEFAULT_CONCURRENCY = {
   perNamespace: 10,
@@ -131,6 +132,30 @@ const parseNumberEnv = (value: string | undefined, fallback: number, min = 0) =>
   const parsed = Number.parseInt(value, 10)
   if (!Number.isFinite(parsed) || parsed < min) return fallback
   return parsed
+}
+
+const parseTimestampMs = (value: unknown): number | null => {
+  if (value instanceof Date) {
+    const ms = value.getTime()
+    return Number.isFinite(ms) ? ms : null
+  }
+  if (typeof value === 'string') {
+    const ms = Date.parse(value)
+    return Number.isNaN(ms) ? null : ms
+  }
+  return null
+}
+
+const isIdempotencyReservationStale = (createdAt: unknown) => {
+  const ttlSeconds = parseNumberEnv(
+    process.env.JANGAR_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS,
+    DEFAULT_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS,
+    0,
+  )
+  if (ttlSeconds <= 0) return false
+  const createdAtMs = parseTimestampMs(createdAt)
+  if (createdAtMs == null) return false
+  return Date.now() - createdAtMs >= ttlSeconds * 1000
 }
 
 const parseAdmissionNamespaces = (namespace: string) => {
@@ -726,11 +751,32 @@ export const postAgentRunsHandler = async (
     } | null = null
 
     if (isAgentRunIdempotencyEnabled()) {
-      const reservation = await store.reserveAgentRunIdempotencyKey({
+      let reservation = await store.reserveAgentRunIdempotencyKey({
         namespace: parsed.namespace,
         agentName: parsed.agentRef.name,
         idempotencyKey: runIdempotencyKey,
       })
+
+      if (
+        !reservation.created &&
+        !reservation.record.agentRunName &&
+        isIdempotencyReservationStale(reservation.record.createdAt)
+      ) {
+        try {
+          await store.deleteAgentRunIdempotencyKey({
+            namespace: parsed.namespace,
+            agentName: parsed.agentRef.name,
+            idempotencyKey: runIdempotencyKey,
+          })
+        } catch {
+          // ignore: if we fail to reclaim, treat as in-progress.
+        }
+        reservation = await store.reserveAgentRunIdempotencyKey({
+          namespace: parsed.namespace,
+          agentName: parsed.agentRef.name,
+          idempotencyKey: runIdempotencyKey,
+        })
+      }
 
       if (!reservation.created) {
         const scope = reservation.record

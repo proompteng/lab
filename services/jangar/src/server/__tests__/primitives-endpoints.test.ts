@@ -257,6 +257,98 @@ describe('primitives endpoints', () => {
     expect(body.details?.existingAgentRunName).toBe('demo-agent-run-1')
   })
 
+  it('reclaims stale AgentRun idempotency reservations', async () => {
+    const scope = new Map<string, Record<string, unknown>>()
+    const kubeResources: Record<string, Record<string, unknown> | null> = {
+      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
+    }
+    const store = createStoreMock()
+    const key = 'jangar:demo-agent:stale-idem'
+    scope.set(key, {
+      id: `idem-${key}`,
+      namespace: 'jangar',
+      agentName: 'demo-agent',
+      idempotencyKey: 'stale-idem',
+      agentRunName: null,
+      agentRunUid: null,
+      terminalPhase: null,
+      terminalAt: null,
+      createdAt: new Date(Date.now() - 60 * 60 * 1000),
+      updatedAt: new Date(Date.now() - 60 * 60 * 1000),
+    })
+
+    store.getAgentRunIdempotencyKey = vi.fn(async () => null)
+    store.reserveAgentRunIdempotencyKey = vi.fn(async (input) => {
+      const mapKey = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
+      const existing = scope.get(mapKey)
+      if (existing) return { record: existing, created: false }
+      const record = {
+        id: `idem-${mapKey}`,
+        namespace: input.namespace,
+        agentName: input.agentName,
+        idempotencyKey: input.idempotencyKey,
+        agentRunName: null,
+        agentRunUid: null,
+        terminalPhase: null,
+        terminalAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }
+      scope.set(mapKey, record)
+      return { record, created: true }
+    })
+    store.deleteAgentRunIdempotencyKey = vi.fn(async (input) => {
+      scope.delete(`${input.namespace}:${input.agentName}:${input.idempotencyKey}`)
+      return true
+    })
+    store.assignAgentRunIdempotencyKey = vi.fn(async (input) => {
+      const mapKey = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
+      const existing = scope.get(mapKey)
+      if (!existing) return null
+      const next = {
+        ...existing,
+        agentRunName: existing.agentRunName ?? input.agentRunName,
+        agentRunUid: input.agentRunUid ?? null,
+      }
+      scope.set(mapKey, next)
+      return next
+    })
+
+    const kube: KubernetesClient = {
+      ...createKubeMock(kubeResources),
+      apply: vi.fn(async (resource) => ({
+        ...resource,
+        metadata: { ...(resource.metadata as Record<string, unknown>), name: 'demo-agent-run-stale', uid: 'uid-stale' },
+        status: { phase: 'Running' },
+      })),
+    }
+
+    const resetEnv = setEnv({
+      JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED: 'true',
+      JANGAR_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS: '60',
+    })
+    try {
+      const request = buildRequest(
+        'http://localhost/v1/agent-runs',
+        {
+          agentRef: { name: 'demo-agent' },
+          namespace: 'jangar',
+          runtime: { type: 'job', config: {} },
+          idempotencyKey: 'stale-idem',
+        },
+        { 'Idempotency-Key': 'delivery-stale-1' },
+      )
+
+      const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
+
+      expect(response.status).toBe(201)
+      expect(store.deleteAgentRunIdempotencyKey).toHaveBeenCalledTimes(1)
+      expect(store.reserveAgentRunIdempotencyKey).toHaveBeenCalledTimes(2)
+    } finally {
+      resetEnv()
+    }
+  })
+
   it('returns the existing AgentRun when idempotency key points to a terminal run', async () => {
     const scope = new Map<string, Record<string, unknown>>()
     const kubeResources: Record<string, Record<string, unknown> | null> = {
