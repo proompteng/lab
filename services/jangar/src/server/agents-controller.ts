@@ -78,6 +78,8 @@ const parseBooleanEnv = (value: string | undefined, fallback: boolean) => {
 
 const isVcsProvidersEnabled = () => parseBooleanEnv(process.env.JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED, true)
 
+const isAgentRunImmutabilityEnforced = () => parseBooleanEnv(process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED, true)
+
 const resolveRequiredCrds = () => {
   if (!isVcsProvidersEnabled()) return BASE_REQUIRED_CRDS
   return [...BASE_REQUIRED_CRDS.slice(0, 5), VCS_PROVIDER_CRD, ...BASE_REQUIRED_CRDS.slice(5)]
@@ -602,6 +604,12 @@ const setStatus = async (
       nextStatusBase = { ...nextStatusBase, systemPromptHash: existingHash }
     }
   }
+  if (kind === 'AgentRun' && status.specHash === undefined) {
+    const existingHash = readNested(resource, ['status', 'specHash'])
+    if (existingHash) {
+      nextStatusBase = { ...nextStatusBase, specHash: existingHash }
+    }
+  }
   if (kind === 'AgentRun' && status.artifacts === undefined) {
     const existingArtifacts = readNested(resource, ['status', 'artifacts'])
     if (existingArtifacts) {
@@ -660,7 +668,7 @@ const setStatus = async (
   }
   if (kind === 'AgentRun') {
     const previousPhase = asString(asRecord(resource.status)?.phase)
-    const nextPhase = asString(status.phase)
+    const nextPhase = asString(nextStatusBase.phase)
     if (nextPhase && ['Succeeded', 'Failed', 'Cancelled'].includes(nextPhase) && previousPhase !== nextPhase) {
       const runtimeRef = asRecord(status.runtimeRef) ?? asRecord(readNested(resource, ['status', 'runtimeRef'])) ?? {}
       const runtimeType =
@@ -1122,6 +1130,46 @@ const resolveRunRepository = (agentRun: Record<string, unknown>) => {
 const isNonBlankString = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0
 
 const sha256Hex = (value: string) => createHash('sha256').update(value).digest('hex')
+
+const canonicalizeForJsonHash = (value: unknown): unknown => {
+  if (value == null) return null
+  if (Array.isArray(value)) return value.map((entry) => canonicalizeForJsonHash(entry))
+  if (typeof value !== 'object') return value
+
+  const record = asRecord(value)
+  if (!record) return value
+
+  const output: Record<string, unknown> = {}
+  for (const key of Object.keys(record).sort()) {
+    const entry = record[key]
+    if (entry === undefined) continue
+    output[key] = canonicalizeForJsonHash(entry)
+  }
+  return output
+}
+
+const stableJsonStringifyForHash = (value: unknown) => JSON.stringify(canonicalizeForJsonHash(value))
+
+const buildAgentRunImmutableSpecSnapshot = (agentRun: Record<string, unknown>) => {
+  const spec = asRecord(agentRun.spec) ?? {}
+  const secrets = parseStringList(spec.secrets).slice().sort()
+  const systemPromptRaw = spec.systemPrompt
+  return {
+    agentRef: asRecord(spec.agentRef) ?? null,
+    implementationSpecRef: asRecord(spec.implementationSpecRef) ?? null,
+    implementation: asRecord(spec.implementation) ?? null,
+    runtime: asRecord(spec.runtime) ?? null,
+    workflow: asRecord(spec.workflow) ?? null,
+    secrets,
+    systemPrompt: typeof systemPromptRaw === 'string' ? systemPromptRaw : null,
+    systemPromptRef: asRecord(spec.systemPromptRef) ?? null,
+    vcsRef: asRecord(spec.vcsRef) ?? null,
+    memoryRef: asRecord(spec.memoryRef) ?? null,
+  }
+}
+
+const hashAgentRunImmutableSpec = (agentRun: Record<string, unknown>) =>
+  sha256Hex(stableJsonStringifyForHash(buildAgentRunImmutableSpecSnapshot(agentRun)))
 
 const normalizeSystemPromptKind = (value: string): SystemPromptRef['kind'] | null => {
   const normalized = value.trim().toLowerCase()
@@ -4950,6 +4998,7 @@ const reconcileWorkflowRun = async (
       conditions: updated,
       vcs: vcsStatus ?? undefined,
       contract: workflowContractStatus,
+      ...(options.initialSubmit ? { specHash: hashAgentRunImmutableSpec(agentRun) } : {}),
       ...(systemPromptHashUpdate ? { systemPromptHash: systemPromptHashUpdate } : {}),
     })
     for (const entry of completedJobs) {
@@ -4982,8 +5031,63 @@ const reconcileAgentRun = async (
   const hasFinalizer = finalizers.includes(finalizer)
   const deleting = Boolean(metadata.deletionTimestamp)
 
-  const conditions = buildConditions(agentRun)
+  let conditions = buildConditions(agentRun)
   const observedGeneration = asRecord(agentRun.metadata)?.generation ?? 0
+  const storedSpecHash = asString(status.specHash)
+  const acceptedCondition = conditions.find((condition) => condition.type === 'Accepted')
+  const acceptedLocked = acceptedCondition?.status === 'True' || phase !== 'Pending'
+
+  if (acceptedLocked) {
+    const currentHash = hashAgentRunImmutableSpec(agentRun)
+    if (storedSpecHash && storedSpecHash !== currentHash) {
+      const message = `immutable AgentRun spec fields changed after acceptance (expected ${storedSpecHash}, got ${currentHash})`
+      if (isAgentRunImmutabilityEnforced()) {
+        const runtimeRef = parseRuntimeRef(status.runtimeRef)
+        if (runtimeRef) {
+          try {
+            await cancelRuntime(runtimeRef, namespace)
+          } catch (error) {
+            console.warn('[jangar] failed to cancel runtime after spec immutability violation', error)
+          }
+        }
+
+        const updated = upsertCondition(conditions, {
+          type: 'Failed',
+          status: 'True',
+          reason: 'SpecImmutableViolation',
+          message,
+        })
+        await setStatus(kube, agentRun, {
+          ...status,
+          observedGeneration,
+          phase: 'Failed',
+          finishedAt: nowIso(),
+          conditions: updated,
+        })
+        return
+      }
+
+      console.warn('[jangar] agent run spec immutability violation (warn-only)', { name, namespace, message })
+      const existingWarning = conditions.find(
+        (condition) => condition.type === 'Warning' && condition.reason === 'SpecImmutableViolation',
+      )
+      if (existingWarning?.status !== 'True' || existingWarning?.message !== message) {
+        conditions = upsertCondition(conditions, {
+          type: 'Warning',
+          status: 'True',
+          reason: 'SpecImmutableViolation',
+          message,
+        })
+        await setStatus(kube, agentRun, {
+          ...status,
+          observedGeneration,
+          phase,
+          conditions,
+        })
+      }
+    }
+  }
+
   const runtimeType = asString(readNested(spec, ['runtime', 'type']))
   const runtimeConfig = asRecord(readNested(spec, ['runtime', 'config'])) ?? {}
   const workload = asRecord(readNested(spec, ['workload'])) ?? {}
@@ -5550,6 +5654,7 @@ const reconcileAgentRun = async (
         conditions: upsertCondition(updated, { type: 'InProgress', status: 'True', reason: 'Running' }),
         vcs: vcsStatus ?? undefined,
         contract: contractStatus,
+        specHash: hashAgentRunImmutableSpec(agentRun),
         ...(systemPromptResolution.systemPromptHash
           ? { systemPromptHash: systemPromptResolution.systemPromptHash }
           : {}),
