@@ -168,6 +168,7 @@ type AgentRunStatus struct {
 	Artifacts          []Artifact              `json:"artifacts,omitempty"`
 	Vcs                *AgentRunVcsStatus      `json:"vcs,omitempty"`
 	SystemPromptHash   string                  `json:"systemPromptHash,omitempty"`
+	SpecHash           string                  `json:"specHash,omitempty"`
 	Conditions         []metav1.Condition      `json:"conditions,omitempty"`
 	ObservedGeneration int64                   `json:"observedGeneration,omitempty"`
 	Contract           *AgentRunContractStatus `json:"contract,omitempty"`

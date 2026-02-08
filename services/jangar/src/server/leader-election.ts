@@ -1,7 +1,7 @@
-import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 
-import { type V1Lease } from '@kubernetes/client-node'
+import type { V1Lease } from '@kubernetes/client-node'
 import { type Counter, metrics as otelMetrics } from '@proompteng/otel/api'
 
 export type LeaderElectionConfig = {
