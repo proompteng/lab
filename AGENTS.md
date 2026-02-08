@@ -53,7 +53,7 @@
 - Use Conventional Commits: `<type>(<scope>): <summary>` (scope optional).
 - Common types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `build`, `ci`, `perf`, `revert`.
 - PR titles must follow the same semantic convention.
-- Create PRs by copying `.github/PULL_REQUEST_TEMPLATE.md` into a temp file, fill the description there, then run `gh pr create --body-file <temp file>`.
+- Create PRs by copying `.github/PULL_REQUEST_TEMPLATE.md` into a temp file, fill the description there, then run `gh pr create --title "<type>(<scope>): <summary>" --body-file <temp file>`.
 
 ## UI/UX
 - Tailwind CSS only; class order layout → spacing → sizing → typography → colors; use `cn()` for conditionals.
@@ -72,10 +72,22 @@
 - Split large tasks; surface ambiguities early; use the planning tool `functions.update_plan` when appropriate.
 
 ## Sub-agents
-- Use sub-agents for parallelizable work (repo discovery, grepping, reading docs, drafting focused diffs, writing test plans) while you keep a single source of truth for decisions and final changes.
+- Use sub-agents only for parallelizable work (repo discovery, grepping, reading docs, drafting focused diffs, writing test plans). Keep a single source of truth for decisions and final changes in the main agent.
 - Sub-agent tools are `functions.spawn_agent`, `functions.send_input`, `functions.wait`, and `functions.close_agent` (some runtimes also support `resume_agent`).
-- Delegate with a concrete prompt: objective, exact scope, relevant paths, constraints (style/testing/infra), and the expected output format (e.g. "return a patch for `services/torghut/...` plus the command to validate it").
+- Delegate with a concrete prompt and explicit ownership. Sub-agents must not touch files outside their ownership; if needed, report back and ask the main agent to re-scope.
+- Prompt template:
+```text
+Objective: <one sentence>
+Ownership: You own <path/glob> only
+Scope: <do X; avoid Y>
+Constraints: <style/testing/infra constraints>
+Output:
+- Option A: findings with exact file pointers + suggested `rg`/test commands
+- Option B: patch limited to ownership + validation command(s)
+```
 - Assign clear ownership to avoid merge conflicts: only one agent edits a given file set at a time; other agents should produce findings, notes, or patches against different files.
+- Default output preference: if the agent is unsure, it should return `rg` commands to run + file pointers rather than a speculative patch.
+- Avoid expensive/slow work by default: sub-agents should not run `bun install` or full test suites unless explicitly requested. Prefer the smallest targeted build/test command that validates the scoped change.
 - Keep spawned agents from idling: queue work in small chunks; use `functions.wait` with a bounded timeout to poll for results; redirect quickly with `functions.send_input` (set `interrupt: true` when needed); and call `functions.close_agent` once an agent has completed its scope.
 - Prefer a hub-and-spoke workflow: continuously integrate results, adjust priorities, and keep agents fed with the next highest-value task until the overall goal is complete.
 - Operating loop: spawn a small number of agents (start with 2-4); track `agent_id -> lane + next task`; `functions.wait` for updates; integrate results; immediately `functions.send_input` the next chunk; and `functions.close_agent` when a lane is done or blocked.
