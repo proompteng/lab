@@ -477,6 +477,19 @@ type JangarAgentRuns = {
   updated_at: Generated<Timestamp>
 }
 
+type JangarAgentRunIdempotencyKeys = {
+  id: Generated<string>
+  namespace: string
+  agent_name: string
+  idempotency_key: string
+  agent_run_name: string | null
+  agent_run_uid: string | null
+  terminal_phase: string | null
+  terminal_at: Timestamp | null
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
 type JangarMemoryResources = {
   id: Generated<string>
   memory_name: string
@@ -567,6 +580,7 @@ export type Database = {
   'jangar_github.pr_worktrees': JangarGithubPrWorktrees
   'jangar_github.write_actions': JangarGithubWriteActions
   agent_runs: JangarAgentRuns
+  agent_run_idempotency_keys: JangarAgentRunIdempotencyKeys
   memory_resources: JangarMemoryResources
   orchestration_runs: JangarOrchestrationRuns
   audit_events: JangarAuditEvents

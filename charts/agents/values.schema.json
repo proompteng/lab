@@ -458,6 +458,14 @@
           "additionalProperties": false
         },
         "agentRunRetentionSeconds": { "type": "integer", "minimum": 0 },
+        "agentRunArtifacts": {
+          "type": "object",
+          "properties": {
+            "max": { "type": "integer", "minimum": 0, "maximum": 50 },
+            "strict": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
         "logRetentionSeconds": { "type": "integer", "minimum": 0 },
         "jobTtlSeconds": { "type": "integer", "minimum": 0 },
         "jobTtlSecondsAfterFinished": { "type": "integer", "minimum": 0 },

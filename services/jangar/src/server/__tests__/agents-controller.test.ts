@@ -80,6 +80,46 @@ const findCondition = (status: Record<string, unknown>, type: string) => {
     | undefined
 }
 
+const canonicalizeForJsonHash = (value: unknown): unknown => {
+  if (value == null) return null
+  if (Array.isArray(value)) return value.map((entry) => canonicalizeForJsonHash(entry))
+  if (typeof value !== 'object') return value
+
+  const record = value as Record<string, unknown>
+  const output: Record<string, unknown> = {}
+  for (const key of Object.keys(record).sort()) {
+    const entry = record[key]
+    if (entry === undefined) continue
+    output[key] = canonicalizeForJsonHash(entry)
+  }
+  return output
+}
+
+const hashAgentRunImmutableSpec = (agentRun: Record<string, unknown>) => {
+  const spec = (agentRun.spec ?? {}) as Record<string, unknown>
+  const secretsRaw = Array.isArray(spec.secrets) ? spec.secrets : []
+  const secrets = secretsRaw
+    .filter((value) => typeof value === 'string')
+    .slice()
+    .sort()
+  const systemPromptRaw = spec.systemPrompt
+  const snapshot = {
+    agentRef: (spec.agentRef as Record<string, unknown> | undefined) ?? null,
+    implementationSpecRef: (spec.implementationSpecRef as Record<string, unknown> | undefined) ?? null,
+    implementation: (spec.implementation as Record<string, unknown> | undefined) ?? null,
+    runtime: (spec.runtime as Record<string, unknown> | undefined) ?? null,
+    workflow: (spec.workflow as Record<string, unknown> | undefined) ?? null,
+    secrets,
+    systemPrompt: typeof systemPromptRaw === 'string' ? systemPromptRaw : null,
+    systemPromptRef: (spec.systemPromptRef as Record<string, unknown> | undefined) ?? null,
+    vcsRef: (spec.vcsRef as Record<string, unknown> | undefined) ?? null,
+    memoryRef: (spec.memoryRef as Record<string, unknown> | undefined) ?? null,
+  }
+  return createHash('sha256')
+    .update(JSON.stringify(canonicalizeForJsonHash(snapshot)))
+    .digest('hex')
+}
+
 const buildMemory = (overrides: Record<string, unknown> = {}) => ({
   apiVersion: 'agents.proompteng.ai/v1alpha1',
   kind: 'Memory',
@@ -126,7 +166,182 @@ const buildVcsProvider = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
+describe('AgentRun artifacts limits', () => {
+  it('trims artifacts to the max and drops oldest', () => {
+    const result = __test.limitAgentRunStatusArtifacts(
+      [
+        { name: 'a1', url: 'https://example.com/1' },
+        { name: 'a2', url: 'https://example.com/2' },
+        { name: 'a3', url: 'https://example.com/3' },
+        { name: 'a4', url: 'https://example.com/4' },
+        { name: 'a5', url: 'https://example.com/5' },
+      ],
+      { maxEntries: 3, strict: false, urlMaxLength: 2048 },
+    )
+
+    expect(result.strictViolation).toBe(false)
+    expect(result.trimmedCount).toBe(2)
+    expect(result.artifacts.map((item) => item.name)).toEqual(['a3', 'a4', 'a5'])
+  })
+
+  it('enforces a hard cap of 50 even if max is higher', async () => {
+    const kube = buildKube()
+    const agentRun = buildAgentRun()
+
+    process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX = '100'
+
+    try {
+      const artifacts = Array.from({ length: 60 }, (_, index) => ({
+        name: `a${index + 1}`,
+        url: `https://example.com/${index + 1}`,
+      }))
+
+      await __test.setStatus(kube as never, agentRun, {
+        phase: 'Succeeded',
+        artifacts,
+      })
+    } finally {
+      delete process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX
+    }
+
+    const status = getLastStatus(kube as never)
+    expect(Array.isArray(status.artifacts)).toBe(true)
+    expect((status.artifacts as unknown[]).length).toBe(50)
+    expect(findCondition(status, 'ArtifactsLimited')?.status).toBe('True')
+  })
+
+  it('strips artifact urls that exceed the limit', () => {
+    const result = __test.limitAgentRunStatusArtifacts([{ name: 'a1', url: '123456' }], {
+      maxEntries: 50,
+      strict: false,
+      urlMaxLength: 5,
+    })
+    expect(result.strictViolation).toBe(false)
+    expect(result.strippedUrlCount).toBe(1)
+    expect(result.artifacts[0]).toEqual({ name: 'a1' })
+  })
+
+  it('fails the status update in strict mode when limits are exceeded', async () => {
+    const kube = buildKube()
+    const agentRun = buildAgentRun()
+
+    process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX = '2'
+    process.env.JANGAR_AGENTRUN_ARTIFACTS_STRICT = 'true'
+
+    try {
+      await __test.setStatus(kube as never, agentRun, {
+        phase: 'Succeeded',
+        artifacts: [{ name: 'a1' }, { name: 'a2' }, { name: 'a3' }],
+      })
+    } finally {
+      delete process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX
+      delete process.env.JANGAR_AGENTRUN_ARTIFACTS_STRICT
+    }
+
+    const status = getLastStatus(kube as never)
+    expect(status.phase).toBe('Failed')
+    expect(findCondition(status, 'ArtifactsLimitExceeded')?.status).toBe('True')
+  })
+})
+
 describe('agents controller reconcileAgentRun', () => {
+  it('allows immutable spec mutations before Accepted', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun()
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      agentRun,
+      'agents',
+      [],
+      [],
+      defaultConcurrency,
+      buildInFlight({ perAgent: new Map([['agent-1', defaultConcurrency.perAgent]]) }),
+      0,
+    )
+
+    const blockedStatus = getLastStatus(kube)
+    expect(findCondition(blockedStatus, 'Blocked')?.status).toBe('True')
+    expect(blockedStatus.specHash).toBeUndefined()
+
+    const mutated = buildAgentRun({
+      spec: {
+        ...(agentRun.spec as Record<string, unknown>),
+        runtime: { type: 'job', config: { mode: 'mutated' } },
+      },
+      status: blockedStatus,
+    })
+
+    await __test.reconcileAgentRun(kube as never, mutated, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    expect(status.phase).toBe('Running')
+    expect(findCondition(status, 'Accepted')?.status).toBe('True')
+    expect(status.specHash).toBe(hashAgentRunImmutableSpec(mutated))
+  })
+
+  it('fails AgentRun when immutable spec fields drift after Accepted', async () => {
+    const previousEnforcement = process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED
+    process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED = 'true'
+    try {
+      const kube = buildKube({
+        get: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return { metadata: { name: 'agent-1' }, spec: { providerRef: { name: 'provider-1' } } }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          return null
+        }),
+      })
+
+      const agentRun = buildAgentRun()
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+      const acceptedStatus = getLastStatus(kube)
+      expect(acceptedStatus.phase).toBe('Running')
+      expect(acceptedStatus.specHash).toBe(hashAgentRunImmutableSpec(agentRun))
+
+      const mutated = buildAgentRun({
+        spec: {
+          ...(agentRun.spec as Record<string, unknown>),
+          runtime: { type: 'job', config: { mode: 'drift' } },
+        },
+        status: acceptedStatus,
+      })
+
+      await __test.reconcileAgentRun(kube as never, mutated, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+      const status = getLastStatus(kube)
+      expect(status.phase).toBe('Failed')
+      expect(findCondition(status, 'Failed')?.reason).toBe('SpecImmutableViolation')
+    } finally {
+      if (previousEnforcement === undefined) {
+        delete process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED
+      } else {
+        process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED = previousEnforcement
+      }
+    }
+  })
+
   it('blocks AgentRun when repository concurrency limit is reached', async () => {
     const kube = buildKube()
 
@@ -1188,10 +1403,10 @@ describe('agents controller reconcileAgentRun', () => {
       const agentRun = buildAgentRun()
       await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
-      const defaultTemplate = (lastJob?.['spec'] as Record<string, unknown> | undefined)?.template as
+      const defaultTemplate = (lastJob?.spec as Record<string, unknown> | undefined)?.template as
         | Record<string, unknown>
         | undefined
-      const defaultPodSpec = (defaultTemplate?.['spec'] as Record<string, unknown> | undefined) ?? {}
+      const defaultPodSpec = (defaultTemplate?.spec as Record<string, unknown> | undefined) ?? {}
       expect(defaultPodSpec.nodeSelector).toEqual({ disktype: 'ssd' })
       expect(defaultPodSpec.affinity).toEqual(defaultAffinity)
       expect(defaultPodSpec.topologySpreadConstraints).toEqual(defaultTopology)
@@ -1244,10 +1459,10 @@ describe('agents controller reconcileAgentRun', () => {
         0,
       )
 
-      const overrideTemplate = (lastJob?.['spec'] as Record<string, unknown> | undefined)?.template as
+      const overrideTemplate = (lastJob?.spec as Record<string, unknown> | undefined)?.template as
         | Record<string, unknown>
         | undefined
-      const overridePodSpec = (overrideTemplate?.['spec'] as Record<string, unknown> | undefined) ?? {}
+      const overridePodSpec = (overrideTemplate?.spec as Record<string, unknown> | undefined) ?? {}
       expect(overridePodSpec.nodeSelector).toEqual({ disktype: 'gpu' })
       expect(overridePodSpec.affinity).toEqual(overrideAffinity)
       expect(overridePodSpec.topologySpreadConstraints).toEqual([
@@ -1323,10 +1538,10 @@ describe('agents controller reconcileAgentRun', () => {
       const agentRun = buildAgentRun()
       await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
-      const defaultTemplate = (lastJob?.['spec'] as Record<string, unknown> | undefined)?.template as
+      const defaultTemplate = (lastJob?.spec as Record<string, unknown> | undefined)?.template as
         | Record<string, unknown>
         | undefined
-      const defaultPodSpec = (defaultTemplate?.['spec'] as Record<string, unknown> | undefined) ?? {}
+      const defaultPodSpec = (defaultTemplate?.spec as Record<string, unknown> | undefined) ?? {}
       expect(defaultPodSpec.topologySpreadConstraints).toBeUndefined()
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS'))
     } finally {
@@ -1472,10 +1687,10 @@ describe('agents controller reconcileAgentRun', () => {
     expect(status.phase).toBe('Running')
     expect(status.systemPromptHash).toBe(createHash('sha256').update('workflow-prompt').digest('hex'))
 
-    const podTemplate = (lastJob?.['spec'] as Record<string, unknown> | undefined)?.template as
+    const podTemplate = (lastJob?.spec as Record<string, unknown> | undefined)?.template as
       | Record<string, unknown>
       | undefined
-    const podSpecSpec = (podTemplate?.['spec'] as Record<string, unknown> | undefined) ?? {}
+    const podSpecSpec = (podTemplate?.spec as Record<string, unknown> | undefined) ?? {}
     const containers = (podSpecSpec.containers as Record<string, unknown>[] | undefined) ?? []
     const container = containers[0] ?? {}
     const env = (container.env as Record<string, unknown>[] | undefined) ?? []

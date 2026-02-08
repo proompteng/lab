@@ -445,10 +445,12 @@ spec:
                     path:
                       type: string
                     url:
+                      maxLength: 2048
                       type: string
                   required:
                   - name
                   type: object
+                maxItems: 50
                 type: array
               conditions:
                 items:
@@ -530,6 +532,8 @@ spec:
                   x-kubernetes-preserve-unknown-fields: true
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
+              specHash:
+                type: string
               startedAt:
                 format: date-time
                 type: string
