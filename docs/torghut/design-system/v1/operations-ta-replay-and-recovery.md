@@ -93,16 +93,15 @@ See also `docs/torghut/ops-2026-01-01-ta-recovery.md` and `v1/operations-clickho
 - ClickHouse data corrupted or partially missing.
 
 ### Approach (v1)
-For the concrete, command-by-command replay flow (including topic deletion/recreate, checkpoint cleanup, and consumer-group
-isolation), start from `argocd/applications/torghut/README.md` and apply it via GitOps where possible.
+Use the canonical workflow in `argocd/applications/torghut/README.md` (“TA replay workflow (canonical)”).
 
-1) Decide replay window:
-   - Bound by Kafka retention configured for ingest topics (see `docs/torghut/topics-and-schemas.md`).
-2) Ensure TA job consumes from the correct offsets:
-   - `TA_AUTO_OFFSET_RESET=earliest` supports “start from beginning” when offsets missing.
-   - For controlled replay, use a new consumer group id (edit `TA_GROUP_ID` in `argocd/applications/torghut/ta/configmap.yaml`).
-3) Clear ClickHouse target partitions for the replay window (optional but recommended to avoid duplicates).
-4) Start TA job and monitor progress.
+Key constraints (do not skip):
+- **Replay window is bounded by Kafka ingest retention** (hard limit) and the effective **ClickHouse TTL** on TA tables
+  (storage limit). See:
+  - `v1/component-kafka-topics-and-retention.md`
+  - `v1/component-clickhouse-capacity-ttl-and-disk-guardrails.md`
+- **Consumer-group isolation is mandatory:** every replay must use a unique `TA_GROUP_ID`, and trading safety gates must be
+  respected before resuming.
 
 ## Automation (AgentRuns)
 AgentRuns should treat these procedures as two classes of automation:

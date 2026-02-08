@@ -55,6 +55,11 @@ flowchart LR
 | `TA_CLICKHOUSE_BATCH_SIZE` | Sink batching | `500` |
 | `TA_CLICKHOUSE_MAX_RETRIES` | Sink retries | `3` |
 
+### Canonical replay/backfill workflow
+Operational replay/backfill (including the required unique `TA_GROUP_ID`, trading safety gates, and destructive vs
+non-destructive modes) is documented canonically in:
+- `argocd/applications/torghut/README.md` (“TA replay workflow (canonical)”)
+
 ## Checkpointing and delivery guarantees
 The job supports Kafka delivery guarantees (see `FlinkTaConfig.kt`):
 - `TA_KAFKA_DELIVERY_GUARANTEE=EXACTLY_ONCE` (recommended)
