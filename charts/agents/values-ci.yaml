@@ -9,6 +9,11 @@ image:
 grpc:
   enabled: false
 
+# The CI image is pinned to a known-good digest. It does not expose `/ready` yet, so use `/health`
+# for readiness to avoid the deployment being stuck NotReady during smoke tests.
+readinessProbe:
+  path: /health
+
 env:
   vars:
     # CI runs with a fresh Postgres, so we must run migrations to create schema
