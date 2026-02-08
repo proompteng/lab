@@ -156,7 +156,6 @@ jobs:
           set -euo pipefail
           export KUBECONFIG="${RUNNER_TEMP}/kubeconfig"
           kind create cluster --name "${KIND_CLUSTER_NAME}" --image kindest/node:v1.29.4 --wait 180s --kubeconfig "${KUBECONFIG}"
-          kind get kubeconfig --name "${KIND_CLUSTER_NAME}" --internal > "${KUBECONFIG}"
           echo "KUBECONFIG=${KUBECONFIG}" >> "${GITHUB_ENV}"
           for i in $(seq 1 30); do
             if kubectl --request-timeout=10s get nodes -o wide; then
@@ -194,7 +193,7 @@ jobs:
           }
           if command -v kind >/dev/null 2>&1 && kind get clusters | grep -Fxq "${KIND_CLUSTER_NAME}"; then
             export KUBECONFIG="$(mktemp)"
-            kind get kubeconfig --name "${KIND_CLUSTER_NAME}" --internal > "${KUBECONFIG}"
+            kind get kubeconfig --name "${KIND_CLUSTER_NAME}" > "${KUBECONFIG}"
 
             timeout_cmd 60s helm uninstall agents-ci -n agents-ci || true
             timeout_cmd 60s kubectl -n agents-ci delete deployment agents-ci-postgres --ignore-not-found || true
