@@ -33,3 +33,11 @@ spec:
               value: "0.0.0.0"
             - name: NITRO_PORT
               value: "3000"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: app-db-app
+                  key: uri
+          envFrom:
+            - secretRef:
+                name: app-env

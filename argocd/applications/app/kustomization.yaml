@@ -4,7 +4,9 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingressroute.yaml
+  - postgres-cluster.yaml
+  - secret.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/app
-    newTag: main
+    newTag: "fix-llms-20260208130629"
     newName: registry.ide-newton.ts.net/lab/app
