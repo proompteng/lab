@@ -1,4 +1,4 @@
-replicaCount: 2
+replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
   tag: 3671d447
@@ -19,6 +19,7 @@ runner:
     digest: sha256:ff8e864d9ad6319fd46629f340c046370fd10cc9b2f31e7ddc100124a080e3f8
 controllers:
   enabled: true
+  replicaCount: 2
   autoscaling:
     enabled: false
   env:
