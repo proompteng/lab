@@ -72,7 +72,7 @@
 - Split large tasks; surface ambiguities early; use the planning tool `functions.update_plan` when appropriate.
 
 ## Sub-agents
-- Use sub-agents for parallelizable work (repo discovery, grepping, reading docs, drafting focused diffs, writing test plans) while the main agent maintains the single source of truth for decisions and final changes.
+- Use sub-agents for parallelizable work (repo discovery, grepping, reading docs, drafting focused diffs, writing test plans) while you keep a single source of truth for decisions and final changes.
 - Delegate with a concrete prompt: objective, exact scope, relevant paths, constraints (style/testing/infra), and the expected output format (e.g. "return a patch for `services/torghut/...` plus the command to validate it").
 - Assign clear ownership to avoid merge conflicts: only one agent edits a given file set at a time; other agents should produce findings, notes, or patches against different files.
 - Keep spawned agents from idling: queue work in small chunks; use `functions.wait` with a bounded timeout to poll for results; redirect quickly with `functions.send_input` (set `interrupt: true` when needed); and call `functions.close_agent` once an agent has completed its scope.
