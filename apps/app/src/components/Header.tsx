@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router'
 
-import { Home, Menu, Network, SquareFunction, StickyNote } from 'lucide-react'
+import { Home, Menu } from 'lucide-react'
 
 import {
   Avatar,
@@ -43,42 +43,6 @@ export default function Header({ user }: HeaderProps) {
                 >
                   <Home className="size-4" />
                   Home
-                </Link>
-                <div className="px-3 pt-3 text-[0.65rem] font-semibold uppercase tracking-[0.28em] text-muted-foreground">
-                  Demos
-                </div>
-                <Link
-                  to="/demo/start/server-funcs"
-                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                  activeProps={{
-                    className:
-                      'flex items-center gap-2 rounded-md px-3 py-2 text-sm bg-muted text-foreground transition',
-                  }}
-                >
-                  <SquareFunction className="size-4" />
-                  Server functions
-                </Link>
-                <Link
-                  to="/demo/start/api-request"
-                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                  activeProps={{
-                    className:
-                      'flex items-center gap-2 rounded-md px-3 py-2 text-sm bg-muted text-foreground transition',
-                  }}
-                >
-                  <Network className="size-4" />
-                  API request
-                </Link>
-                <Link
-                  to="/demo/start/ssr"
-                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                  activeProps={{
-                    className:
-                      'flex items-center gap-2 rounded-md px-3 py-2 text-sm bg-muted text-foreground transition',
-                  }}
-                >
-                  <StickyNote className="size-4" />
-                  SSR demos
                 </Link>
               </nav>
             </SheetContent>
