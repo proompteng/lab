@@ -4,7 +4,9 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingressroute.yaml
+  - postgres-cluster.yaml
+  - secret.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/app
-    newTag: main
+    newTag: "0d391ce3"
     newName: registry.ide-newton.ts.net/lab/app

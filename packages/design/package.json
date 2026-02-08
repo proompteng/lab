@@ -26,7 +26,6 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.json --pretty false",
-    "prepare": "bun run build",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
   },
