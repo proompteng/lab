@@ -4362,7 +4362,7 @@ const reconcileWorkflowRun = async (
   }
 
   const imageCandidates = workflowSteps
-    .map((step) => {
+    .map((step): ImagePolicyCandidate | null => {
       const workload = step.workload ?? baseWorkload
       const image = workload ? resolveJobImage(workload) : null
       if (!image) return null
@@ -5498,7 +5498,7 @@ const reconcileAgentRunWithMetrics = async (
   memories: Record<string, unknown>[],
   existingRuns: Record<string, unknown>[],
   concurrency: ReturnType<typeof parseConcurrency>,
-  inFlight: { total: number; perAgent: Map<string, number> },
+  inFlight: { total: number; perAgent: Map<string, number>; perRepository: Map<string, number> },
   globalInFlight: number,
 ) => {
   const reconcileStartedAt = Date.now()

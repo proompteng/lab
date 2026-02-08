@@ -65,27 +65,6 @@ describe('runCodexImplementation', () => {
   let remoteDir: string
   let eventPath: string
 
-  const runGitCapture = async (args: string[]) =>
-    await new Promise<string>((resolve, reject) => {
-      const proc = spawn('git', args, { cwd: workdir })
-      let stdout = ''
-      let stderr = ''
-      proc.stdout?.on('data', (chunk) => {
-        stdout += chunk.toString()
-      })
-      proc.stderr?.on('data', (chunk) => {
-        stderr += chunk.toString()
-      })
-      proc.on('error', reject)
-      proc.on('close', (code) => {
-        if (code === 0) {
-          resolve(stdout.trim())
-        } else {
-          reject(new Error(`git ${args.join(' ')} exited with ${code}: ${stderr}`))
-        }
-      })
-    })
-
   beforeEach(async () => {
     workdir = await mkdtemp(join(tmpdir(), 'codex-impl-test-'))
     remoteDir = await mkdtemp(join(tmpdir(), 'codex-impl-remote-'))
@@ -280,14 +259,19 @@ describe('runCodexImplementation', () => {
     )
     await chmod(publishScriptPath, 0o755)
 
+    // Avoid `${...}` sequences directly in JS string literals (Biome false-positive),
+    // while still generating a bash script that uses parameter expansion.
+    const natsContextPathExpansion = '$' + '{NATS_CONTEXT_PATH:-}'
+    const natsContextPathVariable = '$' + '{NATS_CONTEXT_PATH}'
+
     const soakScriptPath = join(binDir, 'codex-nats-soak')
     await writeFile(
       soakScriptPath,
       [
         '#!/usr/bin/env bash',
         'set -euo pipefail',
-        'if [ -n "${NATS_CONTEXT_PATH:-}" ]; then',
-        '  printf \'{"fetched":0,"filtered":0,"messages":[]}\\n\' > "${NATS_CONTEXT_PATH}"',
+        `if [ -n "${natsContextPathExpansion}" ]; then`,
+        `  printf '{"fetched":0,"filtered":0,"messages":[]}\\n' > "${natsContextPathVariable}"`,
         'fi',
         'exit 0',
         '',

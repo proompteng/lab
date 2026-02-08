@@ -356,7 +356,7 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
           lastAttemptAt: null,
           lastSuccessAt: null,
           lastError: null,
-        } satisfies LeaderElectionStatus,
+        } as LeaderElectionStatus,
       }
     }
     callbacks.onLeader()
@@ -385,7 +385,7 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
       lastAttemptAt: null,
       lastSuccessAt: null,
       lastError: null,
-    } satisfies LeaderElectionStatus,
+    } as LeaderElectionStatus,
     lastLease: null as V1Lease | null,
     kube: undefined as { api: CoordinationV1Api } | undefined,
     metrics: undefined as { changesCounter: Counter } | undefined,

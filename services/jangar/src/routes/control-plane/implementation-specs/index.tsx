@@ -1,17 +1,3 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import * as React from 'react'
-
-import {
-  deriveStatusCategory,
-  formatTimestamp,
-  getMetadataValue,
-  getResourceUpdatedAt,
-  readNestedValue,
-  StatusBadge,
-} from '@/components/agents-control-plane'
-import { DEFAULT_NAMESPACE, parseNamespaceSearch } from '@/components/agents-control-plane-search'
-import { Button } from '@proompteng/design/ui'
-import { Input } from '@proompteng/design/ui'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,8 +8,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '@proompteng/design/ui'
-import {
+  Button,
+  Input,
   Pagination,
   PaginationContent,
   PaginationEllipsis,
@@ -32,6 +18,17 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from '@proompteng/design/ui'
+import { createFileRoute, Link } from '@tanstack/react-router'
+import * as React from 'react'
+import {
+  deriveStatusCategory,
+  formatTimestamp,
+  getMetadataValue,
+  getResourceUpdatedAt,
+  readNestedValue,
+  StatusBadge,
+} from '@/components/agents-control-plane'
+import { DEFAULT_NAMESPACE, parseNamespaceSearch } from '@/components/agents-control-plane-search'
 import { deletePrimitiveResource, fetchPrimitiveList, type PrimitiveResource } from '@/data/agents-control-plane'
 
 const PAGE_SIZE = 20
@@ -144,6 +141,10 @@ function ImplementationSpecsListPage() {
     return sortedItems.slice(start, start + PAGE_SIZE)
   }, [page, sortedItems])
   const placeholderCount = Math.max(0, PAGE_SIZE - pagedItems.length)
+  const placeholderKeys = React.useMemo(
+    () => Array.from({ length: placeholderCount }, (_, index) => `placeholder-${index + 1}`),
+    [placeholderCount],
+  )
 
   const keyForResource = React.useCallback(
     (resource: PrimitiveResource) => {
@@ -191,9 +192,13 @@ function ImplementationSpecsListPage() {
     setSelectedKeys((prev) => {
       const next = new Set(prev)
       if (checked) {
-        pageKeys.forEach((key) => next.add(key))
+        pageKeys.forEach((key) => {
+          next.add(key)
+        })
       } else {
-        pageKeys.forEach((key) => next.delete(key))
+        pageKeys.forEach((key) => {
+          next.delete(key)
+        })
       }
       return next
     })
@@ -442,12 +447,8 @@ function ImplementationSpecsListPage() {
                   )
                 })}
                 {pagedItems.length > 0
-                  ? Array.from({ length: placeholderCount }).map((_, index) => (
-                      <tr
-                        key={`placeholder-${index}`}
-                        className="border-b last:border-b-0 pointer-events-none"
-                        aria-hidden
-                      >
+                  ? placeholderKeys.map((key) => (
+                      <tr key={key} className="border-b last:border-b-0 pointer-events-none" aria-hidden>
                         <td className="px-2 py-1.5">
                           <span className="opacity-0">-</span>
                         </td>
@@ -493,26 +494,33 @@ function ImplementationSpecsListPage() {
                     }}
                   />
                 </PaginationItem>
-                {pageItems.map((item, index) =>
-                  item === 'ellipsis' ? (
-                    <PaginationItem key={`ellipsis-${index}`}>
-                      <PaginationEllipsis />
-                    </PaginationItem>
-                  ) : (
-                    <PaginationItem key={item}>
-                      <PaginationLink
-                        href="#"
-                        isActive={item === page}
-                        onClick={(event) => {
-                          event.preventDefault()
-                          setPage(item)
-                        }}
-                      >
-                        {item}
-                      </PaginationLink>
-                    </PaginationItem>
-                  ),
-                )}
+                {(() => {
+                  let ellipsisIndex = 0
+                  return pageItems.map((item) => {
+                    if (item === 'ellipsis') {
+                      ellipsisIndex += 1
+                      return (
+                        <PaginationItem key={`ellipsis-${ellipsisIndex}`}>
+                          <PaginationEllipsis />
+                        </PaginationItem>
+                      )
+                    }
+                    return (
+                      <PaginationItem key={item}>
+                        <PaginationLink
+                          href="#"
+                          isActive={item === page}
+                          onClick={(event) => {
+                            event.preventDefault()
+                            setPage(item)
+                          }}
+                        >
+                          {item}
+                        </PaginationLink>
+                      </PaginationItem>
+                    )
+                  })
+                })()}
                 <PaginationItem>
                   <PaginationNext
                     href="#"

@@ -946,7 +946,7 @@ const submitAgentRunStep = async (
       ...(runtimeType === 'workflow'
         ? {
             workflow:
-              workflow && Object.prototype.hasOwnProperty.call(workflow, 'steps')
+              workflow && Object.hasOwn(workflow, 'steps')
                 ? workflow
                 : { ...(workflow ?? {}), steps: [{ name: 'main' }] },
           }

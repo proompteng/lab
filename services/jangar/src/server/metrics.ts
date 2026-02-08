@@ -1,3 +1,4 @@
+import { PrometheusExporter } from '@opentelemetry/exporter-prometheus'
 import {
   type Counter,
   DiagConsoleLogger,
@@ -14,7 +15,8 @@ import {
   SEMRESATTRS_SERVICE_NAME,
   SEMRESATTRS_SERVICE_NAMESPACE,
 } from '@proompteng/otel/semantic-conventions'
-import { PrometheusExporter } from '@opentelemetry/exporter-prometheus'
+
+type MeterReader = Parameters<MeterProvider['addMetricReader']>[0]
 
 type JangarMetrics = {
   sseConnections: Counter
@@ -312,7 +314,9 @@ const createMetricsState = (): MetricsState => {
         })
       : null
     if (prometheusExporter) {
-      meterProvider.addMetricReader(prometheusExporter)
+      // @opentelemetry/exporter-prometheus depends on upstream SDK metric types.
+      // We cast to the @proompteng/otel SDK MetricReader to keep runtime behavior while satisfying TS.
+      meterProvider.addMetricReader(prometheusExporter as unknown as MeterReader)
     }
     otelMetrics.setGlobalMeterProvider(meterProvider)
 
@@ -400,4 +404,9 @@ export const isPrometheusMetricsEnabled = () => Boolean(metricsState.prometheusE
 
 export const getPrometheusMetricsPath = () => metricsState.prometheusPath ?? '/metrics'
 
-export const getPrometheusMetricsRequestHandler = () => metricsState.prometheusExporter?.getMetricsRequestHandler()
+export const handlePrometheusMetricsRequest = (req: unknown, res: unknown) => {
+  const exporter = metricsState.prometheusExporter
+  if (!exporter) return
+  // The Prometheus exporter expects Node HTTP req/res objects.
+  exporter.getMetricsRequestHandler(req as never, res as never)
+}

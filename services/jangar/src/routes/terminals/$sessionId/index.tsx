@@ -1,8 +1,3 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import * as React from 'react'
-import { toast } from 'sonner'
-
-import { TerminalView } from '@/components/terminal-view'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,9 +8,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
+  Button,
+  Skeleton,
 } from '@proompteng/design/ui'
-import { Button } from '@proompteng/design/ui'
-import { Skeleton } from '@proompteng/design/ui'
+import { createFileRoute, Link } from '@tanstack/react-router'
+import * as React from 'react'
+import { toast } from 'sonner'
+import { TerminalView } from '@/components/terminal-view'
 
 export const Route = createFileRoute('/terminals/$sessionId/')({
   component: TerminalSessionPage,

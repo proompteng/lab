@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ReadyRouteImport } from './routes/ready'
 import { Route as MemoriesRouteImport } from './routes/memories'
 import { Route as McpRouteImport } from './routes/mcp'
 import { Route as HealthRouteImport } from './routes/health'
@@ -137,6 +138,11 @@ import { Route as ApiGithubPullsOwnerRepoNumberFilesRouteImport } from './routes
 import { Route as ApiGithubPullsOwnerRepoNumberChecksRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/checks'
 import { Route as ApiGithubPullsOwnerRepoNumberThreadsThreadIdResolveRouteImport } from './routes/api/github/pulls/$owner/$repo/$number/threads/$threadId/resolve'
 
+const ReadyRoute = ReadyRouteImport.update({
+  id: '/ready',
+  path: '/ready',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MemoriesRoute = MemoriesRouteImport.update({
   id: '/memories',
   path: '/memories',
@@ -833,6 +839,7 @@ export interface FileRoutesByFullPath {
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
+  '/ready': typeof ReadyRoute
   '/agents/$runId': typeof AgentsRunIdRoute
   '/agents/general': typeof AgentsGeneralRoute
   '/api/enrich': typeof ApiEnrichRoute
@@ -962,6 +969,7 @@ export interface FileRoutesByTo {
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
+  '/ready': typeof ReadyRoute
   '/agents/$runId': typeof AgentsRunIdRoute
   '/agents/general': typeof AgentsGeneralRoute
   '/api/enrich': typeof ApiEnrichRoute
@@ -1090,6 +1098,7 @@ export interface FileRoutesById {
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
+  '/ready': typeof ReadyRoute
   '/agents/$runId': typeof AgentsRunIdRoute
   '/agents/general': typeof AgentsGeneralRoute
   '/api/enrich': typeof ApiEnrichRoute
@@ -1221,6 +1230,7 @@ export interface FileRouteTypes {
     | '/health'
     | '/mcp'
     | '/memories'
+    | '/ready'
     | '/agents/$runId'
     | '/agents/general'
     | '/api/enrich'
@@ -1350,6 +1360,7 @@ export interface FileRouteTypes {
     | '/health'
     | '/mcp'
     | '/memories'
+    | '/ready'
     | '/agents/$runId'
     | '/agents/general'
     | '/api/enrich'
@@ -1477,6 +1488,7 @@ export interface FileRouteTypes {
     | '/health'
     | '/mcp'
     | '/memories'
+    | '/ready'
     | '/agents/$runId'
     | '/agents/general'
     | '/api/enrich'
@@ -1607,6 +1619,7 @@ export interface RootRouteChildren {
   HealthRoute: typeof HealthRoute
   McpRoute: typeof McpRoute
   MemoriesRoute: typeof MemoriesRoute
+  ReadyRoute: typeof ReadyRoute
   AgentsRunIdRoute: typeof AgentsRunIdRoute
   AgentsGeneralRoute: typeof AgentsGeneralRoute
   ApiEnrichRoute: typeof ApiEnrichRoute
@@ -1704,6 +1717,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/ready': {
+      id: '/ready'
+      path: '/ready'
+      fullPath: '/ready'
+      preLoaderRoute: typeof ReadyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/memories': {
       id: '/memories'
       path: '/memories'
@@ -2821,6 +2841,7 @@ const rootRouteChildren: RootRouteChildren = {
   HealthRoute: HealthRoute,
   McpRoute: McpRoute,
   MemoriesRoute: MemoriesRoute,
+  ReadyRoute: ReadyRoute,
   AgentsRunIdRoute: AgentsRunIdRoute,
   AgentsGeneralRoute: AgentsGeneralRoute,
   ApiEnrichRoute: ApiEnrichRoute,

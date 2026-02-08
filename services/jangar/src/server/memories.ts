@@ -2,9 +2,9 @@ import { Context, Effect, Layer, pipe } from 'effect'
 
 import {
   createPostgresMemoriesStore,
-  type MemoryRecord,
   type MemoriesStats,
   type MemoriesStatsInput,
+  type MemoryRecord,
   type PersistMemoryInput,
   type RetrieveMemoryInput,
 } from './memories-store'

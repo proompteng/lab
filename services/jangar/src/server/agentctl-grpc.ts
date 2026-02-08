@@ -34,6 +34,14 @@ type UnaryCall<Request> = ServerUnaryCall<Request, unknown>
 type ReadableCall<Request> = grpc.ServerReadableStream<Request, unknown>
 type WritableCall<Request> = grpc.ServerWritableStream<Request, unknown>
 
+const buildServiceError = (code: grpc.status, message: string): grpc.ServiceError => {
+  const error = new Error(message) as grpc.ServiceError
+  error.code = code
+  error.details = message
+  error.metadata = new grpc.Metadata()
+  return error
+}
+
 type ListRequest = { namespace?: string; label_selector?: string; phase?: string; runtime?: string }
 type NameRequest = { namespace?: string; name?: string }
 type ApplyRequest = { namespace?: string; manifest_yaml?: string }
@@ -145,10 +153,7 @@ const requireAuth = (call: UnaryCall<unknown> | ReadableCall<unknown> | Writable
   if (!expected) return null
   const provided = resolveAuthToken(call.metadata)
   if (!provided || provided !== expected) {
-    return {
-      code: GrpcStatus.UNAUTHENTICATED,
-      message: 'invalid or missing agentctl token',
-    }
+    return buildServiceError(GrpcStatus.UNAUTHENTICATED, 'invalid or missing agentctl token')
   }
   return null
 }
@@ -159,17 +164,14 @@ const handleUnaryError = (callback: UnaryCallback, error: unknown) => {
     return
   }
   const message = error instanceof Error ? error.message : String(error)
-  callback({ code: GrpcStatus.INTERNAL, message }, null)
+  callback(buildServiceError(GrpcStatus.INTERNAL, message), null)
 }
 
 const requireLeaderForMutation = (): grpc.ServiceError | null => {
   const leaderElection = getLeaderElectionStatus()
   if (!leaderElection.enabled || !leaderElection.required) return null
   if (leaderElection.isLeader) return null
-  return {
-    code: GrpcStatus.UNAVAILABLE,
-    message: 'Not leader; retry on the elected controller replica.',
-  } satisfies grpc.ServiceError
+  return buildServiceError(GrpcStatus.UNAVAILABLE, 'Not leader; retry on the elected controller replica.')
 }
 
 const createListHandler =

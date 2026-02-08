@@ -1,7 +1,3 @@
-import { Link, useRouterState } from '@tanstack/react-router'
-import * as React from 'react'
-
-import { AppSidebar } from '@/components/app-sidebar'
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -9,10 +5,14 @@ import {
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
+  ScrollArea,
+  SidebarProvider,
+  SidebarTrigger,
+  Toaster,
 } from '@proompteng/design/ui'
-import { ScrollArea } from '@proompteng/design/ui'
-import { SidebarProvider, SidebarTrigger } from '@proompteng/design/ui'
-import { Toaster } from '@proompteng/design/ui'
+import { Link, useRouterState } from '@tanstack/react-router'
+import * as React from 'react'
+import { AppSidebar } from '@/components/app-sidebar'
 
 export function AppShell({ mainId, children }: { mainId: string; children: React.ReactNode }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })

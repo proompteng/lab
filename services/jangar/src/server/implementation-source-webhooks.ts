@@ -771,7 +771,7 @@ const buildWebhookStatus = (
 
 const computeWebhookRetryDelayMs = (settings: WebhookRetrySettings, attempt: number) => {
   if (settings.baseDelayMs <= 0) return 0
-  const delay = settings.baseDelayMs * Math.pow(2, Math.max(0, attempt - 1))
+  const delay = settings.baseDelayMs * 2 ** Math.max(0, attempt - 1)
   return Math.min(delay, settings.maxDelayMs)
 }
 

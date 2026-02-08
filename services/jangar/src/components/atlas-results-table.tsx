@@ -1,7 +1,6 @@
+import { buttonVariants } from '@proompteng/design/ui'
 import { Link } from '@tanstack/react-router'
 import type * as React from 'react'
-
-import { buttonVariants } from '@proompteng/design/ui'
 import type { AtlasFileItem } from '@/data/atlas'
 import { cn } from '@/lib/utils'
 

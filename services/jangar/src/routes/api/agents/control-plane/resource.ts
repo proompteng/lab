@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-
+import { createControlPlaneCacheStore } from '~/server/control-plane-cache-store'
 import { resolvePrimitiveKind } from '~/server/primitives-control-plane'
 import {
   asRecord,
@@ -13,7 +13,6 @@ import {
 import { createKubernetesClient } from '~/server/primitives-kube'
 import { createPrimitivesStore } from '~/server/primitives-store'
 import { createKubectlWatchStream } from '~/server/primitives-watch'
-import { createControlPlaneCacheStore } from '~/server/control-plane-cache-store'
 
 export const Route = createFileRoute('/api/agents/control-plane/resource')({
   server: {

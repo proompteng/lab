@@ -16,7 +16,7 @@ describe('namespace scope', () => {
   it('throws when wildcard namespaces are used without cluster RBAC', () => {
     delete process.env.JANGAR_RBAC_CLUSTER_SCOPED
     expect(() => assertClusterScopedForWildcard(['*'], 'agents controller')).toThrow(
-      '[jangar] agents controller namespaces \'*\' require rbac.clusterScoped=true',
+      "[jangar] agents controller namespaces '*' require rbac.clusterScoped=true",
     )
   })
 
