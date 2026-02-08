@@ -54,24 +54,6 @@ const log = (message: string) => {
   console.log(`[${stamp}] ${message}`)
 }
 
-const isTransientKubectlError = (text: string) =>
-  /unable to connect to the server|connection reset by peer|context deadline exceeded|i\/o timeout|tls handshake timeout|eof/i.test(
-    text.toLowerCase(),
-  )
-
-const waitForKubectlReady = async (timeoutMs: number) => {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    const result = await execCapture(['kubectl', 'get', 'nodes', '--request-timeout=10s'])
-    if (result.exitCode === 0) return
-    if (!isTransientKubectlError(`${result.stdout}\n${result.stderr}`)) {
-      fatal('kubectl is not functional against the current cluster context.', `${result.stdout}\n${result.stderr}`)
-    }
-    await sleep(1000)
-  }
-  fatal(`Timed out waiting for kubectl to reach the API server (${timeoutMs}ms).`)
-}
-
 const execCapture = async (cmd: string[], env?: Record<string, string | undefined>) => {
   const subprocess = Bun.spawn(cmd, {
     stdin: 'pipe',
@@ -230,10 +212,6 @@ const getWorkflowSteps = async (namespace: string, name: string): Promise<number
 const main = async () => {
   ensureCli('kubectl')
   ensureCli('helm')
-
-  // kind-action "wait" can still return before kubectl is fully stable; guard against transient API resets.
-  const kubeReadyTimeoutMs = parseDurationMs(process.env.AGENTS_KUBE_READY_TIMEOUT, 5 * 60 * 1000)
-  await waitForKubectlReady(kubeReadyTimeoutMs)
 
   const namespace = process.env.AGENTS_NAMESPACE ?? 'agents'
   const releaseName = process.env.AGENTS_RELEASE_NAME ?? 'agents'

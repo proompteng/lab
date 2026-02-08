@@ -147,10 +147,10 @@ jobs:
           KIND_CLUSTER_NAME: agents-ci-${{ github.run_id }}
         run: |
           set -euo pipefail
-          kind create cluster --name "${KIND_CLUSTER_NAME}" --image kindest/node:v1.29.4 --wait 180s
           export KUBECONFIG="${RUNNER_TEMP}/kubeconfig"
-          kind get kubeconfig --name "${KIND_CLUSTER_NAME}" > "${KUBECONFIG}"
+          kind create cluster --name "${KIND_CLUSTER_NAME}" --image kindest/node:v1.29.4 --wait 180s --kubeconfig "${KUBECONFIG}"
           echo "KUBECONFIG=${KUBECONFIG}" >> "${GITHUB_ENV}"
+          kubectl --request-timeout=10s get nodes -o wide
 
       - name: Run agents integration smoke test
         env:
