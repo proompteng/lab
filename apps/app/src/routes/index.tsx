@@ -1,6 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { Activity, ShieldCheck, Boxes, Eye, Network, Sparkles } from 'lucide-react'
 
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@proompteng/design/ui'
+
 export const Route = createFileRoute('/')({ component: App })
 
 const sections = [
@@ -38,27 +40,33 @@ const sections = [
 
 function App() {
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
-      <section className="mx-auto flex flex-col gap-6 px-6 py-16 max-w-5xl">
+    <div className="min-h-screen bg-background text-foreground">
+      <section className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-12 sm:py-16">
         <div className="space-y-3">
-          <p className="text-xs uppercase tracking-[0.3em] text-slate-400">control plane</p>
-          <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">proompteng app</h1>
-          <p className="max-w-2xl text-sm text-slate-300 sm:text-base">
-            This is the control plane UI shell. Wire it up to your backend services and data sources to get a live view
-            of agents, policies, and runs.
+          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-muted-foreground">control plane</p>
+          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">proompteng app</h1>
+          <p className="max-w-2xl text-sm text-muted-foreground sm:text-base">
+            Control plane UI shell. Wire it up to backend services and data sources to get a live view of agents,
+            policies, and runs.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {sections.map(({ icon: Icon, title, description }) => (
-            <div
-              key={title}
-              className="rounded-2xl border p-5 transition border-slate-800 bg-slate-900/60 hover:border-slate-700"
-            >
-              <Icon className="mb-3 size-6 text-cyan-300" />
-              <h2 className="text-lg font-semibold">{title}</h2>
-              <p className="mt-2 text-sm text-slate-300">{description}</p>
-            </div>
+            <Card key={title} className="group transition hover:ring-ring/30">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex size-9 items-center justify-center rounded-md border bg-muted text-muted-foreground group-hover:text-foreground">
+                    <Icon className="size-4" />
+                  </span>
+                  <div>
+                    <CardTitle>{title}</CardTitle>
+                    <CardDescription>{description}</CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="text-xs text-muted-foreground">Coming soon.</CardContent>
+            </Card>
           ))}
         </div>
       </section>

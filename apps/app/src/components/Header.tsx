@@ -1,158 +1,117 @@
 import { Link } from '@tanstack/react-router'
 
-import { useState } from 'react'
-import { ChevronDown, ChevronRight, Home, Menu, Network, SquareFunction, StickyNote, X } from 'lucide-react'
+import { Home, Menu, Network, SquareFunction, StickyNote } from 'lucide-react'
 
-export default function Header() {
-  const [isOpen, setIsOpen] = useState(false)
-  const [groupedExpanded, setGroupedExpanded] = useState<Record<string, boolean>>({})
+import {
+  Avatar,
+  AvatarFallback,
+  Button,
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@proompteng/design/ui'
 
+import type { SessionUser } from '../server/auth/types'
+
+type HeaderProps = {
+  user: SessionUser | null
+}
+
+export default function Header({ user }: HeaderProps) {
   return (
-    <>
-      <header className="flex items-center p-4 bg-gray-800 text-white shadow-lg">
-        <button
-          onClick={() => setIsOpen(true)}
-          className="rounded-lg p-2 transition-colors hover:bg-gray-700"
-          aria-label="Open menu"
-        >
-          <Menu size={24} />
-        </button>
-        <h1 className="ml-4 text-xl font-semibold">
-          <Link to="/" className="flex items-center gap-3">
-            <span className="rounded-md px-2 py-1 text-xs uppercase tracking-[0.2em] bg-cyan-500/20 text-cyan-200">
+    <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur supports-backdrop-filter:bg-background/75">
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <Sheet>
+            <SheetTrigger render={<Button variant="ghost" size="icon" aria-label="Open navigation" />}>
+              <Menu className="size-4" />
+            </SheetTrigger>
+            <SheetContent side="left" className="p-0">
+              <SheetHeader className="border-b px-6 py-5">
+                <SheetTitle>Navigation</SheetTitle>
+              </SheetHeader>
+              <nav className="flex flex-col gap-1 px-3 py-3">
+                <Link
+                  to="/"
+                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                  activeProps={{
+                    className:
+                      'flex items-center gap-2 rounded-md px-3 py-2 text-sm bg-muted text-foreground transition',
+                  }}
+                >
+                  <Home className="size-4" />
+                  Home
+                </Link>
+                <div className="px-3 pt-3 text-[0.65rem] font-semibold uppercase tracking-[0.28em] text-muted-foreground">
+                  Demos
+                </div>
+                <Link
+                  to="/demo/start/server-funcs"
+                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                  activeProps={{
+                    className:
+                      'flex items-center gap-2 rounded-md px-3 py-2 text-sm bg-muted text-foreground transition',
+                  }}
+                >
+                  <SquareFunction className="size-4" />
+                  Server functions
+                </Link>
+                <Link
+                  to="/demo/start/api-request"
+                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                  activeProps={{
+                    className:
+                      'flex items-center gap-2 rounded-md px-3 py-2 text-sm bg-muted text-foreground transition',
+                  }}
+                >
+                  <Network className="size-4" />
+                  API request
+                </Link>
+                <Link
+                  to="/demo/start/ssr"
+                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                  activeProps={{
+                    className:
+                      'flex items-center gap-2 rounded-md px-3 py-2 text-sm bg-muted text-foreground transition',
+                  }}
+                >
+                  <StickyNote className="size-4" />
+                  SSR demos
+                </Link>
+              </nav>
+            </SheetContent>
+          </Sheet>
+
+          <Link to="/" className="flex items-center gap-2 text-sm font-semibold tracking-tight">
+            <span className="rounded-md border bg-muted px-2 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.28em] text-muted-foreground">
               app
             </span>
-            <span>proompteng</span>
+            proompteng
           </Link>
-        </h1>
-      </header>
-
-      <aside
-        className={`fixed top-0 left-0 h-full w-80 bg-gray-900 text-white shadow-2xl z-50 transform transition-transform duration-300 ease-in-out flex flex-col ${
-          isOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
-      >
-        <div className="flex items-center justify-between p-4 border-b border-gray-700">
-          <h2 className="text-xl font-bold">Navigation</h2>
-          <button
-            onClick={() => setIsOpen(false)}
-            className="p-2 hover:bg-gray-800 rounded-lg transition-colors"
-            aria-label="Close menu"
-          >
-            <X size={24} />
-          </button>
         </div>
 
-        <nav className="flex-1 p-4 overflow-y-auto">
-          <Link
-            to="/"
-            onClick={() => setIsOpen(false)}
-            className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-800 transition-colors mb-2"
-            activeProps={{
-              className: 'flex items-center gap-3 p-3 rounded-lg bg-cyan-600 hover:bg-cyan-700 transition-colors mb-2',
-            }}
-          >
-            <Home size={20} />
-            <span className="font-medium">Home</span>
-          </Link>
-
-          {/* Demo Links Start */}
-
-          <Link
-            to="/demo/start/server-funcs"
-            onClick={() => setIsOpen(false)}
-            className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-800 transition-colors mb-2"
-            activeProps={{
-              className: 'flex items-center gap-3 p-3 rounded-lg bg-cyan-600 hover:bg-cyan-700 transition-colors mb-2',
-            }}
-          >
-            <SquareFunction size={20} />
-            <span className="font-medium">Start - Server Functions</span>
-          </Link>
-
-          <Link
-            to="/demo/start/api-request"
-            onClick={() => setIsOpen(false)}
-            className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-800 transition-colors mb-2"
-            activeProps={{
-              className: 'flex items-center gap-3 p-3 rounded-lg bg-cyan-600 hover:bg-cyan-700 transition-colors mb-2',
-            }}
-          >
-            <Network size={20} />
-            <span className="font-medium">Start - API Request</span>
-          </Link>
-
-          <div className="flex flex-row justify-between">
-            <Link
-              to="/demo/start/ssr"
-              onClick={() => setIsOpen(false)}
-              className="flex-1 flex items-center gap-3 p-3 rounded-lg hover:bg-gray-800 transition-colors mb-2"
-              activeProps={{
-                className:
-                  'flex-1 flex items-center gap-3 p-3 rounded-lg bg-cyan-600 hover:bg-cyan-700 transition-colors mb-2',
-              }}
-            >
-              <StickyNote size={20} />
-              <span className="font-medium">Start - SSR Demos</span>
-            </Link>
-            <button
-              className="p-2 hover:bg-gray-800 rounded-lg transition-colors"
-              onClick={() =>
-                setGroupedExpanded((prev) => ({
-                  ...prev,
-                  StartSSRDemo: !prev.StartSSRDemo,
-                }))
-              }
-            >
-              {groupedExpanded.StartSSRDemo ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
-            </button>
-          </div>
-          {groupedExpanded.StartSSRDemo && (
-            <div className="flex flex-col ml-4">
-              <Link
-                to="/demo/start/ssr/spa-mode"
-                onClick={() => setIsOpen(false)}
-                className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-800 transition-colors mb-2"
-                activeProps={{
-                  className:
-                    'flex items-center gap-3 p-3 rounded-lg bg-cyan-600 hover:bg-cyan-700 transition-colors mb-2',
-                }}
-              >
-                <StickyNote size={20} />
-                <span className="font-medium">SPA Mode</span>
-              </Link>
-
-              <Link
-                to="/demo/start/ssr/full-ssr"
-                onClick={() => setIsOpen(false)}
-                className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-800 transition-colors mb-2"
-                activeProps={{
-                  className:
-                    'flex items-center gap-3 p-3 rounded-lg bg-cyan-600 hover:bg-cyan-700 transition-colors mb-2',
-                }}
-              >
-                <StickyNote size={20} />
-                <span className="font-medium">Full SSR</span>
-              </Link>
-
-              <Link
-                to="/demo/start/ssr/data-only"
-                onClick={() => setIsOpen(false)}
-                className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-800 transition-colors mb-2"
-                activeProps={{
-                  className:
-                    'flex items-center gap-3 p-3 rounded-lg bg-cyan-600 hover:bg-cyan-700 transition-colors mb-2',
-                }}
-              >
-                <StickyNote size={20} />
-                <span className="font-medium">Data Only</span>
-              </Link>
-            </div>
+        <div className="flex items-center gap-2">
+          {user ? (
+            <>
+              <div className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
+                <Avatar className="size-7">
+                  <AvatarFallback>{(user.email ?? user.name ?? 'U').slice(0, 2).toUpperCase()}</AvatarFallback>
+                </Avatar>
+                <span className="max-w-[18ch] truncate">{user.email ?? user.name ?? user.sub}</span>
+              </div>
+              <Button variant="outline" asChild>
+                <a href="/auth/logout">Sign out</a>
+              </Button>
+            </>
+          ) : (
+            <Button asChild>
+              <a href="/login">Sign in</a>
+            </Button>
           )}
-
-          {/* Demo Links End */}
-        </nav>
-      </aside>
-    </>
+        </div>
+      </div>
+    </header>
   )
 }
