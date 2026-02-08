@@ -17,12 +17,11 @@ export const Route = createFileRoute('/ready')({
         const orchestrationController = getOrchestrationControllerHealth()
         const supportingController = getSupportingControllerHealth()
 
-        const leadershipOk = !leaderElection.enabled || !leaderElection.required || leaderElection.isLeader
         const controllersOk =
           isControllerHealthReady(agentsController) &&
           isControllerHealthReady(orchestrationController) &&
           isControllerHealthReady(supportingController)
-        const ready = leadershipOk && controllersOk
+        const ready = controllersOk
 
         const body = JSON.stringify({
           status: ready ? 'ok' : 'degraded',
@@ -36,9 +35,6 @@ export const Route = createFileRoute('/ready')({
         const headers: Record<string, string> = {
           'content-type': 'application/json',
           'content-length': Buffer.byteLength(body).toString(),
-        }
-        if (!leadershipOk) {
-          headers['retry-after'] = '5'
         }
 
         return new Response(body, {

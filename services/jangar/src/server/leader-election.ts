@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { spawn } from 'node:child_process'
 
-import { CoordinationV1Api, KubeConfig, type V1Lease } from '@kubernetes/client-node'
+import { type V1Lease } from '@kubernetes/client-node'
 import { type Counter, metrics as otelMetrics } from '@proompteng/otel/api'
 
 export type LeaderElectionConfig = {
@@ -50,9 +51,6 @@ const globalState = globalThis as typeof globalThis & {
     config: LeaderElectionConfig
     status: LeaderElectionStatus
     lastLease?: V1Lease | null
-    kube?: {
-      api: CoordinationV1Api
-    }
     metrics?: {
       changesCounter: Counter
     }
@@ -60,6 +58,7 @@ const globalState = globalThis as typeof globalThis & {
 }
 
 const nowIso = () => new Date().toISOString()
+const toMicroTime = (date: Date) => date.toISOString().replace(/\.(\d{3})Z$/, '.$1000Z')
 
 const parseBooleanEnv = (value: string | undefined, fallback: boolean) => {
   if (!value) return fallback
@@ -162,15 +161,81 @@ const ensureMetrics = () => {
   state.metrics = { changesCounter }
 }
 
-const ensureKube = () => {
-  const state = globalState.__jangarLeaderElection
-  if (!state) return
-  if (state.kube) return
+type CommandResult = {
+  stdout: string
+  stderr: string
+  exitCode: number | null
+}
 
-  const kubeConfig = new KubeConfig()
-  kubeConfig.loadFromDefault()
-  const api = kubeConfig.makeApiClient(CoordinationV1Api)
-  state.kube = { api }
+const runCommand = (command: string, args: string[], input?: string): Promise<CommandResult> =>
+  new Promise((resolve) => {
+    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+    child.on('close', (code) => resolve({ stdout, stderr, exitCode: code }))
+    if (input) {
+      child.stdin.write(input)
+    }
+    child.stdin.end()
+  })
+
+const kubectl = async (args: string[], input?: string, context?: string) => {
+  const result = await runCommand('kubectl', args, input)
+  if (result.exitCode === 0) {
+    return result.stdout.trim()
+  }
+  const details = result.stderr.trim() || result.stdout.trim()
+  throw new Error(`${context ?? 'kubectl'} failed: ${details || `exit ${result.exitCode}`}`)
+}
+
+const parseJson = <T>(raw: string, context: string): T => {
+  try {
+    return JSON.parse(raw) as T
+  } catch (error) {
+    throw new Error(`${context} returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+type KubectlErrorKind = 'notFound' | 'alreadyExists' | 'conflict' | 'unknown'
+
+const classifyKubectlError = (error: unknown): KubectlErrorKind => {
+  const message = error instanceof Error ? error.message : String(error)
+  if (message.includes('(NotFound)') || message.toLowerCase().includes('notfound')) return 'notFound'
+  if (message.includes('(AlreadyExists)') || message.toLowerCase().includes('alreadyexists')) return 'alreadyExists'
+  if (message.includes('(Conflict)') || message.toLowerCase().includes('conflict')) return 'conflict'
+  if (message.toLowerCase().includes('the object has been modified')) return 'conflict'
+  return 'unknown'
+}
+
+const getLease = async (namespace: string, name: string): Promise<V1Lease> => {
+  const output = await kubectl(['get', 'lease', name, '-n', namespace, '-o', 'json'], undefined, 'kubectl get lease')
+  return parseJson<V1Lease>(output, 'kubectl get lease')
+}
+
+const createLease = async (namespace: string, lease: V1Lease): Promise<V1Lease> => {
+  const output = await kubectl(
+    ['create', '-f', '-', '-n', namespace, '-o', 'json'],
+    JSON.stringify(lease),
+    'kubectl create lease',
+  )
+  return parseJson<V1Lease>(output, 'kubectl create lease')
+}
+
+const replaceLease = async (namespace: string, lease: V1Lease): Promise<V1Lease> => {
+  const output = await kubectl(
+    ['replace', '-f', '-', '-n', namespace, '-o', 'json'],
+    JSON.stringify(lease),
+    'kubectl replace lease',
+  )
+  return parseJson<V1Lease>(output, 'kubectl replace lease')
 }
 
 const parseLeaseTime = (value: unknown): number | null => {
@@ -202,8 +267,8 @@ const buildNewLease = (config: LeaderElectionConfig, identity: string, namespace
   spec: {
     holderIdentity: identity,
     leaseDurationSeconds: config.leaseDurationSeconds,
-    acquireTime: new Date(),
-    renewTime: new Date(),
+    acquireTime: toMicroTime(new Date()),
+    renewTime: toMicroTime(new Date()),
     leaseTransitions: 0,
   },
 })
@@ -224,8 +289,8 @@ const updateLeaseForAcquireOrRenew = (current: V1Lease, config: LeaderElectionCo
       ...(current.spec ?? {}),
       holderIdentity: identity,
       leaseDurationSeconds: config.leaseDurationSeconds,
-      renewTime: now,
-      acquireTime: current.spec?.acquireTime ?? now,
+      renewTime: toMicroTime(now),
+      acquireTime: current.spec?.acquireTime ?? toMicroTime(now),
       leaseTransitions: nextTransitions,
     },
   } satisfies V1Lease
@@ -237,27 +302,11 @@ const clearLeaseHolder = (current: V1Lease, config: LeaderElectionConfig, now: D
     ...(current.spec ?? {}),
     holderIdentity: '',
     leaseDurationSeconds: config.leaseDurationSeconds,
-    renewTime: now,
+    renewTime: toMicroTime(now),
   },
 })
 
-const formatKubeError = (error: unknown) => {
-  if (!(error instanceof Error)) return String(error)
-  const anyError = error as Error & { body?: unknown; statusCode?: number; response?: { statusCode?: number } }
-  const status =
-    anyError.statusCode ??
-    (typeof anyError.response?.statusCode === 'number' ? anyError.response.statusCode : undefined)
-  if (status) return `${anyError.message} (status=${status})`
-  return anyError.message
-}
-
-const getKubeStatusCode = (error: unknown): number | null => {
-  if (!(error instanceof Error)) return null
-  const anyError = error as Error & { statusCode?: number; response?: { statusCode?: number } }
-  if (typeof anyError.statusCode === 'number') return anyError.statusCode
-  if (typeof anyError.response?.statusCode === 'number') return anyError.response.statusCode
-  return null
-}
+const formatKubeError = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 const setLeaderStatus = (isLeader: boolean, error?: string | null) => {
   const state = globalState.__jangarLeaderElection
@@ -393,7 +442,6 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
   }
   globalState.__jangarLeaderElection = state
   ensureMetrics()
-  ensureKube()
 
   let stopped = false
   let lastSuccessMs = 0
@@ -414,26 +462,21 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
     state.status.lastAttemptAt = now.toISOString()
 
     try {
-      const api = state.kube?.api
-      if (!api) {
-        throw new Error('kubernetes client not initialized')
-      }
-
       let lease: V1Lease | null = null
       try {
-        lease = await api.readNamespacedLease({ name: state.config.leaseName, namespace: leaseNamespace })
+        lease = await getLease(leaseNamespace, state.config.leaseName)
       } catch (error) {
-        const status = getKubeStatusCode(error)
-        if (status === 404) {
+        const kind = classifyKubectlError(error)
+        if (kind === 'notFound') {
           try {
-            lease = await api.createNamespacedLease({
-              namespace: leaseNamespace,
-              body: buildNewLease(state.config, identity, leaseNamespace, state.config.leaseName),
-            })
+            lease = await createLease(
+              leaseNamespace,
+              buildNewLease(state.config, identity, leaseNamespace, state.config.leaseName),
+            )
           } catch (createError) {
-            const createStatus = getKubeStatusCode(createError)
-            if (createStatus === 409) {
-              lease = await api.readNamespacedLease({ name: state.config.leaseName, namespace: leaseNamespace })
+            const createKind = classifyKubectlError(createError)
+            if (createKind === 'alreadyExists') {
+              lease = await getLease(leaseNamespace, state.config.leaseName)
             } else {
               throw createError
             }
@@ -457,12 +500,8 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
           setLeaderStatus(false, null)
         } else {
           const updated = updateLeaseForAcquireOrRenew(lease, state.config, identity, now)
-          // Ensure optimistic concurrency: replace will fail with 409 on resourceVersion mismatch.
-          const replaced = await api.replaceNamespacedLease({
-            name: state.config.leaseName,
-            namespace: leaseNamespace,
-            body: updated,
-          })
+          // Ensure optimistic concurrency: replace will fail on resourceVersion mismatch.
+          const replaced = await replaceLease(leaseNamespace, updated)
           state.lastLease = replaced
           lastSuccessMs = nowMs
           state.status.lastSuccessAt = now.toISOString()
@@ -470,10 +509,9 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
         }
       }
     } catch (error) {
-      const status = getKubeStatusCode(error)
       const message = formatKubeError(error)
       // Conflicts are expected under contention; treat as follower and retry.
-      if (status === 409) {
+      if (classifyKubectlError(error) === 'conflict') {
         setLeaderStatus(false, null)
       } else {
         setLeaderStatus(false, message)
@@ -504,12 +542,9 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
 
     // Best-effort release: clear holderIdentity so another replica can take leadership sooner.
     // This must run even during shutdown after `stop()` / `setLeaderStatus(false, ...)`.
-    const api = snapshot.kube?.api
-    if (!api) return
-
     let lease: V1Lease
     try {
-      lease = await api.readNamespacedLease({ name: snapshot.config.leaseName, namespace: leaseNamespace })
+      lease = await getLease(leaseNamespace, snapshot.config.leaseName)
     } catch {
       return
     }
@@ -519,11 +554,7 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
 
     const released = clearLeaseHolder(lease, snapshot.config, new Date())
     try {
-      await api.replaceNamespacedLease({
-        name: snapshot.config.leaseName,
-        namespace: leaseNamespace,
-        body: released,
-      })
+      await replaceLease(leaseNamespace, released)
     } catch {
       // Best-effort only.
     }
