@@ -73,6 +73,11 @@ kind create cluster --name "${CLUSTER_NAME}" --image kindest/node:v1.29.4 --wait
 export KUBECONFIG="${KUBECONFIG_PATH}"
 kubectl get nodes -o wide
 
+if [ -n "${AGENTS_KIND_LOAD_IMAGE:-}" ]; then
+  echo "[local-agents-ci] kind load docker image: ${AGENTS_KIND_LOAD_IMAGE}"
+  kind load docker-image "${AGENTS_KIND_LOAD_IMAGE}" --name "${CLUSTER_NAME}"
+fi
+
 echo "[local-agents-ci] run smoke"
 (cd "${ROOT_DIR}" && \
   AGENTS_NAMESPACE="${NAMESPACE}" \
@@ -85,4 +90,3 @@ echo "[local-agents-ci] run smoke"
   bun run packages/scripts/src/agents/smoke-agents.ts)
 
 echo "[local-agents-ci] success"
-
