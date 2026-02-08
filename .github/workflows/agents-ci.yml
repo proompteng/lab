@@ -159,13 +159,29 @@ jobs:
             local timeout_s="$1"
             shift
 
+            # Prefer coreutils `timeout` when present, but ensure we can actually kill stuck processes.
+            # Fall back to a manual implementation when `timeout -k` isn't supported.
             if command -v timeout >/dev/null 2>&1; then
-              timeout "${timeout_s}s" "$@"
-              return $?
+              set +e
+              timeout -k 10s "${timeout_s}s" "$@"
+              local rc="$?"
+              set -e
+              if [ "${rc}" -ne 125 ]; then
+                return "${rc}"
+              fi
             fi
 
-            "$@" &
-            local pid="$!"
+            local kill_target=""
+            if command -v setsid >/dev/null 2>&1; then
+              # Run in a new session so we can kill the whole process group on timeout.
+              setsid "$@" &
+              local pid="$!"
+              kill_target="-$pid"
+            else
+              "$@" &
+              local pid="$!"
+              kill_target="${pid}"
+            fi
             local start
             start="$(date +%s)"
             while kill -0 "${pid}" >/dev/null 2>&1; do
@@ -173,9 +189,9 @@ jobs:
               now="$(date +%s)"
               if [ $((now - start)) -ge "${timeout_s}" ]; then
                 echo "Command timed out after ${timeout_s}s: $*" >&2
-                kill -TERM "${pid}" >/dev/null 2>&1 || true
+                kill -TERM "${kill_target}" >/dev/null 2>&1 || true
                 sleep 5
-                kill -KILL "${pid}" >/dev/null 2>&1 || true
+                kill -KILL "${kill_target}" >/dev/null 2>&1 || true
                 wait "${pid}" >/dev/null 2>&1 || true
                 return 124
               fi
@@ -190,9 +206,6 @@ jobs:
             exit 1
           fi
           docker version
-
-          # Pull the node image explicitly so we get clear logs/timeouts if registry access is slow/flaky.
-          with_timeout 900 docker pull kindest/node:v1.29.4
 
           with_timeout 900 kind create cluster --name "${KIND_CLUSTER_NAME}" --image kindest/node:v1.29.4 --wait 180s --kubeconfig "${KUBECONFIG}"
           echo "KUBECONFIG=${KUBECONFIG}" >> "${GITHUB_ENV}"
