@@ -9,8 +9,10 @@ HELM_KUBE_VERSION="${HELM_KUBE_VERSION:-1.27.0}"
 run_with_helm3() {
   # kustomize --enable-helm is not compatible with Helm v4 yet; prefer Helm v3 via mise when available.
   if command -v mise >/dev/null 2>&1; then
-    mise exec helm@3 -- "$@"
-    return 0
+    if mise exec helm@3 -- "$@"; then
+      return 0
+    fi
+    echo "mise exec helm@3 failed; falling back to system helm" >&2
   fi
   "$@"
 }

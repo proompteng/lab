@@ -34,6 +34,7 @@ export const Route = createFileRoute('/v1/agent-runs')({
 type AgentRunPayload = {
   agentRef: { name: string }
   namespace: string
+  idempotencyKey?: string
   implementationSpecRef?: { name: string }
   implementation?: Record<string, unknown>
   runtime: { type: string; config?: Record<string, unknown> }
@@ -96,6 +97,8 @@ const parseBooleanEnv = (value: string | undefined, fallback: boolean) => {
 }
 
 const isVcsProvidersEnabled = () => parseBooleanEnv(process.env.JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED, true)
+const isAgentRunIdempotencyEnabled = () => parseBooleanEnv(process.env.JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED, true)
+const DEFAULT_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS = 10 * 60
 
 const DEFAULT_CONCURRENCY = {
   perNamespace: 10,
@@ -129,6 +132,30 @@ const parseNumberEnv = (value: string | undefined, fallback: number, min = 0) =>
   const parsed = Number.parseInt(value, 10)
   if (!Number.isFinite(parsed) || parsed < min) return fallback
   return parsed
+}
+
+const parseTimestampMs = (value: unknown): number | null => {
+  if (value instanceof Date) {
+    const ms = value.getTime()
+    return Number.isFinite(ms) ? ms : null
+  }
+  if (typeof value === 'string') {
+    const ms = Date.parse(value)
+    return Number.isNaN(ms) ? null : ms
+  }
+  return null
+}
+
+const isIdempotencyReservationStale = (createdAt: unknown) => {
+  const ttlSeconds = parseNumberEnv(
+    process.env.JANGAR_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS,
+    DEFAULT_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS,
+    0,
+  )
+  if (ttlSeconds <= 0) return false
+  const createdAtMs = parseTimestampMs(createdAt)
+  if (createdAtMs == null) return false
+  return Date.now() - createdAtMs >= ttlSeconds * 1000
 }
 
 const parseAdmissionNamespaces = (namespace: string) => {
@@ -283,6 +310,7 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
   const name = asString(agentRef?.name)
   if (!name) throw new Error('agentRef.name is required')
   const namespace = normalizeNamespace(asString(payload.namespace))
+  const idempotencyKey = asString(payload.idempotencyKey) ?? undefined
 
   const implementationSpecRef = asRecord(payload.implementationSpecRef)
   const implementationSpecName = asString(implementationSpecRef?.name)
@@ -333,6 +361,7 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
   return {
     agentRef: { name },
     namespace,
+    idempotencyKey,
     implementationSpecRef: implementationSpecName ? { name: implementationSpecName } : undefined,
     implementation: inline ?? undefined,
     runtime: { type: runtimeType, config: asRecord(runtime.config) ?? undefined },
@@ -351,6 +380,11 @@ const parseAgentRunPayload = (payload: Record<string, unknown>): AgentRunPayload
 type AdmissionDecision =
   | { ok: true }
   | { ok: false; status: number; message: string; details?: Record<string, unknown> }
+
+const isTerminalPhase = (value: string) => {
+  const phase = value.trim().toLowerCase()
+  return phase === 'succeeded' || phase === 'failed' || phase === 'cancelled'
+}
 
 const checkAdmissionRateLimits = (
   namespace: string,
@@ -539,6 +573,7 @@ export const postAgentRunsHandler = async (
     const deliveryId = requireIdempotencyKey(request)
     const payload = await parseJsonBody(request)
     const parsed = parseAgentRunPayload(payload)
+    const runIdempotencyKey = parsed.idempotencyKey ?? deliveryId
 
     await store.ready
     const existing = await store.getAgentRunByDeliveryId(deliveryId)
@@ -552,6 +587,40 @@ export const postAgentRunsHandler = async (
         ? await kube.get(RESOURCE_MAP.AgentRun, existing.externalRunId, resourceNamespace)
         : null
       return okResponse({ ok: true, agentRun: existing, resource, idempotent: true })
+    }
+
+    if (isAgentRunIdempotencyEnabled()) {
+      const scope = await store.getAgentRunIdempotencyKey({
+        namespace: parsed.namespace,
+        agentName: parsed.agentRef.name,
+        idempotencyKey: runIdempotencyKey,
+      })
+
+      if (scope?.agentRunName) {
+        const kube = deps.kubeClient ?? createKubernetesClient()
+        const resource = await kube.get(RESOURCE_MAP.AgentRun, scope.agentRunName, parsed.namespace)
+        const phase = asString(readNested(resource, ['status', 'phase'])) ?? 'Pending'
+
+        if (resource && !isTerminalPhase(phase)) {
+          return errorResponse('AgentRun already exists for idempotency key', 409, {
+            namespace: parsed.namespace,
+            agentName: parsed.agentRef.name,
+            idempotencyKey: runIdempotencyKey,
+            existingAgentRunName: scope.agentRunName,
+            phase,
+          })
+        }
+
+        return okResponse({
+          ok: true,
+          idempotent: true,
+          namespace: parsed.namespace,
+          agentName: parsed.agentRef.name,
+          idempotencyKey: runIdempotencyKey,
+          existingAgentRunName: scope.agentRunName,
+          resource,
+        })
+      }
     }
 
     const kube = deps.kubeClient ?? createKubernetesClient()
@@ -673,6 +742,83 @@ export const postAgentRunsHandler = async (
       return errorResponse(admission.message, admission.status, admission.details)
     }
 
+    let idempotencyReservation: {
+      created: boolean
+      agentRunName: string | null
+      idempotencyKey: string
+      agentName: string
+      namespace: string
+    } | null = null
+
+    if (isAgentRunIdempotencyEnabled()) {
+      let reservation = await store.reserveAgentRunIdempotencyKey({
+        namespace: parsed.namespace,
+        agentName: parsed.agentRef.name,
+        idempotencyKey: runIdempotencyKey,
+      })
+
+      if (
+        !reservation.created &&
+        !reservation.record.agentRunName &&
+        isIdempotencyReservationStale(reservation.record.createdAt)
+      ) {
+        try {
+          await store.deleteAgentRunIdempotencyKey({
+            namespace: parsed.namespace,
+            agentName: parsed.agentRef.name,
+            idempotencyKey: runIdempotencyKey,
+          })
+        } catch {
+          // ignore: if we fail to reclaim, treat as in-progress.
+        }
+        reservation = await store.reserveAgentRunIdempotencyKey({
+          namespace: parsed.namespace,
+          agentName: parsed.agentRef.name,
+          idempotencyKey: runIdempotencyKey,
+        })
+      }
+
+      if (!reservation.created) {
+        const scope = reservation.record
+        if (scope.agentRunName) {
+          const resource = await kube.get(RESOURCE_MAP.AgentRun, scope.agentRunName, parsed.namespace)
+          const phase = asString(readNested(resource, ['status', 'phase'])) ?? 'Pending'
+          if (resource && !isTerminalPhase(phase)) {
+            return errorResponse('AgentRun already exists for idempotency key', 409, {
+              namespace: parsed.namespace,
+              agentName: parsed.agentRef.name,
+              idempotencyKey: runIdempotencyKey,
+              existingAgentRunName: scope.agentRunName,
+              phase,
+            })
+          }
+          return okResponse({
+            ok: true,
+            idempotent: true,
+            namespace: parsed.namespace,
+            agentName: parsed.agentRef.name,
+            idempotencyKey: runIdempotencyKey,
+            existingAgentRunName: scope.agentRunName,
+            resource,
+          })
+        }
+
+        return errorResponse('AgentRun creation already in progress for idempotency key', 409, {
+          namespace: parsed.namespace,
+          agentName: parsed.agentRef.name,
+          idempotencyKey: runIdempotencyKey,
+        })
+      }
+
+      idempotencyReservation = {
+        created: reservation.created,
+        agentRunName: reservation.record.agentRunName,
+        idempotencyKey: runIdempotencyKey,
+        agentName: parsed.agentRef.name,
+        namespace: parsed.namespace,
+      }
+    }
+
     const resource: Record<string, unknown> = {
       apiVersion: 'agents.proompteng.ai/v1alpha1',
       kind: 'AgentRun',
@@ -707,15 +853,37 @@ export const postAgentRunsHandler = async (
         memoryRef: parsed.memoryRef ?? undefined,
         vcsRef: parsed.vcsRef ?? undefined,
         vcsPolicy: parsed.vcsPolicy ?? undefined,
-        idempotencyKey: deliveryId,
+        idempotencyKey: runIdempotencyKey,
         ttlSecondsAfterFinished: parsed.ttlSecondsAfterFinished ?? undefined,
       },
     }
 
-    const applied = await kube.apply(resource)
+    let applied: Record<string, unknown>
+    try {
+      applied = await kube.apply(resource)
+    } catch (error) {
+      if (idempotencyReservation) {
+        await store.deleteAgentRunIdempotencyKey({
+          namespace: idempotencyReservation.namespace,
+          agentName: idempotencyReservation.agentName,
+          idempotencyKey: idempotencyReservation.idempotencyKey,
+        })
+      }
+      throw error
+    }
     const metadata = (applied.metadata ?? {}) as Record<string, unknown>
     const externalRunId = asString(metadata.name)
     const provider = asString(readNested(applied, ['spec', 'runtime', 'type'])) ?? 'unknown'
+
+    if (idempotencyReservation && externalRunId) {
+      await store.assignAgentRunIdempotencyKey({
+        namespace: idempotencyReservation.namespace,
+        agentName: idempotencyReservation.agentName,
+        idempotencyKey: idempotencyReservation.idempotencyKey,
+        agentRunName: externalRunId,
+        agentRunUid: asString(metadata.uid) ?? null,
+      })
+    }
 
     const statusPhase = asString(asRecord(applied.status)?.phase) ?? 'Pending'
     const record = await store.createAgentRun({
