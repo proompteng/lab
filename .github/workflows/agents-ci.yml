@@ -78,6 +78,7 @@ jobs:
   integration:
     runs-on: arc-arm64
     needs: validate
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -154,8 +155,17 @@ jobs:
           KIND_CLUSTER_NAME: agents-ci-${{ github.run_id }}
         run: |
           set -euo pipefail
+          timeout_cmd() {
+            if command -v timeout >/dev/null 2>&1; then
+              timeout "$@"
+              return $?
+            fi
+            shift
+            "$@"
+          }
+
           export KUBECONFIG="${RUNNER_TEMP}/kubeconfig"
-          kind create cluster --name "${KIND_CLUSTER_NAME}" --image kindest/node:v1.29.4 --wait 180s --kubeconfig "${KUBECONFIG}"
+          timeout_cmd 10m kind create cluster --name "${KIND_CLUSTER_NAME}" --image kindest/node:v1.29.4 --wait 180s --kubeconfig "${KUBECONFIG}"
           echo "KUBECONFIG=${KUBECONFIG}" >> "${GITHUB_ENV}"
           for i in $(seq 1 30); do
             if kubectl --request-timeout=10s get nodes -o wide; then
@@ -166,6 +176,30 @@ jobs:
           done
           echo "kubectl could not reach the kind API server after retries" >&2
           exit 1
+
+      - name: Export kind logs (on failure)
+        if: failure()
+        env:
+          KIND_CLUSTER_NAME: agents-ci-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if ! command -v kind >/dev/null 2>&1; then
+            echo "kind not installed; skipping log export" >&2
+            exit 0
+          fi
+          if ! kind get clusters | grep -Fxq "${KIND_CLUSTER_NAME}"; then
+            echo "kind cluster ${KIND_CLUSTER_NAME} not present; skipping log export" >&2
+            exit 0
+          fi
+
+          LOG_DIR="${RUNNER_TEMP}/kind-logs"
+          kind export logs --name "${KIND_CLUSTER_NAME}" "${LOG_DIR}" || true
+          echo "Exported kind logs to ${LOG_DIR}"
+          find "${LOG_DIR}" -maxdepth 3 -type f -print || true
+          if command -v docker >/dev/null 2>&1; then
+            docker ps -a || true
+            docker logs "${KIND_CLUSTER_NAME}-control-plane" 2>/dev/null | tail -n 200 || true
+          fi
 
       - name: Run agents integration smoke test
         env:
