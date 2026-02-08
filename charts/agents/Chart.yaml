@@ -4,7 +4,6 @@ description: Minimal Agents control plane (Jangar) with CRDs
 home: https://github.com/proompteng/charts/tree/main/charts/agents
 sources:
   - https://github.com/proompteng/charts/tree/main/charts/agents
-kubeVersion: ">=1.25.0-0"
 type: application
 version: 0.9.1
 appVersion: "0.9.0"

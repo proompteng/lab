@@ -87,6 +87,15 @@ grpc:
   servicePort: 50051
   serviceType: ClusterIP
 
+audit:
+  sink:
+    # none | stdout | http
+    type: none
+    http:
+      url: ""
+      headers: {}
+      timeoutMs: 2000
+
 metrics:
   enabled: true
   path: /metrics

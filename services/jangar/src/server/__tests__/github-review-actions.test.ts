@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GithubReviewStore } from '../github-review-store'
 
+vi.mock('~/server/audit-client', () => ({
+  emitAuditEventBestEffort: vi.fn(async () => {}),
+}))
+
 const globalState = globalThis as typeof globalThis & {
   __githubReviewConfigMock?: {
     githubToken: string | null
@@ -125,6 +129,7 @@ beforeEach(() => {
 describe('github review write actions', () => {
   it('submits a review via GitHub API', async () => {
     const { submitPullRequestReview } = await import('../github-review-actions')
+    const { emitAuditEventBestEffort } = await import('~/server/audit-client')
     const request = new Request('http://localhost/api/github/pulls/proompteng/lab/1/review', { method: 'POST' })
 
     const response = await submitPullRequestReview(request, {
@@ -137,10 +142,12 @@ describe('github review write actions', () => {
 
     expect(response).toEqual({ id: 1 })
     expect(githubMock.submitReview).toHaveBeenCalled()
+    expect(emitAuditEventBestEffort).toHaveBeenCalled()
   })
 
   it('resolves review threads', async () => {
     const { resolvePullRequestThread } = await import('../github-review-actions')
+    const { emitAuditEventBestEffort } = await import('~/server/audit-client')
     const request = new Request('http://localhost/api/github/pulls/proompteng/lab/1/threads/1/resolve', {
       method: 'POST',
     })
@@ -155,10 +162,12 @@ describe('github review write actions', () => {
 
     expect(response.id).toBe('thread-1')
     expect(githubMock.resolveReviewThread).toHaveBeenCalled()
+    expect(emitAuditEventBestEffort).toHaveBeenCalled()
   })
 
   it('merges pull requests and deletes branches', async () => {
     const { mergePullRequest } = await import('../github-review-actions')
+    const { emitAuditEventBestEffort } = await import('~/server/audit-client')
     const request = new Request('http://localhost/api/github/pulls/proompteng/lab/1/merge', { method: 'POST' })
 
     const response = await mergePullRequest(request, {
@@ -172,5 +181,6 @@ describe('github review write actions', () => {
     expect(response.merge).toEqual({ merged: true })
     expect(githubMock.mergePullRequest).toHaveBeenCalled()
     expect(githubMock.deleteBranch).toHaveBeenCalled()
+    expect(emitAuditEventBestEffort).toHaveBeenCalled()
   })
 })

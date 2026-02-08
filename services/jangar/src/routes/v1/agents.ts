@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { createFileRoute } from '@tanstack/react-router'
+import { resolveAuditContextFromRequest } from '~/server/audit-logging'
 import { requireLeaderForMutationHttp } from '~/server/leader-election'
 import {
   asRecord,
@@ -51,6 +52,12 @@ export const postAgentsHandler = async (
     const deliveryId = requireIdempotencyKey(request)
     const payload = await parseJsonBody(request)
     const parsed = parseAgentPayload(payload)
+    const auditContext = resolveAuditContextFromRequest(request, {
+      deliveryId,
+      namespace: parsed.namespace,
+      repository: null,
+      source: 'v1.agents',
+    })
 
     const requiredSecrets = extractRequiredSecrets(parsed.spec)
     const policy = parsed.policy ?? {}
@@ -73,7 +80,8 @@ export const postAgentsHandler = async (
         entityType: 'PolicyDecision',
         entityId: randomUUID(),
         eventType: 'policy.allowed',
-        payload: { deliveryId, subject: policyChecks.subject, checks: policyChecks },
+        context: auditContext,
+        details: { subject: policyChecks.subject, checks: policyChecks },
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -82,7 +90,8 @@ export const postAgentsHandler = async (
           entityType: 'PolicyDecision',
           entityId: randomUUID(),
           eventType: 'policy.denied',
-          payload: { deliveryId, subject: policyChecks.subject, checks: policyChecks, reason: message },
+          context: auditContext,
+          details: { subject: policyChecks.subject, checks: policyChecks, reason: message },
         })
       } catch {
         // ignore audit failures
@@ -112,7 +121,8 @@ export const postAgentsHandler = async (
         entityType: 'Agent',
         entityId: uid,
         eventType: 'agent.created',
-        payload: { deliveryId, name: parsed.name, namespace: parsed.namespace },
+        context: auditContext,
+        details: { name: parsed.name, agentUid: uid },
       })
     }
 
