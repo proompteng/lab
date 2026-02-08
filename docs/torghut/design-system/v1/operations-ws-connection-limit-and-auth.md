@@ -33,6 +33,19 @@ Forwarder readiness is a hard gate on “can make progress”:
 2) Kafka must be reachable (metadata calls for all configured topics succeed).
 3) If trade-updates streaming is enabled, that stream must also be healthy.
 
+### Readiness response body (machine-parseable)
+When the forwarder is **not** Ready, `GET /readyz` returns `503` with a JSON body that includes a stable
+`error_class` for automation and oncall triage (no raw upstream/Kafka error strings):
+- `alpaca_406_second_connection`
+- `alpaca_auth`
+- `kafka_auth`
+- `kafka_metadata`
+- `kafka_produce`
+- `unknown`
+
+The response also includes boolean readiness gates (`gates.alpaca_ws`, `gates.kafka`, `gates.trade_updates`) to
+help distinguish upstream vs downstream causes.
+
 Implementation pointers:
 - Readiness endpoint: `services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/HealthServer.kt`
 - Readiness gates: `services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/ForwarderApp.kt`
