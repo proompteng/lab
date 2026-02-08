@@ -1,3 +1,6 @@
+import { randomUUID } from 'node:crypto'
+import { emitAuditEventBestEffort } from '~/server/audit-client'
+import { resolveAuditContextFromRequest } from '~/server/audit-logging'
 import { createGitHubClient } from '~/server/github-client'
 import { isGithubRepoAllowed, loadGithubReviewConfig } from '~/server/github-review-config'
 import { createGithubReviewStore } from '~/server/github-review-store'
@@ -14,32 +17,6 @@ const getGithub = (config: ReturnType<typeof loadGithubReviewConfig>) =>
   globalOverrides.__githubReviewGithubMock ??
   createGitHubClient({ token: config.githubToken, apiBaseUrl: config.githubApiBaseUrl })
 const getStore = () => globalOverrides.__githubReviewStoreMock ?? createGithubReviewStore()
-
-const resolveActor = (request: Request) => {
-  const candidates = [
-    'x-jangar-actor',
-    'x-forwarded-user',
-    'x-forwarded-email',
-    'x-auth-request-email',
-    'x-auth-request-user',
-    'x-remote-user',
-    'x-github-user',
-  ]
-  for (const header of candidates) {
-    const value = request.headers.get(header)
-    if (value?.trim()) return value.trim()
-  }
-  return null
-}
-
-const resolveRequestId = (request: Request) => {
-  const candidates = ['x-request-id', 'x-correlation-id', 'x-amzn-trace-id']
-  for (const header of candidates) {
-    const value = request.headers.get(header)
-    if (value?.trim()) return value.trim()
-  }
-  return null
-}
 
 const requireRepoAllowed = (repository: string, config: ReturnType<typeof loadGithubReviewConfig>) => {
   if (!isGithubRepoAllowed(config, repository)) {
@@ -92,8 +69,12 @@ export const submitPullRequestReview = async (
   requireWriteEnabled(config.reviewsWriteEnabled, 'Review submission')
   requireToken(config)
 
-  const actor = resolveActor(request)
-  const requestId = resolveRequestId(request)
+  const auditContext = resolveAuditContextFromRequest(request, {
+    source: 'github-review-actions',
+    repository,
+  })
+  const actor = auditContext.actor
+  const requestId = auditContext.requestId ?? auditContext.correlationId
   const receivedAt = new Date().toISOString()
 
   try {
@@ -134,6 +115,19 @@ export const submitPullRequestReview = async (
       success: true,
       receivedAt,
     })
+    void emitAuditEventBestEffort({
+      entityType: 'GithubWriteAction',
+      entityId: randomUUID(),
+      eventType: 'github.review_submitted',
+      context: auditContext,
+      details: {
+        repository,
+        prNumber: input.number,
+        action: 'review_submit',
+        event: input.event,
+        success: true,
+      },
+    })
 
     console.info('[jangar][github] review submitted', {
       repository,
@@ -158,6 +152,20 @@ export const submitPullRequestReview = async (
       success: false,
       error: message,
       receivedAt,
+    })
+    void emitAuditEventBestEffort({
+      entityType: 'GithubWriteAction',
+      entityId: randomUUID(),
+      eventType: 'github.review_submitted',
+      context: auditContext,
+      details: {
+        repository,
+        prNumber: input.number,
+        action: 'review_submit',
+        event: input.event,
+        success: false,
+        error: message,
+      },
     })
 
     console.info('[jangar][github] review submit failed', {
@@ -193,8 +201,12 @@ export const resolvePullRequestThread = async (
   requireWriteEnabled(config.reviewsWriteEnabled, 'Thread resolution')
   requireToken(config)
 
-  const actor = resolveActor(request)
-  const requestId = resolveRequestId(request)
+  const auditContext = resolveAuditContextFromRequest(request, {
+    source: 'github-review-actions',
+    repository,
+  })
+  const actor = auditContext.actor
+  const requestId = auditContext.requestId ?? auditContext.correlationId
   const receivedAt = new Date().toISOString()
   let resolvedThreadId: string | null = null
 
@@ -237,6 +249,20 @@ export const resolvePullRequestThread = async (
       success: true,
       receivedAt,
     })
+    void emitAuditEventBestEffort({
+      entityType: 'GithubWriteAction',
+      entityId: randomUUID(),
+      eventType: input.resolve ? 'github.thread_resolved' : 'github.thread_unresolved',
+      context: auditContext,
+      details: {
+        repository,
+        prNumber: input.number,
+        action: input.resolve ? 'thread_resolve' : 'thread_unresolve',
+        threadKey: input.threadKey,
+        threadId: resolvedThreadId,
+        success: true,
+      },
+    })
 
     console.info('[jangar][github] thread resolution updated', {
       repository,
@@ -261,6 +287,21 @@ export const resolvePullRequestThread = async (
       success: false,
       error: message,
       receivedAt,
+    })
+    void emitAuditEventBestEffort({
+      entityType: 'GithubWriteAction',
+      entityId: randomUUID(),
+      eventType: input.resolve ? 'github.thread_resolved' : 'github.thread_unresolved',
+      context: auditContext,
+      details: {
+        repository,
+        prNumber: input.number,
+        action: input.resolve ? 'thread_resolve' : 'thread_unresolve',
+        threadKey: input.threadKey,
+        threadId: resolvedThreadId,
+        success: false,
+        error: message,
+      },
     })
 
     console.info('[jangar][github] thread resolution failed', {
@@ -299,8 +340,12 @@ export const mergePullRequest = async (
   requireWriteEnabled(config.mergeWriteEnabled, 'Merge')
   requireToken(config)
 
-  const actor = resolveActor(request)
-  const requestId = resolveRequestId(request)
+  const auditContext = resolveAuditContextFromRequest(request, {
+    source: 'github-review-actions',
+    repository,
+  })
+  const actor = auditContext.actor
+  const requestId = auditContext.requestId ?? auditContext.correlationId
   const receivedAt = new Date().toISOString()
 
   try {
@@ -373,6 +418,23 @@ export const mergePullRequest = async (
       success: true,
       receivedAt,
     })
+    void emitAuditEventBestEffort({
+      entityType: 'GithubWriteAction',
+      entityId: randomUUID(),
+      eventType: 'github.merge_completed',
+      context: auditContext,
+      details: {
+        repository,
+        prNumber: input.number,
+        action: 'merge',
+        method: input.method,
+        deleteBranch: input.deleteBranch ?? false,
+        force,
+        merged,
+        commitSha: pull.headSha ?? null,
+        success: true,
+      },
+    })
 
     console.info('[jangar][github] merge completed', {
       repository,
@@ -407,6 +469,23 @@ export const mergePullRequest = async (
       success: false,
       error: message,
       receivedAt,
+    })
+    void emitAuditEventBestEffort({
+      entityType: 'GithubWriteAction',
+      entityId: randomUUID(),
+      eventType: 'github.merge_completed',
+      context: auditContext,
+      details: {
+        repository,
+        prNumber: input.number,
+        action: 'merge',
+        method: input.method,
+        deleteBranch: input.deleteBranch ?? false,
+        force: Boolean(input.force && config.mergeForceEnabled),
+        commitSha: pull?.headSha ?? null,
+        success: false,
+        error: message,
+      },
     })
 
     console.info('[jangar][github] merge failed', {

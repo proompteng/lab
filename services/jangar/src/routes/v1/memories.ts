@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { resolveAuditContextFromRequest } from '~/server/audit-logging'
 import { requireLeaderForMutationHttp } from '~/server/leader-election'
 import {
   asRecord,
@@ -68,6 +69,12 @@ export const postMemoriesHandler = async (
     const applied = await kube.apply(resource)
     const metadata = (applied.metadata ?? {}) as Record<string, unknown>
     const uid = asString(metadata.uid)
+    const auditContext = resolveAuditContextFromRequest(request, {
+      deliveryId,
+      namespace: parsed.namespace,
+      repository: null,
+      source: 'v1.memories',
+    })
 
     const store = (deps.storeFactory ?? createPrimitivesStore)()
     try {
@@ -78,7 +85,8 @@ export const postMemoriesHandler = async (
           entityType: 'Memory',
           entityId: uid,
           eventType: 'memory.created',
-          payload: { deliveryId, name: parsed.name, namespace: parsed.namespace },
+          context: auditContext,
+          details: { name: parsed.name, memoryUid: uid },
         })
       }
       return okResponse({ ok: true, memory: applied, record }, 201)

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
+import { resolveRepositoryFromParameters } from '~/server/audit-logging'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { extractApprovalPolicies, validatePolicies } from '~/server/primitives-policy'
@@ -42,6 +43,14 @@ export const submitOrchestrationRun = async (
   const store = (deps.storeFactory ?? createPrimitivesStore)()
   try {
     await store.ready
+    const repository = resolveRepositoryFromParameters(input.parameters)
+    const baseContext = {
+      source: 'v1.orchestration-runs',
+      correlationId: input.deliveryId,
+      deliveryId: input.deliveryId,
+      namespace: input.namespace,
+      repository,
+    }
     const existing = await store.getOrchestrationRunByDeliveryId(input.deliveryId)
     if (existing) {
       const resourceNamespace =
@@ -77,7 +86,8 @@ export const submitOrchestrationRun = async (
         entityType: 'PolicyDecision',
         entityId: randomUUID(),
         eventType: 'policy.allowed',
-        payload: { deliveryId: input.deliveryId, subject: policyChecks.subject, checks: policyChecks },
+        context: baseContext,
+        details: { subject: policyChecks.subject, checks: policyChecks },
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -86,12 +96,8 @@ export const submitOrchestrationRun = async (
           entityType: 'PolicyDecision',
           entityId: randomUUID(),
           eventType: 'policy.denied',
-          payload: {
-            deliveryId: input.deliveryId,
-            subject: policyChecks.subject,
-            checks: policyChecks,
-            reason: message,
-          },
+          context: baseContext,
+          details: { subject: policyChecks.subject, checks: policyChecks, reason: message },
         })
       } catch {
         // ignore audit failures
@@ -142,7 +148,13 @@ export const submitOrchestrationRun = async (
       entityType: 'OrchestrationRun',
       entityId: record.id,
       eventType: 'orchestration_run.created',
-      payload: { deliveryId: input.deliveryId, orchestration: input.orchestrationRef.name, namespace: input.namespace },
+      context: baseContext,
+      details: {
+        orchestration: input.orchestrationRef.name,
+        orchestrationRunId: record.id,
+        orchestrationRunName: externalRunId,
+        orchestrationRunUid: asString(asRecord(applied.metadata)?.uid),
+      },
     })
 
     return { orchestrationRun: record, resource: applied, idempotent: false }

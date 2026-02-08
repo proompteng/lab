@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('~/server/audit-client', () => ({
+  emitAuditEventBestEffort: vi.fn(async () => {}),
+}))
+
+import { emitAuditEventBestEffort } from '~/server/audit-client'
 import { __test__ } from '~/server/orchestration-controller'
 import type { KubernetesClient } from '~/server/primitives-kube'
 
 describe('orchestration controller', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-20T00:00:00Z'))
   })
@@ -85,6 +91,7 @@ describe('orchestration controller', () => {
     await __test__.reconcileOrchestrationRun(kube, orchestrationRun, 'agents')
 
     expect(apply).toHaveBeenCalledTimes(2)
+    expect(emitAuditEventBestEffort).toHaveBeenCalledTimes(2)
     expect(applyStatus).toHaveBeenCalledTimes(1)
     const payload = applyStatus.mock.calls[0]?.[0] as { status?: Record<string, unknown> }
     const status = payload.status ?? {}

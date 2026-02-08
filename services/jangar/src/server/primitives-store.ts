@@ -1,6 +1,8 @@
 import { sql } from 'kysely'
 
-import { createKyselyDb, type Db } from '~/server/db'
+import { type AuditEventContext, buildAuditPayload } from '~/server/audit-logging'
+import { emitAuditEventToOptionalSink } from '~/server/audit-sink'
+import { createKyselyDb, type Db, getDb } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
 
 type Timestamp = string | Date
@@ -84,7 +86,8 @@ export type CreateAuditEventInput = {
   entityType: string
   entityId: string
   eventType: string
-  payload: Record<string, unknown>
+  context?: AuditEventContext
+  details?: Record<string, unknown>
 }
 
 export type PrimitivesStore = {
@@ -204,11 +207,10 @@ const toAuditEventRecord = (row: {
 
 export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): PrimitivesStore => {
   const url = options.url ?? process.env.DATABASE_URL
-  if (!url) {
+  const db = url && options.createDb ? options.createDb(url) : url ? createKyselyDb(url) : getDb()
+  if (!db) {
     throw new Error('DATABASE_URL is required for Jangar primitives storage')
   }
-
-  const db = (options.createDb ?? createKyselyDb)(url)
   const ready = ensureMigrations(db)
 
   const close = async () => {
@@ -467,7 +469,8 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
 
   const createAuditEvent: PrimitivesStore['createAuditEvent'] = async (input) => {
     await ready
-    const payloadJson = JSON.stringify(input.payload ?? {})
+    const payload = buildAuditPayload({ context: input.context, details: input.details })
+    const payloadJson = JSON.stringify(payload)
     const row = await db
       .insertInto('audit_events')
       .values({
@@ -478,7 +481,11 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
       })
       .returningAll()
       .executeTakeFirstOrThrow()
-    return toAuditEventRecord(row)
+    const record = toAuditEventRecord(row)
+    emitAuditEventToOptionalSink(record).catch((error) => {
+      console.warn('[jangar] audit sink emission failed', error)
+    })
+    return record
   }
 
   const getRunById: PrimitivesStore['getRunById'] = async (id) => {
