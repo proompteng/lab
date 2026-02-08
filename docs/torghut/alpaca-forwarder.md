@@ -1,5 +1,7 @@
 # Kotlin WS Service (torghut)
 
+> Note: Canonical production-facing design docs live in `docs/torghut/design-system/README.md` (v1). This document is supporting material and may drift from the current deployed manifests.
+
 ## Purpose
 Single-replica Kotlin/JVM service (Gradle multi-project) that ingests Alpaca market (and optional trading) WebSocket streams and forwards to Kafka with ordering, dedup, and status signals.
 
@@ -8,7 +10,7 @@ Single-replica Kotlin/JVM service (Gradle multi-project) that ingests Alpaca mar
 - One active WS per account (Alpaca constraint); reconnect with backoff and resubscribe.
 - Dedup keys: trades by `i`; quotes/bars by `(t,symbol)`; trade_updates by order id; maintain monotonic `seq` keyed by symbol.
 - Envelope: `ingest_ts`, Alpaca `event_ts` (`t`), `feed`, `channel`, `symbol`, `seq`, `payload`, `is_final?`, `source` (ws/rest), optional `window{}`.
-- Kafka producer: SASL/PLAIN over TLS using Strimzi KafkaUser secret; acks=all; linger 20–50 ms; compression lz4; idempotence on.
+- Kafka producer: SASL/PLAIN over TLS using Strimzi KafkaUser secret; acks=all; linger 20-50 ms; compression lz4; idempotence on.
 - Optional startup backfill: last 100 1m bars via REST (`source: rest`, `is_final: true`).
 
 ### Config knobs
@@ -85,7 +87,7 @@ Single-replica Kotlin/JVM service (Gradle multi-project) that ingests Alpaca mar
 - NetworkPolicy: egress only to Alpaca endpoints, Kafka bootstrap/brokers, MinIO (if used for backfill), image registry, observability ingress.
 - RBAC: ServiceAccount with minimal permissions; no cluster-admin.
 
-## Incident & Runbook
+## Incident & Operations Procedure
 - WS 406 (connection limit): ensure only one replica; check leaked connections; restart if stuck.
 - Persistent Kafka produce failures: mark not-ready, emit status, backoff; check auth/ACL; consider rolling restart.
 - Lag spike: compute lag metric; reconnect if `now - event_ts` exceeds threshold; emit status.

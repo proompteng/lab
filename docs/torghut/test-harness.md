@@ -1,5 +1,7 @@
 # Test & Load Harness
 
+> Note: Canonical production-facing design docs live in `docs/torghut/design-system/README.md` (v1). This document is supporting material and may drift from the current deployed manifests.
+
 ## Replay script (concept)
 - Use a simple producer to replay recorded Alpaca JSON lines into Kafka for trades/quotes/bars.
 - Example (kcat):

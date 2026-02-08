@@ -1,5 +1,7 @@
 # Torghut TA/WS Recovery (2026-01-01)
 
+> Note: Canonical production-facing design docs live in `docs/torghut/design-system/README.md` (v1). This document is supporting material and may drift from the current deployed manifests.
+
 ## Summary
 Recovered torghut TA processing and visuals after ClickHouse replicas went read-only and Jangar pointed to the wrong database. Also stabilized torghut-ws readiness by clearing Alpaca WS connection-limit errors.
 

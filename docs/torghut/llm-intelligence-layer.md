@@ -1,5 +1,7 @@
 # Torghut LLM Intelligence Layer
 
+> Note: Canonical production-facing design docs live in `docs/torghut/design-system/README.md` (v1). This document is supporting material and may drift from the current deployed manifests.
+
 ## Status
 Draft (target: paper trading first)
 

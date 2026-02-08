@@ -1,7 +1,10 @@
 # Torghut Streaming Architecture
 
+> Note: Canonical production-facing design docs are `docs/torghut/design-system/README.md` (v1). This file is kept as a
+> supporting snapshot and may drift from the current deployed manifests.
+
 ## Goals
-- Near real-time technical analysis (≤300–500 ms event-to-signal).
+- Near real-time technical analysis (≤300-500 ms event-to-signal).
 - Reliable ingestion from Alpaca WS with automatic reconnect/dedup.
 - Exactly-once delivery in analytics path; ordering preserved per symbol.
 - Operate under Alpaca single-connection-per-account constraint.
@@ -48,12 +51,12 @@ flowchart LR
 - WS service runtime: Kotlin/JVM (JDK 21), Ktor WS client, kotlinx-serialization/Avro, kafka-clients 4.x; coroutines with structured concurrency.
 
 ### Latency budget (p99 ≤500 ms)
-- WS frame → forwarder ingress: ~5–30 ms
-- Forwarder dedup + produce (linger 20–50 ms): ~40–80 ms
-- Kafka transit: ~5–20 ms
-- Flink watermark wait (goal 1–2 s slack): dominates tail; tune as stability improves
-- Flink compute + sink txn: ~50–120 ms
-- Downstream consume: ~10–30 ms
+- WS frame → forwarder ingress: ~5-30 ms
+- Forwarder dedup + produce (linger 20-50 ms): ~40-80 ms
+- Kafka transit: ~5-20 ms
+- Flink watermark wait (goal 1-2 s slack): dominates tail; tune as stability improves
+- Flink compute + sink txn: ~50-120 ms
+- Downstream consume: ~10-30 ms
 
 ### Failure modes & handling
 - WS disconnect: exponential backoff reconnect; status topic emits reason/attempt.
@@ -126,7 +129,7 @@ flowchart LR
 - Flink TA job: `docs/torghut/flink-ta.md`
 - Topics & schemas: `docs/torghut/topics-and-schemas.md`
 - Low-latency tuning: `docs/torghut/low-latency-notes.md`
-- Runbooks: `docs/torghut/runbooks.md`
+- Runbooks: `docs/torghut/operations-legacy.md`
 - Network/RBAC: `docs/torghut/network-and-rbac.md`
 - CI/CD: `docs/torghut/ci-cd.md`
 - Argo: `docs/torghut/argo.md`

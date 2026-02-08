@@ -1,5 +1,7 @@
 # torghut Main Service Consumer Guide (Deprecated)
 
+> Note: Canonical production-facing design docs live in `docs/torghut/design-system/README.md` (v1). This document is supporting material and may drift from the current deployed manifests.
+
 > **Status (2026-01-01):** The main torghut service no longer consumes TA topics. This doc is retained for reference only if a future consumer is added.
 
 ## Purpose
@@ -10,7 +12,7 @@ How the main torghut service should consume TA outputs and switch sources safely
 - `torghut.ta.bars.1s.v1` (optional for charts)
 
 ## Client config
-- `enable.idempotence=true` (producer, if writing responses) — not required for consumer.
+- `enable.idempotence=true` (producer, if writing responses) - not required for consumer.
 - `isolation.level=read_committed` when TA sink uses transactions (default profile).
 - `auto.offset.reset=latest` for steady state; `earliest` for backfill/replay tools.
 - SASL/TLS from Strimzi KafkaUser secret; truststore mounted; set `ssl.endpoint.identification.algorithm=HTTPS`.

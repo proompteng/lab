@@ -1,7 +1,7 @@
 # Torghut System Design (Consolidated)
 
 ## Status
-Draft - consolidated reference for implementation, operations, and roadmap.
+Legacy snapshot. Canonical production-facing design docs are `docs/torghut/design-system/README.md` (v1).
 
 ## Scope
 Torghut is a streaming market-data and technical-analysis (TA) system with a trading loop on top of ClickHouse-backed signals. It includes:
@@ -362,7 +362,7 @@ CREATE INDEX trade_decisions_symbol_created_at_idx
 - LLM intelligence layer: `docs/torghut/llm-intelligence-layer.md`
 - Flink TA job: `docs/torghut/flink-ta.md`
 - Topics & schemas: `docs/torghut/topics-and-schemas.md`
-- Runbooks: `docs/torghut/runbooks.md`
+- Runbooks: `docs/torghut/operations-legacy.md`
 - Ops recovery note: `docs/torghut/ops-2026-01-01-ta-recovery.md`
 
 ## References (research)

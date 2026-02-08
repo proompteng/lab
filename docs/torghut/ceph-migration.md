@@ -1,5 +1,7 @@
 # Ceph Object Storage Migration (MinIO → Ceph RGW via Rook)
 
+> Note: Canonical production-facing design docs live in `docs/torghut/design-system/README.md` (v1). This document is supporting material and may drift from the current deployed manifests.
+
 ## 1. Context and goals
 - Replace MinIO with an open-source, production-grade S3 backend while keeping Flink checkpoints and torghut data flows S3-compatible.
 - Preserve latency budgets (≤500 ms end-to-end for signals) and checkpoint reliability.
@@ -55,23 +57,23 @@ fs.s3a.path.style.access: true
 - Keep transaction timeout > checkpoint timeout (e.g., 120s).
 
 ## 5. Migration plan (MinIO → Ceph)
-### Phase 0 — Prep
+### Phase 0 - Prep
 - Deploy Rook operator + CephCluster (distinct storage class or raw devices).
 - Create `CephObjectStore` (`objstore`), `CephObjectStoreUser` (`torghut-flink`).
 - Create buckets via `radosgw-admin bucket create` or `aws s3api --endpoint`.
 - Add NetworkPolicy allowing JM/TM → RGW:443.
 
-### Phase 1 — Dual-write ready (optional)
+### Phase 1 - Dual-write ready (optional)
 - Keep MinIO as primary; configure `rclone sync` cron from MinIO bucket to Ceph bucket for checkpoints and artifacts.
 - Validate object ACLs and path-style compatibility.
 
-### Phase 2 — Cutover with savepoint
+### Phase 2 - Cutover with savepoint
 1. Trigger Flink savepoint and stop job (drain) while sinks commit.
 2. `rclone sync` MinIO → Ceph for checkpoint + savepoint prefixes.
 3. Patch `FlinkDeployment` to new S3 endpoint/keys; set `state.savepoints.dir` to Ceph URI; redeploy.
 4. Resume from latest savepoint; confirm checkpoints writing to Ceph.
 
-### Phase 3 — Decommission MinIO (after soak)
+### Phase 3 - Decommission MinIO (after soak)
 - Remove sync job; archive MinIO bucket for rollback window (e.g., 7 days).
 - Update runbooks to point to Ceph-only.
 
@@ -91,7 +93,7 @@ fs.s3a.path.style.access: true
 ## 7. Risks and mitigations
 - **Client compatibility**: Ensure `s3.path.style.access=true` for s3a; without it virtual-hosted style may fail on cluster DNS. Mitigate via config above.
 - **Checkpoint consistency**: Always migrate via savepoint; do not reuse in-flight MinIO checkpoints.
-- **TLS trust**: Provide CA bundle to Flink pods; misaligned SANs will break HTTPS—match `advertiseEndpoint` in CephObjectStore.
+- **TLS trust**: Provide CA bundle to Flink pods; misaligned SANs will break HTTPS-match `advertiseEndpoint` in CephObjectStore.
 - **Performance**: Start with conservative `connection.maximum` and adjust after observing RGW CPU; benchmarks indicate network-bound at scale, so watch NIC saturation.
 
 ## References
@@ -102,4 +104,4 @@ fs.s3a.path.style.access: true
 ## 8. Open questions
 - Final storage topology (dedicated disks vs shared PVCs)?
 - Do we need multisite replication for DR in another cluster?
-- KMS for server-side encryption (SSE-S3 vs SSE-C) — align with platform policy.
+- KMS for server-side encryption (SSE-S3 vs SSE-C) - align with platform policy.
