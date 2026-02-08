@@ -1,7 +1,3 @@
-import { createFileRoute } from '@tanstack/react-router'
-import * as React from 'react'
-import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
-
 import {
   Button,
   Card,
@@ -10,12 +6,15 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  type ChartConfig,
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
   Skeleton,
-  type ChartConfig,
 } from '@proompteng/design/ui'
+import { createFileRoute } from '@tanstack/react-router'
+import * as React from 'react'
+import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
 
 export const Route = createFileRoute('/')({ component: Home })
 

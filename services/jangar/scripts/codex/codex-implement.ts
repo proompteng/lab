@@ -90,18 +90,6 @@ const readOptionalTextFile = async (path: string, logger: CodexLogger) => {
   }
 }
 
-const safeParseJson = (value: string | null | undefined) => {
-  if (!value) return null
-  try {
-    return JSON.parse(value) as Record<string, unknown>
-  } catch {
-    return null
-  }
-}
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value && typeof value === 'object' && !Array.isArray(value))
-
 const VALID_STAGES = new Set(['implementation', 'verify', 'review', 'planning', 'research'])
 
 const normalizeStage = (value: string | null | undefined) => {
@@ -1361,9 +1349,7 @@ export const runCodexImplementation = async (eventPath: string) => {
     event.planCommentId !== undefined && event.planCommentId !== null ? String(event.planCommentId) : ''
   const planCommentUrl = sanitizeNullableString(event.planCommentUrl)
   const planCommentBody = sanitizeNullableString(event.planCommentBody)
-  let issueTitle = sanitizeNullableString(event.issueTitle ?? process.env.ISSUE_TITLE ?? '')
-  let issueBody = sanitizeNullableString(event.issueBody ?? '')
-  let issueUrl = sanitizeNullableString(event.issueUrl ?? '')
+  const issueTitle = sanitizeNullableString(event.issueTitle ?? process.env.ISSUE_TITLE ?? '')
 
   if (!prompt) {
     throw new Error('Missing Codex prompt in event payload')

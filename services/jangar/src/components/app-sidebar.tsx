@@ -1,21 +1,4 @@
 import {
-  IconBrain,
-  IconChartCandle,
-  IconDatabase,
-  IconFileText,
-  IconGitPullRequest,
-  IconHeart,
-  IconHome,
-  IconList,
-  IconMessages,
-  IconRobot,
-  IconTerminal2,
-  IconActivity,
-} from '@tabler/icons-react'
-import { Link, useRouterState } from '@tanstack/react-router'
-import * as React from 'react'
-
-import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
@@ -29,9 +12,27 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarRail,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
   useSidebar,
 } from '@proompteng/design/ui'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@proompteng/design/ui'
+import {
+  IconActivity,
+  IconBrain,
+  IconChartCandle,
+  IconDatabase,
+  IconFileText,
+  IconGitPullRequest,
+  IconHeart,
+  IconHome,
+  IconList,
+  IconMessages,
+  IconRobot,
+  IconTerminal2,
+} from '@tabler/icons-react'
+import { Link, useRouterState } from '@tanstack/react-router'
+import * as React from 'react'
 
 type AppNavItem = {
   to: string

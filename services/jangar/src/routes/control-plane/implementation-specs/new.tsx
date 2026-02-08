@@ -1,10 +1,7 @@
+import { Button, Input, Textarea } from '@proompteng/design/ui'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
-
 import { DEFAULT_NAMESPACE, parseNamespaceSearch } from '@/components/agents-control-plane-search'
-import { Button } from '@proompteng/design/ui'
-import { Input } from '@proompteng/design/ui'
-import { Textarea } from '@proompteng/design/ui'
 import { randomUuid } from '@/lib/uuid'
 
 export const Route = createFileRoute('/control-plane/implementation-specs/new')({

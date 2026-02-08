@@ -3,6 +3,7 @@ import { sql } from 'kysely'
 
 import { getAgentsControllerHealth } from '~/server/agents-controller'
 import { getDb } from '~/server/db'
+import { getLeaderElectionStatus } from '~/server/leader-election'
 import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
 import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
 
@@ -55,6 +56,18 @@ export type NamespaceStatus = {
 export type ControlPlaneStatus = {
   service: string
   generated_at: string
+  leader_election: {
+    enabled: boolean
+    required: boolean
+    is_leader: boolean
+    lease_name: string
+    lease_namespace: string
+    identity: string
+    last_transition_at: string
+    last_attempt_at: string
+    last_success_at: string
+    last_error: string
+  }
   controllers: ControllerStatus[]
   runtime_adapters: RuntimeAdapterStatus[]
   database: DatabaseStatus
@@ -275,10 +288,23 @@ export const buildControlPlaneStatus = async (
   ]
 
   const now = (deps.now ?? (() => new Date()))()
+  const leaderElection = getLeaderElectionStatus()
 
   return {
     service: options.service ?? 'jangar',
     generated_at: now.toISOString(),
+    leader_election: {
+      enabled: leaderElection.enabled,
+      required: leaderElection.required,
+      is_leader: leaderElection.isLeader,
+      lease_name: leaderElection.leaseName,
+      lease_namespace: leaderElection.leaseNamespace,
+      identity: leaderElection.identity,
+      last_transition_at: leaderElection.lastTransitionAt ?? '',
+      last_attempt_at: leaderElection.lastAttemptAt ?? '',
+      last_success_at: leaderElection.lastSuccessAt ?? '',
+      last_error: leaderElection.lastError ?? '',
+    },
     controllers,
     runtime_adapters: runtimeAdapters,
     database,

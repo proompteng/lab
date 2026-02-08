@@ -52,6 +52,8 @@ const controllerState = (() => {
 })()
 
 let started = controllerState.started
+let starting = false
+let lifecycleToken = 0
 let reconciling = false
 let _crdCheckState: CrdCheckState | null = controllerState.crdCheckState
 let watchHandles: Array<{ stop: () => void }> = []
@@ -952,19 +954,25 @@ const handleWorkspaceVolumeEvent = async (
 }
 
 export const startSupportingPrimitivesController = async () => {
-  if (started || !shouldStart()) return
+  if (started || starting || !shouldStart()) return
+  starting = true
+  lifecycleToken += 1
+  const token = lifecycleToken
   const crdsReady = await checkCrds()
   if (!crdsReady.ok) {
     console.error('[jangar] supporting controller will not start without CRDs')
+    starting = false
     return
   }
+  const handles: Array<{ stop: () => void }> = []
   try {
     const kube = createKubernetesClient()
     const namespaces = await resolveNamespaces()
+    if (lifecycleToken !== token) return
     void reconcileAll(kube, namespaces)
 
     for (const namespace of namespaces) {
-      watchHandles.push(
+      handles.push(
         startResourceWatch({
           resource: RESOURCE_MAP.Tool,
           namespace,
@@ -972,7 +980,7 @@ export const startSupportingPrimitivesController = async () => {
           onError: (error) => console.warn('[jangar] tool watch failed', error),
         }),
       )
-      watchHandles.push(
+      handles.push(
         startResourceWatch({
           resource: RESOURCE_MAP.ApprovalPolicy,
           namespace,
@@ -980,7 +988,7 @@ export const startSupportingPrimitivesController = async () => {
           onError: (error) => console.warn('[jangar] approval policy watch failed', error),
         }),
       )
-      watchHandles.push(
+      handles.push(
         startResourceWatch({
           resource: RESOURCE_MAP.Budget,
           namespace,
@@ -988,7 +996,7 @@ export const startSupportingPrimitivesController = async () => {
           onError: (error) => console.warn('[jangar] budget watch failed', error),
         }),
       )
-      watchHandles.push(
+      handles.push(
         startResourceWatch({
           resource: RESOURCE_MAP.SecretBinding,
           namespace,
@@ -996,7 +1004,7 @@ export const startSupportingPrimitivesController = async () => {
           onError: (error) => console.warn('[jangar] secret binding watch failed', error),
         }),
       )
-      watchHandles.push(
+      handles.push(
         startResourceWatch({
           resource: RESOURCE_MAP.Signal,
           namespace,
@@ -1004,7 +1012,7 @@ export const startSupportingPrimitivesController = async () => {
           onError: (error) => console.warn('[jangar] signal watch failed', error),
         }),
       )
-      watchHandles.push(
+      handles.push(
         startResourceWatch({
           resource: RESOURCE_MAP.SignalDelivery,
           namespace,
@@ -1012,7 +1020,7 @@ export const startSupportingPrimitivesController = async () => {
           onError: (error) => console.warn('[jangar] signal delivery watch failed', error),
         }),
       )
-      watchHandles.push(
+      handles.push(
         startResourceWatch({
           resource: RESOURCE_MAP.Schedule,
           namespace,
@@ -1020,7 +1028,7 @@ export const startSupportingPrimitivesController = async () => {
           onError: (error) => console.warn('[jangar] schedule watch failed', error),
         }),
       )
-      watchHandles.push(
+      handles.push(
         startResourceWatch({
           resource: RESOURCE_MAP.Artifact,
           namespace,
@@ -1028,7 +1036,7 @@ export const startSupportingPrimitivesController = async () => {
           onError: (error) => console.warn('[jangar] artifact watch failed', error),
         }),
       )
-      watchHandles.push(
+      handles.push(
         startResourceWatch({
           resource: RESOURCE_MAP.Workspace,
           namespace,
@@ -1036,7 +1044,7 @@ export const startSupportingPrimitivesController = async () => {
           onError: (error) => console.warn('[jangar] workspace watch failed', error),
         }),
       )
-      watchHandles.push(
+      handles.push(
         startResourceWatch({
           resource: 'cronjob',
           namespace,
@@ -1045,7 +1053,7 @@ export const startSupportingPrimitivesController = async () => {
           onError: (error) => console.warn('[jangar] schedule cronjob watch failed', error),
         }),
       )
-      watchHandles.push(
+      handles.push(
         startResourceWatch({
           resource: 'persistentvolumeclaim',
           namespace,
@@ -1056,14 +1064,27 @@ export const startSupportingPrimitivesController = async () => {
       )
     }
 
+    if (lifecycleToken !== token) return
+    watchHandles = handles
     started = true
     controllerState.started = true
   } catch (error) {
     console.error('[jangar] supporting controller failed to start', error)
+  } finally {
+    if (lifecycleToken !== token) {
+      for (const handle of handles) {
+        handle.stop()
+      }
+    }
+    if (lifecycleToken === token) {
+      starting = false
+    }
   }
 }
 
 export const stopSupportingPrimitivesController = () => {
+  lifecycleToken += 1
+  starting = false
   for (const handle of watchHandles) {
     handle.stop()
   }

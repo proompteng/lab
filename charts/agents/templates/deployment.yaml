@@ -8,11 +8,12 @@
 {{- $imagePullSecrets := $controlPlaneImage.pullSecrets | default .Values.image.pullSecrets -}}
 {{- $replicas := .Values.controlPlane.replicaCount | default .Values.replicaCount -}}
 {{- $resources := .Values.controlPlane.resources | default .Values.resources -}}
+{{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "agents.fullname" . }}
-  namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  namespace: {{ $namespace }}
   labels:
     {{- include "agents.labels" . | nindent 4 }}
 spec:
@@ -189,6 +190,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: JANGAR_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
             {{- $metricsEnabled := true }}
             {{- if and (hasKey .Values "metrics") (hasKey .Values.metrics "enabled") }}
             {{- $metricsEnabled = .Values.metrics.enabled }}
@@ -197,6 +202,18 @@ spec:
               value: {{ $metricsEnabled | quote }}
             - name: JANGAR_PROMETHEUS_METRICS_PATH
               value: {{ .Values.metrics.path | default "/metrics" | quote }}
+            - name: JANGAR_LEADER_ELECTION_ENABLED
+              value: {{ .Values.controller.leaderElection.enabled | default true | quote }}
+            - name: JANGAR_LEADER_ELECTION_LEASE_NAME
+              value: {{ .Values.controller.leaderElection.leaseName | default "jangar-controller-leader" | quote }}
+            - name: JANGAR_LEADER_ELECTION_LEASE_NAMESPACE
+              value: {{ .Values.controller.leaderElection.leaseNamespace | default $namespace | quote }}
+            - name: JANGAR_LEADER_ELECTION_LEASE_DURATION_SECONDS
+              value: {{ .Values.controller.leaderElection.leaseDurationSeconds | default 30 | quote }}
+            - name: JANGAR_LEADER_ELECTION_RENEW_DEADLINE_SECONDS
+              value: {{ .Values.controller.leaderElection.renewDeadlineSeconds | default 20 | quote }}
+            - name: JANGAR_LEADER_ELECTION_RETRY_PERIOD_SECONDS
+              value: {{ .Values.controller.leaderElection.retryPeriodSeconds | default 5 | quote }}
             - name: JANGAR_RBAC_CLUSTER_SCOPED
               value: {{ .Values.rbac.clusterScoped | default false | quote }}
             - name: JANGAR_PRIMITIVES_NAMESPACES

@@ -1,14 +1,3 @@
-import { createFileRoute } from '@tanstack/react-router'
-import * as React from 'react'
-
-import {
-  deriveStatusCategory,
-  formatTimestamp,
-  getMetadataValue,
-  getResourceUpdatedAt,
-  StatusBadge,
-} from '@/components/agents-control-plane'
-import { DEFAULT_NAMESPACE, parseAgentRunsSearch } from '@/components/agents-control-plane-search'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,10 +8,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '@proompteng/design/ui'
-import { Button } from '@proompteng/design/ui'
-import { Input } from '@proompteng/design/ui'
-import {
+  Button,
+  Input,
   Pagination,
   PaginationContent,
   PaginationEllipsis,
@@ -31,6 +18,16 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from '@proompteng/design/ui'
+import { createFileRoute } from '@tanstack/react-router'
+import * as React from 'react'
+import {
+  deriveStatusCategory,
+  formatTimestamp,
+  getMetadataValue,
+  getResourceUpdatedAt,
+  StatusBadge,
+} from '@/components/agents-control-plane'
+import { DEFAULT_NAMESPACE, parseAgentRunsSearch } from '@/components/agents-control-plane-search'
 import { deletePrimitiveResource, fetchPrimitiveList, type PrimitiveResource } from '@/data/agents-control-plane'
 
 const PAGE_SIZE = 20

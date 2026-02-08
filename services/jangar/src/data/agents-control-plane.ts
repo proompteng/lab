@@ -139,6 +139,18 @@ export type NamespaceStatus = {
 export type ControlPlaneStatus = {
   service: string
   generated_at: string
+  leader_election: {
+    enabled: boolean
+    required: boolean
+    is_leader: boolean
+    lease_name: string
+    lease_namespace: string
+    identity: string
+    last_transition_at: string
+    last_attempt_at: string
+    last_success_at: string
+    last_error: string
+  }
   controllers: ControllerStatus[]
   runtime_adapters: RuntimeAdapterStatus[]
   database: DatabaseStatus

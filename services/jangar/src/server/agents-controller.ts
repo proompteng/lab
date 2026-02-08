@@ -228,6 +228,8 @@ type ControllerState = {
 }
 
 let started = controllerState.started
+let starting = false
+let lifecycleToken = 0
 let reconciling = false
 let temporalClientPromise: ReturnType<typeof createTemporalClient> | null = null
 let watchHandles: Array<{ stop: () => void }> = []
@@ -4360,7 +4362,7 @@ const reconcileWorkflowRun = async (
   }
 
   const imageCandidates = workflowSteps
-    .map((step) => {
+    .map((step): ImagePolicyCandidate | null => {
       const workload = step.workload ?? baseWorkload
       const image = workload ? resolveJobImage(workload) : null
       if (!image) return null
@@ -5496,7 +5498,7 @@ const reconcileAgentRunWithMetrics = async (
   memories: Record<string, unknown>[],
   existingRuns: Record<string, unknown>[],
   concurrency: ReturnType<typeof parseConcurrency>,
-  inFlight: { total: number; perAgent: Map<string, number> },
+  inFlight: { total: number; perAgent: Map<string, number>; perRepository: Map<string, number> },
   globalInFlight: number,
 ) => {
   const reconcileStartedAt = Date.now()
@@ -5647,6 +5649,7 @@ const startNamespaceWatches = (
   namespace: string,
   state: ControllerState,
   concurrency: ReturnType<typeof parseConcurrency>,
+  handles: Array<{ stop: () => void }>,
 ) => {
   const nsState = ensureNamespaceState(state, namespace)
   const enqueueFull = () =>
@@ -5716,7 +5719,7 @@ const startNamespaceWatches = (
     })
   }
 
-  watchHandles.push(
+  handles.push(
     startResourceWatch({
       resource: RESOURCE_MAP.AgentRun,
       namespace,
@@ -5724,7 +5727,7 @@ const startNamespaceWatches = (
       onError: (error) => console.warn('[jangar] agent run watch failed', error),
     }),
   )
-  watchHandles.push(
+  handles.push(
     startResourceWatch({
       resource: RESOURCE_MAP.Agent,
       namespace,
@@ -5732,7 +5735,7 @@ const startNamespaceWatches = (
       onError: (error) => console.warn('[jangar] agent watch failed', error),
     }),
   )
-  watchHandles.push(
+  handles.push(
     startResourceWatch({
       resource: RESOURCE_MAP.AgentProvider,
       namespace,
@@ -5740,7 +5743,7 @@ const startNamespaceWatches = (
       onError: (error) => console.warn('[jangar] provider watch failed', error),
     }),
   )
-  watchHandles.push(
+  handles.push(
     startResourceWatch({
       resource: RESOURCE_MAP.ImplementationSpec,
       namespace,
@@ -5748,7 +5751,7 @@ const startNamespaceWatches = (
       onError: (error) => console.warn('[jangar] implementation spec watch failed', error),
     }),
   )
-  watchHandles.push(
+  handles.push(
     startResourceWatch({
       resource: RESOURCE_MAP.ImplementationSource,
       namespace,
@@ -5757,7 +5760,7 @@ const startNamespaceWatches = (
     }),
   )
   if (isVcsProvidersEnabled()) {
-    watchHandles.push(
+    handles.push(
       startResourceWatch({
         resource: RESOURCE_MAP.VersionControlProvider,
         namespace,
@@ -5766,7 +5769,7 @@ const startNamespaceWatches = (
       }),
     )
   }
-  watchHandles.push(
+  handles.push(
     startResourceWatch({
       resource: RESOURCE_MAP.Memory,
       namespace,
@@ -5774,7 +5777,7 @@ const startNamespaceWatches = (
       onError: (error) => console.warn('[jangar] memory watch failed', error),
     }),
   )
-  watchHandles.push(
+  handles.push(
     startResourceWatch({
       resource: 'job',
       namespace,
@@ -5786,32 +5789,53 @@ const startNamespaceWatches = (
 }
 
 export const startAgentsController = async () => {
-  if (started || !shouldStart()) return
+  if (started || starting || !shouldStart()) return
+  starting = true
+  lifecycleToken += 1
+  const token = lifecycleToken
   const crdsReady = await checkCrds()
   if (!crdsReady.ok) {
     console.error('[jangar] agents controller will not start without CRDs')
+    starting = false
     return
   }
+  const handles: Array<{ stop: () => void }> = []
   try {
     const namespaces = await resolveNamespaces()
+    if (lifecycleToken !== token) return
     const kube = createKubernetesClient()
     const concurrency = parseConcurrency()
     const state: ControllerState = { namespaces: new Map() }
-    _controllerState = state
     for (const namespace of namespaces) {
       await seedNamespaceState(kube, namespace, state, concurrency)
+      if (lifecycleToken !== token) return
     }
     for (const namespace of namespaces) {
-      startNamespaceWatches(kube, namespace, state, concurrency)
+      startNamespaceWatches(kube, namespace, state, concurrency, handles)
+      if (lifecycleToken !== token) return
     }
+    if (lifecycleToken !== token) return
+    watchHandles = handles
+    _controllerState = state
     started = true
     controllerState.started = true
   } catch (error) {
     console.error('[jangar] agents controller failed to start', error)
+  } finally {
+    if (lifecycleToken !== token) {
+      for (const handle of handles) {
+        handle.stop()
+      }
+    }
+    if (lifecycleToken === token) {
+      starting = false
+    }
   }
 }
 
 export const stopAgentsController = () => {
+  lifecycleToken += 1
+  starting = false
   for (const handle of watchHandles) {
     handle.stop()
   }

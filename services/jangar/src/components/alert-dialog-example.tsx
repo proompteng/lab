@@ -1,5 +1,3 @@
-import { IconBluetooth, IconTrash } from '@tabler/icons-react'
-import { Example, ExampleWrapper } from '@/components/example'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -11,9 +9,7 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '@proompteng/design/ui'
-import { Button } from '@proompteng/design/ui'
-import {
+  Button,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -22,6 +18,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@proompteng/design/ui'
+import { IconBluetooth, IconTrash } from '@tabler/icons-react'
+import { Example, ExampleWrapper } from '@/components/example'
 
 export default function AlertDialogExample() {
   return (

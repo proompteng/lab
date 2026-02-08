@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { createFileRoute } from '@tanstack/react-router'
+import { requireLeaderForMutationHttp } from '~/server/leader-election'
 import {
   asRecord,
   asString,
@@ -43,6 +44,9 @@ export const postOrchestrationsHandler = async (
   request: Request,
   deps: { storeFactory?: typeof createPrimitivesStore; kubeClient?: ReturnType<typeof createKubernetesClient> } = {},
 ) => {
+  const leaderResponse = requireLeaderForMutationHttp()
+  if (leaderResponse) return leaderResponse
+
   const store = (deps.storeFactory ?? createPrimitivesStore)()
   try {
     const deliveryId = requireIdempotencyKey(request)

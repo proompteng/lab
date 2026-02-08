@@ -1,11 +1,10 @@
 import '@xterm/xterm/css/xterm.css'
 
+import { Button } from '@proompteng/design/ui'
 import type { FitAddon } from '@xterm/addon-fit'
 import type { SearchAddon } from '@xterm/addon-search'
 import type { Terminal } from '@xterm/xterm'
 import * as React from 'react'
-
-import { Button } from '@proompteng/design/ui'
 import { cn } from '@/lib/utils'
 import { randomUuid } from '@/lib/uuid'
 

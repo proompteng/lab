@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 
 import { createFileRoute } from '@tanstack/react-router'
+import { requireLeaderForMutationHttp } from '~/server/leader-election'
+import { recordAgentQueueDepth } from '~/server/metrics'
 import {
   asRecord,
   asString,
@@ -19,7 +21,6 @@ import {
   validatePolicies,
 } from '~/server/primitives-policy'
 import { createPrimitivesStore } from '~/server/primitives-store'
-import { recordAgentQueueDepth } from '~/server/metrics'
 
 export const Route = createFileRoute('/v1/agent-runs')({
   server: {
@@ -151,11 +152,7 @@ const parseAdmissionLimits = () => ({
       DEFAULT_CONCURRENCY.perNamespace,
       1,
     ),
-    cluster: parseNumberEnv(
-      process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER,
-      DEFAULT_CONCURRENCY.cluster,
-      1,
-    ),
+    cluster: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER, DEFAULT_CONCURRENCY.cluster, 1),
   },
   queue: {
     perNamespace: parseNumberEnv(
@@ -423,7 +420,6 @@ const evaluateAdmissionLimits = async (
   let queuedNamespace = 0
   let runningCluster = 0
   let queuedCluster = 0
-  let runningRepo = 0
   let queuedRepo = 0
 
   for (const result of results) {
@@ -445,7 +441,6 @@ const evaluateAdmissionLimits = async (
       if (normalizedRepo) {
         const runRepo = resolveRepositoryFromRun(run)
         if (runRepo && normalizeRepository(runRepo) === normalizedRepo) {
-          if (isRunning) runningRepo += 1
           if (isQueued) queuedRepo += 1
         }
       }
@@ -536,6 +531,9 @@ export const postAgentRunsHandler = async (
     kubeClient?: ReturnType<typeof createKubernetesClient>
   } = {},
 ) => {
+  const leaderResponse = requireLeaderForMutationHttp()
+  if (leaderResponse) return leaderResponse
+
   const store = (deps.storeFactory ?? createPrimitivesStore)()
   try {
     const deliveryId = requireIdempotencyKey(request)

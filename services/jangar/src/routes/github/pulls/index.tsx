@@ -1,8 +1,6 @@
+import { Button, Input } from '@proompteng/design/ui'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
-
-import { Button } from '@proompteng/design/ui'
-import { Input } from '@proompteng/design/ui'
 import { fetchGithubPulls, type GithubPullListItem } from '@/data/github'
 
 const DEFAULT_REPOSITORY = 'proompteng/lab'

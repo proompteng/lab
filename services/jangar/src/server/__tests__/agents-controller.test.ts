@@ -12,7 +12,7 @@ const metricsMocks = vi.hoisted(() => ({
 
 vi.mock('~/server/metrics', () => metricsMocks)
 
-const { recordReconcileDurationMs, recordAgentRunOutcome } = metricsMocks
+const { recordReconcileDurationMs } = metricsMocks
 
 import { __test } from '~/server/agents-controller'
 import { RESOURCE_MAP } from '~/server/primitives-kube'
@@ -1188,8 +1188,10 @@ describe('agents controller reconcileAgentRun', () => {
       const agentRun = buildAgentRun()
       await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
-      const defaultPodSpec = ((lastJob?.spec as Record<string, unknown>)?.template as Record<string, unknown>)
-        ?.spec as Record<string, unknown>
+      const defaultTemplate = (lastJob?.['spec'] as Record<string, unknown> | undefined)?.template as
+        | Record<string, unknown>
+        | undefined
+      const defaultPodSpec = (defaultTemplate?.['spec'] as Record<string, unknown> | undefined) ?? {}
       expect(defaultPodSpec.nodeSelector).toEqual({ disktype: 'ssd' })
       expect(defaultPodSpec.affinity).toEqual(defaultAffinity)
       expect(defaultPodSpec.topologySpreadConstraints).toEqual(defaultTopology)
@@ -1207,7 +1209,7 @@ describe('agents controller reconcileAgentRun', () => {
         },
       }
       const overrideRun = buildAgentRun()
-      overrideRun.metadata = { ...(overrideRun.metadata as Record<string, unknown>), name: 'run-2' }
+      overrideRun.metadata = { ...overrideRun.metadata, name: 'run-2' }
       overrideRun.spec = {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
@@ -1242,8 +1244,10 @@ describe('agents controller reconcileAgentRun', () => {
         0,
       )
 
-      const overridePodSpec = ((lastJob?.spec as Record<string, unknown>)?.template as Record<string, unknown>)
-        ?.spec as Record<string, unknown>
+      const overrideTemplate = (lastJob?.['spec'] as Record<string, unknown> | undefined)?.template as
+        | Record<string, unknown>
+        | undefined
+      const overridePodSpec = (overrideTemplate?.['spec'] as Record<string, unknown> | undefined) ?? {}
       expect(overridePodSpec.nodeSelector).toEqual({ disktype: 'gpu' })
       expect(overridePodSpec.affinity).toEqual(overrideAffinity)
       expect(overridePodSpec.topologySpreadConstraints).toEqual([
@@ -1319,8 +1323,10 @@ describe('agents controller reconcileAgentRun', () => {
       const agentRun = buildAgentRun()
       await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
-      const defaultPodSpec = ((lastJob?.spec as Record<string, unknown>)?.template as Record<string, unknown>)
-        ?.spec as Record<string, unknown>
+      const defaultTemplate = (lastJob?.['spec'] as Record<string, unknown> | undefined)?.template as
+        | Record<string, unknown>
+        | undefined
+      const defaultPodSpec = (defaultTemplate?.['spec'] as Record<string, unknown> | undefined) ?? {}
       expect(defaultPodSpec.topologySpreadConstraints).toBeUndefined()
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS'))
     } finally {
@@ -1466,10 +1472,10 @@ describe('agents controller reconcileAgentRun', () => {
     expect(status.phase).toBe('Running')
     expect(status.systemPromptHash).toBe(createHash('sha256').update('workflow-prompt').digest('hex'))
 
-    const podSpec = (lastJob?.spec as Record<string, unknown> | undefined)?.template as
+    const podTemplate = (lastJob?.['spec'] as Record<string, unknown> | undefined)?.template as
       | Record<string, unknown>
       | undefined
-    const podSpecSpec = (podSpec?.spec as Record<string, unknown> | undefined) ?? {}
+    const podSpecSpec = (podTemplate?.['spec'] as Record<string, unknown> | undefined) ?? {}
     const containers = (podSpecSpec.containers as Record<string, unknown>[] | undefined) ?? []
     const container = containers[0] ?? {}
     const env = (container.env as Record<string, unknown>[] | undefined) ?? []

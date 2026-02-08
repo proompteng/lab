@@ -1,8 +1,6 @@
+import { Button, Input } from '@proompteng/design/ui'
 import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
-
-import { Button } from '@proompteng/design/ui'
-import { Input } from '@proompteng/design/ui'
 
 export const Route = createFileRoute('/memories')({
   component: MemoriesPage,

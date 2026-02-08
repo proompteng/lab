@@ -1,12 +1,17 @@
+import {
+  Button,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Textarea,
+} from '@proompteng/design/ui'
 import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
-
 import { getMetadataValue, getResourceUpdatedAt } from '@/components/agents-control-plane'
 import { parseNamespaceSearch } from '@/components/agents-control-plane-search'
-import { Button } from '@proompteng/design/ui'
-import { Input } from '@proompteng/design/ui'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@proompteng/design/ui'
-import { Textarea } from '@proompteng/design/ui'
 import { fetchPrimitiveDetail, fetchPrimitiveList, type PrimitiveResource } from '@/data/agents-control-plane'
 import { randomUuid } from '@/lib/uuid'
 
@@ -571,8 +576,8 @@ function ImplementationSpecRunPage() {
               <div className="space-y-1">
                 <div className="text-xs font-medium text-foreground">Acceptance criteria</div>
                 <ul className="list-disc space-y-1 pl-4 text-xs text-foreground">
-                  {selectedSpec.acceptanceCriteria.map((item, index) => (
-                    <li key={`${item}-${index}`}>{item}</li>
+                  {selectedSpec.acceptanceCriteria.map((item) => (
+                    <li key={item}>{item}</li>
                   ))}
                 </ul>
               </div>

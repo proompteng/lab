@@ -5,18 +5,27 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHART_DIR="${ROOT_DIR}/charts/agents"
 ARGOCD_AGENTS_DIR="${ROOT_DIR}/argocd/applications/agents"
 
+run_with_helm3() {
+  # kustomize --enable-helm is not compatible with Helm v4 yet; prefer Helm v3 via mise when available.
+  if command -v mise >/dev/null 2>&1; then
+    mise exec helm@3 -- "$@"
+    return 0
+  fi
+  "$@"
+}
+
 go generate "${ROOT_DIR}/services/jangar/api/agents"
 
 git -C "${ROOT_DIR}" diff --exit-code -- "${CHART_DIR}/crds" \
   "${ROOT_DIR}/services/jangar/api/agents/v1alpha1/zz_generated.deepcopy.go"
 
-helm lint "${CHART_DIR}"
+run_with_helm3 helm lint "${CHART_DIR}"
 
 render_and_check() {
   local values_file="$1"
   local output
   output="$(mktemp)"
-  helm template "${CHART_DIR}" --values "${values_file}" >"${output}"
+  run_with_helm3 helm template "${CHART_DIR}" --values "${values_file}" >"${output}"
 
   if command -v rg >/dev/null 2>&1; then
     if rg -n "^kind: (Ingress|StatefulSet|CronJob|PersistentVolumeClaim)" "${output}"; then
@@ -39,12 +48,12 @@ render_and_check "${CHART_DIR}/values-prod.yaml"
 
 render_kustomize() {
   if command -v kustomize >/dev/null 2>&1; then
-    kustomize build --enable-helm "${ARGOCD_AGENTS_DIR}" >/dev/null
+    run_with_helm3 kustomize build --enable-helm "${ARGOCD_AGENTS_DIR}" >/dev/null
     return 0
   fi
 
   if command -v kubectl >/dev/null 2>&1; then
-    kubectl kustomize --enable-helm "${ARGOCD_AGENTS_DIR}" >/dev/null
+    run_with_helm3 kubectl kustomize --enable-helm "${ARGOCD_AGENTS_DIR}" >/dev/null
     return 0
   fi
 

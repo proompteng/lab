@@ -1,13 +1,12 @@
+import { Button } from '@proompteng/design/ui'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
-
 import {
   AgentMessageList,
   AgentStreamStatusBadge,
   sortMessagesByTimestamp,
   useAgentEventStream,
 } from '@/components/agent-comms'
-import { Button } from '@proompteng/design/ui'
 
 export const Route = createFileRoute('/agents/general')({
   component: AgentsGeneralPage,

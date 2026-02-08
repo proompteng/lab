@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { requireLeaderForMutationHttp } from '~/server/leader-election'
 import {
   asRecord,
   asString,
@@ -42,6 +43,9 @@ export const postMemoriesHandler = async (
     kubeClient?: ReturnType<typeof createKubernetesClient>
   } = {},
 ) => {
+  const leaderResponse = requireLeaderForMutationHttp()
+  if (leaderResponse) return leaderResponse
+
   try {
     const deliveryId = requireIdempotencyKey(request)
     const payload = await parseJsonBody(request)

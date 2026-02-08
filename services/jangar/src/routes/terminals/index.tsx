@@ -1,8 +1,3 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import { Loader2 } from 'lucide-react'
-import * as React from 'react'
-import { toast } from 'sonner'
-
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,10 +8,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
+  Button,
+  ScrollArea,
+  Skeleton,
 } from '@proompteng/design/ui'
-import { Button } from '@proompteng/design/ui'
-import { ScrollArea } from '@proompteng/design/ui'
-import { Skeleton } from '@proompteng/design/ui'
+import { createFileRoute, Link } from '@tanstack/react-router'
+import { Loader2 } from 'lucide-react'
+import * as React from 'react'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/terminals/')({

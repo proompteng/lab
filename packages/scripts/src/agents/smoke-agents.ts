@@ -231,6 +231,7 @@ const main = async () => {
   const dbName = process.env.AGENTS_DB_NAME ?? 'agents'
   const dbHost = process.env.AGENTS_DB_HOST ?? `${releaseName}-postgres`
   const dbPort = process.env.AGENTS_DB_PORT ?? '5432'
+  const dbImage = process.env.AGENTS_DB_IMAGE ?? 'pgvector/pgvector:pg16'
   const agentctlBin = process.env.AGENTCTL_BIN ?? 'agentctl'
   const kubeconfigPath =
     process.env.AGENTCTL_KUBECONFIG ?? process.env.KUBECONFIG ?? resolve(homedir(), '.kube', 'config')
@@ -305,7 +306,7 @@ spec:
     spec:
       containers:
         - name: postgres
-          image: postgres:16-alpine
+          image: ${dbImage}
           env:
             - name: POSTGRES_USER
               value: ${dbUser}
@@ -324,6 +325,54 @@ spec:
     )
 
     await run('kubectl', ['-n', namespace, 'rollout', 'status', `deploy/${dbHost}`, `--timeout=${timeoutFlag}`])
+
+    log('Ensuring required Postgres extensions for Jangar...')
+    const podResult = await execCapture([
+      'kubectl',
+      '-n',
+      namespace,
+      'get',
+      'pod',
+      '-l',
+      `app=${dbHost}`,
+      '-o',
+      'jsonpath={.items[0].metadata.name}',
+    ])
+    const dbPod = podResult.exitCode === 0 ? podResult.stdout : ''
+    if (!dbPod) {
+      fatal(`Failed to resolve Postgres pod name for ${dbHost}.`, podResult.stderr)
+    }
+
+    // Jangar requires both pgvector (vector) and pgcrypto extensions.
+    // Even after the pod is Ready, Postgres may still be finalizing startup; retry briefly.
+    const extensionSql = 'CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pgcrypto;'
+    const extensionDeadlineMs = 60_000
+    const extensionStart = Date.now()
+    while (Date.now() - extensionStart <= extensionDeadlineMs) {
+      const exitCode = await runInherit([
+        'kubectl',
+        '-n',
+        namespace,
+        'exec',
+        dbPod,
+        '--',
+        'psql',
+        '-U',
+        dbUser,
+        '-d',
+        dbName,
+        '-v',
+        'ON_ERROR_STOP=1',
+        '-c',
+        extensionSql,
+      ])
+      if (exitCode === 0) break
+      await sleep(2000)
+    }
+    if (Date.now() - extensionStart > extensionDeadlineMs) {
+      fatal(`Timed out ensuring Postgres extensions in pod ${dbPod}.`)
+    }
+
     process.env.AGENTS_DB_URL = databaseUrl
   }
 

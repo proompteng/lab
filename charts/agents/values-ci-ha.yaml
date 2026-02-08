@@ -1,18 +1,17 @@
 replicaCount: 1
 
 image:
-  repository: registry.ide-newton.ts.net/lab/jangar
-  tag: "5436c9d2"
-  digest: sha256:d673055eb54af663963dedfee69e63de46059254b830eca2a52e97e641f00349
+  # Local dev image loaded into kind via AGENTS_KIND_LOAD_IMAGE.
+  repository: jangar-control-plane
+  tag: ha-test
   pullPolicy: IfNotPresent
 
 grpc:
   enabled: false
 
-# The CI image is pinned to a known-good digest. It does not expose `/ready` yet, so use `/health`
-# for readiness to avoid the deployment being stuck NotReady during smoke tests.
 readinessProbe:
-  path: /health
+  # This branch adds /ready (leader-election aware).
+  path: /ready
 
 env:
   vars:
@@ -25,7 +24,16 @@ resources:
     cpu: 100m
     memory: 256Mi
 
+controllers:
+  enabled: true
+  replicaCount: 2
+  env:
+    vars:
+      JANGAR_MIGRATIONS: "auto"
+
 controller:
+  leaderElection:
+    enabled: true
   namespaces:
     - agents-ci
   vcsProviders:
