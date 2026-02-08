@@ -146,16 +146,24 @@ jobs:
           KIND_CLUSTER_NAME: agents-ci-${{ github.run_id }}
         run: |
           set -euo pipefail
+          timeout_cmd() {
+            if command -v timeout >/dev/null 2>&1; then
+              timeout "$@"
+              return $?
+            fi
+            shift
+            "$@"
+          }
           if command -v kind >/dev/null 2>&1 && kind get clusters | grep -Fxq "${KIND_CLUSTER_NAME}"; then
             export KUBECONFIG="$(mktemp)"
             kind get kubeconfig --name "${KIND_CLUSTER_NAME}" > "${KUBECONFIG}"
 
-            helm uninstall agents-ci -n agents-ci || true
-            kubectl -n agents-ci delete deployment agents-ci-postgres --ignore-not-found || true
-            kubectl -n agents-ci delete service agents-ci-postgres --ignore-not-found || true
-            kubectl delete namespace agents-ci --ignore-not-found --wait=false || true
+            timeout_cmd 60s helm uninstall agents-ci -n agents-ci || true
+            timeout_cmd 60s kubectl -n agents-ci delete deployment agents-ci-postgres --ignore-not-found || true
+            timeout_cmd 60s kubectl -n agents-ci delete service agents-ci-postgres --ignore-not-found || true
+            timeout_cmd 60s kubectl delete namespace agents-ci --ignore-not-found --wait=false || true
 
-            kind delete cluster --name "${KIND_CLUSTER_NAME}" || true
+            timeout_cmd 120s kind delete cluster --name "${KIND_CLUSTER_NAME}" || true
           else
             echo "kind cluster ${KIND_CLUSTER_NAME} not present; skipping cleanup to avoid touching host cluster"
           fi
