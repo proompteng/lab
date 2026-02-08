@@ -1,6 +1,6 @@
 # Leader Election for HA (Jangar Controllers)
 
-Status: Draft (2026-02-07)
+Status: Implemented (2026-02-08)
 
 Docs index: [README](../README.md)
 ## Purpose
@@ -9,18 +9,19 @@ reconciliation, and provide predictable failover behavior.
 
 ## Current State
 
-- Code: No leader election is implemented. Controllers start unconditionally via `ensureAgentCommsRuntime` in
-  `services/jangar/src/server/agent-comms-runtime.ts`, and readiness is not gated on leadership.
-- Chart: There is no `controller.leaderElection` configuration in `charts/agents/values.yaml` or the deployment
-  template.
-- Cluster: The `agents` deployment runs `replicaCount: 1` from `argocd/applications/agents/values.yaml`, so HA is
-  not active. The namespace includes a PDB named `agents` with `minAvailable: 1`, and gRPC is enabled on port 50051.
+- Code: Leader election is implemented in `services/jangar/src/server/leader-election.ts` and wired into
+  `services/jangar/src/server/agent-comms-runtime.ts`.
+- Code: Lease operations are performed via `kubectl get/create/replace lease` for Bun compatibility.
+- Chart: `controller.leaderElection.*` is present in `charts/agents/values.yaml` and wired into both deployments.
+- Cluster: GitOps desired state can scale `agents-controllers` independently via `controllers.replicaCount`.
+- Readiness: `/ready` exists and reports controller health (not leadership); mutation endpoints are leader-gated.
 
 ## Design Summary
 
 - Use a single Kubernetes Lease to elect one leader across all controller loops running in the Jangar process.
 - Only the leader runs reconciliation loops and accepts mutating requests (webhooks, gRPC mutation endpoints).
-- Non-leaders stay alive and serve read-only endpoints but report not-ready to avoid traffic.
+- Non-leaders stay alive and serve read-only endpoints while remaining ready; mutation endpoints return retryable
+  errors and controller loops are stopped on leadership loss.
 
 ## Lease Details
 
@@ -37,7 +38,7 @@ reconciliation, and provide predictable failover behavior.
 
 ## Traffic and Readiness
 
-- Readiness probe should report ready only on the leader.
+- Readiness probe reports process/controller health, not leadership.
 - Non-leader behavior:
   - HTTP mutation endpoints return `503` with `Retry-After`.
   - gRPC mutation methods return `Unavailable` with a retry hint.
@@ -114,13 +115,15 @@ Map values into env vars consumed by the controller runtime, for example:
 - Argo WorkflowTemplates used by Codex (when applicable): `argocd/applications/froussard/*.yaml` (typically in namespace `jangar`)
 
 ### Current cluster state (GitOps desired + live API server)
-As of 2026-02-07 (repo `main`):
+As of 2026-02-08 (repo `main`):
 - Kubernetes API server (live): `v1.35.0+k3s1` (from `kubectl get --raw /version`).
 - Argo CD app: `agents` deploys Helm chart `charts/agents` (release `agents`) into namespace `agents` with `includeCRDs: true`. See `argocd/applications/agents/kustomization.yaml`.
 - Chart version pinned by GitOps: `0.9.1`. See `argocd/applications/agents/kustomization.yaml`.
 - Images pinned by GitOps (see `argocd/applications/agents/values.yaml`):
-  - Control plane (`Deployment/agents`): `registry.ide-newton.ts.net/lab/jangar-control-plane:5436c9d2@sha256:b511d73a2622ea3a4f81f5507899bca1970a0e7b6a9742b42568362f1d682b9a`
-  - Controllers (`Deployment/agents-controllers`): `registry.ide-newton.ts.net/lab/jangar:5436c9d2@sha256:d673055eb54af663963dedfee69e63de46059254b830eca2a52e97e641f00349`
+  - Control plane (`Deployment/agents`): `registry.ide-newton.ts.net/lab/jangar-control-plane:a5afbc7f@sha256:34822aa0b93f57630260aee28659abdbf154ae6706bc6f6d86f08efce5ee4e5b`
+  - Controllers (`Deployment/agents-controllers`): `registry.ide-newton.ts.net/lab/jangar:3671d447@sha256:515e03dfe27dd186cf5fcaebbb1eb9bcc773f1236bc89fc523eb0134b9e9794b`
+- Control plane replicas: `replicaCount: 1` (root key in `argocd/applications/agents/values.yaml`).
+- Controllers replicas: `controllers.replicaCount: 2` (in `argocd/applications/agents/values.yaml`).
 - Namespaced reconciliation: `controller.namespaces: [agents]` and `rbac.clusterScoped: false`. See `argocd/applications/agents/values.yaml`.
 - Database connectivity: `database.secretRef.name: jangar-db-app` / `key: uri`. See `argocd/applications/agents/values.yaml`.
 - gRPC enabled: `grpc.enabled: true` on port `50051`. See `argocd/applications/agents/values.yaml`.
@@ -167,6 +170,7 @@ Common mappings:
 - `grpc.*` → `JANGAR_GRPC_{ENABLED,HOST,PORT}` (unless overridden via `env.vars`)
 - `controller.jobTtlSecondsAfterFinished` → `JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS`
 - `runtime.*` → `JANGAR_{AGENT_RUNNER_IMAGE,AGENT_IMAGE,SCHEDULE_RUNNER_IMAGE,SCHEDULE_SERVICE_ACCOUNT}` (unless overridden via `env.vars`)
+- `controller.leaderElection.*` → `JANGAR_LEADER_ELECTION_{ENABLED,LEASE_NAME,LEASE_NAMESPACE,LEASE_DURATION_SECONDS,RENEW_DEADLINE_SECONDS,RETRY_PERIOD_SECONDS}`
 
 ### Rollout plan (GitOps)
 1. Update code + chart + CRDs in one PR when changing APIs:

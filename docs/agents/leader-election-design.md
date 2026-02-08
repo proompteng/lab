@@ -1,6 +1,6 @@
 # Leader Election Design (Jangar Controllers)
 
-Status: Current (2026-02-07)
+Status: Implemented (2026-02-08)
 
 Docs index: [README](README.md)
 
@@ -8,13 +8,21 @@ Docs index: [README](README.md)
 Define how Jangar controllers use Kubernetes leader election to support safe horizontal scaling, prevent double
 reconciliation, and provide predictable failover behavior.
 
-## Current State (As Of 2026-02-07)
-- Code: no leader election is implemented. Controllers start unconditionally via `ensureAgentCommsRuntime` in
-  `services/jangar/src/server/agent-comms-runtime.ts`, and readiness is not gated on leadership.
-- Chart: there is no `controller.leaderElection` configuration in `charts/agents/values.yaml` or the deployment
-  templates.
-- Cluster (GitOps desired state): `argocd/applications/agents/values.yaml` runs the `agents` deployment with
-  `replicaCount: 1`, so HA is not active. gRPC is enabled (port `50051`).
+## Implementation (As Of 2026-02-08)
+- Code: Leader election runtime lives in `services/jangar/src/server/leader-election.ts`.
+- Code: Controllers are started/stopped based on leadership via `ensureAgentCommsRuntime` in
+  `services/jangar/src/server/agent-comms-runtime.ts`.
+- Code: Lease CRUD is implemented via `kubectl get/create/replace lease` to remain Bun-compatible (avoids TLS issues
+  with the Kubernetes client in some environments).
+- HTTP readiness: `/ready` exists and reports controller health, not leadership. See `services/jangar/src/routes/ready.tsx`.
+- HTTP readiness: `/ready` includes `leaderElection` status in the response body for debuggability.
+- Mutation gating: HTTP mutation routes can use `requireLeaderForMutationHttp()` from `services/jangar/src/server/leader-election.ts`.
+- Mutation gating: gRPC mutation methods are gated in `services/jangar/src/server/agentctl-grpc.ts`.
+- Chart: Values are `controller.leaderElection.*` in `charts/agents/values.yaml` with schema in `charts/agents/values.schema.json`.
+- Chart: Env wiring is in `charts/agents/templates/deployment.yaml` and `charts/agents/templates/deployment-controllers.yaml`.
+- Chart: RBAC is in `charts/agents/templates/rbac.yaml` (Lease permissions in the namespace).
+- Cluster (GitOps desired state): `argocd/applications/agents/values.yaml` runs control plane with `replicaCount: 1`.
+- Cluster (GitOps desired state): `argocd/applications/agents/values.yaml` runs controllers HA with `controllers.replicaCount: 2`.
 
 ## Goals
 - Ensure exactly one active reconciler across the controller loops in a given Jangar release at any time.
@@ -31,7 +39,8 @@ reconciliation, and provide predictable failover behavior.
 - Use a single Kubernetes Lease to elect one leader across all controller loops running in the Jangar controllers
   process (the `Deployment/agents-controllers` workload).
 - Only the leader runs reconciliation loops and accepts mutating requests (webhooks, gRPC mutation endpoints).
-- Non-leaders stay alive and serve read-only endpoints but report not-ready to avoid traffic.
+- Non-leaders stay alive, remain ready, and serve read-only endpoints. Mutation endpoints are rejected with retry
+  semantics, and controller loops are stopped on leadership loss.
 
 Note: This design is intentionally "one leader per release per namespace". If we later add sharding, this document
 becomes the baseline and a sharding design should explicitly replace the "single Lease" contract.
@@ -80,19 +89,16 @@ Important: Use server time semantics (`renewTime` set to "now" from this pod) bu
 comparing times with a safety margin (for example, treat a lease as expired only after `leaseDurationSeconds + 2s`).
 
 ## Traffic And Readiness
-- Readiness probe should report ready only on the leader.
+- Readiness probe reports process/controller health, not leadership. This prevents readiness flapping when leadership
+  changes and avoids removing non-leader pods from Service endpoints.
 - Non-leader behavior:
-  - HTTP mutation endpoints return `503` with `Retry-After`.
-  - gRPC mutation methods return `Unavailable` with a retry hint.
+  - HTTP mutation endpoints return `503` with `Retry-After` via `requireLeaderForMutationHttp()`.
+  - gRPC mutation methods return `Unavailable` via `requireLeaderForMutation()` in `agentctl-grpc.ts`.
   - Read-only status endpoints remain available.
 
 ### Readiness Implications
-If Services select only ready endpoints (the Kubernetes default behavior), then "followers are not-ready" implies:
-- Followers are removed from the Service endpoints for HTTP/gRPC, which is desirable for mutation traffic.
-- Read-only endpoints on followers are not reachable through the same Service unless a separate Service is created that
-  does not depend on readiness gating.
-
-This document assumes we prefer safety over read-only availability and that leader-only readiness is acceptable.
+Because followers remain ready, Services may still route traffic to non-leaders. This is safe because mutation paths
+are explicitly leader-gated and return retryable errors on followers.
 
 ## Configuration
 Add a `controller.leaderElection` section to `charts/agents/values.yaml`:
@@ -130,10 +136,11 @@ To reduce "gap time" during rolling updates:
 
 ## Observability
 - Log leadership acquisition/loss with lease name and namespace.
-- Add metrics:
-  - `jangar_leader_elected` (gauge, 1 for leader, 0 for follower)
-  - `jangar_leader_changes_total` (counter)
-- Extend `services/jangar/src/server/control-plane-status.ts` to report leader status.
+- Metrics:
+  - `jangar_leader_changes_total` (counter) is emitted on leader<->follower transitions.
+- Status:
+  - `services/jangar/src/server/control-plane-status.ts` reports leader status.
+  - `/ready` includes leader status in the response body (for quick in-cluster inspection).
 
 ### Alerts (Future)
 Once metrics exist, add alerting for:
@@ -145,12 +152,12 @@ Jangar service account must be able to manage Leases in its namespace:
 - `get`, `list`, `watch`, `create`, `update`, `patch` on `leases.coordination.k8s.io`.
 
 ## Rollout Plan
-- Add leader election implementation and env wiring behind a feature flag.
-- Deploy with `replicaCount=2` in a non-prod namespace and confirm only one pod is ready.
-- Enable the feature flag in production and increase replicas.
+- Default is enabled. To disable in an emergency, set `controller.leaderElection.enabled=false` in values.
+- HA is enabled by scaling the controllers deployment, for example `controllers.replicaCount: 2`.
 
 ## Validation
-- Kill the leader pod and verify another pod becomes leader within 30 seconds.
+- Kill the leader pod and verify another pod becomes leader within 30 seconds (validated in the `agents` namespace on
+  2026-02-08).
 - Confirm webhooks and gRPC mutation calls are rejected by non-leaders.
 - Confirm read-only endpoints remain available during leadership transitions.
 
@@ -177,7 +184,7 @@ kubectl -n agents logs deploy/agents-controllers --tail=200 | rg -n \"leader|lea
 - `docs/agents/agents-helm-chart-implementation.md`
 - `docs/agents/jangar-controller-design.md`
 - `docs/agents/production-readiness-design.md`
-- `docs/agents/designs/leader-election-ha.md` (draft, includes repo/chart/cluster handoff appendix)
+- `docs/agents/designs/leader-election-ha.md` (includes repo/chart/cluster handoff appendix)
 
 ## Diagram
 
@@ -190,7 +197,7 @@ sequenceDiagram
 
   P1->>L: acquire/renew lease
   P2-->>L: observe lease held
-  Note over P2: follower stays not-ready
+  Note over P2: follower stays ready; controller loops are stopped
   P1-->>L: renew until crash/partition
   P1-xL: stop renewing
   P2->>L: acquire lease after timeout
