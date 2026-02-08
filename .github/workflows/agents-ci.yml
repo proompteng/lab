@@ -99,7 +99,8 @@ jobs:
               exit 1
               ;;
           esac
-          curl -fsSL -o kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl"
+          curl -fL --retry 5 --retry-delay 2 --retry-all-errors -o kubectl \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl"
           chmod +x kubectl
           if command -v sudo >/dev/null 2>&1; then
             sudo mv kubectl /usr/local/bin/
@@ -133,7 +134,13 @@ jobs:
               exit 1
               ;;
           esac
-          curl -fsSL -o kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-${ARCH}"
+          curl -fL --retry 5 --retry-delay 2 --retry-all-errors -o "kind-linux-${ARCH}" \
+            "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-${ARCH}"
+          curl -fL --retry 5 --retry-delay 2 --retry-all-errors -o "kind-linux-${ARCH}.sha256sum" \
+            "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-${ARCH}.sha256sum"
+          grep "kind-linux-${ARCH}" < "kind-linux-${ARCH}.sha256sum" | sha256sum -c
+          mv "kind-linux-${ARCH}" kind
+          rm -f "kind-linux-${ARCH}.sha256sum"
           chmod +x kind
           if command -v sudo >/dev/null 2>&1; then
             sudo mv kind /usr/local/bin/
@@ -149,8 +156,17 @@ jobs:
           set -euo pipefail
           export KUBECONFIG="${RUNNER_TEMP}/kubeconfig"
           kind create cluster --name "${KIND_CLUSTER_NAME}" --image kindest/node:v1.29.4 --wait 180s --kubeconfig "${KUBECONFIG}"
+          kind get kubeconfig --name "${KIND_CLUSTER_NAME}" --internal > "${KUBECONFIG}"
           echo "KUBECONFIG=${KUBECONFIG}" >> "${GITHUB_ENV}"
-          kubectl --request-timeout=10s get nodes -o wide
+          for i in $(seq 1 30); do
+            if kubectl --request-timeout=10s get nodes -o wide; then
+              exit 0
+            fi
+            echo "kubectl get nodes failed (attempt ${i}/30); retrying..." >&2
+            sleep 2
+          done
+          echo "kubectl could not reach the kind API server after retries" >&2
+          exit 1
 
       - name: Run agents integration smoke test
         env:
@@ -178,7 +194,7 @@ jobs:
           }
           if command -v kind >/dev/null 2>&1 && kind get clusters | grep -Fxq "${KIND_CLUSTER_NAME}"; then
             export KUBECONFIG="$(mktemp)"
-            kind get kubeconfig --name "${KIND_CLUSTER_NAME}" > "${KUBECONFIG}"
+            kind get kubeconfig --name "${KIND_CLUSTER_NAME}" --internal > "${KUBECONFIG}"
 
             timeout_cmd 60s helm uninstall agents-ci -n agents-ci || true
             timeout_cmd 60s kubectl -n agents-ci delete deployment agents-ci-postgres --ignore-not-found || true
