@@ -37,6 +37,10 @@
 - Save: `bun run --filter memories save-memory --task-name … --content … --summary … --tags …`.
 - Retrieve: `bun run --filter memories retrieve-memory --query … --limit <n>`; uses `schemas/embeddings/memories.sql` and OpenAI embedding env vars.
 
+## Memories (Agent)
+- Make sure to read memories before the turn.
+- Make sure to save memories after the turn.
+
 ## Coding Style & Naming Conventions
 - Biome: 2-space indent, single quotes, trailing commas, 120-char width; auto-organizes imports.
 - Imports: standard → third-party → internal; blank lines between groups.
