@@ -11,7 +11,7 @@ import {
   recordAgentRunOutcome,
   recordReconcileDurationMs,
 } from '~/server/metrics'
-import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
+import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { createPrimitivesStore } from '~/server/primitives-store'
@@ -96,6 +96,7 @@ type CrdCheckState = {
 type ControllerHealthState = {
   started: boolean
   crdCheckState: CrdCheckState | null
+  namespaces: string[] | null
 }
 
 type RateBucket = { count: number; resetAt: number }
@@ -112,7 +113,7 @@ const globalState = globalThis as typeof globalThis & {
 
 const controllerState = (() => {
   if (globalState.__jangarAgentsControllerState) return globalState.__jangarAgentsControllerState
-  const initial = { started: false, crdCheckState: null }
+  const initial = { started: false, crdCheckState: null, namespaces: null }
   globalState.__jangarAgentsControllerState = initial
   return initial
 })()
@@ -283,15 +284,10 @@ const shouldStart = () => {
 }
 
 const parseNamespaces = () => {
-  const raw = process.env.JANGAR_AGENTS_CONTROLLER_NAMESPACES
-  if (!raw) return DEFAULT_NAMESPACES
-  const list = raw
-    .split(',')
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0)
-  const namespaces = list.length > 0 ? list : DEFAULT_NAMESPACES
-  assertClusterScopedForWildcard(namespaces, 'agents controller')
-  return namespaces
+  return parseNamespaceScopeEnv('JANGAR_AGENTS_CONTROLLER_NAMESPACES', {
+    fallback: DEFAULT_NAMESPACES,
+    label: 'agents controller',
+  })
 }
 
 const resolveCrdCheckNamespace = () => {
@@ -472,6 +468,7 @@ const checkCrds = async (): Promise<CrdCheckState> => {
 export const getAgentsControllerHealth = () => ({
   enabled: shouldStart(),
   started: controllerState.started,
+  namespaces: controllerState.namespaces,
   crdsReady: controllerState.crdCheckState?.ok ?? null,
   missingCrds: controllerState.crdCheckState?.missing ?? [],
   lastCheckedAt: controllerState.crdCheckState?.checkedAt ?? null,
@@ -6172,7 +6169,17 @@ export const startAgentsController = async () => {
   starting = true
   lifecycleToken += 1
   const token = lifecycleToken
-  const crdsReady = await checkCrds()
+  let crdsReady: CrdCheckState
+  try {
+    crdsReady = await checkCrds()
+  } catch (error) {
+    console.error('[jangar] agents controller failed to validate namespace scope', error)
+    starting = false
+    if (error instanceof Error && error.name === 'NamespaceScopeConfigError') {
+      process.exitCode = 1
+    }
+    throw error
+  }
   if (!crdsReady.ok) {
     console.error('[jangar] agents controller will not start without CRDs')
     starting = false
@@ -6182,6 +6189,8 @@ export const startAgentsController = async () => {
   try {
     const namespaces = await resolveNamespaces()
     if (lifecycleToken !== token) return
+    controllerState.namespaces = namespaces
+    console.info('[jangar] agents controller namespace scope:', JSON.stringify(namespaces))
     const kube = createKubernetesClient()
     const concurrency = parseConcurrency()
     const state: ControllerState = { namespaces: new Map() }
@@ -6200,6 +6209,10 @@ export const startAgentsController = async () => {
     controllerState.started = true
   } catch (error) {
     console.error('[jangar] agents controller failed to start', error)
+    if (error instanceof Error && error.name === 'NamespaceScopeConfigError') {
+      process.exitCode = 1
+      throw error
+    }
   } finally {
     if (lifecycleToken !== token) {
       for (const handle of handles) {
@@ -6223,6 +6236,7 @@ export const stopAgentsController = () => {
   namespaceQueues.clear()
   started = false
   controllerState.started = false
+  controllerState.namespaces = null
 }
 
 export const __test = {

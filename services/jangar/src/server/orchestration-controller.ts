@@ -193,6 +193,7 @@ const checkCrds = async (): Promise<CrdCheckState> => {
 export const getOrchestrationControllerHealth = () => ({
   enabled: shouldStart(),
   started: controllerState.started,
+  namespaces: null,
   crdsReady: controllerState.crdCheckState?.ok ?? null,
   missingCrds: controllerState.crdCheckState?.missing ?? [],
   lastCheckedAt: controllerState.crdCheckState?.checkedAt ?? null,

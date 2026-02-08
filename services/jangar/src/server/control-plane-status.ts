@@ -17,6 +17,7 @@ export type ControllerStatus = {
   name: string
   enabled: boolean
   started: boolean
+  scope_namespaces: string[]
   crds_ready: boolean
   missing_crds: string[]
   last_checked_at: string
@@ -93,11 +94,13 @@ export type ControlPlaneStatusDeps = {
 const normalizeMessage = (value: unknown) => (value instanceof Error ? value.message : String(value))
 
 const buildControllerStatus = (name: string, health: ControllerHealth): ControllerStatus => {
+  const scopeNamespaces = Array.isArray(health.namespaces) ? health.namespaces : []
   if (!health.enabled) {
     return {
       name,
       enabled: false,
       started: health.started,
+      scope_namespaces: scopeNamespaces,
       crds_ready: false,
       missing_crds: health.missingCrds,
       last_checked_at: health.lastCheckedAt ?? '',
@@ -110,6 +113,7 @@ const buildControllerStatus = (name: string, health: ControllerHealth): Controll
       name,
       enabled: true,
       started: false,
+      scope_namespaces: scopeNamespaces,
       crds_ready: false,
       missing_crds: health.missingCrds,
       last_checked_at: health.lastCheckedAt ?? '',
@@ -122,6 +126,7 @@ const buildControllerStatus = (name: string, health: ControllerHealth): Controll
       name,
       enabled: true,
       started: true,
+      scope_namespaces: scopeNamespaces,
       crds_ready: false,
       missing_crds: health.missingCrds,
       last_checked_at: health.lastCheckedAt ?? '',
@@ -134,6 +139,7 @@ const buildControllerStatus = (name: string, health: ControllerHealth): Controll
       name,
       enabled: true,
       started: true,
+      scope_namespaces: scopeNamespaces,
       crds_ready: false,
       missing_crds: health.missingCrds,
       last_checked_at: health.lastCheckedAt ?? '',
@@ -145,6 +151,7 @@ const buildControllerStatus = (name: string, health: ControllerHealth): Controll
     name,
     enabled: true,
     started: true,
+    scope_namespaces: scopeNamespaces,
     crds_ready: true,
     missing_crds: health.missingCrds,
     last_checked_at: health.lastCheckedAt ?? '',

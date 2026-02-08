@@ -1,4 +1,5 @@
 import { startResourceWatch } from '~/server/kube-watch'
+import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { buildResourceFingerprint } from '~/server/status-utils'
@@ -37,14 +38,19 @@ const shouldStart = () => {
 }
 
 const parseNamespaces = () => {
-  const raw =
-    process.env.JANGAR_CONTROL_PLANE_CACHE_NAMESPACES?.trim() || process.env.JANGAR_PRIMITIVES_NAMESPACES?.trim()
-  if (!raw) return [DEFAULT_NAMESPACE]
-  const namespaces = raw
-    .split(',')
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0)
-  return namespaces.length > 0 ? namespaces : [DEFAULT_NAMESPACE]
+  const explicit = process.env.JANGAR_CONTROL_PLANE_CACHE_NAMESPACES?.trim()
+  if (explicit) {
+    const namespaces = explicit
+      .split(',')
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0)
+    return namespaces.length > 0 ? namespaces : [DEFAULT_NAMESPACE]
+  }
+
+  return parseNamespaceScopeEnv('JANGAR_PRIMITIVES_NAMESPACES', {
+    fallback: [DEFAULT_NAMESPACE],
+    label: 'control plane cache',
+  })
 }
 
 const resolveClusterId = () => process.env.JANGAR_CONTROL_PLANE_CACHE_CLUSTER?.trim() || DEFAULT_CLUSTER_ID

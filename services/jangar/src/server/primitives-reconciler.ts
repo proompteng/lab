@@ -1,5 +1,7 @@
+import { spawn } from 'node:child_process'
+
 import { startResourceWatch } from '~/server/kube-watch'
-import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
+import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { hydrateMemoryRecord } from '~/server/primitives-memory'
@@ -36,15 +38,62 @@ const shouldStart = () => {
 }
 
 const parseNamespaces = () => {
-  const raw = process.env.JANGAR_PRIMITIVES_NAMESPACES
-  if (!raw) return DEFAULT_NAMESPACES
-  const list = raw
-    .split(',')
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0)
-  const namespaces = list.length > 0 ? list : DEFAULT_NAMESPACES
-  assertClusterScopedForWildcard(namespaces, 'primitives reconciler')
-  return namespaces
+  return parseNamespaceScopeEnv('JANGAR_PRIMITIVES_NAMESPACES', {
+    fallback: DEFAULT_NAMESPACES,
+    label: 'primitives reconciler',
+  })
+}
+
+const runKubectl = (args: string[]) =>
+  new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
+    const child = spawn('kubectl', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    const finish = (payload: { stdout: string; stderr: string; code: number | null }) => {
+      if (settled) return
+      settled = true
+      resolve(payload)
+    }
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+    child.on('error', (error) => {
+      finish({
+        stdout,
+        stderr: stderr || (error instanceof Error ? error.message : String(error)),
+        code: 1,
+      })
+    })
+    child.on('close', (code) => finish({ stdout, stderr, code }))
+  })
+
+const resolveNamespaces = async () => {
+  const namespaces = parseNamespaces()
+  if (!namespaces.includes('*')) return namespaces
+
+  const result = await runKubectl(['get', 'namespace', '-o', 'json'])
+  if (result.code !== 0) {
+    throw new Error(result.stderr || result.stdout || 'failed to list namespaces')
+  }
+  const payload = JSON.parse(result.stdout) as Record<string, unknown>
+  const items = Array.isArray(payload.items) ? payload.items : []
+  const resolved = items
+    .map((item) => {
+      const metadata = item && typeof item === 'object' ? (item as Record<string, unknown>).metadata : null
+      const name = metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>).name : null
+      return typeof name === 'string' ? name : null
+    })
+    .filter((value): value is string => Boolean(value))
+  if (resolved.length === 0) {
+    throw new Error('no namespaces returned by kubectl')
+  }
+  return resolved
 }
 
 const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
@@ -267,50 +316,59 @@ export const startPrimitivesReconciler = () => {
   const store = createPrimitivesStore()
   storeRef = store
   const kube = createKubernetesClient()
-  const namespaces = parseNamespaces()
+  void (async () => {
+    const namespaces = await resolveNamespaces()
+    console.info('[jangar] primitives reconciler namespace scope:', JSON.stringify(namespaces))
 
-  void reconcileOnce(kube, store, namespaces)
+    void reconcileOnce(kube, store, namespaces)
 
-  for (const namespace of namespaces) {
-    watchHandles.push(
-      startResourceWatch({
-        resource: RESOURCE_MAP.AgentRun,
-        namespace,
-        onEvent: (event) => {
-          const resource = asRecord(event.object)
-          if (!resource || event.type === 'DELETED') return
-          enqueueNamespaceTask(namespace, () => reconcileAgentRunItem(resource, namespace, store, kube))
-        },
-        onError: (error) => console.warn('[jangar] primitives agent run watch failed', error),
-      }),
-    )
-    watchHandles.push(
-      startResourceWatch({
-        resource: RESOURCE_MAP.OrchestrationRun,
-        namespace,
-        onEvent: (event) => {
-          const resource = asRecord(event.object)
-          if (!resource || event.type === 'DELETED') return
-          enqueueNamespaceTask(namespace, () => reconcileOrchestrationRunItem(resource, namespace, store, kube))
-        },
-        onError: (error) => console.warn('[jangar] primitives orchestration run watch failed', error),
-      }),
-    )
-    watchHandles.push(
-      startResourceWatch({
-        resource: RESOURCE_MAP.Memory,
-        namespace,
-        onEvent: (event) => {
-          const resource = asRecord(event.object)
-          if (!resource || event.type === 'DELETED') return
-          enqueueNamespaceTask(namespace, async () => {
-            await reconcileMemories(namespace, store, kube)
-          })
-        },
-        onError: (error) => console.warn('[jangar] primitives memory watch failed', error),
-      }),
-    )
-  }
+    for (const namespace of namespaces) {
+      watchHandles.push(
+        startResourceWatch({
+          resource: RESOURCE_MAP.AgentRun,
+          namespace,
+          onEvent: (event) => {
+            const resource = asRecord(event.object)
+            if (!resource || event.type === 'DELETED') return
+            enqueueNamespaceTask(namespace, () => reconcileAgentRunItem(resource, namespace, store, kube))
+          },
+          onError: (error) => console.warn('[jangar] primitives agent run watch failed', error),
+        }),
+      )
+      watchHandles.push(
+        startResourceWatch({
+          resource: RESOURCE_MAP.OrchestrationRun,
+          namespace,
+          onEvent: (event) => {
+            const resource = asRecord(event.object)
+            if (!resource || event.type === 'DELETED') return
+            enqueueNamespaceTask(namespace, () => reconcileOrchestrationRunItem(resource, namespace, store, kube))
+          },
+          onError: (error) => console.warn('[jangar] primitives orchestration run watch failed', error),
+        }),
+      )
+      watchHandles.push(
+        startResourceWatch({
+          resource: RESOURCE_MAP.Memory,
+          namespace,
+          onEvent: (event) => {
+            const resource = asRecord(event.object)
+            if (!resource || event.type === 'DELETED') return
+            enqueueNamespaceTask(namespace, async () => {
+              await reconcileMemories(namespace, store, kube)
+            })
+          },
+          onError: (error) => console.warn('[jangar] primitives memory watch failed', error),
+        }),
+      )
+    }
+  })().catch((error) => {
+    console.error('[jangar] primitives reconciler failed to start', error)
+    if (error instanceof Error && error.name === 'NamespaceScopeConfigError') {
+      process.exitCode = 1
+      throw error
+    }
+  })
 }
 
 export const stopPrimitivesReconciler = () => {

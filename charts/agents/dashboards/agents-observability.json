@@ -137,10 +137,7 @@
   "refresh": "30s",
   "schemaVersion": 36,
   "style": "dark",
-  "tags": [
-    "agents",
-    "jangar"
-  ],
+  "tags": ["agents", "jangar"],
   "templating": {
     "list": []
   },
