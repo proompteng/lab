@@ -227,6 +227,8 @@ spec:
               value: qwen3-embedding-saigak:0.6b
             - name: OPENAI_EMBEDDING_DIMENSION
               value: "1024"
+            - name: OPENAI_EMBEDDING_TIMEOUT_MS
+              value: "60000"
           ports:
             - name: http
               containerPort: 8080
