@@ -159,17 +159,18 @@ type WorkloadVolume struct {
 type AgentRunStatus struct {
 	Phase string `json:"phase,omitempty"`
 	// +kubebuilder:pruning:PreserveUnknownFields
-	RuntimeRef         map[string]apiextensionsv1.JSON `json:"runtimeRef,omitempty"`
-	Workflow           *WorkflowStatus                 `json:"workflow,omitempty"`
-	StartedAt          *metav1.Time                    `json:"startedAt,omitempty"`
-	FinishedAt         *metav1.Time                    `json:"finishedAt,omitempty"`
-	UpdatedAt          *metav1.Time                    `json:"updatedAt,omitempty"`
-	Artifacts          []Artifact                      `json:"artifacts,omitempty"`
-	Vcs                *AgentRunVcsStatus              `json:"vcs,omitempty"`
-	SystemPromptHash   string                          `json:"systemPromptHash,omitempty"`
-	Conditions         []metav1.Condition              `json:"conditions,omitempty"`
-	ObservedGeneration int64                           `json:"observedGeneration,omitempty"`
-	Contract           *AgentRunContractStatus         `json:"contract,omitempty"`
+	RuntimeRef map[string]apiextensionsv1.JSON `json:"runtimeRef,omitempty"`
+	Workflow   *WorkflowStatus                 `json:"workflow,omitempty"`
+	StartedAt  *metav1.Time                    `json:"startedAt,omitempty"`
+	FinishedAt *metav1.Time                    `json:"finishedAt,omitempty"`
+	UpdatedAt  *metav1.Time                    `json:"updatedAt,omitempty"`
+	// +kubebuilder:validation:MaxItems=50
+	Artifacts          []Artifact              `json:"artifacts,omitempty"`
+	Vcs                *AgentRunVcsStatus      `json:"vcs,omitempty"`
+	SystemPromptHash   string                  `json:"systemPromptHash,omitempty"`
+	Conditions         []metav1.Condition      `json:"conditions,omitempty"`
+	ObservedGeneration int64                   `json:"observedGeneration,omitempty"`
+	Contract           *AgentRunContractStatus `json:"contract,omitempty"`
 }
 
 type VcsPolicy struct {
@@ -254,7 +255,8 @@ type Artifact struct {
 	Name string `json:"name"`
 	Path string `json:"path,omitempty"`
 	Key  string `json:"key,omitempty"`
-	URL  string `json:"url,omitempty"`
+	// +kubebuilder:validation:MaxLength=2048
+	URL string `json:"url,omitempty"`
 }
 
 type AgentProviderStatus struct {

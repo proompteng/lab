@@ -73,6 +73,7 @@ spec:
                     path:
                       type: string
                     url:
+                      maxLength: 2048
                       type: string
                   required:
                   - name
