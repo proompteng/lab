@@ -688,7 +688,10 @@ const resolveAgentRunArtifactsLimitConfig = (
   const maxFromEnv =
     parsedMax === undefined || !Number.isFinite(parsedMax) || parsedMax < 0 ? DEFAULT_AGENTRUN_ARTIFACTS_MAX : parsedMax
 
-  const maxEntries = Math.max(0, Math.floor(overrides.maxEntries ?? maxFromEnv))
+  const maxEntries = Math.min(
+    DEFAULT_AGENTRUN_ARTIFACTS_MAX,
+    Math.max(0, Math.floor(overrides.maxEntries ?? maxFromEnv)),
+  )
   const strict = overrides.strict ?? parseBooleanEnv(process.env.JANGAR_AGENTRUN_ARTIFACTS_STRICT, false)
   return {
     maxEntries,
