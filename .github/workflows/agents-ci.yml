@@ -78,6 +78,11 @@ jobs:
   integration:
     runs-on: arc-arm64
     needs: validate
+    env:
+      # ARC runners run with hostNetwork=true; a shared "kind" docker bridge subnet can collide across pods.
+      # Use a per-run docker network for kind to keep routing deterministic.
+      KIND_DOCKER_NETWORK_NAME: kind-${{ github.run_id }}-${{ github.run_attempt }}
+      KIND_CLUSTER_NAME: agents-ci-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -123,8 +128,10 @@ jobs:
 
       - name: Create kind cluster
         uses: helm/kind-action@v1
+        env:
+          KIND_EXPERIMENTAL_DOCKER_NETWORK: ${{ env.KIND_DOCKER_NETWORK_NAME }}
         with:
-          cluster_name: agents-ci-${{ github.run_id }}
+          cluster_name: ${{ env.KIND_CLUSTER_NAME }}
           version: v0.31.0
           node_image: kindest/node:v1.29.4
           kubectl_version: v1.29.4
@@ -142,20 +149,10 @@ jobs:
 
       - name: Cleanup agents integration release
         if: always()
-        env:
-          KIND_CLUSTER_NAME: agents-ci-${{ github.run_id }}
         run: |
           set -euo pipefail
-          if command -v kind >/dev/null 2>&1 && kind get clusters | grep -Fxq "${KIND_CLUSTER_NAME}"; then
-            export KUBECONFIG="$(mktemp)"
-            kind get kubeconfig --name "${KIND_CLUSTER_NAME}" > "${KUBECONFIG}"
-
-            helm uninstall agents-ci -n agents-ci || true
-            kubectl -n agents-ci delete deployment agents-ci-postgres --ignore-not-found || true
-            kubectl -n agents-ci delete service agents-ci-postgres --ignore-not-found || true
-            kubectl delete namespace agents-ci --ignore-not-found --wait=false || true
-
-            kind delete cluster --name "${KIND_CLUSTER_NAME}" || true
-          else
-            echo "kind cluster ${KIND_CLUSTER_NAME} not present; skipping cleanup to avoid touching host cluster"
+          # Kind cluster is ephemeral; prefer cleanup that does not depend on kubectl connectivity.
+          if command -v docker >/dev/null 2>&1; then
+            docker rm -f "${KIND_CLUSTER_NAME}-control-plane" >/dev/null 2>&1 || true
+            docker network rm "${KIND_DOCKER_NETWORK_NAME}" >/dev/null 2>&1 || true
           fi
