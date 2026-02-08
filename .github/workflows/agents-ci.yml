@@ -3,6 +3,7 @@ name: agents-ci
 on:
   pull_request:
     paths:
+      - 'bun.lock'
       - 'charts/agents/**'
       - 'services/jangar/**'
       - 'scripts/agents/**'
@@ -12,6 +13,7 @@ on:
     branches:
       - main
     paths:
+      - 'bun.lock'
       - 'charts/agents/**'
       - 'services/jangar/**'
       - 'scripts/agents/**'
