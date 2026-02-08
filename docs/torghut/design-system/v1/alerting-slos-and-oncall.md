@@ -52,6 +52,7 @@ flowchart TD
 
 ## Operations links
 - TA recovery: `v1/operations-ta-replay-and-recovery.md`
+- Pause TA writes (stop the bleeding): `v1/operations-pause-ta-writes.md`
 - WS connection/auth: `v1/operations-ws-connection-limit-and-auth.md`
 - ClickHouse replica/keeper: `v1/operations-clickhouse-replica-and-keeper.md`
 - Knative revision failures: `v1/operations-knative-revision-failures.md`
