@@ -121,14 +121,36 @@ jobs:
       - name: Ensure kind Docker network
         run: scripts/agents/ensure-kind-network.sh
 
+      - name: Install kind
+        run: |
+          KIND_VERSION="v0.31.0"
+          ARCH="$(uname -m)"
+          case "${ARCH}" in
+            x86_64|amd64) ARCH="amd64" ;;
+            aarch64|arm64) ARCH="arm64" ;;
+            *)
+              echo "Unsupported architecture: ${ARCH}" >&2
+              exit 1
+              ;;
+          esac
+          curl -fsSL -o kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-${ARCH}"
+          chmod +x kind
+          if command -v sudo >/dev/null 2>&1; then
+            sudo mv kind /usr/local/bin/
+          else
+            mv kind /usr/local/bin/
+          fi
+          kind version
+
       - name: Create kind cluster
-        uses: helm/kind-action@v1
-        with:
-          cluster_name: agents-ci-${{ github.run_id }}
-          version: v0.31.0
-          node_image: kindest/node:v1.29.4
-          kubectl_version: v1.29.4
-          wait: 180s
+        env:
+          KIND_CLUSTER_NAME: agents-ci-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          kind create cluster --name "${KIND_CLUSTER_NAME}" --image kindest/node:v1.29.4 --wait 180s
+          export KUBECONFIG="${RUNNER_TEMP}/kubeconfig"
+          kind get kubeconfig --name "${KIND_CLUSTER_NAME}" > "${KUBECONFIG}"
+          echo "KUBECONFIG=${KUBECONFIG}" >> "${GITHUB_ENV}"
 
       - name: Run agents integration smoke test
         env:
