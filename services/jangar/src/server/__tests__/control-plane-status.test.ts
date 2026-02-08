@@ -5,6 +5,7 @@ import { buildControlPlaneStatus } from '~/server/control-plane-status'
 const healthyController = {
   enabled: true,
   started: true,
+  namespaces: ['agents'],
   crdsReady: true,
   missingCrds: [],
   lastCheckedAt: '2026-01-20T00:00:00Z',
@@ -56,6 +57,7 @@ describe('control-plane status', () => {
     const degradedController = {
       enabled: true,
       started: false,
+      namespaces: ['agents'],
       crdsReady: false,
       missingCrds: ['agents.agents.proompteng.ai'],
       lastCheckedAt: '2026-01-20T00:00:00Z',
