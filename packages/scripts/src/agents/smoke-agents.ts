@@ -232,7 +232,7 @@ const main = async () => {
   ensureCli('helm')
 
   // kind-action "wait" can still return before kubectl is fully stable; guard against transient API resets.
-  const kubeReadyTimeoutMs = parseDurationMs(process.env.AGENTS_KUBE_READY_TIMEOUT, 120 * 1000)
+  const kubeReadyTimeoutMs = parseDurationMs(process.env.AGENTS_KUBE_READY_TIMEOUT, 5 * 60 * 1000)
   await waitForKubectlReady(kubeReadyTimeoutMs)
 
   const namespace = process.env.AGENTS_NAMESPACE ?? 'agents'
