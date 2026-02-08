@@ -499,22 +499,34 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
   }
 
   const tryRelease = async () => {
-    if (stopped) return
     const snapshot = globalState.__jangarLeaderElection
-    if (!snapshot || !snapshot.status.isLeader) return
+    if (!snapshot) return
 
     // Best-effort release: clear holderIdentity so another replica can take leadership sooner.
+    // This must run even during shutdown after `stop()` / `setLeaderStatus(false, ...)`.
     const api = snapshot.kube?.api
     if (!api) return
-    const lease = await api.readNamespacedLease({ name: snapshot.config.leaseName, namespace: leaseNamespace })
+
+    let lease: V1Lease
+    try {
+      lease = await api.readNamespacedLease({ name: snapshot.config.leaseName, namespace: leaseNamespace })
+    } catch {
+      return
+    }
+
     const holder = (lease.spec?.holderIdentity ?? '').trim()
     if (holder !== identity) return
+
     const released = clearLeaseHolder(lease, snapshot.config, new Date())
-    await api.replaceNamespacedLease({
-      name: snapshot.config.leaseName,
-      namespace: leaseNamespace,
-      body: released,
-    })
+    try {
+      await api.replaceNamespacedLease({
+        name: snapshot.config.leaseName,
+        namespace: leaseNamespace,
+        body: released,
+      })
+    } catch {
+      // Best-effort only.
+    }
   }
 
   process.once('SIGTERM', () => {
