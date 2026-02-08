@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHART_DIR="${ROOT_DIR}/charts/agents"
 ARGOCD_AGENTS_DIR="${ROOT_DIR}/argocd/applications/agents"
-HELM_KUBE_VERSION="${HELM_KUBE_VERSION:-1.35.0}"
+HELM_KUBE_VERSION="${HELM_KUBE_VERSION:-1.27.0}"
 
 run_with_helm3() {
   # kustomize --enable-helm is not compatible with Helm v4 yet; prefer Helm v3 via mise when available.
@@ -28,7 +28,7 @@ render_and_check() {
   local values_file="$1"
   local output
   output="$(mktemp)"
-  run_with_helm3 helm template "${CHART_DIR}" --values "${values_file}" --kube-version "${HELM_KUBE_VERSION}" >"${output}"
+  run_with_helm3 helm template "${CHART_DIR}" --kube-version "${HELM_KUBE_VERSION}" --values "${values_file}" >"${output}"
 
   if command -v rg >/dev/null 2>&1; then
     if rg -n "^kind: (Ingress|StatefulSet|CronJob|PersistentVolumeClaim)" "${output}"; then
