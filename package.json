@@ -95,7 +95,7 @@
     "apps/*",
     "packages/*",
     "services/*",
-    "services/jangar/agentctl"
+    "services/jangar/*"
   ],
   "dependencies": {
     "@headlessui/react": "^2.2.9",

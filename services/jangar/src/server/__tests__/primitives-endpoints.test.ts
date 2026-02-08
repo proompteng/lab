@@ -69,6 +69,26 @@ const createStoreMock = (): PrimitivesStore =>
       payload: { context: input.context ?? null, details: input.details ?? null },
       createdAt: new Date(),
     })),
+    getAgentRunIdempotencyKey: vi.fn(async () => null),
+    reserveAgentRunIdempotencyKey: vi.fn(async (input) => ({
+      record: {
+        id: 'idempotency-id',
+        namespace: input.namespace,
+        agentName: input.agentName,
+        idempotencyKey: input.idempotencyKey,
+        agentRunName: null,
+        agentRunUid: null,
+        terminalPhase: null,
+        terminalAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      created: true,
+    })),
+    assignAgentRunIdempotencyKey: vi.fn(async () => null),
+    markAgentRunIdempotencyKeyTerminal: vi.fn(async () => null),
+    deleteAgentRunIdempotencyKey: vi.fn(async () => true),
+    pruneAgentRunIdempotencyKeys: vi.fn(async () => 0),
     getRunById: vi.fn(async () => null),
   }) as PrimitivesStore
 
@@ -148,6 +168,267 @@ describe('primitives endpoints', () => {
     } finally {
       clearLeaderElection()
     }
+  })
+
+  it('enforces AgentRun idempotency scope across retries', async () => {
+    const scope = new Map<string, Record<string, unknown>>()
+    const kubeResources: Record<string, Record<string, unknown> | null> = {
+      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
+    }
+    const store = createStoreMock()
+    store.getAgentRunIdempotencyKey = vi.fn(
+      async (input) => scope.get(`${input.namespace}:${input.agentName}:${input.idempotencyKey}`) ?? null,
+    )
+    store.reserveAgentRunIdempotencyKey = vi.fn(async (input) => {
+      const key = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
+      const existing = scope.get(key)
+      if (existing) return { record: existing, created: false }
+      const record = {
+        id: `idem-${key}`,
+        namespace: input.namespace,
+        agentName: input.agentName,
+        idempotencyKey: input.idempotencyKey,
+        agentRunName: null,
+        agentRunUid: null,
+        terminalPhase: null,
+        terminalAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }
+      scope.set(key, record)
+      return { record, created: true }
+    })
+    store.assignAgentRunIdempotencyKey = vi.fn(async (input) => {
+      const key = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
+      const existing = scope.get(key)
+      if (!existing) return null
+      const next = {
+        ...existing,
+        agentRunName: existing.agentRunName ?? input.agentRunName,
+        agentRunUid: input.agentRunUid ?? null,
+      }
+      scope.set(key, next)
+      return next
+    })
+
+    const kube: KubernetesClient = {
+      ...createKubeMock(kubeResources),
+      apply: vi.fn(async (resource) => {
+        const applied = {
+          ...resource,
+          metadata: { ...(resource.metadata as Record<string, unknown>), name: 'demo-agent-run-1', uid: 'uid-1' },
+          status: { phase: 'Running' },
+        } as Record<string, unknown>
+        kubeResources['agentruns.agents.proompteng.ai:jangar:demo-agent-run-1'] = applied
+        return applied
+      }),
+    }
+
+    const first = buildRequest(
+      'http://localhost/v1/agent-runs',
+      {
+        agentRef: { name: 'demo-agent' },
+        namespace: 'jangar',
+        idempotencyKey: 'client-key-1',
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+      },
+      { 'Idempotency-Key': 'delivery-1' },
+    )
+    const firstResponse = await postAgentRunsHandler(first, { storeFactory: () => store, kubeClient: kube })
+    expect(firstResponse.status).toBe(201)
+
+    const second = buildRequest(
+      'http://localhost/v1/agent-runs',
+      {
+        agentRef: { name: 'demo-agent' },
+        namespace: 'jangar',
+        idempotencyKey: 'client-key-1',
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+      },
+      { 'Idempotency-Key': 'delivery-2' },
+    )
+    const secondResponse = await postAgentRunsHandler(second, { storeFactory: () => store, kubeClient: kube })
+    expect(secondResponse.status).toBe(409)
+    expect(kube.apply).toHaveBeenCalledTimes(1)
+    const body = (await secondResponse.json()) as { error?: string; details?: Record<string, unknown> }
+    expect(body.error).toContain('already exists')
+    expect(body.details?.existingAgentRunName).toBe('demo-agent-run-1')
+  })
+
+  it('reclaims stale AgentRun idempotency reservations', async () => {
+    const scope = new Map<string, Record<string, unknown>>()
+    const kubeResources: Record<string, Record<string, unknown> | null> = {
+      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
+    }
+    const store = createStoreMock()
+    const key = 'jangar:demo-agent:stale-idem'
+    scope.set(key, {
+      id: `idem-${key}`,
+      namespace: 'jangar',
+      agentName: 'demo-agent',
+      idempotencyKey: 'stale-idem',
+      agentRunName: null,
+      agentRunUid: null,
+      terminalPhase: null,
+      terminalAt: null,
+      createdAt: new Date(Date.now() - 60 * 60 * 1000),
+      updatedAt: new Date(Date.now() - 60 * 60 * 1000),
+    })
+
+    store.getAgentRunIdempotencyKey = vi.fn(async () => null)
+    store.reserveAgentRunIdempotencyKey = vi.fn(async (input) => {
+      const mapKey = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
+      const existing = scope.get(mapKey)
+      if (existing) return { record: existing, created: false }
+      const record = {
+        id: `idem-${mapKey}`,
+        namespace: input.namespace,
+        agentName: input.agentName,
+        idempotencyKey: input.idempotencyKey,
+        agentRunName: null,
+        agentRunUid: null,
+        terminalPhase: null,
+        terminalAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }
+      scope.set(mapKey, record)
+      return { record, created: true }
+    })
+    store.deleteAgentRunIdempotencyKey = vi.fn(async (input) => {
+      scope.delete(`${input.namespace}:${input.agentName}:${input.idempotencyKey}`)
+      return true
+    })
+    store.assignAgentRunIdempotencyKey = vi.fn(async (input) => {
+      const mapKey = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
+      const existing = scope.get(mapKey)
+      if (!existing) return null
+      const next = {
+        ...existing,
+        agentRunName: existing.agentRunName ?? input.agentRunName,
+        agentRunUid: input.agentRunUid ?? null,
+      }
+      scope.set(mapKey, next)
+      return next
+    })
+
+    const kube: KubernetesClient = {
+      ...createKubeMock(kubeResources),
+      apply: vi.fn(async (resource) => ({
+        ...resource,
+        metadata: { ...(resource.metadata as Record<string, unknown>), name: 'demo-agent-run-stale', uid: 'uid-stale' },
+        status: { phase: 'Running' },
+      })),
+    }
+
+    const resetEnv = setEnv({
+      JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED: 'true',
+      JANGAR_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS: '60',
+    })
+    try {
+      const request = buildRequest(
+        'http://localhost/v1/agent-runs',
+        {
+          agentRef: { name: 'demo-agent' },
+          namespace: 'jangar',
+          runtime: { type: 'job', config: {} },
+          idempotencyKey: 'stale-idem',
+        },
+        { 'Idempotency-Key': 'delivery-stale-1' },
+      )
+
+      const response = await postAgentRunsHandler(request, { storeFactory: () => store, kubeClient: kube })
+
+      expect(response.status).toBe(201)
+      expect(store.deleteAgentRunIdempotencyKey).toHaveBeenCalledTimes(1)
+      expect(store.reserveAgentRunIdempotencyKey).toHaveBeenCalledTimes(2)
+    } finally {
+      resetEnv()
+    }
+  })
+
+  it('returns the existing AgentRun when idempotency key points to a terminal run', async () => {
+    const scope = new Map<string, Record<string, unknown>>()
+    const kubeResources: Record<string, Record<string, unknown> | null> = {
+      'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
+    }
+    const store = createStoreMock()
+    store.getAgentRunIdempotencyKey = vi.fn(
+      async (input) => scope.get(`${input.namespace}:${input.agentName}:${input.idempotencyKey}`) ?? null,
+    )
+    store.reserveAgentRunIdempotencyKey = vi.fn(async (input) => {
+      const key = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
+      const existing = scope.get(key)
+      if (existing) return { record: existing, created: false }
+      const record = {
+        id: `idem-${key}`,
+        namespace: input.namespace,
+        agentName: input.agentName,
+        idempotencyKey: input.idempotencyKey,
+        agentRunName: null,
+        agentRunUid: null,
+        terminalPhase: null,
+        terminalAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }
+      scope.set(key, record)
+      return { record, created: true }
+    })
+    store.assignAgentRunIdempotencyKey = vi.fn(async (input) => {
+      const key = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
+      const existing = scope.get(key)
+      if (!existing) return null
+      const next = { ...existing, agentRunName: existing.agentRunName ?? input.agentRunName }
+      scope.set(key, next)
+      return next
+    })
+
+    const kube: KubernetesClient = {
+      ...createKubeMock(kubeResources),
+      apply: vi.fn(async (resource) => {
+        const applied = {
+          ...resource,
+          metadata: { ...(resource.metadata as Record<string, unknown>), name: 'demo-agent-run-2' },
+          status: { phase: 'Succeeded' },
+        } as Record<string, unknown>
+        kubeResources['agentruns.agents.proompteng.ai:jangar:demo-agent-run-2'] = applied
+        return applied
+      }),
+    }
+
+    const first = buildRequest(
+      'http://localhost/v1/agent-runs',
+      {
+        agentRef: { name: 'demo-agent' },
+        namespace: 'jangar',
+        idempotencyKey: 'client-key-2',
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+      },
+      { 'Idempotency-Key': 'delivery-3' },
+    )
+    const firstResponse = await postAgentRunsHandler(first, { storeFactory: () => store, kubeClient: kube })
+    expect(firstResponse.status).toBe(201)
+
+    const second = buildRequest(
+      'http://localhost/v1/agent-runs',
+      {
+        agentRef: { name: 'demo-agent' },
+        namespace: 'jangar',
+        idempotencyKey: 'client-key-2',
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'job', config: {} },
+      },
+      { 'Idempotency-Key': 'delivery-4' },
+    )
+    const secondResponse = await postAgentRunsHandler(second, { storeFactory: () => store, kubeClient: kube })
+    expect(secondResponse.status).toBe(200)
+    expect(kube.apply).toHaveBeenCalledTimes(1)
+    const body = (await secondResponse.json()) as { existingAgentRunName?: string }
+    expect(body.existingAgentRunName).toBe('demo-agent-run-2')
   })
 
   it('passes workflow steps through when submitting workflow agent runs', async () => {

@@ -476,7 +476,7 @@
         "agentRunArtifacts": {
           "type": "object",
           "properties": {
-            "max": { "type": "integer", "minimum": 0 },
+            "max": { "type": "integer", "minimum": 0, "maximum": 50 },
             "strict": { "type": "boolean" }
           },
           "additionalProperties": false

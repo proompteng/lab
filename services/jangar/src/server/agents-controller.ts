@@ -14,6 +14,7 @@ import {
 import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import { createPrimitivesStore } from '~/server/primitives-store'
 import { shouldApplyStatus } from '~/server/status-utils'
 
 const DEFAULT_NAMESPACES = ['agents']
@@ -57,6 +58,7 @@ const AGENTRUN_ARTIFACT_URL_MAX_LENGTH = 2048
 const DEFAULT_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 300
 const MIN_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 30
 const QUEUED_PHASES = new Set(['pending', 'queued', 'progressing', 'inprogress'])
+const DEFAULT_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS = 30
 
 const BASE_REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -255,6 +257,8 @@ let watchHandles: Array<{ stop: () => void }> = []
 let _controllerState: ControllerState | null = null
 const namespaceQueues = new Map<string, Promise<void>>()
 const githubAppTokenCache = new Map<string, { token: string; expiresAt: number; refreshAfter: number }>()
+let primitivesStoreRef: ReturnType<typeof createPrimitivesStore> | null = null
+let lastIdempotencyPruneAtMs = 0
 
 const nowIso = () => new Date().toISOString()
 
@@ -325,6 +329,24 @@ const parseNumberEnv = (value: string | undefined, fallback: number, min = 0) =>
   const parsed = Number.parseInt(value, 10)
   if (!Number.isFinite(parsed) || parsed < min) return fallback
   return parsed
+}
+
+const isAgentRunIdempotencyEnabled = () => parseBooleanEnv(process.env.JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED, true)
+
+const resolveAgentRunIdempotencyRetentionDays = () =>
+  parseNumberEnv(process.env.JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS, DEFAULT_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS, 1)
+
+const getPrimitivesStore = async () => {
+  if (primitivesStoreRef) return primitivesStoreRef
+  try {
+    primitivesStoreRef = createPrimitivesStore()
+    await primitivesStoreRef.ready
+    return primitivesStoreRef
+  } catch (error) {
+    primitivesStoreRef = null
+    console.warn('[jangar] failed to initialize primitives store (idempotency disabled)', error)
+    return null
+  }
 }
 
 const normalizeRepositoryKey = (value: string) => value.trim().toLowerCase()
@@ -688,7 +710,10 @@ const resolveAgentRunArtifactsLimitConfig = (
   const maxFromEnv =
     parsedMax === undefined || !Number.isFinite(parsedMax) || parsedMax < 0 ? DEFAULT_AGENTRUN_ARTIFACTS_MAX : parsedMax
 
-  const maxEntries = Math.max(0, Math.floor(overrides.maxEntries ?? maxFromEnv))
+  const maxEntries = Math.min(
+    DEFAULT_AGENTRUN_ARTIFACTS_MAX,
+    Math.max(0, Math.floor(overrides.maxEntries ?? maxFromEnv)),
+  )
   const strict = overrides.strict ?? parseBooleanEnv(process.env.JANGAR_AGENTRUN_ARTIFACTS_STRICT, false)
   return {
     maxEntries,
@@ -5119,6 +5144,24 @@ const reconcileAgentRun = async (
   }
 
   if (phase === 'Succeeded' || phase === 'Failed' || phase === 'Cancelled') {
+    const idempotencyKey = asString(readNested(spec, ['idempotencyKey']))
+    if (isAgentRunIdempotencyEnabled() && idempotencyKey && agentName) {
+      const store = await getPrimitivesStore()
+      if (store) {
+        try {
+          await store.markAgentRunIdempotencyKeyTerminal({
+            namespace,
+            agentName,
+            idempotencyKey,
+            terminalPhase: phase,
+            terminalAt: finishedAt ?? null,
+          })
+        } catch (error) {
+          console.warn('[jangar] failed to mark AgentRun idempotency terminal state', error)
+        }
+      }
+    }
+
     const retentionSeconds = resolveAgentRunRetentionSeconds(spec)
     if (retentionSeconds > 0 && finishedAt) {
       const finishedAtMs = Date.parse(finishedAt)
@@ -5133,7 +5176,59 @@ const reconcileAgentRun = async (
   }
 
   const runtimeRef = parseRuntimeRef(status.runtimeRef)
-  const shouldSubmit = !runtimeRef && phase !== 'Running' && phase !== 'Succeeded' && phase !== 'Failed'
+  const shouldSubmit =
+    !runtimeRef && phase !== 'Running' && phase !== 'Succeeded' && phase !== 'Failed' && phase !== 'Cancelled'
+
+  if (shouldSubmit && isAgentRunIdempotencyEnabled()) {
+    const idempotencyKey = asString(readNested(spec, ['idempotencyKey']))
+    if (idempotencyKey && agentName) {
+      const store = await getPrimitivesStore()
+      if (store) {
+        try {
+          const reservation = await store.reserveAgentRunIdempotencyKey({
+            namespace,
+            agentName,
+            idempotencyKey,
+          })
+          let canonicalRunName = reservation.record.agentRunName
+          if (!canonicalRunName) {
+            const assigned = await store.assignAgentRunIdempotencyKey({
+              namespace,
+              agentName,
+              idempotencyKey,
+              agentRunName: name,
+              agentRunUid: asString(metadata.uid) ?? null,
+            })
+            canonicalRunName = assigned?.agentRunName ?? name
+          }
+
+          if (canonicalRunName && canonicalRunName !== name) {
+            const existing = await kube.get(RESOURCE_MAP.AgentRun, canonicalRunName, namespace)
+            const existingPhase = asString(readNested(existing, ['status', 'phase'])) ?? 'Pending'
+            const duplicateReason =
+              existing && (existingPhase === 'Succeeded' || existingPhase === 'Failed' || existingPhase === 'Cancelled')
+                ? 'IdempotencyKeyCompleted'
+                : 'IdempotencyKeyInUse'
+            const updated = upsertCondition(conditions, {
+              type: 'Duplicate',
+              status: 'True',
+              reason: duplicateReason,
+              message: `AgentRun ${canonicalRunName} already claimed idempotencyKey ${idempotencyKey}`,
+            })
+            await setStatus(kube, agentRun, {
+              observedGeneration,
+              phase: 'Failed',
+              finishedAt: nowIso(),
+              conditions: updated,
+            })
+            return
+          }
+        } catch (error) {
+          console.warn('[jangar] failed to enforce AgentRun idempotency', error)
+        }
+      }
+    }
+  }
 
   if (shouldSubmit && agentName && (inFlight.perAgent.get(agentName) ?? 0) >= concurrency.perAgent) {
     const updated = upsertCondition(conditions, {
@@ -5873,6 +5968,21 @@ const _reconcileAll = async (
   if (reconciling) return
   reconciling = true
   try {
+    if (isAgentRunIdempotencyEnabled()) {
+      const now = Date.now()
+      if (now - lastIdempotencyPruneAtMs >= 60 * 60 * 1000) {
+        const store = await getPrimitivesStore()
+        if (store) {
+          try {
+            const retentionDays = resolveAgentRunIdempotencyRetentionDays()
+            await store.pruneAgentRunIdempotencyKeys(retentionDays)
+            lastIdempotencyPruneAtMs = now
+          } catch (error) {
+            console.warn('[jangar] failed to prune AgentRun idempotency keys', error)
+          }
+        }
+      }
+    }
     for (const namespace of namespaces) {
       await reconcileNamespaceState(kube, namespace, state, concurrency)
     }

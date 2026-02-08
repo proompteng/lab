@@ -19,8 +19,10 @@ run_with_helm3() {
     fi
   fi
   if command -v mise >/dev/null 2>&1; then
-    mise exec helm@3 -- "$@"
-    return 0
+    if mise exec helm@3 -- "$@"; then
+      return 0
+    fi
+    echo "mise exec helm@3 failed; falling back to system helm" >&2
   fi
   "$@"
 }

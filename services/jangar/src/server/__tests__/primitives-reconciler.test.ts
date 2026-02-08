@@ -16,6 +16,26 @@ vi.mock('~/server/primitives-store', () => {
       getOrchestrationRunByDeliveryId: vi.fn(async () => null),
       getOrchestrationRunByExternalRunId: vi.fn(async () => null),
       upsertMemoryResource: vi.fn(async (input) => ({ id: 'memory-1', ...input })),
+      getAgentRunIdempotencyKey: vi.fn(async () => null),
+      reserveAgentRunIdempotencyKey: vi.fn(async () => ({
+        record: {
+          id: 'idempotency-1',
+          namespace: 'jangar',
+          agentName: 'agent',
+          idempotencyKey: 'key',
+          agentRunName: null,
+          agentRunUid: null,
+          terminalPhase: null,
+          terminalAt: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        created: true,
+      })),
+      assignAgentRunIdempotencyKey: vi.fn(async () => null),
+      markAgentRunIdempotencyKeyTerminal: vi.fn(async () => null),
+      deleteAgentRunIdempotencyKey: vi.fn(async () => true),
+      pruneAgentRunIdempotencyKeys: vi.fn(async () => 0),
     }),
   }
 })
