@@ -111,8 +111,11 @@ export const main = async () => {
 
   const authHeader = { Authorization: `Bearer ${token.access_token}` }
   const redirectUris = [
+    // better-auth generic OAuth callback route
+    `${appBaseUrl}/api/auth/oauth2/callback/keycloak`,
     `${appBaseUrl}/api/auth/callback/keycloak`,
     `${appBaseUrl}/auth/callback`,
+    'http://localhost:3000/api/auth/oauth2/callback/keycloak',
     'http://localhost:3000/api/auth/callback/keycloak',
     'http://localhost:3000/auth/callback',
   ]
@@ -136,9 +139,14 @@ export const main = async () => {
       rootUrl: appBaseUrl,
       baseUrl: appBaseUrl,
       adminUrl: appBaseUrl,
+      // NOTE: better-auth does not currently send PKCE parameters for this flow.
+      // If PKCE is configured/required in Keycloak, Keycloak will reject auth requests with:
+      // `Missing parameter: code_challenge_method`.
+      // Setting the method to the empty string is intentional: omitting the key can leave
+      // Keycloak's existing PKCE settings in place.
       attributes: {
-        'pkce.code.challenge.method': 'S256',
-        'pkce.code.challenge.required': 'true',
+        'pkce.code.challenge.required': 'false',
+        'pkce.code.challenge.method': '',
       },
     }
 
@@ -177,9 +185,10 @@ export const main = async () => {
   existing.protocol = 'openid-connect'
   existing.attributes = {
     ...(existing.attributes ?? {}),
-    'pkce.code.challenge.method': 'S256',
-    'pkce.code.challenge.required': 'true',
   }
+  // Explicitly disable PKCE for this client.
+  existing.attributes['pkce.code.challenge.required'] = 'false'
+  existing.attributes['pkce.code.challenge.method'] = ''
 
   await fetchText(`${keycloakBaseUrl}/admin/realms/${realm}/clients/${id}`, {
     method: 'PUT',
