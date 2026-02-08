@@ -30,6 +30,7 @@ Jangar APIs; Jangar creates and manages the underlying CRDs and reconciles statu
 ## Documents
 
 - `agent.md`
+- `code-search.md`
 - `memory.md`
 - `orchestration.md`
 - `supporting-primitives.md`
