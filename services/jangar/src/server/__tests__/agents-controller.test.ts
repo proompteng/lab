@@ -184,6 +184,32 @@ describe('AgentRun artifacts limits', () => {
     expect(result.artifacts.map((item) => item.name)).toEqual(['a3', 'a4', 'a5'])
   })
 
+  it('enforces a hard cap of 50 even if max is higher', async () => {
+    const kube = buildKube()
+    const agentRun = buildAgentRun()
+
+    process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX = '100'
+
+    try {
+      const artifacts = Array.from({ length: 60 }, (_, index) => ({
+        name: `a${index + 1}`,
+        url: `https://example.com/${index + 1}`,
+      }))
+
+      await __test.setStatus(kube as never, agentRun, {
+        phase: 'Succeeded',
+        artifacts,
+      })
+    } finally {
+      delete process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX
+    }
+
+    const status = getLastStatus(kube as never)
+    expect(Array.isArray(status.artifacts)).toBe(true)
+    expect((status.artifacts as unknown[]).length).toBe(50)
+    expect(findCondition(status, 'ArtifactsLimited')?.status).toBe('True')
+  })
+
   it('strips artifact urls that exceed the limit', () => {
     const result = __test.limitAgentRunStatusArtifacts([{ name: 'a1', url: '123456' }], {
       maxEntries: 50,
