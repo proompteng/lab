@@ -86,7 +86,7 @@ url
 {{- if or (not $namespaces) (eq (len $namespaces) 0) -}}
 {{- $namespaces = list (.Values.namespaceOverride | default .Release.Namespace) -}}
 {{- end -}}
-{{- join "," $namespaces -}}
+{{- $namespaces | toJson -}}
 {{- end -}}
 
 {{- define "agents.orchestrationNamespaces" -}}
