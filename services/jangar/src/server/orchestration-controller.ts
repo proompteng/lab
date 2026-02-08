@@ -1,5 +1,8 @@
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 
+import { emitAuditEventBestEffort } from '~/server/audit-client'
+import { resolveRepositoryFromParameters } from '~/server/audit-logging'
 import { startResourceWatch } from '~/server/kube-watch'
 import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
@@ -957,6 +960,29 @@ const submitAgentRunStep = async (
   }
 
   const applied = await kube.apply(resource)
+  const repo = resolveRepositoryFromParameters(parameters)
+  const orchestrationMetadata = asRecord(orchestrationRun.metadata) ?? {}
+  const deliveryId = asString(readNested(orchestrationMetadata, ['labels', 'jangar.proompteng.ai/delivery-id']))
+  void emitAuditEventBestEffort({
+    entityType: 'OrchestrationRun',
+    entityId: randomUUID(),
+    eventType: 'orchestration_run.step_submitted',
+    context: {
+      source: 'orchestration-controller',
+      correlationId: deliveryId ?? runName,
+      deliveryId: deliveryId ?? null,
+      namespace,
+      repository: repo,
+    },
+    details: {
+      stepKind: 'AgentRun',
+      stepName: asString(step.name),
+      orchestrationRunName: runName,
+      orchestrationRunUid: asString(orchestrationMetadata.uid),
+      agentRef: agentRefName,
+      resourceRef: buildResourceRef(applied),
+    },
+  })
   return buildResourceRef(applied)
 }
 
@@ -996,6 +1022,29 @@ const submitToolRunStep = async (
   }
 
   const applied = await kube.apply(resource)
+  const repo = resolveRepositoryFromParameters(parameters)
+  const orchestrationMetadata = asRecord(orchestrationRun.metadata) ?? {}
+  const deliveryId = asString(readNested(orchestrationMetadata, ['labels', 'jangar.proompteng.ai/delivery-id']))
+  void emitAuditEventBestEffort({
+    entityType: 'OrchestrationRun',
+    entityId: randomUUID(),
+    eventType: 'orchestration_run.step_submitted',
+    context: {
+      source: 'orchestration-controller',
+      correlationId: deliveryId ?? runName,
+      deliveryId: deliveryId ?? null,
+      namespace,
+      repository: repo,
+    },
+    details: {
+      stepKind: 'ToolRun',
+      stepName: asString(step.name),
+      orchestrationRunName: runName,
+      orchestrationRunUid: asString(orchestrationMetadata.uid),
+      toolRef: toolRefName,
+      resourceRef: buildResourceRef(applied),
+    },
+  })
   return buildResourceRef(applied)
 }
 
@@ -1035,6 +1084,29 @@ const submitSubOrchestrationStep = async (
   }
 
   const applied = await kube.apply(resource)
+  const repo = resolveRepositoryFromParameters(parameters)
+  const orchestrationMetadata = asRecord(orchestrationRun.metadata) ?? {}
+  const deliveryId = asString(readNested(orchestrationMetadata, ['labels', 'jangar.proompteng.ai/delivery-id']))
+  void emitAuditEventBestEffort({
+    entityType: 'OrchestrationRun',
+    entityId: randomUUID(),
+    eventType: 'orchestration_run.step_submitted',
+    context: {
+      source: 'orchestration-controller',
+      correlationId: deliveryId ?? runName,
+      deliveryId: deliveryId ?? null,
+      namespace,
+      repository: repo,
+    },
+    details: {
+      stepKind: 'SubOrchestration',
+      stepName: asString(step.name),
+      orchestrationRunName: runName,
+      orchestrationRunUid: asString(orchestrationMetadata.uid),
+      orchestrationRef: orchestrationName,
+      resourceRef: buildResourceRef(applied),
+    },
+  })
   return buildResourceRef(applied)
 }
 

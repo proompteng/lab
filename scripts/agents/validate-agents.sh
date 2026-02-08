@@ -4,14 +4,16 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHART_DIR="${ROOT_DIR}/charts/agents"
 ARGOCD_AGENTS_DIR="${ROOT_DIR}/argocd/applications/agents"
-HELM_KUBE_VERSION="${HELM_KUBE_VERSION:-1.27.0}"
+# Backward-compatible: older callers used HELM_KUBE_VERSION.
+KUBE_VERSION_FOR_HELM="${KUBE_VERSION_FOR_HELM:-${HELM_KUBE_VERSION:-1.35.0}}"
 
 run_with_helm3() {
-  # kustomize --enable-helm is not compatible with Helm v4 yet; prefer Helm v3 via mise when available.
+  # kustomize --enable-helm is not compatible with Helm v4 yet; prefer Helm v3.
+  #
+  # Primary: use an already-installed Helm v3 on PATH (works in CI containers).
+  # Fallback: use mise to provide Helm v3 when it can install it.
   if command -v helm >/dev/null 2>&1; then
-    local version
-    version="$(helm version --short 2>/dev/null || true)"
-    if [[ "${version}" == v3* ]]; then
+    if helm version --short 2>/dev/null | grep -qE '^v3\.'; then
       "$@"
       return 0
     fi
@@ -30,13 +32,13 @@ go generate "${ROOT_DIR}/services/jangar/api/agents"
 git -C "${ROOT_DIR}" diff --exit-code -- "${CHART_DIR}/crds" \
   "${ROOT_DIR}/services/jangar/api/agents/v1alpha1/zz_generated.deepcopy.go"
 
-run_with_helm3 helm lint "${CHART_DIR}" --kube-version "${HELM_KUBE_VERSION}"
+run_with_helm3 helm lint --kube-version "${KUBE_VERSION_FOR_HELM}" "${CHART_DIR}"
 
 render_and_check() {
   local values_file="$1"
   local output
   output="$(mktemp)"
-  run_with_helm3 helm template "${CHART_DIR}" --kube-version "${HELM_KUBE_VERSION}" --values "${values_file}" >"${output}"
+  run_with_helm3 helm template "${CHART_DIR}" --kube-version "${KUBE_VERSION_FOR_HELM}" --values "${values_file}" >"${output}"
 
   if command -v rg >/dev/null 2>&1; then
     if rg -n "^kind: (Ingress|StatefulSet|CronJob|PersistentVolumeClaim)" "${output}"; then
@@ -59,12 +61,12 @@ render_and_check "${CHART_DIR}/values-prod.yaml"
 
 render_kustomize() {
   if command -v kustomize >/dev/null 2>&1; then
-    run_with_helm3 kustomize build --enable-helm --helm-kube-version "${HELM_KUBE_VERSION}" "${ARGOCD_AGENTS_DIR}" >/dev/null
+    run_with_helm3 kustomize build --enable-helm --helm-kube-version "${KUBE_VERSION_FOR_HELM}" "${ARGOCD_AGENTS_DIR}" >/dev/null
     return 0
   fi
 
   if command -v kubectl >/dev/null 2>&1; then
-    run_with_helm3 kubectl kustomize --enable-helm --helm-kube-version "${HELM_KUBE_VERSION}" "${ARGOCD_AGENTS_DIR}" >/dev/null
+    run_with_helm3 kubectl kustomize --enable-helm --helm-kube-version "${KUBE_VERSION_FOR_HELM}" "${ARGOCD_AGENTS_DIR}" >/dev/null
     return 0
   fi
 

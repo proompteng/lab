@@ -136,6 +136,22 @@ spec:
             - name: JANGAR_SCHEDULE_SERVICE_ACCOUNT
               value: {{ .Values.runtime.scheduleServiceAccount | quote }}
             {{- end }}
+            {{- if and .Values.audit.sink.type (ne .Values.audit.sink.type "none") (not (hasKey $envVars "JANGAR_AUDIT_SINK_TYPE")) }}
+            - name: JANGAR_AUDIT_SINK_TYPE
+              value: {{ .Values.audit.sink.type | quote }}
+            {{- end }}
+            {{- if and (eq .Values.audit.sink.type "http") .Values.audit.sink.http.url (not (hasKey $envVars "JANGAR_AUDIT_SINK_HTTP_URL")) }}
+            - name: JANGAR_AUDIT_SINK_HTTP_URL
+              value: {{ .Values.audit.sink.http.url | quote }}
+            {{- end }}
+            {{- if and (eq .Values.audit.sink.type "http") .Values.audit.sink.http.timeoutMs (not (hasKey $envVars "JANGAR_AUDIT_SINK_HTTP_TIMEOUT_MS")) }}
+            - name: JANGAR_AUDIT_SINK_HTTP_TIMEOUT_MS
+              value: {{ .Values.audit.sink.http.timeoutMs | quote }}
+            {{- end }}
+            {{- if and (eq .Values.audit.sink.type "http") (not (empty .Values.audit.sink.http.headers)) (not (hasKey $envVars "JANGAR_AUDIT_SINK_HTTP_HEADERS_JSON")) }}
+            - name: JANGAR_AUDIT_SINK_HTTP_HEADERS_JSON
+              value: {{ toJson .Values.audit.sink.http.headers | quote }}
+            {{- end }}
             {{- range $name, $value := $envVars }}
             - name: {{ $name }}
               value: {{ $value | quote }}

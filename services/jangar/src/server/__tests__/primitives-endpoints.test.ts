@@ -66,7 +66,7 @@ const createStoreMock = (): PrimitivesStore =>
       entityType: input.entityType,
       entityId: input.entityId,
       eventType: input.eventType,
-      payload: input.payload,
+      payload: { context: input.context ?? null, details: input.details ?? null },
       createdAt: new Date(),
     })),
     getAgentRunIdempotencyKey: vi.fn(async () => null),

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { createFileRoute } from '@tanstack/react-router'
+import { resolveAuditContextFromRequest } from '~/server/audit-logging'
 import { requireLeaderForMutationHttp } from '~/server/leader-election'
 import {
   asRecord,
@@ -52,6 +53,12 @@ export const postOrchestrationsHandler = async (
     const deliveryId = requireIdempotencyKey(request)
     const payload = await parseJsonBody(request)
     const parsed = parseOrchestrationPayload(payload)
+    const auditContext = resolveAuditContextFromRequest(request, {
+      deliveryId,
+      namespace: parsed.namespace,
+      repository: null,
+      source: 'v1.orchestrations',
+    })
     const steps = Array.isArray(parsed.spec.steps) ? (parsed.spec.steps as Record<string, unknown>[]) : []
     const approvalPolicies = extractApprovalPolicies(steps)
 
@@ -70,7 +77,8 @@ export const postOrchestrationsHandler = async (
         entityType: 'PolicyDecision',
         entityId: randomUUID(),
         eventType: 'policy.allowed',
-        payload: { deliveryId, subject: policyChecks.subject, checks: policyChecks },
+        context: auditContext,
+        details: { subject: policyChecks.subject, checks: policyChecks },
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -79,7 +87,8 @@ export const postOrchestrationsHandler = async (
           entityType: 'PolicyDecision',
           entityId: randomUUID(),
           eventType: 'policy.denied',
-          payload: { deliveryId, subject: policyChecks.subject, checks: policyChecks, reason: message },
+          context: auditContext,
+          details: { subject: policyChecks.subject, checks: policyChecks, reason: message },
         })
       } catch {
         // ignore audit failures
@@ -109,7 +118,8 @@ export const postOrchestrationsHandler = async (
         entityType: 'Orchestration',
         entityId: uid,
         eventType: 'orchestration.created',
-        payload: { deliveryId, name: parsed.name, namespace: parsed.namespace },
+        context: auditContext,
+        details: { name: parsed.name, orchestrationUid: uid },
       })
     }
 

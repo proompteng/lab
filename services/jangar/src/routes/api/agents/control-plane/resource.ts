@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { resolveAuditContextFromRequest } from '~/server/audit-logging'
 import { createControlPlaneCacheStore } from '~/server/control-plane-cache-store'
 import { resolvePrimitiveKind } from '~/server/primitives-control-plane'
 import {
@@ -236,6 +237,12 @@ export const postPrimitiveResource = async (
     const deliveryId = requireIdempotencyKey(request)
     const payload = await parseJsonBody(request)
     const parsed = parseImplementationSpecPayload(payload)
+    const auditContext = resolveAuditContextFromRequest(request, {
+      deliveryId,
+      namespace: parsed.namespace,
+      repository: null,
+      source: 'control-plane.resource',
+    })
 
     await store.ready
     const kube = deps.kubeClient ?? createKubernetesClient()
@@ -261,7 +268,8 @@ export const postPrimitiveResource = async (
         entityType: 'ImplementationSpec',
         entityId: uid,
         eventType: 'implementation_spec.created',
-        payload: { deliveryId, name: parsed.name, namespace: parsed.namespace },
+        context: auditContext,
+        details: { name: parsed.name, implementationSpecUid: uid },
       })
     }
 

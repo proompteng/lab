@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto'
 
 import { createFileRoute } from '@tanstack/react-router'
+import {
+  resolveAuditContextFromRequest,
+  resolveRepositoryFromParameters as resolveRepositoryFromParameterMap,
+} from '~/server/audit-logging'
 import { requireLeaderForMutationHttp } from '~/server/leader-election'
 import { recordAgentQueueDepth } from '~/server/metrics'
 import {
@@ -574,6 +578,13 @@ export const postAgentRunsHandler = async (
     const payload = await parseJsonBody(request)
     const parsed = parseAgentRunPayload(payload)
     const runIdempotencyKey = parsed.idempotencyKey ?? deliveryId
+    const repository = resolveRepositoryFromParameterMap(parsed.parameters)
+    const auditContext = resolveAuditContextFromRequest(request, {
+      deliveryId,
+      namespace: parsed.namespace,
+      repository,
+      source: 'v1.agent-runs',
+    })
 
     await store.ready
     const existing = await store.getAgentRunByDeliveryId(deliveryId)
@@ -719,7 +730,8 @@ export const postAgentRunsHandler = async (
         entityType: 'PolicyDecision',
         entityId: randomUUID(),
         eventType: 'policy.allowed',
-        payload: { deliveryId, subject: policyChecks.subject, checks: policyChecks },
+        context: auditContext,
+        details: { subject: policyChecks.subject, checks: policyChecks },
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -728,7 +740,8 @@ export const postAgentRunsHandler = async (
           entityType: 'PolicyDecision',
           entityId: randomUUID(),
           eventType: 'policy.denied',
-          payload: { deliveryId, subject: policyChecks.subject, checks: policyChecks, reason: message },
+          context: auditContext,
+          details: { subject: policyChecks.subject, checks: policyChecks, reason: message },
         })
       } catch {
         // ignore audit failures
@@ -736,8 +749,8 @@ export const postAgentRunsHandler = async (
       return errorResponse(message, message.includes('DATABASE_URL') ? 503 : 403)
     }
 
-    const repository = resolveRepositoryFromParams(parsed.parameters) || null
-    const admission = await evaluateAdmissionLimits(kube, parsed.namespace, repository)
+    const admissionRepository = resolveRepositoryFromParams(parsed.parameters) || null
+    const admission = await evaluateAdmissionLimits(kube, parsed.namespace, admissionRepository)
     if (!admission.ok) {
       return errorResponse(admission.message, admission.status, admission.details)
     }
@@ -898,7 +911,14 @@ export const postAgentRunsHandler = async (
       entityType: 'AgentRun',
       entityId: record.id,
       eventType: 'agent_run.created',
-      payload: { deliveryId, agent: parsed.agentRef.name, namespace: parsed.namespace },
+      context: auditContext,
+      details: {
+        agent: parsed.agentRef.name,
+        agentRunId: record.id,
+        agentRunName: externalRunId,
+        agentRunUid: asString(asRecord(applied.metadata)?.uid),
+        provider,
+      },
     })
     return okResponse({ ok: true, agentRun: record, resource: applied }, 201)
   } catch (error) {
