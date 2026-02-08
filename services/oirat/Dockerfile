@@ -8,6 +8,8 @@ WORKDIR /app
 ENV HUSKY=0
 COPY json/ .
 COPY tsconfig.base.json ./
+# Turbo prune keeps the root workspace list; drop entries that don't exist in the pruned context.
+RUN bun -e "const fs = require('fs'); const p = 'package.json'; const pkg = JSON.parse(fs.readFileSync(p, 'utf8')); if (Array.isArray(pkg.workspaces)) { pkg.workspaces = pkg.workspaces.filter((entry) => entry !== 'services/jangar/*' && entry !== 'services/jangar/agentctl'); fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\\n'); }"
 RUN --mount=type=cache,target=/root/.cache/bun \
   bun install --no-save --frozen-lockfile --ignore-scripts --filter @proompteng/oirat
 
@@ -20,6 +22,7 @@ WORKDIR /app
 ENV HUSKY=0
 COPY json/ .
 COPY tsconfig.base.json ./
+RUN bun -e "const fs = require('fs'); const p = 'package.json'; const pkg = JSON.parse(fs.readFileSync(p, 'utf8')); if (Array.isArray(pkg.workspaces)) { pkg.workspaces = pkg.workspaces.filter((entry) => entry !== 'services/jangar/*' && entry !== 'services/jangar/agentctl'); fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\\n'); }"
 RUN --mount=type=cache,target=/root/.cache/bun \
   bun install --no-save --production --frozen-lockfile --ignore-scripts --filter @proompteng/oirat
 
