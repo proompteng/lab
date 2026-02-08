@@ -8,5 +8,5 @@ resources:
   - secret.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/app
-    newTag: "fix-llms-20260208130629"
+    newTag: "0d391ce3"
     newName: registry.ide-newton.ts.net/lab/app
