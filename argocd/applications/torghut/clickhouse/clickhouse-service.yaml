@@ -17,7 +17,9 @@ spec:
     - name: http
       port: 8123
       targetPort: 8123
+    - name: metrics
+      port: 9363
+      targetPort: 9363
     - name: native
       port: 9000
       targetPort: 9000
-
