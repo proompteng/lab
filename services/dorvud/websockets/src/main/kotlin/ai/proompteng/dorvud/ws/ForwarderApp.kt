@@ -31,6 +31,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
@@ -251,6 +252,33 @@ class ForwarderApp(
   ) {
     val url = "${config.alpacaStreamUrl.trimEnd('/')}/v2/${config.alpacaFeed}"
     httpClient.webSocket(urlString = url) {
+      suspend fun decodeNextMessages(): List<AlpacaMessage> {
+        val frame = incoming.receive()
+        val text =
+          when (frame) {
+            is Frame.Text -> frame.readText()
+            is Frame.Binary -> frame.readBytes().decodeToString()
+            else -> return emptyList()
+          }
+        val elements =
+          try {
+            json.parseToJsonElement(text)
+          } catch (e: SerializationException) {
+            logger.warn(e) { "failed to parse alpaca frame as JSON; dropping" }
+            return emptyList()
+          }
+        val messages: List<JsonElement> =
+          if (elements is JsonArray) elements.toList() else listOf(elements)
+        return messages.mapNotNull { el ->
+          try {
+            json.decodeFromJsonElement(AlpacaMessageSerializer, el)
+          } catch (e: SerializationException) {
+            logger.warn(e) { "failed to decode alpaca message; dropping" }
+            null
+          }
+        }
+      }
+
       val auth =
         buildJsonObject {
           put("action", "auth")
@@ -271,6 +299,32 @@ class ForwarderApp(
         if (nowReady && !readyNotified) {
           onReady()
           readyNotified = true
+        }
+      }
+
+      suspend fun awaitAuthOrThrow() {
+        // Alpaca rejects subscribe requests before a successful auth handshake; if we get an error,
+        // restart the session so the outer loop can apply backoff.
+        withTimeout(10_000) {
+          while (isActive && !authOk) {
+            decodeNextMessages().forEach { msg ->
+              when (msg) {
+                is AlpacaSuccess -> {
+                  if (msg.msg.contains("auth", ignoreCase = true)) {
+                    authOk = true
+                    updateWsReady()
+                  }
+                }
+                is AlpacaError -> {
+                  authOk = false
+                  subscribedOk = false
+                  updateWsReady()
+                  throw RuntimeException("alpaca auth error code=${msg.code} msg=${msg.msg}")
+                }
+                else -> {}
+              }
+            }
+          }
         }
       }
 
@@ -325,6 +379,7 @@ class ForwarderApp(
         subscribedSymbols.clear()
         subscribedSymbols.addAll(initial)
       }
+      awaitAuthOrThrow()
       applySubscribe(initial)
       maybeBackfillBars(producer, seq, initial)
 
@@ -357,31 +412,8 @@ class ForwarderApp(
         }
 
       try {
-        for (frame in incoming) {
-          val text =
-            when (frame) {
-              is Frame.Text -> frame.readText()
-              is Frame.Binary -> frame.readBytes().decodeToString()
-              else -> continue
-            }
-          val elements =
-            try {
-              json.parseToJsonElement(text)
-            } catch (e: SerializationException) {
-              logger.warn(e) { "failed to parse alpaca frame as JSON; dropping" }
-              continue
-            }
-          val messages: List<JsonElement> =
-            if (elements is JsonArray) elements.toList() else listOf(elements)
-          messages.forEach { el ->
-            val msg =
-              try {
-                json.decodeFromJsonElement(AlpacaMessageSerializer, el)
-              } catch (e: SerializationException) {
-                logger.warn(e) { "failed to decode alpaca message; dropping" }
-                return@forEach
-              }
-
+        while (isActive) {
+          decodeNextMessages().forEach { msg ->
             when (msg) {
               is AlpacaSuccess -> {
                 if (msg.msg.contains("auth", ignoreCase = true)) {
@@ -400,7 +432,7 @@ class ForwarderApp(
                 subscribedOk = false
                 updateWsReady()
                 logger.error { "alpaca error code=${msg.code} msg=${msg.msg}" }
-                return@forEach
+                throw RuntimeException("alpaca error code=${msg.code} msg=${msg.msg}")
               }
               else -> handleMessage(msg, producer, seq, tradesDedup, quotesDedup, barsDedup)
             }
