@@ -1,5 +1,7 @@
 # Argo CD / ApplicationSet Notes
 
+> Note: Canonical production-facing design docs live in `docs/torghut/design-system/README.md` (v1). This document is supporting material and may drift from the current deployed manifests.
+
 ## WS app (example)
 ```yaml
 apiVersion: argoproj.io/v1alpha1

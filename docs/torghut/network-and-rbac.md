@@ -1,5 +1,7 @@
 # NetworkPolicy and RBAC Examples (torghut)
 
+> Note: Canonical production-facing design docs live in `docs/torghut/design-system/README.md` (v1). This document is supporting material and may drift from the current deployed manifests.
+
 ## NetworkPolicy (kotlin-ws)
 ```yaml
 apiVersion: networking.k8s.io/v1

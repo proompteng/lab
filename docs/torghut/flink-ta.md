@@ -1,7 +1,9 @@
 # Flink Technical Analysis Job
 
+> Note: Canonical production-facing design docs live in `docs/torghut/design-system/README.md` (v1). This document is supporting material and may drift from the current deployed manifests.
+
 ## Objective
-Produce near real-time TA outputs (≤300–500 ms p99 event-to-signal) from Alpaca-derived Kafka topics using Flink.
+Produce near real-time TA outputs (≤300-500 ms p99 event-to-signal) from Alpaca-derived Kafka topics using Flink.
 
 ## Inputs
 - Kafka topics (from forwarder): trades, quotes, 1m bars (`is_final` flag), status. Keyed by `symbol`, partitions=1.
@@ -28,7 +30,7 @@ Use Avro or JSON with Karapace; backward-compatible evolution.
 - Source: `KafkaSource` with watermark `event_time - 2s` (tunable); idle timeout for idle partitions.
 - Processing:
   - Trades -> hopping 1s/1s to micro-bars (O/H/L/C/V, vwap).
-  - Bars (1s + upstream 1m) -> EMA12/26 -> MACD; RSI14; Bollinger20/2; VWAP (session & rolling window); realized vol (30–60s); join with quotes for spread/imbalance.
+  - Bars (1s + upstream 1m) -> EMA12/26 -> MACD; RSI14; Bollinger20/2; VWAP (session & rolling window); realized vol (30-60s); join with quotes for spread/imbalance.
   - Dedup optional: drop duplicates by trade id and (event_ts, symbol) for quotes/bars before aggregation.
 - Sinks: `KafkaSink` to TA topics with `delivery.guarantee=exactly-once`, idempotent/transactional; partitioner fixed (key=symbol).
 
@@ -39,7 +41,7 @@ Use Avro or JSON with Karapace; backward-compatible evolution.
 - RSI14: Wilder smoothing on 14-bar window using gains/losses.
 - Bollinger: mid = SMA20; upper/lower = mid ± 2*stddev20.
 - VWAP: session accumulator (reset on session boundary) + rolling window (e.g., 5m configurable).
-- Realized vol: stddev of log returns over 30–60s (configurable).
+- Realized vol: stddev of log returns over 30-60s (configurable).
 - Spread/imbalance: bid/ask spread, (bid_sz - ask_sz)/(bid_sz + ask_sz).
 
 ## State & Checkpointing
@@ -58,7 +60,7 @@ S3A properties (example):
 - Kustomization under `argocd/applications/torghut/ta/` (FlinkDeployment `flinkdeployment.yaml`).
 - FlinkDeployment (application mode) image includes the fat jar at `/opt/flink/usrlib/app.jar`.
 - Secrets: Strimzi KafkaUser (SCRAM/TLS) in torghut namespace or reflected; MinIO creds via `observability-minio-creds` (reflected to torghut).
-- Resources (initial): JM 1 CPU/2Gi; TM 1–2 CPU/3–4Gi; parallelism 1.
+- Resources (initial): JM 1 CPU/2Gi; TM 1-2 CPU/3-4Gi; parallelism 1.
 - ServiceAccount with least privilege; network policy to Kafka, MinIO, registry only.
 
 ## Build & Deploy
@@ -75,7 +77,7 @@ S3A properties (example):
 ### Sink settings (KafkaSink)
 - `deliveryGuarantee = EXACTLY_ONCE`
 - `transaction.timeout.ms` > checkpoint timeout + failover (e.g., 120s)
-- `linger.ms` 20–50; `compression.type` lz4; `enable.idempotence` true
+- `linger.ms` 20-50; `compression.type` lz4; `enable.idempotence` true
 - `acks=all`; `max.in.flight.requests.per.connection=5` (ok with idempotence)
 
 ### ClickHouse sink (TA visualization)

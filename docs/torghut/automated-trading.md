@@ -1,11 +1,13 @@
-# Torghut Automated Trading — One‑Shot Execution Doc
+# Torghut Automated Trading - One-Shot Execution Doc
 
-This document describes a **single-run, end‑to‑end** implementation plan for the core automated trading pipeline in torghut. It is intentionally structured as a one‑shot execution guide for Codex (no milestones).
+> Note: Canonical production-facing design docs live in `docs/torghut/design-system/README.md` (v1). This document is supporting material and may drift from the current deployed manifests.
+
+This document describes a **single-run, end-to-end** implementation plan for the core automated trading pipeline in torghut. It is intentionally structured as a one-shot execution guide for Codex (no milestones).
 
 ## Scope
 - **Signals source:** ClickHouse `ta_signals`.
 - **Execution mode:** paper trading by default, live trading gated by config.
-- **Universe:** from Jangar symbols endpoint or per‑strategy list.
+- **Universe:** from Jangar symbols endpoint or per-strategy list.
 - **Owner:** torghut service (FastAPI) or a dedicated worker deployment in the torghut namespace.
 
 ## Design References
@@ -55,21 +57,21 @@ flowchart LR
   REC --> DB
 ```
 
-## One‑Shot Execution Steps (implementation within a single Codex run)
+## One-Shot Execution Steps (implementation within a single Codex run)
 
 ### 1) Create trading modules (code)
 Create a module folder under `services/torghut/app/trading/` with:
-- `models.py` — Pydantic DTOs for signals/decisions/execution requests.
-- `ingest.py` — ClickHouse signal ingestion (poll by `event_ts` cursor).
-- `decisions.py` — Strategy evaluation (start with simple MACD/RSI example).
-- `risk.py` — Risk checks:
+- `models.py` - Pydantic DTOs for signals/decisions/execution requests.
+- `ingest.py` - ClickHouse signal ingestion (poll by `event_ts` cursor).
+- `decisions.py` - Strategy evaluation (start with simple MACD/RSI example).
+- `risk.py` - Risk checks:
   - `max_position_pct_equity`
   - `max_notional_per_trade`
   - symbol allowlist
-  - paper‑only gate + kill switch
-- `execution.py` — Idempotent order submission via `TorghutAlpacaClient`.
-- `reconcile.py` — Order reconciliation (poll Alpaca for status updates).
-- `scheduler.py` — Worker loop:
+  - paper-only gate + kill switch
+- `execution.py` - Idempotent order submission via `TorghutAlpacaClient`.
+- `reconcile.py` - Order reconciliation (poll Alpaca for status updates).
+- `scheduler.py` - Worker loop:
   - `ingest -> decide -> risk -> execute`
   - periodic reconciliation
 
@@ -93,7 +95,7 @@ Use Alembic in `services/torghut/migrations/` to add:
 - `trade_decisions.decision_hash` (unique)
 - `trade_decisions.executed_at` (timestamp)
 - Optional: `executions.last_update_at`
-- Optional: `trade_cursor` table for ingestion cursor (or re‑use `tool_run_logs`).
+- Optional: `trade_cursor` table for ingestion cursor (or re-use `tool_run_logs`).
 
 ### 5) Idempotency
 Decision hash:
@@ -112,7 +114,7 @@ Minimum checks before order submission:
 - buying power / equity coverage
 - max notional per trade
 - max percent equity per position
-- optional cool‑down per symbol
+- optional cool-down per symbol
 
 ### 7) Observability
 Logs (structured):
@@ -192,4 +194,4 @@ New (proposed):
 
 ## Notes
 - Signal ingestion is ClickHouse-only for this plan.
-- Keep the system paper‑only unless explicitly configured for live trading.
+- Keep the system paper-only unless explicitly configured for live trading.

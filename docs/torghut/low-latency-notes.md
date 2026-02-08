@@ -1,17 +1,19 @@
 # Low-Latency & Reliability Notes (Torghut Streaming)
 
+> Note: Canonical production-facing design docs live in `docs/torghut/design-system/README.md` (v1). This document is supporting material and may drift from the current deployed manifests.
+
 This doc captures tuning and operational guardrails to reach near-real-time behaviour while keeping correctness.
 
 ## Delivery semantics vs latency
-- Exactly-once Kafka sink waits for checkpoints to commit transactions. For sub-500 ms tails, keep checkpoint interval short (e.g., 5–10 s) or allow an at-least-once profile (no transactions) when downstream can dedup.
+- Exactly-once Kafka sink waits for checkpoints to commit transactions. For sub-500 ms tails, keep checkpoint interval short (e.g., 5-10 s) or allow an at-least-once profile (no transactions) when downstream can dedup.
 - Set `transaction.timeout.ms` > checkpoint timeout + failover budget to avoid aborts during recovery.
 - Consumers of TA topics should use `isolation.level=read_committed` when transactions are on.
 
 References: Flink delivery guarantees overview (Confluent): https://docs.confluent.io/cloud/current/flink/concepts/delivery-guarantees.html
 
 ## Watermark & buffer tuning
-- `pipeline.auto-watermark-interval`: 50–100 ms to emit watermarks more frequently.
-- `execution.buffer-timeout`: 5–10 ms to reduce operator flush latency.
+- `pipeline.auto-watermark-interval`: 50-100 ms to emit watermarks more frequently.
+- `execution.buffer-timeout`: 5-10 ms to reduce operator flush latency.
 - `table.exec.source.idle-timeout`: small (e.g., 1s) so idle partitions don’t hold back watermarks.
 
 Reference: Flink low-latency tuning guide: https://flink.apache.org/2022/05/18/getting-into-low-latency-gears-with-apache-flink-part-one/

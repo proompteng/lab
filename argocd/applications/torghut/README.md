@@ -6,38 +6,56 @@ This directory contains the Argo CD application resources for the torghut namesp
 
 Use this flow when you need a clean recompute of TA outputs.
 
+This procedure is **destructive** (deletes Kafka topics and Flink state). Treat it as emergency-only and require explicit
+human approval before running in production.
+
+0) Pause trading first (recommended).
+- Set `TRADING_ENABLED=false` in `argocd/applications/torghut/knative-service.yaml` and Argo sync.
+
 1) Suspend the job.
 ```
 kubectl -n torghut patch flinkdeployment torghut-ta --type=merge -p '{"spec":{"job":{"state":"suspended"}}}'
 ```
 
 2) Drop and recreate output topics.
+
+Precheck: identify a Kafka pod that has `kafka-topics.sh` available.
 ```
-kubectl -n kafka exec kafka-pool-a-0 -- /opt/kafka/bin/kafka-topics.sh \
+kubectl -n kafka get pods
+```
+
+```
+kubectl -n kafka exec <kafka-pod> -- /opt/kafka/bin/kafka-topics.sh \
   --bootstrap-server kafka-kafka-bootstrap.kafka:9092 \
   --delete --topic torghut.ta.bars.1s.v1
 
-kubectl -n kafka exec kafka-pool-a-0 -- /opt/kafka/bin/kafka-topics.sh \
+kubectl -n kafka exec <kafka-pod> -- /opt/kafka/bin/kafka-topics.sh \
   --bootstrap-server kafka-kafka-bootstrap.kafka:9092 \
   --delete --topic torghut.ta.signals.v1
 
-kubectl -n kafka exec kafka-pool-a-0 -- /opt/kafka/bin/kafka-topics.sh \
+kubectl -n kafka exec <kafka-pod> -- /opt/kafka/bin/kafka-topics.sh \
   --bootstrap-server kafka-kafka-bootstrap.kafka:9092 \
   --create --topic torghut.ta.bars.1s.v1 \
   --partitions 1 --replication-factor 3
 
-kubectl -n kafka exec kafka-pool-a-0 -- /opt/kafka/bin/kafka-topics.sh \
+kubectl -n kafka exec <kafka-pod> -- /opt/kafka/bin/kafka-topics.sh \
   --bootstrap-server kafka-kafka-bootstrap.kafka:9092 \
   --create --topic torghut.ta.signals.v1 \
   --partitions 1 --replication-factor 3
 ```
 
 3) Remove checkpoint and savepoint state.
+
+Precheck: identify a MinIO pod that has `mc` configured (this often varies by cluster).
 ```
-kubectl -n minio exec observability-pool-0-0 -- mc rm -r --force \
+kubectl -n minio get pods
+```
+
+```
+kubectl -n minio exec <minio-pod> -- mc rm -r --force \
   local/flink-checkpoints/torghut/technical-analysis/checkpoints
 
-kubectl -n minio exec observability-pool-0-0 -- mc rm -r --force \
+kubectl -n minio exec <minio-pod> -- mc rm -r --force \
   local/flink-checkpoints/torghut/technical-analysis/savepoints
 ```
 
@@ -47,9 +65,8 @@ kubectl -n minio exec observability-pool-0-0 -- mc rm -r --force \
 TA_GROUP_ID: "torghut-ta-<date>"
 TA_AUTO_OFFSET_RESET: "earliest"
 ```
-Apply and restart:
+Apply via GitOps (preferred) or emergency-only direct apply. Then restart:
 ```
-kubectl apply -k argocd/applications/torghut/ta
 kubectl -n torghut patch flinkdeployment torghut-ta --type=merge -p '{"spec":{"restartNonce":<bump>}}'
 ```
 
