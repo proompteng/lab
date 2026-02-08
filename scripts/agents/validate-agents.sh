@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHART_DIR="${ROOT_DIR}/charts/agents"
 ARGOCD_AGENTS_DIR="${ROOT_DIR}/argocd/applications/agents"
+HELM_KUBE_VERSION="${HELM_KUBE_VERSION:-1.27.0}"
 
 run_with_helm3() {
   # kustomize --enable-helm is not compatible with Helm v4 yet; prefer Helm v3 via mise when available.
@@ -19,13 +20,13 @@ go generate "${ROOT_DIR}/services/jangar/api/agents"
 git -C "${ROOT_DIR}" diff --exit-code -- "${CHART_DIR}/crds" \
   "${ROOT_DIR}/services/jangar/api/agents/v1alpha1/zz_generated.deepcopy.go"
 
-run_with_helm3 helm lint "${CHART_DIR}"
+run_with_helm3 helm lint "${CHART_DIR}" --kube-version "${HELM_KUBE_VERSION}"
 
 render_and_check() {
   local values_file="$1"
   local output
   output="$(mktemp)"
-  run_with_helm3 helm template "${CHART_DIR}" --values "${values_file}" >"${output}"
+  run_with_helm3 helm template "${CHART_DIR}" --kube-version "${HELM_KUBE_VERSION}" --values "${values_file}" >"${output}"
 
   if command -v rg >/dev/null 2>&1; then
     if rg -n "^kind: (Ingress|StatefulSet|CronJob|PersistentVolumeClaim)" "${output}"; then
@@ -48,7 +49,7 @@ render_and_check "${CHART_DIR}/values-prod.yaml"
 
 render_kustomize() {
   if command -v kustomize >/dev/null 2>&1; then
-    run_with_helm3 kustomize build --enable-helm "${ARGOCD_AGENTS_DIR}" >/dev/null
+    run_with_helm3 kustomize build --enable-helm --helm-kube-version "${HELM_KUBE_VERSION}" "${ARGOCD_AGENTS_DIR}" >/dev/null
     return 0
   fi
 
