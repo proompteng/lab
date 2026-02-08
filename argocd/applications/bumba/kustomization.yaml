@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: jangar
 resources:
   - deployment.yaml
+  - deployment-model.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/bumba
     newTag: "1c67f6fae"

@@ -1,26 +1,24 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: bumba
+  name: bumba-model
   namespace: jangar
   labels:
-    app.kubernetes.io/name: bumba
+    app.kubernetes.io/name: bumba-model
     app.kubernetes.io/part-of: lab
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: bumba
+      app.kubernetes.io/name: bumba-model
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: bumba
+        app.kubernetes.io/name: bumba-model
         app.kubernetes.io/part-of: lab
-      annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-01-31T07:19:07.319Z"
     spec:
       containers:
-        - name: bumba
+        - name: bumba-model
           image: registry.ide-newton.ts.net/lab/bumba
           imagePullPolicy: Always
           ports:
@@ -42,13 +40,13 @@ spec:
             - name: TEMPORAL_NAMESPACE
               value: default
             - name: TEMPORAL_TASK_QUEUE
-              value: bumba
+              value: bumba-model
             - name: TEMPORAL_WORKFLOW_CONCURRENCY
-              value: "64"
+              value: "8"
             - name: TEMPORAL_ACTIVITY_CONCURRENCY
-              value: "32"
+              value: "1"
             - name: TEMPORAL_STICKY_CACHE_SIZE
-              value: "1024"
+              value: "128"
             - name: TEMPORAL_DETERMINISM_MARKER_MODE
               value: delta
             - name: TEMPORAL_DETERMINISM_MARKER_INTERVAL_TASKS
@@ -66,7 +64,7 @@ spec:
             - name: TEMPORAL_METRICS_ENDPOINT
               value: http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics
             - name: OTEL_SERVICE_NAME
-              value: bumba
+              value: bumba-model
             - name: OTEL_SERVICE_NAMESPACE
               valueFrom:
                 fieldRef:
@@ -118,15 +116,13 @@ spec:
             - name: OPENAI_COMPLETION_MAX_ATTEMPTS
               value: "1"
             - name: OPENAI_COMPLETION_TIMEOUT_MS
-              value: "300000"
+              value: "600000"
             - name: OPENAI_COMPLETION_MAX_OUTPUT_TOKENS
               value: "1024"
             - name: BUMBA_MODEL_CONCURRENCY
               value: "1"
-            - name: BUMBA_CHILD_WORKFLOW_CONCURRENCY
-              value: "16"
-            - name: BUMBA_EMBEDDING_CONCURRENCY
-              value: "4"
+            - name: BUMBA_COMPLETION_CONCURRENCY
+              value: "1"
             - name: OPENAI_EMBEDDING_MODEL
               value: qwen3-embedding-saigak:0.6b
             - name: OPENAI_EMBEDDING_DIMENSION
@@ -159,7 +155,7 @@ spec:
             failureThreshold: 3
           resources:
             requests:
-              cpu: 200m
+              cpu: 100m
               memory: 256Mi
             limits:
               cpu: "1"
@@ -171,3 +167,4 @@ spec:
         - name: workspace
           persistentVolumeClaim:
             claimName: jangar-workspace-rwx
+
