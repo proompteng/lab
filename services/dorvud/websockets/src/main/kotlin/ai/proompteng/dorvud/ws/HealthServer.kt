@@ -11,6 +11,7 @@ import io.ktor.server.engine.ApplicationEngine
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.callloging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
@@ -65,7 +66,12 @@ class HealthServer(
     routing {
       get("/healthz") { call.respondText("ok") }
       get("/readyz") {
-        if (app.isReady()) call.respondText("ready") else call.respondText("not-ready", status = HttpStatusCode.ServiceUnavailable)
+        val info = app.readinessInfo()
+        if (info.ready) {
+          call.respond(info)
+        } else {
+          call.respond(HttpStatusCode.ServiceUnavailable, info)
+        }
       }
     }
   }
