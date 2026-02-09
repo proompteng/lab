@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { postAgentRunsHandler } from '~/routes/v1/agent-runs'
 import { postOrchestrationsHandler } from '~/routes/v1/orchestrations'
 import type { KubernetesClient } from '~/server/primitives-kube'
-import type { PrimitivesStore } from '~/server/primitives-store'
+import type { AgentRunIdempotencyRecord, PrimitivesStore } from '~/server/primitives-store'
 
 const setLeaderElectionFollower = () => {
   ;(globalThis as unknown as { __jangarLeaderElection?: unknown }).__jangarLeaderElection = {
@@ -171,19 +171,19 @@ describe('primitives endpoints', () => {
   })
 
   it('enforces AgentRun idempotency scope across retries', async () => {
-    const scope = new Map<string, Record<string, unknown>>()
+    const scope = new Map<string, AgentRunIdempotencyRecord>()
     const kubeResources: Record<string, Record<string, unknown> | null> = {
       'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
     }
     const store = createStoreMock()
-    store.getAgentRunIdempotencyKey = vi.fn(
+    store.getAgentRunIdempotencyKey = vi.fn<PrimitivesStore['getAgentRunIdempotencyKey']>(
       async (input) => scope.get(`${input.namespace}:${input.agentName}:${input.idempotencyKey}`) ?? null,
     )
-    store.reserveAgentRunIdempotencyKey = vi.fn(async (input) => {
+    store.reserveAgentRunIdempotencyKey = vi.fn<PrimitivesStore['reserveAgentRunIdempotencyKey']>(async (input) => {
       const key = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
       const existing = scope.get(key)
       if (existing) return { record: existing, created: false }
-      const record = {
+      const record: AgentRunIdempotencyRecord = {
         id: `idem-${key}`,
         namespace: input.namespace,
         agentName: input.agentName,
@@ -198,7 +198,7 @@ describe('primitives endpoints', () => {
       scope.set(key, record)
       return { record, created: true }
     })
-    store.assignAgentRunIdempotencyKey = vi.fn(async (input) => {
+    store.assignAgentRunIdempotencyKey = vi.fn<PrimitivesStore['assignAgentRunIdempotencyKey']>(async (input) => {
       const key = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
       const existing = scope.get(key)
       if (!existing) return null
@@ -258,7 +258,7 @@ describe('primitives endpoints', () => {
   })
 
   it('reclaims stale AgentRun idempotency reservations', async () => {
-    const scope = new Map<string, Record<string, unknown>>()
+    const scope = new Map<string, AgentRunIdempotencyRecord>()
     const kubeResources: Record<string, Record<string, unknown> | null> = {
       'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
     }
@@ -277,12 +277,12 @@ describe('primitives endpoints', () => {
       updatedAt: new Date(Date.now() - 60 * 60 * 1000),
     })
 
-    store.getAgentRunIdempotencyKey = vi.fn(async () => null)
-    store.reserveAgentRunIdempotencyKey = vi.fn(async (input) => {
+    store.getAgentRunIdempotencyKey = vi.fn<PrimitivesStore['getAgentRunIdempotencyKey']>(async () => null)
+    store.reserveAgentRunIdempotencyKey = vi.fn<PrimitivesStore['reserveAgentRunIdempotencyKey']>(async (input) => {
       const mapKey = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
       const existing = scope.get(mapKey)
       if (existing) return { record: existing, created: false }
-      const record = {
+      const record: AgentRunIdempotencyRecord = {
         id: `idem-${mapKey}`,
         namespace: input.namespace,
         agentName: input.agentName,
@@ -297,11 +297,11 @@ describe('primitives endpoints', () => {
       scope.set(mapKey, record)
       return { record, created: true }
     })
-    store.deleteAgentRunIdempotencyKey = vi.fn(async (input) => {
+    store.deleteAgentRunIdempotencyKey = vi.fn<PrimitivesStore['deleteAgentRunIdempotencyKey']>(async (input) => {
       scope.delete(`${input.namespace}:${input.agentName}:${input.idempotencyKey}`)
       return true
     })
-    store.assignAgentRunIdempotencyKey = vi.fn(async (input) => {
+    store.assignAgentRunIdempotencyKey = vi.fn<PrimitivesStore['assignAgentRunIdempotencyKey']>(async (input) => {
       const mapKey = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
       const existing = scope.get(mapKey)
       if (!existing) return null
@@ -334,6 +334,7 @@ describe('primitives endpoints', () => {
           agentRef: { name: 'demo-agent' },
           namespace: 'jangar',
           runtime: { type: 'job', config: {} },
+          implementationSpecRef: { name: 'impl-1' },
           idempotencyKey: 'stale-idem',
         },
         { 'Idempotency-Key': 'delivery-stale-1' },
@@ -350,19 +351,19 @@ describe('primitives endpoints', () => {
   })
 
   it('returns the existing AgentRun when idempotency key points to a terminal run', async () => {
-    const scope = new Map<string, Record<string, unknown>>()
+    const scope = new Map<string, AgentRunIdempotencyRecord>()
     const kubeResources: Record<string, Record<string, unknown> | null> = {
       'agents.agents.proompteng.ai:jangar:demo-agent': { spec: {} },
     }
     const store = createStoreMock()
-    store.getAgentRunIdempotencyKey = vi.fn(
+    store.getAgentRunIdempotencyKey = vi.fn<PrimitivesStore['getAgentRunIdempotencyKey']>(
       async (input) => scope.get(`${input.namespace}:${input.agentName}:${input.idempotencyKey}`) ?? null,
     )
-    store.reserveAgentRunIdempotencyKey = vi.fn(async (input) => {
+    store.reserveAgentRunIdempotencyKey = vi.fn<PrimitivesStore['reserveAgentRunIdempotencyKey']>(async (input) => {
       const key = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
       const existing = scope.get(key)
       if (existing) return { record: existing, created: false }
-      const record = {
+      const record: AgentRunIdempotencyRecord = {
         id: `idem-${key}`,
         namespace: input.namespace,
         agentName: input.agentName,
@@ -377,7 +378,7 @@ describe('primitives endpoints', () => {
       scope.set(key, record)
       return { record, created: true }
     })
-    store.assignAgentRunIdempotencyKey = vi.fn(async (input) => {
+    store.assignAgentRunIdempotencyKey = vi.fn<PrimitivesStore['assignAgentRunIdempotencyKey']>(async (input) => {
       const key = `${input.namespace}:${input.agentName}:${input.idempotencyKey}`
       const existing = scope.get(key)
       if (!existing) return null

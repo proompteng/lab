@@ -1403,7 +1403,7 @@ describe('agents controller reconcileAgentRun', () => {
       const agentRun = buildAgentRun()
       await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
-      const defaultTemplate = (lastJob?.spec as Record<string, unknown> | undefined)?.template as
+      const defaultTemplate = ((lastJob as any)?.spec as Record<string, unknown> | undefined)?.template as
         | Record<string, unknown>
         | undefined
       const defaultPodSpec = (defaultTemplate?.spec as Record<string, unknown> | undefined) ?? {}
@@ -1459,7 +1459,7 @@ describe('agents controller reconcileAgentRun', () => {
         0,
       )
 
-      const overrideTemplate = (lastJob?.spec as Record<string, unknown> | undefined)?.template as
+      const overrideTemplate = ((lastJob as any)?.spec as Record<string, unknown> | undefined)?.template as
         | Record<string, unknown>
         | undefined
       const overridePodSpec = (overrideTemplate?.spec as Record<string, unknown> | undefined) ?? {}
@@ -1538,7 +1538,7 @@ describe('agents controller reconcileAgentRun', () => {
       const agentRun = buildAgentRun()
       await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
-      const defaultTemplate = (lastJob?.spec as Record<string, unknown> | undefined)?.template as
+      const defaultTemplate = ((lastJob as any)?.spec as Record<string, unknown> | undefined)?.template as
         | Record<string, unknown>
         | undefined
       const defaultPodSpec = (defaultTemplate?.spec as Record<string, unknown> | undefined) ?? {}
@@ -1687,7 +1687,7 @@ describe('agents controller reconcileAgentRun', () => {
     expect(status.phase).toBe('Running')
     expect(status.systemPromptHash).toBe(createHash('sha256').update('workflow-prompt').digest('hex'))
 
-    const podTemplate = (lastJob?.spec as Record<string, unknown> | undefined)?.template as
+    const podTemplate = ((lastJob as any)?.spec as Record<string, unknown> | undefined)?.template as
       | Record<string, unknown>
       | undefined
     const podSpecSpec = (podTemplate?.spec as Record<string, unknown> | undefined) ?? {}

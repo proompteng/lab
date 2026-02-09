@@ -10,7 +10,7 @@ The Code Search primitive provides a durable, queryable index over one or more G
 
 Jangar is the control plane for all Code Search resources and APIs.
 
-## Grounding In The Current Platform (As Of 2026-02-08)
+## Grounding In The Current Platform (As Of 2026-02-09)
 
 This repository already has an Atlas-backed indexing pipeline that writes into the `jangar-db` CNPG cluster:
 
@@ -130,12 +130,13 @@ CREATE TABLE atlas.chunk_embeddings (
 );
 ```
 
-Add an HNSW index:
+Add a vector index (this repo currently uses `ivfflat`):
 
 ```sql
-CREATE INDEX chunk_embeddings_embedding_hnsw
+CREATE INDEX atlas_chunk_embeddings_embedding_idx
   ON atlas.chunk_embeddings
-  USING hnsw (embedding vector_cosine_ops);
+  USING ivfflat (embedding vector_cosine_ops)
+  WITH (lists = 100);
 ```
 
 3. Add lexical search support for chunks.
@@ -153,6 +154,82 @@ CREATE INDEX file_chunks_text_tsvector_gin
 
 Populate `text_tsvector` on write using `to_tsvector('simple', content)` and optionally include symbol names from
 metadata.
+
+## Current Implementation (2026-02-09)
+
+This repository now implements the “chunk-level retrieval” parts of this design.
+
+### Jangar API
+
+- HTTP endpoint: `POST /api/code-search`
+- MCP tool: `atlas_code_search` (alias: `atlas.code_search`)
+
+The search is hybrid:
+
+- Lexical: `websearch_to_tsquery` + `ts_rank_cd` over `atlas.file_chunks.text_tsvector`
+- Semantic: `pgvector` cosine distance over `atlas.chunk_embeddings.embedding`
+
+### Bumba Indexing (Chunk Indexing)
+
+Bumba writes chunks and chunk embeddings as part of the `enrichFile` workflow, after file-level enrichment/embedding
+and facts persistence.
+
+Chunk indexing is feature-flagged:
+
+- `BUMBA_ATLAS_CHUNK_INDEXING=true` enables writing to `atlas.file_chunks` and `atlas.chunk_embeddings`.
+- When disabled (default), Bumba will return a `{ skipped: true, reason: 'disabled' }` result and continue.
+
+Chunk extraction tuning env vars (defaults in code):
+
+- `BUMBA_ATLAS_CHUNK_LINES` (default 80)
+- `BUMBA_ATLAS_MIN_CHUNK_LINES` (default 3)
+- `BUMBA_ATLAS_MAX_CHUNK_LINES` (default 220)
+- `BUMBA_ATLAS_MAX_CHUNKS` (default 250)
+
+## Agent Usage
+
+Agents should treat Code Search like “Memories, but for code pointers”: use it to find the right place to read/edit,
+then fetch the exact file content using existing file-read primitives.
+
+### MCP: `atlas_code_search`
+
+Input:
+
+```json
+{
+  "query": "where do we set the bumba Temporal model task queue?",
+  "repository": "proompteng/lab",
+  "ref": "main",
+  "pathPrefix": "services/bumba",
+  "limit": 8
+}
+```
+
+Output matches include:
+
+- `repository`, `ref`, `commit`
+- `path`
+- `startLine`, `endLine`
+- `score` (normalized hybrid score)
+- `highlights` (optional short snippets)
+
+Workflow:
+
+1. Call `atlas_code_search` with a specific query and `pathPrefix` whenever possible.
+2. Open the returned file(s) and read the chunk region (`startLine..endLine`).
+3. If results are too broad, re-run with tighter `pathPrefix` or more identifier-heavy queries.
+
+### HTTP: `POST /api/code-search`
+
+Example:
+
+```bash
+curl -sS \\
+  -X POST \\
+  -H 'content-type: application/json' \\
+  http://localhost:3000/api/code-search \\
+  -d '{\"query\":\"indexFileChunks\",\"repository\":\"proompteng/lab\",\"pathPrefix\":\"services/bumba\",\"limit\":5}'
+```
 
 ## Ingestion And Freshness
 
@@ -296,4 +373,3 @@ kubectl cnpg psql -n jangar jangar-db -- -d jangar -c \\\n  \"SELECT count(*) FR
 3. Enable the Code Search API endpoint (hybrid retrieval) and integrate it as an agent tool.
 4. Backfill existing `file_versions` with rate limiting.
 5. Iterate on chunking and reranking based on real agent usage.
-

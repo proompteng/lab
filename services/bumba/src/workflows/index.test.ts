@@ -304,11 +304,23 @@ test('enrichFile completes when all activities are resolved', async () => {
       'activity-10',
       {
         status: 'completed',
-        value: {},
+        value: {
+          skipped: true,
+          reason: 'disabled',
+          chunks: 0,
+          embedded: 0,
+        },
       },
     ],
     [
       'activity-11',
+      {
+        status: 'completed',
+        value: {},
+      },
+    ],
+    [
+      'activity-12',
       {
         status: 'completed',
         value: {
@@ -329,7 +341,7 @@ test('enrichFile completes when all activities are resolved', async () => {
     (command: Command) => command.commandType === CommandType.SCHEDULE_ACTIVITY_TASK,
   )
 
-  expect(scheduleCommands).toHaveLength(12)
+  expect(scheduleCommands).toHaveLength(13)
   expect(output.commands.at(-1)?.commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
   expect(output.completion).toBe('completed')
   expect(output.result).toEqual({ id: 'enrichment-id', filename: input.filePath })
@@ -612,11 +624,23 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       'activity-11',
       {
         status: 'completed',
-        value: {},
+        value: {
+          skipped: true,
+          reason: 'disabled',
+          chunks: 0,
+          embedded: 0,
+        },
       },
     ],
     [
       'activity-12',
+      {
+        status: 'completed',
+        value: {},
+      },
+    ],
+    [
+      'activity-13',
       {
         status: 'completed',
         value: {
@@ -637,7 +661,7 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
     (command: Command) => command.commandType === CommandType.SCHEDULE_ACTIVITY_TASK,
   )
 
-  expect(scheduleCommands).toHaveLength(13)
+  expect(scheduleCommands).toHaveLength(14)
   expect(output.commands.at(-1)?.commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
   expect(output.completion).toBe('completed')
   expect(output.result).toEqual({ id: 'enrichment-id', filename: input.filePath })

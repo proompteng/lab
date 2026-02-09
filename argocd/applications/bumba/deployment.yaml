@@ -127,6 +127,8 @@ spec:
               value: "16"
             - name: BUMBA_EMBEDDING_CONCURRENCY
               value: "4"
+            - name: BUMBA_ATLAS_CHUNK_INDEXING
+              value: "true"
             - name: OPENAI_EMBEDDING_MODEL
               value: qwen3-embedding-saigak:0.6b
             - name: OPENAI_EMBEDDING_DIMENSION

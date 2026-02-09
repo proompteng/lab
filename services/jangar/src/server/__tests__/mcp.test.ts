@@ -72,6 +72,7 @@ const makeAtlasService = (): AtlasService => {
     listIndexedFiles: () => fail(),
     getAstPreview: () => fail(),
     search: () => fail(),
+    codeSearch: () => fail(),
     searchCount: () => fail(),
     stats: () => fail(),
     close: () => Effect.void,
@@ -111,6 +112,7 @@ describe('Memories MCP handler', () => {
       'retrieve_memory',
       'atlas_index',
       'atlas_search',
+      'atlas_code_search',
       'atlas_stats',
     ])
   })

@@ -2,6 +2,8 @@ import { Context, Effect, Layer, pipe } from 'effect'
 
 import {
   type AtlasAstPreview,
+  type AtlasCodeSearchInput,
+  type AtlasCodeSearchMatch,
   type AtlasIndexedFile,
   type AtlasSearchInput,
   type AtlasSearchMatch,
@@ -73,6 +75,7 @@ export type AtlasService = {
   getAstPreview: (input: { fileVersionId: string; limit?: number }) => Effect.Effect<AtlasAstPreview, Error>
   search: (input: AtlasSearchInput) => Effect.Effect<AtlasSearchMatch[], Error>
   searchCount: (input: AtlasSearchInput) => Effect.Effect<number, Error>
+  codeSearch: (input: AtlasCodeSearchInput) => Effect.Effect<AtlasCodeSearchMatch[], Error>
   stats: () => Effect.Effect<AtlasStats, Error>
   close: () => Effect.Effect<void, Error>
 }
@@ -149,6 +152,7 @@ export const AtlasLive = Layer.scoped(
       getAstPreview: (input) => wrap('atlas get ast preview failed', (resolved) => resolved.getAstPreview(input)),
       search: (input) => wrap('atlas search failed', (resolved) => resolved.search(input)),
       searchCount: (input) => wrap('atlas search count failed', (resolved) => resolved.searchCount(input)),
+      codeSearch: (input) => wrap('atlas code search failed', (resolved) => resolved.codeSearch(input)),
       stats: () => wrap('atlas stats failed', (resolved) => resolved.stats()),
       close: () =>
         pipe(

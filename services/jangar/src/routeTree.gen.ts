@@ -39,6 +39,7 @@ import { Route as ApiModelsRouteImport } from './routes/api/models'
 import { Route as ApiMemoriesRouteImport } from './routes/api/memories'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as ApiEnrichRouteImport } from './routes/api/enrich'
+import { Route as ApiCodeSearchRouteImport } from './routes/api/code-search'
 import { Route as AgentsGeneralRouteImport } from './routes/agents/general'
 import { Route as AgentsRunIdRouteImport } from './routes/agents/$runId'
 import { Route as TerminalsSessionIdIndexRouteImport } from './routes/terminals/$sessionId/index'
@@ -286,6 +287,11 @@ const ApiHealthRoute = ApiHealthRouteImport.update({
 const ApiEnrichRoute = ApiEnrichRouteImport.update({
   id: '/api/enrich',
   path: '/api/enrich',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiCodeSearchRoute = ApiCodeSearchRouteImport.update({
+  id: '/api/code-search',
+  path: '/api/code-search',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AgentsGeneralRoute = AgentsGeneralRouteImport.update({
@@ -842,6 +848,7 @@ export interface FileRoutesByFullPath {
   '/ready': typeof ReadyRoute
   '/agents/$runId': typeof AgentsRunIdRoute
   '/agents/general': typeof AgentsGeneralRoute
+  '/api/code-search': typeof ApiCodeSearchRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
   '/api/memories': typeof ApiMemoriesRouteWithChildren
@@ -972,6 +979,7 @@ export interface FileRoutesByTo {
   '/ready': typeof ReadyRoute
   '/agents/$runId': typeof AgentsRunIdRoute
   '/agents/general': typeof AgentsGeneralRoute
+  '/api/code-search': typeof ApiCodeSearchRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
   '/api/memories': typeof ApiMemoriesRouteWithChildren
@@ -1101,6 +1109,7 @@ export interface FileRoutesById {
   '/ready': typeof ReadyRoute
   '/agents/$runId': typeof AgentsRunIdRoute
   '/agents/general': typeof AgentsGeneralRoute
+  '/api/code-search': typeof ApiCodeSearchRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
   '/api/memories': typeof ApiMemoriesRouteWithChildren
@@ -1233,6 +1242,7 @@ export interface FileRouteTypes {
     | '/ready'
     | '/agents/$runId'
     | '/agents/general'
+    | '/api/code-search'
     | '/api/enrich'
     | '/api/health'
     | '/api/memories'
@@ -1363,6 +1373,7 @@ export interface FileRouteTypes {
     | '/ready'
     | '/agents/$runId'
     | '/agents/general'
+    | '/api/code-search'
     | '/api/enrich'
     | '/api/health'
     | '/api/memories'
@@ -1491,6 +1502,7 @@ export interface FileRouteTypes {
     | '/ready'
     | '/agents/$runId'
     | '/agents/general'
+    | '/api/code-search'
     | '/api/enrich'
     | '/api/health'
     | '/api/memories'
@@ -1622,6 +1634,7 @@ export interface RootRouteChildren {
   ReadyRoute: typeof ReadyRoute
   AgentsRunIdRoute: typeof AgentsRunIdRoute
   AgentsGeneralRoute: typeof AgentsGeneralRoute
+  ApiCodeSearchRoute: typeof ApiCodeSearchRoute
   ApiEnrichRoute: typeof ApiEnrichRoute
   ApiHealthRoute: typeof ApiHealthRoute
   ApiMemoriesRoute: typeof ApiMemoriesRouteWithChildren
@@ -1925,6 +1938,13 @@ declare module '@tanstack/react-router' {
       path: '/api/enrich'
       fullPath: '/api/enrich'
       preLoaderRoute: typeof ApiEnrichRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/code-search': {
+      id: '/api/code-search'
+      path: '/api/code-search'
+      fullPath: '/api/code-search'
+      preLoaderRoute: typeof ApiCodeSearchRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/agents/general': {
@@ -2844,6 +2864,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReadyRoute: ReadyRoute,
   AgentsRunIdRoute: AgentsRunIdRoute,
   AgentsGeneralRoute: AgentsGeneralRoute,
+  ApiCodeSearchRoute: ApiCodeSearchRoute,
   ApiEnrichRoute: ApiEnrichRoute,
   ApiHealthRoute: ApiHealthRoute,
   ApiMemoriesRoute: ApiMemoriesRouteWithChildren,

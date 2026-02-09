@@ -32,6 +32,15 @@ export type AtlasSearchInput = {
   kinds?: string[]
 }
 
+export type AtlasCodeSearchInput = {
+  query: string
+  limit?: number
+  repository?: string
+  ref?: string
+  pathPrefix?: string
+  language?: string
+}
+
 const normalizeRequiredText = (value: unknown, field: string, max: number, fallback?: string): string | null => {
   const raw = typeof value === 'string' ? value.trim() : ''
   const resolved = raw.length > 0 ? raw : (fallback ?? '')
@@ -148,6 +157,39 @@ export const parseAtlasSearchInput = (
     return {
       ok: false,
       message: error instanceof Error ? error.message : 'Invalid Atlas search input.',
+    }
+  }
+}
+
+export const parseAtlasCodeSearchInput = (
+  payload: Record<string, unknown>,
+  fallbackLimit = DEFAULT_LIMIT,
+): ValidationResult<AtlasCodeSearchInput> => {
+  try {
+    const query = normalizeRequiredText(payload.query, 'Query', MAX_QUERY_CHARS)
+    if (!query) return { ok: false, message: 'Query is required.' }
+
+    const limit = normalizeLimit(payload.limit, fallbackLimit)
+    const repository = normalizeOptionalText(payload.repository, MAX_REPOSITORY_CHARS)
+    const ref = normalizeOptionalText(payload.ref, MAX_REF_CHARS)
+    const pathPrefix = normalizeOptionalText(payload.pathPrefix, MAX_PATH_CHARS)
+    const language = normalizeOptionalText(payload.language, 100)
+
+    return {
+      ok: true,
+      value: {
+        query,
+        limit,
+        repository,
+        ref,
+        pathPrefix,
+        language,
+      },
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : 'Invalid Atlas code search input.',
     }
   }
 }

@@ -117,6 +117,19 @@ export type PersistFactsInput = {
   facts: TreeSitterFact[]
 }
 
+export type IndexFileChunksInput = {
+  fileVersionId: string
+  filePath: string
+  content: string
+}
+
+export type IndexFileChunksOutput = {
+  skipped: boolean
+  reason?: string
+  chunks: number
+  embedded: number
+}
+
 export type CleanupEnrichmentInput = {
   fileMetadata: FileMetadata
 }
@@ -1702,6 +1715,189 @@ const parseAst = async (source: string, filePath: string): Promise<AstSummaryOut
   }
 }
 
+type ExtractedFileChunk = {
+  chunkIndex: number
+  startLine: number
+  endLine: number
+  content: string
+  tokenCount: number
+  metadata: Record<string, unknown>
+}
+
+const loadChunkingConfig = () => {
+  const linesPerChunk = clampNumber(Number.parseInt(process.env.BUMBA_ATLAS_CHUNK_LINES ?? '', 10), 80)
+  const minChunkLines = clampNumber(Number.parseInt(process.env.BUMBA_ATLAS_MIN_CHUNK_LINES ?? '', 10), 3)
+  const maxChunkLines = clampNumber(Number.parseInt(process.env.BUMBA_ATLAS_MAX_CHUNK_LINES ?? '', 10), 220)
+  const maxChunks = clampNumber(Number.parseInt(process.env.BUMBA_ATLAS_MAX_CHUNKS ?? '', 10), 250)
+  return { linesPerChunk, minChunkLines, maxChunkLines, maxChunks }
+}
+
+const chunkNodeTypes = new Set([
+  // TS/JS
+  'function_declaration',
+  'method_definition',
+  'class_declaration',
+  'interface_declaration',
+  'type_alias_declaration',
+  'enum_declaration',
+  // Go
+  'function_declaration',
+  'method_declaration',
+  'type_declaration',
+  // Python
+  'function_definition',
+  'class_definition',
+  // Kotlin
+  'class_declaration',
+  'object_declaration',
+  'function_declaration',
+  // YAML (custom parser emits facts; tree-sitter yaml node types may vary)
+  'yaml-pair',
+  'yaml-seq-item',
+])
+
+const isChunkNode = (node: AstNode) =>
+  node.isNamed && (chunkNodeTypes.has(node.type) || node.type.endsWith('_declaration'))
+
+const estimateTokenCount = (text: string) => {
+  const trimmed = text.trim()
+  if (!trimmed) return 0
+  return trimmed.split(/\s+/).length
+}
+
+const extractTreeSitterChunks = (root: AstNode, source: string, config: ReturnType<typeof loadChunkingConfig>) => {
+  const candidates: Array<{
+    nodeType: string
+    name: string | null
+    startLine: number
+    endLine: number
+  }> = []
+
+  const stack: AstNode[] = [root]
+  while (stack.length > 0 && candidates.length < config.maxChunks * 4) {
+    const node = stack.pop()
+    if (!node) continue
+
+    if (isChunkNode(node)) {
+      const startLine = node.startPosition.row + 1
+      const endLine = node.endPosition.row + 1
+      const lineSpan = endLine - startLine + 1
+      if (lineSpan >= config.minChunkLines && lineSpan <= config.maxChunkLines) {
+        const identifier = findIdentifier(node)
+        const name = identifier ? source.slice(identifier.startIndex, identifier.endIndex).trim() : null
+        candidates.push({ nodeType: node.type, name, startLine, endLine })
+      }
+    }
+
+    const children = node.namedChildren
+    for (let i = children.length - 1; i >= 0; i -= 1) {
+      const child = children[i]
+      if (child) stack.push(child)
+    }
+  }
+
+  candidates.sort((a, b) => a.startLine - b.startLine || a.endLine - b.endLine)
+
+  const selected: typeof candidates = []
+  for (const candidate of candidates) {
+    if (selected.length >= config.maxChunks) break
+    const last = selected[selected.length - 1]
+    if (last && candidate.startLine <= last.endLine) {
+      // Avoid overlapping/nested nodes to keep chunks stable.
+      continue
+    }
+    selected.push(candidate)
+  }
+
+  const lines = splitLines(source)
+  const chunks: ExtractedFileChunk[] = []
+  selected.forEach((range, idx) => {
+    const start = Math.max(1, range.startLine)
+    const end = Math.min(lines.length, Math.max(start, range.endLine))
+    const content = lines.slice(start - 1, end).join('\n')
+    chunks.push({
+      chunkIndex: idx,
+      startLine: start,
+      endLine: end,
+      content,
+      tokenCount: estimateTokenCount(content),
+      metadata: {
+        chunkType: 'ast_node',
+        nodeType: range.nodeType,
+        name: range.name,
+      },
+    })
+  })
+
+  return chunks
+}
+
+const extractFixedLineChunks = (source: string, config: ReturnType<typeof loadChunkingConfig>) => {
+  const lines = splitLines(source)
+  const chunks: ExtractedFileChunk[] = []
+  if (lines.length === 0) return chunks
+  let index = 0
+  for (let start = 0; start < lines.length && chunks.length < config.maxChunks; start += config.linesPerChunk) {
+    const end = Math.min(lines.length, start + config.linesPerChunk)
+    const content = lines.slice(start, end).join('\n')
+    chunks.push({
+      chunkIndex: index,
+      startLine: start + 1,
+      endLine: end,
+      content,
+      tokenCount: estimateTokenCount(content),
+      metadata: {
+        chunkType: 'fixed_lines',
+      },
+    })
+    index += 1
+  }
+  return chunks
+}
+
+const extractFileChunks = async (source: string, filePath: string): Promise<ExtractedFileChunk[]> => {
+  const config = loadChunkingConfig()
+  if (!source.trim()) return []
+
+  const { maxBytes } = loadAstLimits()
+  if (source.length > maxBytes) {
+    return extractFixedLineChunks(source, config)
+  }
+
+  const ext = extname(filePath).toLowerCase()
+  const customParser = customAstParsers.get(ext)
+  if (customParser) {
+    // Some file types use custom parsing for facts; chunking still falls back to stable line windows.
+    return extractFixedLineChunks(source, config)
+  }
+
+  let entry: LoadedLanguage | null
+  try {
+    entry = await loadLanguageForExtension(ext)
+  } catch {
+    return extractFixedLineChunks(source, config)
+  }
+
+  if (!entry) {
+    return extractFixedLineChunks(source, config)
+  }
+
+  try {
+    const parser = new Parser()
+    parser.setLanguage(entry.language)
+    const tree = parser.parse(source)
+    const root = tree?.rootNode as AstNode | undefined
+    if (!root) {
+      return extractFixedLineChunks(source, config)
+    }
+    const chunks = extractTreeSitterChunks(root, source, config)
+    if (chunks.length > 0) return chunks
+    return extractFixedLineChunks(source, config)
+  } catch {
+    return extractFixedLineChunks(source, config)
+  }
+}
+
 const dedupeFacts = (facts: TreeSitterFact[]) => {
   const seen = new Map<string, TreeSitterFact>()
   for (const fact of facts) {
@@ -2184,6 +2380,39 @@ const embedText = async (text: string): Promise<number[]> => {
       catch: (error) => toError(error),
     }),
   )
+}
+
+const embedTexts = async (texts: string[]): Promise<number[][]> => {
+  if (texts.length === 0) return []
+
+  const batchSize = loadEmbeddingBatchSize()
+  const batchMaxChars = loadEmbeddingBatchMaxChars()
+  if (batchSize <= 1 && !batchMaxChars) {
+    return await requestEmbeddingBatch(texts)
+  }
+
+  const chunks: number[][] = []
+  for (let i = 0; i < texts.length; ) {
+    const batch: string[] = []
+    let batchChars = 0
+    while (i < texts.length && batch.length < batchSize) {
+      const next = texts[i] ?? ''
+      const nextChars = next.length
+      if (batchMaxChars && batch.length > 0 && batchChars + nextChars > batchMaxChars) {
+        break
+      }
+      batch.push(next)
+      batchChars += nextChars
+      i += 1
+    }
+    if (batch.length === 0) {
+      batch.push(texts[i] ?? '')
+      i += 1
+    }
+    const embeddings = await requestEmbeddingBatch(batch)
+    chunks.push(...embeddings)
+  }
+  return chunks
 }
 
 const withDefaultSslMode = (rawUrl: string) => {
@@ -3234,6 +3463,209 @@ export const activities = {
       logActivity('error', 'failed', 'persistFacts', {
         fileVersionId: input.fileVersionId,
         requested: input.facts.length,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
+    }
+  },
+
+  async indexFileChunks(input: IndexFileChunksInput): Promise<IndexFileChunksOutput> {
+    const startedAt = Date.now()
+
+    logActivity('info', 'started', 'indexFileChunks', {
+      fileVersionId: input.fileVersionId,
+      filePath: input.filePath,
+      contentChars: input.content.length,
+    })
+
+    const enabledRaw = (process.env.BUMBA_ATLAS_CHUNK_INDEXING ?? '').trim().toLowerCase()
+    const enabled = enabledRaw === '1' || enabledRaw === 'true' || enabledRaw === 'yes' || enabledRaw === 'on'
+    if (!enabled) {
+      logActivity('info', 'skipped', 'indexFileChunks', {
+        fileVersionId: input.fileVersionId,
+        filePath: input.filePath,
+        reason: 'disabled',
+        durationMs: Date.now() - startedAt,
+      })
+      return { skipped: true, reason: 'disabled', chunks: 0, embedded: 0 }
+    }
+
+    try {
+      const db = getAtlasDb()
+      if (!db) {
+        logActivity('info', 'skipped', 'indexFileChunks', {
+          fileVersionId: input.fileVersionId,
+          filePath: input.filePath,
+          reason: 'missing_database_url',
+          durationMs: Date.now() - startedAt,
+        })
+        return { skipped: true, reason: 'missing_database_url', chunks: 0, embedded: 0 }
+      }
+
+      const chunks = await extractFileChunks(input.content, input.filePath)
+      if (chunks.length === 0) {
+        logActivity('info', 'completed', 'indexFileChunks', {
+          fileVersionId: input.fileVersionId,
+          filePath: input.filePath,
+          chunks: 0,
+          embedded: 0,
+          durationMs: Date.now() - startedAt,
+        })
+        return { skipped: false, chunks: 0, embedded: 0 }
+      }
+
+      const chunkIndexes = chunks.map((chunk) => chunk.chunkIndex)
+      const startLines = chunks.map((chunk) => chunk.startLine)
+      const endLines = chunks.map((chunk) => chunk.endLine)
+      const contents = chunks.map((chunk) => chunk.content)
+      const tokenCounts = chunks.map((chunk) => chunk.tokenCount)
+      const metadataValues = chunks.map((chunk) => JSON.stringify(chunk.metadata ?? {}))
+
+      let chunkIdByIndex = new Map<number, string>()
+
+      try {
+        const rows = (await db`
+          INSERT INTO atlas.file_chunks (
+            file_version_id,
+            chunk_index,
+            start_line,
+            end_line,
+            content,
+            token_count,
+            metadata,
+            text_tsvector
+          )
+          SELECT
+            ${input.fileVersionId},
+            chunk_index,
+            start_line,
+            end_line,
+            content,
+            token_count,
+            metadata::jsonb,
+            to_tsvector('simple', content)
+          FROM UNNEST(
+            ${db.array(chunkIndexes, 'int4')},
+            ${db.array(startLines, 'int4')},
+            ${db.array(endLines, 'int4')},
+            ${db.array(contents, 'text')},
+            ${db.array(tokenCounts, 'int4')},
+            ${db.array(metadataValues, 'text')}
+          ) AS chunk(chunk_index, start_line, end_line, content, token_count, metadata)
+          ON CONFLICT (file_version_id, chunk_index) DO UPDATE
+          SET start_line = EXCLUDED.start_line,
+              end_line = EXCLUDED.end_line,
+              content = EXCLUDED.content,
+              token_count = EXCLUDED.token_count,
+              metadata = EXCLUDED.metadata,
+              text_tsvector = EXCLUDED.text_tsvector
+          RETURNING id, chunk_index;
+        `) as Array<{ id: string; chunk_index: number }>
+
+        chunkIdByIndex = new Map(rows.map((row) => [row.chunk_index, row.id]))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        const normalized = message.toLowerCase()
+        const looksLikeSchemaMissing =
+          normalized.includes('does not exist') ||
+          normalized.includes('unknown') ||
+          normalized.includes('column') ||
+          normalized.includes('relation') ||
+          normalized.includes('undefined')
+        if (looksLikeSchemaMissing) {
+          logActivity('info', 'skipped', 'indexFileChunks', {
+            fileVersionId: input.fileVersionId,
+            filePath: input.filePath,
+            reason: 'schema_missing',
+            error: message,
+            durationMs: Date.now() - startedAt,
+          })
+          return { skipped: true, reason: 'schema_missing', chunks: 0, embedded: 0 }
+        }
+        throw error
+      }
+
+      if (chunkIdByIndex.size === 0) {
+        logActivity('info', 'completed', 'indexFileChunks', {
+          fileVersionId: input.fileVersionId,
+          filePath: input.filePath,
+          chunks: chunks.length,
+          embedded: 0,
+          durationMs: Date.now() - startedAt,
+        })
+        return { skipped: false, chunks: chunks.length, embedded: 0 }
+      }
+
+      const { maxInputChars, model, dimension } = loadEmbeddingConfig()
+      const embedInputs = chunks.map((chunk) => {
+        const truncated = chunk.content.length > maxInputChars ? chunk.content.slice(0, maxInputChars) : chunk.content
+        return truncated
+      })
+
+      const embeddings = await embedTexts(embedInputs)
+      const chunkIds: string[] = []
+      const vectors: string[] = []
+
+      embeddings.forEach((embedding, idx) => {
+        const chunkIndex = chunks[idx]?.chunkIndex ?? -1
+        const chunkId = chunkIdByIndex.get(chunkIndex)
+        if (!chunkId) return
+        chunkIds.push(chunkId)
+        vectors.push(vectorToPgArray(embedding))
+      })
+
+      if (chunkIds.length > 0) {
+        try {
+          await db`
+            INSERT INTO atlas.chunk_embeddings (chunk_id, model, dimension, embedding)
+            SELECT
+              chunk_id,
+              ${model},
+              ${dimension},
+              embedding::vector
+            FROM UNNEST(
+              ${db.array(chunkIds, 'uuid')},
+              ${db.array(vectors, 'text')}
+            ) AS row(chunk_id, embedding)
+            ON CONFLICT (chunk_id) DO UPDATE
+            SET model = EXCLUDED.model,
+                dimension = EXCLUDED.dimension,
+                embedding = EXCLUDED.embedding;
+          `
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          const normalized = message.toLowerCase()
+          const looksLikeSchemaMissing = normalized.includes('does not exist') || normalized.includes('relation')
+          if (looksLikeSchemaMissing) {
+            logActivity('info', 'skipped', 'indexFileChunks', {
+              fileVersionId: input.fileVersionId,
+              filePath: input.filePath,
+              reason: 'schema_missing',
+              error: message,
+              durationMs: Date.now() - startedAt,
+            })
+            return { skipped: true, reason: 'schema_missing', chunks: 0, embedded: 0 }
+          }
+          throw error
+        }
+      }
+
+      logActivity('info', 'completed', 'indexFileChunks', {
+        fileVersionId: input.fileVersionId,
+        filePath: input.filePath,
+        chunks: chunkIdByIndex.size,
+        embedded: chunkIds.length,
+        model,
+        dimension,
+        durationMs: Date.now() - startedAt,
+      })
+
+      return { skipped: false, chunks: chunkIdByIndex.size, embedded: chunkIds.length }
+    } catch (error) {
+      logActivity('error', 'failed', 'indexFileChunks', {
+        fileVersionId: input.fileVersionId,
+        filePath: input.filePath,
         durationMs: Date.now() - startedAt,
         error: formatActivityError(error),
       })

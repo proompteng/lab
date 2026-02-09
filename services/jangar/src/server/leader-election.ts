@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 
-import type { V1Lease } from '@kubernetes/client-node'
+import { V1MicroTime, type V1Lease } from '@kubernetes/client-node'
 import { type Counter, metrics as otelMetrics } from '@proompteng/otel/api'
 
 export type LeaderElectionConfig = {
@@ -58,7 +58,7 @@ const globalState = globalThis as typeof globalThis & {
 }
 
 const nowIso = () => new Date().toISOString()
-const toMicroTime = (date: Date) => date.toISOString().replace(/\.(\d{3})Z$/, '.$1000Z')
+const toMicroTime = (date: Date) => new V1MicroTime(date.getTime())
 
 const parseBooleanEnv = (value: string | undefined, fallback: boolean) => {
   if (!value) return fallback
@@ -436,7 +436,6 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
       lastError: null,
     } as LeaderElectionStatus,
     lastLease: null as V1Lease | null,
-    kube: undefined as { api: CoordinationV1Api } | undefined,
     metrics: undefined as { changesCounter: Counter } | undefined,
     stop: undefined as (() => void) | undefined,
   }
