@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
+from enum import Enum
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, cast
+from uuid import UUID
 
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
@@ -159,12 +162,37 @@ class TorghutAlpacaClient:
     # ------------------- Helpers -------------------
     @staticmethod
     def _model_to_dict(model: Any) -> Dict[str, Any]:
+        def to_jsonable(value: Any) -> Any:
+            if value is None:
+                return None
+            if isinstance(value, UUID):
+                return str(value)
+            if isinstance(value, datetime):
+                return value.isoformat()
+            if isinstance(value, Enum):
+                return value.value
+            if is_dataclass(value):
+                return to_jsonable(asdict(value))
+            if isinstance(value, dict):
+                return {str(k): to_jsonable(v) for k, v in value.items()}
+            if isinstance(value, (list, tuple, set)):
+                return [to_jsonable(v) for v in value]
+            return value
+
         if hasattr(model, "model_dump"):
-            return model.model_dump()
+            try:
+                raw = model.model_dump(mode="json")
+            except TypeError:
+                # Some test doubles don't accept the `mode` kwarg.
+                raw = model.model_dump()
+            if isinstance(raw, dict):
+                return cast(Dict[str, Any], to_jsonable(raw))
+            raise TypeError(f"Unsupported model_dump payload type: {type(raw)}")
         if hasattr(model, "__dict__"):
-            return {k: v for k, v in model.__dict__.items() if not k.startswith("_")}
+            raw = {k: v for k, v in model.__dict__.items() if not k.startswith("_")}
+            return cast(Dict[str, Any], to_jsonable(raw))
         if isinstance(model, dict):
-            return cast(Dict[str, Any], model)
+            return cast(Dict[str, Any], to_jsonable(model))
         raise TypeError(f"Unsupported model type: {type(model)}")
 
     @staticmethod
