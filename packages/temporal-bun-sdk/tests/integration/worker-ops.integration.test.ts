@@ -41,6 +41,14 @@ test('worker ops and versioning RPCs are reachable', async () => {
         console.warn('[temporal-bun-sdk] worker ops RPCs unimplemented, skipping test')
         return
       }
+      if (
+        error instanceof ConnectError &&
+        error.code === Code.PermissionDenied &&
+        error.rawMessage.includes('Worker versioning v0.2')
+      ) {
+        console.warn('[temporal-bun-sdk] worker versioning rules endpoint disabled, skipping test')
+        return
+      }
       throw error
     } finally {
       await client.shutdown()

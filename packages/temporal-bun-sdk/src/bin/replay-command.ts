@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { basename, dirname, extname, relative, resolve } from 'node:path'
 import { cwd } from 'node:process'
 import { create, fromJson, type JsonValue } from '@bufbuild/protobuf'
 import { Effect } from 'effect'
@@ -40,7 +40,7 @@ interface WorkflowExecutionRef {
   readonly runId: string
 }
 
-interface ReplayCommandOptions {
+interface ReplaySingleOptions {
   readonly historyFile?: string
   readonly execution?: WorkflowExecutionRef
   readonly workflowType?: string
@@ -51,11 +51,26 @@ interface ReplayCommandOptions {
   readonly debug: boolean
 }
 
+interface ReplayDirectoryOptions {
+  readonly historyDir: string
+  readonly outDir?: string
+  readonly workflowType?: string
+  readonly namespaceOverride?: string
+  readonly temporalCliPath?: string
+  readonly source: ReplayHistorySourcePreference
+  readonly jsonOutput: boolean
+  readonly debug: boolean
+}
+
+type ReplayCommandOptions = ReplaySingleOptions | ReplayDirectoryOptions
+
 const isReplayOptions = (value: unknown): value is ReplayCommandOptions =>
   Boolean(
     value &&
       typeof value === 'object' &&
-      ('historyFile' in (value as Record<string, unknown>) || 'execution' in (value as Record<string, unknown>)),
+      ('historyFile' in (value as Record<string, unknown>) ||
+        'historyDir' in (value as Record<string, unknown>) ||
+        'execution' in (value as Record<string, unknown>)),
   )
 
 interface HistoryMetadata {
@@ -103,6 +118,17 @@ export interface ReplayRunResult {
   readonly summary: ReplaySummary
 }
 
+export interface ReplayBatchResult {
+  readonly exitCode: number
+  readonly summaries: readonly ReplaySummary[]
+  readonly historyDir: string
+  readonly outDir?: string
+  readonly reportPath?: string
+  readonly startedAtIso: string
+  readonly durationMs: number
+  readonly status: 'ok' | 'nondeterministic'
+}
+
 export interface ReplaySummary {
   readonly workflow: WorkflowInfo
   readonly history: {
@@ -116,6 +142,8 @@ export interface ReplaySummary {
     readonly hasMarker: boolean
     readonly mismatchCount: number
     readonly mismatches: DeterminismDiffResult['mismatches']
+    readonly ignoredMismatchCount?: number
+    readonly ignoredMismatches?: DeterminismDiffResult['mismatches']
     readonly failureMetadata?: WorkflowDeterminismFailureMetadata
   }
   readonly attempts: HistoryLoaderAttempt[]
@@ -136,7 +164,7 @@ class ReplayCommandError extends Error {
 }
 
 const executeReplayInternal = (
-  options: ReplayCommandOptions,
+  options: ReplaySingleOptions,
 ): Effect.Effect<
   ReplayRunResult,
   ReplayCommandError,
@@ -216,7 +244,10 @@ const executeReplayInternal = (
       ? yield* diffDeterminismState(baselineReplay.determinismState, actualReplay.determinismState)
       : undefined
 
-    const mismatchCount = diffResult?.mismatches.length ?? 0
+    const allMismatches = diffResult?.mismatches ?? []
+    const ignoredMismatches = allMismatches.filter((mismatch) => mismatch.kind === 'random' || mismatch.kind === 'time')
+    const mismatches = allMismatches.filter((mismatch) => mismatch.kind !== 'random' && mismatch.kind !== 'time')
+    const mismatchCount = mismatches.length
     const exitCode = mismatchCount > 0 ? 2 : 0
     const durationMs = Date.now() - startTime
 
@@ -245,7 +276,8 @@ const executeReplayInternal = (
       determinism: {
         hasMarker: baselineReplay.hasDeterminismMarker,
         mismatchCount,
-        mismatches: diffResult?.mismatches ?? [],
+        mismatches,
+        ...(ignoredMismatches.length > 0 ? { ignoredMismatchCount: ignoredMismatches.length, ignoredMismatches } : {}),
         failureMetadata: actualReplay.determinismState.failureMetadata,
       },
       attempts: historyOutcome.attempts,
@@ -280,18 +312,23 @@ const executeReplayInternal = (
 export const executeReplay = (
   flagsOrOptions: Record<string, string | boolean> | ReplayCommandOptions,
 ): Effect.Effect<
-  ReplayRunResult,
+  ReplayRunResult | ReplayBatchResult,
   ReplayCommandError,
   TemporalConfigService | ObservabilityService | WorkflowServiceClientService
 > => {
   const options = isReplayOptions(flagsOrOptions)
     ? flagsOrOptions
     : parseReplayOptions(flagsOrOptions as Record<string, string | boolean>)
+  if ('historyDir' in options) {
+    return executeReplayDirectoryInternal(options)
+  }
   return executeReplayInternal(options)
 }
 
 export const parseReplayOptions = (flags: Record<string, string | boolean>): ReplayCommandOptions => {
   const historyFile = readStringFlag(flags['history-file'])
+  const historyDir = readStringFlag(flags['history-dir'])
+  const outDir = readStringFlag(flags.out)
   const executionFlag = readStringFlag(flags.execution)
   const workflowType = readStringFlag(flags['workflow-type'])
   const namespaceOverride = readStringFlag(flags.namespace)
@@ -300,8 +337,10 @@ export const parseReplayOptions = (flags: Record<string, string | boolean>): Rep
   const jsonOutput = readBooleanFlag(flags.json)
   const debug = readBooleanFlag(flags.debug)
 
-  if ((historyFile ? 1 : 0) + (executionFlag ? 1 : 0) !== 1) {
-    throw new ReplayCommandError('Provide exactly one of --history-file or --execution <workflowId/runId>')
+  if ((historyFile ? 1 : 0) + (historyDir ? 1 : 0) + (executionFlag ? 1 : 0) !== 1) {
+    throw new ReplayCommandError(
+      'Provide exactly one of --history-file, --history-dir, or --execution <workflowId/runId>',
+    )
   }
 
   let execution: WorkflowExecutionRef | undefined
@@ -311,6 +350,19 @@ export const parseReplayOptions = (flags: Record<string, string | boolean>): Rep
 
   const source: ReplayHistorySourcePreference =
     sourceValue && ['auto', 'cli', 'service'].includes(sourceValue) ? sourceValue : 'auto'
+
+  if (historyDir) {
+    return {
+      historyDir: resolve(cwd(), historyDir),
+      outDir: outDir ? resolve(cwd(), outDir) : undefined,
+      workflowType,
+      namespaceOverride,
+      temporalCliPath,
+      source,
+      jsonOutput,
+      debug,
+    }
+  }
 
   return {
     historyFile: historyFile ? resolve(cwd(), historyFile) : undefined,
@@ -339,7 +391,7 @@ export const parseExecutionFlag = (value: string): WorkflowExecutionRef => {
 }
 
 const loadReplayHistory = async (
-  options: ReplayCommandOptions,
+  options: ReplaySingleOptions,
   config: TemporalConfig,
   workflowService: WorkflowServiceClient,
 ): Promise<HistoryLoadOutcome> => {
@@ -361,6 +413,155 @@ const loadReplayHistory = async (
     loaders: defaultHistoryLoaders,
   })
 }
+
+const listHistoryFiles = async (historyDir: string): Promise<string[]> => {
+  const files: string[] = []
+  const queue: string[] = [historyDir]
+
+  while (queue.length > 0) {
+    const dir = queue.shift()
+    if (!dir) continue
+    const entries = await readdir(dir, { withFileTypes: true })
+    for (const entry of entries) {
+      const fullPath = resolve(dir, entry.name)
+      if (entry.isDirectory()) {
+        queue.push(fullPath)
+        continue
+      }
+      const ext = extname(entry.name).toLowerCase()
+      if (ext === '.json') {
+        files.push(fullPath)
+      }
+    }
+  }
+
+  return files.sort()
+}
+
+const writeReplayBatchArtifacts = async (options: {
+  readonly outDir: string
+  readonly historyDir: string
+  readonly summaries: readonly ReplaySummary[]
+  readonly startedAtIso: string
+  readonly durationMs: number
+}): Promise<{ reportPath: string }> => {
+  const outDir = options.outDir
+  const perHistoryDir = resolve(outDir, 'replay-report')
+  await mkdir(perHistoryDir, { recursive: true })
+
+  for (const summary of options.summaries) {
+    const description = summary.history.description
+    const relativePath = description.startsWith(options.historyDir)
+      ? relative(options.historyDir, description)
+      : basename(description)
+    const safe = relativePath.replace(/[\\/]/g, '__')
+    const path = resolve(perHistoryDir, safe)
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, JSON.stringify(summary, null, 2))
+  }
+
+  const reportPath = resolve(outDir, 'replay-report.json')
+  await writeFile(
+    reportPath,
+    JSON.stringify(
+      {
+        historyDir: options.historyDir,
+        startedAtIso: options.startedAtIso,
+        durationMs: options.durationMs,
+        summaries: options.summaries,
+      },
+      null,
+      2,
+    ),
+  )
+  return { reportPath }
+}
+
+const executeReplayDirectoryInternal = (
+  options: ReplayDirectoryOptions,
+): Effect.Effect<
+  ReplayBatchResult,
+  ReplayCommandError,
+  TemporalConfigService | ObservabilityService | WorkflowServiceClientService
+> =>
+  Effect.gen(function* () {
+    const startTime = Date.now()
+    const { logger } = yield* ObservabilityService
+
+    const files = yield* Effect.tryPromise({
+      try: () => listHistoryFiles(options.historyDir),
+      catch: (error) =>
+        new ReplayCommandError(`Failed to read history directory at ${options.historyDir}`, { cause: error }),
+    })
+    if (files.length === 0) {
+      throw new ReplayCommandError(`No history JSON files found under ${options.historyDir}`)
+    }
+
+    yield* logger.log('info', 'temporal-bun replay directory started', {
+      historyDir: options.historyDir,
+      fileCount: files.length,
+    })
+
+    const summaries: ReplaySummary[] = []
+    let exitCode = 0
+    for (const filePath of files) {
+      const run = yield* executeReplayInternal({
+        historyFile: filePath,
+        execution: undefined,
+        workflowType: options.workflowType,
+        namespaceOverride: options.namespaceOverride,
+        temporalCliPath: options.temporalCliPath,
+        source: options.source,
+        jsonOutput: options.jsonOutput,
+        debug: options.debug,
+      })
+      summaries.push(run.summary)
+      if (run.exitCode === 2) {
+        exitCode = 2
+      } else if (run.exitCode !== 0 && exitCode === 0) {
+        exitCode = run.exitCode
+      }
+    }
+
+    const durationMs = Date.now() - startTime
+    const startedAtIso = new Date(startTime).toISOString()
+    const status: ReplayBatchResult['status'] = exitCode === 2 ? 'nondeterministic' : 'ok'
+
+    let reportPath: string | undefined
+    if (options.outDir) {
+      const outcome = yield* Effect.tryPromise({
+        try: () =>
+          writeReplayBatchArtifacts({
+            outDir: options.outDir,
+            historyDir: options.historyDir,
+            summaries,
+            startedAtIso,
+            durationMs,
+          }),
+        catch: (error) => new ReplayCommandError('Failed to write replay artifacts', { cause: error }),
+      })
+      reportPath = outcome.reportPath
+    }
+
+    yield* logger.log('info', 'temporal-bun replay directory completed', {
+      historyDir: options.historyDir,
+      status,
+      durationMs,
+      mismatches: summaries.reduce((sum, s) => sum + s.determinism.mismatchCount, 0),
+      reportPath,
+    })
+
+    return {
+      exitCode,
+      summaries,
+      historyDir: options.historyDir,
+      ...(options.outDir ? { outDir: options.outDir } : {}),
+      ...(reportPath ? { reportPath } : {}),
+      startedAtIso,
+      durationMs,
+      status,
+    }
+  })
 
 const loadHistoryFromFile = async (filePath: string): Promise<HistorySourceRecord> => {
   try {
@@ -759,31 +960,72 @@ const readStream = async (stream: BunReadableStream): Promise<string> => {
   return chunks.join('')
 }
 
-export const printReplaySummary = (summary: ReplaySummary, jsonOutput: boolean): void => {
-  const lines = [
-    `temporal-bun replay (${summary.history.source})`,
-    `  workflow: ${summary.workflow.workflowType} ${summary.workflow.workflowId}/${summary.workflow.runId}`,
-    `  namespace: ${summary.workflow.namespace}`,
-    `  history source: ${summary.history.description}`,
-    `  events processed: ${summary.history.eventCount}`,
-    `  last event id: ${summary.history.lastEventId ?? 'n/a'}`,
-    `  determinism marker: ${summary.determinism.hasMarker ? 'found' : 'not found'}`,
-    `  mismatches: ${summary.determinism.mismatchCount}`,
-    `  duration: ${summary.durationMs}ms`,
-  ]
-  for (const line of lines) {
-    console.log(line)
+export const printReplaySummary = (result: ReplayRunResult | ReplayBatchResult, jsonOutput: boolean): void => {
+  if ('summary' in result) {
+    const summary = result.summary
+    const lines = [
+      `temporal-bun replay (${summary.history.source})`,
+      `  workflow: ${summary.workflow.workflowType} ${summary.workflow.workflowId}/${summary.workflow.runId}`,
+      `  namespace: ${summary.workflow.namespace}`,
+      `  history source: ${summary.history.description}`,
+      `  events processed: ${summary.history.eventCount}`,
+      `  last event id: ${summary.history.lastEventId ?? 'n/a'}`,
+      `  determinism marker: ${summary.determinism.hasMarker ? 'found' : 'not found'}`,
+      `  mismatches: ${summary.determinism.mismatchCount}`,
+      ...(summary.determinism.ignoredMismatchCount
+        ? [`  ignored mismatches: ${summary.determinism.ignoredMismatchCount}`]
+        : []),
+      `  duration: ${summary.durationMs}ms`,
+    ]
+    for (const line of lines) {
+      console.log(line)
+    }
+
+    if (summary.determinism.mismatchCount > 0) {
+      console.log('  mismatch details:')
+      for (const mismatch of summary.determinism.mismatches) {
+        console.log(`    - ${formatMismatchLine(mismatch)}`)
+      }
+    }
+    if (summary.determinism.ignoredMismatchCount && summary.determinism.ignoredMismatches) {
+      console.log('  ignored mismatch details:')
+      for (const mismatch of summary.determinism.ignoredMismatches) {
+        console.log(`    - ${formatMismatchLine(mismatch)}`)
+      }
+    }
+
+    if (jsonOutput) {
+      console.log(JSON.stringify(summary))
+    }
+    return
   }
 
-  if (summary.determinism.mismatchCount > 0) {
-    console.log('  mismatch details:')
-    for (const mismatch of summary.determinism.mismatches) {
-      console.log(`    - ${formatMismatchLine(mismatch)}`)
+  const mismatches = result.summaries.reduce((sum, s) => sum + s.determinism.mismatchCount, 0)
+  const ignored = result.summaries.reduce((sum, s) => sum + (s.determinism.ignoredMismatchCount ?? 0), 0)
+  console.log('temporal-bun replay (directory)')
+  console.log(`  history dir: ${result.historyDir}`)
+  console.log(`  histories: ${result.summaries.length}`)
+  console.log(`  mismatches: ${mismatches}`)
+  if (ignored > 0) {
+    console.log(`  ignored mismatches: ${ignored}`)
+  }
+  console.log(`  duration: ${result.durationMs}ms`)
+  if (result.reportPath) {
+    console.log(`  report: ${result.reportPath}`)
+  }
+
+  if (mismatches > 0) {
+    console.log('  mismatch summaries:')
+    for (const summary of result.summaries) {
+      if (summary.determinism.mismatchCount === 0) continue
+      console.log(
+        `    - ${summary.workflow.workflowType} ${summary.workflow.workflowId}/${summary.workflow.runId}: ${summary.determinism.mismatchCount}`,
+      )
     }
   }
 
   if (jsonOutput) {
-    console.log(JSON.stringify(summary))
+    console.log(JSON.stringify(result))
   }
 }
 

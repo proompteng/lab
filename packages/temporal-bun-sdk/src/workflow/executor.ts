@@ -36,12 +36,24 @@ import {
   WorkflowNondeterminismError,
   WorkflowQueryViolationError,
 } from './errors'
+import { installWorkflowRuntimeGuards, type WorkflowGuardsMode } from './guards'
 import type { WorkflowQueryRequest, WorkflowSignalDeliveryInput } from './inbound'
 import { runWithWorkflowLogContext, type WorkflowLogContext, type WorkflowLogger } from './log'
 import type { WorkflowRegistry } from './registry'
 
 const noopWorkflowLogger: WorkflowLogger = {
   log: () => Effect.void,
+}
+
+const workflowGuardsOptions = new Set<WorkflowGuardsMode>(['strict', 'warn', 'off'])
+const parseWorkflowGuardsMode = (raw: string | undefined): WorkflowGuardsMode | undefined => {
+  if (!raw) return undefined
+  const normalized = raw.trim().toLowerCase()
+  if (!normalized) return undefined
+  if (workflowGuardsOptions.has(normalized as WorkflowGuardsMode)) {
+    return normalized as WorkflowGuardsMode
+  }
+  return undefined
 }
 
 export interface WorkflowUpdateInvocation {
@@ -134,20 +146,26 @@ export interface WorkflowExecutorOptions {
   registry: WorkflowRegistry
   dataConverter: DataConverter
   logger?: WorkflowLogger
+  workflowGuards?: WorkflowGuardsMode
 }
 
 export class WorkflowExecutor {
   #registry: WorkflowRegistry
   #dataConverter: DataConverter
   #logger: WorkflowLogger
+  #workflowGuards: WorkflowGuardsMode
 
   constructor(options: WorkflowExecutorOptions) {
     this.#registry = options.registry
     this.#dataConverter = options.dataConverter
     this.#logger = options.logger ?? noopWorkflowLogger
+    this.#workflowGuards =
+      options.workflowGuards ?? parseWorkflowGuardsMode(process.env.TEMPORAL_WORKFLOW_GUARDS) ?? 'warn'
   }
 
   async execute(input: ExecuteWorkflowInput): Promise<WorkflowExecutionOutput> {
+    installWorkflowRuntimeGuards({ mode: this.#workflowGuards })
+
     const info: WorkflowInfo = {
       namespace: input.namespace,
       taskQueue: input.taskQueue,

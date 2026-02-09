@@ -272,6 +272,8 @@ export interface WorkerRuntimeOptions {
   dataConverter?: DataConverter
   identity?: string
   config?: TemporalConfig
+  workflowGuards?: TemporalConfig['workflowGuards']
+  workflowLint?: TemporalConfig['workflowLint']
   workflowService?: WorkflowServiceClient
   logger?: Logger
   metrics?: MetricsRegistry
@@ -310,6 +312,7 @@ export class WorkerRuntime {
     }
 
     const activities = options.activities ?? {}
+    const workflowGuards = options.workflowGuards ?? config.workflowGuards
     const observability = await Effect.runPromise(
       createObservabilityServices(
         {
@@ -342,6 +345,7 @@ export class WorkerRuntime {
       registry,
       dataConverter,
       logger,
+      workflowGuards,
     })
 
     const runtimeMetrics = await WorkerRuntime.#initMetrics(metricsRegistry)
@@ -433,6 +437,25 @@ export class WorkerRuntime {
       workerVersioningMode === WorkerVersioningMode.VERSIONED
         ? (options.deployment?.versioningBehavior ?? VersioningBehavior.PINNED)
         : null
+
+    // TODO(TBS-NDG-002): enforce strict versioning policy.
+    if (workflowGuards === 'strict') {
+      if (workerVersioningMode !== WorkerVersioningMode.VERSIONED) {
+        throw new Error(
+          'workflowGuards=strict requires worker versioning to be enabled (deployment.versioningMode=VERSIONED)',
+        )
+      }
+      if (versioningBehavior !== VersioningBehavior.PINNED) {
+        throw new Error('workflowGuards=strict requires VersioningBehavior.PINNED')
+      }
+      if (!buildId || buildId.trim().length === 0) {
+        throw new Error('workflowGuards=strict requires a non-empty deployment.buildId / TEMPORAL_WORKER_BUILD_ID')
+      }
+      if (buildId === identity) {
+        throw new Error('workflowGuards=strict requires a stable deployment build ID; refusing buildId === identity')
+      }
+    }
+
     const deploymentOptions = create(WorkerDeploymentOptionsSchema, {
       deploymentName,
       buildId,
@@ -445,6 +468,11 @@ export class WorkerRuntime {
       if (capability.supported) {
         await registerWorkerBuildIdCompatibility(workflowService, namespace, taskQueue, buildId, { logger })
       } else {
+        if (workflowGuards === 'strict') {
+          throw new Error(
+            `workflowGuards=strict requires server worker versioning APIs; capability check failed: ${capability.reason ?? 'unknown'}`,
+          )
+        }
         await Effect.runPromise(
           logger.log('warn', 'skipping worker build ID registration', {
             namespace,
@@ -499,6 +527,7 @@ export class WorkerRuntime {
         namespace,
         taskQueue,
         identity,
+        workflowGuards,
         workflowConcurrency,
         activityConcurrency,
         stickySchedulingEnabled,
