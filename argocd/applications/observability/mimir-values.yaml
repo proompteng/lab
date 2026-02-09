@@ -99,7 +99,13 @@ ruler:
           set -eu
           rm -rf /etc/mimir/rules/*
           mkdir -p /etc/mimir/rules/anonymous
-          cp -a /etc/mimir/rules-src/. /etc/mimir/rules/anonymous/
+          # ConfigMap mounts use symlinks + timestamped dirs (..data/..2026_...).
+          # Copy dereferenced files into the tenant directory without trying to preserve ownership.
+          for f in /etc/mimir/rules-src/*.yml /etc/mimir/rules-src/*.yaml; do
+            if [ -f "$f" ]; then
+              cp -Lf "$f" /etc/mimir/rules/anonymous/
+            fi
+          done
   extraVolumes:
     - name: graf-mimir-rules
       configMap:
