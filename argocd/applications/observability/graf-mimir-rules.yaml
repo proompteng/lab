@@ -228,12 +228,12 @@ data:
                 ) == bool 0
               )
               * on() group_left()
-              vector(
-                (day_of_week() >= 1)
-                * (day_of_week() <= 5)
-                * (hour() >= 14)
-                * (hour() < 21)
-              ) > 0
+              (
+                (day_of_week(vector(time())) >= bool 1)
+                * (day_of_week(vector(time())) <= bool 5)
+                * (hour(vector(time())) >= bool 14)
+                * (hour(vector(time())) < bool 21)
+              )
             for: 15m
             labels:
               severity: critical
