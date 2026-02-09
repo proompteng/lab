@@ -327,6 +327,10 @@ export class WorkflowCommandContext {
     return seq
   }
 
+  peekSequence(): number {
+    return this.#sequence
+  }
+
   resolveScheduledActivityEventId(activityId: string): string | undefined {
     return this.#activityScheduleEventIds?.get(activityId)
   }
@@ -880,22 +884,32 @@ const runGetVersion = (params: {
   minSupported: number
   maxSupported: number
 }): number => {
-  const sequence = params.commandContext.nextSequence()
-  const previous = params.commandContext.previousIntent(sequence)
-  if (previous && previous.kind === 'record-marker' && previous.markerName === MARKER_VERSION) {
-    const intent: RecordMarkerCommandIntent = { ...previous, sequence }
-    params.commandContext.addIntent(intent)
-    const details = intent.details ?? {}
-    const version = typeof details.version === 'number' ? details.version : undefined
-    if (version === undefined) {
-      throw new WorkflowBlockedError('Version marker missing version payload')
+  const peek = params.commandContext.peekSequence()
+  const previous = params.commandContext.previousIntent(peek)
+  if (previous) {
+    if (previous.kind === 'record-marker' && previous.markerName === MARKER_VERSION) {
+      const details = previous.details ?? {}
+      if (details.changeId === params.changeId) {
+        const sequence = params.commandContext.nextSequence()
+        const intent: RecordMarkerCommandIntent = { ...previous, sequence }
+        params.commandContext.addIntent(intent)
+        const version = typeof details.version === 'number' ? details.version : undefined
+        if (version === undefined) {
+          throw new WorkflowBlockedError('Version marker missing version payload')
+        }
+        return version
+      }
     }
-    return version
+
+    // Replay with no version marker at this position: behave like Temporal JS SDK and
+    // return minSupported without emitting a marker command.
+    return params.minSupported
   }
 
   if (params.maxSupported < params.minSupported) {
     throw new WorkflowBlockedError('maxSupported version must be >= minSupported version')
   }
+  const sequence = params.commandContext.nextSequence()
   const version = params.maxSupported
   const intent: RecordMarkerCommandIntent = {
     id: `version-${sequence}`,
@@ -916,13 +930,25 @@ const runPatchMarker = (params: {
   patchId: string
   deprecated: boolean
 }): boolean => {
-  const sequence = params.commandContext.nextSequence()
-  const previous = params.commandContext.previousIntent(sequence)
-  if (previous && previous.kind === 'record-marker' && previous.markerName === MARKER_PATCH) {
-    const intent: RecordMarkerCommandIntent = { ...previous, sequence }
-    params.commandContext.addIntent(intent)
-    return true
+  const peek = params.commandContext.peekSequence()
+  const previous = params.commandContext.previousIntent(peek)
+  if (previous) {
+    if (previous.kind === 'record-marker' && previous.markerName === MARKER_PATCH) {
+      const details = previous.details ?? {}
+      if (details.patchId === params.patchId) {
+        const sequence = params.commandContext.nextSequence()
+        const intent: RecordMarkerCommandIntent = { ...previous, sequence }
+        params.commandContext.addIntent(intent)
+        return true
+      }
+      throw new WorkflowBlockedError(`Patch marker mismatch for "${params.patchId}"`)
+    }
+
+    // Replay with no patch marker at this position: return false without emitting a marker.
+    return false
   }
+
+  const sequence = params.commandContext.nextSequence()
   const intent: RecordMarkerCommandIntent = {
     id: `patch-${sequence}`,
     kind: 'record-marker',
