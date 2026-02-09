@@ -13,6 +13,12 @@ SSH to the VM:
 ssh kalmyk@192.168.1.190
 ```
 
+If SSH fails with something like `sign_and_send_pubkey ... communication with agent failed`, bypass your local SSH agent and force a key:
+
+```bash
+ssh -o IdentityAgent=none -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 kalmyk@192.168.1.190
+```
+
 Confirm the PCI device is present:
 
 ```bash
@@ -61,7 +67,8 @@ sudo systemctl disable --now ollama-proxy.service
 Verify listeners:
 
 ```bash
-ss -lntp | grep -E '11434|11435'
+sudo ss -lntp | grep -E '11434|11435'
+curl -fsS http://127.0.0.1:11434/api/version
 curl -fsS http://127.0.0.1:11434/api/tags
 ```
 
@@ -78,10 +85,15 @@ Then configure a host proxy separately or adjust consumers to talk to
 
 ## Pull models
 ### Chat/coding: Qwen3 Coder (quantized)
-Pull Qwen3 Coder 30B A3B (Q4_K_M):
+Expected (Saigak) model tag on `docker-host`:
+- `qwen3-coder-saigak:30b-a3b-q4_K_M`
+
+Pull Qwen3 Coder 30B A3B (Q4_K_M) (non-Saigak tag shown as fallback):
 
 ```bash
-ollama pull qwen3-coder:30b-a3b-q4_K_M
+ollama pull qwen3-coder-saigak:30b-a3b-q4_K_M
+# fallback:
+# ollama pull qwen3-coder:30b-a3b-q4_K_M
 ollama list
 ```
 
@@ -90,14 +102,26 @@ Smoke test:
 ```bash
 curl -fsS http://127.0.0.1:11434/api/generate \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen3-coder:30b-a3b-q4_K_M","prompt":"Return only a bash one-liner that prints hello","stream":false}'
+  -d '{"model":"qwen3-coder-saigak:30b-a3b-q4_K_M","prompt":"Return only a bash one-liner that prints hello","stream":false}'
+```
+
+Verify it’s actually using the GPU:
+
+```bash
+ollama ps
+nvidia-smi
 ```
 
 ### Embeddings: Qwen3 Embedding (OpenAI-compatible)
-Pull an embeddings model:
+Expected (Saigak) embeddings tag on `docker-host`:
+- `qwen3-embedding-saigak:0.6b`
+
+Pull an embeddings model (non-Saigak tag shown as fallback):
 
 ```bash
-ollama pull qwen3-embedding:0.6b
+ollama pull qwen3-embedding-saigak:0.6b
+# fallback:
+# ollama pull qwen3-embedding:0.6b
 ollama list
 ```
 
@@ -106,7 +130,7 @@ Validate the OpenAI-compatible embeddings endpoint (this is what you’ll use la
 ```bash
 curl -fsS http://127.0.0.1:11434/v1/embeddings \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen3-embedding:0.6b","input":"hello"}' | \
+  -d '{"model":"qwen3-embedding-saigak:0.6b","input":"hello"}' | \
   python3 -c 'import json,sys; r=json.load(sys.stdin); print(len(r["data"][0]["embedding"]))'
 ```
 
@@ -139,6 +163,14 @@ export OPENAI_EMBEDDING_DIMENSION='1024'
 # OPENAI_API_KEY is optional for Ollama
 ```
 
+`services/memories` retrieval is a plain GET to Jangar:
+
+```bash
+curl -sS -G http://jangar/api/memories \
+  --data-urlencode 'query=ping' \
+  --data-urlencode 'limit=1'
+```
+
 ## Wire Jangar OpenWebUI to `docker-host` Ollama
 OpenWebUI in the `jangar` namespace is Helm-managed via `argocd/applications/jangar/openwebui-values.yaml`. It’s configured to use Jangar as the OpenAI-compatible backend, but can also be given one or more Ollama endpoints.
 
@@ -157,6 +189,37 @@ If the models are available, OpenWebUI should include `qwen3-coder-saigak:30b-a3
 `qwen3-embedding-saigak:0.6b` in its model list.
 
 ## Troubleshooting
+### Harvester VM stuck `Starting` / `CrashLoopBackOff` (virt-launcher flaps)
+Symptoms:
+- Harvester UI shows `docker-host` stuck in `Starting` (or `CrashLoopBackOff`).
+- The VMI rapidly goes `Scheduling -> Failed`, and `virt-launcher-docker-host-*` pods get created then deleted.
+- Jangar memory search returns 500s like `retrieve memories failed: Unable to connect` (because the embeddings backend is unreachable).
+
+Inspect in the Harvester (KubeVirt) cluster:
+
+```bash
+kubectl --kubeconfig ~/.kube/altra.yaml -n default get vm,vmi -o wide | rg -n 'docker-host|NAME'
+kubectl --kubeconfig ~/.kube/altra.yaml -n default get events --sort-by=.lastTimestamp | tail -n 80
+kubectl --kubeconfig ~/.kube/altra.yaml -n harvester-system logs deploy/harvester --since=30m | rg -n 'docker-host|pcidevice cache|pcidevices\\.harvesterhci\\.io' || true
+```
+
+If you see this error, it’s the common root cause:
+- `admission webhook "pcidevices.harvesterhci.io" denied the request: gpu device ga102: resource name nvidia.com/GA102_GEFORCE_RTX_3090 not found in pcidevice cache`
+
+Fix (refresh the PCI device webhook/controller cache):
+
+```bash
+kubectl --kubeconfig ~/.kube/altra.yaml -n harvester-system delete pod -l app.kubernetes.io/name=harvester-pcidevices-controller
+kubectl --kubeconfig ~/.kube/altra.yaml -n harvester-system rollout status ds/harvester-pcidevices-controller --timeout=180s
+```
+
+Then restart the VM (or delete the failed VMI and let `runStrategy: Always` recreate it):
+
+```bash
+kubectl --kubeconfig ~/.kube/altra.yaml -n default delete vmi docker-host --grace-period=0 --force
+kubectl --kubeconfig ~/.kube/altra.yaml -n default get vmi docker-host -w
+```
+
 ### Ollama running but completions time out
 Symptoms:
 - `/v1/chat/completions` hangs or returns 500s after minutes.
