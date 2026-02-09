@@ -1886,61 +1886,68 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
 
     const identifiers = extractIdentifierTokens(resolvedQuery)
 
-    const embeddingConfig = loadEmbeddingConfig()
-    const embedding = await embedText(resolvedQuery, embeddingConfig)
-    const vectorString = vectorToPgArray(embedding)
-
     const semanticLimit = Math.min(MAX_SEARCH_LIMIT, Math.max(resolvedLimit * 5, resolvedLimit))
     const lexicalLimit = Math.min(MAX_SEARCH_LIMIT, Math.max(resolvedLimit * 5, resolvedLimit))
+    const semanticRows = await (async () => {
+      try {
+        const embeddingConfig = loadEmbeddingConfig()
+        const embedding = await embedText(resolvedQuery, embeddingConfig)
+        const vectorString = vectorToPgArray(embedding)
+        const semanticDistanceExpr = sql<number>`chunk_embeddings.embedding <=> ${vectorString}::vector`
 
-    const semanticDistanceExpr = sql<number>`chunk_embeddings.embedding <=> ${vectorString}::vector`
+        let semanticQuery = db
+          .selectFrom('atlas.chunk_embeddings as chunk_embeddings')
+          .innerJoin('atlas.file_chunks as file_chunks', 'file_chunks.id', 'chunk_embeddings.chunk_id')
+          .innerJoin('atlas.file_versions as file_versions', 'file_versions.id', 'file_chunks.file_version_id')
+          .innerJoin('atlas.file_keys as file_keys', 'file_keys.id', 'file_versions.file_key_id')
+          .innerJoin('atlas.repositories as repositories', 'repositories.id', 'file_keys.repository_id')
+          .select([
+            'file_chunks.id as chunk_id',
+            'file_chunks.file_version_id as chunk_file_version_id',
+            'file_chunks.chunk_index as chunk_index',
+            'file_chunks.start_line as chunk_start_line',
+            'file_chunks.end_line as chunk_end_line',
+            'file_chunks.content as chunk_content',
+            'file_chunks.token_count as chunk_token_count',
+            'file_chunks.metadata as chunk_metadata',
+            'file_chunks.created_at as chunk_created_at',
+            'file_versions.id as file_version_id',
+            'file_versions.file_key_id as file_version_file_key_id',
+            'file_versions.repository_ref as file_version_repository_ref',
+            'file_versions.repository_commit as file_version_repository_commit',
+            'file_versions.content_hash as file_version_content_hash',
+            'file_versions.language as file_version_language',
+            'file_versions.byte_size as file_version_byte_size',
+            'file_versions.line_count as file_version_line_count',
+            'file_versions.metadata as file_version_metadata',
+            'file_versions.source_timestamp as file_version_source_timestamp',
+            'file_versions.created_at as file_version_created_at',
+            'file_versions.updated_at as file_version_updated_at',
+            'file_keys.id as file_key_id',
+            'file_keys.repository_id as file_key_repository_id',
+            'file_keys.path as file_key_path',
+            'file_keys.created_at as file_key_created_at',
+            'repositories.id as repository_id',
+            'repositories.name as repository_name',
+            'repositories.default_ref as repository_default_ref',
+            'repositories.metadata as repository_metadata',
+            'repositories.created_at as repository_created_at',
+            'repositories.updated_at as repository_updated_at',
+            semanticDistanceExpr.as('semantic_distance'),
+          ])
+          .where('chunk_embeddings.model', '=', embeddingConfig.model)
+          .where('chunk_embeddings.dimension', '=', embeddingConfig.dimension)
 
-    let semanticQuery = db
-      .selectFrom('atlas.chunk_embeddings as chunk_embeddings')
-      .innerJoin('atlas.file_chunks as file_chunks', 'file_chunks.id', 'chunk_embeddings.chunk_id')
-      .innerJoin('atlas.file_versions as file_versions', 'file_versions.id', 'file_chunks.file_version_id')
-      .innerJoin('atlas.file_keys as file_keys', 'file_keys.id', 'file_versions.file_key_id')
-      .innerJoin('atlas.repositories as repositories', 'repositories.id', 'file_keys.repository_id')
-      .select([
-        'file_chunks.id as chunk_id',
-        'file_chunks.file_version_id as chunk_file_version_id',
-        'file_chunks.chunk_index as chunk_index',
-        'file_chunks.start_line as chunk_start_line',
-        'file_chunks.end_line as chunk_end_line',
-        'file_chunks.content as chunk_content',
-        'file_chunks.token_count as chunk_token_count',
-        'file_chunks.metadata as chunk_metadata',
-        'file_chunks.created_at as chunk_created_at',
-        'file_versions.id as file_version_id',
-        'file_versions.file_key_id as file_version_file_key_id',
-        'file_versions.repository_ref as file_version_repository_ref',
-        'file_versions.repository_commit as file_version_repository_commit',
-        'file_versions.content_hash as file_version_content_hash',
-        'file_versions.language as file_version_language',
-        'file_versions.byte_size as file_version_byte_size',
-        'file_versions.line_count as file_version_line_count',
-        'file_versions.metadata as file_version_metadata',
-        'file_versions.source_timestamp as file_version_source_timestamp',
-        'file_versions.created_at as file_version_created_at',
-        'file_versions.updated_at as file_version_updated_at',
-        'file_keys.id as file_key_id',
-        'file_keys.repository_id as file_key_repository_id',
-        'file_keys.path as file_key_path',
-        'file_keys.created_at as file_key_created_at',
-        'repositories.id as repository_id',
-        'repositories.name as repository_name',
-        'repositories.default_ref as repository_default_ref',
-        'repositories.metadata as repository_metadata',
-        'repositories.created_at as repository_created_at',
-        'repositories.updated_at as repository_updated_at',
-        semanticDistanceExpr.as('semantic_distance'),
-      ])
-      .where('chunk_embeddings.model', '=', embeddingConfig.model)
-      .where('chunk_embeddings.dimension', '=', embeddingConfig.dimension)
+        semanticQuery = applyCodeSearchFilters(semanticQuery, filters)
 
-    semanticQuery = applyCodeSearchFilters(semanticQuery, filters)
-
-    const semanticRows = await semanticQuery.orderBy(semanticDistanceExpr).limit(semanticLimit).execute()
+        return await semanticQuery.orderBy(semanticDistanceExpr).limit(semanticLimit).execute()
+      } catch (error) {
+        console.warn('[atlas] semantic code search unavailable; falling back to lexical only', {
+          error: error instanceof Error ? error.message : String(error),
+        })
+        return []
+      }
+    })()
 
     const lexicalQueryExpr = sql<string>`websearch_to_tsquery('simple', ${resolvedQuery})`
     const lexicalRankExpr = sql<number>`ts_rank_cd(file_chunks.text_tsvector, ${lexicalQueryExpr})`
