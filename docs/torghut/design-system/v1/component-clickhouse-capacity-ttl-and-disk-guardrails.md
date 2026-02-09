@@ -73,7 +73,8 @@ storage or reducing retention rather than “tuning around” persistent disk sc
 1) **Confirm** it is disk pressure (not auth):
    - Check ClickHouse disk free.
 2) **Reduce write pressure**:
-   - Temporarily scale/stop TA job (`FlinkDeployment`) to prevent thrash.
+   - Temporarily pause TA writes by suspending `FlinkDeployment/torghut-ta` to prevent thrash.
+   - Runbook: `v1/operations-pause-ta-writes.md`
 3) **Reclaim disk**:
    - Drop old partitions if TTL cannot catch up fast enough.
    - Reduce retention TTLs *only via code-reviewed DDL change*.

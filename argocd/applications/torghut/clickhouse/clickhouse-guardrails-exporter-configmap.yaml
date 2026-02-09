@@ -1,0 +1,253 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torghut-clickhouse-guardrails-exporter
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-clickhouse-guardrails-exporter
+    app.kubernetes.io/part-of: torghut
+data:
+  exporter.py: |
+    import json
+    import os
+    import threading
+    import time
+    import urllib.parse
+    import urllib.request
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    CLICKHOUSE_URL = os.environ.get("CLICKHOUSE_URL", "http://torghut-clickhouse.torghut.svc.cluster.local:8123")
+    CLICKHOUSE_USER = os.environ.get("CLICKHOUSE_USER", "torghut")
+    CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "")
+    DATABASE = os.environ.get("CLICKHOUSE_DATABASE", "torghut")
+    CLICKHOUSE_CLUSTER = os.environ.get("CLICKHOUSE_CLUSTER", "default")
+    EXPORTER_PORT = int(os.environ.get("EXPORTER_PORT", "9108"))
+    SCRAPE_INTERVAL_SECONDS = int(os.environ.get("SCRAPE_INTERVAL_SECONDS", "30"))
+
+    DEFAULT_DISK_NAME = os.environ.get("CLICKHOUSE_DISK_NAME", "default")
+    TABLES = os.environ.get("CLICKHOUSE_REPLICATED_TABLES", "ta_signals,ta_microbars").split(",")
+    TABLES = [t.strip() for t in TABLES if t.strip()]
+
+
+    def clickhouse_query_rows(query: str) -> list[dict]:
+        params = urllib.parse.urlencode({"query": query})
+        url = f"{CLICKHOUSE_URL.rstrip('/')}/?{params}"
+        headers = {}
+        if CLICKHOUSE_USER:
+            headers["X-ClickHouse-User"] = CLICKHOUSE_USER
+        if CLICKHOUSE_PASSWORD:
+            headers["X-ClickHouse-Key"] = CLICKHOUSE_PASSWORD
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = resp.read().decode("utf-8").strip()
+            if not body:
+                return []
+            rows = []
+            for line in body.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                rows.append(json.loads(line))
+            return rows
+
+
+    def clickhouse_str(value: str) -> str:
+        # ClickHouse string literal quoting (single quotes). Double quotes are identifiers.
+        return "'" + value.replace("'", "''") + "'"
+
+
+    def prom_label_value(value: str) -> str:
+        # Minimal escaping for Prometheus label values.
+        return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+    class State:
+        def __init__(self):
+            self.lock = threading.Lock()
+            # replica -> metrics
+            self.replicas: dict[str, dict] = {}
+            self.last_scrape_success = 0.0
+            self.last_scrape_ts_seconds = 0.0
+            self.last_error = ""
+
+        def snapshot(self) -> dict:
+            with self.lock:
+                return {
+                    "replicas": dict(self.replicas),
+                    "last_scrape_success": self.last_scrape_success,
+                    "last_scrape_ts_seconds": self.last_scrape_ts_seconds,
+                }
+
+
+    state = State()
+
+
+    def float_or_nan(value):
+        try:
+            return float(value)
+        except Exception:
+            return float("nan")
+
+
+    def scrape_once():
+        now = time.time()
+        try:
+            disk_query = (
+                "SELECT hostName() AS replica, max(free_space) AS free_space, max(total_space) AS total_space "
+                f"FROM clusterAllReplicas({clickhouse_str(CLICKHOUSE_CLUSTER)}, system.disks) "
+                f"WHERE name = {clickhouse_str(DEFAULT_DISK_NAME)} "
+                "GROUP BY replica "
+                "FORMAT JSONEachRow"
+            )
+            disk_rows = clickhouse_query_rows(disk_query)
+
+            readonly_query = (
+                "SELECT hostName() AS replica, max(is_readonly) AS any_readonly "
+                f"FROM clusterAllReplicas({clickhouse_str(CLICKHOUSE_CLUSTER)}, system.replicas) "
+                f"WHERE database = {clickhouse_str(DATABASE)} "
+                f"AND table IN ({', '.join(clickhouse_str(t) for t in TABLES)}) "
+                "GROUP BY replica "
+                "FORMAT JSONEachRow"
+            )
+            readonly_rows = clickhouse_query_rows(readonly_query)
+
+            disk_by_replica: dict[str, dict] = {}
+            for row in disk_rows:
+                replica = str(row.get("replica") or "")
+                if not replica:
+                    continue
+                disk_by_replica[replica] = {
+                    "disk_free_bytes": float_or_nan(row.get("free_space")),
+                    "disk_total_bytes": float_or_nan(row.get("total_space")),
+                }
+
+            readonly_by_replica: dict[str, float] = {}
+            for row in readonly_rows:
+                replica = str(row.get("replica") or "")
+                if not replica:
+                    continue
+                readonly_by_replica[replica] = float_or_nan(row.get("any_readonly"))
+
+            replicas = {}
+            for replica in sorted(set(disk_by_replica.keys()) | set(readonly_by_replica.keys())):
+                free_space = disk_by_replica.get(replica, {}).get("disk_free_bytes", float("nan"))
+                total_space = disk_by_replica.get(replica, {}).get("disk_total_bytes", float("nan"))
+                ratio = float("nan")
+                if total_space and total_space > 0 and free_space == free_space:
+                    ratio = free_space / total_space
+
+                replicas[replica] = {
+                    "clickhouse_up": 1.0,
+                    "disk_free_bytes": free_space,
+                    "disk_total_bytes": total_space,
+                    "disk_free_ratio": ratio,
+                    "any_replica_readonly": readonly_by_replica.get(replica, float("nan")),
+                }
+
+            if not replicas:
+                raise RuntimeError("no ClickHouse replicas returned for guardrails scrape")
+
+            with state.lock:
+                state.replicas = replicas
+                state.last_scrape_success = 1.0
+                state.last_scrape_ts_seconds = now
+                state.last_error = ""
+        except Exception as e:
+            with state.lock:
+                state.replicas = {}
+                state.last_scrape_success = 0.0
+                state.last_scrape_ts_seconds = now
+                state.last_error = str(e)
+
+
+    def scrape_loop():
+        while True:
+            scrape_once()
+            time.sleep(SCRAPE_INTERVAL_SECONDS)
+
+
+    def render_metrics(snapshot: dict) -> str:
+        lines = []
+        lines.append(
+            "# HELP torghut_clickhouse_guardrails_clickhouse_up 1 if ClickHouse is reachable for guardrail queries (per replica)."
+        )
+        lines.append("# TYPE torghut_clickhouse_guardrails_clickhouse_up gauge")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_clickhouse_up{{replica="{label}"}} {metrics["clickhouse_up"]}'
+            )
+
+        lines.append("# HELP torghut_clickhouse_guardrails_disk_free_bytes Free bytes on the ClickHouse default disk (per replica).")
+        lines.append("# TYPE torghut_clickhouse_guardrails_disk_free_bytes gauge")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_disk_free_bytes{{replica="{label}"}} {metrics["disk_free_bytes"]}'
+            )
+
+        lines.append("# HELP torghut_clickhouse_guardrails_disk_total_bytes Total bytes on the ClickHouse default disk (per replica).")
+        lines.append("# TYPE torghut_clickhouse_guardrails_disk_total_bytes gauge")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_disk_total_bytes{{replica="{label}"}} {metrics["disk_total_bytes"]}'
+            )
+
+        lines.append(
+            "# HELP torghut_clickhouse_guardrails_disk_free_ratio Free/total ratio on the ClickHouse default disk (per replica)."
+        )
+        lines.append("# TYPE torghut_clickhouse_guardrails_disk_free_ratio gauge")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_disk_free_ratio{{replica="{label}"}} {metrics["disk_free_ratio"]}'
+            )
+
+        lines.append(
+            "# HELP torghut_clickhouse_guardrails_any_replica_readonly 1 if any Torghut replicated table is read-only (per replica)."
+        )
+        lines.append("# TYPE torghut_clickhouse_guardrails_any_replica_readonly gauge")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_any_replica_readonly{{replica="{label}"}} {metrics["any_replica_readonly"]}'
+            )
+
+        lines.append("# HELP torghut_clickhouse_guardrails_last_scrape_success 1 if the last scrape succeeded.")
+        lines.append("# TYPE torghut_clickhouse_guardrails_last_scrape_success gauge")
+        lines.append(f"torghut_clickhouse_guardrails_last_scrape_success {snapshot['last_scrape_success']}")
+
+        lines.append("# HELP torghut_clickhouse_guardrails_last_scrape_ts_seconds Unix timestamp of the last scrape attempt.")
+        lines.append("# TYPE torghut_clickhouse_guardrails_last_scrape_ts_seconds gauge")
+        lines.append(f"torghut_clickhouse_guardrails_last_scrape_ts_seconds {snapshot['last_scrape_ts_seconds']}")
+
+        lines.append("")
+        return "\n".join(lines)
+
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path not in ("/metrics", "/"):
+                self.send_response(404)
+                self.end_headers()
+                return
+
+            snapshot = state.snapshot()
+            body = render_metrics(snapshot).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            return
+
+
+    if __name__ == "__main__":
+        t = threading.Thread(target=scrape_loop, daemon=True)
+        t.start()
+
+        server = HTTPServer(("0.0.0.0", EXPORTER_PORT), Handler)
+        server.serve_forever()
