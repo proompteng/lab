@@ -104,11 +104,13 @@ import { intentsEqual, stableStringify } from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
 import type { WorkflowQueryEvaluationResult, WorkflowUpdateInvocation } from '../workflow/executor'
 import { WorkflowExecutor } from '../workflow/executor'
+import { installWorkflowRuntimeGuards } from '../workflow/guards'
 import {
   CHILD_WORKFLOW_COMPLETED_SIGNAL,
   type WorkflowQueryRequest,
   type WorkflowSignalDeliveryInput,
 } from '../workflow/inbound'
+import { runWithWorkflowModuleLoadContext } from '../workflow/module-load'
 import { WorkflowRegistry } from '../workflow/registry'
 import {
   DETERMINISM_MARKER_NAME,
@@ -306,13 +308,20 @@ export class WorkerRuntime {
     }
 
     const identity = options.identity ?? config.workerIdentity
-    const workflows = await loadWorkflows(options.workflowsPath, options.workflows)
+    const workflowGuards = options.workflowGuards ?? config.workflowGuards
+
+    // Install workflow runtime guards before importing any workflow code so top-level module
+    // initialization is protected (e.g. `fetch()` / `Date.now()` in module scope).
+    installWorkflowRuntimeGuards({ mode: workflowGuards })
+
+    const workflows = await runWithWorkflowModuleLoadContext({ mode: workflowGuards }, async () => {
+      return await loadWorkflows(options.workflowsPath, options.workflows)
+    })
     if (workflows.length === 0) {
       throw new Error('No workflow definitions were registered; provide workflows or workflowsPath')
     }
 
     const activities = options.activities ?? {}
-    const workflowGuards = options.workflowGuards ?? config.workflowGuards
     const observability = await Effect.runPromise(
       createObservabilityServices(
         {
@@ -432,7 +441,9 @@ export class WorkerRuntime {
     const deploymentName =
       options.deployment?.name ?? config.workerDeploymentName ?? WorkerRuntime.#defaultDeploymentName(taskQueue)
     const buildId = options.deployment?.buildId ?? config.workerBuildId ?? identity
-    const workerVersioningMode = options.deployment?.versioningMode ?? WorkerVersioningMode.UNVERSIONED
+    const workerVersioningMode =
+      options.deployment?.versioningMode ??
+      (workflowGuards === 'strict' ? WorkerVersioningMode.VERSIONED : WorkerVersioningMode.UNVERSIONED)
     const versioningBehavior =
       workerVersioningMode === WorkerVersioningMode.VERSIONED
         ? (options.deployment?.versioningBehavior ?? VersioningBehavior.PINNED)

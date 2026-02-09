@@ -43,10 +43,6 @@ spec:
               value: default
             - name: TEMPORAL_TASK_QUEUE
               value: bumba
-            - name: TEMPORAL_WORKER_DEPLOYMENT_NAME
-              value: bumba-deployment
-            - name: TEMPORAL_WORKFLOW_GUARDS
-              value: warn
             - name: TEMPORAL_WORKFLOW_CONCURRENCY
               value: "64"
             - name: TEMPORAL_ACTIVITY_CONCURRENCY
