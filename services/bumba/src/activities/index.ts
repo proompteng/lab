@@ -3603,7 +3603,20 @@ export const activities = {
         return truncated
       })
 
-      const embeddings = await embedTexts(embedInputs)
+      let embeddings: number[][]
+      try {
+        embeddings = await embedTexts(embedInputs)
+      } catch (error) {
+        logActivity('error', 'failed', 'indexFileChunks', {
+          fileVersionId: input.fileVersionId,
+          filePath: input.filePath,
+          reason: 'embedding_failed',
+          chunks: chunkIdByIndex.size,
+          durationMs: Date.now() - startedAt,
+          error: formatActivityError(error),
+        })
+        return { skipped: false, reason: 'embedding_failed', chunks: chunkIdByIndex.size, embedded: 0 }
+      }
       const chunkIds: string[] = []
       const vectors: string[] = []
 
@@ -3647,7 +3660,16 @@ export const activities = {
             })
             return { skipped: true, reason: 'schema_missing', chunks: 0, embedded: 0 }
           }
-          throw error
+          logActivity('error', 'failed', 'indexFileChunks', {
+            fileVersionId: input.fileVersionId,
+            filePath: input.filePath,
+            reason: 'chunk_embeddings_failed',
+            chunks: chunkIdByIndex.size,
+            embedded: 0,
+            durationMs: Date.now() - startedAt,
+            error: message,
+          })
+          return { skipped: false, reason: 'chunk_embeddings_failed', chunks: chunkIdByIndex.size, embedded: 0 }
         }
       }
 
@@ -3669,7 +3691,7 @@ export const activities = {
         durationMs: Date.now() - startedAt,
         error: formatActivityError(error),
       })
-      throw error
+      return { skipped: true, reason: 'error', chunks: 0, embedded: 0 }
     }
   },
 
