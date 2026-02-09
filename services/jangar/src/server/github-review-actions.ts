@@ -73,8 +73,8 @@ export const submitPullRequestReview = async (
     source: 'github-review-actions',
     repository,
   })
-  const actor = auditContext.actor
-  const requestId = auditContext.requestId ?? auditContext.correlationId
+  const actor = auditContext.actor ?? null
+  const requestId = auditContext.requestId ?? auditContext.correlationId ?? null
   const receivedAt = new Date().toISOString()
 
   try {
@@ -205,8 +205,8 @@ export const resolvePullRequestThread = async (
     source: 'github-review-actions',
     repository,
   })
-  const actor = auditContext.actor
-  const requestId = auditContext.requestId ?? auditContext.correlationId
+  const actor = auditContext.actor ?? null
+  const requestId = auditContext.requestId ?? auditContext.correlationId ?? null
   const receivedAt = new Date().toISOString()
   let resolvedThreadId: string | null = null
 
@@ -344,8 +344,8 @@ export const mergePullRequest = async (
     source: 'github-review-actions',
     repository,
   })
-  const actor = auditContext.actor
-  const requestId = auditContext.requestId ?? auditContext.correlationId
+  const actor = auditContext.actor ?? null
+  const requestId = auditContext.requestId ?? auditContext.correlationId ?? null
   const receivedAt = new Date().toISOString()
 
   try {

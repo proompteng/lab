@@ -47,8 +47,17 @@ type AtlasFileChunks = {
   start_line: number | null
   end_line: number | null
   content: string | null
+  text_tsvector: unknown | null
   token_count: number | null
   metadata: JsonValue
+  created_at: Generated<Timestamp>
+}
+
+type AtlasChunkEmbeddings = {
+  chunk_id: string
+  model: string
+  dimension: number
+  embedding: unknown
   created_at: Generated<Timestamp>
 }
 
@@ -558,6 +567,7 @@ export type Database = {
   'atlas.file_chunks': AtlasFileChunks
   'atlas.enrichments': AtlasEnrichments
   'atlas.embeddings': AtlasEmbeddings
+  'atlas.chunk_embeddings': AtlasChunkEmbeddings
   'atlas.tree_sitter_facts': AtlasTreeSitterFacts
   'atlas.symbols': AtlasSymbols
   'atlas.symbol_defs': AtlasSymbolDefs

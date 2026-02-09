@@ -7,6 +7,7 @@ import * as Schema from 'effect/Schema'
 import type {
   AstSummaryOutput,
   EnrichOutput,
+  IndexFileChunksOutput,
   ListRepoFilesOutput,
   PersistEnrichmentRecordOutput,
   PersistFileVersionOutput,
@@ -77,6 +78,11 @@ const persistEmbeddingTimeouts = {
 const persistFactsTimeouts = {
   startToCloseTimeoutMs: 120_000,
   scheduleToCloseTimeoutMs: 600_000,
+}
+
+const indexFileChunksTimeouts = {
+  startToCloseTimeoutMs: 600_000,
+  scheduleToCloseTimeoutMs: 3_600_000,
 }
 
 const upsertIngestionTimeouts = {
@@ -523,6 +529,31 @@ export const workflows = [
 
         yield* persistEmbedding
         yield* persistFacts
+
+        const chunkIndexing = (yield* activities.schedule(
+          'indexFileChunks',
+          [
+            {
+              fileVersionId: fileVersion.fileVersionId,
+              filePath,
+              content: fileResult.content,
+            },
+          ],
+          {
+            ...indexFileChunksTimeouts,
+            retry: activityRetry,
+          },
+        )) as IndexFileChunksOutput
+
+        logWorkflow('enrichFile.chunkIndexing', {
+          workflowId: info.workflowId,
+          runId: info.runId,
+          filePath,
+          skipped: chunkIndexing.skipped,
+          reason: chunkIndexing.reason ?? null,
+          chunks: chunkIndexing.chunks,
+          embedded: chunkIndexing.embedded,
+        })
 
         if (eventDeliveryId) {
           yield* activities.schedule(

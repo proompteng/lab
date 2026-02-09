@@ -297,6 +297,30 @@ export type AtlasSearchMatch = {
   repository: RepositoryRecord
 }
 
+export type AtlasCodeSearchInput = {
+  query: string
+  limit?: number
+  repository?: string
+  ref?: string
+  pathPrefix?: string
+  language?: string
+}
+
+export type AtlasCodeSearchSignals = {
+  semanticDistance: number | null
+  lexicalRank: number | null
+  matchedIdentifiers: string[]
+}
+
+export type AtlasCodeSearchMatch = {
+  repository: RepositoryRecord
+  fileKey: FileKeyRecord
+  fileVersion: FileVersionRecord
+  chunk: FileChunkRecord
+  score: number
+  signals: AtlasCodeSearchSignals
+}
+
 export type AtlasStats = {
   repositories: number
   fileKeys: number
@@ -359,6 +383,7 @@ export type AtlasStore = {
   getAstPreview: (input: { fileVersionId: string; limit?: number }) => Promise<AtlasAstPreview>
   search: (input: AtlasSearchInput) => Promise<AtlasSearchMatch[]>
   searchCount: (input: AtlasSearchInput) => Promise<number>
+  codeSearch: (input: AtlasCodeSearchInput) => Promise<AtlasCodeSearchMatch[]>
   stats: () => Promise<AtlasStats>
   close: () => Promise<void>
 }
@@ -420,6 +445,54 @@ const resolveEmbeddingDefaults = (apiBaseUrl: string) => {
 }
 
 const vectorToPgArray = (values: number[]) => `[${values.join(',')}]`
+
+const extractIdentifierTokens = (query: string) => {
+  // Prefer identifiers that are likely to appear in code.
+  const candidates = query
+    .split(/[^A-Za-z0-9_./-]+/g)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3)
+
+  const blocked = new Set([
+    'the',
+    'and',
+    'for',
+    'with',
+    'where',
+    'what',
+    'how',
+    'file',
+    'files',
+    'code',
+    'repo',
+    'repository',
+    'path',
+    'search',
+  ])
+
+  const result: string[] = []
+  const seen = new Set<string>()
+  for (const token of candidates) {
+    const lowered = token.toLowerCase()
+    if (blocked.has(lowered)) continue
+    if (seen.has(lowered)) continue
+    seen.add(lowered)
+    result.push(token)
+  }
+  return result.slice(0, 25)
+}
+
+const countIdentifierMatches = (haystack: string, identifiers: string[]) => {
+  if (!haystack || identifiers.length === 0) return { matched: [], count: 0 }
+  const matched: string[] = []
+  for (const token of identifiers) {
+    if (matched.length >= 10) break
+    if (haystack.includes(token)) {
+      matched.push(token)
+    }
+  }
+  return { matched, count: matched.length }
+}
 
 const loadEmbeddingConfig = () => {
   const apiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL
@@ -570,11 +643,41 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     }
   }
 
+  const ensureChunkEmbeddingDimensionMatches = async () => {
+    const { rows } = await sql<{ embedding_type: string | null }>`
+      SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) AS embedding_type
+      FROM pg_catalog.pg_attribute a
+      JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = ${SCHEMA}
+        AND c.relname = ${'chunk_embeddings'}
+        AND a.attname = 'embedding'
+        AND a.attnum > 0
+        AND NOT a.attisdropped;
+    `.execute(db)
+
+    const embeddingType = rows[0]?.embedding_type ?? null
+    if (!embeddingType) return
+
+    const match = embeddingType.match(/vector\((\d+)\)/i)
+    const actualDimension = match ? Number.parseInt(match[1] ?? '', 10) : null
+    if (!actualDimension || !Number.isFinite(actualDimension)) return
+
+    if (actualDimension !== expectedEmbeddingDimension) {
+      throw new Error(
+        `embedding dimension mismatch in Postgres schema: atlas.chunk_embeddings.embedding is ${embeddingType} ` +
+          `but OPENAI_EMBEDDING_DIMENSION is ${expectedEmbeddingDimension}. ` +
+          'Update OPENAI_EMBEDDING_DIMENSION or migrate the column type to match.',
+      )
+    }
+  }
+
   const ensureSchema = async () => {
     if (!schemaReady) {
       schemaReady = (async () => {
         await ensureMigrations(db)
         await ensureEmbeddingDimensionMatches()
+        await ensureChunkEmbeddingDimensionMatches()
       })()
     }
     await schemaReady
@@ -853,6 +956,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         start_line: startLine ?? null,
         end_line: endLine ?? null,
         content: content ?? null,
+        text_tsvector: sql`to_tsvector('simple', ${content ?? ''})`,
         token_count: tokenCount ?? null,
         metadata: sql`${resolvedMetadata}::jsonb`,
       })
@@ -861,6 +965,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
           start_line: sql`excluded.start_line`,
           end_line: sql`excluded.end_line`,
           content: sql`excluded.content`,
+          text_tsvector: sql`excluded.text_tsvector`,
           token_count: sql`excluded.token_count`,
           metadata: sql`excluded.metadata`,
         }),
@@ -872,6 +977,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         'start_line',
         'end_line',
         'content',
+        'text_tsvector',
         'token_count',
         'metadata',
         'created_at',
@@ -887,6 +993,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
       startLine: row.start_line,
       endLine: row.end_line,
       content: row.content,
+      // We don't expose tsvector as part of the record contract; it is query-only.
       tokenCount: row.token_count,
       metadata: row.metadata ?? {},
       createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
@@ -1738,6 +1845,263 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     return unique.size
   }
 
+  const resolveCodeSearchFilters = ({
+    repository,
+    ref,
+    pathPrefix,
+    language,
+  }: Pick<AtlasCodeSearchInput, 'repository' | 'ref' | 'pathPrefix' | 'language'>) => ({
+    repository: typeof repository === 'string' ? repository.trim() : '',
+    ref: typeof ref === 'string' ? ref.trim() : '',
+    pathPrefix: typeof pathPrefix === 'string' ? pathPrefix.trim() : '',
+    language: typeof language === 'string' ? language.trim() : '',
+  })
+
+  const applyCodeSearchFilters = <T extends { where: (...args: unknown[]) => T }>(
+    query: T,
+    filters: ReturnType<typeof resolveCodeSearchFilters>,
+  ) => {
+    let next = query
+    if (filters.repository) {
+      next = next.where('repositories.name', '=', filters.repository)
+    }
+    if (filters.ref) {
+      next = next.where('file_versions.repository_ref', '=', filters.ref)
+    }
+    if (filters.pathPrefix) {
+      next = next.where('file_keys.path', 'like', `${filters.pathPrefix}%`)
+    }
+    if (filters.language) {
+      next = next.where('file_versions.language', '=', filters.language)
+    }
+    return next
+  }
+
+  const codeSearch: AtlasStore['codeSearch'] = async ({ query, limit, repository, ref, pathPrefix, language }) => {
+    await ensureSchema()
+
+    const resolvedQuery = normalizeText(query, 'query')
+    const resolvedLimit = Math.max(1, Math.min(MAX_SEARCH_LIMIT, Math.floor(limit ?? DEFAULT_SEARCH_LIMIT)))
+    const filters = resolveCodeSearchFilters({ repository, ref, pathPrefix, language })
+
+    const identifiers = extractIdentifierTokens(resolvedQuery)
+
+    const embeddingConfig = loadEmbeddingConfig()
+    const embedding = await embedText(resolvedQuery, embeddingConfig)
+    const vectorString = vectorToPgArray(embedding)
+
+    const semanticLimit = Math.min(MAX_SEARCH_LIMIT, Math.max(resolvedLimit * 5, resolvedLimit))
+    const lexicalLimit = Math.min(MAX_SEARCH_LIMIT, Math.max(resolvedLimit * 5, resolvedLimit))
+
+    const semanticDistanceExpr = sql<number>`chunk_embeddings.embedding <=> ${vectorString}::vector`
+
+    let semanticQuery = db
+      .selectFrom('atlas.chunk_embeddings as chunk_embeddings')
+      .innerJoin('atlas.file_chunks as file_chunks', 'file_chunks.id', 'chunk_embeddings.chunk_id')
+      .innerJoin('atlas.file_versions as file_versions', 'file_versions.id', 'file_chunks.file_version_id')
+      .innerJoin('atlas.file_keys as file_keys', 'file_keys.id', 'file_versions.file_key_id')
+      .innerJoin('atlas.repositories as repositories', 'repositories.id', 'file_keys.repository_id')
+      .select([
+        'file_chunks.id as chunk_id',
+        'file_chunks.file_version_id as chunk_file_version_id',
+        'file_chunks.chunk_index as chunk_index',
+        'file_chunks.start_line as chunk_start_line',
+        'file_chunks.end_line as chunk_end_line',
+        'file_chunks.content as chunk_content',
+        'file_chunks.token_count as chunk_token_count',
+        'file_chunks.metadata as chunk_metadata',
+        'file_chunks.created_at as chunk_created_at',
+        'file_versions.id as file_version_id',
+        'file_versions.file_key_id as file_version_file_key_id',
+        'file_versions.repository_ref as file_version_repository_ref',
+        'file_versions.repository_commit as file_version_repository_commit',
+        'file_versions.content_hash as file_version_content_hash',
+        'file_versions.language as file_version_language',
+        'file_versions.byte_size as file_version_byte_size',
+        'file_versions.line_count as file_version_line_count',
+        'file_versions.metadata as file_version_metadata',
+        'file_versions.source_timestamp as file_version_source_timestamp',
+        'file_versions.created_at as file_version_created_at',
+        'file_versions.updated_at as file_version_updated_at',
+        'file_keys.id as file_key_id',
+        'file_keys.repository_id as file_key_repository_id',
+        'file_keys.path as file_key_path',
+        'file_keys.created_at as file_key_created_at',
+        'repositories.id as repository_id',
+        'repositories.name as repository_name',
+        'repositories.default_ref as repository_default_ref',
+        'repositories.metadata as repository_metadata',
+        'repositories.created_at as repository_created_at',
+        'repositories.updated_at as repository_updated_at',
+        semanticDistanceExpr.as('semantic_distance'),
+      ])
+      .where('chunk_embeddings.model', '=', embeddingConfig.model)
+      .where('chunk_embeddings.dimension', '=', embeddingConfig.dimension)
+
+    semanticQuery = applyCodeSearchFilters(semanticQuery, filters)
+
+    const semanticRows = await semanticQuery.orderBy(semanticDistanceExpr).limit(semanticLimit).execute()
+
+    const lexicalQueryExpr = sql<string>`websearch_to_tsquery('simple', ${resolvedQuery})`
+    const lexicalRankExpr = sql<number>`ts_rank_cd(file_chunks.text_tsvector, ${lexicalQueryExpr})`
+
+    let lexicalQuery = db
+      .selectFrom('atlas.file_chunks as file_chunks')
+      .innerJoin('atlas.file_versions as file_versions', 'file_versions.id', 'file_chunks.file_version_id')
+      .innerJoin('atlas.file_keys as file_keys', 'file_keys.id', 'file_versions.file_key_id')
+      .innerJoin('atlas.repositories as repositories', 'repositories.id', 'file_keys.repository_id')
+      .select([
+        'file_chunks.id as chunk_id',
+        'file_chunks.file_version_id as chunk_file_version_id',
+        'file_chunks.chunk_index as chunk_index',
+        'file_chunks.start_line as chunk_start_line',
+        'file_chunks.end_line as chunk_end_line',
+        'file_chunks.content as chunk_content',
+        'file_chunks.token_count as chunk_token_count',
+        'file_chunks.metadata as chunk_metadata',
+        'file_chunks.created_at as chunk_created_at',
+        'file_versions.id as file_version_id',
+        'file_versions.file_key_id as file_version_file_key_id',
+        'file_versions.repository_ref as file_version_repository_ref',
+        'file_versions.repository_commit as file_version_repository_commit',
+        'file_versions.content_hash as file_version_content_hash',
+        'file_versions.language as file_version_language',
+        'file_versions.byte_size as file_version_byte_size',
+        'file_versions.line_count as file_version_line_count',
+        'file_versions.metadata as file_version_metadata',
+        'file_versions.source_timestamp as file_version_source_timestamp',
+        'file_versions.created_at as file_version_created_at',
+        'file_versions.updated_at as file_version_updated_at',
+        'file_keys.id as file_key_id',
+        'file_keys.repository_id as file_key_repository_id',
+        'file_keys.path as file_key_path',
+        'file_keys.created_at as file_key_created_at',
+        'repositories.id as repository_id',
+        'repositories.name as repository_name',
+        'repositories.default_ref as repository_default_ref',
+        'repositories.metadata as repository_metadata',
+        'repositories.created_at as repository_created_at',
+        'repositories.updated_at as repository_updated_at',
+        lexicalRankExpr.as('lexical_rank'),
+      ])
+      .where(sql<boolean>`file_chunks.text_tsvector @@ ${lexicalQueryExpr}`)
+
+    lexicalQuery = applyCodeSearchFilters(lexicalQuery, filters)
+
+    const lexicalRows = await lexicalQuery.orderBy(lexicalRankExpr, 'desc').limit(lexicalLimit).execute()
+
+    const merged = new Map<
+      string,
+      {
+        row: (typeof semanticRows)[number] | (typeof lexicalRows)[number]
+        semanticDistance: number | null
+        lexicalRank: number | null
+      }
+    >()
+
+    for (const row of semanticRows) {
+      merged.set(row.chunk_id, { row, semanticDistance: Number(row.semantic_distance), lexicalRank: null })
+    }
+
+    for (const row of lexicalRows) {
+      const existing = merged.get(row.chunk_id)
+      if (existing) {
+        existing.lexicalRank = Number(row.lexical_rank)
+      } else {
+        merged.set(row.chunk_id, { row, semanticDistance: null, lexicalRank: Number(row.lexical_rank) })
+      }
+    }
+
+    const results: AtlasCodeSearchMatch[] = []
+
+    for (const entry of merged.values()) {
+      const row = entry.row
+      const content = row.chunk_content ?? ''
+      const { matched } = countIdentifierMatches(content, identifiers)
+
+      const semanticDistance = entry.semanticDistance
+      const lexicalRank = entry.lexicalRank
+
+      // Convert distance (lower is better) to a bounded score.
+      const semanticScore = semanticDistance === null ? 0 : 1 / (1 + Math.max(0, semanticDistance))
+      const lexicalScore = lexicalRank === null ? 0 : Math.max(0, lexicalRank)
+      const identifierBoost = Math.min(0.5, matched.length * 0.05)
+
+      const score = semanticScore + lexicalScore * 0.25 + identifierBoost
+
+      results.push({
+        repository: {
+          id: row.repository_id,
+          name: row.repository_name,
+          defaultRef: row.repository_default_ref,
+          metadata: row.repository_metadata ?? {},
+          createdAt:
+            row.repository_created_at instanceof Date
+              ? row.repository_created_at.toISOString()
+              : String(row.repository_created_at),
+          updatedAt:
+            row.repository_updated_at instanceof Date
+              ? row.repository_updated_at.toISOString()
+              : String(row.repository_updated_at),
+        },
+        fileKey: {
+          id: row.file_key_id,
+          repositoryId: row.file_key_repository_id,
+          path: row.file_key_path,
+          createdAt:
+            row.file_key_created_at instanceof Date
+              ? row.file_key_created_at.toISOString()
+              : String(row.file_key_created_at),
+        },
+        fileVersion: {
+          id: row.file_version_id,
+          fileKeyId: row.file_version_file_key_id,
+          repositoryRef: row.file_version_repository_ref,
+          repositoryCommit: row.file_version_repository_commit,
+          contentHash: row.file_version_content_hash,
+          language: row.file_version_language,
+          byteSize: row.file_version_byte_size,
+          lineCount: row.file_version_line_count,
+          metadata: row.file_version_metadata ?? {},
+          sourceTimestamp:
+            row.file_version_source_timestamp instanceof Date
+              ? row.file_version_source_timestamp.toISOString()
+              : row.file_version_source_timestamp
+                ? String(row.file_version_source_timestamp)
+                : null,
+          createdAt:
+            row.file_version_created_at instanceof Date
+              ? row.file_version_created_at.toISOString()
+              : String(row.file_version_created_at),
+          updatedAt:
+            row.file_version_updated_at instanceof Date
+              ? row.file_version_updated_at.toISOString()
+              : String(row.file_version_updated_at),
+        },
+        chunk: {
+          id: row.chunk_id,
+          fileVersionId: row.chunk_file_version_id,
+          chunkIndex: row.chunk_index,
+          startLine: row.chunk_start_line,
+          endLine: row.chunk_end_line,
+          content: row.chunk_content,
+          tokenCount: row.chunk_token_count,
+          metadata: row.chunk_metadata ?? {},
+          createdAt:
+            row.chunk_created_at instanceof Date ? row.chunk_created_at.toISOString() : String(row.chunk_created_at),
+        },
+        score,
+        signals: {
+          semanticDistance,
+          lexicalRank,
+          matchedIdentifiers: matched,
+        },
+      })
+    }
+
+    return results.sort((a, b) => b.score - a.score).slice(0, resolvedLimit)
+  }
+
   const stats: AtlasStore['stats'] = async () => {
     await ensureSchema()
 
@@ -1797,6 +2161,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     getAstPreview,
     search,
     searchCount,
+    codeSearch,
     stats,
     close,
   }

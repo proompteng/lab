@@ -1,7 +1,7 @@
 import { Effect, Layer, ManagedRuntime } from 'effect'
 
 import { Atlas, AtlasLive } from './atlas'
-import { parseAtlasIndexInput, parseAtlasSearchInput } from './atlas-http'
+import { parseAtlasCodeSearchInput, parseAtlasIndexInput, parseAtlasSearchInput } from './atlas-http'
 import { Memories, MemoriesLive } from './memories'
 
 type JsonRpcId = string | number | null
@@ -59,6 +59,7 @@ const withMcpSessionHeaders = (request: Request, init: ResponseInit = {}): Respo
 const TOOL_NAME_ALIASES: Record<string, string> = {
   'atlas.index': 'atlas_index',
   'atlas.search': 'atlas_search',
+  'atlas.code_search': 'atlas_code_search',
   'atlas.stats': 'atlas_stats',
 }
 
@@ -127,6 +128,24 @@ const toolsListResult = {
           pathPrefix: { type: 'string', description: 'Filter by file path prefix.' },
           tags: { type: 'array', items: { type: 'string' }, description: 'Filter by enrichment tags.' },
           kinds: { type: 'array', items: { type: 'string' }, description: 'Filter by enrichment kinds.' },
+        },
+        required: ['query'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'atlas_code_search',
+      description:
+        'Search Atlas code chunks with hybrid semantic + lexical retrieval and return precise file + line pointers.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query (required).' },
+          limit: { type: 'integer', description: 'Max results (default 10, max 50).', minimum: 1, maximum: 50 },
+          repository: { type: 'string', description: 'Filter by repository name.' },
+          ref: { type: 'string', description: 'Filter by repository ref.' },
+          pathPrefix: { type: 'string', description: 'Filter by file path prefix.' },
+          language: { type: 'string', description: 'Filter by language (e.g. typescript, go).' },
         },
         required: ['query'],
         additionalProperties: false,
@@ -419,6 +438,31 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
           }
 
           const matchesResult = yield* Effect.either(atlas.search(parsed.value))
+          if (matchesResult._tag === 'Left') {
+            if (isNotification) return null
+            return toolError(id, matchesResult.left.message, { tool: toolName })
+          }
+          if (isNotification) return null
+          return asJsonRpcResponse(
+            id,
+            toTextToolResult(
+              JSON.stringify(
+                { ok: true, matches: matchesResult.right, mcp: { server: baseUrl.origin, tool: toolName } },
+                null,
+                2,
+              ),
+            ),
+          )
+        }
+
+        if (toolName === 'atlas_code_search') {
+          const parsed = parseAtlasCodeSearchInput(args)
+          if (!parsed.ok) {
+            if (isNotification) return null
+            return invalidParams(id, parsed.message)
+          }
+
+          const matchesResult = yield* Effect.either(atlas.codeSearch(parsed.value))
           if (matchesResult._tag === 'Left') {
             if (isNotification) return null
             return toolError(id, matchesResult.left.message, { tool: toolName })
