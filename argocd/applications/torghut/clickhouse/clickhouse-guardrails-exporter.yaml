@@ -38,6 +38,8 @@ spec:
                   key: torghut_password
             - name: CLICKHOUSE_DATABASE
               value: torghut
+            - name: CLICKHOUSE_CLUSTER
+              value: default
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
           ports:

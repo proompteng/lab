@@ -145,3 +145,28 @@ data:
 
                 Stop the bleeding: pause TA writes first, then follow replica recovery (SYSTEM RESTORE REPLICA).
               runbook_url: docs/torghut/design-system/v1/operations-clickhouse-replica-and-keeper.md
+          - alert: TorghutClickHouseGuardrailsExporterDown
+            expr: |
+              up{
+                job="torghut",
+                namespace="torghut",
+                service="torghut-clickhouse-guardrails-exporter"
+              } == 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut ClickHouse guardrails exporter is down
+              description: Guardrails metrics are not being scraped, so disk/read-only alerts may not fire.
+          - alert: TorghutClickHouseGuardrailsScrapeFailing
+            expr: |
+              torghut_clickhouse_guardrails_last_scrape_success{
+                namespace="torghut",
+                service="torghut-clickhouse-guardrails-exporter"
+              } == 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut ClickHouse guardrails scrape failing
+              description: Guardrails exporter is up but cannot query ClickHouse successfully.

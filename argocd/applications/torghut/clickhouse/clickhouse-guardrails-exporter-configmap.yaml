@@ -20,6 +20,7 @@ data:
     CLICKHOUSE_USER = os.environ.get("CLICKHOUSE_USER", "torghut")
     CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "")
     DATABASE = os.environ.get("CLICKHOUSE_DATABASE", "torghut")
+    CLICKHOUSE_CLUSTER = os.environ.get("CLICKHOUSE_CLUSTER", "default")
     EXPORTER_PORT = int(os.environ.get("EXPORTER_PORT", "9108"))
     SCRAPE_INTERVAL_SECONDS = int(os.environ.get("SCRAPE_INTERVAL_SECONDS", "30"))
 
@@ -28,7 +29,7 @@ data:
     TABLES = [t.strip() for t in TABLES if t.strip()]
 
 
-    def clickhouse_query(query: str) -> dict:
+    def clickhouse_query_rows(query: str) -> list[dict]:
         params = urllib.parse.urlencode({"query": query})
         url = f"{CLICKHOUSE_URL.rstrip('/')}/?{params}"
         headers = {}
@@ -40,18 +41,31 @@ data:
         with urllib.request.urlopen(req, timeout=10) as resp:
             body = resp.read().decode("utf-8").strip()
             if not body:
-                return {}
-            return json.loads(body)
+                return []
+            rows = []
+            for line in body.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                rows.append(json.loads(line))
+            return rows
+
+
+    def clickhouse_str(value: str) -> str:
+        # ClickHouse string literal quoting (single quotes). Double quotes are identifiers.
+        return "'" + value.replace("'", "''") + "'"
+
+
+    def prom_label_value(value: str) -> str:
+        # Minimal escaping for Prometheus label values.
+        return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
     class State:
         def __init__(self):
             self.lock = threading.Lock()
-            self.clickhouse_up = 0.0
-            self.disk_free_bytes = float("nan")
-            self.disk_total_bytes = float("nan")
-            self.disk_free_ratio = float("nan")
-            self.any_replica_readonly = float("nan")
+            # replica -> metrics
+            self.replicas: dict[str, dict] = {}
             self.last_scrape_success = 0.0
             self.last_scrape_ts_seconds = 0.0
             self.last_error = ""
@@ -59,11 +73,7 @@ data:
         def snapshot(self) -> dict:
             with self.lock:
                 return {
-                    "clickhouse_up": self.clickhouse_up,
-                    "disk_free_bytes": self.disk_free_bytes,
-                    "disk_total_bytes": self.disk_total_bytes,
-                    "disk_free_ratio": self.disk_free_ratio,
-                    "any_replica_readonly": self.any_replica_readonly,
+                    "replicas": dict(self.replicas),
                     "last_scrape_success": self.last_scrape_success,
                     "last_scrape_ts_seconds": self.last_scrape_ts_seconds,
                 }
@@ -83,42 +93,68 @@ data:
         now = time.time()
         try:
             disk_query = (
-                "SELECT max(free_space) AS free_space, max(total_space) AS total_space "
-                "FROM system.disks "
-                f"WHERE name = {json.dumps(DEFAULT_DISK_NAME)} "
+                "SELECT hostName() AS replica, max(free_space) AS free_space, max(total_space) AS total_space "
+                f"FROM clusterAllReplicas({clickhouse_str(CLICKHOUSE_CLUSTER)}, system.disks) "
+                f"WHERE name = {clickhouse_str(DEFAULT_DISK_NAME)} "
+                "GROUP BY replica "
                 "FORMAT JSONEachRow"
             )
-            disk_row = clickhouse_query(disk_query) or {}
+            disk_rows = clickhouse_query_rows(disk_query)
 
             readonly_query = (
-                "SELECT max(is_readonly) AS any_readonly "
-                "FROM system.replicas "
-                f"WHERE database = {json.dumps(DATABASE)} "
-                f"AND table IN ({', '.join(json.dumps(t) for t in TABLES)}) "
+                "SELECT hostName() AS replica, max(is_readonly) AS any_readonly "
+                f"FROM clusterAllReplicas({clickhouse_str(CLICKHOUSE_CLUSTER)}, system.replicas) "
+                f"WHERE database = {clickhouse_str(DATABASE)} "
+                f"AND table IN ({', '.join(clickhouse_str(t) for t in TABLES)}) "
+                "GROUP BY replica "
                 "FORMAT JSONEachRow"
             )
-            readonly_row = clickhouse_query(readonly_query) or {}
+            readonly_rows = clickhouse_query_rows(readonly_query)
 
-            free_space = float_or_nan(disk_row.get("free_space"))
-            total_space = float_or_nan(disk_row.get("total_space"))
-            ratio = float("nan")
-            if total_space and total_space > 0 and free_space == free_space:
-                ratio = free_space / total_space
+            disk_by_replica: dict[str, dict] = {}
+            for row in disk_rows:
+                replica = str(row.get("replica") or "")
+                if not replica:
+                    continue
+                disk_by_replica[replica] = {
+                    "disk_free_bytes": float_or_nan(row.get("free_space")),
+                    "disk_total_bytes": float_or_nan(row.get("total_space")),
+                }
 
-            any_readonly = float_or_nan(readonly_row.get("any_readonly"))
+            readonly_by_replica: dict[str, float] = {}
+            for row in readonly_rows:
+                replica = str(row.get("replica") or "")
+                if not replica:
+                    continue
+                readonly_by_replica[replica] = float_or_nan(row.get("any_readonly"))
+
+            replicas = {}
+            for replica in sorted(set(disk_by_replica.keys()) | set(readonly_by_replica.keys())):
+                free_space = disk_by_replica.get(replica, {}).get("disk_free_bytes", float("nan"))
+                total_space = disk_by_replica.get(replica, {}).get("disk_total_bytes", float("nan"))
+                ratio = float("nan")
+                if total_space and total_space > 0 and free_space == free_space:
+                    ratio = free_space / total_space
+
+                replicas[replica] = {
+                    "clickhouse_up": 1.0,
+                    "disk_free_bytes": free_space,
+                    "disk_total_bytes": total_space,
+                    "disk_free_ratio": ratio,
+                    "any_replica_readonly": readonly_by_replica.get(replica, float("nan")),
+                }
+
+            if not replicas:
+                raise RuntimeError("no ClickHouse replicas returned for guardrails scrape")
 
             with state.lock:
-                state.clickhouse_up = 1.0
-                state.disk_free_bytes = free_space
-                state.disk_total_bytes = total_space
-                state.disk_free_ratio = ratio
-                state.any_replica_readonly = any_readonly
+                state.replicas = replicas
                 state.last_scrape_success = 1.0
                 state.last_scrape_ts_seconds = now
                 state.last_error = ""
         except Exception as e:
             with state.lock:
-                state.clickhouse_up = 0.0
+                state.replicas = {}
                 state.last_scrape_success = 0.0
                 state.last_scrape_ts_seconds = now
                 state.last_error = str(e)
@@ -132,27 +168,51 @@ data:
 
     def render_metrics(snapshot: dict) -> str:
         lines = []
-        lines.append("# HELP torghut_clickhouse_guardrails_clickhouse_up 1 if ClickHouse is reachable for guardrail queries.")
+        lines.append(
+            "# HELP torghut_clickhouse_guardrails_clickhouse_up 1 if ClickHouse is reachable for guardrail queries (per replica)."
+        )
         lines.append("# TYPE torghut_clickhouse_guardrails_clickhouse_up gauge")
-        lines.append(f"torghut_clickhouse_guardrails_clickhouse_up {snapshot['clickhouse_up']}")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_clickhouse_up{{replica="{label}"}} {metrics["clickhouse_up"]}'
+            )
 
-        lines.append("# HELP torghut_clickhouse_guardrails_disk_free_bytes Free bytes on the ClickHouse default disk.")
+        lines.append("# HELP torghut_clickhouse_guardrails_disk_free_bytes Free bytes on the ClickHouse default disk (per replica).")
         lines.append("# TYPE torghut_clickhouse_guardrails_disk_free_bytes gauge")
-        lines.append(f"torghut_clickhouse_guardrails_disk_free_bytes {snapshot['disk_free_bytes']}")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_disk_free_bytes{{replica="{label}"}} {metrics["disk_free_bytes"]}'
+            )
 
-        lines.append("# HELP torghut_clickhouse_guardrails_disk_total_bytes Total bytes on the ClickHouse default disk.")
+        lines.append("# HELP torghut_clickhouse_guardrails_disk_total_bytes Total bytes on the ClickHouse default disk (per replica).")
         lines.append("# TYPE torghut_clickhouse_guardrails_disk_total_bytes gauge")
-        lines.append(f"torghut_clickhouse_guardrails_disk_total_bytes {snapshot['disk_total_bytes']}")
-
-        lines.append("# HELP torghut_clickhouse_guardrails_disk_free_ratio Free/total ratio on the ClickHouse default disk.")
-        lines.append("# TYPE torghut_clickhouse_guardrails_disk_free_ratio gauge")
-        lines.append(f"torghut_clickhouse_guardrails_disk_free_ratio {snapshot['disk_free_ratio']}")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_disk_total_bytes{{replica="{label}"}} {metrics["disk_total_bytes"]}'
+            )
 
         lines.append(
-            "# HELP torghut_clickhouse_guardrails_any_replica_readonly 1 if any Torghut replicated table is read-only."
+            "# HELP torghut_clickhouse_guardrails_disk_free_ratio Free/total ratio on the ClickHouse default disk (per replica)."
+        )
+        lines.append("# TYPE torghut_clickhouse_guardrails_disk_free_ratio gauge")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_disk_free_ratio{{replica="{label}"}} {metrics["disk_free_ratio"]}'
+            )
+
+        lines.append(
+            "# HELP torghut_clickhouse_guardrails_any_replica_readonly 1 if any Torghut replicated table is read-only (per replica)."
         )
         lines.append("# TYPE torghut_clickhouse_guardrails_any_replica_readonly gauge")
-        lines.append(f"torghut_clickhouse_guardrails_any_replica_readonly {snapshot['any_replica_readonly']}")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_any_replica_readonly{{replica="{label}"}} {metrics["any_replica_readonly"]}'
+            )
 
         lines.append("# HELP torghut_clickhouse_guardrails_last_scrape_success 1 if the last scrape succeeded.")
         lines.append("# TYPE torghut_clickhouse_guardrails_last_scrape_success gauge")
@@ -191,4 +251,3 @@ data:
 
         server = HTTPServer(("0.0.0.0", EXPORTER_PORT), Handler)
         server.serve_forever()
-
