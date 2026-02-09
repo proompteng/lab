@@ -240,26 +240,6 @@ test('enrichFile completes when all activities are resolved', async () => {
       {
         status: 'completed',
         value: {
-          summary: 'short summary',
-          enriched: '- bullet',
-          metadata: {},
-        },
-      },
-    ],
-    [
-      'activity-4',
-      {
-        status: 'completed',
-        value: {
-          embedding: [0.1, 0.2, 0.3],
-        },
-      },
-    ],
-    [
-      'activity-5',
-      {
-        status: 'completed',
-        value: {
           repositoryId: 'repo-id',
           fileKeyId: 'file-key-id',
           fileVersionId: 'file-version-id',
@@ -267,7 +247,7 @@ test('enrichFile completes when all activities are resolved', async () => {
       },
     ],
     [
-      'activity-6',
+      'activity-4',
       {
         status: 'completed',
         value: {
@@ -278,30 +258,14 @@ test('enrichFile completes when all activities are resolved', async () => {
       },
     ],
     [
-      'activity-7',
+      'activity-5',
       {
         status: 'completed',
         value: {},
       },
     ],
     [
-      'activity-8',
-      {
-        status: 'completed',
-        value: {
-          enrichmentId: 'enrichment-id',
-        },
-      },
-    ],
-    [
-      'activity-9',
-      {
-        status: 'completed',
-        value: {},
-      },
-    ],
-    [
-      'activity-10',
+      'activity-6',
       {
         status: 'completed',
         value: {
@@ -310,6 +274,42 @@ test('enrichFile completes when all activities are resolved', async () => {
           chunks: 0,
           embedded: 0,
         },
+      },
+    ],
+    [
+      'activity-7',
+      {
+        status: 'completed',
+        value: {
+          summary: 'short summary',
+          enriched: '- bullet',
+          metadata: {},
+        },
+      },
+    ],
+    [
+      'activity-8',
+      {
+        status: 'completed',
+        value: {
+          embedding: [0.1, 0.2, 0.3],
+        },
+      },
+    ],
+    [
+      'activity-9',
+      {
+        status: 'completed',
+        value: {
+          enrichmentId: 'enrichment-id',
+        },
+      },
+    ],
+    [
+      'activity-10',
+      {
+        status: 'completed',
+        value: {},
       },
     ],
     [
@@ -402,22 +402,6 @@ test('enrichFile fails when enrichWithModel times out', async () => {
     [
       'activity-3',
       {
-        status: 'failed',
-        error: new Error('completion request timed out after 60000ms'),
-      },
-    ],
-    [
-      'activity-4',
-      {
-        status: 'completed',
-        value: {
-          embedding: [0.1, 0.2, 0.3],
-        },
-      },
-    ],
-    [
-      'activity-5',
-      {
         status: 'completed',
         value: {
           repositoryId: 'repo-id',
@@ -427,7 +411,7 @@ test('enrichFile fails when enrichWithModel times out', async () => {
       },
     ],
     [
-      'activity-6',
+      'activity-4',
       {
         status: 'completed',
         value: {
@@ -438,37 +422,28 @@ test('enrichFile fails when enrichWithModel times out', async () => {
       },
     ],
     [
-      'activity-7',
+      'activity-5',
       {
         status: 'completed',
         value: {},
+      },
+    ],
+    [
+      'activity-6',
+      {
+        status: 'completed',
+        value: { skipped: true, reason: 'disabled', chunks: 0, embedded: 0 },
+      },
+    ],
+    [
+      'activity-7',
+      {
+        status: 'failed',
+        error: new Error('completion request timed out after 60000ms'),
       },
     ],
     [
       'activity-8',
-      {
-        status: 'completed',
-        value: {
-          enrichmentId: 'enrichment-id',
-        },
-      },
-    ],
-    [
-      'activity-9',
-      {
-        status: 'completed',
-        value: {},
-      },
-    ],
-    [
-      'activity-10',
-      {
-        status: 'completed',
-        value: {},
-      },
-    ],
-    [
-      'activity-11',
       {
         status: 'completed',
         value: {
@@ -560,26 +535,6 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       {
         status: 'completed',
         value: {
-          summary: 'short summary',
-          enriched: '- bullet',
-          metadata: {},
-        },
-      },
-    ],
-    [
-      'activity-5',
-      {
-        status: 'completed',
-        value: {
-          embedding: [0.1, 0.2, 0.3],
-        },
-      },
-    ],
-    [
-      'activity-6',
-      {
-        status: 'completed',
-        value: {
           repositoryId: 'repo-id',
           fileKeyId: 'file-key-id',
           fileVersionId: 'file-version-id',
@@ -587,7 +542,7 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       },
     ],
     [
-      'activity-7',
+      'activity-5',
       {
         status: 'completed',
         value: {
@@ -598,30 +553,14 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       },
     ],
     [
-      'activity-8',
+      'activity-6',
       {
         status: 'completed',
         value: {},
       },
     ],
     [
-      'activity-9',
-      {
-        status: 'completed',
-        value: {
-          enrichmentId: 'enrichment-id',
-        },
-      },
-    ],
-    [
-      'activity-10',
-      {
-        status: 'completed',
-        value: {},
-      },
-    ],
-    [
-      'activity-11',
+      'activity-7',
       {
         status: 'completed',
         value: {
@@ -630,6 +569,42 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
           chunks: 0,
           embedded: 0,
         },
+      },
+    ],
+    [
+      'activity-8',
+      {
+        status: 'completed',
+        value: {
+          summary: 'short summary',
+          enriched: '- bullet',
+          metadata: {},
+        },
+      },
+    ],
+    [
+      'activity-9',
+      {
+        status: 'completed',
+        value: {
+          embedding: [0.1, 0.2, 0.3],
+        },
+      },
+    ],
+    [
+      'activity-10',
+      {
+        status: 'completed',
+        value: {
+          enrichmentId: 'enrichment-id',
+        },
+      },
+    ],
+    [
+      'activity-11',
+      {
+        status: 'completed',
+        value: {},
       },
     ],
     [
