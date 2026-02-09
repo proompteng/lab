@@ -41,6 +41,12 @@ spec:
               value: default
             - name: TEMPORAL_TASK_QUEUE
               value: bumba-model
+            - name: TEMPORAL_WORKER_DEPLOYMENT_NAME
+              value: bumba-model-deployment
+            - name: TEMPORAL_WORKER_BUILD_ID
+              value: bumba-model@139e01e9
+            - name: TEMPORAL_WORKFLOW_GUARDS
+              value: warn
             - name: TEMPORAL_WORKFLOW_CONCURRENCY
               value: "8"
             - name: TEMPORAL_ACTIVITY_CONCURRENCY
@@ -167,4 +173,3 @@ spec:
         - name: workspace
           persistentVolumeClaim:
             claimName: jangar-workspace-rwx
-
