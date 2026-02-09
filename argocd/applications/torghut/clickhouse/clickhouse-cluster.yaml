@@ -13,7 +13,7 @@ spec:
     files:
       config.d/99-logging-overrides.xml: |-
         <yandex>
-          <logger>
+          <logger replace="1">
             <level>information</level>
           </logger>
         </yandex>
@@ -94,7 +94,7 @@ spec:
             - ReadWriteOnce
           resources:
             requests:
-              storage: 20Gi
+              storage: 50Gi
           storageClassName: longhorn
   defaults:
     templates:
