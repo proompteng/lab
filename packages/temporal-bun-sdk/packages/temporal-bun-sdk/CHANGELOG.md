@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.6.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.5.0...temporal-bun-sdk-v0.6.0) (2026-02-09)
+
+
+### Features
+
+* **codex:** implement autonomous pipeline ([#2329](https://github.com/proompteng/lab/issues/2329)) ([#2333](https://github.com/proompteng/lab/issues/2333)) ([faaa00a](https://github.com/proompteng/lab/commit/faaa00ab1b6ae661d768d1ea870c3b3fd37751d5))
+* **temporal-bun-sdk:** add workflow nondeterminism guardrails ([#2934](https://github.com/proompteng/lab/issues/2934)) ([c55ac86](https://github.com/proompteng/lab/commit/c55ac86700b422f01606dc33018e72b724e46c93))
+
+
+### Bug Fixes
+
+* **argo:** add nats-context artifact output ([#2322](https://github.com/proompteng/lab/issues/2322)) ([5c8df5b](https://github.com/proompteng/lab/commit/5c8df5b70ab0ec01edd2384f53c95645dff39746))
+* build proompteng with bun turbo ([#2471](https://github.com/proompteng/lab/issues/2471)) ([b45fb97](https://github.com/proompteng/lab/commit/b45fb97ea12dfff6f207b90c06b30f796605961b))
+* **bumba:** prevent enrichFile nondeterminism ([#2930](https://github.com/proompteng/lab/issues/2930)) ([637f7ce](https://github.com/proompteng/lab/commit/637f7cecb5ebc7455f1fb8c2ec4d1a74d52f6aa5))
+
 ## [0.5.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.4.0...temporal-bun-sdk-v0.5.0) (2026-01-09)
 
 
