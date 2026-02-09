@@ -160,7 +160,10 @@ class TorghutAlpacaClient:
     @staticmethod
     def _model_to_dict(model: Any) -> Dict[str, Any]:
         if hasattr(model, "model_dump"):
-            return model.model_dump()
+            try:
+                return cast(Dict[str, Any], model.model_dump(mode="json"))
+            except TypeError:
+                return cast(Dict[str, Any], model.model_dump())
         if hasattr(model, "__dict__"):
             return {k: v for k, v in model.__dict__.items() if not k.startswith("_")}
         if isinstance(model, dict):
