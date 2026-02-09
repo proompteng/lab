@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 from unittest import TestCase
+from typing import Any
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -84,6 +85,33 @@ class FakeAlpacaClient:
         }
 
 
+class RejectingAlpacaClient(FakeAlpacaClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.submit_calls = 0
+        self.cancel_calls: list[str] = []
+
+    def submit_order(
+        self,
+        symbol: str,
+        side: str,
+        qty: float,
+        order_type: str,
+        time_in_force: str,
+        limit_price: float | None = None,
+        stop_price: float | None = None,
+        extra_params: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        self.submit_calls += 1
+        raise Exception(
+            '{"code":40310000,"existing_order_id":"order-existing","message":"potential wash trade detected","reject_reason":"opposite side market/stop order exists"}'
+        )
+
+    def cancel_order(self, alpaca_order_id: str) -> bool:
+        self.cancel_calls.append(alpaca_order_id)
+        return True
+
+
 class CountingAlpacaClient(FakeAlpacaClient):
     def __init__(self) -> None:
         super().__init__()
@@ -122,7 +150,7 @@ class FakeLLMReviewEngine:
         self,
         decision: StrategyDecision,
         account: dict[str, str],
-        positions: list[dict[str, str]],
+        positions: list[dict[str, Any]],
         portfolio: PortfolioSnapshot | None = None,
         market: MarketSnapshot | None = None,
         recent_decisions: list[RecentDecisionSummary] | None = None,
@@ -167,7 +195,7 @@ class FakeLLMReviewEngine:
         self,
         decision: StrategyDecision,
         account: dict[str, str],
-        positions: list[dict[str, str]],
+        positions: list[dict[str, Any]],
         request: LLMReviewRequest | None = None,
         portfolio: PortfolioSnapshot | None = None,
         market: MarketSnapshot | None = None,
@@ -593,6 +621,79 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
 
+    def test_pipeline_order_submit_rejection_does_not_crash_or_retry(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = False
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                timeframe="1Min",
+            )
+
+            alpaca = RejectingAlpacaClient()
+            pipeline = TradingPipeline(
+                alpaca_client=alpaca,
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+
+            pipeline.run_once()
+            pipeline.run_once()
+
+            self.assertEqual(alpaca.submit_calls, 1)
+            self.assertEqual(alpaca.cancel_calls, ["order-existing"])
+
+            with self.session_local() as session:
+                decisions = session.execute(select(TradeDecision)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(len(decisions), 1)
+                self.assertEqual(decisions[0].status, "rejected")
+                self.assertEqual(len(executions), 0)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original["trading_universe_source"]
+            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.llm_enabled = original["llm_enabled"]
+
     def test_pipeline_llm_veto(self) -> None:
         from app import config
 
@@ -723,7 +824,7 @@ class TestTradingPipeline(TestCase):
                 session_factory=self.session_local,
                 llm_review_engine=FakeLLMReviewEngine(
                     verdict="adjust",
-                    adjusted_qty=Decimal("1.2"),
+                    adjusted_qty=Decimal("8"),
                     adjusted_order_type="limit",
                     limit_price=Decimal("101.5"),
                 ),
@@ -736,12 +837,12 @@ class TestTradingPipeline(TestCase):
                 executions = session.execute(select(Execution)).scalars().all()
                 decisions = session.execute(select(TradeDecision)).scalars().all()
                 self.assertEqual(reviews[0].verdict, "adjust")
-                self.assertEqual(reviews[0].adjusted_qty, Decimal("1.2"))
+                self.assertEqual(reviews[0].adjusted_qty, Decimal("8"))
                 self.assertEqual(len(executions), 1)
-                self.assertEqual(executions[0].submitted_qty, Decimal("1.2"))
+                self.assertEqual(executions[0].submitted_qty, Decimal("8"))
                 decision_json = decisions[0].decision_json
                 self.assertIn("llm_adjusted_decision", decision_json)
-                self.assertEqual(decision_json["llm_adjusted_decision"]["qty"], "1.2")
+                self.assertEqual(decision_json["llm_adjusted_decision"]["qty"], "8")
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
