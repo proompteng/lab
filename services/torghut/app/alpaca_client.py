@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from enum import Enum
+from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional, cast
 
 from alpaca.data.historical import StockHistoricalDataClient
@@ -159,12 +163,48 @@ class TorghutAlpacaClient:
     # ------------------- Helpers -------------------
     @staticmethod
     def _model_to_dict(model: Any) -> Dict[str, Any]:
+        def json_sanitize(value: Any) -> Any:
+            if value is None or isinstance(value, (str, int, float, bool)):
+                return value
+            if isinstance(value, uuid.UUID):
+                return str(value)
+            if isinstance(value, datetime):
+                return value.isoformat()
+            if isinstance(value, Decimal):
+                # Preserve precision in JSON columns; callers can parse as needed.
+                return str(value)
+            if isinstance(value, Enum):
+                return json_sanitize(value.value)
+            if isinstance(value, Mapping):
+                mapping = cast(Mapping[object, Any], value)
+                return {str(key): json_sanitize(val) for key, val in mapping.items()}
+            if isinstance(value, (list, tuple, set, frozenset)):
+                items = cast(Iterable[Any], value)
+                return [json_sanitize(item) for item in items]
+            return str(value)
+
         if hasattr(model, "model_dump"):
-            return model.model_dump()
+            dumped: Any
+            # Prefer JSON-mode dumps so pydantic converts UUID/datetime/Decimal/etc.
+            try:
+                dumped = model.model_dump(mode="json")
+            except TypeError:
+                dumped = model.model_dump()
+            sanitized = json_sanitize(dumped)
+            if isinstance(sanitized, dict):
+                return cast(Dict[str, Any], sanitized)
+            raise TypeError(f"Unsupported model_dump payload type: {type(sanitized)}")
         if hasattr(model, "__dict__"):
-            return {k: v for k, v in model.__dict__.items() if not k.startswith("_")}
+            raw = {k: v for k, v in model.__dict__.items() if not k.startswith("_")}
+            sanitized = json_sanitize(raw)
+            if isinstance(sanitized, dict):
+                return cast(Dict[str, Any], sanitized)
+            raise TypeError(f"Unsupported __dict__ payload type: {type(sanitized)}")
         if isinstance(model, dict):
-            return cast(Dict[str, Any], model)
+            sanitized = json_sanitize(model)
+            if isinstance(sanitized, dict):
+                return cast(Dict[str, Any], sanitized)
+            raise TypeError(f"Unsupported dict payload type: {type(sanitized)}")
         raise TypeError(f"Unsupported model type: {type(model)}")
 
     @staticmethod

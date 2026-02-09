@@ -7,6 +7,9 @@ metadata:
     app: torghut-ws
 spec:
   replicas: 1
+  strategy:
+    # Alpaca WS enforces low per-key connection limits; avoid deadlock during rolling updates.
+    type: Recreate
   selector:
     matchLabels:
       app: torghut-ws
@@ -15,7 +18,7 @@ spec:
       labels:
         app: torghut-ws
       annotations:
-        kubectl.kubernetes.io/restartedAt: 2026-01-12T07:50:33.561Z
+        kubectl.kubernetes.io/restartedAt: 2026-02-08T23:44:00Z
     spec:
       serviceAccountName: torghut-runtime
       securityContext:
@@ -25,7 +28,7 @@ spec:
         fsGroup: 65532
       containers:
         - name: torghut-ws
-          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:718b43043774b37dfe2685b8626f3b4ac618612ad67cc4a3f684cb9d126f3eac
+          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:ae933661c78f0e6aa0d1c8629172d21a386046e2712581fae19077a634e1b252
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -49,9 +52,9 @@ spec:
                   name: torghut-ws
                   key: password
             - name: TORGHUT_WS_VERSION
-              value: v0.410.2
+              value: v0.518.2-3-g9d1a7266
             - name: TORGHUT_WS_COMMIT
-              value: 91a87f7b427b9ce7e7a29083a30393ddebaae4a7
+              value: 9d1a726624f5a0b29de3cc6383dc992152936d16
           ports:
             - containerPort: 8080
               name: http

@@ -16,6 +16,8 @@ spec:
           <logger>
             <level>information</level>
           </logger>
+          <!-- Keep system tables from growing without bound on small PVCs. -->
+          <trace_log remove="1"/>
         </yandex>
       users.d/99-profile-overrides.xml: |-
         <yandex>
@@ -94,7 +96,7 @@ spec:
             - ReadWriteOnce
           resources:
             requests:
-              storage: 20Gi
+              storage: 50Gi
           storageClassName: longhorn
   defaults:
     templates:
