@@ -22,7 +22,7 @@ class CapturingIngestor(ClickHouseSignalIngestor):
 
 class TestSignalIngest(TestCase):
     def test_parse_envelope_row(self) -> None:
-        ingestor = ClickHouseSignalIngestor(schema="envelope")
+        ingestor = ClickHouseSignalIngestor(schema="envelope", fast_forward_stale_cursor=False)
         row = {
             "event_ts": datetime(2026, 1, 1, tzinfo=timezone.utc),
             "ingest_ts": datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -40,7 +40,7 @@ class TestSignalIngest(TestCase):
         self.assertEqual(signal.timeframe, "1Min")
 
     def test_parse_flat_row(self) -> None:
-        ingestor = ClickHouseSignalIngestor(schema="flat")
+        ingestor = ClickHouseSignalIngestor(schema="flat", fast_forward_stale_cursor=False)
         row = {
             "ts": "2026-01-01T00:00:01Z",
             "symbol": "MSFT",
@@ -58,7 +58,7 @@ class TestSignalIngest(TestCase):
         self.assertEqual(signal.payload.get("vwap"), 350.1)
 
     def test_build_query_flat_schema(self) -> None:
-        ingestor = ClickHouseSignalIngestor(schema="flat", table="torghut.ta_signals")
+        ingestor = ClickHouseSignalIngestor(schema="flat", table="torghut.ta_signals", fast_forward_stale_cursor=False)
         query = ingestor._build_query(datetime(2026, 1, 1, tzinfo=timezone.utc), None, None)
         self.assertIn("SELECT ts, symbol, macd, macd_signal, signal, rsi, rsi14, ema, vwap", query)
         self.assertIn("signal_json, timeframe, price, close, spread", query)
@@ -68,7 +68,11 @@ class TestSignalIngest(TestCase):
         self.assertIn("ORDER BY ts ASC, symbol ASC", query)
 
     def test_build_query_envelope_schema(self) -> None:
-        ingestor = ClickHouseSignalIngestor(schema="envelope", table="torghut.ta_signals")
+        ingestor = ClickHouseSignalIngestor(
+            schema="envelope",
+            table="torghut.ta_signals",
+            fast_forward_stale_cursor=False,
+        )
         query = ingestor._build_query(datetime(2026, 1, 1, tzinfo=timezone.utc), None, None)
         self.assertIn("SELECT event_ts, ingest_ts, symbol, payload, window_size, window_step, seq, source", query)
         self.assertIn("FROM torghut.ta_signals", query)
@@ -77,14 +81,18 @@ class TestSignalIngest(TestCase):
         self.assertNotIn("signal_json", query)
 
     def test_build_query_envelope_schema_with_cursor_seq(self) -> None:
-        ingestor = ClickHouseSignalIngestor(schema="envelope", table="torghut.ta_signals")
+        ingestor = ClickHouseSignalIngestor(
+            schema="envelope",
+            table="torghut.ta_signals",
+            fast_forward_stale_cursor=False,
+        )
         query = ingestor._build_query(datetime(2026, 1, 1, tzinfo=timezone.utc), 42, None)
         self.assertIn("event_ts = toDateTime64", query)
         self.assertIn("seq > 42", query)
         self.assertIn("ORDER BY event_ts ASC, symbol ASC, seq ASC", query)
 
     def test_build_query_flat_schema_overlaps_window(self) -> None:
-        ingestor = ClickHouseSignalIngestor(schema="flat", table="torghut.ta_signals")
+        ingestor = ClickHouseSignalIngestor(schema="flat", table="torghut.ta_signals", fast_forward_stale_cursor=False)
         query = ingestor._build_query(datetime(2026, 1, 1, 0, 0, 5, tzinfo=timezone.utc), None, None)
         self.assertIn("WHERE ts >= toDateTime64", query)
         self.assertIn("2026-01-01 00:00:03.000", query)
@@ -118,7 +126,7 @@ class TestSignalIngest(TestCase):
         self.assertIn("ORDER BY event_ts ASC, seq ASC", envelope_ingestor.last_query)
 
     def test_parse_window_size_timeframe(self) -> None:
-        ingestor = ClickHouseSignalIngestor(schema="envelope")
+        ingestor = ClickHouseSignalIngestor(schema="envelope", fast_forward_stale_cursor=False)
         row = {
             "event_ts": datetime(2026, 1, 1, tzinfo=timezone.utc),
             "symbol": "AAPL",
@@ -151,7 +159,12 @@ class TestSignalIngest(TestCase):
             def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
                 return self._rows
 
-        ingestor = CursorIngestor(schema="envelope", table="torghut.ta_signals", url="http://example")
+        ingestor = CursorIngestor(
+            schema="envelope",
+            table="torghut.ta_signals",
+            url="http://example",
+            fast_forward_stale_cursor=False,
+        )
         with session_local() as session:
             batch = ingestor.fetch_signals(session)
             cursor = session.execute(select(TradeCursor)).scalar_one_or_none()
@@ -181,7 +194,12 @@ class TestSignalIngest(TestCase):
             def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
                 return self._rows
 
-        ingestor = CursorIngestor(schema="envelope", table="torghut.ta_signals", url="http://example")
+        ingestor = CursorIngestor(
+            schema="envelope",
+            table="torghut.ta_signals",
+            url="http://example",
+            fast_forward_stale_cursor=False,
+        )
         with session_local() as session:
             batch = ingestor.fetch_signals(session)
             ingestor.commit_cursor(session, batch)
@@ -210,7 +228,12 @@ class TestSignalIngest(TestCase):
             def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
                 return self._rows
 
-        ingestor = CursorIngestor(schema="flat", table="torghut.ta_signals", url="http://example")
+        ingestor = CursorIngestor(
+            schema="flat",
+            table="torghut.ta_signals",
+            url="http://example",
+            fast_forward_stale_cursor=False,
+        )
         with session_local() as session:
             cursor = TradeCursor(source="clickhouse", cursor_at=base_ts, cursor_seq=None)
             session.add(cursor)

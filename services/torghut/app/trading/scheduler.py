@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -32,6 +33,36 @@ from .llm.schema import MarketSnapshot as LLMMarketSnapshot
 from .llm.schema import PortfolioSnapshot, RecentDecisionSummary
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_json_error_payload(error: Exception) -> Optional[dict[str, Any]]:
+    raw = str(error).strip()
+    if not raw.startswith('{'):
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(parsed, dict):
+        return cast(dict[str, Any], parsed)
+    return None
+
+
+def _format_order_submit_rejection(error: Exception) -> str:
+    payload = _extract_json_error_payload(error)
+    if payload:
+        code = payload.get('code')
+        reject_reason = payload.get('reject_reason')
+        existing_order_id = payload.get('existing_order_id')
+        parts: list[str] = ['alpaca_order_rejected']
+        if code is not None:
+            parts.append(f'code={code}')
+        if reject_reason:
+            parts.append(f'reason={reject_reason}')
+        if existing_order_id:
+            parts.append(f'existing_order_id={existing_order_id}')
+        return ' '.join(parts)
+    return f'alpaca_order_submit_failed {type(error).__name__}: {error}'
 
 
 @dataclass
@@ -121,19 +152,31 @@ class TradingPipeline:
 
             allowed_symbols = self.universe_resolver.get_symbols()
 
-            try:
-                for signal in batch.signals:
-                    decisions = self.decision_engine.evaluate(signal, strategies)
-                    if not decisions:
-                        continue
-                    for decision in decisions:
-                        self.state.metrics.decisions_total += 1
+            for signal in batch.signals:
+                try:
+                    decisions = self.decision_engine.evaluate(signal, strategies, equity=account_snapshot.equity)
+                except Exception:
+                    logger.exception("Decision evaluation failed symbol=%s timeframe=%s", signal.symbol, signal.timeframe)
+                    continue
+
+                if not decisions:
+                    continue
+
+                for decision in decisions:
+                    self.state.metrics.decisions_total += 1
+                    try:
                         self._handle_decision(session, decision, strategies, account, positions, allowed_symbols)
-            except Exception:
-                logger.exception("Trading cycle failed before cursor commit")
-                raise
-            else:
-                self.ingestor.commit_cursor(session, batch)
+                    except Exception:
+                        # Keep the loop alive and commit the cursor so we don't reprocess the same signals forever.
+                        logger.exception(
+                            "Decision handling failed strategy_id=%s symbol=%s timeframe=%s",
+                            decision.strategy_id,
+                            decision.symbol,
+                            decision.timeframe,
+                        )
+                        self.state.metrics.orders_rejected_total += 1
+
+            self.ingestor.commit_cursor(session, batch)
 
     def reconcile(self) -> int:
         with self.session_factory() as session:
@@ -148,76 +191,121 @@ class TradingPipeline:
         decision: StrategyDecision,
         strategies: list[Strategy],
         account: dict[str, str],
-        positions: list[dict[str, str]],
+        positions: list[dict[str, Any]],
         allowed_symbols: set[str],
     ) -> None:
-        strategy = next((s for s in strategies if str(s.id) == decision.strategy_id), None)
-        if strategy is None:
-            return
+        decision_row: Optional[TradeDecision] = None
+        try:
+            strategy = next((s for s in strategies if str(s.id) == decision.strategy_id), None)
+            if strategy is None:
+                return
 
-        strategy_symbols = _coerce_strategy_symbols(strategy.universe_symbols)
-        if strategy_symbols:
-            if allowed_symbols:
-                symbol_allowlist = strategy_symbols & allowed_symbols
+            strategy_symbols = _coerce_strategy_symbols(strategy.universe_symbols)
+            if strategy_symbols:
+                if allowed_symbols:
+                    symbol_allowlist = strategy_symbols & allowed_symbols
+                else:
+                    symbol_allowlist = strategy_symbols
             else:
-                symbol_allowlist = strategy_symbols
-        else:
-            symbol_allowlist = allowed_symbols
+                symbol_allowlist = allowed_symbols
 
-        decision_row = self.executor.ensure_decision(session, decision, strategy, self.account_label)
-        if self.executor.execution_exists(session, decision_row):
-            return
+            decision_row = self.executor.ensure_decision(session, decision, strategy, self.account_label)
+            if decision_row.status != "planned":
+                return
+            if self.executor.execution_exists(session, decision_row):
+                return
 
-        decision, snapshot = self._ensure_decision_price(decision, signal_price=decision.params.get("price"))
-        if snapshot is not None:
-            params_update = decision.model_dump(mode="json").get("params", {})
-            if isinstance(params_update, Mapping):
-                self.executor.update_decision_params(session, decision_row, cast(Mapping[str, Any], params_update))
+            decision, snapshot = self._ensure_decision_price(decision, signal_price=decision.params.get("price"))
+            if snapshot is not None:
+                params_update = decision.model_dump(mode="json").get("params", {})
+                if isinstance(params_update, Mapping):
+                    self.executor.update_decision_params(session, decision_row, cast(Mapping[str, Any], params_update))
 
-        decision, llm_reject_reason = self._apply_llm_review(
-            session,
-            decision,
-            decision_row,
-            account,
-            positions,
-        )
-        if llm_reject_reason:
-            self.state.metrics.orders_rejected_total += 1
-            self.executor.mark_rejected(session, decision_row, llm_reject_reason)
-            return
-
-        verdict = self.risk_engine.evaluate(session, decision, strategy, account, positions, symbol_allowlist)
-        if not verdict.approved:
-            self.state.metrics.orders_rejected_total += 1
-            for reason in verdict.reasons:
-                logger.info(
-                    "Decision rejected strategy_id=%s symbol=%s reason=%s",
-                    decision.strategy_id,
-                    decision.symbol,
-                    reason,
-                )
-            self.executor.mark_rejected(session, decision_row, ";".join(verdict.reasons))
-            return
-
-        if not settings.trading_enabled:
-            return
-
-        execution = self.executor.submit_order(
-            session,
-            self.alpaca_client,
-            decision,
-            decision_row,
-            self.account_label,
-        )
-        if execution:
-            self.state.metrics.orders_submitted_total += 1
-            logger.info(
-                "Order submitted strategy_id=%s decision_id=%s symbol=%s alpaca_order_id=%s",
-                decision.strategy_id,
-                decision_row.id,
-                decision.symbol,
-                execution.alpaca_order_id,
+            decision, llm_reject_reason = self._apply_llm_review(
+                session,
+                decision,
+                decision_row,
+                account,
+                positions,
             )
+            if llm_reject_reason:
+                self.state.metrics.orders_rejected_total += 1
+                self.executor.mark_rejected(session, decision_row, llm_reject_reason)
+                return
+
+            verdict = self.risk_engine.evaluate(session, decision, strategy, account, positions, symbol_allowlist)
+            if not verdict.approved:
+                self.state.metrics.orders_rejected_total += 1
+                for reason in verdict.reasons:
+                    logger.info(
+                        "Decision rejected strategy_id=%s symbol=%s reason=%s",
+                        decision.strategy_id,
+                        decision.symbol,
+                        reason,
+                    )
+                self.executor.mark_rejected(session, decision_row, ";".join(verdict.reasons))
+                return
+
+            if not settings.trading_enabled:
+                return
+
+            try:
+                execution = self.executor.submit_order(
+                    session,
+                    self.alpaca_client,
+                    decision,
+                    decision_row,
+                    self.account_label,
+                )
+            except Exception as exc:
+                self.state.metrics.orders_rejected_total += 1
+                payload = _extract_json_error_payload(exc) or {}
+                existing_order_id = payload.get("existing_order_id")
+                if existing_order_id:
+                    try:
+                        self.alpaca_client.cancel_order(str(existing_order_id))
+                        logger.info(
+                            "Canceled conflicting Alpaca order decision_id=%s existing_order_id=%s",
+                            decision_row.id,
+                            existing_order_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to cancel conflicting Alpaca order decision_id=%s existing_order_id=%s",
+                            decision_row.id,
+                            existing_order_id,
+                        )
+                reason = _format_order_submit_rejection(exc)
+                self.executor.mark_rejected(session, decision_row, reason)
+                logger.warning(
+                    "Order submission failed strategy_id=%s decision_id=%s symbol=%s error=%s",
+                    decision.strategy_id,
+                    decision_row.id,
+                    decision.symbol,
+                    exc,
+                )
+                return
+
+            if execution:
+                self.state.metrics.orders_submitted_total += 1
+                logger.info(
+                    "Order submitted strategy_id=%s decision_id=%s symbol=%s alpaca_order_id=%s",
+                    decision.strategy_id,
+                    decision_row.id,
+                    decision.symbol,
+                    execution.alpaca_order_id,
+                )
+        except Exception as exc:
+            logger.exception(
+                "Decision handling failed strategy_id=%s symbol=%s error=%s",
+                decision.strategy_id,
+                decision.symbol,
+                exc,
+            )
+            if decision_row is not None and decision_row.status == "planned":
+                self.state.metrics.orders_rejected_total += 1
+                self.executor.mark_rejected(session, decision_row, f"decision_handler_error {type(exc).__name__}")
+            return
 
     @staticmethod
     def _load_strategies(session: Session) -> list[Strategy]:
@@ -230,7 +318,7 @@ class TradingPipeline:
         decision: StrategyDecision,
         decision_row: TradeDecision,
         account: dict[str, str],
-        positions: list[dict[str, str]],
+        positions: list[dict[str, Any]],
     ) -> tuple[StrategyDecision, Optional[str]]:
         if not settings.llm_enabled:
             return decision, None
@@ -358,7 +446,7 @@ class TradingPipeline:
         decision: StrategyDecision,
         decision_row: TradeDecision,
         account: dict[str, str],
-        positions: list[dict[str, str]],
+        positions: list[dict[str, Any]],
         reason: str,
     ) -> tuple[StrategyDecision, Optional[str]]:
         fallback = self._resolve_llm_fallback()
@@ -551,7 +639,7 @@ def _price_snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:
     }
 
 
-def _build_portfolio_snapshot(account: dict[str, str], positions: list[dict[str, str]]) -> PortfolioSnapshot:
+def _build_portfolio_snapshot(account: dict[str, str], positions: list[dict[str, Any]]) -> PortfolioSnapshot:
     equity = _optional_decimal(account.get("equity"))
     cash = _optional_decimal(account.get("cash"))
     buying_power = _optional_decimal(account.get("buying_power"))
@@ -709,6 +797,7 @@ class TradingScheduler:
                     raise RuntimeError("trading_pipeline_not_initialized")
                 await asyncio.to_thread(self._pipeline.run_once)
                 self.state.last_run_at = datetime.now(timezone.utc)
+                self.state.last_error = None
             except Exception as exc:  # pragma: no cover - loop guard
                 logger.exception("Trading loop failed: %s", exc)
                 self.state.last_error = str(exc)
@@ -722,6 +811,7 @@ class TradingScheduler:
                     if updates:
                         logger.info("Reconciled %s executions", updates)
                     self.state.last_reconcile_at = datetime.now(timezone.utc)
+                    self.state.last_error = None
                 except Exception as exc:  # pragma: no cover - loop guard
                     logger.exception("Reconcile loop failed: %s", exc)
                     self.state.last_error = str(exc)

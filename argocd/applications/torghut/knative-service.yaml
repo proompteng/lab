@@ -18,14 +18,14 @@ spec:
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
-        client.knative.dev/updateTimestamp: 2026-02-08T23:40:43Z
+        client.knative.dev/updateTimestamp: 2026-02-09T02:53:30.000Z
     spec:
       containerConcurrency: 0
       timeoutSeconds: 60
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:4ffb607ba991fabd73d389891ac29499eae9bad67b2bc08de612679a4f51d2ed
           imagePullPolicy: IfNotPresent
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:7cd901027afbddef45c7ba96f4255353f3be8f9cf1c6306e241672abe059da12
           ports:
             - name: http1
               containerPort: 8181
@@ -58,7 +58,7 @@ spec:
             - name: CLICKHOUSE_HOST
               value: torghut-clickhouse.torghut.svc.cluster.local
             - name: CLICKHOUSE_PORT
-              value: "8123"
+              value: '8123'
             - name: CLICKHOUSE_DATABASE
               value: torghut
             - name: CLICKHOUSE_USERNAME
@@ -69,31 +69,31 @@ spec:
                   name: torghut-clickhouse-auth
                   key: torghut_password
             - name: CLICKHOUSE_SECURE
-              value: "false"
+              value: 'false'
             - name: CLICKHOUSE_TIMEOUT_SECONDS
-              value: "10"
+              value: '10'
             - name: TRADING_ENABLED
-              value: "true"
+              value: 'true'
             - name: TRADING_MODE
               value: paper
             - name: TRADING_LIVE_ENABLED
-              value: "false"
+              value: 'false'
             - name: TRADING_SIGNAL_SOURCE
               value: clickhouse
             - name: TRADING_SIGNAL_TABLE
               value: torghut.ta_signals
             - name: TRADING_SIGNAL_LOOKBACK_MINUTES
-              value: "15"
+              value: '15'
             - name: TRADING_POLL_MS
-              value: "5000"
+              value: '5000'
             - name: TRADING_RECONCILE_MS
-              value: "15000"
+              value: '15000'
             - name: TRADING_STRATEGY_CONFIG_PATH
               value: /etc/torghut/strategies.yaml
             - name: TRADING_STRATEGY_CONFIG_MODE
               value: sync
             - name: TRADING_STRATEGY_RELOAD_SECONDS
-              value: "10"
+              value: '10'
             - name: TRADING_UNIVERSE_SOURCE
               value: static
             - name: TRADING_STATIC_SYMBOLS
@@ -105,9 +105,9 @@ spec:
             - name: LLM_PROVIDER
               value: jangar
             - name: LLM_ENABLED
-              value: "true"
+              value: 'true'
             - name: LLM_SHADOW_MODE
-              value: "true"
+              value: 'true'
             - name: LLM_FAIL_MODE
               value: pass_through
             - name: TA_CLICKHOUSE_URL
@@ -120,11 +120,11 @@ spec:
                   name: torghut-clickhouse-auth
                   key: torghut_password
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
-              value: "10"
+              value: '10'
             - name: TORGHUT_VERSION
-              value: v0.518.2-2-g6ec5d178
+              value: v0.519.0-6-g2de76d18
             - name: TORGHUT_COMMIT
-              value: 6ec5d178009eff05e7a344a1fc98768e1898b9a1
+              value: 2de76d18170e650a6ab72da459b478bb35bd75b1
           livenessProbe:
             httpGet:
               path: /healthz

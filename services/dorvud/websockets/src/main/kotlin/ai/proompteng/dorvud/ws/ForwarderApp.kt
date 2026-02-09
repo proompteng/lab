@@ -113,7 +113,11 @@ class ForwarderApp(
           SymbolsTracker(
             normalizeSymbols(config.staticSymbols),
             config.jangarSymbolsUrl?.let { url ->
-              suspend { normalizeSymbols(fetchDesiredSymbols(url)) }
+              suspend {
+                runCatching { fetchDesiredSymbols(url) }
+                  .getOrElse { err -> throw RuntimeException("jangar desired symbols fetch failed url=$url", err) }
+                  .let(::normalizeSymbols)
+              }
             },
           )
 

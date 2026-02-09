@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import re
-import uuid
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from dataclasses import asdict, is_dataclass
 from enum import Enum
-from collections.abc import Mapping
-from typing import Any, Dict, Iterable, List, Optional, cast
+from typing import Any, Dict, List, Optional, cast
+from uuid import UUID
 
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
@@ -163,48 +164,40 @@ class TorghutAlpacaClient:
     # ------------------- Helpers -------------------
     @staticmethod
     def _model_to_dict(model: Any) -> Dict[str, Any]:
-        def json_sanitize(value: Any) -> Any:
+        def to_jsonable(value: Any) -> Any:
             if value is None or isinstance(value, (str, int, float, bool)):
                 return value
-            if isinstance(value, uuid.UUID):
+            if isinstance(value, UUID):
                 return str(value)
             if isinstance(value, datetime):
                 return value.isoformat()
             if isinstance(value, Decimal):
-                # Preserve precision in JSON columns; callers can parse as needed.
                 return str(value)
             if isinstance(value, Enum):
-                return json_sanitize(value.value)
+                return to_jsonable(value.value)
+            if is_dataclass(value) and not isinstance(value, type):
+                return to_jsonable(asdict(value))
             if isinstance(value, Mapping):
                 mapping = cast(Mapping[object, Any], value)
-                return {str(key): json_sanitize(val) for key, val in mapping.items()}
+                return {str(key): to_jsonable(val) for key, val in mapping.items()}
             if isinstance(value, (list, tuple, set, frozenset)):
                 items = cast(Iterable[Any], value)
-                return [json_sanitize(item) for item in items]
+                return [to_jsonable(item) for item in items]
             return str(value)
 
         if hasattr(model, "model_dump"):
-            dumped: Any
-            # Prefer JSON-mode dumps so pydantic converts UUID/datetime/Decimal/etc.
             try:
-                dumped = model.model_dump(mode="json")
+                raw = model.model_dump(mode="json")
             except TypeError:
-                dumped = model.model_dump()
-            sanitized = json_sanitize(dumped)
-            if isinstance(sanitized, dict):
-                return cast(Dict[str, Any], sanitized)
-            raise TypeError(f"Unsupported model_dump payload type: {type(sanitized)}")
+                raw = model.model_dump()
+            if isinstance(raw, Mapping):
+                return cast(Dict[str, Any], to_jsonable(raw))
+            raise TypeError(f"Unsupported model_dump payload type: {type(raw)}")
         if hasattr(model, "__dict__"):
             raw = {k: v for k, v in model.__dict__.items() if not k.startswith("_")}
-            sanitized = json_sanitize(raw)
-            if isinstance(sanitized, dict):
-                return cast(Dict[str, Any], sanitized)
-            raise TypeError(f"Unsupported __dict__ payload type: {type(sanitized)}")
-        if isinstance(model, dict):
-            sanitized = json_sanitize(model)
-            if isinstance(sanitized, dict):
-                return cast(Dict[str, Any], sanitized)
-            raise TypeError(f"Unsupported dict payload type: {type(sanitized)}")
+            return cast(Dict[str, Any], to_jsonable(raw))
+        if isinstance(model, Mapping):
+            return cast(Dict[str, Any], to_jsonable(model))
         raise TypeError(f"Unsupported model type: {type(model)}")
 
     @staticmethod

@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import ValidationError
@@ -72,7 +72,7 @@ class LLMReviewEngine:
         self,
         decision: StrategyDecision,
         account: dict[str, str],
-        positions: list[dict[str, str]],
+        positions: list[dict[str, Any]],
         request: Optional[LLMReviewRequest] = None,
         portfolio: Optional[PortfolioSnapshot] = None,
         market: Optional[MarketSnapshot] = None,
@@ -111,7 +111,7 @@ class LLMReviewEngine:
 
         content = raw.content or ""
         try:
-            parsed = json.loads(content)
+            parsed = _parse_json_object(content)
         except json.JSONDecodeError as exc:
             raise ValueError("llm_response_not_json") from exc
 
@@ -138,7 +138,7 @@ class LLMReviewEngine:
         self,
         decision: StrategyDecision,
         account: dict[str, str],
-        positions: list[dict[str, str]],
+        positions: list[dict[str, Any]],
         portfolio: PortfolioSnapshot,
         market: Optional[MarketSnapshot],
         recent_decisions: list[RecentDecisionSummary],
@@ -182,6 +182,51 @@ def _coerce_int(value: Any) -> Optional[int]:
 
 
 __all__ = ["LLMReviewEngine", "LLMReviewOutcome"]
+
+
+def _parse_json_object(content: str) -> dict[str, Any]:
+    """Parse the first JSON object from an LLM response.
+
+    Jangar streams may include gateway-injected preambles (e.g. rate limit notes)
+    before the JSON payload. We accept that and decode the first `{...}` block.
+    """
+
+    content = content.strip()
+    if not content:
+        raise json.JSONDecodeError("empty", content, 0)
+
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        decoder = json.JSONDecoder()
+        start = content.find("{")
+        if start < 0:
+            raise
+        parsed, _ = decoder.raw_decode(content[start:])
+
+    if not isinstance(parsed, dict):
+        raise json.JSONDecodeError("expected_object", content, 0)
+
+    return _normalize_llm_response_payload(cast(dict[str, Any], parsed))
+
+
+def _normalize_llm_response_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize common model mistakes into the expected response shape."""
+
+    if "verdict" not in payload and "decision" in payload:
+        payload = dict(payload)
+        payload["verdict"] = payload.pop("decision")
+
+    # Provide defaults for optional-ish fields; schema validation will still enforce
+    # correct verdict and rationale.
+    if "confidence" not in payload:
+        payload = dict(payload)
+        payload["confidence"] = 0.5
+    if "risk_flags" not in payload:
+        payload = dict(payload)
+        payload["risk_flags"] = []
+
+    return payload
 
 
 def load_prompt_template(version: str) -> str:

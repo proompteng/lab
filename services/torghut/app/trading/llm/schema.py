@@ -9,7 +9,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-def _positions_default() -> list[dict[str, str]]:
+def _positions_default() -> list[dict[str, Any]]:
     return []
 
 
@@ -100,7 +100,7 @@ class LLMReviewRequest(BaseModel):
     market: Optional[MarketSnapshot] = None
     recent_decisions: list[RecentDecisionSummary] = Field(default_factory=_recent_decisions_default)
     account: dict[str, str] = Field(default_factory=_account_default)
-    positions: list[dict[str, str]] = Field(default_factory=_positions_default)
+    positions: list[dict[str, Any]] = Field(default_factory=_positions_default)
     policy: LLMPolicyContext
     trading_mode: Literal["paper", "live"]
     prompt_version: str
@@ -109,7 +109,9 @@ class LLMReviewRequest(BaseModel):
 class LLMReviewResponse(BaseModel):
     """Structured response payload returned by the LLM."""
 
-    model_config = ConfigDict(extra="forbid")
+    # Some gateways prepend metadata or include extra keys even when prompted not to.
+    # Ignore unknown fields but keep strict validation on required schema fields.
+    model_config = ConfigDict(extra="ignore")
 
     verdict: Literal["approve", "veto", "adjust"]
     confidence: float = Field(ge=0.0, le=1.0)

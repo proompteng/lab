@@ -40,7 +40,7 @@ class LLMClient:
         max_tokens: int,
     ) -> LLMClientResponse:
         if self._provider == "jangar":
-            return self._request_review_via_jangar(messages)
+            return self._request_review_via_jangar(messages, temperature=temperature, max_tokens=max_tokens)
 
         if self._client is None:
             raise RuntimeError("LLM provider configured as openai but OpenAI client was not initialized")
@@ -58,7 +58,12 @@ class LLMClient:
 
         return LLMClientResponse(content=content, usage=usage)
 
-    def _request_review_via_jangar(self, messages: list[ChatCompletionMessageParam]) -> LLMClientResponse:
+    def _request_review_via_jangar(
+        self,
+        messages: list[ChatCompletionMessageParam],
+        temperature: float,
+        max_tokens: int,
+    ) -> LLMClientResponse:
         base_url = settings.jangar_base_url
         if not base_url:
             raise RuntimeError("Jangar LLM provider selected but JANGAR_BASE_URL is not set")
@@ -68,6 +73,10 @@ class LLMClient:
             "model": self._model,
             "messages": messages,
             "stream": True,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            # Ask the gateway to enforce JSON-only output (mirrors the OpenAI client path).
+            "response_format": {"type": "json_object"},
             # Torghut needs a JSON-only response; disabling plan deltas avoids markdown
             # injection into the stream that would break JSON parsing.
             "stream_options": {"include_usage": True, "include_plan": False},

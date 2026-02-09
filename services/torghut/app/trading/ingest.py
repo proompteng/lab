@@ -72,6 +72,7 @@ class ClickHouseSignalIngestor:
         batch_size: Optional[int] = None,
         initial_lookback_minutes: Optional[int] = None,
         schema: Optional[str] = None,
+        fast_forward_stale_cursor: bool = True,
     ) -> None:
         self.url = (url or settings.trading_clickhouse_url or "").rstrip("/")
         self.username = username or settings.trading_clickhouse_username
@@ -80,6 +81,7 @@ class ClickHouseSignalIngestor:
         self.batch_size = batch_size or settings.trading_signal_batch_size
         self.initial_lookback_minutes = initial_lookback_minutes or settings.trading_signal_lookback_minutes
         self.schema = schema or settings.trading_signal_schema
+        self.fast_forward_stale_cursor = fast_forward_stale_cursor
         self._columns: Optional[set[str]] = None
         self._time_column: Optional[str] = None
 
@@ -89,6 +91,18 @@ class ClickHouseSignalIngestor:
             return SignalBatch(signals=[], cursor_at=None, cursor_seq=None, cursor_symbol=None)
 
         cursor_at, cursor_seq, cursor_symbol = self._get_cursor(session)
+        if self.fast_forward_stale_cursor:
+            min_cursor = datetime.now(timezone.utc) - timedelta(minutes=self.initial_lookback_minutes)
+            if cursor_at < min_cursor:
+                logger.warning(
+                    "Trade cursor is stale; fast-forwarding cursor_at=%s -> %s",
+                    cursor_at.isoformat(),
+                    min_cursor.isoformat(),
+                )
+                cursor_at = min_cursor
+                cursor_seq = None
+                cursor_symbol = None
+                self._set_cursor(session, cursor_at, cursor_seq, cursor_symbol)
         time_column = self._resolve_time_column()
         supports_seq = self._supports_seq_for_time_column(time_column)
         overlap_cutoff = cursor_at if time_column == "ts" and not supports_seq else None
