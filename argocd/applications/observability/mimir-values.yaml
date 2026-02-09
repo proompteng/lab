@@ -41,7 +41,10 @@ mimir:
       local:
         directory: /etc/mimir/rules
     ruler:
-      rule_path: /etc/mimir/rules
+      # Must not overlap ruler_storage.local.directory.
+      # /etc/mimir/rules is used as the read-only rule store (local backend),
+      # while /data/ruler is the writable working directory used by the ruler.
+      rule_path: /data/ruler
     usage_stats:
       enabled: false
       installation_mode: helm
@@ -84,7 +87,8 @@ query_scheduler:
 
 ruler:
   replicas: 1
-  extraInitContainers:
+  # mimir-distributed chart uses `initContainers` (not `extraInitContainers`).
+  initContainers:
     - name: copy-graf-rules
       image: docker.io/library/busybox:1.36
       imagePullPolicy: IfNotPresent
@@ -92,9 +96,10 @@ ruler:
         - /bin/sh
         - -c
         - |
-          set -euo pipefail
-          find /etc/mimir/rules -mindepth 1 -delete
-          cp -a /etc/mimir/rules-src/. /etc/mimir/rules/
+          set -eu
+          rm -rf /etc/mimir/rules/*
+          mkdir -p /etc/mimir/rules/anonymous
+          cp -a /etc/mimir/rules-src/. /etc/mimir/rules/anonymous/
   extraVolumes:
     - name: graf-mimir-rules
       configMap:
