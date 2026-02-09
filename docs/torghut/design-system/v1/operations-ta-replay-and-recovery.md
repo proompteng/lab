@@ -92,16 +92,24 @@ See also `docs/torghut/ops-2026-01-01-ta-recovery.md` and `v1/operations-clickho
 - TA job bug fixed and you need recomputation.
 - ClickHouse data corrupted or partially missing.
 
-### Approach (v1)
-Use the canonical workflow in `argocd/applications/torghut/README.md` (“TA replay workflow (canonical)”).
+### Canonical runbook (v1)
+The single source of truth for the TA replay workflow is:
+- `argocd/applications/torghut/README.md` → **“TA replay workflow (canonical)”**
 
-Key constraints (do not skip):
-- **Replay window is bounded by Kafka ingest retention** (hard limit) and the effective **ClickHouse TTL** on TA tables
-  (storage limit). See:
-  - `v1/component-kafka-topics-and-retention.md`
-  - `v1/component-clickhouse-capacity-ttl-and-disk-guardrails.md`
-- **Consumer-group isolation is mandatory:** every replay must use a unique `TA_GROUP_ID`, and trading safety gates must be
-  respected before resuming.
+This is intentionally documented next to the concrete resource manifests so it is:
+- repeatable by oncall,
+- safe by default (non-destructive),
+- and straightforward for an AgentRun to automate via GitOps PRs.
+
+### Constraints and safety reminders
+- **Hard replay limit (Kafka retention):** TA can only replay what still exists in Kafka inputs (expected 7–30 days; verify).
+  See `v1/component-kafka-topics-and-retention.md`.
+- **Data persistence limit (ClickHouse TTL):** replayed outputs older than TTL may be deleted during merges.
+  See `v1/component-clickhouse-capacity-ttl-and-disk-guardrails.md`.
+- **Trading safety gate:** if there is any uncertainty about signal correctness, pause trading via
+  `argocd/applications/torghut/knative-service.yaml` (`TRADING_ENABLED=false`) before running replay.
+- **Group-id isolation (required):** replays/backfills must use a *unique* `TA_GROUP_ID` and must record the prior
+  steady-state `TA_GROUP_ID` for rollback.
 
 ## Automation (AgentRuns)
 AgentRuns should treat these procedures as two classes of automation:
