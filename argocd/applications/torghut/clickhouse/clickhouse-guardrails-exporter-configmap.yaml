@@ -21,6 +21,8 @@ data:
     CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "")
     DATABASE = os.environ.get("CLICKHOUSE_DATABASE", "torghut")
     CLICKHOUSE_CLUSTER = os.environ.get("CLICKHOUSE_CLUSTER", "default")
+    CLICKHOUSE_NAMESPACE = os.environ.get("CLICKHOUSE_NAMESPACE", "torghut")
+    CLICKHOUSE_PORT = int(os.environ.get("CLICKHOUSE_PORT", "8123"))
     EXPORTER_PORT = int(os.environ.get("EXPORTER_PORT", "9108"))
     SCRAPE_INTERVAL_SECONDS = int(os.environ.get("SCRAPE_INTERVAL_SECONDS", "30"))
 
@@ -29,9 +31,9 @@ data:
     TABLES = [t.strip() for t in TABLES if t.strip()]
 
 
-    def clickhouse_query_rows(query: str) -> list[dict]:
+    def clickhouse_query_rows(base_url: str, query: str) -> list[dict]:
         params = urllib.parse.urlencode({"query": query})
-        url = f"{CLICKHOUSE_URL.rstrip('/')}/?{params}"
+        url = f"{base_url.rstrip('/')}/?{params}"
         headers = {}
         if CLICKHOUSE_USER:
             headers["X-ClickHouse-User"] = CLICKHOUSE_USER
@@ -92,66 +94,85 @@ data:
     def scrape_once():
         now = time.time()
         try:
+            discovery_query = (
+                "SELECT host_name AS replica "
+                "FROM system.clusters "
+                f"WHERE cluster = {clickhouse_str(CLICKHOUSE_CLUSTER)} "
+                "GROUP BY replica "
+                "ORDER BY replica "
+                "FORMAT JSONEachRow"
+            )
+            replica_rows = clickhouse_query_rows(CLICKHOUSE_URL, discovery_query)
+            replica_names = [str(row.get("replica") or "") for row in replica_rows]
+            replica_names = [r for r in replica_names if r]
+            if not replica_names:
+                raise RuntimeError("no ClickHouse replicas discovered via system.clusters")
+
             disk_query = (
-                "SELECT hostName() AS replica, max(free_space) AS free_space, max(total_space) AS total_space "
-                f"FROM clusterAllReplicas({clickhouse_str(CLICKHOUSE_CLUSTER)}, system.disks) "
+                "SELECT max(free_space) AS free_space, max(total_space) AS total_space "
+                "FROM system.disks "
                 f"WHERE name = {clickhouse_str(DEFAULT_DISK_NAME)} "
-                "GROUP BY replica "
                 "FORMAT JSONEachRow"
             )
-            disk_rows = clickhouse_query_rows(disk_query)
 
-            readonly_query = (
-                "SELECT hostName() AS replica, max(is_readonly) AS any_readonly "
-                f"FROM clusterAllReplicas({clickhouse_str(CLICKHOUSE_CLUSTER)}, system.replicas) "
-                f"WHERE database = {clickhouse_str(DATABASE)} "
-                f"AND table IN ({', '.join(clickhouse_str(t) for t in TABLES)}) "
-                "GROUP BY replica "
-                "FORMAT JSONEachRow"
-            )
-            readonly_rows = clickhouse_query_rows(readonly_query)
+            readonly_query = ""
+            if TABLES:
+                readonly_query = (
+                    "SELECT max(is_readonly) AS any_readonly "
+                    "FROM system.replicas "
+                    f"WHERE database = {clickhouse_str(DATABASE)} "
+                    f"AND table IN ({', '.join(clickhouse_str(t) for t in TABLES)}) "
+                    "FORMAT JSONEachRow"
+                )
 
-            disk_by_replica: dict[str, dict] = {}
-            for row in disk_rows:
-                replica = str(row.get("replica") or "")
-                if not replica:
-                    continue
-                disk_by_replica[replica] = {
-                    "disk_free_bytes": float_or_nan(row.get("free_space")),
-                    "disk_total_bytes": float_or_nan(row.get("total_space")),
-                }
+            replicas: dict[str, dict] = {}
+            scrape_errors: list[str] = []
 
-            readonly_by_replica: dict[str, float] = {}
-            for row in readonly_rows:
-                replica = str(row.get("replica") or "")
-                if not replica:
-                    continue
-                readonly_by_replica[replica] = float_or_nan(row.get("any_readonly"))
+            for replica in replica_names:
+                replica_url = f"http://{replica}.{CLICKHOUSE_NAMESPACE}.svc.cluster.local:{CLICKHOUSE_PORT}"
+                try:
+                    disk_rows = clickhouse_query_rows(replica_url, disk_query)
+                    if not disk_rows:
+                        raise RuntimeError("disk query returned no rows")
+                    disk_row = disk_rows[0]
 
-            replicas = {}
-            for replica in sorted(set(disk_by_replica.keys()) | set(readonly_by_replica.keys())):
-                free_space = disk_by_replica.get(replica, {}).get("disk_free_bytes", float("nan"))
-                total_space = disk_by_replica.get(replica, {}).get("disk_total_bytes", float("nan"))
-                ratio = float("nan")
-                if total_space and total_space > 0 and free_space == free_space:
-                    ratio = free_space / total_space
+                    readonly_row: dict = {}
+                    if readonly_query:
+                        readonly_rows = clickhouse_query_rows(replica_url, readonly_query)
+                        if not readonly_rows:
+                            raise RuntimeError("readonly query returned no rows")
+                        readonly_row = readonly_rows[0]
 
-                replicas[replica] = {
-                    "clickhouse_up": 1.0,
-                    "disk_free_bytes": free_space,
-                    "disk_total_bytes": total_space,
-                    "disk_free_ratio": ratio,
-                    "any_replica_readonly": readonly_by_replica.get(replica, float("nan")),
-                }
+                    free_space = float_or_nan(disk_row.get("free_space"))
+                    total_space = float_or_nan(disk_row.get("total_space"))
+                    ratio = float("nan")
+                    if total_space and total_space > 0 and free_space == free_space:
+                        ratio = free_space / total_space
 
-            if not replicas:
-                raise RuntimeError("no ClickHouse replicas returned for guardrails scrape")
+                    replicas[replica] = {
+                        "clickhouse_up": 1.0,
+                        "disk_free_bytes": free_space,
+                        "disk_total_bytes": total_space,
+                        "disk_free_ratio": ratio,
+                        "any_replica_readonly": float_or_nan(readonly_row.get("any_readonly", 0.0)),
+                    }
+                except Exception as e:
+                    scrape_errors.append(f"{replica}: {e}")
+                    replicas[replica] = {
+                        "clickhouse_up": 0.0,
+                        "disk_free_bytes": float("nan"),
+                        "disk_total_bytes": float("nan"),
+                        "disk_free_ratio": float("nan"),
+                        "any_replica_readonly": float("nan"),
+                    }
+
+            last_scrape_success = 1.0 if scrape_errors == [] else 0.0
 
             with state.lock:
                 state.replicas = replicas
-                state.last_scrape_success = 1.0
+                state.last_scrape_success = last_scrape_success
                 state.last_scrape_ts_seconds = now
-                state.last_error = ""
+                state.last_error = "; ".join(scrape_errors)
         except Exception as e:
             with state.lock:
                 state.replicas = {}
