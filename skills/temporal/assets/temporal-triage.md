@@ -15,6 +15,9 @@
 - Last event ID: 31
 - Worker image tag: 91fcf5a0
 
+Common cause: workflow code changed in a way that alters the command stream for an in-flight execution (e.g. reordering
+`activities.schedule(...)` without patch/getVersion gating).
+
 ## Diagnostics
 
 - Describe output: `temporal workflow describe --workflow-id bumba-repo-0e6476cd-6df7-4ee3-8184-95029cd50c88 --run-id 019b7788-e535-752c-8a4a-2ee44de7065e`
@@ -23,6 +26,8 @@
 
 ## Mitigation
 
-- Reset to event ID 31 with `FirstWorkflowTask`.
+- Identify a safe reset event (often the last `WorkflowTaskCompleted` before the divergent scheduled command), then reset.
+- See: `docs/temporal-nondeterminism.md`
+
 - Re-run `enrichRepository` using the repo script.
 - Confirm child `enrichFile` workflows complete.
