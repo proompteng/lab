@@ -2,6 +2,7 @@
 # This Dockerfile is intended to be built from a Turbo-pruned context:
 # `bunx turbo prune --scope=@proompteng/bumba --docker --out-dir <dir>`
 ARG BUN_VERSION=1.3.5
+ARG LAB_GIT_SHA=dev
 
 FROM oven/bun:${BUN_VERSION} AS deps
 WORKDIR /app
@@ -31,6 +32,8 @@ RUN --mount=type=cache,target=/root/.cache/bun \
 FROM oven/bun:${BUN_VERSION} AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+ARG LAB_GIT_SHA=dev
+ENV TEMPORAL_WORKER_BUILD_ID=bumba@${LAB_GIT_SHA}
 RUN --mount=type=cache,target=/var/cache/apt \
   --mount=type=cache,target=/var/lib/apt/lists \
   set -eux; \

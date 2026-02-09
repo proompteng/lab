@@ -45,8 +45,6 @@ spec:
               value: bumba
             - name: TEMPORAL_WORKER_DEPLOYMENT_NAME
               value: bumba-deployment
-            - name: TEMPORAL_WORKER_BUILD_ID
-              value: bumba@139e01e9
             - name: TEMPORAL_WORKFLOW_GUARDS
               value: warn
             - name: TEMPORAL_WORKFLOW_CONCURRENCY
