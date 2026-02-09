@@ -11,11 +11,23 @@ metadata:
 spec:
   configuration:
     files:
+      config.d/99-prometheus.xml: |-
+        <yandex>
+          <prometheus>
+            <endpoint>/metrics</endpoint>
+            <port>9363</port>
+            <metrics>true</metrics>
+            <events>true</events>
+            <asynchronous_metrics>true</asynchronous_metrics>
+          </prometheus>
+        </yandex>
       config.d/99-logging-overrides.xml: |-
         <yandex>
           <logger>
             <level>information</level>
           </logger>
+          <!-- Keep system tables from growing without bound on small PVCs. -->
+          <trace_log remove="1"/>
         </yandex>
       users.d/99-profile-overrides.xml: |-
         <yandex>
@@ -94,7 +106,7 @@ spec:
             - ReadWriteOnce
           resources:
             requests:
-              storage: 20Gi
+              storage: 50Gi
           storageClassName: longhorn
   defaults:
     templates:

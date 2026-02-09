@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torghut-clickhouse-guardrails-exporter
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-clickhouse-guardrails-exporter
+    app.kubernetes.io/part-of: torghut
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: torghut-clickhouse-guardrails-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: torghut-clickhouse-guardrails-exporter
+        app.kubernetes.io/part-of: torghut
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      containers:
+        - name: exporter
+          image: python:3.12-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - /app/exporter.py
+          env:
+            - name: CLICKHOUSE_URL
+              value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
+            - name: CLICKHOUSE_USER
+              value: torghut
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
+            - name: CLICKHOUSE_DATABASE
+              value: torghut
+            - name: CLICKHOUSE_CLUSTER
+              value: default
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          ports:
+            - name: metrics
+              containerPort: 9108
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: app
+              mountPath: /app
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 2
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 2
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: app
+          configMap:
+            name: torghut-clickhouse-guardrails-exporter
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: torghut-clickhouse-guardrails-exporter
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-clickhouse-guardrails-exporter
+    app.kubernetes.io/part-of: torghut
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: torghut-clickhouse-guardrails-exporter
+  ports:
+    - name: metrics
+      port: 9108
+      targetPort: metrics

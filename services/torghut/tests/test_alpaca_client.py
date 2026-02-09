@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import Any, List
 from unittest import TestCase
 from unittest.mock import patch
@@ -26,7 +27,7 @@ class DummyTradingClient:
         return [DummyModel(symbol="AAPL", qty="1")]
 
     def get_orders(self, filter=None):  # type: ignore[override]
-        return [DummyModel(id="order-1", symbol="AAPL")]
+        return [DummyModel(id="order-1", symbol="AAPL", uuid_id=uuid.uuid4())]
 
     def submit_order(self, order_data):  # type: ignore[override]
         return DummyModel(
@@ -73,6 +74,7 @@ class TestAlpacaClient(TestCase):
 
         orders = client.list_open_orders()
         self.assertEqual(orders[0]["id"], "order-1")
+        self.assertIsInstance(orders[0]["uuid_id"], str)
 
         submitted = client.submit_order(
             symbol="AAPL",
