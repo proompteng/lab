@@ -229,7 +229,7 @@ const enrichRepositorySignals = defineWorkflowSignals({
 })
 
 export const workflows = [
-  defineWorkflow('enrichFile', EnrichFileInput, ({ input, activities, info }) => {
+  defineWorkflow('enrichFile', EnrichFileInput, ({ input, activities, info, determinism }) => {
     const { repoRoot, filePath, repository, ref, commit, context, eventDeliveryId, force } = input
 
     return Effect.gen(function* () {
@@ -392,115 +392,155 @@ export const workflows = [
           },
         )) as AstSummaryOutput
 
-        const fileVersion = (yield* activities.schedule(
-          'persistFileVersion',
-          [
-            {
-              fileMetadata: fileResult.metadata,
-            },
-          ],
-          {
-            ...persistFileVersionTimeouts,
-            retry: activityRetry,
-          },
-        )) as PersistFileVersionOutput
+        // Temporal determinism: we previously scheduled `enrichWithModel` before
+        // `persistFileVersion` + `indexFileChunks`. Reordering without a patch marker
+        // breaks replay for in-flight runs (nondeterminism). This patch gates the new
+        // ordering so older histories replay with the old schedule order.
+        const usePreModelChunkIndexing = determinism.patched('enrichFile.preModelChunkIndexing.v1')
 
-        if (eventDeliveryId) {
-          yield* activities.schedule(
-            'upsertEventFile',
-            [
+        let fileVersion: PersistFileVersionOutput
+        let chunkIndexing: IndexFileChunksOutput | null = null
+
+        const enrichWithModel = () =>
+          Effect.catchAllCause(
+            activities.schedule(
+              'enrichWithModel',
+              [
+                {
+                  filename: filePath,
+                  content: fileResult.content,
+                  astSummary: astResult.astSummary,
+                  context: context ?? '',
+                },
+              ],
               {
-                deliveryId: eventDeliveryId,
-                fileKeyId: fileVersion.fileKeyId,
-                changeType: 'indexed',
+                ...enrichWithModelTimeouts,
+                taskQueue: MODEL_ACTIVITY_TASK_QUEUE,
+                retry: activityRetry,
               },
-            ],
-            {
-              ...upsertEventFileTimeouts,
-              retry: activityRetry,
+            ),
+            (cause) => {
+              const error = getCauseError(cause)
+              if (error?.message.includes('completion request timed out')) {
+                logWorkflow('enrichFile.modelTimeout', {
+                  workflowId: info.workflowId,
+                  runId: info.runId,
+                  filePath,
+                  error: error.message,
+                })
+              }
+              return Effect.failCause(cause)
             },
-          )
-        }
+          ) as Effect.Effect<EnrichOutput, unknown, never>
 
-        if (ingestionId) {
-          yield* activities.schedule(
-            'upsertIngestionTarget',
-            [
-              {
-                ingestionId,
-                fileVersionId: fileVersion.fileVersionId,
-                kind: 'model_enrichment',
-              },
-            ],
-            {
-              ...upsertIngestionTargetTimeouts,
-              retry: activityRetry,
-            },
-          )
-        }
-
-        // Chunk indexing should run even if model enrichment fails (e.g., model endpoint down).
-        // This allows lexical-only code search to function and makes later semantic backfills cheaper.
-        const chunkIndexing = (yield* activities.schedule(
-          'indexFileChunks',
-          [
-            {
-              fileVersionId: fileVersion.fileVersionId,
-              filePath,
-              content: fileResult.content,
-            },
-          ],
-          {
-            ...indexFileChunksTimeouts,
+        const createEmbedding = (text: string) =>
+          activities.schedule('createEmbedding', [{ text }], {
+            ...createEmbeddingTimeouts,
             retry: activityRetry,
-          },
-        )) as IndexFileChunksOutput
+          }) as Effect.Effect<{ embedding: number[] }, unknown, never>
 
-        logWorkflow('enrichFile.chunkIndexing', {
-          workflowId: info.workflowId,
-          runId: info.runId,
-          filePath,
-          skipped: chunkIndexing.skipped,
-          reason: chunkIndexing.reason ?? null,
-          chunks: chunkIndexing.chunks,
-          embedded: chunkIndexing.embedded,
-        })
-
-        const enriched = (yield* Effect.catchAllCause(
+        const persistFileVersion = () =>
           activities.schedule(
-            'enrichWithModel',
+            'persistFileVersion',
             [
               {
-                filename: filePath,
-                content: fileResult.content,
-                astSummary: astResult.astSummary,
-                context: context ?? '',
+                fileMetadata: fileResult.metadata,
               },
             ],
             {
-              ...enrichWithModelTimeouts,
-              taskQueue: MODEL_ACTIVITY_TASK_QUEUE,
+              ...persistFileVersionTimeouts,
               retry: activityRetry,
             },
-          ),
-          (cause) => {
-            const error = getCauseError(cause)
-            if (error?.message.includes('completion request timed out')) {
-              logWorkflow('enrichFile.modelTimeout', {
-                workflowId: info.workflowId,
-                runId: info.runId,
-                filePath,
-                error: error.message,
-              })
-            }
-            return Effect.failCause(cause)
-          },
-        )) as EnrichOutput
+          ) as Effect.Effect<PersistFileVersionOutput, unknown, never>
 
-        const embedding = (yield* activities.schedule('createEmbedding', [{ text: enriched.enriched }], {
-          ...createEmbeddingTimeouts,
-          retry: activityRetry,
-        })) as { embedding: number[] }
+        const persistEventFileRefs = (version: PersistFileVersionOutput) =>
+          Effect.gen(function* () {
+            if (eventDeliveryId) {
+              yield* activities.schedule(
+                'upsertEventFile',
+                [
+                  {
+                    deliveryId: eventDeliveryId,
+                    fileKeyId: version.fileKeyId,
+                    changeType: 'indexed',
+                  },
+                ],
+                {
+                  ...upsertEventFileTimeouts,
+                  retry: activityRetry,
+                },
+              )
+            }
+
+            if (ingestionId) {
+              yield* activities.schedule(
+                'upsertIngestionTarget',
+                [
+                  {
+                    ingestionId,
+                    fileVersionId: version.fileVersionId,
+                    kind: 'model_enrichment',
+                  },
+                ],
+                {
+                  ...upsertIngestionTargetTimeouts,
+                  retry: activityRetry,
+                },
+              )
+            }
+          })
+
+        const indexChunks = (version: PersistFileVersionOutput) =>
+          activities.schedule(
+            'indexFileChunks',
+            [
+              {
+                fileVersionId: version.fileVersionId,
+                filePath,
+                content: fileResult.content,
+              },
+            ],
+            {
+              ...indexFileChunksTimeouts,
+              retry: activityRetry,
+            },
+          ) as Effect.Effect<IndexFileChunksOutput, unknown, never>
+
+        const logChunkIndexing = (result: IndexFileChunksOutput) => {
+          logWorkflow('enrichFile.chunkIndexing', {
+            workflowId: info.workflowId,
+            runId: info.runId,
+            filePath,
+            skipped: result.skipped,
+            reason: result.reason ?? null,
+            chunks: result.chunks,
+            embedded: result.embedded,
+          })
+        }
+
+        let enriched: EnrichOutput
+        let embedding: { embedding: number[] }
+
+        if (usePreModelChunkIndexing) {
+          fileVersion = (yield* persistFileVersion()) as PersistFileVersionOutput
+          yield* persistEventFileRefs(fileVersion)
+
+          // Chunk indexing should run even if model enrichment fails (e.g., model endpoint down).
+          // This allows lexical-only code search to function and makes later semantic backfills cheaper.
+          chunkIndexing = (yield* indexChunks(fileVersion)) as IndexFileChunksOutput
+          logChunkIndexing(chunkIndexing)
+
+          enriched = (yield* enrichWithModel()) as EnrichOutput
+          embedding = (yield* createEmbedding(enriched.enriched)) as { embedding: number[] }
+        } else {
+          // Legacy order (for replay of older histories):
+          // model enrichment -> embedding -> persist file version -> enrichment persistence -> chunk indexing.
+          enriched = (yield* enrichWithModel()) as EnrichOutput
+          embedding = (yield* createEmbedding(enriched.enriched)) as { embedding: number[] }
+
+          fileVersion = (yield* persistFileVersion()) as PersistFileVersionOutput
+          yield* persistEventFileRefs(fileVersion)
+        }
 
         const enrichmentRecord = (yield* activities.schedule(
           'persistEnrichmentRecord',
@@ -556,6 +596,11 @@ export const workflows = [
 
         yield* persistEmbedding
         yield* persistFacts
+
+        if (!usePreModelChunkIndexing) {
+          chunkIndexing = (yield* indexChunks(fileVersion)) as IndexFileChunksOutput
+          logChunkIndexing(chunkIndexing)
+        }
 
         if (eventDeliveryId) {
           yield* activities.schedule(
