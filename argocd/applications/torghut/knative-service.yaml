@@ -100,6 +100,16 @@ spec:
               value: CRWD,MU,NVDA
             - name: JANGAR_SYMBOLS_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/symbols
+            - name: JANGAR_BASE_URL
+              value: http://jangar.jangar.svc.cluster.local
+            - name: LLM_PROVIDER
+              value: jangar
+            - name: LLM_ENABLED
+              value: "true"
+            - name: LLM_SHADOW_MODE
+              value: "true"
+            - name: LLM_FAIL_MODE
+              value: pass_through
             - name: TA_CLICKHOUSE_URL
               value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
             - name: TA_CLICKHOUSE_USERNAME

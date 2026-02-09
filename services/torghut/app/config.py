@@ -79,7 +79,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS", "CLICKHOUSE_TIMEOUT_SECONDS"),
     )
 
+    # Jangar gateway (recommended for LLM calls in-cluster).
+    jangar_base_url: Optional[str] = Field(default=None, alias="JANGAR_BASE_URL")
+    jangar_api_key: Optional[str] = Field(default=None, alias="JANGAR_API_KEY")
+
     llm_enabled: bool = Field(default=False, alias="LLM_ENABLED")
+    llm_provider: Literal["jangar", "openai"] = Field(default="openai", alias="LLM_PROVIDER")
     llm_model: str = Field(default="gpt-5.3-codex", alias="LLM_MODEL")
     llm_prompt_version: str = Field(default="v1", alias="LLM_PROMPT_VERSION")
     llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE")
@@ -106,6 +111,10 @@ class Settings(BaseSettings):
     def model_post_init(self, __context: Any) -> None:
         if "trading_account_label" not in self.model_fields_set:
             self.trading_account_label = self.trading_mode
+        if self.jangar_base_url:
+            self.jangar_base_url = self.jangar_base_url.strip().rstrip("/")
+        if "llm_provider" not in self.model_fields_set and self.jangar_base_url:
+            self.llm_provider = "jangar"
 
     @property
     def sqlalchemy_dsn(self) -> str:
