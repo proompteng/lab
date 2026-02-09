@@ -176,9 +176,11 @@ class TorghutAlpacaClient:
             if isinstance(value, Enum):
                 return json_sanitize(value.value)
             if isinstance(value, Mapping):
-                return {str(key): json_sanitize(val) for key, val in value.items()}
+                mapping = cast(Mapping[object, Any], value)
+                return {str(key): json_sanitize(val) for key, val in mapping.items()}
             if isinstance(value, (list, tuple, set, frozenset)):
-                return [json_sanitize(item) for item in value]
+                items = cast(Iterable[Any], value)
+                return [json_sanitize(item) for item in items]
             return str(value)
 
         if hasattr(model, "model_dump"):
