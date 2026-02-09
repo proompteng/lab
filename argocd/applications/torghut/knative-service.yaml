@@ -23,13 +23,12 @@ spec:
       containerConcurrency: 0
       timeoutSeconds: 60
       containers:
-        - name: user-container
-          imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:7cd901027afbddef45c7ba96f4255353f3be8f9cf1c6306e241672abe059da12
-          imagePullPolicy: IfNotPresent
-          ports:
-            - name: http1
-              containerPort: 8181
+	        - name: user-container
+	          imagePullPolicy: IfNotPresent
+	          image: registry.ide-newton.ts.net/lab/torghut@sha256:7cd901027afbddef45c7ba96f4255353f3be8f9cf1c6306e241672abe059da12
+	          ports:
+	            - name: http1
+	              containerPort: 8181
           env:
             - name: APP_ENV
               value: prod

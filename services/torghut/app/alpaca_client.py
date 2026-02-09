@@ -175,7 +175,7 @@ class TorghutAlpacaClient:
                 return str(value)
             if isinstance(value, Enum):
                 return to_jsonable(value.value)
-            if is_dataclass(value):
+            if is_dataclass(value) and not isinstance(value, type):
                 return to_jsonable(asdict(value))
             if isinstance(value, Mapping):
                 mapping = cast(Mapping[object, Any], value)

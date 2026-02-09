@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import ValidationError
@@ -207,7 +207,7 @@ def _parse_json_object(content: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise json.JSONDecodeError("expected_object", content, 0)
 
-    return _normalize_llm_response_payload(parsed)
+    return _normalize_llm_response_payload(cast(dict[str, Any], parsed))
 
 
 def _normalize_llm_response_payload(payload: dict[str, Any]) -> dict[str, Any]:
