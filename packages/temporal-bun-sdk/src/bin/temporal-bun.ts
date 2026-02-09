@@ -10,8 +10,8 @@ import { makeDefaultClientInterceptors } from '../interceptors/client'
 import { makeDefaultWorkerInterceptors } from '../interceptors/worker'
 import { runTemporalCliEffect } from '../runtime/cli-layer'
 import { ObservabilityService, TemporalConfigService } from '../runtime/effect-layers'
-import { executeReplay, parseReplayOptions, printReplaySummary } from './replay-command'
 import { executeLintWorkflows, parseLintWorkflowsFlags, printLintWorkflows } from './lint-workflows-command'
+import { executeReplay, parseReplayOptions, printReplaySummary } from './replay-command'
 
 type CommandResult = { exitCode?: number }
 

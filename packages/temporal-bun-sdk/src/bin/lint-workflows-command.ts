@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 
-import { buildWorkflowLintGraph } from './workflow-lint/graph'
 import { loadWorkflowLintConfig, type WorkflowLintFormat, type WorkflowLintMode } from './workflow-lint/config'
+import { buildWorkflowLintGraph } from './workflow-lint/graph'
 import { lintWorkflowModuleAst, type WorkflowLintViolation } from './workflow-lint/rules'
 
 export type LintWorkflowsExitCode = 0 | 1

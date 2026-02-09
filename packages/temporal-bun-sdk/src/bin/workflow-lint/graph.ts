@@ -103,7 +103,7 @@ export const buildWorkflowLintGraph = async (options: {
     let sourceText: string
     try {
       sourceText = await readFile(filePath, 'utf8')
-    } catch (error) {
+    } catch (_error) {
       violations.push({
         filePath,
         rule: 'deny-import',

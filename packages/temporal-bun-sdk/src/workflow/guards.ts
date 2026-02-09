@@ -237,6 +237,7 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
   const originalWebSocket = (globalThis as unknown as { WebSocket?: unknown }).WebSocket
   if (typeof originalWebSocket === 'function') {
     globalRef[ORIGINAL_WEBSOCKET_SYMBOL] = originalWebSocket
+    // biome-ignore lint/complexity/useArrowFunction: must remain constructable (usable with `new`)
     ;(globalThis as unknown as { WebSocket: unknown }).WebSocket = function (...args: unknown[]) {
       const ctx = currentWorkflowLogContext()
       if (!ctx) {

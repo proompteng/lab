@@ -23,18 +23,6 @@ const positionOf = (sourceFile: ts.SourceFile, node: ts.Node) => {
   return { line: lc.line + 1, column: lc.character + 1 }
 }
 
-const isIdentifierNamed = (node: ts.Node, name: string): node is ts.Identifier =>
-  ts.isIdentifier(node) && node.text === name
-
-const isPropertyAccess = (node: ts.Node, base: string, prop: string): boolean =>
-  ts.isPropertyAccessExpression(node) && isIdentifierNamed(node.expression, base) && node.name.text === prop
-
-const isElementAccessLiteral = (node: ts.Node, base: string, prop: string): boolean =>
-  ts.isElementAccessExpression(node) &&
-  isIdentifierNamed(node.expression, base) &&
-  ts.isStringLiteral(node.argumentExpression) &&
-  node.argumentExpression.text === prop
-
 export const lintWorkflowModuleAst = async (options: {
   readonly filePath: string
   readonly denyGlobals: ReadonlySet<string>
