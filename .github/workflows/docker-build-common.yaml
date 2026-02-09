@@ -98,6 +98,8 @@ jobs:
           platforms: ${{ inputs.platforms }}
           context: ${{ steps.prune.outputs.context || (inputs.external_repository && 'external_repo' || inputs.context) }}
           file: ${{ inputs.external_repository && 'external_repo/' || '' }}${{ inputs.dockerfile }}
+          build-args: |
+            LAB_GIT_SHA=${{ inputs.new_tag }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           push: true
