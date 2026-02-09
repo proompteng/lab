@@ -245,7 +245,7 @@ Verification:
 ### Procedure: TA replay from scratch (destructive)
 This is intentionally not “one button”. It deletes Kafka topics and Flink state.
 
-Source procedure: `argocd/applications/torghut/README.md`.
+Source procedure: `argocd/applications/torghut/README.md` → **“TA replay workflow (canonical)”** (Mode 2).
 
 Hard requirements:
 - trading paused (`TRADING_ENABLED=false`)
@@ -273,4 +273,3 @@ This merged doc is the entrypoint; deeper detail remains in the component and po
 - `v1/operations-ws-connection-limit-and-auth.md`
 - `v1/operations-clickhouse-replica-and-keeper.md`
 - `v1/operations-knative-revision-failures.md`
-

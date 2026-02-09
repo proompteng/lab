@@ -41,6 +41,12 @@ flowchart LR
 | TA outputs | `delete` | ~14 days | TA can be recomputed; ClickHouse is authoritative for longer-lived queries |
 | Status | `compact,delete` (optional) | 7 days | keep recent health history; compaction optionally keeps last status |
 
+### Replay window and operational constraints
+- **Hard limit:** TA replay/backfill is only possible within the ingest-topic retention window.
+- **Storage limit:** ClickHouse TTL may delete older recomputed data during merges.
+- Canonical, step-by-step replay runbook (including required unique consumer group id and safety gates):
+  - `argocd/applications/torghut/README.md` (“TA replay workflow (canonical)”)
+
 ## Configuration examples (repo pointers)
 Kafka user for WS forwarder:
 - `argocd/applications/kafka/torghut-ws-kafkauser.yaml`

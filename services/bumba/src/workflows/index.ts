@@ -28,6 +28,10 @@ const childWorkflowRetry = {
   maximumAttempts: 3,
 }
 
+// Route GPU-heavy model calls to a dedicated worker/task queue so slow inference cannot
+// starve DB/bookkeeping activities and cause ScheduleToClose timeouts.
+const MODEL_ACTIVITY_TASK_QUEUE = 'bumba-model'
+
 const readRepoFileTimeouts = {
   startToCloseTimeoutMs: 90_000,
   scheduleToCloseTimeoutMs: 600_000,
@@ -44,8 +48,10 @@ const extractAstSummaryTimeouts = {
 }
 
 const enrichWithModelTimeouts = {
-  startToCloseTimeoutMs: 360_000,
-  scheduleToCloseTimeoutMs: 1_800_000,
+  // StartToClose needs to cover slow/large prompts (streaming + model latency).
+  // ScheduleToClose must be large enough to tolerate queueing when the model worker is intentionally low-concurrency.
+  startToCloseTimeoutMs: 720_000,
+  scheduleToCloseTimeoutMs: 10_800_000,
 }
 
 const createEmbeddingTimeouts = {
@@ -393,6 +399,7 @@ export const workflows = [
             ],
             {
               ...enrichWithModelTimeouts,
+              taskQueue: MODEL_ACTIVITY_TASK_QUEUE,
               retry: activityRetry,
             },
           ),
