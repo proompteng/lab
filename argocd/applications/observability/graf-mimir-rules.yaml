@@ -317,61 +317,61 @@ data:
               description: |
                 The active Knative private revision for torghut is being scraped but up=0 for 5 minutes.
               runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
-        - name: torghut-freshness.rules
-          rules:
-            - alert: TorghutSignalsStaleDuringMarketHours
-              expr: |
-                (
-                  time()
-                  - max(
-                    torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds{
-                      namespace="torghut",
-                      service="torghut-clickhouse-guardrails-exporter"
-                    }
-                  )
-                ) > bool 900
-                * on() group_left()
-                (
-                  (day_of_week(vector(time())) >= bool 1)
-                  * (day_of_week(vector(time())) <= bool 5)
-                  * (hour(vector(time())) >= bool 14)
-                  * (hour(vector(time())) < bool 21)
+      - name: torghut-freshness.rules
+        rules:
+          - alert: TorghutSignalsStaleDuringMarketHours
+            expr: |
+              (
+                time()
+                - max(
+                  torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds{
+                    namespace="torghut",
+                    service="torghut-clickhouse-guardrails-exporter"
+                  }
                 )
-              for: 15m
-              labels:
-                severity: critical
-              annotations:
-                summary: Torghut signals are stale (market hours)
-                description: |
-                  ClickHouse ta_signals max(event_ts) is older than 15 minutes during market hours (UTC schedule).
+              ) > bool 900
+              * on() group_left()
+              (
+                (day_of_week(vector(time())) >= bool 1)
+                * (day_of_week(vector(time())) <= bool 5)
+                * (hour(vector(time())) >= bool 14)
+                * (hour(vector(time())) < bool 21)
+              )
+            for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut signals are stale (market hours)
+              description: |
+                ClickHouse ta_signals max(event_ts) is older than 15 minutes during market hours (UTC schedule).
 
-                  First checks:
-                  - torghut-ws readiness and Kafka publishing
-                  - torghut-ta checkpointing and ClickHouse JDBC sink health
-                runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
-            - alert: TorghutMicrobarsStaleDuringMarketHours
-              expr: |
-                (
-                  time()
-                  - max(
-                    torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds{
-                      namespace="torghut",
-                      service="torghut-clickhouse-guardrails-exporter"
-                    }
-                  )
-                ) > bool 300
-                * on() group_left()
-                (
-                  (day_of_week(vector(time())) >= bool 1)
-                  * (day_of_week(vector(time())) <= bool 5)
-                  * (hour(vector(time())) >= bool 14)
-                  * (hour(vector(time())) < bool 21)
+                First checks:
+                - torghut-ws readiness and Kafka publishing
+                - torghut-ta checkpointing and ClickHouse JDBC sink health
+              runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
+          - alert: TorghutMicrobarsStaleDuringMarketHours
+            expr: |
+              (
+                time()
+                - max(
+                  torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds{
+                    namespace="torghut",
+                    service="torghut-clickhouse-guardrails-exporter"
+                  }
                 )
-              for: 10m
-              labels:
-                severity: warning
-              annotations:
-                summary: Torghut microbars are stale (market hours)
-                description: |
-                  ClickHouse ta_microbars max(window_end) is older than 5 minutes during market hours (UTC schedule).
-                runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
+              ) > bool 300
+              * on() group_left()
+              (
+                (day_of_week(vector(time())) >= bool 1)
+                * (day_of_week(vector(time())) <= bool 5)
+                * (hour(vector(time())) >= bool 14)
+                * (hour(vector(time())) < bool 21)
+              )
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut microbars are stale (market hours)
+              description: |
+                ClickHouse ta_microbars max(window_end) is older than 5 minutes during market hours (UTC schedule).
+              runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
