@@ -392,42 +392,6 @@ export const workflows = [
           },
         )) as AstSummaryOutput
 
-        const enriched = (yield* Effect.catchAllCause(
-          activities.schedule(
-            'enrichWithModel',
-            [
-              {
-                filename: filePath,
-                content: fileResult.content,
-                astSummary: astResult.astSummary,
-                context: context ?? '',
-              },
-            ],
-            {
-              ...enrichWithModelTimeouts,
-              taskQueue: MODEL_ACTIVITY_TASK_QUEUE,
-              retry: activityRetry,
-            },
-          ),
-          (cause) => {
-            const error = getCauseError(cause)
-            if (error?.message.includes('completion request timed out')) {
-              logWorkflow('enrichFile.modelTimeout', {
-                workflowId: info.workflowId,
-                runId: info.runId,
-                filePath,
-                error: error.message,
-              })
-            }
-            return Effect.failCause(cause)
-          },
-        )) as EnrichOutput
-
-        const embedding = (yield* activities.schedule('createEmbedding', [{ text: enriched.enriched }], {
-          ...createEmbeddingTimeouts,
-          retry: activityRetry,
-        })) as { embedding: number[] }
-
         const fileVersion = (yield* activities.schedule(
           'persistFileVersion',
           [
@@ -474,6 +438,69 @@ export const workflows = [
             },
           )
         }
+
+        // Chunk indexing should run even if model enrichment fails (e.g., model endpoint down).
+        // This allows lexical-only code search to function and makes later semantic backfills cheaper.
+        const chunkIndexing = (yield* activities.schedule(
+          'indexFileChunks',
+          [
+            {
+              fileVersionId: fileVersion.fileVersionId,
+              filePath,
+              content: fileResult.content,
+            },
+          ],
+          {
+            ...indexFileChunksTimeouts,
+            retry: activityRetry,
+          },
+        )) as IndexFileChunksOutput
+
+        logWorkflow('enrichFile.chunkIndexing', {
+          workflowId: info.workflowId,
+          runId: info.runId,
+          filePath,
+          skipped: chunkIndexing.skipped,
+          reason: chunkIndexing.reason ?? null,
+          chunks: chunkIndexing.chunks,
+          embedded: chunkIndexing.embedded,
+        })
+
+        const enriched = (yield* Effect.catchAllCause(
+          activities.schedule(
+            'enrichWithModel',
+            [
+              {
+                filename: filePath,
+                content: fileResult.content,
+                astSummary: astResult.astSummary,
+                context: context ?? '',
+              },
+            ],
+            {
+              ...enrichWithModelTimeouts,
+              taskQueue: MODEL_ACTIVITY_TASK_QUEUE,
+              retry: activityRetry,
+            },
+          ),
+          (cause) => {
+            const error = getCauseError(cause)
+            if (error?.message.includes('completion request timed out')) {
+              logWorkflow('enrichFile.modelTimeout', {
+                workflowId: info.workflowId,
+                runId: info.runId,
+                filePath,
+                error: error.message,
+              })
+            }
+            return Effect.failCause(cause)
+          },
+        )) as EnrichOutput
+
+        const embedding = (yield* activities.schedule('createEmbedding', [{ text: enriched.enriched }], {
+          ...createEmbeddingTimeouts,
+          retry: activityRetry,
+        })) as { embedding: number[] }
 
         const enrichmentRecord = (yield* activities.schedule(
           'persistEnrichmentRecord',
@@ -529,31 +556,6 @@ export const workflows = [
 
         yield* persistEmbedding
         yield* persistFacts
-
-        const chunkIndexing = (yield* activities.schedule(
-          'indexFileChunks',
-          [
-            {
-              fileVersionId: fileVersion.fileVersionId,
-              filePath,
-              content: fileResult.content,
-            },
-          ],
-          {
-            ...indexFileChunksTimeouts,
-            retry: activityRetry,
-          },
-        )) as IndexFileChunksOutput
-
-        logWorkflow('enrichFile.chunkIndexing', {
-          workflowId: info.workflowId,
-          runId: info.runId,
-          filePath,
-          skipped: chunkIndexing.skipped,
-          reason: chunkIndexing.reason ?? null,
-          chunks: chunkIndexing.chunks,
-          embedded: chunkIndexing.embedded,
-        })
 
         if (eventDeliveryId) {
           yield* activities.schedule(
