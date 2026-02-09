@@ -160,7 +160,9 @@ export class WorkflowExecutor {
     this.#dataConverter = options.dataConverter
     this.#logger = options.logger ?? noopWorkflowLogger
     this.#workflowGuards =
-      options.workflowGuards ?? parseWorkflowGuardsMode(process.env.TEMPORAL_WORKFLOW_GUARDS) ?? 'warn'
+      options.workflowGuards ??
+      parseWorkflowGuardsMode(process.env.TEMPORAL_WORKFLOW_GUARDS) ??
+      (process.env.NODE_ENV === 'production' ? 'strict' : 'warn')
   }
 
   async execute(input: ExecuteWorkflowInput): Promise<WorkflowExecutionOutput> {

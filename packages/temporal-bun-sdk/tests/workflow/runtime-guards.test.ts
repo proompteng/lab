@@ -3,7 +3,9 @@ import { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
 import { createDefaultDataConverter } from '../../src/common/payloads'
+import { installWorkflowRuntimeGuards } from '../../src/workflow/guards'
 import { WorkflowNondeterminismError } from '../../src/workflow/errors'
+import { runWithWorkflowModuleLoadContext } from '../../src/workflow/module-load'
 import type { ExecuteWorkflowInput } from '../../src/workflow/executor'
 import { WorkflowExecutor } from '../../src/workflow/executor'
 import { defineWorkflow } from '../../src/workflow/definition'
@@ -54,6 +56,24 @@ test('Date.now() is deterministic in workflow context across replays', async () 
   expect(second.result).toEqual(first.result)
 })
 
+test('new Date() is deterministic in workflow context across replays', async () => {
+  const { registry, executor } = makeExecutor()
+  registry.register(
+    defineWorkflow('dateWorkflow', Schema.Array(Schema.Unknown), () =>
+      Effect.sync(() => [new Date().getTime(), new Date().getTime()]),
+    ),
+  )
+
+  const first = await execute(executor, { workflowType: 'dateWorkflow', arguments: [] })
+  const second = await execute(executor, {
+    workflowType: 'dateWorkflow',
+    arguments: [],
+    determinismState: first.determinismState,
+  })
+
+  expect(second.result).toEqual(first.result)
+})
+
 test('Math.random() is deterministic in workflow context across replays', async () => {
   const { registry, executor } = makeExecutor()
   registry.register(
@@ -65,6 +85,59 @@ test('Math.random() is deterministic in workflow context across replays', async 
   const first = await execute(executor, { workflowType: 'randomWorkflow', arguments: [] })
   const second = await execute(executor, {
     workflowType: 'randomWorkflow',
+    arguments: [],
+    determinismState: first.determinismState,
+  })
+
+  expect(second.result).toEqual(first.result)
+})
+
+test('crypto.randomUUID() is deterministic in workflow context across replays (when available)', async () => {
+  const cryptoRef = (globalThis as unknown as { crypto?: unknown }).crypto as { randomUUID?: () => string } | undefined
+  if (!cryptoRef?.randomUUID) {
+    return
+  }
+
+  const { registry, executor } = makeExecutor()
+  registry.register(
+    defineWorkflow('uuidWorkflow', Schema.Array(Schema.Unknown), () =>
+      Effect.sync(() => [cryptoRef.randomUUID?.(), cryptoRef.randomUUID?.()]),
+    ),
+  )
+
+  const first = await execute(executor, { workflowType: 'uuidWorkflow', arguments: [] })
+  const second = await execute(executor, {
+    workflowType: 'uuidWorkflow',
+    arguments: [],
+    determinismState: first.determinismState,
+  })
+
+  expect(second.result).toEqual(first.result)
+})
+
+test('crypto.getRandomValues() is deterministic in workflow context across replays (when available)', async () => {
+  const cryptoRef = (globalThis as unknown as { crypto?: unknown }).crypto as
+    | { getRandomValues?: <T extends ArrayBufferView>(array: T) => T }
+    | undefined
+  if (!cryptoRef?.getRandomValues) {
+    return
+  }
+
+  const { registry, executor } = makeExecutor()
+  registry.register(
+    defineWorkflow('grvWorkflow', Schema.Array(Schema.Unknown), () =>
+      Effect.sync(() => {
+        const bytes = new Uint8Array(12)
+        cryptoRef.getRandomValues?.(bytes)
+        cryptoRef.getRandomValues?.(bytes)
+        return Array.from(bytes)
+      }),
+    ),
+  )
+
+  const first = await execute(executor, { workflowType: 'grvWorkflow', arguments: [] })
+  const second = await execute(executor, {
+    workflowType: 'grvWorkflow',
     arguments: [],
     determinismState: first.determinismState,
   })
@@ -88,6 +161,16 @@ test('fetch() throws in strict mode when called from workflow code', async () =>
   )
 })
 
+test('workflow module initialization is guarded in strict mode', async () => {
+  installWorkflowRuntimeGuards({ mode: 'strict' })
+
+  await expect(
+    runWithWorkflowModuleLoadContext({ mode: 'strict' }, async () => {
+      Date.now()
+    }),
+  ).rejects.toBeInstanceOf(WorkflowNondeterminismError)
+})
+
 test('setTimeout() throws in strict mode when called from workflow code', async () => {
   const { registry, executor } = makeExecutor()
   registry.register(
@@ -103,4 +186,3 @@ test('setTimeout() throws in strict mode when called from workflow code', async 
     WorkflowNondeterminismError,
   )
 })
-

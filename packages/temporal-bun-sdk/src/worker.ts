@@ -1,6 +1,11 @@
 import type { DataConverter } from './common/payloads'
 import { loadTemporalConfig, type TemporalConfig } from './config'
-import { deriveWorkerBuildId, resolveWorkerActivities, resolveWorkerWorkflowsPath } from './worker/defaults'
+import {
+  deriveWorkerBuildId,
+  deriveWorkerBuildIdFromWorkflowsPath,
+  resolveWorkerActivities,
+  resolveWorkerWorkflowsPath,
+} from './worker/defaults'
 import type { ActivityHandler, WorkerDeploymentConfig } from './worker/runtime'
 import { WorkerRuntime } from './worker/runtime'
 import type { WorkflowDefinitions } from './workflow/definition'
@@ -18,6 +23,8 @@ export interface CreateWorkerOptions {
   dataConverter?: DataConverter
   identity?: string
   deployment?: WorkerDeploymentConfig
+  workflowGuards?: TemporalConfig['workflowGuards']
+  workflowLint?: TemporalConfig['workflowLint']
 }
 
 export interface BunWorkerHandle {
@@ -41,7 +48,11 @@ export class BunWorker {
 export const createWorker = async (options: CreateWorkerOptions = {}): Promise<BunWorkerHandle> => {
   const activities = resolveWorkerActivities(options.activities)
   const workflowsPath = resolveWorkerWorkflowsPath(options.workflowsPath)
-  const derivedBuildId = options.config?.workerBuildId ?? deriveWorkerBuildId()
+  const derivedBuildId =
+    options.deployment?.buildId ??
+    options.config?.workerBuildId ??
+    deriveWorkerBuildIdFromWorkflowsPath(workflowsPath) ??
+    deriveWorkerBuildId()
   const config = await resolveWorkerConfig(options, derivedBuildId)
   if (config.allowInsecureTls) {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
@@ -62,6 +73,8 @@ export const createWorker = async (options: CreateWorkerOptions = {}): Promise<B
     namespace,
     dataConverter: options.dataConverter,
     identity: options.identity,
+    workflowGuards: options.workflowGuards,
+    workflowLint: options.workflowLint,
     config,
     deployment: {
       ...options.deployment,

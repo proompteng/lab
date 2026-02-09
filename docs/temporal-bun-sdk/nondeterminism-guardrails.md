@@ -148,6 +148,7 @@ Add a strictness knob in config and as runtime options.
   - `strict`: block side effects + enforce versioning policy at startup
   - `warn`: log violations but do not throw (safe for gradual rollout)
   - `off`: no runtime wrappers (not recommended)
+  - default: `strict` when `NODE_ENV=production`, otherwise `warn` (no env var required)
 - `TEMPORAL_WORKFLOW_LINT=strict|warn|off` (controls CLI lint default behavior)
 - `TEMPORAL_REPLAY_GATE_REQUIRED=1` (CI convenience toggle; defaults to enabled
   for repos that declare workflows)
@@ -222,4 +223,3 @@ re-planning.
 5. `temporal-bun lint-workflows` detects banned imports and banned APIs.
 6. Replay gate blocks a change that removes a previously-emitted command unless
    a version branch is added.
-
