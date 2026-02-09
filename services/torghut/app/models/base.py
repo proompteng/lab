@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, cast
 
+from pydantic import TypeAdapter
 from sqlalchemy import JSON, MetaData
 from sqlalchemy.engine import Dialect
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -66,12 +67,41 @@ class JSONType(TypeDecorator[Any]):
     impl = JSON
     cache_ok = True
 
+    _json_adapter: TypeAdapter[Any] = TypeAdapter(Any)
+
     def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:  # type: ignore[override]
         if dialect.name == "postgresql":
             from sqlalchemy.dialects.postgresql import JSONB  # imported lazily to avoid hard dependency
 
             return dialect.type_descriptor(JSONB())
         return dialect.type_descriptor(JSON())
+
+    def process_bind_param(self, value: Any, dialect: Dialect) -> Any:  # noqa: ANN401 - SQLAlchemy typing
+        """Ensure JSON payloads contain only JSON-serializable primitives.
+
+        Production incidents have been triggered by uuid.UUID values leaking into JSONB columns,
+        which psycopg cannot serialize by default. We enforce a strict boundary here so callers
+        can pass in Pydantic models, UUIDs, datetimes, Decimals, etc., without crashing at commit time.
+        """
+
+        if value is None:
+            return None
+
+        encoded = self._json_adapter.dump_python(value, mode="json")
+        _assert_no_uuid(encoded)
+        return encoded
+
+
+def _assert_no_uuid(value: Any, path: str = "$") -> None:
+    if isinstance(value, uuid.UUID):
+        raise ValueError(f"uuid.UUID leaked into JSON payload at {path}")
+    if isinstance(value, dict):
+        for key, child in cast(dict[object, Any], value).items():
+            _assert_no_uuid(child, f"{path}.{key!s}")
+        return
+    if isinstance(value, (list, tuple)):
+        for index, child in enumerate(cast(list[Any] | tuple[Any, ...], value)):
+            _assert_no_uuid(child, f"{path}[{index}]")
 
 
 
