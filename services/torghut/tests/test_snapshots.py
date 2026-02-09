@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, List
@@ -49,6 +50,32 @@ class TestSnapshots(TestCase):
             self.assertEqual(snapshot.buying_power, Decimal("20000"))
             self.assertEqual(len(snapshot.positions), 1)
 
+    def test_snapshot_account_and_positions_serializes_uuid_payloads(self) -> None:
+        client = DummyAlpacaClient()
+        sample_id = uuid.uuid4()
+        client.positions = [
+            {
+                "symbol": "AAPL",
+                "qty": "1",
+                "position_id": sample_id,
+                "nested": {"order_id": sample_id},
+            },
+        ]
+        with Session(self.engine) as session:
+            snapshot = snapshot_account_and_positions(session, client, "paper")
+
+            def contains_uuid(value: Any) -> bool:
+                if isinstance(value, uuid.UUID):
+                    return True
+                if isinstance(value, dict):
+                    return any(contains_uuid(item) for item in value.values())
+                if isinstance(value, list):
+                    return any(contains_uuid(item) for item in value)
+                return False
+
+            self.assertFalse(contains_uuid(snapshot.positions))
+            self.assertEqual(snapshot.positions[0]["position_id"], str(sample_id))
+
     def test_sync_order_create_and_update(self) -> None:
         with Session(self.engine) as session:
             first = sync_order_to_db(
@@ -86,3 +113,23 @@ class TestSnapshots(TestCase):
             self.assertEqual(updated.filled_qty, Decimal("1"))
             self.assertEqual(updated.avg_fill_price, Decimal("10.50"))
 
+    def test_sync_order_to_db_serializes_uuid_payloads(self) -> None:
+        sample_id = uuid.uuid4()
+        with Session(self.engine) as session:
+            execution = sync_order_to_db(
+                session,
+                {
+                    "id": "order-uuid-test",
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "type": "market",
+                    "time_in_force": "day",
+                    "qty": "1",
+                    "filled_qty": "0",
+                    "status": "accepted",
+                    "client_order_id": "client-order-1",
+                    "meta": {"strategy_run_id": sample_id},
+                },
+            )
+
+            self.assertEqual(execution.raw_order["meta"]["strategy_run_id"], str(sample_id))
