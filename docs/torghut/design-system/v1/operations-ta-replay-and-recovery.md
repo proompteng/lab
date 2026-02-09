@@ -92,17 +92,24 @@ See also `docs/torghut/ops-2026-01-01-ta-recovery.md` and `v1/operations-clickho
 - TA job bug fixed and you need recomputation.
 - ClickHouse data corrupted or partially missing.
 
-### Approach (v1)
-For the concrete, command-by-command replay flow (including topic deletion/recreate, checkpoint cleanup, and consumer-group
-isolation), start from `argocd/applications/torghut/README.md` and apply it via GitOps where possible.
+### Canonical runbook (v1)
+The single source of truth for the TA replay workflow is:
+- `argocd/applications/torghut/README.md` → **“TA replay workflow (canonical)”**
 
-1) Decide replay window:
-   - Bound by Kafka retention configured for ingest topics (see `docs/torghut/topics-and-schemas.md`).
-2) Ensure TA job consumes from the correct offsets:
-   - `TA_AUTO_OFFSET_RESET=earliest` supports “start from beginning” when offsets missing.
-   - For controlled replay, use a new consumer group id (edit `TA_GROUP_ID` in `argocd/applications/torghut/ta/configmap.yaml`).
-3) Clear ClickHouse target partitions for the replay window (optional but recommended to avoid duplicates).
-4) Start TA job and monitor progress.
+This is intentionally documented next to the concrete resource manifests so it is:
+- repeatable by oncall,
+- safe by default (non-destructive),
+- and straightforward for an AgentRun to automate via GitOps PRs.
+
+### Constraints and safety reminders
+- **Hard replay limit (Kafka retention):** TA can only replay what still exists in Kafka inputs (expected 7–30 days; verify).
+  See `v1/component-kafka-topics-and-retention.md`.
+- **Data persistence limit (ClickHouse TTL):** replayed outputs older than TTL may be deleted during merges.
+  See `v1/component-clickhouse-capacity-ttl-and-disk-guardrails.md`.
+- **Trading safety gate:** if there is any uncertainty about signal correctness, pause trading via
+  `argocd/applications/torghut/knative-service.yaml` (`TRADING_ENABLED=false`) before running replay.
+- **Group-id isolation (required):** replays/backfills must use a *unique* `TA_GROUP_ID` and must record the prior
+  steady-state `TA_GROUP_ID` for rollback.
 
 ## Automation (AgentRuns)
 AgentRuns should treat these procedures as two classes of automation:
