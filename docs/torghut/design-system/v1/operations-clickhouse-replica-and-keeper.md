@@ -59,6 +59,7 @@ curl -fsS 'http://localhost:8123/?query=SELECT%201%20FORMAT%20JSONEachRow' \\
 ### Steps (operator)
 0) Reduce write pressure first (recommended):
    - Pause TA writes by suspending `FlinkDeployment/torghut-ta` (GitOps-first; direct `kubectl patch` is emergency-only).
+   - Runbook: `v1/operations-pause-ta-writes.md`
 1) Verify keeper is healthy:
    - Check keeper pods/service and logs.
 2) Inspect replica state:
