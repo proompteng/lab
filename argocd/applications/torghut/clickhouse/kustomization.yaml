@@ -5,6 +5,8 @@ resources:
   - clickhouse-keeper.yaml
   - keeper-pdb.yaml
   - sealed-secret.yaml
+  - clickhouse-guardrails-exporter-configmap.yaml
+  - clickhouse-guardrails-exporter.yaml
   - clickhouse-cluster.yaml
   - clickhouse-pdb.yaml
   - clickhouse-service.yaml
