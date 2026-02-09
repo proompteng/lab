@@ -125,6 +125,18 @@ data:
                     "FORMAT JSONEachRow"
                 )
 
+            signals_freshness_query = (
+                "SELECT ifNull(toUnixTimestamp64Milli(max(event_ts)), 0) AS max_event_ts_ms "
+                f"FROM {DATABASE}.ta_signals "
+                "FORMAT JSONEachRow"
+            )
+
+            microbars_freshness_query = (
+                "SELECT ifNull(toUnixTimestamp64Milli(max(window_end)), 0) AS max_window_end_ms "
+                f"FROM {DATABASE}.ta_microbars "
+                "FORMAT JSONEachRow"
+            )
+
             replicas: dict[str, dict] = {}
             scrape_errors: list[str] = []
 
@@ -143,6 +155,18 @@ data:
                             raise RuntimeError("readonly query returned no rows")
                         readonly_row = readonly_rows[0]
 
+                    signals_rows = clickhouse_query_rows(replica_url, signals_freshness_query)
+                    if not signals_rows:
+                        raise RuntimeError("signals freshness query returned no rows")
+                    signals_row = signals_rows[0]
+                    max_event_ts_ms = float_or_nan(signals_row.get("max_event_ts_ms", 0.0))
+
+                    microbars_rows = clickhouse_query_rows(replica_url, microbars_freshness_query)
+                    if not microbars_rows:
+                        raise RuntimeError("microbars freshness query returned no rows")
+                    microbars_row = microbars_rows[0]
+                    max_window_end_ms = float_or_nan(microbars_row.get("max_window_end_ms", 0.0))
+
                     free_space = float_or_nan(disk_row.get("free_space"))
                     total_space = float_or_nan(disk_row.get("total_space"))
                     ratio = float("nan")
@@ -155,6 +179,8 @@ data:
                         "disk_total_bytes": total_space,
                         "disk_free_ratio": ratio,
                         "any_replica_readonly": float_or_nan(readonly_row.get("any_readonly", 0.0)),
+                        "ta_signals_max_event_ts_seconds": max_event_ts_ms / 1000.0,
+                        "ta_microbars_max_window_end_seconds": max_window_end_ms / 1000.0,
                     }
                 except Exception as e:
                     scrape_errors.append(f"{replica}: {e}")
@@ -164,6 +190,8 @@ data:
                         "disk_total_bytes": float("nan"),
                         "disk_free_ratio": float("nan"),
                         "any_replica_readonly": float("nan"),
+                        "ta_signals_max_event_ts_seconds": float("nan"),
+                        "ta_microbars_max_window_end_seconds": float("nan"),
                     }
 
             last_scrape_success = 1.0 if scrape_errors == [] else 0.0
@@ -233,6 +261,26 @@ data:
             label = prom_label_value(replica)
             lines.append(
                 f'torghut_clickhouse_guardrails_any_replica_readonly{{replica="{label}"}} {metrics["any_replica_readonly"]}'
+            )
+
+        lines.append(
+            "# HELP torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds Max event_ts for ta_signals (per replica, seconds since epoch)."
+        )
+        lines.append("# TYPE torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds gauge")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds{{replica="{label}"}} {metrics["ta_signals_max_event_ts_seconds"]}'
+            )
+
+        lines.append(
+            "# HELP torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds Max window_end for ta_microbars (per replica, seconds since epoch)."
+        )
+        lines.append("# TYPE torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds gauge")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds{{replica="{label}"}} {metrics["ta_microbars_max_window_end_seconds"]}'
             )
 
         lines.append("# HELP torghut_clickhouse_guardrails_last_scrape_success 1 if the last scrape succeeded.")
