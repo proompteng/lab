@@ -117,3 +117,4 @@ kubectl logs -n jangar deploy/bumba --tail=200
 - Reference: `references/temporal-cli.md`
 - Runner: `scripts/temporal-run.sh`
 - Triage template: `assets/temporal-triage.md`
+- Nondeterminism failure mode: `docs/temporal-nondeterminism.md`
