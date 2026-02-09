@@ -157,7 +157,7 @@ def _parse_jangar_sse(stream: Any) -> tuple[str, Optional[dict[str, int]]]:
             if err_dict is not None:
                 message = err_dict.get("message") or err_dict.get("code") or "unknown_error"
             else:
-                message = str(err)
+                message = str(cast(object, err))
             raise RuntimeError(f"jangar completion error: {message}")
 
         if "usage" in frame:
@@ -167,7 +167,7 @@ def _parse_jangar_sse(stream: Any) -> tuple[str, Optional[dict[str, int]]]:
         if not isinstance(choices, list):
             continue
 
-        for choice in choices:
+        for choice in cast(list[object], choices):
             if not isinstance(choice, dict):
                 continue
             choice_dict = cast(dict[str, Any], choice)
