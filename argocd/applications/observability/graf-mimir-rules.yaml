@@ -170,3 +170,208 @@ data:
             annotations:
               summary: Torghut ClickHouse guardrails scrape failing
               description: Guardrails exporter is up but cannot query ClickHouse successfully.
+      - name: torghut-ws.rules
+        rules:
+          - alert: TorghutWSForwarderDown
+            expr: |
+              up{
+                job="torghut",
+                namespace="torghut",
+                service="torghut-ws"
+              } == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut WS forwarder is down
+              description: |
+                torghut-ws is not being scraped (up=0) for 5 minutes. Market data will not flow into Kafka, and TA will stall.
+              runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
+          - alert: TorghutWSForwarderNotReady
+            expr: |
+              torghut_ws_readyz_status{
+                namespace="torghut",
+                service="torghut-ws"
+              } == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut WS forwarder not ready
+              description: |
+                torghut-ws /readyz is failing for 5 minutes (Alpaca/Kafka gates not healthy).
+              runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
+          - alert: TorghutWSKafkaSendErrors
+            expr: |
+              rate(
+                torghut_ws_kafka_send_errors_total{
+                  namespace="torghut",
+                  service="torghut-ws"
+                }[5m]
+              ) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut WS Kafka send errors
+              description: torghut-ws is reporting Kafka send errors over the last 10 minutes.
+          - alert: TorghutWSKafkaSendsStalledDuringMarketHours
+            expr: |
+              (
+                sum(
+                  rate(
+                    torghut_ws_kafka_send_latency_seconds_count{
+                      namespace="torghut",
+                      service="torghut-ws"
+                    }[5m]
+                  )
+                ) == bool 0
+              )
+              * on() group_left()
+              vector(
+                (day_of_week() >= 1)
+                * (day_of_week() <= 5)
+                * (hour() >= 14)
+                * (hour() < 21)
+              ) > 0
+            for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut WS is not publishing Kafka records (market hours)
+              description: |
+                torghut-ws has published 0 records/sec for 15 minutes during market hours (UTC schedule).
+
+                This usually means the Alpaca WS isn't receiving events or subscriptions are broken.
+              runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
+      - name: torghut-ta.rules
+        rules:
+          - alert: TorghutTAJobmanagerDown
+            expr: |
+              up{
+                job="torghut",
+                namespace="torghut",
+                service="torghut-ta"
+              } == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut TA jobmanager metrics endpoint is down
+              description: TA jobmanager is not being scraped (up=0) for 5 minutes.
+              runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
+          - alert: TorghutTACheckpointsStalled
+            expr: |
+              (
+                time()
+                - max(
+                  flink_jobmanager_job_lastCheckpointCompletedTimestamp{
+                    namespace="torghut",
+                    service="torghut-ta"
+                  }
+                ) / 1000
+              ) > 180
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut TA checkpoints appear stalled
+              description: |
+                Flink last checkpoint completed timestamp is older than 3 minutes for 10 minutes.
+                This strongly indicates the TA job is stuck or failing to checkpoint.
+              runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
+      - name: torghut-trading.rules
+        rules:
+          - alert: TorghutTradingRevisionMetricsMissing
+            expr: |
+              absent(
+                up{
+                  job="torghut",
+                  namespace="torghut",
+                  service=~"torghut-[0-9]{5}-private"
+                }
+              ) == 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut trading revision metrics missing
+              description: |
+                No active Knative private revision service metrics are being scraped for torghut.
+                If torghut should be running, this may indicate revision readiness failures or scrape config drift.
+              runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
+          - alert: TorghutTradingRevisionMetricsDown
+            expr: |
+              max(
+                up{
+                  job="torghut",
+                  namespace="torghut",
+                  service=~"torghut-[0-9]{5}-private"
+                }
+              ) == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut trading revision metrics endpoint is down
+              description: |
+                The active Knative private revision for torghut is being scraped but up=0 for 5 minutes.
+              runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
+      - name: torghut-freshness.rules
+        rules:
+          - alert: TorghutSignalsStaleDuringMarketHours
+            expr: |
+              (
+                time()
+                - max(
+                  torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds{
+                    namespace="torghut",
+                    service="torghut-clickhouse-guardrails-exporter"
+                  }
+                )
+              ) > bool 900
+              * on() group_left()
+              vector(
+                (day_of_week() >= 1)
+                * (day_of_week() <= 5)
+                * (hour() >= 14)
+                * (hour() < 21)
+              ) > 0
+            for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut signals are stale (market hours)
+              description: |
+                ClickHouse ta_signals max(event_ts) is older than 15 minutes during market hours (UTC schedule).
+
+                First checks:
+                - torghut-ws readiness and Kafka publishing
+                - torghut-ta checkpointing and ClickHouse JDBC sink health
+              runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
+          - alert: TorghutMicrobarsStaleDuringMarketHours
+            expr: |
+              (
+                time()
+                - max(
+                  torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds{
+                    namespace="torghut",
+                    service="torghut-clickhouse-guardrails-exporter"
+                  }
+                )
+              ) > bool 300
+              * on() group_left()
+              vector(
+                (day_of_week() >= 1)
+                * (day_of_week() <= 5)
+                * (hour() >= 14)
+                * (hour() < 21)
+              ) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut microbars are stale (market hours)
+              description: |
+                ClickHouse ta_microbars max(window_end) is older than 5 minutes during market hours (UTC schedule).
+              runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
