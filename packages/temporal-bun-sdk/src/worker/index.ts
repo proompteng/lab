@@ -1,3 +1,6 @@
+export { WorkerVersioningMode } from '../proto/temporal/api/enums/v1/deployment_pb'
+export { VersioningBehavior } from '../proto/temporal/api/enums/v1/workflow_pb'
+
 export type { BunWorkerHandle, CreateWorkerOptions } from '../worker'
 export { BunWorker, createWorker, runWorker } from '../worker'
 export type { WorkerPlugin, WorkerPluginContext } from './plugins'
