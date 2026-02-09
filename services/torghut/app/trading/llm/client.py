@@ -108,9 +108,10 @@ def _coerce_int(value: Any) -> Optional[int]:
 def _coerce_usage(usage: Any) -> Optional[dict[str, int]]:
     if not isinstance(usage, dict):
         return None
+    usage_dict = cast(dict[str, Any], usage)
     out: dict[str, int] = {}
     for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
-        maybe = _coerce_int(usage.get(key))
+        maybe = _coerce_int(usage_dict.get(key))
         if maybe is not None:
             out[key] = maybe
     return out or None
@@ -140,37 +141,46 @@ def _parse_jangar_sse(stream: Any) -> tuple[str, Optional[dict[str, int]]]:
             break
 
         try:
-            frame = json.loads(data)
+            parsed = json.loads(data)
         except json.JSONDecodeError:
             # Ignore malformed frames; a later valid frame may still terminate the stream.
             continue
 
-        if isinstance(frame, dict) and "error" in frame:
+        if not isinstance(parsed, dict):
+            continue
+
+        frame = cast(dict[str, Any], parsed)
+
+        if "error" in frame:
             err = frame.get("error")
-            if isinstance(err, dict):
-                message = err.get("message") or err.get("code") or "unknown_error"
+            err_dict = cast(dict[str, Any], err) if isinstance(err, dict) else None
+            if err_dict is not None:
+                message = err_dict.get("message") or err_dict.get("code") or "unknown_error"
             else:
                 message = str(err)
             raise RuntimeError(f"jangar completion error: {message}")
 
-        if isinstance(frame, dict) and "usage" in frame:
+        if "usage" in frame:
             usage = _coerce_usage(frame.get("usage")) or usage
 
-        choices = frame.get("choices") if isinstance(frame, dict) else None
+        choices = frame.get("choices")
         if not isinstance(choices, list):
             continue
 
         for choice in choices:
             if not isinstance(choice, dict):
                 continue
-            delta = choice.get("delta")
+            choice_dict = cast(dict[str, Any], choice)
+            delta = choice_dict.get("delta")
             if isinstance(delta, dict):
-                content = delta.get("content")
+                delta_dict = cast(dict[str, Any], delta)
+                content = delta_dict.get("content")
                 if isinstance(content, str) and content:
                     content_parts.append(content)
-            message = choice.get("message")
+            message = choice_dict.get("message")
             if isinstance(message, dict):
-                content = message.get("content")
+                message_dict = cast(dict[str, Any], message)
+                content = message_dict.get("content")
                 if isinstance(content, str) and content:
                     content_parts.append(content)
 
