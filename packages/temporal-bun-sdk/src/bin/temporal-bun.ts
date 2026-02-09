@@ -10,6 +10,7 @@ import { makeDefaultClientInterceptors } from '../interceptors/client'
 import { makeDefaultWorkerInterceptors } from '../interceptors/worker'
 import { runTemporalCliEffect } from '../runtime/cli-layer'
 import { ObservabilityService, TemporalConfigService } from '../runtime/effect-layers'
+import { executeLintWorkflows, parseLintWorkflowsFlags, printLintWorkflows } from './lint-workflows-command'
 import { executeReplay, parseReplayOptions, printReplaySummary } from './replay-command'
 
 type CommandResult = { exitCode?: number }
@@ -141,23 +142,37 @@ const buildReplayProgram = (flagsOrOptions: Parameters<typeof executeReplay>[0])
 const handleReplay: CommandHandler = (_args, flags) => {
   const options = parseReplayOptions(flags)
   const commandEffect = buildReplayProgram(options).pipe(
-    Effect.tap((result) => Effect.sync(() => printReplaySummary(result.summary, options.jsonOutput))),
+    Effect.tap((result) => Effect.sync(() => printReplaySummary(result, options.jsonOutput))),
     Effect.map((result) => (result.exitCode && result.exitCode !== 0 ? { exitCode: result.exitCode } : undefined)),
   )
   return Effect.promise(() => runTemporalCliEffect(commandEffect, { config: { env: process.env } }))
 }
+
+const handleLintWorkflows: CommandHandler = (_args, flags) =>
+  Effect.tryPromise(async () => {
+    const options = parseLintWorkflowsFlags(flags)
+    const result = await executeLintWorkflows(options)
+    await printLintWorkflows(result)
+    return result.exitCode !== 0 ? { exitCode: result.exitCode } : undefined
+  })
 
 const commands: Record<string, CommandHandler> = {
   init: handleInit,
   'docker-build': handleDockerBuild,
   doctor: handleDoctor,
   replay: handleReplay,
+  'lint-workflows': handleLintWorkflows,
   help: handleHelp,
 }
 
 export const temporalCliTestHooks = {
   handleDoctor: (_args: string[], _flags: Record<string, string | boolean>) => doctorCommandProgram,
   handleReplay: (_args: string[], flags: Record<string, string | boolean>) => buildReplayProgram(flags),
+  handleLintWorkflows: (_args: string[], flags: Record<string, string | boolean>) =>
+    Effect.tryPromise(async () => {
+      const options = parseLintWorkflowsFlags(flags)
+      return await executeLintWorkflows(options)
+    }),
 }
 
 export const main = async () => {
@@ -229,6 +244,7 @@ Commands:
   docker-build            Build a Docker image for the current project
   doctor                  Validate configuration + observability sinks
   replay                  Replay workflow histories to diff determinism
+  lint-workflows           Lint workflow modules for nondeterminism hazards
   help                    Show this help message
 
 Options:
@@ -251,8 +267,15 @@ Options:
   --temporal-cli <path>   Override the Temporal CLI binary for replay
   --source <cli|service|auto>
                           Force a history source when replaying live executions
+  --history-dir <path>    Replay all history JSON files under a directory
+  --out <path>            Write replay batch artifacts (report + per-history JSON)
   --json                  Emit a JSON replay summary alongside console output
   --debug                 Pause execution for a debugger during replay
+  --workflows <glob>      Lint workflow entries (comma-separated globs allowed)
+  --mode <mode>           Lint mode (strict|warn|off)
+  --format <format>       Lint output format (text|json)
+  --config <path>         Workflow lint config path (default: .temporal-bun-workflows.json)
+  --changed-only          Lint only entries impacted by git diff (best-effort)
 `)
 }
 

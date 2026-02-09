@@ -20,6 +20,8 @@ export const runWithWorkflowLogContext = async <T>(context: WorkflowLogContext, 
 
 export const currentWorkflowLogContext = (): WorkflowLogContext | undefined => workflowLogStorage.getStore()
 
+export const runOutsideWorkflowLogContext = <T>(fn: () => T): T => workflowLogStorage.exit(fn)
+
 const requireWorkflowLogContext = (): WorkflowLogContext => {
   const context = currentWorkflowLogContext()
   if (!context) {
@@ -44,7 +46,9 @@ const emitLog = (level: LogLevel, message: string, fields?: LogFields): void => 
   }
   const baseFields = baseFieldsForInfo(context.info)
   const mergedFields = fields ? { ...fields, ...baseFields } : baseFields
-  void Effect.runPromise(context.logger.log(level, message, mergedFields))
+  runOutsideWorkflowLogContext(() => {
+    void Effect.runPromise(context.logger.log(level, message, mergedFields))
+  })
 }
 
 export const log = {

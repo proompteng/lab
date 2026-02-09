@@ -37,6 +37,8 @@ const DEFAULT_DETERMINISM_MARKER_INTERVAL_TASKS = 10
 const DEFAULT_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS = 50
 const DEFAULT_DETERMINISM_MARKER_SKIP_UNCHANGED = true
 const DEFAULT_DETERMINISM_MARKER_MAX_DETAIL_BYTES = 1_800_000
+const DEFAULT_WORKFLOW_GUARDS_MODE: WorkflowGuardsMode = 'warn'
+const DEFAULT_WORKFLOW_LINT_MODE: WorkflowLintMode = 'warn'
 const DEFAULT_CLIENT_RETRY_MAX_ATTEMPTS = defaultRetryPolicy.maxAttempts
 const DEFAULT_CLIENT_RETRY_INITIAL_MS = defaultRetryPolicy.initialDelayMs
 const DEFAULT_CLIENT_RETRY_MAX_MS = defaultRetryPolicy.maxDelayMs
@@ -78,6 +80,8 @@ const LogLevelSchema = Schema.Literal('debug', 'info', 'warn', 'error')
 const LogFormatSchema = Schema.Literal('json', 'pretty')
 const DeterminismMarkerModeSchema = Schema.Literal('always', 'interval', 'delta', 'never')
 const MetricsExporterTypeSchema = Schema.Literal('in-memory', 'file', 'otlp', 'prometheus')
+const WorkflowGuardsModeSchema = Schema.Literal('strict', 'warn', 'off')
+const WorkflowLintModeSchema = Schema.Literal('strict', 'warn', 'off')
 const MetricsExporterSpecSchema = Schema.Struct({
   type: MetricsExporterTypeSchema,
   endpoint: Schema.optional(Schema.String),
@@ -129,6 +133,8 @@ const TemporalConfigSchema = Schema.Struct({
   determinismMarkerFullSnapshotIntervalTasks: Schema.Number,
   determinismMarkerSkipUnchanged: Schema.Boolean,
   determinismMarkerMaxDetailBytes: Schema.Number,
+  workflowGuards: WorkflowGuardsModeSchema,
+  workflowLint: WorkflowLintModeSchema,
   activityHeartbeatIntervalMs: Schema.Number,
   activityHeartbeatRpcTimeoutMs: Schema.Number,
   workerDeploymentName: Schema.optional(Schema.String),
@@ -187,6 +193,8 @@ export interface TemporalEnvironment {
   TEMPORAL_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS?: string
   TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED?: string
   TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES?: string
+  TEMPORAL_WORKFLOW_GUARDS?: string
+  TEMPORAL_WORKFLOW_LINT?: string
   TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS?: string
   TEMPORAL_CLIENT_RETRY_INITIAL_MS?: string
   TEMPORAL_CLIENT_RETRY_MAX_MS?: string
@@ -203,6 +211,8 @@ const falsyValues = new Set(['0', 'false', 'f', 'no', 'n', 'off'])
 const logLevelOptions = new Set<LogLevel>(['debug', 'info', 'warn', 'error'])
 const logFormatOptions = new Set<LogFormat>(['json', 'pretty'])
 const determinismMarkerModeOptions = new Set<DeterminismMarkerMode>(['always', 'interval', 'delta', 'never'])
+const workflowGuardsModeOptions = new Set<WorkflowGuardsMode>(['strict', 'warn', 'off'])
+const workflowLintModeOptions = new Set<WorkflowLintMode>(['strict', 'warn', 'off'])
 
 const parseLogLevel = (value: string | undefined): LogLevel | undefined => {
   if (!value) {
@@ -244,6 +254,34 @@ const parseDeterminismMarkerMode = (value: string | undefined): DeterminismMarke
     return normalized as DeterminismMarkerMode
   }
   throw new TemporalConfigError(`Invalid TEMPORAL_DETERMINISM_MARKER_MODE: ${value}`)
+}
+
+const parseWorkflowGuardsMode = (value: string | undefined): WorkflowGuardsMode | undefined => {
+  if (!value) {
+    return undefined
+  }
+  const normalized = value.trim().toLowerCase()
+  if (normalized.length === 0) {
+    return undefined
+  }
+  if (workflowGuardsModeOptions.has(normalized as WorkflowGuardsMode)) {
+    return normalized as WorkflowGuardsMode
+  }
+  throw new TemporalConfigError(`Invalid TEMPORAL_WORKFLOW_GUARDS: ${value}`)
+}
+
+const parseWorkflowLintMode = (value: string | undefined): WorkflowLintMode | undefined => {
+  if (!value) {
+    return undefined
+  }
+  const normalized = value.trim().toLowerCase()
+  if (normalized.length === 0) {
+    return undefined
+  }
+  if (workflowLintModeOptions.has(normalized as WorkflowLintMode)) {
+    return normalized as WorkflowLintMode
+  }
+  throw new TemporalConfigError(`Invalid TEMPORAL_WORKFLOW_LINT: ${value}`)
 }
 
 const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
@@ -292,6 +330,8 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
     ),
     TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED: read('TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED'),
     TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES: read('TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES'),
+    TEMPORAL_WORKFLOW_GUARDS: read('TEMPORAL_WORKFLOW_GUARDS'),
+    TEMPORAL_WORKFLOW_LINT: read('TEMPORAL_WORKFLOW_LINT'),
     TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS: read('TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS'),
     TEMPORAL_CLIENT_RETRY_INITIAL_MS: read('TEMPORAL_CLIENT_RETRY_INITIAL_MS'),
     TEMPORAL_CLIENT_RETRY_MAX_MS: read('TEMPORAL_CLIENT_RETRY_MAX_MS'),
@@ -467,6 +507,8 @@ export interface LoadTemporalConfigOptions {
 }
 
 export type DeterminismMarkerMode = 'always' | 'interval' | 'delta' | 'never'
+export type WorkflowGuardsMode = 'strict' | 'warn' | 'off'
+export type WorkflowLintMode = 'strict' | 'warn' | 'off'
 
 export interface TemporalConfig {
   host: string
@@ -493,6 +535,8 @@ export interface TemporalConfig {
   determinismMarkerFullSnapshotIntervalTasks: number
   determinismMarkerSkipUnchanged: boolean
   determinismMarkerMaxDetailBytes: number
+  workflowGuards: WorkflowGuardsMode
+  workflowLint: WorkflowLintMode
   activityHeartbeatIntervalMs: number
   activityHeartbeatRpcTimeoutMs: number
   workerDeploymentName?: string
@@ -770,6 +814,10 @@ export const loadTemporalConfigEffect = (
       defaults.determinismMarkerMaxDetailBytes ?? DEFAULT_DETERMINISM_MARKER_MAX_DETAIL_BYTES,
       'TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES',
     )
+    const workflowGuards =
+      parseWorkflowGuardsMode(env.TEMPORAL_WORKFLOW_GUARDS) ?? defaults.workflowGuards ?? DEFAULT_WORKFLOW_GUARDS_MODE
+    const workflowLint =
+      parseWorkflowLintMode(env.TEMPORAL_WORKFLOW_LINT) ?? defaults.workflowLint ?? DEFAULT_WORKFLOW_LINT_MODE
     const fallbackHeartbeatInterval = defaults.activityHeartbeatIntervalMs ?? DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS
     const fallbackHeartbeatRpcTimeout =
       defaults.activityHeartbeatRpcTimeoutMs ?? DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS
@@ -845,6 +893,8 @@ export const loadTemporalConfigEffect = (
       determinismMarkerFullSnapshotIntervalTasks,
       determinismMarkerSkipUnchanged,
       determinismMarkerMaxDetailBytes,
+      workflowGuards,
+      workflowLint,
       activityHeartbeatIntervalMs,
       activityHeartbeatRpcTimeoutMs,
       workerDeploymentName,
@@ -896,6 +946,8 @@ export const temporalDefaults = {
   determinismMarkerFullSnapshotIntervalTasks: DEFAULT_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS,
   determinismMarkerSkipUnchanged: DEFAULT_DETERMINISM_MARKER_SKIP_UNCHANGED,
   determinismMarkerMaxDetailBytes: DEFAULT_DETERMINISM_MARKER_MAX_DETAIL_BYTES,
+  workflowGuards: DEFAULT_WORKFLOW_GUARDS_MODE,
+  workflowLint: DEFAULT_WORKFLOW_LINT_MODE,
   activityHeartbeatIntervalMs: DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS,
   activityHeartbeatRpcTimeoutMs: DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS,
   workerDeploymentName: undefined,
@@ -926,6 +978,8 @@ export const temporalDefaults = {
   | 'determinismMarkerFullSnapshotIntervalTasks'
   | 'determinismMarkerSkipUnchanged'
   | 'determinismMarkerMaxDetailBytes'
+  | 'workflowGuards'
+  | 'workflowLint'
   | 'activityHeartbeatIntervalMs'
   | 'activityHeartbeatRpcTimeoutMs'
   | 'workerDeploymentName'

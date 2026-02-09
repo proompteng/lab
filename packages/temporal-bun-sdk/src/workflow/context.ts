@@ -508,8 +508,20 @@ export const createWorkflowContext = <I>(
   }
 
   const determinism: WorkflowDeterminismHelpers = {
-    now: () => params.determinismGuard.nextTime(() => Date.now()),
-    random: () => params.determinismGuard.nextRandom(() => Math.random()),
+    now: () => {
+      const originalDateNow = (globalThis as unknown as Record<symbol, unknown>)[
+        Symbol.for('@proompteng/temporal-bun-sdk.original.Date.now')
+      ] as (() => number) | undefined
+      const clock = originalDateNow ?? Date.now.bind(Date)
+      return params.determinismGuard.nextTime(clock)
+    },
+    random: () => {
+      const originalMathRandom = (globalThis as unknown as Record<symbol, unknown>)[
+        Symbol.for('@proompteng/temporal-bun-sdk.original.Math.random')
+      ] as (() => number) | undefined
+      const rng = originalMathRandom ?? Math.random.bind(Math)
+      return params.determinismGuard.nextRandom(rng)
+    },
     sideEffect: <T>({ compute, identifier }: SideEffectOptions<T>) =>
       runSideEffect<T>({
         commandContext,
