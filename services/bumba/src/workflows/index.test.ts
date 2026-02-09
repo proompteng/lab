@@ -236,7 +236,7 @@ test('enrichFile completes when all activities are resolved', async () => {
       },
     ],
     [
-      'activity-3',
+      'activity-4',
       {
         status: 'completed',
         value: {
@@ -247,7 +247,7 @@ test('enrichFile completes when all activities are resolved', async () => {
       },
     ],
     [
-      'activity-4',
+      'activity-5',
       {
         status: 'completed',
         value: {
@@ -258,14 +258,14 @@ test('enrichFile completes when all activities are resolved', async () => {
       },
     ],
     [
-      'activity-5',
+      'activity-6',
       {
         status: 'completed',
         value: {},
       },
     ],
     [
-      'activity-6',
+      'activity-7',
       {
         status: 'completed',
         value: {
@@ -277,7 +277,7 @@ test('enrichFile completes when all activities are resolved', async () => {
       },
     ],
     [
-      'activity-7',
+      'activity-8',
       {
         status: 'completed',
         value: {
@@ -288,7 +288,7 @@ test('enrichFile completes when all activities are resolved', async () => {
       },
     ],
     [
-      'activity-8',
+      'activity-9',
       {
         status: 'completed',
         value: {
@@ -297,19 +297,12 @@ test('enrichFile completes when all activities are resolved', async () => {
       },
     ],
     [
-      'activity-9',
+      'activity-10',
       {
         status: 'completed',
         value: {
           enrichmentId: 'enrichment-id',
         },
-      },
-    ],
-    [
-      'activity-10',
-      {
-        status: 'completed',
-        value: {},
       },
     ],
     [
@@ -321,6 +314,13 @@ test('enrichFile completes when all activities are resolved', async () => {
     ],
     [
       'activity-12',
+      {
+        status: 'completed',
+        value: {},
+      },
+    ],
+    [
+      'activity-13',
       {
         status: 'completed',
         value: {
@@ -531,7 +531,7 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       },
     ],
     [
-      'activity-4',
+      'activity-5',
       {
         status: 'completed',
         value: {
@@ -542,7 +542,7 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       },
     ],
     [
-      'activity-5',
+      'activity-6',
       {
         status: 'completed',
         value: {
@@ -553,14 +553,14 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       },
     ],
     [
-      'activity-6',
+      'activity-7',
       {
         status: 'completed',
         value: {},
       },
     ],
     [
-      'activity-7',
+      'activity-8',
       {
         status: 'completed',
         value: {
@@ -572,7 +572,7 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       },
     ],
     [
-      'activity-8',
+      'activity-9',
       {
         status: 'completed',
         value: {
@@ -583,7 +583,7 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       },
     ],
     [
-      'activity-9',
+      'activity-10',
       {
         status: 'completed',
         value: {
@@ -592,19 +592,12 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       },
     ],
     [
-      'activity-10',
+      'activity-11',
       {
         status: 'completed',
         value: {
           enrichmentId: 'enrichment-id',
         },
-      },
-    ],
-    [
-      'activity-11',
-      {
-        status: 'completed',
-        value: {},
       },
     ],
     [
@@ -616,6 +609,13 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
     ],
     [
       'activity-13',
+      {
+        status: 'completed',
+        value: {},
+      },
+    ],
+    [
+      'activity-14',
       {
         status: 'completed',
         value: {
