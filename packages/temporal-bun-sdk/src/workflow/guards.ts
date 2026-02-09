@@ -93,8 +93,8 @@ const throwViolation = (details: ViolationDetails): never => {
     throw new WorkflowQueryViolationError(`${details.message} (${details.api})`)
   }
   throw new WorkflowNondeterminismError(details.message, {
-    api: details.api,
-    remediation: details.remediation,
+    received: { api: details.api },
+    hint: details.remediation,
   })
 }
 

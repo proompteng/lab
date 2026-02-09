@@ -64,6 +64,8 @@ interface ReplayDirectoryOptions {
 
 type ReplayCommandOptions = ReplaySingleOptions | ReplayDirectoryOptions
 
+type ReplayExecutionOptions = ReplaySingleOptions & { execution: WorkflowExecutionRef }
+
 const isReplayOptions = (value: unknown): value is ReplayCommandOptions =>
   Boolean(
     value &&
@@ -407,7 +409,7 @@ const loadReplayHistory = async (
   }
 
   return loadExecutionHistory({
-    options,
+    options: options as ReplayExecutionOptions,
     config,
     workflowService,
     loaders: defaultHistoryLoaders,
@@ -594,7 +596,7 @@ const loadExecutionHistory = async ({
   loaders,
   workflowService,
 }: {
-  readonly options: ReplayCommandOptions
+  readonly options: ReplayExecutionOptions
   readonly config: TemporalConfig
   readonly loaders: HistoryLoaders
   readonly workflowService: WorkflowServiceClient
@@ -646,13 +648,10 @@ async function loadHistoryViaCli({
   config,
   namespace,
 }: {
-  readonly options: ReplayCommandOptions
+  readonly options: ReplayExecutionOptions
   readonly config: TemporalConfig
   readonly namespace: string
 }): Promise<HistorySourceRecord> {
-  if (!options.execution) {
-    throw new ReplayCommandError('Execution metadata missing for CLI history fetch')
-  }
   const binary = options.temporalCliPath ?? 'temporal'
   const args = [
     'workflow',
@@ -749,14 +748,11 @@ async function loadHistoryViaService({
   namespace,
   workflowService,
 }: {
-  readonly options: ReplayCommandOptions
+  readonly options: ReplayExecutionOptions
   readonly config: TemporalConfig
   readonly namespace: string
   readonly workflowService: WorkflowServiceClient
 }): Promise<HistorySourceRecord> {
-  if (!options.execution) {
-    throw new ReplayCommandError('Execution metadata missing for WorkflowService history fetch')
-  }
   const events: HistoryEvent[] = []
   let nextPageToken: HistoryPageToken = new Uint8Array()
 
@@ -884,7 +880,7 @@ const resolveWorkflowInfo = ({
   metadata,
 }: {
   readonly config: TemporalConfig
-  readonly options: ReplayCommandOptions
+  readonly options: ReplaySingleOptions
   readonly metadata: HistoryMetadata
 }): WorkflowInfo => {
   const workflowType = options.workflowType ?? metadata.workflowType
