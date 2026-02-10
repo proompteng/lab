@@ -175,6 +175,15 @@ function TorghutTrading() {
   const [decisions, setDecisions] = React.useState<RejectedDecision[]>([])
   const [isLoading, setIsLoading] = React.useState(false)
 
+  const loadDataRequestIdRef = React.useRef(0)
+  const loadDataAbortRef = React.useRef<AbortController | null>(null)
+
+  React.useEffect(() => {
+    return () => {
+      loadDataAbortRef.current?.abort()
+    }
+  }, [])
+
   const loadStrategies = React.useCallback(async () => {
     setDisabledMessage(null)
     setStrategiesError(null)
@@ -212,6 +221,13 @@ function TorghutTrading() {
   }, [])
 
   const loadData = React.useCallback(async (params: { day: string; strategyId: string }) => {
+    const requestId = loadDataRequestIdRef.current + 1
+    loadDataRequestIdRef.current = requestId
+
+    loadDataAbortRef.current?.abort()
+    const controller = new AbortController()
+    loadDataAbortRef.current = controller
+
     setIsLoading(true)
     setSummaryError(null)
     setDisabledMessage(null)
@@ -221,12 +237,15 @@ function TorghutTrading() {
 
     try {
       const [summaryRes, execRes, decRes] = await Promise.all([
-        fetch(`/api/torghut/trading/summary?${query}`),
-        fetch(`/api/torghut/trading/executions?${query}`),
-        fetch(`/api/torghut/trading/decisions?${query}`),
+        fetch(`/api/torghut/trading/summary?${query}`, { signal: controller.signal }),
+        fetch(`/api/torghut/trading/executions?${query}`, { signal: controller.signal }),
+        fetch(`/api/torghut/trading/decisions?${query}`, { signal: controller.signal }),
       ])
 
+      if (loadDataRequestIdRef.current !== requestId) return
+
       const summaryPayload = (await summaryRes.json().catch(() => null)) as unknown
+      if (loadDataRequestIdRef.current !== requestId) return
       if (!summaryRes.ok) {
         const message = getErrorMessage(summaryPayload) ?? `Failed to load summary (${summaryRes.status})`
         const disabled = Boolean(summaryPayload && typeof summaryPayload === 'object' && 'disabled' in summaryPayload)
@@ -248,18 +267,23 @@ function TorghutTrading() {
       setSummary(summaryPayload.summary)
 
       const execPayload = (await execRes.json().catch(() => null)) as unknown
+      if (loadDataRequestIdRef.current !== requestId) return
       setExecutions(execRes.ok && isItemsPayload<FilledExecution>(execPayload) ? execPayload.items : [])
 
       const decPayload = (await decRes.json().catch(() => null)) as unknown
+      if (loadDataRequestIdRef.current !== requestId) return
       setDecisions(decRes.ok && isItemsPayload<RejectedDecision>(decPayload) ? decPayload.items : [])
     } catch (error) {
+      if (controller.signal.aborted) return
       const message = error instanceof Error ? error.message : 'Failed to load trading history.'
       setSummaryError(message)
       setSummary(null)
       setExecutions([])
       setDecisions([])
     } finally {
-      setIsLoading(false)
+      if (loadDataRequestIdRef.current === requestId) {
+        setIsLoading(false)
+      }
     }
   }, [])
 

@@ -54,6 +54,18 @@ const clampIsoDayParts = (day: string) => {
   if (year === null || month === null || dayOfMonth === null) return null
   if (month < 1 || month > 12) return null
   if (dayOfMonth < 1 || dayOfMonth > 31) return null
+
+  // Ensure the date is a real calendar day (e.g. reject 2026-02-31). Date.UTC normalizes overflow,
+  // so we round-trip through a UTC date and verify the components match the requested parts.
+  const normalized = new Date(Date.UTC(year, month - 1, dayOfMonth))
+  if (
+    normalized.getUTCFullYear() !== year ||
+    normalized.getUTCMonth() !== month - 1 ||
+    normalized.getUTCDate() !== dayOfMonth
+  ) {
+    return null
+  }
+
   return { year, month, day: dayOfMonth }
 }
 
