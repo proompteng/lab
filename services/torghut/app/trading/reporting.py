@@ -24,8 +24,11 @@ class EvaluationReportConfig:
     cost_model_config: CostModelConfig = field(default_factory=CostModelConfig)
     run_id: Optional[str] = None
     strategy_config_path: Optional[str] = None
+    variant_count: Optional[int] = None
+    variant_warning_threshold: int = 20
 
     def to_payload(self) -> dict[str, object]:
+        resolved_variant_count = self.variant_count if self.variant_count is not None else len(self.strategies)
         return {
             "evaluation_start": self.evaluation_start.isoformat(),
             "evaluation_end": self.evaluation_end.isoformat(),
@@ -34,6 +37,8 @@ class EvaluationReportConfig:
             "cost_model": _cost_model_payload(self.cost_model_config),
             "run_id": self.run_id,
             "strategy_config_path": self.strategy_config_path,
+            "variant_count": resolved_variant_count,
+            "variant_warning_threshold": self.variant_warning_threshold,
         }
 
 
@@ -62,6 +67,70 @@ class EvaluationMetrics:
             "turnover_ratio": str(self.turnover_ratio),
             "average_exposure": str(self.average_exposure),
             "cost_bps": str(self.cost_bps),
+        }
+
+
+@dataclass(frozen=True)
+class RobustnessFoldMetrics:
+    fold_name: str
+    decision_count: int
+    trade_count: int
+    net_pnl: Decimal
+    max_drawdown: Decimal
+    turnover_ratio: Decimal
+    cost_bps: Decimal
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "fold_name": self.fold_name,
+            "decision_count": self.decision_count,
+            "trade_count": self.trade_count,
+            "net_pnl": str(self.net_pnl),
+            "max_drawdown": str(self.max_drawdown),
+            "turnover_ratio": str(self.turnover_ratio),
+            "cost_bps": str(self.cost_bps),
+        }
+
+
+@dataclass(frozen=True)
+class RobustnessReport:
+    method: str
+    fold_count: int
+    net_pnl_mean: Decimal
+    net_pnl_std: Decimal
+    net_pnl_cv: Optional[Decimal]
+    worst_fold_net_pnl: Decimal
+    best_fold_net_pnl: Decimal
+    negative_fold_count: int
+    folds: list[RobustnessFoldMetrics]
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "method": self.method,
+            "fold_count": self.fold_count,
+            "net_pnl_mean": str(self.net_pnl_mean),
+            "net_pnl_std": str(self.net_pnl_std),
+            "net_pnl_cv": str(self.net_pnl_cv) if self.net_pnl_cv is not None else None,
+            "worst_fold_net_pnl": str(self.worst_fold_net_pnl),
+            "best_fold_net_pnl": str(self.best_fold_net_pnl),
+            "negative_fold_count": self.negative_fold_count,
+            "folds": [fold.to_payload() for fold in self.folds],
+        }
+
+
+@dataclass(frozen=True)
+class MultipleTestingSummary:
+    variant_count: int
+    warning_threshold: int
+    warning_triggered: bool
+    warnings: list[str]
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "variant_count": self.variant_count,
+            "warning_threshold": self.warning_threshold,
+            "warning_triggered": self.warning_triggered,
+            "warnings": list(self.warnings),
         }
 
 
@@ -128,6 +197,8 @@ class EvaluationReport:
     config: EvaluationReportConfig
     metrics: EvaluationMetrics
     gates: EvaluationGateOutcome
+    robustness: RobustnessReport
+    multiple_testing: MultipleTestingSummary
     git_sha: Optional[str] = None
 
     def to_payload(self) -> dict[str, object]:
@@ -138,6 +209,8 @@ class EvaluationReport:
             "versions": {"git_sha": self.git_sha},
             "metrics": self.metrics.to_payload(),
             "gates": self.gates.to_payload(),
+            "robustness": self.robustness.to_payload(),
+            "multiple_testing": self.multiple_testing.to_payload(),
         }
 
 
@@ -156,15 +229,20 @@ def generate_evaluation_report(
     cost_model: Optional[TransactionCostModel] = None,
 ) -> EvaluationReport:
     decisions = _flatten_decisions(results)
-    metrics = _evaluate_metrics(decisions, cost_model or TransactionCostModel(config.cost_model_config))
+    resolved_cost_model = cost_model or TransactionCostModel(config.cost_model_config)
+    metrics = _evaluate_metrics(decisions, resolved_cost_model)
     gates = _evaluate_gates(metrics, gate_policy or EvaluationGatePolicy(), promotion_target)
+    robustness = _evaluate_robustness(results, resolved_cost_model)
+    multiple_testing = _evaluate_multiple_testing(config)
     generated_at = datetime.now(timezone.utc)
     return EvaluationReport(
-        report_version="v1",
+        report_version="v2",
         generated_at=generated_at,
         config=config,
         metrics=metrics,
         gates=gates,
+        robustness=robustness,
+        multiple_testing=multiple_testing,
         git_sha=config.git_sha,
     )
 
@@ -293,6 +371,81 @@ def _evaluate_gates(
         promotion_allowed=promotion_allowed,
         recommended_mode=recommended_mode,
         reasons=reasons,
+    )
+
+
+def _evaluate_robustness(
+    results: WalkForwardResults,
+    cost_model: TransactionCostModel,
+) -> RobustnessReport:
+    fold_metrics: list[RobustnessFoldMetrics] = []
+    net_pnls: list[Decimal] = []
+
+    for fold in results.folds:
+        metrics = _evaluate_metrics(fold.decisions, cost_model)
+        fold_metrics.append(
+            RobustnessFoldMetrics(
+                fold_name=fold.fold.name,
+                decision_count=metrics.decision_count,
+                trade_count=metrics.trade_count,
+                net_pnl=metrics.net_pnl,
+                max_drawdown=metrics.max_drawdown,
+                turnover_ratio=metrics.turnover_ratio,
+                cost_bps=metrics.cost_bps,
+            )
+        )
+        net_pnls.append(metrics.net_pnl)
+
+    fold_count = len(fold_metrics)
+    if fold_count == 0:
+        return RobustnessReport(
+            method="fold_stability",
+            fold_count=0,
+            net_pnl_mean=Decimal("0"),
+            net_pnl_std=Decimal("0"),
+            net_pnl_cv=None,
+            worst_fold_net_pnl=Decimal("0"),
+            best_fold_net_pnl=Decimal("0"),
+            negative_fold_count=0,
+            folds=[],
+        )
+
+    net_pnl_mean = _decimal_mean(net_pnls)
+    net_pnl_std = _decimal_std(net_pnls, net_pnl_mean)
+    net_pnl_cv: Optional[Decimal] = None
+    if net_pnl_mean != 0:
+        net_pnl_cv = net_pnl_std / abs(net_pnl_mean)
+
+    worst_fold = min(net_pnls)
+    best_fold = max(net_pnls)
+    negative_fold_count = sum(1 for value in net_pnls if value < 0)
+
+    return RobustnessReport(
+        method="fold_stability",
+        fold_count=fold_count,
+        net_pnl_mean=net_pnl_mean,
+        net_pnl_std=net_pnl_std,
+        net_pnl_cv=net_pnl_cv,
+        worst_fold_net_pnl=worst_fold,
+        best_fold_net_pnl=best_fold,
+        negative_fold_count=negative_fold_count,
+        folds=fold_metrics,
+    )
+
+
+def _evaluate_multiple_testing(config: EvaluationReportConfig) -> MultipleTestingSummary:
+    variant_count = config.variant_count if config.variant_count is not None else len(config.strategies)
+    warning_threshold = config.variant_warning_threshold
+    warning_triggered = variant_count >= warning_threshold if warning_threshold > 0 else False
+    warnings: list[str] = []
+    if warning_triggered:
+        warnings.append("variant_count_exceeds_threshold")
+
+    return MultipleTestingSummary(
+        variant_count=variant_count,
+        warning_threshold=warning_threshold,
+        warning_triggered=warning_triggered,
+        warnings=warnings,
     )
 
 
@@ -491,12 +644,29 @@ def _bps_from_cost(cost: Decimal, notional: Decimal) -> Decimal:
     return (cost / notional) * Decimal("10000")
 
 
+def _decimal_mean(values: list[Decimal]) -> Decimal:
+    if not values:
+        return Decimal("0")
+    total = sum(values, Decimal("0"))
+    return total / Decimal(len(values))
+
+
+def _decimal_std(values: list[Decimal], mean: Decimal) -> Decimal:
+    if len(values) <= 1:
+        return Decimal("0")
+    variance = sum((value - mean) ** 2 for value in values) / Decimal(len(values))
+    return variance.sqrt()
+
+
 __all__ = [
     "EvaluationGateOutcome",
     "EvaluationGatePolicy",
     "EvaluationMetrics",
     "EvaluationReport",
     "EvaluationReportConfig",
+    "MultipleTestingSummary",
+    "RobustnessFoldMetrics",
+    "RobustnessReport",
     "generate_evaluation_report",
     "write_evaluation_report",
 ]
