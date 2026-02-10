@@ -87,29 +87,17 @@ See also `docs/torghut/ops-2026-01-01-ta-recovery.md` and `v1/operations-clickho
    - `SYSTEM RESTORE REPLICA torghut.ta_microbars`
 3) Restart TA job after ClickHouse is healthy.
 
-## Procedure C: Replay/backfill within retention window
-### When to replay
-- TA job bug fixed and you need recomputation.
-- ClickHouse data corrupted or partially missing.
-
-### Canonical runbook (v1)
-The single source of truth for the TA replay workflow is:
+## TA replay workflow (canonical)
+The single, canonical TA replay/backfill workflow is defined alongside the concrete manifests so oncall and automation
+have one authoritative source:
 - `argocd/applications/torghut/README.md` → **“TA replay workflow (canonical)”**
 
-This is intentionally documented next to the concrete resource manifests so it is:
-- repeatable by oncall,
-- safe by default (non-destructive),
-- and straightforward for an AgentRun to automate via GitOps PRs.
-
-### Constraints and safety reminders
-- **Hard replay limit (Kafka retention):** TA can only replay what still exists in Kafka inputs (expected 7–30 days; verify).
-  See `v1/component-kafka-topics-and-retention.md`.
-- **Data persistence limit (ClickHouse TTL):** replayed outputs older than TTL may be deleted during merges.
-  See `v1/component-clickhouse-capacity-ttl-and-disk-guardrails.md`.
-- **Trading safety gate:** if there is any uncertainty about signal correctness, pause trading via
-  `argocd/applications/torghut/knative-service.yaml` (`TRADING_ENABLED=false`) before running replay.
-- **Group-id isolation (required):** replays/backfills must use a *unique* `TA_GROUP_ID` and must record the prior
-  steady-state `TA_GROUP_ID` for rollback.
+Follow that runbook for:
+- the required unique `TA_GROUP_ID` and how to set it,
+- replay window constraints (Kafka retention vs ClickHouse TTL),
+- explicit safety prerequisites and confirmation steps,
+- non-destructive vs destructive modes,
+- and rollback/recovery if replay fails.
 
 ## Automation (AgentRuns)
 AgentRuns should treat these procedures as two classes of automation:
