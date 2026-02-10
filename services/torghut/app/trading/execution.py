@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from collections.abc import Mapping
 from typing import Any, Optional, cast
@@ -13,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Execution, Strategy, TradeDecision, coerce_json_payload
 from ..snapshots import sync_order_to_db
+from .execution_policy import should_retry_order_error
 from .firewall import OrderFirewall
 from .models import ExecutionRequest, StrategyDecision, decision_hash
 
@@ -71,6 +73,8 @@ class OrderExecutor:
         decision: StrategyDecision,
         decision_row: TradeDecision,
         account_label: str,
+        *,
+        retry_delays: Optional[list[float]] = None,
     ) -> Optional[Execution]:
         existing_execution = self._fetch_execution(session, decision_row)
         if existing_execution is not None:
@@ -98,16 +102,35 @@ class OrderExecutor:
             client_order_id=decision_row.decision_hash,
         )
 
-        order_response = firewall.submit_order(
-            symbol=request.symbol,
-            side=request.side,
-            qty=float(request.qty),
-            order_type=request.order_type,
-            time_in_force=request.time_in_force,
-            limit_price=float(request.limit_price) if request.limit_price is not None else None,
-            stop_price=float(request.stop_price) if request.stop_price is not None else None,
-            extra_params={"client_order_id": request.client_order_id},
-        )
+        if retry_delays is None:
+            retry_delays = []
+
+        attempt = 0
+        while True:
+            try:
+                order_response = firewall.submit_order(
+                    symbol=request.symbol,
+                    side=request.side,
+                    qty=float(request.qty),
+                    order_type=request.order_type,
+                    time_in_force=request.time_in_force,
+                    limit_price=float(request.limit_price) if request.limit_price is not None else None,
+                    stop_price=float(request.stop_price) if request.stop_price is not None else None,
+                    extra_params={"client_order_id": request.client_order_id},
+                )
+                break
+            except Exception as exc:
+                if attempt >= len(retry_delays) or not should_retry_order_error(exc):
+                    raise
+                delay = retry_delays[attempt]
+                attempt += 1
+                logger.warning(
+                    "Retrying order submission attempt=%s decision_id=%s error=%s",
+                    attempt,
+                    decision_row.id,
+                    exc,
+                )
+                time.sleep(delay)
 
         execution = sync_order_to_db(session, order_response, trade_decision_id=str(decision_row.id))
         _apply_execution_status(
