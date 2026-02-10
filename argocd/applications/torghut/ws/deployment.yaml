@@ -17,7 +17,7 @@ spec:
       labels:
         app: torghut-ws
       annotations:
-        kubectl.kubernetes.io/restartedAt: 2026-02-10T06:36:37.043Z
+        kubectl.kubernetes.io/restartedAt: 2026-02-10T09:28:58Z
     spec:
       serviceAccountName: torghut-runtime
       securityContext:
