@@ -32,8 +32,8 @@ If you replay data older than the ClickHouse TTL, it may be deleted during merge
 `docs/torghut/design-system/v1/component-clickhouse-capacity-ttl-and-disk-guardrails.md`).
 
 ### Safety gates (read first)
-- **Trading safety:** if there is any uncertainty about signal correctness (stale/corrupt/partial), pause trading first
-  and keep it paused until verification passes:
+- **Trading safety (prerequisite):** if there is any uncertainty about signal correctness (stale/corrupt/partial), pause
+  trading first and keep it paused until verification passes.
   - set `TRADING_ENABLED=false` in `argocd/applications/torghut/knative-service.yaml`
   - keep `TRADING_LIVE_ENABLED=false` (safety backstop)
 - **Unique consumer group required (hard requirement):** every replay/backfill must use a **new** `TA_GROUP_ID`
@@ -42,6 +42,14 @@ If you replay data older than the ClickHouse TTL, it may be deleted during merge
   Emergency-only `kubectl patch` is allowed, but reconcile back to GitOps immediately after.
 - **Not “one button destructive”:** default to Mode 1 (non-destructive). Mode 2 is explicitly destructive and requires an
   additional confirmation step + a recorded ticket/incident reference.
+
+### Safety prerequisites and confirmations
+Before touching the TA job or Kafka topics, record the following in your ticket/incident:
+- `REPLAY_ID` (unique id used in group id + any backups), example: `2026-02-09T0315Z-INC1234`
+- `PREV_TA_GROUP_ID` (current steady-state group id from `argocd/applications/torghut/ta/configmap.yaml`)
+- Confirmation that trading is paused (or explicitly confirmed safe for paper-only replay)
+- Confirmation of replay window feasibility (Kafka retention vs ClickHouse TTL; see above)
+- If Mode 2 is required: explicit human approval + acknowledgement of destructive steps
 
 ### Inputs to capture (for rollback)
 - `PREV_TA_GROUP_ID` (current steady-state group id from `argocd/applications/torghut/ta/configmap.yaml`)
@@ -169,8 +177,9 @@ Apply via GitOps (preferred), then restart via `spec.restartNonce` bump and set 
 ### Rollback / recovery if replay fails
 1) Stop the job:
    - Set `spec.job.state: suspended` (GitOps-first) or patch the FlinkDeployment.
-2) Restore steady-state config:
+2) Restore steady-state config (non-destructive rollback):
    - Revert `TA_GROUP_ID` to `PREV_TA_GROUP_ID` in `argocd/applications/torghut/ta/configmap.yaml`.
+   - If you changed `TA_AUTO_OFFSET_RESET`, restore the previous value.
    - Bump `spec.restartNonce` in `argocd/applications/torghut/ta/flinkdeployment.yaml` to force restart.
    - Set `spec.job.state: running` and Argo sync.
 3) If you used Mode 2 (deleted state), restore MinIO state from your backup prefix, then restart:
