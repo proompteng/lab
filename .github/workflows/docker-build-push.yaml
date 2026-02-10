@@ -38,12 +38,15 @@ jobs:
           filters: |
             proompteng:
               - 'apps/landing/**'
+              - 'packages/design/**'
             app:
               - 'apps/app/**'
+              - 'packages/design/**'
             cms:
               - 'apps/cms/**'
             docs:
               - 'apps/docs/**'
+              - 'packages/design/**'
             kitty-krew:
               - 'apps/kitty-krew/**'
             reviseur:
