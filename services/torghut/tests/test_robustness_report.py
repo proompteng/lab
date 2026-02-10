@@ -62,6 +62,7 @@ class TestRobustnessReport(TestCase):
         self.assertEqual(report.robustness.best_fold_net_pnl, Decimal('1'))
         self.assertEqual(report.robustness.negative_fold_count, 0)
         self.assertEqual(report.robustness.folds[0].net_pnl, Decimal('1'))
+        self.assertEqual(report.robustness.folds[0].regime.label(), 'vol=high|trend=up|liq=liquid')
 
         self.assertTrue(report.multiple_testing.warning_triggered)
         self.assertIn('variant_count_exceeds_threshold', report.multiple_testing.warnings)

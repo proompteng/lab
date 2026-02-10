@@ -12,6 +12,7 @@ from typing import Any, Literal, Optional
 from ..models import Strategy
 from .costs import CostModelConfig, CostModelInputs, OrderIntent, TransactionCostModel
 from .evaluation import WalkForwardDecision, WalkForwardResults
+from .regime import RegimeLabel, classify_regime
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,7 @@ class RobustnessFoldMetrics:
     max_drawdown: Decimal
     turnover_ratio: Decimal
     cost_bps: Decimal
+    regime: RegimeLabel
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -89,6 +91,8 @@ class RobustnessFoldMetrics:
             "max_drawdown": str(self.max_drawdown),
             "turnover_ratio": str(self.turnover_ratio),
             "cost_bps": str(self.cost_bps),
+            "regime_label": self.regime.label(),
+            "regime": self.regime.to_payload(),
         }
 
 
@@ -383,6 +387,7 @@ def _evaluate_robustness(
 
     for fold in results.folds:
         metrics = _evaluate_metrics(fold.decisions, cost_model)
+        regime = classify_regime(fold.decisions)
         fold_metrics.append(
             RobustnessFoldMetrics(
                 fold_name=fold.fold.name,
@@ -392,6 +397,7 @@ def _evaluate_robustness(
                 max_drawdown=metrics.max_drawdown,
                 turnover_ratio=metrics.turnover_ratio,
                 cost_bps=metrics.cost_bps,
+                regime=regime,
             )
         )
         net_pnls.append(metrics.net_pnl)
