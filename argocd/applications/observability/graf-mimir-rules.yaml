@@ -99,10 +99,12 @@ data:
         rules:
           - alert: TorghutClickHouseDiskFreeLowWarning
             expr: |
-              torghut_clickhouse_guardrails_disk_free_ratio{
-                namespace="torghut",
-                service="torghut-clickhouse-guardrails-exporter"
-              } < 0.15
+              min by (namespace, service) (
+                torghut_clickhouse_guardrails_disk_free_ratio{
+                  namespace="torghut",
+                  service="torghut-clickhouse-guardrails-exporter"
+                }
+              ) < 0.15
             for: 10m
             labels:
               severity: warning
@@ -112,13 +114,16 @@ data:
                 Torghut ClickHouse is below 15% free disk for 10 minutes.
 
                 First safe action: pause TA writes to stop the retry storm and prevent disk exhaustion.
+                Follow-up guidance: v1/component-clickhouse-capacity-ttl-and-disk-guardrails.md.
               runbook_url: docs/torghut/design-system/v1/operations-pause-ta-writes.md
           - alert: TorghutClickHouseDiskFreeLowCritical
             expr: |
-              torghut_clickhouse_guardrails_disk_free_ratio{
-                namespace="torghut",
-                service="torghut-clickhouse-guardrails-exporter"
-              } < 0.08
+              min by (namespace, service) (
+                torghut_clickhouse_guardrails_disk_free_ratio{
+                  namespace="torghut",
+                  service="torghut-clickhouse-guardrails-exporter"
+                }
+              ) < 0.08
             for: 5m
             labels:
               severity: critical
@@ -131,10 +136,12 @@ data:
               runbook_url: docs/torghut/design-system/v1/operations-pause-ta-writes.md
           - alert: TorghutClickHouseReplicaReadOnly
             expr: |
-              torghut_clickhouse_guardrails_any_replica_readonly{
-                namespace="torghut",
-                service="torghut-clickhouse-guardrails-exporter"
-              } >= 1
+              max by (namespace, service) (
+                torghut_clickhouse_guardrails_any_replica_readonly{
+                  namespace="torghut",
+                  service="torghut-clickhouse-guardrails-exporter"
+                }
+              ) >= 1
             for: 2m
             labels:
               severity: critical
@@ -143,7 +150,8 @@ data:
               description: |
                 At least one Torghut ClickHouse replicated table reports read-only, which will cause TA JDBC writes to fail.
 
-                Stop the bleeding: pause TA writes first, then follow replica recovery (SYSTEM RESTORE REPLICA).
+                Stop the bleeding: pause TA writes first (v1/operations-pause-ta-writes.md), then follow replica recovery
+                (v1/operations-clickhouse-replica-and-keeper.md).
               runbook_url: docs/torghut/design-system/v1/operations-clickhouse-replica-and-keeper.md
           - alert: TorghutClickHouseGuardrailsExporterDown
             expr: |
