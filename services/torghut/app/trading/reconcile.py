@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -14,6 +14,9 @@ from ..snapshots import sync_order_to_db
 from .risk import FINAL_STATUSES
 
 logger = logging.getLogger(__name__)
+
+BACKFILL_DECISION_LOOKBACK_DAYS = 7
+BACKFILL_DECISION_LIMIT = 200
 
 
 class Reconciler:
@@ -46,25 +49,47 @@ class Reconciler:
         return updates
 
     def _backfill_missing_executions(self, session: Session, client: TorghutAlpacaClient) -> int:
-        try:
-            orders = client.list_orders(status="all")
-        except Exception as exc:  # pragma: no cover - external failure
-            logger.warning("Failed to fetch broker orders for reconciliation: %s", exc)
-            return 0
+        # Avoid scanning broker history unboundedly; reconcile only local decisions that are
+        # missing an Execution and ask the broker for those specific client_order_ids.
+        cutoff = datetime.now(timezone.utc) - timedelta(days=BACKFILL_DECISION_LOOKBACK_DAYS)
+        decision_stmt = (
+            select(TradeDecision)
+            .where(
+                TradeDecision.decision_hash.is_not(None),
+                TradeDecision.created_at >= cutoff,
+                ~TradeDecision.status.in_(FINAL_STATUSES),
+            )
+            .order_by(TradeDecision.created_at.desc())
+            .limit(BACKFILL_DECISION_LIMIT)
+        )
+        decisions = session.execute(decision_stmt).scalars().all()
 
         updates = 0
-        for order in orders:
-            client_order_id = order.get("client_order_id")
-            if not client_order_id:
+        for decision in decisions:
+            if decision.decision_hash is None:
                 continue
-            stmt = select(Execution).where(Execution.client_order_id == client_order_id)
-            existing = session.execute(stmt).scalar_one_or_none()
+
+            existing_stmt = select(Execution).where(
+                (Execution.trade_decision_id == decision.id) | (Execution.client_order_id == decision.decision_hash)
+            )
+            existing = session.execute(existing_stmt).scalar_one_or_none()
             if existing is not None:
                 continue
-            decision_stmt = select(TradeDecision).where(TradeDecision.decision_hash == client_order_id)
-            decision = session.execute(decision_stmt).scalar_one_or_none()
-            trade_decision_id = str(decision.id) if decision is not None else None
-            execution = sync_order_to_db(session, order, trade_decision_id=trade_decision_id)
+
+            try:
+                order = client.get_order_by_client_order_id(decision.decision_hash)
+            except Exception as exc:  # pragma: no cover - external failure
+                logger.warning(
+                    "Failed to fetch broker order for decision %s client_order_id=%s: %s",
+                    decision.id,
+                    decision.decision_hash,
+                    exc,
+                )
+                continue
+            if not order:
+                continue
+
+            execution = sync_order_to_db(session, order, trade_decision_id=str(decision.id))
             _update_trade_decision(session, execution)
             updates += 1
         return updates

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.models import Base, Execution, Strategy, TradeDecision
 from app.trading.execution import OrderExecutor
 from app.trading.models import StrategyDecision, decision_hash
+from app.trading.reconcile import Reconciler
 
 
 class FakeAlpacaClient:
@@ -122,3 +123,59 @@ class TestOrderIdempotency(TestCase):
             executions = session.execute(select(Execution)).scalars().all()
             self.assertEqual(len(executions), 1)
             self.assertEqual(len(alpaca_client.submitted), 1)
+
+    def test_reconciler_backfills_missing_execution_by_client_order_id(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name='demo',
+                description='demo',
+                enabled=True,
+                base_timeframe='1Min',
+                universe_type='static',
+                universe_symbols=['AAPL'],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision_hash_value = 'decision-hash-1'
+            decision_row = TradeDecision(
+                strategy_id=str(strategy.id),
+                alpaca_account_label='paper',
+                symbol='AAPL',
+                timeframe='1Min',
+                decision_json={'symbol': 'AAPL'},
+                rationale=None,
+                status='planned',
+                decision_hash=decision_hash_value,
+            )
+            session.add(decision_row)
+            session.commit()
+            session.refresh(decision_row)
+
+            alpaca_client = FakeAlpacaClient()
+            alpaca_client.submitted.append(
+                {
+                    'id': 'order-1',
+                    'client_order_id': decision_hash_value,
+                    'symbol': 'AAPL',
+                    'side': 'buy',
+                    'type': 'market',
+                    'time_in_force': 'day',
+                    'qty': '1',
+                    'filled_qty': '0',
+                    'status': 'accepted',
+                }
+            )
+
+            reconciler = Reconciler()
+            updates = reconciler.reconcile(session, alpaca_client)
+
+            self.assertEqual(updates, 1)
+            executions = session.execute(select(Execution)).scalars().all()
+            self.assertEqual(len(executions), 1)
+            self.assertEqual(executions[0].client_order_id, decision_hash_value)
+
+            refreshed_decision = session.get(TradeDecision, decision_row.id)
+            assert refreshed_decision is not None
+            self.assertEqual(refreshed_decision.status, 'accepted')
