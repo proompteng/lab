@@ -3,6 +3,7 @@
 
 /*
   Shared global theme for proompteng apps.
+  Tokens derived from Jangar and consumed across app/docs/landing.
   This is intentionally CSS-first (Tailwind v4) so consumers only need:
     @import "@proompteng/design/globals.css";
 */
