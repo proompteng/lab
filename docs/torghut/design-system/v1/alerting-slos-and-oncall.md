@@ -42,7 +42,8 @@ flowchart TD
 ### Paging alerts (examples)
 - `torghut-ws` readiness 503 for > N minutes.
 - FlinkDeployment `FAILED` or not `RUNNING/STABLE`.
-- ClickHouse disk free bytes below critical threshold.
+- ClickHouse disk free bytes below critical threshold (`TorghutClickHouseDiskFreeLowWarning/Critical`).
+- ClickHouse replica read-only (`TorghutClickHouseReplicaReadOnly`).
 - Trading service crashloop (Knative revision not Ready).
 
 ### Ticket alerts (examples)
@@ -62,6 +63,7 @@ flowchart TD
 | --- | --- | --- |
 | WS readiness 503 | check Alpaca 401/406, Kafka SASL | restart WS forwarder; keep single replica |
 | ClickHouse disk low | check merges, TTL, recent writes | pause TA writes; reclaim disk; restart TA |
+| ClickHouse replica read-only | check keeper/replica status | pause TA writes; restore replica; restart TA |
 | Knative revision failing | check logs for UUID JSON bug | roll back revision; apply serialization fix |
 
 ## Security considerations

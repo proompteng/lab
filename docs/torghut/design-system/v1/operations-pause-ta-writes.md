@@ -17,6 +17,8 @@ without taking risky actions.
 ## Safety invariants (do not violate)
 - Do **not** enable live trading. Keep `TRADING_LIVE_ENABLED=false`.
 - Prefer keeping trading paused (`TRADING_ENABLED=false`) while TA is paused or signals are stale.
+- If trading was enabled, disable it via the GitOps procedure in
+  `v1/torghut-autonomous-trading-system.md` ("Procedure: Pause trading (GitOps-first)").
 
 ## When to use
 Use this procedure when any of the following are true:
