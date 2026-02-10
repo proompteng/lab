@@ -24,6 +24,8 @@ NAMING_CONVENTION: dict[str, str] = {
 
 metadata_obj = MetaData(naming_convention=NAMING_CONVENTION)
 
+_JSON_ADAPTER: TypeAdapter[Any] = TypeAdapter(Any)
+
 
 class Base(DeclarativeBase):
     """Declarative base for torghut ORM models."""
@@ -67,8 +69,6 @@ class JSONType(TypeDecorator[Any]):
     impl = JSON
     cache_ok = True
 
-    _json_adapter: TypeAdapter[Any] = TypeAdapter(Any)
-
     def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:  # type: ignore[override]
         if dialect.name == "postgresql":
             from sqlalchemy.dialects.postgresql import JSONB  # imported lazily to avoid hard dependency
@@ -87,9 +87,17 @@ class JSONType(TypeDecorator[Any]):
         if value is None:
             return None
 
-        encoded = self._json_adapter.dump_python(value, mode="json")
+        encoded = _JSON_ADAPTER.dump_python(value, mode="json")
         _assert_no_uuid(encoded)
         return encoded
+
+
+def coerce_json_payload(value: Any) -> Any:
+    if value is None:
+        return None
+    encoded = _JSON_ADAPTER.dump_python(value, mode="json")
+    _assert_no_uuid(encoded)
+    return encoded
 
 
 def _assert_no_uuid(value: Any, path: str = "$") -> None:
@@ -105,4 +113,4 @@ def _assert_no_uuid(value: Any, path: str = "$") -> None:
 
 
 
-__all__ = ["Base", "GUID", "JSONType", "metadata_obj"]
+__all__ = ["Base", "GUID", "JSONType", "coerce_json_payload", "metadata_obj"]

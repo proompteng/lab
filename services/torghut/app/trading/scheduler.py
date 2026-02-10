@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from ..alpaca_client import TorghutAlpacaClient
 from ..config import settings
 from ..db import SessionLocal
-from ..models import LLMDecisionReview, Strategy, TradeDecision
+from ..models import LLMDecisionReview, Strategy, TradeDecision, coerce_json_payload
 from ..snapshots import snapshot_account_and_positions
 from ..strategies import StrategyCatalog
 from .decisions import DecisionEngine
@@ -612,18 +612,21 @@ class TradingPipeline:
         tokens_prompt: Optional[int],
         tokens_completion: Optional[int],
     ) -> None:
+        request_payload = coerce_json_payload(request_json)
+        response_payload = coerce_json_payload(response_json)
+        risk_payload = coerce_json_payload(risk_flags)
         review = LLMDecisionReview(
             trade_decision_id=decision_row.id,
             model=model,
             prompt_version=prompt_version,
-            input_json=request_json,
-            response_json=response_json,
+            input_json=request_payload,
+            response_json=response_payload,
             verdict=verdict,
             confidence=Decimal(str(confidence)) if confidence is not None else None,
             adjusted_qty=adjusted_qty,
             adjusted_order_type=adjusted_order_type,
             rationale=rationale,
-            risk_flags=risk_flags,
+            risk_flags=risk_payload,
             tokens_prompt=tokens_prompt,
             tokens_completion=tokens_completion,
         )
@@ -637,7 +640,7 @@ class TradingPipeline:
         decision: StrategyDecision,
     ) -> None:
         decision_json = _coerce_json(decision_row.decision_json)
-        decision_json["llm_adjusted_decision"] = decision.model_dump(mode="json")
+        decision_json["llm_adjusted_decision"] = coerce_json_payload(decision.model_dump(mode="json"))
         decision_row.decision_json = decision_json
         session.add(decision_row)
         session.commit()

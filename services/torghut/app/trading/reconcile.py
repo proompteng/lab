@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..alpaca_client import TorghutAlpacaClient
-from ..models import Execution, TradeDecision
+from ..models import Execution, TradeDecision, coerce_json_payload
 from ..snapshots import sync_order_to_db
 from .risk import FINAL_STATUSES
 
@@ -105,7 +105,7 @@ def _apply_order_update(execution: Execution, order: dict[str, str]) -> bool:
     avg_price = order.get("filled_avg_price") or order.get("avg_fill_price")
     if avg_price is not None:
         execution.avg_fill_price = Decimal(str(avg_price))
-    execution.raw_order = order
+    execution.raw_order = coerce_json_payload(order)
     execution.last_update_at = datetime.now(timezone.utc)
     return True
 

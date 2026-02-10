@@ -12,6 +12,9 @@ from sqlalchemy.orm import Session
 
 from app.models import Base, Execution, LLMDecisionReview, PositionSnapshot, Strategy, TradeDecision
 from app.snapshots import snapshot_account_and_positions, sync_order_to_db
+from app.trading.execution import OrderExecutor
+from app.trading.models import StrategyDecision
+from app.trading.scheduler import TradingPipeline
 
 
 def _assert_no_uuid(value: Any) -> None:
@@ -61,20 +64,20 @@ class TestJsonSerializationBoundary(TestCase):
             session.add(strategy)
             session.commit()
 
-            payload = {"decision_id": uuid.uuid4(), "nested": {"strategy_id": uuid.uuid4()}}
-            decision = TradeDecision(
-                strategy_id=strategy.id,
-                alpaca_account_label="paper",
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
                 symbol="AAPL",
+                event_ts=datetime.now(timezone.utc),
                 timeframe="1Min",
-                decision_json=payload,
+                action="buy",
+                qty=Decimal("1"),
                 rationale="test",
-                decision_hash="decision-uuid",
+                params={"decision_id": uuid.uuid4(), "nested": {"strategy_id": uuid.uuid4()}},
             )
-            session.add(decision)
-            session.commit()
-
-            stored = session.execute(select(TradeDecision)).scalar_one()
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+            stored = session.get(TradeDecision, decision_row.id)
+            assert stored is not None
             _assert_no_uuid(stored.decision_json)
             json.dumps(stored.decision_json)
 
@@ -136,24 +139,24 @@ class TestJsonSerializationBoundary(TestCase):
             session.commit()
             session.refresh(decision)
 
-            review = LLMDecisionReview(
-                trade_decision_id=decision.id,
+            request_payload = {"review_id": review_id, "nested": {"decision_id": decision.id}}
+            response_payload = {"review_id": review_id}
+            TradingPipeline._persist_llm_review(
+                session=session,
+                decision_row=decision,
                 model="gpt-test",
                 prompt_version="v0",
-                input_json={"review_id": review_id},
-                response_json={"review_id": review_id},
+                request_json=request_payload,
+                response_json=response_payload,
                 verdict="approve",
                 confidence=None,
                 adjusted_qty=None,
                 adjusted_order_type=None,
                 rationale=None,
-                risk_flags=None,
+                risk_flags=["review"],
                 tokens_prompt=None,
                 tokens_completion=None,
             )
-            session.add(review)
-            session.commit()
-            session.refresh(review)
 
             stored = session.execute(select(LLMDecisionReview)).scalar_one()
             _assert_no_uuid(stored.input_json)
@@ -187,4 +190,3 @@ class TestJsonSerializationBoundary(TestCase):
             stored = session.execute(select(Execution)).scalar_one()
             _assert_no_uuid(stored.raw_order)
             json.dumps(stored.raw_order)
-

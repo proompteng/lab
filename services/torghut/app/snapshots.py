@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .alpaca_client import TorghutAlpacaClient
-from .models import Execution, PositionSnapshot
+from .models import Execution, PositionSnapshot, coerce_json_payload
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ def snapshot_account_and_positions(
         equity=Decimal(str(account.get("equity"))),
         cash=Decimal(str(account.get("cash"))),
         buying_power=Decimal(str(account.get("buying_power"))),
-        positions=positions,
+        positions=coerce_json_payload(positions),
     )
     session.add(snapshot)
     session.commit()
@@ -70,7 +70,7 @@ def sync_order_to_db(
         "filled_qty": Decimal(str(order_response.get("filled_qty", 0))),
         "avg_fill_price": _optional_decimal(order_response.get("filled_avg_price")),
         "status": order_response.get("status"),
-        "raw_order": order_response,
+        "raw_order": coerce_json_payload(order_response),
         "last_update_at": datetime.now(timezone.utc),
     }
 
