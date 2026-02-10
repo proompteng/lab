@@ -76,6 +76,9 @@ class ForwarderApp(
   private val tradeUpdatesReady = AtomicBoolean(false)
   private val kafkaReady = AtomicBoolean(false)
   private val readinessErrorClass = AtomicReference<ReadinessErrorClass?>(null)
+  private val alpacaErrorClass = AtomicReference<ReadinessErrorClass?>(null)
+  private val tradeUpdatesErrorClass = AtomicReference<ReadinessErrorClass?>(null)
+  private val kafkaErrorClass = AtomicReference<ReadinessErrorClass?>(null)
   private val reportedNotReadyClass = AtomicReference<ReadinessErrorClass?>(null)
   private val kafkaFailureCount = AtomicInteger(0)
   private val backfillDone = AtomicBoolean(false)
@@ -184,22 +187,14 @@ class ForwarderApp(
   fun isReady(): Boolean = ready.get()
 
   fun readinessInfo(): ReadinessInfo {
-    val gateTradeUpdates = tradeUpdatesGate()
     val readyNow = ready.get()
-    val errorClassId =
-      ReadinessClassifier
-        .readinessErrorClassForResponse(readyNow, readinessErrorClass.get())
-        ?.id
+    val gates = currentReadinessGates()
+    val errorClassId = currentReadinessErrorClass(readyNow, gates)?.id
     return ReadinessInfo(
       status = if (readyNow) "ready" else "not_ready",
       ready = readyNow,
       errorClass = errorClassId,
-      gates =
-        ReadinessGates(
-          alpacaWs = wsReady.get(),
-          kafka = kafkaReady.get(),
-          tradeUpdates = gateTradeUpdates,
-        ),
+      gates = gates,
     )
   }
 
@@ -225,7 +220,7 @@ class ForwarderApp(
       } catch (e: Exception) {
         ReadinessClassifier.classifyAlpacaHandshakeFailure(e)?.let { errorClass ->
           metrics.recordWsConnectError(errorClass)
-          setReadinessError(errorClass)
+          recordAlpacaError(errorClass)
         }
         logger.warn(e) { "alpaca ws session ended" }
       } finally {
@@ -260,7 +255,7 @@ class ForwarderApp(
       } catch (e: Exception) {
         ReadinessClassifier.classifyAlpacaHandshakeFailure(e)?.let { errorClass ->
           metrics.recordWsConnectError(errorClass)
-          setReadinessError(errorClass)
+          recordTradeUpdatesError(errorClass)
         }
         logger.warn(e) { "alpaca trade_updates session ended" }
       } finally {
@@ -356,7 +351,7 @@ class ForwarderApp(
                   updateWsReady()
                   val errorClass = ReadinessClassifier.classifyAlpacaError(msg.code, msg.msg)
                   metrics.recordWsConnectError(errorClass)
-                  setReadinessError(errorClass)
+                  recordAlpacaError(errorClass)
                   logger.error { "alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}" }
                   throw RuntimeException("alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}")
                 }
@@ -472,7 +467,7 @@ class ForwarderApp(
                 updateWsReady()
                 val errorClass = ReadinessClassifier.classifyAlpacaError(msg.code, msg.msg)
                 metrics.recordWsConnectError(errorClass)
-                setReadinessError(errorClass)
+                recordAlpacaError(errorClass)
                 logger.error { "alpaca error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}" }
                 throw RuntimeException("alpaca error code=${msg.code} msg=${msg.msg}")
               }
@@ -559,7 +554,7 @@ class ForwarderApp(
               authOk = false
               val errorClass = ReadinessErrorClass.AlpacaAuth
               metrics.recordWsConnectError(errorClass)
-              setReadinessError(errorClass)
+              recordTradeUpdatesError(errorClass)
               logger.error { "alpaca trade_updates auth failed status=$status error_class=${errorClass.id}" }
               updateReady()
             }
@@ -785,7 +780,7 @@ class ForwarderApp(
           KafkaFailureContext.Metadata,
         )
       metrics.recordKafkaMetadataError(errorClass)
-      setReadinessError(errorClass)
+      recordKafkaError(errorClass)
     }
 
     if (readyNow) {
@@ -896,7 +891,7 @@ class ForwarderApp(
   ) {
     val errorClass = ReadinessClassifier.classifyKafkaFailure(exception, KafkaFailureContext.Produce)
     metrics.recordKafkaProduceError(topic, errorClass)
-    setReadinessError(errorClass)
+    recordKafkaError(errorClass)
     val failures = kafkaFailureCount.incrementAndGet()
     if (failures == 1) {
       logger.warn(exception) { "kafka send failure detected; count=$failures error_class=${errorClass.id}" }
@@ -917,12 +912,18 @@ class ForwarderApp(
   }
 
   private fun setKafkaReady(value: Boolean) {
+    if (value) {
+      kafkaErrorClass.set(null)
+    }
     kafkaReady.set(value)
     markReady(value && wsReady.get() && tradeUpdatesGate())
   }
 
   private fun setWsReady(value: Boolean) {
     val previous = wsReady.getAndSet(value)
+    if (value) {
+      alpacaErrorClass.set(null)
+    }
     if (value && !previous) {
       metrics.wsConnectSuccess.increment()
     }
@@ -930,6 +931,9 @@ class ForwarderApp(
   }
 
   private fun setTradeUpdatesReady(value: Boolean) {
+    if (value) {
+      tradeUpdatesErrorClass.set(null)
+    }
     tradeUpdatesReady.set(value)
     markReady(wsReady.get() && kafkaReady.get() && tradeUpdatesGate())
   }
@@ -946,7 +950,7 @@ class ForwarderApp(
       return
     }
 
-    val errorClass = readinessErrorClass.get() ?: ReadinessErrorClass.Unknown
+    val errorClass = currentReadinessErrorClass(value, currentReadinessGates()) ?: ReadinessErrorClass.Unknown
     metrics.setReadinessErrorClass(errorClass)
     if (previous) {
       logger.warn {
@@ -963,16 +967,52 @@ class ForwarderApp(
     }
   }
 
-  private fun setReadinessError(errorClass: ReadinessErrorClass) {
+  private fun recordReadinessError(errorClass: ReadinessErrorClass) {
     readinessErrorClass.set(errorClass)
     if (!ready.get()) {
-      metrics.setReadinessErrorClass(errorClass)
-      val lastReported = reportedNotReadyClass.getAndSet(errorClass)
-      if (lastReported != errorClass) {
-        metrics.recordReadinessError(errorClass)
+      val currentError = currentReadinessErrorClass(ready.get(), currentReadinessGates()) ?: errorClass
+      metrics.setReadinessErrorClass(currentError)
+      val lastReported = reportedNotReadyClass.getAndSet(currentError)
+      if (lastReported != currentError) {
+        metrics.recordReadinessError(currentError)
       }
     }
   }
+
+  private fun recordAlpacaError(errorClass: ReadinessErrorClass) {
+    alpacaErrorClass.set(errorClass)
+    recordReadinessError(errorClass)
+  }
+
+  private fun recordTradeUpdatesError(errorClass: ReadinessErrorClass) {
+    tradeUpdatesErrorClass.set(errorClass)
+    recordReadinessError(errorClass)
+  }
+
+  private fun recordKafkaError(errorClass: ReadinessErrorClass) {
+    kafkaErrorClass.set(errorClass)
+    recordReadinessError(errorClass)
+  }
+
+  private fun currentReadinessGates(): ReadinessGates =
+    ReadinessGates(
+      alpacaWs = wsReady.get(),
+      kafka = kafkaReady.get(),
+      tradeUpdates = tradeUpdatesGate(),
+    )
+
+  private fun currentReadinessErrorClass(
+    readyNow: Boolean,
+    gates: ReadinessGates,
+  ): ReadinessErrorClass? =
+    ReadinessClassifier.readinessErrorClassForGates(
+      ready = readyNow,
+      gates = gates,
+      alpacaErrorClass = alpacaErrorClass.get(),
+      kafkaErrorClass = kafkaErrorClass.get(),
+      tradeUpdatesErrorClass = tradeUpdatesErrorClass.get(),
+      fallbackErrorClass = readinessErrorClass.get(),
+    )
 
   private suspend fun DefaultClientWebSocketSession.sendSerialized(payload: JsonObject) {
     val text = json.encodeToString(payload)
