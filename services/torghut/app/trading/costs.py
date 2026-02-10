@@ -48,6 +48,10 @@ class CostModelConfig:
     impact_bps_at_full_participation: Decimal = Decimal("50")
 
 
+def _string_list() -> list[str]:
+    return []
+
+
 @dataclass(frozen=True)
 class CostEstimate:
     notional: Decimal
@@ -60,7 +64,7 @@ class CostEstimate:
     total_cost: Decimal
     participation_rate: Optional[Decimal]
     capacity_ok: bool
-    warnings: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=_string_list)
 
 
 class TransactionCostModel:
@@ -140,7 +144,7 @@ def _bps_from_cost(cost: Decimal, notional: Decimal) -> Decimal:
     return (cost / notional) * BPS_SCALE
 
 
-def _ensure_decimal(value: Optional[Decimal]) -> Optional[Decimal]:
+def _ensure_decimal(value: Optional[Decimal | str | float]) -> Optional[Decimal]:
     if value is None:
         return None
     if isinstance(value, Decimal):
