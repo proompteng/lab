@@ -76,6 +76,12 @@ class FakeAlpacaClient:
         self.submitted.append(order)
         return order
 
+    def list_orders(self, status: str = "all") -> list[dict[str, str]]:
+        return list(self.submitted)
+
+    def get_order_by_client_order_id(self, client_order_id: str) -> dict[str, str] | None:
+        return next((order for order in self.submitted if order.get("client_order_id") == client_order_id), None)
+
     def get_order(self, alpaca_order_id: str) -> dict[str, str]:
         return {
             "id": alpaca_order_id,
@@ -385,8 +391,9 @@ class TestTradingPipeline(TestCase):
                 timeframe="1Min",
             )
 
+            alpaca_client = FakeAlpacaClient()
             pipeline = TradingPipeline(
-                alpaca_client=FakeAlpacaClient(),
+                alpaca_client=alpaca_client,
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -407,6 +414,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(len(decisions), 1)
                 self.assertEqual(len(executions), 1)
                 self.assertIsNotNone(decisions[0].decision_hash)
+                self.assertEqual(len(alpaca_client.submitted), 1)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]

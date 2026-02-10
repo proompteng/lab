@@ -75,6 +75,7 @@ def decision_hash(decision: StrategyDecision) -> str:
         "strategy_id": decision.strategy_id,
         "symbol": decision.symbol,
         "event_ts": decision.event_ts.isoformat(),
+        "timeframe": decision.timeframe,
         "action": decision.action,
         "qty": str(decision.qty),
         "order_type": decision.order_type,
