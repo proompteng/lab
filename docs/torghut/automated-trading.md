@@ -19,6 +19,11 @@ This document describes a **single-run, end-to-end** implementation plan for the
 ## System Overview
 Pipeline:
 ```
+Alpaca Market WS -> torghut-ws -> Kafka ingest topics -> torghut-ta (Flink) -> ClickHouse (ta_signals/ta_microbars)
+ClickHouse -> torghut trading loop -> deterministic RiskEngine -> OrderExecutor -> Alpaca Trading API
+torghut trading loop -> Postgres audit (trade_decisions, executions, llm_decision_reviews, position_snapshots)
+Jangar -> symbols/universe API + TA visualization (reads ClickHouse directly)
+```
 
 ## Runtime Configuration (env)
 - `TRADING_ENABLED` (default `false`) gates the trading loop.
@@ -38,9 +43,6 @@ Pipeline:
 - Shorts policy: `TRADING_ALLOW_SHORTS` (default `false`).
 - LLM controls: `LLM_ENABLED`, `LLM_SHADOW_MODE`, `LLM_PROMPT_VERSION`, `LLM_RECENT_DECISIONS`,
   `LLM_CIRCUIT_MAX_ERRORS`, `LLM_CIRCUIT_WINDOW_SECONDS`, `LLM_CIRCUIT_COOLDOWN_SECONDS`.
-SignalIngestor -> DecisionEngine -> RiskEngine -> OrderExecutor -> Reconciler
-                                   ↘ Persistence (trade_decisions, executions)
-```
 
 **Timeframe note:** when signals are emitted at 1s windows (`window_size=PT1S`), the ingestor
 maps that to `1Sec`. Strategies must use a matching `base_timeframe` (`1Sec`) or they will never fire.

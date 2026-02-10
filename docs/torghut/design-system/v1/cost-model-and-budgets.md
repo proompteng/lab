@@ -47,7 +47,9 @@ flowchart TD
 
 ### AI
 Use explicit caps:
-- `LLM_ENABLED=false` by default.
+- Code default is `LLM_ENABLED=false` (see `services/torghut/app/config.py`).
+- In production (paper), AI may be enabled in shadow mode to measure value safely:
+  - `LLM_ENABLED=true`, `LLM_SHADOW_MODE=true`, `LLM_FAIL_MODE=pass_through` (see `argocd/applications/torghut/knative-service.yaml`).
 - `LLM_MAX_TOKENS` and request timeouts.
 - Circuit breaker to prevent runaway retries.
 
@@ -66,4 +68,3 @@ Use explicit caps:
 - **Decision:** Prefer spending modestly on disk headroom and observability to avoid TA outages and operational churn.
 - **Rationale:** Repeated incidents are more expensive than baseline capacity.
 - **Consequences:** Budgets must include headroom for growth and merges.
-
