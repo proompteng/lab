@@ -11,6 +11,7 @@ Control risk in a way that increases robustness across regimes.
 - Volatility targeting (scale positions to keep vol stable).
 - Drawdown-based de-risking.
 - Correlation-aware risk budgets.
+- Shock response: if realized vol spikes above a threshold, reduce exposure quickly (with hysteresis).
 
 ## Optional (If Options Added Later)
 - Volatility carry and hedging overlays.
@@ -18,6 +19,7 @@ Control risk in a way that increases robustness across regimes.
 ## Torghut Implementation Sketch
 - Compute realized volatility per symbol and for the portfolio.
 - Scale target exposures each rebalance tick.
+- Persist the vol estimates used for each sizing decision (audit + reproducibility).
 
 ## References
 - Trend drawdowns and volatility dynamics often co-move: https://www.man.com/maninstitute/why-do-trend-following-strategies-suffer-drawdowns

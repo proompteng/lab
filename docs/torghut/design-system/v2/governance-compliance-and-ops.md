@@ -11,11 +11,19 @@ Describe the governance and operational controls needed for unattended trading.
 - Clear ownership of each strategy and each risk limit.
 - Change control for any configuration that can change trading behavior.
 - Periodic review of market access controls and logs.
+- Model risk management for any ML/LLM component:
+  - inventory (what models, where used),
+  - evaluation evidence before promotion,
+  - rollback plan and drift monitoring.
 
 ## Operational Must-Haves
 - Oncall-ready dashboards and alerts: signal freshness, reconcile lag, order reject taxonomy.
 - One-command kill (cancel open orders + stop new orders).
 - Post-incident review with exact reproduction artifacts.
+- Daily automated reporting:
+  - PnL attribution and realized slippage,
+  - risk and broker reject summaries,
+  - model/LLM veto rates and circuit state.
 
 ## Torghut Extensions
 - Add explicit "actuation" gating for automation (AgentRuns): separate diagnostics from changes.

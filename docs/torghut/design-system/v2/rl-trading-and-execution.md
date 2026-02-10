@@ -20,6 +20,16 @@ Describe where RL can be useful, and where it is often a trap.
 - Keep RL behind deterministic safety:
   - RL proposes, risk engine approves.
 
+## Simulator Requirement (Why Most RL Trading Fails)
+If the environment does not model:
+- partial fills,
+- slippage and spreads,
+- impact under participation,
+- latency and queue priority,
+then RL agents will learn a policy that exploits simulator artifacts, not the market.
+
+Treat RL outputs as a proposal that must survive the same cost model and risk firewall as any other execution plan.
+
 ## References
 - RL for optimal execution (2025 survey): https://arxiv.org/abs/2508.06535
 - Deep RL for technical analysis and trading systems (ACM, 2025): https://dl.acm.org/doi/10.1145/3731899
