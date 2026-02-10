@@ -27,7 +27,7 @@ spec:
         fsGroup: 65532
       containers:
         - name: torghut-ws
-          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:81ee1d7eb7c6800e982cce477989f0816550dd5fc65e863989daea34de20d67b
+          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:a116a8161dc9f4cc5e091b4c1724671b1fd71ae4c26f2c83b367e24f2cbba83c
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -51,9 +51,9 @@ spec:
                   name: torghut-ws
                   key: password
             - name: TORGHUT_WS_VERSION
-              value: v0.523.3
+              value: v0.529.1
             - name: TORGHUT_WS_COMMIT
-              value: 14348305dfe4be8d192b1920eb72f093c73896ee
+              value: 312d4efc4375aa51f0b979d1f732619abba3bc59
           ports:
             - containerPort: 8080
               name: http
