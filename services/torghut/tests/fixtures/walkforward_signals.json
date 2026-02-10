@@ -1,0 +1,41 @@
+[
+  {
+    "event_ts": "2026-01-01T00:01:00+00:00",
+    "symbol": "AAPL",
+    "timeframe": "1Min",
+    "payload": {
+      "macd": {
+        "macd": "1.2",
+        "signal": "0.5"
+      },
+      "rsi14": "20",
+      "price": "100.00"
+    }
+  },
+  {
+    "event_ts": "2026-01-01T00:02:00+00:00",
+    "symbol": "AAPL",
+    "timeframe": "1Min",
+    "payload": {
+      "macd": {
+        "macd": "-0.2",
+        "signal": "0.1"
+      },
+      "rsi14": "75",
+      "price": "101.00"
+    }
+  },
+  {
+    "event_ts": "2026-01-01T00:04:00+00:00",
+    "symbol": "AAPL",
+    "timeframe": "1Min",
+    "payload": {
+      "macd": {
+        "macd": "0.2",
+        "signal": "0.1"
+      },
+      "rsi14": "30",
+      "price": "102.00"
+    }
+  }
+]

@@ -46,6 +46,14 @@ internal enum class KafkaFailureContext {
 }
 
 internal object ReadinessClassifier {
+  fun readinessErrorClassForResponse(
+    ready: Boolean,
+    errorClass: ReadinessErrorClass?,
+  ): ReadinessErrorClass? {
+    if (ready) return null
+    return errorClass ?: ReadinessErrorClass.Unknown
+  }
+
   fun classifyAlpacaError(
     code: Int?,
     msg: String?,

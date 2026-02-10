@@ -77,3 +77,6 @@ class OrderFirewall:
     def cancel_all_orders(self) -> list[dict[str, Any]]:
         return self._client.cancel_all_orders(firewall_token=self._token)
 
+    def get_order_by_client_order_id(self, client_order_id: str) -> dict[str, Any] | None:
+        # Reads are always allowed; this is used for idempotency backfills.
+        return self._client.get_order_by_client_order_id(client_order_id)

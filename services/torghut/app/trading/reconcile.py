@@ -3,22 +3,34 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..alpaca_client import TorghutAlpacaClient
 from ..models import Execution, TradeDecision
+from ..snapshots import sync_order_to_db
 from .risk import FINAL_STATUSES
 
 logger = logging.getLogger(__name__)
+
+BACKFILL_DECISION_LOOKBACK_DAYS = 7
+BACKFILL_DECISION_LIMIT = 200
 
 
 class Reconciler:
     """Pull order updates from Alpaca and update executions."""
 
     def reconcile(self, session: Session, client: TorghutAlpacaClient) -> int:
+        updates = 0
+        updates += self._reconcile_existing_executions(session, client)
+        updates += self._backfill_missing_executions(session, client)
+        if updates:
+            session.commit()
+        return updates
+
+    def _reconcile_existing_executions(self, session: Session, client: TorghutAlpacaClient) -> int:
         stmt = select(Execution).where(~Execution.status.in_(FINAL_STATUSES))
         executions = session.execute(stmt).scalars().all()
         updates = 0
@@ -34,9 +46,52 @@ class Reconciler:
             if updated:
                 updates += 1
                 _update_trade_decision(session, execution)
+        return updates
 
-        if updates:
-            session.commit()
+    def _backfill_missing_executions(self, session: Session, client: TorghutAlpacaClient) -> int:
+        # Avoid scanning broker history unboundedly; reconcile only local decisions that are
+        # missing an Execution and ask the broker for those specific client_order_ids.
+        cutoff = datetime.now(timezone.utc) - timedelta(days=BACKFILL_DECISION_LOOKBACK_DAYS)
+        decision_stmt = (
+            select(TradeDecision)
+            .where(
+                TradeDecision.decision_hash.is_not(None),
+                TradeDecision.created_at >= cutoff,
+                ~TradeDecision.status.in_(FINAL_STATUSES),
+            )
+            .order_by(TradeDecision.created_at.desc())
+            .limit(BACKFILL_DECISION_LIMIT)
+        )
+        decisions = session.execute(decision_stmt).scalars().all()
+
+        updates = 0
+        for decision in decisions:
+            if decision.decision_hash is None:
+                continue
+
+            existing_stmt = select(Execution).where(
+                (Execution.trade_decision_id == decision.id) | (Execution.client_order_id == decision.decision_hash)
+            )
+            existing = session.execute(existing_stmt).scalar_one_or_none()
+            if existing is not None:
+                continue
+
+            try:
+                order = client.get_order_by_client_order_id(decision.decision_hash)
+            except Exception as exc:  # pragma: no cover - external failure
+                logger.warning(
+                    "Failed to fetch broker order for decision %s client_order_id=%s: %s",
+                    decision.id,
+                    decision.decision_hash,
+                    exc,
+                )
+                continue
+            if not order:
+                continue
+
+            execution = sync_order_to_db(session, order, trade_decision_id=str(decision.id))
+            _update_trade_decision(session, execution)
+            updates += 1
         return updates
 
 
