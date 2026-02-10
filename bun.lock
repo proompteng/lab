@@ -90,6 +90,7 @@
       "name": "docs",
       "version": "0.1.0",
       "dependencies": {
+        "@proompteng/design": "workspace:*",
         "fumadocs-core": "15.8.5",
         "fumadocs-mdx": "12.0.3",
         "fumadocs-ui": "15.8.5",
@@ -396,6 +397,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@base-ui/react": "^1.1.0",
+        "@fontsource-variable/jetbrains-mono": "^5.2.8",
         "@radix-ui/react-accordion": "^1.2.12",
         "@radix-ui/react-aspect-ratio": "^1.1.7",
         "@radix-ui/react-avatar": "^1.1.10",
@@ -501,7 +503,7 @@
     },
     "packages/temporal-bun-sdk": {
       "name": "@proompteng/temporal-bun-sdk",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "bin": {
         "temporal-bun-worker": "./dist/bin/start-worker.js",
         "temporal-bun": "./dist/bin/temporal-bun.js",
