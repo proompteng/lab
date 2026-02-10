@@ -164,7 +164,7 @@ const createRecordingLogger = () => {
   return { entries, logger }
 }
 
-test('WorkerRuntime registers build IDs before pollers start when worker versioning is supported', async () => {
+test('WorkerRuntime does not call build-id compatibility APIs when worker versioning is enabled', async () => {
   const capabilityRequests: unknown[] = []
   const registrationRequests: unknown[] = []
   const workflowService = withWorkflowService({
@@ -191,42 +191,30 @@ test('WorkerRuntime registers build IDs before pollers start when worker version
     },
   })
 
-  expect(capabilityRequests).toHaveLength(1)
-  expect(registrationRequests).toHaveLength(1)
+  expect(capabilityRequests).toHaveLength(0)
+  expect(registrationRequests).toHaveLength(0)
   await runtime.shutdown()
 })
 
-test('WorkerRuntime logs a warning and skips registration when worker versioning APIs are missing', async () => {
+test('WorkerRuntime continues to start even if build-id compatibility APIs are disabled', async () => {
   const capabilityRequests: unknown[] = []
-  let updateCalled = false
+  const registrationRequests: unknown[] = []
   const workflowService = withWorkflowService({
     async getWorkerBuildIdCompatibility(request) {
       capabilityRequests.push(request)
-      throw new ConnectError('not implemented', Code.Unimplemented)
+      throw new ConnectError('disabled', Code.PermissionDenied)
     },
-    async updateWorkerBuildIdCompatibility() {
-      updateCalled = true
-      return {}
+    async updateWorkerBuildIdCompatibility(request) {
+      registrationRequests.push(request)
+      throw new ConnectError('disabled', Code.PermissionDenied)
     },
   })
-
-  const warnings: string[] = []
-  const logger: Logger = {
-    log(level, message, fields) {
-      if (level === 'warn') {
-        const serializedFields = fields ? JSON.stringify(fields) : ''
-        warnings.push(serializedFields ? `${message} ${serializedFields}` : message)
-      }
-      return Effect.void
-    },
-  }
 
   const config = createTestConfig({ taskQueue: 'versioned-queue-2' })
   const runtime = await createTestWorkerRuntime({
     config,
     workflows: noopWorkflows,
     workflowService,
-    logger,
     deployment: {
       name: config.workerDeploymentName,
       buildId: config.workerBuildId,
@@ -235,8 +223,7 @@ test('WorkerRuntime logs a warning and skips registration when worker versioning
     },
   })
 
-  expect(capabilityRequests).toHaveLength(1)
-  expect(updateCalled).toBeFalse()
-  expect(warnings.some((line) => line.includes('skipping worker build ID registration'))).toBeTrue()
+  expect(capabilityRequests).toHaveLength(0)
+  expect(registrationRequests).toHaveLength(0)
   await runtime.shutdown()
 })
