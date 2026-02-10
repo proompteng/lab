@@ -81,6 +81,9 @@ If the AgentRun is “changing state”, prefer it to:
 2) let ArgoCD reconcile,
 instead of directly mutating live objects.
 
+See `docs/torghut/design-system/v1/operations-actuation-runner.md` for the **gated** actuation runner details,
+supported procedures, and exact patch shapes.
+
 ### AgentRuns templates (copy/paste)
 These are minimal skeletons. Customize:
 - `metadata.namespace` (where your Agents system is installed),
@@ -118,7 +121,7 @@ spec:
     cnpgCluster: torghut-db
 ```
 
-GitOps actuation AgentRun (opens PR; read-write VCS required):
+GitOps actuation AgentRun (opens PR; read-write VCS required, confirmation enforced):
 ```yaml
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
@@ -132,7 +135,7 @@ spec:
   agentRef:
     name: <agent-name>
   implementationSpecRef:
-    name: <implementation-spec-name>
+    name: torghut-actuation-runner-v1
   runtime:
     type: workflow
   ttlSecondsAfterFinished: 7200
@@ -144,10 +147,12 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: agentruns/torghut-ops
+    head: agentruns/torghut-actuation-<yyyymmdd-hhmm>
     torghutNamespace: torghut
     gitopsPath: argocd/applications/torghut
-    change: <pause-trading|restart-ws|bump-ta-group|rollback-image>
+    change: <pause-trading|restart-ws|suspend-ta|resume-ta>
+    reason: <short-human-justification>
+    confirm: ACTUATE_TORGHUT
 ```
 
 ImplementationSpec skeletons (so the AgentRuns above are actually runnable once applied):
@@ -193,6 +198,8 @@ Notes:
 ### Progress updates (post-2026-02-08)
 - **2026-02-10:** The read-only Torghut health report procedure was exercised successfully via:
   `AgentRun/torghut-health-report-v1-20260210-2` in namespace `agents`.
+- **2026-02-10:** Gated actuation runner documented and templated:
+  `docs/torghut/design-system/v1/operations-actuation-runner.md`.
 
 ## Build/test/release (for implementers)
 Concrete commands live in `docs/torghut/ci-cd.md`. Quick pointers:

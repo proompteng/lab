@@ -37,6 +37,10 @@ sequenceDiagram
   K8s-->>Argo: health/status
 ```
 
+For **actuation automation**, the same flow applies: the runner opens a PR against
+`argocd/applications/torghut/**` and Argo reconciles after merge (see
+`docs/torghut/design-system/v1/operations-actuation-runner.md`).
+
 ## Overlay guidance (v1)
 If/when environment overlays exist:
 - Keep topic names and schemas consistent across envs.
@@ -62,4 +66,3 @@ If/when environment overlays exist:
 - **Decision:** Operational changes happen via PRs and Argo sync.
 - **Rationale:** Repeatability, auditability, reduced drift.
 - **Consequences:** Requires disciplined incident procedures and fast rollback process.
-

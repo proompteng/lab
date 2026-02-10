@@ -183,6 +183,9 @@ Controls (from `services/torghut/app/config.py`):
 ## Operations as design (automation-ready procedures)
 These are part of the production design because they define how the system is safely operated under failure.
 
+Gated actuation runner: use the GitOps-first, confirmation-gated procedures in
+`docs/torghut/design-system/v1/operations-actuation-runner.md` for any state-changing automation.
+
 ### Procedure: Torghut health report (read-only)
 Goal: produce a single report with forwarder, TA, ClickHouse, and trading-service status.
 
