@@ -41,6 +41,7 @@ flowchart LR
 - `ws_connect_success_total`, `ws_connect_error_total` (by error_class)
 - `kafka_produce_success_total`, `kafka_produce_error_total` (by topic)
 - `torghut_ws_readyz_error_class` (gauge by error_class; 1 for the current readiness failure class, else 0)
+- `torghut_ws_readyz_gate_status` (gauge by gate; 1 when gate is healthy, else 0)
 - `subscriptions_active` (gauge)
 - `readyz_status` (0/1), `healthz_status` (0/1)
 
