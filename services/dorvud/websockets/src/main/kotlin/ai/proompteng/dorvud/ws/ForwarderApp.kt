@@ -185,10 +185,14 @@ class ForwarderApp(
 
   fun readinessInfo(): ReadinessInfo {
     val gateTradeUpdates = tradeUpdatesGate()
-    val errorClassId = readinessErrorClass.get()?.id
+    val readyNow = ready.get()
+    val errorClassId =
+      ReadinessClassifier
+        .readinessErrorClassForResponse(readyNow, readinessErrorClass.get())
+        ?.id
     return ReadinessInfo(
-      status = if (ready.get()) "ready" else "not_ready",
-      ready = ready.get(),
+      status = if (readyNow) "ready" else "not_ready",
+      ready = readyNow,
       errorClass = errorClassId,
       gates =
         ReadinessGates(
@@ -933,11 +937,17 @@ class ForwarderApp(
     if (value) {
       readinessErrorClass.set(null)
       reportedNotReadyClass.set(null)
+      metrics.setReadinessErrorClass(null)
       return
     }
 
     val errorClass = readinessErrorClass.get() ?: ReadinessErrorClass.Unknown
+    metrics.setReadinessErrorClass(errorClass)
     if (previous) {
+      logger.warn {
+        "readiness changed to not_ready error_class=${errorClass.id} " +
+          "gates=alpaca_ws:${wsReady.get()} kafka:${kafkaReady.get()} trade_updates:${tradeUpdatesGate()}"
+      }
       reportedNotReadyClass.set(errorClass)
       metrics.recordReadinessError(errorClass)
     } else {
@@ -951,6 +961,7 @@ class ForwarderApp(
   private fun setReadinessError(errorClass: ReadinessErrorClass) {
     readinessErrorClass.set(errorClass)
     if (!ready.get()) {
+      metrics.setReadinessErrorClass(errorClass)
       val lastReported = reportedNotReadyClass.getAndSet(errorClass)
       if (lastReported != errorClass) {
         metrics.recordReadinessError(errorClass)

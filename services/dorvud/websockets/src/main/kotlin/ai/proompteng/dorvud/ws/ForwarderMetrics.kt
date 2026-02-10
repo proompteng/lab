@@ -20,6 +20,10 @@ internal class ForwarderMetrics(
   private val kafkaMetadataErrorCounters = ConcurrentHashMap<String, Counter>()
 
   private val readinessStatus = AtomicInteger(0)
+  private val readinessErrorClassGauge =
+    ReadinessErrorClass
+      .entries
+      .associateWith { AtomicInteger(0) }
 
   private val lagSummary: DistributionSummary =
     DistributionSummary
@@ -41,10 +45,23 @@ internal class ForwarderMetrics(
     Gauge
       .builder("torghut_ws_readyz_status", readinessStatus) { it.get().toDouble() }
       .register(registry)
+
+    readinessErrorClassGauge.forEach { (errorClass, value) ->
+      Gauge
+        .builder("torghut_ws_readyz_error_class", value) { it.get().toDouble() }
+        .tag("error_class", errorClass.id)
+        .register(registry)
+    }
   }
 
   fun setReady(ready: Boolean) {
     readinessStatus.set(if (ready) 1 else 0)
+  }
+
+  fun setReadinessErrorClass(errorClass: ReadinessErrorClass?) {
+    readinessErrorClassGauge.forEach { (cls, value) ->
+      value.set(if (cls == errorClass) 1 else 0)
+    }
   }
 
   fun recordReadinessError(errorClass: ReadinessErrorClass) {

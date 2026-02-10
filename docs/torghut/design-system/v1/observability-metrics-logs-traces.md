@@ -40,6 +40,7 @@ flowchart LR
 ### WS forwarder
 - `ws_connect_success_total`, `ws_connect_error_total` (by error_class)
 - `kafka_produce_success_total`, `kafka_produce_error_total` (by topic)
+- `readyz_error_class` (gauge by error_class; 1 for current readiness failure)
 - `subscriptions_active` (gauge)
 - `readyz_status` (0/1), `healthz_status` (0/1)
 
@@ -87,4 +88,3 @@ Use bounded attributes; do not add order ids as span attributes unless sampled.
 - **Decision:** Metrics labels are bounded; logs are structured and sampled when needed.
 - **Rationale:** Prevents observability systems from becoming unstable during incidents.
 - **Consequences:** Some investigations require querying logs by content, not metrics labels.
-
