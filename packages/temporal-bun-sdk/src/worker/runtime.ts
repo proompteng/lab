@@ -123,7 +123,6 @@ import {
   resolveHistoryLastEventId,
 } from '../workflow/replay'
 import { type ActivityContext, type ActivityInfo, runWithActivityContext } from './activity-context'
-import { checkWorkerVersioningCapability, registerWorkerBuildIdCompatibility } from './build-id'
 import {
   type ActivityTaskEnvelope,
   makeWorkerScheduler,
@@ -473,27 +472,6 @@ export class WorkerRuntime {
       workerVersioningMode,
     })
     const rpcDeploymentOptions = workerVersioningMode === WorkerVersioningMode.VERSIONED ? deploymentOptions : undefined
-
-    if (workerVersioningMode === WorkerVersioningMode.VERSIONED) {
-      const capability = await checkWorkerVersioningCapability(workflowService, namespace, taskQueue)
-      if (capability.supported) {
-        await registerWorkerBuildIdCompatibility(workflowService, namespace, taskQueue, buildId, { logger })
-      } else {
-        if (workflowGuards === 'strict') {
-          throw new Error(
-            `workflowGuards=strict requires server worker versioning APIs; capability check failed: ${capability.reason ?? 'unknown'}`,
-          )
-        }
-        await Effect.runPromise(
-          logger.log('warn', 'skipping worker build ID registration', {
-            namespace,
-            taskQueue,
-            reason: capability.reason ?? 'unknown capability error',
-            note: 'Temporal CLI dev server (scripts/start-temporal-cli.ts) does not implement worker versioning yet',
-          }),
-        )
-      }
-    }
 
     const tracingEnabled = options.tracingEnabled ?? config.tracingInterceptorsEnabled ?? false
     const workerInterceptorBuilder: WorkerInterceptorBuilder = options.interceptorBuilder ?? {
