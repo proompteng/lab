@@ -25,7 +25,7 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:ca6b60ac27b15ac19fcf119570ac8861377f9b7ce5c5001d39aff3bd987aeece
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:7a9d077da14fe334b9f36aa8653cb65209ac7f5eccff75c80cf9c444594cf513
           ports:
             - name: http1
               containerPort: 8181
@@ -128,9 +128,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.523.3
+              value: v0.529.1
             - name: TORGHUT_COMMIT
-              value: 14348305dfe4be8d192b1920eb72f093c73896ee
+              value: 312d4efc4375aa51f0b979d1f732619abba3bc59
           livenessProbe:
             httpGet:
               path: /healthz
