@@ -13,6 +13,8 @@ COPY scripts/run-husky-install.mjs ./scripts/run-husky-install.mjs
 COPY --parents apps/*/package.json ./
 COPY --parents packages/*/package.json ./
 COPY --parents services/*/package.json ./
+# Root workspaces include `services/jangar/*`, so include nested workspace manifests too.
+COPY --parents services/jangar/*/package.json ./
 
 # Copy the kitty-krew workspace source
 COPY apps/kitty-krew ./apps/kitty-krew

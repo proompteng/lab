@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "prebuild": "bun run --filter @proompteng/backend codegen",
+    "prebuild": "bash -lc 'if [ -n \"${CONVEX_DEPLOYMENT:-}\" ]; then bun run --filter @proompteng/backend codegen; elif [ -d ../../packages/backend/convex/_generated ]; then echo \"Skipping Convex codegen (CONVEX_DEPLOYMENT not set; using committed _generated).\"; else echo \"Missing packages/backend/convex/_generated and CONVEX_DEPLOYMENT is not set.\" >&2; exit 1; fi'",
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "bunx biome check",
