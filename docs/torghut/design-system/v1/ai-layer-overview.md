@@ -44,7 +44,9 @@ flowchart LR
 ```
 
 ## Safety invariants (v1)
-- `LLM_ENABLED` defaults to `false` (`services/torghut/app/config.py`).
+- Code default: `LLM_ENABLED=false` (`services/torghut/app/config.py`).
+- As deployed (see `argocd/applications/torghut/knative-service.yaml` as of 2026-02-09): `LLM_ENABLED=true` in **shadow mode**
+  (`LLM_SHADOW_MODE=true`) with `LLM_FAIL_MODE=pass_through` while `TRADING_MODE=paper`.
 - AI never calls broker APIs.
 - AI outputs must parse as strict schema and pass policy guard.
 - Deterministic risk engine remains the final gate.
@@ -55,11 +57,15 @@ From `services/torghut/app/config.py`:
 | Env var | Purpose | Safe default |
 | --- | --- | --- |
 | `LLM_ENABLED` | enable AI advisory | `false` |
-| `LLM_SHADOW_MODE` | observe only | `false` (set true for evaluation) |
-| `LLM_FAIL_MODE` | behavior on AI error | `veto` (fail-closed for live) |
+| `LLM_SHADOW_MODE` | observe only | `false` |
+| `LLM_FAIL_MODE` | behavior on AI error | `veto` |
 | `LLM_ADJUSTMENT_ALLOWED` | allow adjustments | `false` |
 | `LLM_MIN_CONFIDENCE` | confidence gate | `0.5` |
 | `LLM_TIMEOUT_SECONDS` | request timeout | `20` |
+
+Operational note:
+- In production paper mode, prefer `LLM_SHADOW_MODE=true` and `LLM_FAIL_MODE=pass_through` until the AI layer is validated.
+- In live mode, keep `LLM_FAIL_MODE=veto` (fail-closed).
 
 ## Failure modes and recovery
 | Failure | Symptoms | Detection | Recovery |
@@ -77,4 +83,3 @@ From `services/torghut/app/config.py`:
 - **Decision:** AI is optional, advisory-only, and always bounded by deterministic policy.
 - **Rationale:** Reduces risk from non-determinism and adversarial input.
 - **Consequences:** AI’s “value add” must be measurable without increasing system risk.
-
