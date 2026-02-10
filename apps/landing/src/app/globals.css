@@ -1,11 +1,5 @@
 @import "@proompteng/design/globals.css";
 
-/* Keep Next.js font variables from `next/font` as the landing-page typography. */
-body {
-  --proompteng-font-sans: var(--font-space-grotesk);
-  --proompteng-font-mono: var(--font-jetbrains-mono);
-}
-
 @keyframes hero-glow {
   0%,
   100% {

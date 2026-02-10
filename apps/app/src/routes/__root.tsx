@@ -1,6 +1,6 @@
-import { HeadContent, Scripts, createRootRoute, redirect } from '@tanstack/react-router'
-import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { TanStackDevtools } from '@tanstack/react-devtools'
+import { createRootRoute, HeadContent, redirect, Scripts } from '@tanstack/react-router'
+import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 
 import Header from '../components/Header'
 import { getCurrentUserServerFn } from '../server/auth/server-fns'
@@ -60,7 +60,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
   const { user } = Route.useLoaderData()
 
   return (
-    <html lang="en">
+    <html lang="en" className="dark">
       <head>
         <HeadContent />
       </head>
