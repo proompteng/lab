@@ -33,6 +33,8 @@ Pick one initial alpha family:
 - `mean-reversion-and-stat-arb.md` (mean reversion)
 
 ## Next (Once MVP Is Stable)
+- `alpha-discovery-loop.md`
+- `research-ledger.md`
 - `research-reading-list.md`
 - `agent-swarm-implementation.md`
 - `strategy-universe.md`

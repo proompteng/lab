@@ -14,11 +14,11 @@ high-level and focuses on process, risk, and tooling rather than alpha specifics
 ## Top-Firm And Industry Research (Public)
 
 ### Two Sigma (AI in investment management)
-- AI in Investment Management: 2026 Outlook (Part I) (2026-01-30)
+- AI in Investment Management: 2026 Outlook (Part I) (2026-01-12)
   - https://www.twosigma.com/articles/ai-in-investment-management-2026-outlook-part-i/
   - Notes:
     - Useful for framing agentic AI adoption as a disciplined engineering program.
-- AI in Investment Management: 2026 Outlook (Part II) (2026-01-31)
+- AI in Investment Management: 2026 Outlook (Part II) (2026-01-21)
   - https://www.twosigma.com/articles/ai-in-investment-management-2026-outlook-part-ii/
 
 ### Man Group / Man Institute (systematic + ML)
@@ -48,6 +48,20 @@ high-level and focuses on process, risk, and tooling rather than alpha specifics
   - https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence
 - Microsoft: Defending against indirect prompt injection (2025-07-22)
   - https://www.microsoft.com/en-us/msrc/blog/2025/07/how-microsoft-defends-against-indirect-prompt-injection-attacks/
+- Prompt Fencing: caging a \"wild\" LLM agent via prompt injection (2025)
+  - https://arxiv.org/abs/2504.19762
+
+## LLMs In Finance (Benchmarks and Papers)
+- FinVault: a benchmark for AI agents in finance (2026)
+  - https://arxiv.org/abs/2601.12065
+  - Notes:
+    - Useful for evaluating agentic workflows without letting them touch production trading.
+- QuantAgent: an LLM-driven framework for high-frequency trading (2025)
+  - https://arxiv.org/abs/2502.06973
+  - Notes:
+    - Treat as research inspiration. HFT-style work demands simulator realism and strict safety gating.
+- JaxMARL-HFT: a multi-agent environment for high-frequency trading (2025)
+  - https://arxiv.org/abs/2508.16588
 
 ## Quant Research That Transfers To Production
 
@@ -62,6 +76,8 @@ high-level and focuses on process, risk, and tooling rather than alpha specifics
 ### Execution and market impact
 - Almgren-Chriss optimal execution (2001)
   - https://www.math.nyu.edu/faculty/chriss/optliq_f.pdf
+- RL for optimal execution survey (2025)
+  - https://arxiv.org/abs/2508.06535
 
 ### Trend / time-series momentum
 - Time Series Momentum (Moskowitz, Ooi, Pedersen)
