@@ -24,6 +24,10 @@ Implement controlled mean-reversion strategies that are cost-aware and regime-aw
 - Controls:
   - disable in strong trend regimes,
   - strict stop-loss and max holding time.
+- Execution:
+  - avoid crossing wide spreads; prefer passive/near-touch limits,
+  - enforce a minimum expected edge vs cost model.
 
 ## References
 - Backtest overfitting risk is high for mean reversion due to many degrees of freedom: https://scholarworks.wmich.edu/math_pubs/42/
+- Intraday reversal (RFS, 2025): https://www.sciencedirect.com/science/article/pii/S1386418124001669

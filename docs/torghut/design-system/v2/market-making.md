@@ -17,7 +17,7 @@ inventory and adverse selection controls.
 - Detect toxic flow and pull quotes in stress.
 
 ## Torghut Extensions Needed
-- Order-book ingestion and feature generation (see `03-data-pipeline-and-features.md`).
+- Order-book ingestion and feature generation (see `data-pipeline-and-features.md`).
 - Sub-second loop and deterministic throttles.
 - Inventory-aware risk engine extensions.
 

@@ -37,9 +37,9 @@ A profitable autonomous system is one that:
   - Verified kill switch cancels open orders and blocks new submissions.
 
 ## Torghut Extensions Required
-- Stronger transaction cost model (see `06-transaction-cost-and-capacity.md`).
-- Execution quality improvements (see `07-execution-and-market-impact.md`).
-- Regime-aware risk throttles (see `10-regime-detection.md`).
+- Stronger transaction cost model (see `transaction-cost-and-capacity.md`).
+- Execution quality improvements (see `execution-and-market-impact.md`).
+- Regime-aware risk throttles (see `regime-detection.md`).
 - Always-on, reproducible decision store (inputs + outputs) for attribution.
 
 ## Common Profit-Killers
