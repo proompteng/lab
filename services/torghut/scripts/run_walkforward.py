@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,12 @@ from app.trading.evaluation import (
     generate_walk_forward_folds,
     run_walk_forward,
     write_walk_forward_results,
+)
+from app.trading.reporting import (
+    EvaluationGatePolicy,
+    EvaluationReportConfig,
+    generate_evaluation_report,
+    write_evaluation_report,
 )
 
 
@@ -79,10 +86,24 @@ def _default_strategy(timeframe: str) -> list[Strategy]:
     ]
 
 
+def _resolve_git_sha() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return None
+    return result.stdout.strip() or None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run walk-forward evaluation on fixture signals.")
     parser.add_argument("--signals", type=Path, required=True, help="Path to fixture signal JSON.")
     parser.add_argument("--output", type=Path, required=True, help="Path to write results JSON.")
+    parser.add_argument("--report", type=Path, help="Optional path to write evaluation report JSON.")
     parser.add_argument("--start", type=str, required=True, help="Start datetime (ISO).")
     parser.add_argument("--end", type=str, required=True, help="End datetime (ISO).")
     parser.add_argument("--train-window-minutes", type=int, default=60, help="Train window size in minutes.")
@@ -90,12 +111,22 @@ def main() -> int:
     parser.add_argument("--step-minutes", type=int, default=30, help="Step size in minutes.")
     parser.add_argument("--strategy-config", type=Path, help="Optional strategy config (YAML/JSON).")
     parser.add_argument("--strategy-timeframe", type=str, default="1Min", help="Timeframe for default strategy.")
+    parser.add_argument("--gate-policy", type=Path, help="Optional gate policy JSON file.")
+    parser.add_argument(
+        "--promotion-target",
+        choices=("shadow", "paper", "live"),
+        default="shadow",
+        help="Requested promotion target (default: shadow).",
+    )
+    parser.add_argument("--run-id", type=str, help="Optional run identifier.")
     args = parser.parse_args()
 
     signal_source = FixtureSignalSource.from_path(args.signals)
+    start = _parse_datetime(args.start)
+    end = _parse_datetime(args.end)
     folds = generate_walk_forward_folds(
-        _parse_datetime(args.start),
-        _parse_datetime(args.end),
+        start,
+        end,
         train_window=timedelta(minutes=args.train_window_minutes),
         test_window=timedelta(minutes=args.test_window_minutes),
         step=timedelta(minutes=args.step_minutes),
@@ -113,6 +144,25 @@ def main() -> int:
         decision_engine=DecisionEngine(),
     )
     write_walk_forward_results(results, args.output)
+
+    if args.report:
+        config = EvaluationReportConfig(
+            evaluation_start=start,
+            evaluation_end=end,
+            signal_source="fixture",
+            strategies=strategies,
+            git_sha=_resolve_git_sha(),
+            run_id=args.run_id,
+            strategy_config_path=str(args.strategy_config) if args.strategy_config else None,
+        )
+        gate_policy = EvaluationGatePolicy.from_path(args.gate_policy) if args.gate_policy else None
+        report = generate_evaluation_report(
+            results,
+            config=config,
+            gate_policy=gate_policy,
+            promotion_target=args.promotion_target,
+        )
+        write_evaluation_report(report, args.report)
     return 0
 
 

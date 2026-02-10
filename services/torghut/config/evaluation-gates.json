@@ -1,0 +1,9 @@
+{
+  "policy_version": "v1",
+  "promotion_enabled": false,
+  "allow_live": false,
+  "min_trades": 1,
+  "min_net_pnl": "0",
+  "max_drawdown": "100",
+  "max_turnover_ratio": "5"
+}
