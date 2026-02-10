@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Iterable, Literal, Optional
+from typing import Any, Literal, Optional
 
 from ..models import Strategy
 from .costs import CostModelConfig, CostModelInputs, OrderIntent, TransactionCostModel
