@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.1](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.6.0...temporal-bun-sdk-v0.6.1) (2026-02-10)
+
+
+### Bug Fixes
+
+* **release-please:** correct temporal-bun-sdk changelog paths ([#2957](https://github.com/proompteng/lab/issues/2957)) ([1434830](https://github.com/proompteng/lab/commit/14348305dfe4be8d192b1920eb72f093c73896ee))
+* **temporal-bun-sdk:** avoid build-id compatibility API ([#2948](https://github.com/proompteng/lab/issues/2948)) ([ebdbf24](https://github.com/proompteng/lab/commit/ebdbf243a321361b8176dc78f49b29760bcc6fca))
+* **temporal-bun-sdk:** make strict guards default ([#2952](https://github.com/proompteng/lab/issues/2952)) ([d26e1f9](https://github.com/proompteng/lab/commit/d26e1f92226be898a42e583edac5873d975af49d))
+* **temporal-bun-sdk:** strict guards by default in prod ([#2946](https://github.com/proompteng/lab/issues/2946)) ([4a921d0](https://github.com/proompteng/lab/commit/4a921d06f92477894840bcf29cf186ef12d068d9))
+
 ## [0.6.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.5.0...temporal-bun-sdk-v0.6.0) (2026-02-09)
 
 
