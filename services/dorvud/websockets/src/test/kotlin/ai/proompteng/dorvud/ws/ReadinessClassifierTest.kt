@@ -24,6 +24,22 @@ class ReadinessClassifierTest {
   }
 
   @Test
+  fun `alpaca message-only 406 maps to connection-limit class`() {
+    assertEquals(
+      ReadinessErrorClass.Alpaca406SecondConnection,
+      ReadinessClassifier.classifyAlpacaError(null, "http 406 connection limit exceeded"),
+    )
+  }
+
+  @Test
+  fun `alpaca message-only forbidden maps to auth class`() {
+    assertEquals(
+      ReadinessErrorClass.AlpacaAuth,
+      ReadinessClassifier.classifyAlpacaError(null, "forbidden"),
+    )
+  }
+
+  @Test
   fun `kafka sasl auth maps to kafka_auth`() {
     val ex = SaslAuthenticationException("bad credentials")
     assertEquals(

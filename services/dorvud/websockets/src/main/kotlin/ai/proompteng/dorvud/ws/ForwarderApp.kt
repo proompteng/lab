@@ -354,7 +354,11 @@ class ForwarderApp(
                   authOk = false
                   subscribedOk = false
                   updateWsReady()
-                  throw RuntimeException("alpaca auth error code=${msg.code} msg=${msg.msg}")
+                  val errorClass = ReadinessClassifier.classifyAlpacaError(msg.code, msg.msg)
+                  metrics.recordWsConnectError(errorClass)
+                  setReadinessError(errorClass)
+                  logger.error { "alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}" }
+                  throw RuntimeException("alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}")
                 }
                 else -> {}
               }
@@ -556,6 +560,7 @@ class ForwarderApp(
               val errorClass = ReadinessErrorClass.AlpacaAuth
               metrics.recordWsConnectError(errorClass)
               setReadinessError(errorClass)
+              logger.error { "alpaca trade_updates auth failed status=$status error_class=${errorClass.id}" }
               updateReady()
             }
           }
