@@ -1403,9 +1403,8 @@ describe('agents controller reconcileAgentRun', () => {
       const agentRun = buildAgentRun()
       await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
-      const defaultTemplate = ((lastJob as any)?.spec as Record<string, unknown> | undefined)?.template as
-        | Record<string, unknown>
-        | undefined
+      const defaultTemplate = (((lastJob ?? {}) as { spec?: unknown }).spec as { template?: unknown } | undefined)
+        ?.template as Record<string, unknown> | undefined
       const defaultPodSpec = (defaultTemplate?.spec as Record<string, unknown> | undefined) ?? {}
       expect(defaultPodSpec.nodeSelector).toEqual({ disktype: 'ssd' })
       expect(defaultPodSpec.affinity).toEqual(defaultAffinity)
@@ -1459,9 +1458,8 @@ describe('agents controller reconcileAgentRun', () => {
         0,
       )
 
-      const overrideTemplate = ((lastJob as any)?.spec as Record<string, unknown> | undefined)?.template as
-        | Record<string, unknown>
-        | undefined
+      const overrideTemplate = (((lastJob ?? {}) as { spec?: unknown }).spec as { template?: unknown } | undefined)
+        ?.template as Record<string, unknown> | undefined
       const overridePodSpec = (overrideTemplate?.spec as Record<string, unknown> | undefined) ?? {}
       expect(overridePodSpec.nodeSelector).toEqual({ disktype: 'gpu' })
       expect(overridePodSpec.affinity).toEqual(overrideAffinity)
@@ -1538,9 +1536,8 @@ describe('agents controller reconcileAgentRun', () => {
       const agentRun = buildAgentRun()
       await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
 
-      const defaultTemplate = ((lastJob as any)?.spec as Record<string, unknown> | undefined)?.template as
-        | Record<string, unknown>
-        | undefined
+      const defaultTemplate = (((lastJob ?? {}) as { spec?: unknown }).spec as { template?: unknown } | undefined)
+        ?.template as Record<string, unknown> | undefined
       const defaultPodSpec = (defaultTemplate?.spec as Record<string, unknown> | undefined) ?? {}
       expect(defaultPodSpec.topologySpreadConstraints).toBeUndefined()
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS'))
@@ -1687,9 +1684,8 @@ describe('agents controller reconcileAgentRun', () => {
     expect(status.phase).toBe('Running')
     expect(status.systemPromptHash).toBe(createHash('sha256').update('workflow-prompt').digest('hex'))
 
-    const podTemplate = ((lastJob as any)?.spec as Record<string, unknown> | undefined)?.template as
-      | Record<string, unknown>
-      | undefined
+    const podTemplate = (((lastJob ?? {}) as { spec?: unknown }).spec as { template?: unknown } | undefined)
+      ?.template as Record<string, unknown> | undefined
     const podSpecSpec = (podTemplate?.spec as Record<string, unknown> | undefined) ?? {}
     const containers = (podSpecSpec.containers as Record<string, unknown>[] | undefined) ?? []
     const container = containers[0] ?? {}
