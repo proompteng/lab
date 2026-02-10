@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Protocol
+from typing import Any, Iterable, Protocol, cast
 
 from ..models import Strategy
 from .decisions import DecisionEngine
@@ -17,6 +17,7 @@ from .models import SignalEnvelope, StrategyDecision
 class SignalSource(Protocol):
     def fetch_signals(self, start: datetime, end: datetime) -> list[SignalEnvelope]:
         """Return signals between start (inclusive) and end (exclusive)."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -34,10 +35,14 @@ class WalkForwardDecision:
     features: SignalFeatures
 
 
+def _empty_decisions() -> list[WalkForwardDecision]:
+    return []
+
+
 @dataclass
 class FoldResult:
     fold: WalkForwardFold
-    decisions: list[WalkForwardDecision] = field(default_factory=list)
+    decisions: list[WalkForwardDecision] = field(default_factory=_empty_decisions)
     signals_count: int = 0
 
     def to_payload(self) -> dict[str, object]:
@@ -84,7 +89,8 @@ class FixtureSignalSource:
         payload = json.loads(raw)
         if not isinstance(payload, list):
             raise ValueError("fixture payload must be a list")
-        signals = [SignalEnvelope.model_validate(item) for item in payload]
+        payload_list = cast(list[dict[str, Any]], payload)
+        signals = [SignalEnvelope.model_validate(item) for item in payload_list]
         return cls(signals=signals)
 
     def fetch_signals(self, start: datetime, end: datetime) -> list[SignalEnvelope]:
