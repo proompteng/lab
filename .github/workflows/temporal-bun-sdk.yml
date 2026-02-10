@@ -298,7 +298,7 @@ jobs:
         run: |
           set -euo pipefail
           branch="release-please--branches--main--components--temporal-bun-sdk"
-          pr_number=$(gh pr list --search "$branch" --state merged --limit 1 --json number --jq '.[0].number')
+          pr_number=$(gh pr list --head "$branch" --state merged --limit 1 --json number --jq '.[0].number')
           if [[ -n "$pr_number" ]]; then
             gh pr edit "$pr_number" --remove-label "autorelease: pending" --add-label "autorelease: tagged"
             echo "Updated labels on release PR #$pr_number"
