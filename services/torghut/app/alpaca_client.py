@@ -236,7 +236,7 @@ class TorghutAlpacaClient:
         raise ValueError(f"Unsupported timeframe unit: {unit}")
 
     @staticmethod
-    def _require_firewall_token(token: OrderFirewallToken) -> None:
+    def _require_firewall_token(token: object) -> None:
         if not isinstance(token, OrderFirewallToken):
             raise PermissionError("order_firewall_token_required")
 
