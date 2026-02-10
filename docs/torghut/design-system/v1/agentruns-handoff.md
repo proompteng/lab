@@ -190,6 +190,10 @@ Notes:
 - `ttlSecondsAfterFinished` is a top-level `AgentRun.spec` field (see `charts/agents/crds/agents.proompteng.ai_agentruns.yaml`).
 - Avoid setting `spec.parameters.prompt` unless you intend to override the ImplementationSpec text (prompt precedence is documented in `docs/agents/agentrun-creation-guide.md`).
 
+### Progress updates (post-2026-02-08)
+- **2026-02-10:** The read-only Torghut health report procedure was exercised successfully via:
+  `AgentRun/torghut-health-report-v1-20260210-2` in namespace `agents`.
+
 ## Build/test/release (for implementers)
 Concrete commands live in `docs/torghut/ci-cd.md`. Quick pointers:
 - WS forwarder image: `services/dorvud/websockets/Dockerfile`

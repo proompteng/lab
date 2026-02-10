@@ -59,6 +59,11 @@ flowchart TD
 4) Improve forwarder readiness error classification to reduce “503 mystery” incidents.
 5) Produce an AgentRuns-friendly “Torghut health report” run (read-only) and a gated actuation runbook runner (see `v1/agentruns-handoff.md`).
 
+## Progress updates (post-2026-02-08)
+- **2026-02-10:** Read-only Torghut health report AgentRun executed successfully:
+  `AgentRun/torghut-health-report-v1-20260210-2` in namespace `agents`.
+  Remaining work for item (5): implement the **gated actuation runbook runner** described in `v1/agentruns-handoff.md`.
+
 ## Security considerations
 - Keep live trading gated; audit any changes to `TRADING_LIVE_ENABLED`.
 - Do not store secrets in docs; operational procedures must reference secret *names* only.
