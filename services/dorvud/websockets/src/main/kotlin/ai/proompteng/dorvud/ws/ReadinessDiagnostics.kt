@@ -54,6 +54,27 @@ internal object ReadinessClassifier {
     return errorClass ?: ReadinessErrorClass.Unknown
   }
 
+  fun readinessErrorClassForGates(
+    ready: Boolean,
+    gates: ReadinessGates,
+    alpacaErrorClass: ReadinessErrorClass?,
+    kafkaErrorClass: ReadinessErrorClass?,
+    tradeUpdatesErrorClass: ReadinessErrorClass?,
+    fallbackErrorClass: ReadinessErrorClass?,
+  ): ReadinessErrorClass? {
+    if (ready) return null
+    return when {
+      !gates.alpacaWs -> alpacaErrorClass ?: fallbackErrorClass ?: ReadinessErrorClass.Unknown
+      !gates.kafka -> kafkaErrorClass ?: fallbackErrorClass ?: ReadinessErrorClass.Unknown
+      !gates.tradeUpdates ->
+        tradeUpdatesErrorClass
+          ?: alpacaErrorClass
+          ?: fallbackErrorClass
+          ?: ReadinessErrorClass.Unknown
+      else -> fallbackErrorClass ?: ReadinessErrorClass.Unknown
+    }
+  }
+
   fun classifyAlpacaError(
     code: Int?,
     msg: String?,

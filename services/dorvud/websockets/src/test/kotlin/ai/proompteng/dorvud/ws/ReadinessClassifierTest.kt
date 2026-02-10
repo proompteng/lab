@@ -81,4 +81,88 @@ class ReadinessClassifierTest {
       ReadinessClassifier.readinessErrorClassForResponse(true, ReadinessErrorClass.KafkaAuth),
     )
   }
+
+  @Test
+  fun `readiness error uses alpaca class when alpaca gate is false`() {
+    val gates =
+      ReadinessGates(
+        alpacaWs = false,
+        kafka = true,
+        tradeUpdates = true,
+      )
+    assertEquals(
+      ReadinessErrorClass.Alpaca406SecondConnection,
+      ReadinessClassifier.readinessErrorClassForGates(
+        ready = false,
+        gates = gates,
+        alpacaErrorClass = ReadinessErrorClass.Alpaca406SecondConnection,
+        kafkaErrorClass = ReadinessErrorClass.KafkaAuth,
+        tradeUpdatesErrorClass = ReadinessErrorClass.AlpacaAuth,
+        fallbackErrorClass = ReadinessErrorClass.Unknown,
+      ),
+    )
+  }
+
+  @Test
+  fun `readiness error uses kafka class when kafka gate is false`() {
+    val gates =
+      ReadinessGates(
+        alpacaWs = true,
+        kafka = false,
+        tradeUpdates = true,
+      )
+    assertEquals(
+      ReadinessErrorClass.KafkaAuth,
+      ReadinessClassifier.readinessErrorClassForGates(
+        ready = false,
+        gates = gates,
+        alpacaErrorClass = ReadinessErrorClass.AlpacaAuth,
+        kafkaErrorClass = ReadinessErrorClass.KafkaAuth,
+        tradeUpdatesErrorClass = null,
+        fallbackErrorClass = ReadinessErrorClass.Unknown,
+      ),
+    )
+  }
+
+  @Test
+  fun `readiness error uses trade updates class when trade gate is false`() {
+    val gates =
+      ReadinessGates(
+        alpacaWs = true,
+        kafka = true,
+        tradeUpdates = false,
+      )
+    assertEquals(
+      ReadinessErrorClass.AlpacaAuth,
+      ReadinessClassifier.readinessErrorClassForGates(
+        ready = false,
+        gates = gates,
+        alpacaErrorClass = ReadinessErrorClass.Alpaca406SecondConnection,
+        kafkaErrorClass = ReadinessErrorClass.KafkaAuth,
+        tradeUpdatesErrorClass = ReadinessErrorClass.AlpacaAuth,
+        fallbackErrorClass = ReadinessErrorClass.Unknown,
+      ),
+    )
+  }
+
+  @Test
+  fun `readiness error falls back to unknown when all gates true`() {
+    val gates =
+      ReadinessGates(
+        alpacaWs = true,
+        kafka = true,
+        tradeUpdates = true,
+      )
+    assertEquals(
+      ReadinessErrorClass.Unknown,
+      ReadinessClassifier.readinessErrorClassForGates(
+        ready = false,
+        gates = gates,
+        alpacaErrorClass = null,
+        kafkaErrorClass = null,
+        tradeUpdatesErrorClass = null,
+        fallbackErrorClass = null,
+      ),
+    )
+  }
 }
