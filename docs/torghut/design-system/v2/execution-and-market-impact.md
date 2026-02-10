@@ -18,11 +18,20 @@ Improve fills and reduce slippage while maintaining strict safety.
 - Max order rate per symbol.
 - Cancel/replace throttles.
 - Market hours and halt awareness.
+- \"No chase\" rules: if market moves away beyond a band, cancel instead of crossing the spread repeatedly.
+- Participation caps (per symbol and portfolio) to keep impact bounded.
 
 ## Torghut Extensions
 - Introduce an ExecutionPlanner that outputs a schedule of child orders.
 - Store child order intent and link to parent decision hash.
+- Persist realized slippage (decision price vs average fill) to calibrate the cost model.
+
+## ExecutionPlanner MVP (Sane Defaults)
+- Prefer passive or near-touch limits in normal liquidity.
+- Escalate aggressiveness only when the strategy edge is time-sensitive and the cost model allows it.
+- Use timeouts and stepwise bands instead of continuous repricing.
 
 ## References
 - RL for optimal execution (2025 survey): https://arxiv.org/abs/2508.06535
+- 100x more data improves RL for optimal execution (2025): https://arxiv.org/abs/2505.20271
 - Optimal execution with impact (foundational): https://docslib.org/doc/1384720/optimal-execution-of-portfolio-transactions

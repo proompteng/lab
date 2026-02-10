@@ -26,6 +26,18 @@ experience long drawdowns in sideways markets.
 - Execution:
   - limit orders with bands to avoid chasing.
 
+## Practical Controls (To Survive Drawdowns)
+- Regime gating: reduce or disable trend exposure in \"high chop\" regimes.
+- Time-based stops: cap holding time for weak trends (reduce bleed).
+- Portfolio constraints:
+  - cap correlated exposures,
+  - cap max single-name risk,
+  - throttle during correlation spikes.
+
+## Signal Notes
+For equities, trend signals can be implemented on end-of-bar data (e.g., 1m/5m/daily). Ensure the backtest matches
+how the signal is computed in production (no same-bar fill if the signal uses the bar close).
+
 ## References
 - Time Series Momentum (foundational): https://pages.stern.nyu.edu/~lpederse/papers/TimeSeriesMomentum.pdf
 - Managed futures / trend following overview: https://www.aqr.com/Insights/Strategies/Alternative-Thinking/Managed-Futures

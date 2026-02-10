@@ -13,30 +13,35 @@ This is not investment advice and does not guarantee profitability. The goal is 
 (overfitting, hidden costs, regime breaks, unsafe autonomy) and increase the probability of positive expectancy.
 
 ## How To Use This Pack
-- Read `01-profitability-discipline.md` first.
-- For strategy research, use `02-strategy-universe-2026.md` plus the strategy-specific docs (`11-15`).
-- For system extension, focus on `03-10`, `16-19`.
+- Start with the MVP track below. Add strategy families only after you have credible evaluation + cost realism.
+- Treat \"Advanced\" items as optional until you have strong evidence you need them.
 
-## v2 Document List
-- `01-profitability-discipline.md`
-- `02-strategy-universe-2026.md`
-- `03-data-pipeline-and-features.md`
-- `04-backtesting-and-walkforward.md`
-- `05-overfitting-and-statistical-validity.md`
-- `06-transaction-cost-and-capacity.md`
-- `07-execution-and-market-impact.md`
-- `08-portfolio-and-sizing.md`
-- `09-risk-controls-and-kill-switches-v2.md`
-- `10-regime-detection.md`
-- `11-time-series-momentum.md`
-- `12-mean-reversion-and-stat-arb.md`
-- `13-cross-sectional-factors.md`
-- `14-volatility-strategies.md`
-- `15-market-making.md`
-- `16-ml-stack-transformers-and-lob.md`
-- `17-rl-trading-and-execution.md`
-- `18-llm-intelligence-layer-architecture.md`
-- `19-governance-compliance-and-ops.md`
+## MVP Track (Build This First)
+- `profitability-discipline.md`
+- `backtesting-and-walkforward.md`
+- `overfitting-and-statistical-validity.md`
+- `transaction-cost-and-capacity.md`
+- `execution-and-market-impact.md`
+- `portfolio-and-sizing.md`
+- `risk-controls-and-kill-switches.md`
+- `regime-detection.md`
+- `llm-intelligence-layer-architecture.md`
+- `governance-compliance-and-ops.md`
+
+Pick one initial alpha family:
+- `time-series-momentum.md` (trend)
+- `mean-reversion-and-stat-arb.md` (mean reversion)
+
+## Next (Once MVP Is Stable)
+- `strategy-universe.md`
+- `data-pipeline-and-features.md`
+- `cross-sectional-factors.md`
+- `volatility-strategies.md`
+
+## Advanced / Optional
+- `market-making.md` (requires order book data + low-latency loop + toxicity controls)
+- `ml-stack-transformers-and-lob.md` (requires stronger data + evaluation discipline)
+- `rl-trading-and-execution.md` (requires credible simulators; easiest to overfit)
 
 ## Design Constraints (Non-Negotiable)
 - Paper-by-default. Live requires explicit gate(s) and change control.
