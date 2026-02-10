@@ -64,6 +64,7 @@ The v1 documents are written to stay consistent with:
 | `v1/operations-ws-connection-limit-and-auth.md` | Operations: WS connection limit and auth |
 | `v1/operations-clickhouse-replica-and-keeper.md` | Operations: ClickHouse replica and keeper |
 | `v1/operations-knative-revision-failures.md` | Operations: Knative revision failures |
+| `v1/operations-actuation-runner.md` | Operations: gated actuation runner |
 | `v1/security-threat-model.md` | Security: threat model |
 | `v1/security-secrets-rotation.md` | Security: secrets rotation |
 | `v1/security-network-and-rbac.md` | Security: network and RBAC |

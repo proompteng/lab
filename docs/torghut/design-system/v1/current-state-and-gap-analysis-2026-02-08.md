@@ -2,7 +2,7 @@
 
 ## Status
 - Version: `v1`
-- Last updated: **2026-02-08**
+- Last updated: **2026-02-10**
 - Source of truth (config): `argocd/applications/torghut/**`
 
 ## Purpose
@@ -62,7 +62,8 @@ flowchart TD
 ## Progress updates (post-2026-02-08)
 - **2026-02-10:** Read-only Torghut health report AgentRun executed successfully:
   `AgentRun/torghut-health-report-v1-20260210-2` in namespace `agents`.
-  Remaining work for item (5): implement the **gated actuation runbook runner** described in `v1/agentruns-handoff.md`.
+- **2026-02-10:** Gated actuation runner documented and templated (GitOps-first) in
+  `docs/torghut/design-system/v1/operations-actuation-runner.md`.
 
 ## Security considerations
 - Keep live trading gated; audit any changes to `TRADING_LIVE_ENABLED`.
