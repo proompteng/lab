@@ -18,14 +18,14 @@ spec:
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
-        client.knative.dev/updateTimestamp: 2026-02-10T06:36:37.036Z
+        client.knative.dev/updateTimestamp: 2026-02-10T16:38:50.112Z
     spec:
       containerConcurrency: 0
       timeoutSeconds: 60
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:7a9d077da14fe334b9f36aa8653cb65209ac7f5eccff75c80cf9c444594cf513
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:2668c766e049140880a138f922d2d2a1022e3f0781d454305035aabb1c6e48af
           ports:
             - name: http1
               containerPort: 8181

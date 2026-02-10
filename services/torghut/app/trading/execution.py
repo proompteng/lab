@@ -11,7 +11,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..models import Execution, Strategy, TradeDecision
+from ..models import Execution, Strategy, TradeDecision, coerce_json_payload
 from ..snapshots import sync_order_to_db
 from .firewall import OrderFirewall
 from .models import ExecutionRequest, StrategyDecision, decision_hash
@@ -31,12 +31,13 @@ class OrderExecutor:
         if existing:
             return existing
 
+        decision_payload = coerce_json_payload(decision.model_dump(mode="json"))
         decision_row = TradeDecision(
             strategy_id=strategy.id,
             alpaca_account_label=account_label,
             symbol=decision.symbol,
             timeframe=decision.timeframe,
-            decision_json=decision.model_dump(mode="json"),
+            decision_json=decision_payload,
             rationale=decision.rationale,
             status="planned",
             decision_hash=digest,
