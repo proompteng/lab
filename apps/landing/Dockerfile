@@ -14,6 +14,8 @@ COPY scripts/run-husky-install.mjs ./scripts/run-husky-install.mjs
 COPY --parents apps/*/package.json ./
 COPY --parents packages/*/package.json ./
 COPY --parents services/*/package.json ./
+# Root workspaces include `services/jangar/*`, so include nested workspace manifests too.
+COPY --parents services/jangar/*/package.json ./
 RUN bun install --frozen-lockfile --ignore-scripts
 
 FROM deps AS builder
