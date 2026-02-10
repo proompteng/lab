@@ -23,6 +23,19 @@ class LLMClientResponse:
     content: str
     usage: Optional[dict[str, int]]
 
+def _passthrough_payload() -> str:
+    # Must satisfy `LLMReviewResponse` validation to behave like a true pass-through,
+    # meaning "do not veto or adjust due to LLM unavailability".
+    return json.dumps(
+        {
+            "verdict": "approve",
+            "confidence": 1.0,
+            "rationale": "llm_passthrough",
+            "risk_flags": ["llm_passthrough"],
+        },
+        separators=(",", ":"),
+    )
+
 
 class LLMClient:
     """Thin wrapper around the OpenAI client to keep it mockable."""
@@ -40,7 +53,18 @@ class LLMClient:
         max_tokens: int,
     ) -> LLMClientResponse:
         if self._provider == "jangar":
-            return self._request_review_via_jangar(messages, temperature=temperature, max_tokens=max_tokens)
+            try:
+                return self._request_review_via_jangar(messages, temperature=temperature, max_tokens=max_tokens)
+            except Exception:
+                try:
+                    return self._request_review_via_self_hosted(messages, temperature=temperature, max_tokens=max_tokens)
+                except Exception:
+                    # In live trading we keep fail-closed semantics: if both Jangar and the
+                    # self-hosted fallback fail, bubble up so the scheduler can veto.
+                    if settings.trading_mode == "live":
+                        raise
+                    # For paper trading: allow the strategy decision to proceed unchanged.
+                    return LLMClientResponse(content=_passthrough_payload(), usage=None)
 
         if self._client is None:
             raise RuntimeError("LLM provider configured as openai but OpenAI client was not initialized")
@@ -56,6 +80,43 @@ class LLMClient:
         content = response.choices[0].message.content or ""
         usage = cast(dict[str, int], response.usage.model_dump()) if response.usage else None
 
+        return LLMClientResponse(content=content, usage=usage)
+
+    def _request_review_via_self_hosted(
+        self,
+        messages: list[ChatCompletionMessageParam],
+        temperature: float,
+        max_tokens: int,
+    ) -> LLMClientResponse:
+        base_url = settings.llm_self_hosted_base_url
+        if not base_url:
+            raise RuntimeError("self-hosted LLM fallback requested but LLM_SELF_HOSTED_BASE_URL is not set")
+
+        model = settings.llm_self_hosted_model or self._model
+        api_key = settings.llm_self_hosted_api_key or "local"
+
+        client = OpenAI(base_url=base_url, api_key=api_key, timeout=self._timeout_seconds)
+
+        # Not all OpenAI-compatible servers implement `response_format`; try it first,
+        # then retry without if rejected.
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_format={"type": "json_object"},
+            )
+        except Exception:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+        content = response.choices[0].message.content or ""
+        usage = cast(dict[str, int], response.usage.model_dump()) if response.usage else None
         return LLMClientResponse(content=content, usage=usage)
 
     def _request_review_via_jangar(
