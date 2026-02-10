@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .alpaca_client import TorghutAlpacaClient
 from .models import Execution, PositionSnapshot
+
+logger = logging.getLogger(__name__)
 
 
 def snapshot_account_and_positions(
@@ -46,6 +50,13 @@ def sync_order_to_db(
 
     stmt = select(Execution).where(Execution.alpaca_order_id == alpaca_order_id)
     existing = session.execute(stmt).scalar_one_or_none()
+    if existing is None:
+        client_order_id = order_response.get("client_order_id")
+        if client_order_id:
+            stmt = select(Execution).where(Execution.client_order_id == client_order_id)
+            existing = session.execute(stmt).scalar_one_or_none()
+            if existing and existing.alpaca_order_id != alpaca_order_id:
+                logger.warning("Execution client_order_id reused with new alpaca_order_id")
 
     data = {
         "trade_decision_id": trade_decision_id,
@@ -73,9 +84,27 @@ def sync_order_to_db(
 
     execution = Execution(**data)
     session.add(execution)
-    session.commit()
-    session.refresh(execution)
-    return execution
+    try:
+        session.commit()
+        session.refresh(execution)
+        return execution
+    except IntegrityError:
+        session.rollback()
+        stmt = select(Execution).where(Execution.alpaca_order_id == alpaca_order_id)
+        existing = session.execute(stmt).scalar_one_or_none()
+        if existing is None:
+            client_order_id = order_response.get("client_order_id")
+            if client_order_id:
+                stmt = select(Execution).where(Execution.client_order_id == client_order_id)
+                existing = session.execute(stmt).scalar_one_or_none()
+        if existing is None:
+            raise
+        for key, value in data.items():
+            setattr(existing, key, value)
+        session.add(existing)
+        session.commit()
+        session.refresh(existing)
+        return existing
 
 
 def _optional_decimal(value: Any) -> Optional[Decimal]:
