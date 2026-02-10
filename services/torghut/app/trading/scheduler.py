@@ -26,6 +26,7 @@ from .firewall import OrderFirewall, OrderFirewallBlocked
 from .ingest import ClickHouseSignalIngestor
 from .llm import LLMReviewEngine, apply_policy
 from .models import SignalEnvelope, StrategyDecision
+from .portfolio import PortfolioSizingResult, sizer_from_settings
 from .prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
 from .reconcile import Reconciler
 from .risk import RiskEngine
@@ -230,6 +231,23 @@ class TradingPipeline:
                 if isinstance(params_update, Mapping):
                     self.executor.update_decision_params(session, decision_row, cast(Mapping[str, Any], params_update))
 
+            sizing_result = self._apply_portfolio_sizing(decision, strategy, account, positions)
+            decision = sizing_result.decision
+            sizing_params = decision.model_dump(mode="json").get("params", {})
+            if isinstance(sizing_params, Mapping) and "portfolio_sizing" in sizing_params:
+                self.executor.update_decision_params(session, decision_row, cast(Mapping[str, Any], sizing_params))
+            if not sizing_result.approved:
+                self.state.metrics.orders_rejected_total += 1
+                for reason in sizing_result.reasons:
+                    logger.info(
+                        "Decision rejected by portfolio sizing strategy_id=%s symbol=%s reason=%s",
+                        decision.strategy_id,
+                        decision.symbol,
+                        reason,
+                    )
+                self.executor.mark_rejected(session, decision_row, ";".join(sizing_result.reasons))
+                return
+
             decision, llm_reject_reason = self._apply_llm_review(
                 session,
                 decision,
@@ -326,6 +344,17 @@ class TradingPipeline:
                 self.state.metrics.orders_rejected_total += 1
                 self.executor.mark_rejected(session, decision_row, f"decision_handler_error {type(exc).__name__}")
             return
+
+    def _apply_portfolio_sizing(
+        self,
+        decision: StrategyDecision,
+        strategy: Strategy,
+        account: dict[str, str],
+        positions: list[dict[str, Any]],
+    ) -> PortfolioSizingResult:
+        equity = _optional_decimal(account.get("equity"))
+        sizer = sizer_from_settings(strategy, equity)
+        return sizer.size(decision, account=account, positions=positions)
 
     @staticmethod
     def _load_strategies(session: Session) -> list[Strategy]:

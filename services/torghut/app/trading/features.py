@@ -15,6 +15,7 @@ class SignalFeatures:
     macd_signal: Optional[Decimal]
     rsi: Optional[Decimal]
     price: Optional[Decimal]
+    volatility: Optional[Decimal]
 
 
 def extract_signal_features(signal: SignalEnvelope) -> SignalFeatures:
@@ -22,7 +23,8 @@ def extract_signal_features(signal: SignalEnvelope) -> SignalFeatures:
     macd, macd_signal = extract_macd(payload)
     rsi = extract_rsi(payload)
     price = extract_price(payload)
-    return SignalFeatures(macd=macd, macd_signal=macd_signal, rsi=rsi, price=price)
+    volatility = extract_volatility(payload)
+    return SignalFeatures(macd=macd, macd_signal=macd_signal, rsi=rsi, price=price, volatility=volatility)
 
 
 def extract_macd(payload: dict[str, Any]) -> tuple[Optional[Decimal], Optional[Decimal]]:
@@ -48,6 +50,13 @@ def extract_price(payload: dict[str, Any]) -> Optional[Decimal]:
     return None
 
 
+def extract_volatility(payload: dict[str, Any]) -> Optional[Decimal]:
+    for key in ("volatility", "vol", "sigma"):
+        if key in payload:
+            return optional_decimal(payload.get(key))
+    return None
+
+
 def optional_decimal(value: Any) -> Optional[Decimal]:
     if value is None:
         return None
@@ -59,4 +68,12 @@ def optional_decimal(value: Any) -> Optional[Decimal]:
         return None
 
 
-__all__ = ["SignalFeatures", "extract_signal_features", "extract_macd", "extract_rsi", "extract_price", "optional_decimal"]
+__all__ = [
+    "SignalFeatures",
+    "extract_signal_features",
+    "extract_macd",
+    "extract_rsi",
+    "extract_price",
+    "extract_volatility",
+    "optional_decimal",
+]
