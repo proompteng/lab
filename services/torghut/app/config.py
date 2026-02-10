@@ -66,6 +66,51 @@ class Settings(BaseSettings):
     trading_max_position_pct_equity: Optional[float] = Field(
         default=None, alias="TRADING_MAX_POSITION_PCT_EQUITY"
     )
+    trading_portfolio_notional_per_position: Optional[float] = Field(
+        default=None,
+        alias="TRADING_PORTFOLIO_NOTIONAL_PER_POSITION",
+        description="Target notional per position for portfolio sizing (optional).",
+    )
+    trading_portfolio_volatility_target: Optional[float] = Field(
+        default=None,
+        alias="TRADING_PORTFOLIO_VOLATILITY_TARGET",
+        description="Volatility target for portfolio sizing (optional).",
+    )
+    trading_portfolio_volatility_floor: float = Field(
+        default=0.0,
+        alias="TRADING_PORTFOLIO_VOLATILITY_FLOOR",
+        description="Floor used when scaling by volatility (default 0).",
+    )
+    trading_portfolio_max_positions: Optional[int] = Field(
+        default=None,
+        alias="TRADING_PORTFOLIO_MAX_POSITIONS",
+        description="Max concurrent positions allowed (optional).",
+    )
+    trading_portfolio_max_notional_per_symbol: Optional[float] = Field(
+        default=None,
+        alias="TRADING_PORTFOLIO_MAX_NOTIONAL_PER_SYMBOL",
+        description="Max notional per symbol for portfolio sizing (optional).",
+    )
+    trading_portfolio_max_gross_exposure: Optional[float] = Field(
+        default=None,
+        alias="TRADING_PORTFOLIO_MAX_GROSS_EXPOSURE",
+        description="Absolute gross exposure cap (optional).",
+    )
+    trading_portfolio_max_gross_exposure_pct_equity: Optional[float] = Field(
+        default=None,
+        alias="TRADING_PORTFOLIO_MAX_GROSS_EXPOSURE_PCT_EQUITY",
+        description="Gross exposure cap as a pct of equity (optional).",
+    )
+    trading_portfolio_max_net_exposure: Optional[float] = Field(
+        default=None,
+        alias="TRADING_PORTFOLIO_MAX_NET_EXPOSURE",
+        description="Absolute net exposure cap (optional).",
+    )
+    trading_portfolio_max_net_exposure_pct_equity: Optional[float] = Field(
+        default=None,
+        alias="TRADING_PORTFOLIO_MAX_NET_EXPOSURE_PCT_EQUITY",
+        description="Net exposure cap as a pct of equity (optional).",
+    )
     trading_cooldown_seconds: int = Field(default=0, alias="TRADING_COOLDOWN_SECONDS")
     trading_allow_shorts: bool = Field(default=False, alias="TRADING_ALLOW_SHORTS")
     trading_account_label: str = Field(default="paper", alias="TRADING_ACCOUNT_LABEL")

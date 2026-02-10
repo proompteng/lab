@@ -99,6 +99,7 @@ class DecisionEngine:
                 macd_signal=features.macd_signal,
                 rsi=features.rsi,
                 price=price,
+                volatility=features.volatility,
                 snapshot=snapshot,
             )
             | {"sizing": sizing_meta},
@@ -110,6 +111,7 @@ def _build_params(
     macd_signal: Decimal,
     rsi: Decimal,
     price: Optional[Decimal],
+    volatility: Optional[Decimal],
     snapshot: Optional[MarketSnapshot],
 ) -> dict[str, Any]:
     params: dict[str, Any] = {
@@ -118,6 +120,8 @@ def _build_params(
         "rsi": rsi,
         "price": price,
     }
+    if volatility is not None:
+        params["volatility"] = volatility
     if snapshot is not None:
         params["price_snapshot"] = _snapshot_payload(snapshot)
         if snapshot.spread is not None:
