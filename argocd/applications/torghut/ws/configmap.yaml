@@ -8,6 +8,8 @@ data:
   ALPACA_STREAM_URL: "wss://stream.data.alpaca.markets"
   ALPACA_BASE_URL: "https://data.alpaca.markets"
   JANGAR_SYMBOLS_URL: "http://jangar.jangar.svc.cluster.local/api/torghut/symbols"
+  # Fallback so the ws forwarder can become ready if Jangar has no ready endpoints.
+  SYMBOLS: "CRWD,MU,NVDA"
   SYMBOLS_POLL_INTERVAL_MS: "30000"
   SUBSCRIBE_BATCH_SIZE: "200"
   SHARD_COUNT: "1"
