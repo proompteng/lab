@@ -3,6 +3,7 @@
 ## Status
 - Version: `v1`
 - Last updated: **2026-02-10**
+- Implemented: PR #2958 (merged **2026-02-10**) - `feat(jangar): add torghut trading history UI`
 - Source of truth (Torghut config): `argocd/applications/torghut/**`
 - Source of truth (Torghut audit data): Torghut Postgres (`strategies`, `trade_decisions`, `executions`, `position_snapshots`, `llm_decision_reviews`)
 
@@ -244,4 +245,3 @@ Implications for Torghut:
 - Equity delta is account-level and can diverge from realized PnL if positions remain open at day end.
 - Data volume: `trade_decisions` can be high-cardinality; APIs must paginate and bound by day/range.
 - Multi-strategy attribution remains approximate unless Torghut records allocation or sub-accounts.
-
