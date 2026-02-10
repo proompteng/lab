@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { createTemporalClient, type TemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
-import { createWorker, VersioningBehavior, WorkerVersioningMode } from '@proompteng/temporal-bun-sdk/worker'
+import { createWorker } from '@proompteng/temporal-bun-sdk/worker'
 
 import activities from './activities/index'
 
@@ -164,16 +164,9 @@ const startHealthServer = async (config: TemporalConfig): Promise<HealthServer> 
 }
 
 const main = async () => {
-  const versioningMode =
-    process.env.NODE_ENV === 'production' ? WorkerVersioningMode.VERSIONED : WorkerVersioningMode.UNVERSIONED
-
   const { worker, config } = await createWorker({
     workflowsPath: fileURLToPath(new URL('./workflows/index.ts', import.meta.url)),
     activities: activities as Record<string, ActivityHandler>,
-    deployment: {
-      versioningMode,
-      ...(versioningMode === WorkerVersioningMode.VERSIONED ? { versioningBehavior: VersioningBehavior.PINNED } : {}),
-    },
   })
 
   const health = await startHealthServer(config)

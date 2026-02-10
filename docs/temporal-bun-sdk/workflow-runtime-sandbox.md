@@ -66,7 +66,7 @@ If `ctx` is undefined, we are not in workflow context.
 
 ## Guard Modes
 
-Controlled by `TEMPORAL_WORKFLOW_GUARDS` / `WorkerRuntimeOptions.workflowGuards`:
+Controlled by `WorkerRuntimeOptions.workflowGuards` / `WorkflowExecutorOptions.workflowGuards`:
 
 - `strict`: throw on forbidden APIs
 - `warn`: log a structured warning and proceed
@@ -230,11 +230,11 @@ process lifetime.
 
 Strictness comes from:
 
-1. `WorkerRuntimeOptions.workflowGuards` if set
-2. `TEMPORAL_WORKFLOW_GUARDS` env var
-3. default based on `NODE_ENV`-style heuristics is not reliable under Bun
+1. `WorkerRuntimeOptions.workflowGuards` / `WorkflowExecutorOptions.workflowGuards` if set
+2. otherwise the SDK default (`strict`)
 
-Recommendation: default to `warn`, and services flip to `strict` intentionally.
+In production (`NODE_ENV=production`), non-`strict` modes are rejected at
+runtime to avoid accidental nondeterminism.
 
 ### Wrapper behavior: `warn` vs `strict`
 
@@ -273,4 +273,3 @@ Add unit tests under `packages/temporal-bun-sdk/tests/`:
   (captured reference), linting must catch it. Example:
   `const realFetch = fetch;` then calling `realFetch` later.
   Mitigation: lint rules for capturing forbidden globals.
-

@@ -49,7 +49,6 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
    TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES=1800000  # optional – skip markers exceeding size limit
    TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS=4000     # optional – heartbeat throttle interval in ms
    TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS=5000  # optional – heartbeat RPC timeout in ms
-   TEMPORAL_WORKER_DEPLOYMENT_NAME=replay-worker      # optional – worker deployment metadata
    TEMPORAL_WORKER_BUILD_ID=git-sha                 # optional – build-id for versioning
 ```
 
@@ -505,22 +504,15 @@ Pass your converter to both the worker and client factories to keep payload hand
 
 ## Worker versioning and build IDs
 
-Workers derive their build ID from `TEMPORAL_WORKER_BUILD_ID`, the package version, or the configured identity. When `deployment.versioningMode` is `WorkerVersioningMode.VERSIONED`, `WorkerRuntime.create()` now:
+Workers derive their build ID (in priority order) from:
 
-1. Calls `GetWorkerBuildIdCompatibility` to confirm the WorkflowService supports worker versioning for the namespace/task queue.
-2. Registers the build ID via `UpdateWorkerBuildIdCompatibility` before any pollers start, retrying transient `Unavailable`, `DeadlineExceeded`, `Aborted`, and `Internal` errors with incremental backoff.
-3. Emits an info log so deploy pipelines can trace which build IDs were registered.
+1. `deployment.buildId` passed to `createWorker(...)` / `WorkerRuntime.create(...)`
+2. `TEMPORAL_WORKER_BUILD_ID`
+3. a derived value based on the configured `workflowsPath` contents (recommended default)
 
-If the capability probe returns `Unimplemented` or `FailedPrecondition`, the runtime logs a warning and skips registration so local development servers (for example, the Temporal CLI dev server started via `bun scripts/start-temporal-cli.ts`) continue working even though they lack worker versioning APIs. Any other error aborts startup because versioned task queues will refuse to hand out work without a registered build ID.
+When `deployment.versioningMode` is `WorkerVersioningMode.VERSIONED`, the worker includes deployment metadata (deployment name + build ID) in poll/response requests so the server can route workflow tasks to the correct build.
 
-Example logs:
-
-```
-[temporal-bun-sdk] registered worker build ID replay-worker@1.2.3 for default/replay-fixtures
-[temporal-bun-sdk] skipping worker build ID registration for default/replay-fixtures: worker versioning API unavailable (Unimplemented (12)). If you are running against the Temporal CLI dev server via bun scripts/start-temporal-cli.ts this warning is expected because that server does not implement worker versioning APIs yet.
-```
-
-Production clusters should enable worker versioning, watch for the registration log during deploys, and alert on failures so versioned queues stay healthy.
+The Bun SDK does not call the deprecated Build ID Compatibility APIs (Version Set-based “worker versioning v0.1”), since they may be disabled on some namespaces.
 
 ## License
 MIT © ProomptEng AI

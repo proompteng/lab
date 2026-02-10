@@ -55,6 +55,7 @@ describeIntegration('Activity lifecycle integration', () => {
       taskQueue: CLI_CONFIG.taskQueue,
       namespace: CLI_CONFIG.namespace,
       stickyScheduling: true,
+      workflowGuards: 'warn',
     })
     runtimePromise = runtime.run()
   }, { timeout: hookTimeoutMs })

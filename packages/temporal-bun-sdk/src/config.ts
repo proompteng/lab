@@ -37,7 +37,7 @@ const DEFAULT_DETERMINISM_MARKER_INTERVAL_TASKS = 10
 const DEFAULT_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS = 50
 const DEFAULT_DETERMINISM_MARKER_SKIP_UNCHANGED = true
 const DEFAULT_DETERMINISM_MARKER_MAX_DETAIL_BYTES = 1_800_000
-const DEFAULT_WORKFLOW_GUARDS_MODE: WorkflowGuardsMode = process.env.NODE_ENV === 'production' ? 'strict' : 'warn'
+const DEFAULT_WORKFLOW_GUARDS_MODE: WorkflowGuardsMode = 'strict'
 const DEFAULT_WORKFLOW_LINT_MODE: WorkflowLintMode = 'warn'
 const DEFAULT_CLIENT_RETRY_MAX_ATTEMPTS = defaultRetryPolicy.maxAttempts
 const DEFAULT_CLIENT_RETRY_INITIAL_MS = defaultRetryPolicy.initialDelayMs
@@ -185,7 +185,6 @@ export interface TemporalEnvironment {
   TEMPORAL_STICKY_TTL_MS?: string
   TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS?: string
   TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS?: string
-  TEMPORAL_WORKER_DEPLOYMENT_NAME?: string
   TEMPORAL_WORKER_BUILD_ID?: string
   TEMPORAL_STICKY_SCHEDULING_ENABLED?: string
   TEMPORAL_DETERMINISM_MARKER_MODE?: string
@@ -193,7 +192,6 @@ export interface TemporalEnvironment {
   TEMPORAL_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS?: string
   TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED?: string
   TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES?: string
-  TEMPORAL_WORKFLOW_GUARDS?: string
   TEMPORAL_WORKFLOW_LINT?: string
   TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS?: string
   TEMPORAL_CLIENT_RETRY_INITIAL_MS?: string
@@ -211,7 +209,6 @@ const falsyValues = new Set(['0', 'false', 'f', 'no', 'n', 'off'])
 const logLevelOptions = new Set<LogLevel>(['debug', 'info', 'warn', 'error'])
 const logFormatOptions = new Set<LogFormat>(['json', 'pretty'])
 const determinismMarkerModeOptions = new Set<DeterminismMarkerMode>(['always', 'interval', 'delta', 'never'])
-const workflowGuardsModeOptions = new Set<WorkflowGuardsMode>(['strict', 'warn', 'off'])
 const workflowLintModeOptions = new Set<WorkflowLintMode>(['strict', 'warn', 'off'])
 
 const parseLogLevel = (value: string | undefined): LogLevel | undefined => {
@@ -254,20 +251,6 @@ const parseDeterminismMarkerMode = (value: string | undefined): DeterminismMarke
     return normalized as DeterminismMarkerMode
   }
   throw new TemporalConfigError(`Invalid TEMPORAL_DETERMINISM_MARKER_MODE: ${value}`)
-}
-
-const parseWorkflowGuardsMode = (value: string | undefined): WorkflowGuardsMode | undefined => {
-  if (!value) {
-    return undefined
-  }
-  const normalized = value.trim().toLowerCase()
-  if (normalized.length === 0) {
-    return undefined
-  }
-  if (workflowGuardsModeOptions.has(normalized as WorkflowGuardsMode)) {
-    return normalized as WorkflowGuardsMode
-  }
-  throw new TemporalConfigError(`Invalid TEMPORAL_WORKFLOW_GUARDS: ${value}`)
 }
 
 const parseWorkflowLintMode = (value: string | undefined): WorkflowLintMode | undefined => {
@@ -320,7 +303,6 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
     TEMPORAL_STICKY_TTL_MS: read('TEMPORAL_STICKY_TTL_MS'),
     TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS: read('TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS'),
     TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS: read('TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS'),
-    TEMPORAL_WORKER_DEPLOYMENT_NAME: read('TEMPORAL_WORKER_DEPLOYMENT_NAME'),
     TEMPORAL_WORKER_BUILD_ID: read('TEMPORAL_WORKER_BUILD_ID'),
     TEMPORAL_STICKY_SCHEDULING_ENABLED: read('TEMPORAL_STICKY_SCHEDULING_ENABLED'),
     TEMPORAL_DETERMINISM_MARKER_MODE: read('TEMPORAL_DETERMINISM_MARKER_MODE'),
@@ -330,7 +312,6 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
     ),
     TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED: read('TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED'),
     TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES: read('TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES'),
-    TEMPORAL_WORKFLOW_GUARDS: read('TEMPORAL_WORKFLOW_GUARDS'),
     TEMPORAL_WORKFLOW_LINT: read('TEMPORAL_WORKFLOW_LINT'),
     TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS: read('TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS'),
     TEMPORAL_CLIENT_RETRY_INITIAL_MS: read('TEMPORAL_CLIENT_RETRY_INITIAL_MS'),
@@ -814,8 +795,7 @@ export const loadTemporalConfigEffect = (
       defaults.determinismMarkerMaxDetailBytes ?? DEFAULT_DETERMINISM_MARKER_MAX_DETAIL_BYTES,
       'TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES',
     )
-    const workflowGuards =
-      parseWorkflowGuardsMode(env.TEMPORAL_WORKFLOW_GUARDS) ?? defaults.workflowGuards ?? DEFAULT_WORKFLOW_GUARDS_MODE
+    const workflowGuards = defaults.workflowGuards ?? DEFAULT_WORKFLOW_GUARDS_MODE
     const workflowLint =
       parseWorkflowLintMode(env.TEMPORAL_WORKFLOW_LINT) ?? defaults.workflowLint ?? DEFAULT_WORKFLOW_LINT_MODE
     const fallbackHeartbeatInterval = defaults.activityHeartbeatIntervalMs ?? DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS
@@ -831,7 +811,7 @@ export const loadTemporalConfigEffect = (
       fallbackHeartbeatRpcTimeout,
       'TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS',
     )
-    const workerDeploymentName = env.TEMPORAL_WORKER_DEPLOYMENT_NAME ?? defaults.workerDeploymentName
+    const workerDeploymentName = defaults.workerDeploymentName
     const workerBuildId = env.TEMPORAL_WORKER_BUILD_ID ?? defaults.workerBuildId
     const allowInsecureTls =
       coerceBoolean(env.TEMPORAL_ALLOW_INSECURE) ??

@@ -81,6 +81,7 @@ describeIntegration('interceptor framework wiring', () => {
       taskQueue: CLI_CONFIG.taskQueue,
       namespace: CLI_CONFIG.namespace,
       interceptors: [captureWorkerInterceptor],
+      workflowGuards: 'warn',
     })
     runtimePromise = runtime.run()
 

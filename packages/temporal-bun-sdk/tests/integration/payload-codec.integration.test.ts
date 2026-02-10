@@ -131,6 +131,7 @@ describeIntegration('payload codec E2E', () => {
       taskQueue: TASK_QUEUE,
       namespace: config.namespace,
       stickyScheduling: false,
+      workflowGuards: 'warn',
     })
     runtimePromise = runtime.run().catch((error) => {
       console.error('[temporal-bun-sdk] codec runtime exited', error)

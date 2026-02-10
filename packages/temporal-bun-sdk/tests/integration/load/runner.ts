@@ -66,6 +66,7 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
     },
     stickyScheduling: true,
     schedulerHooks: createSchedulerHooks(stats),
+    workflowGuards: 'warn',
   })
 
   const runPromise = runtime.run().catch((error) => {

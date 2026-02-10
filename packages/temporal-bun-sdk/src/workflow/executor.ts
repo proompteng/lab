@@ -45,17 +45,6 @@ const noopWorkflowLogger: WorkflowLogger = {
   log: () => Effect.void,
 }
 
-const workflowGuardsOptions = new Set<WorkflowGuardsMode>(['strict', 'warn', 'off'])
-const parseWorkflowGuardsMode = (raw: string | undefined): WorkflowGuardsMode | undefined => {
-  if (!raw) return undefined
-  const normalized = raw.trim().toLowerCase()
-  if (!normalized) return undefined
-  if (workflowGuardsOptions.has(normalized as WorkflowGuardsMode)) {
-    return normalized as WorkflowGuardsMode
-  }
-  return undefined
-}
-
 export interface WorkflowUpdateInvocation {
   readonly protocolInstanceId: string
   readonly requestMessageId: string
@@ -159,10 +148,11 @@ export class WorkflowExecutor {
     this.#registry = options.registry
     this.#dataConverter = options.dataConverter
     this.#logger = options.logger ?? noopWorkflowLogger
-    this.#workflowGuards =
-      options.workflowGuards ??
-      parseWorkflowGuardsMode(process.env.TEMPORAL_WORKFLOW_GUARDS) ??
-      (process.env.NODE_ENV === 'production' ? 'strict' : 'warn')
+    const workflowGuards = options.workflowGuards ?? 'strict'
+    if (process.env.NODE_ENV === 'production' && workflowGuards !== 'strict') {
+      throw new Error('workflowGuards must be strict in production')
+    }
+    this.#workflowGuards = workflowGuards
   }
 
   async execute(input: ExecuteWorkflowInput): Promise<WorkflowExecutionOutput> {

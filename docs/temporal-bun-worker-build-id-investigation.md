@@ -1,10 +1,16 @@
 # Temporal Bun Worker – Build ID Registration Investigation
 
-**Last updated:** 2025-11-02  
+**Last updated:** 2026-02-10  
 **Owner:** Codex automation (gregkonush workspace)  
 > **Historical note:** `TEMPORAL_BUN_SDK_USE_ZIG` has been retired; the Zig bridge
 > is no longer selectable at runtime. This document remains for archival
 > reference while the TypeScript runtime is the supported path.
+>
+> **Additional historical note (2026-02-10):** The worker-versioning v0.1 Build ID
+> Compatibility APIs (`GetWorkerBuildIdCompatibility` / `UpdateWorkerBuildIdCompatibility`)
+> are disabled on some namespaces (permission denied). The Temporal Bun SDK no
+> longer calls these APIs in worker startup; worker versioning is handled via
+> deployment metadata (deployment name + build ID) and `WorkerVersioningMode.VERSIONED`.
 
 **Scope:** `packages/temporal-bun-sdk` TypeScript worker runtime (Bun)  
 
@@ -12,10 +18,13 @@
 
 ## Executive Summary
 
-- The Bun-native Temporal worker consistently hung whenever a build ID was provided (explicitly or via defaults) because the server never saw a compatibility registration.
-- Long-poll workflows never delivered activations because the server rejected the worker’s build ID; from the client side this manifested as an endless `PollWorkflowTask` timeout loop.
-- The TypeScript SDK automatically registers build IDs via `TaskQueueClient.updateBuildIdCompatibility`, but the Bun runtime never issued the analogous RPC.
-- `WorkerRuntime.create()` now probes worker-versioning support with `GetWorkerBuildIdCompatibility` and, when available, registers the build ID through the `registerWorkerBuildIdCompatibility` helper before pollers start. When the probe fails with `Unimplemented`/`FailedPrecondition` (Temporal CLI dev server), the runtime logs a warning and keeps running so CI/local workflows stay green.
+- This document captures an investigation into Build ID Compatibility registration (Temporal “worker versioning v0.1”).
+- That approach is now considered **deprecated for this repo**, because v0.1 APIs may be disabled on a namespace (permission denied).
+- The current SDK behavior is:
+  - enforce strict nondeterminism guards by default
+  - default workers to `WorkerVersioningMode.VERSIONED` + `VersioningBehavior.PINNED` when strict
+  - derive stable build IDs from workflow sources (or accept an explicit build ID)
+  - do **not** call v0.1 Build ID Compatibility APIs during worker startup
 
 ---
 
@@ -56,17 +65,9 @@
 
 ## Implemented Changes
 
-1. **TypeScript helper (`src/worker/build-id.ts`)**
-   - Builds `UpdateWorkerBuildIdCompatibility` requests using the protobuf schema and retries transient `Unavailable`, `DeadlineExceeded`, `Aborted`, and `Internal` errors with incremental backoff.
-   - Treats `Unimplemented`/`FailedPrecondition` as “worker versioning unavailable” so local dev servers can continue without fatal errors.
-
-2. **Worker bootstrap (`src/worker/runtime.ts`)**
-   - `WorkerRuntime.create()` now calls `GetWorkerBuildIdCompatibility` before starting pollers whenever `WorkerVersioningMode.VERSIONED` is configured.
-   - Successful probes trigger build ID registration; failures propagate so deployments fail fast.
-   - The CLI dev server lit up via `bun scripts/start-temporal-cli.ts` falls into the fallback path and emits a warning instead of crashing.
-
-3. **Unit coverage**
-   - `tests/worker.build-id-registration.test.ts` asserts both runtime paths: registration success and CLI fallback logging.
+This investigation originally led to a helper (`src/worker/build-id.ts`) and worker
+bootstrap wiring. As of 2026-02-10, the SDK no longer uses that wiring in
+`WorkerRuntime.create()` because the v0.1 APIs may be disabled on a namespace.
 
 ---
 
@@ -74,10 +75,10 @@
 
 | Component | Status | Notes |
 | --- | --- | --- |
-| Zig bridge build | ✅ Passes ReleaseFast build |
-| Temporal dev server | ✅ Must be running (PID referenced in `.temporal-cli.pid`) |
-| Native integration test | ⚠️ Still hanging on long poll (needs rerun after ensuring server is clean and helper wired in JS layer) |
-| Documentation | This file captures investigation + next steps |
+| Worker versioning v0.1 APIs | ⚠️ Not used | Disabled on some namespaces. |
+| Worker deployments versioning | ✅ Used | `WorkerVersioningMode.VERSIONED` + `VersioningBehavior.PINNED` when strict. |
+| Nondeterminism runtime guards | ✅ Enabled by default | Strict in production; strict by default. |
+| Documentation | ✅ Updated | This file is archival; see `docs/temporal-bun-sdk/` for current design/runbooks. |
 
 ---
 

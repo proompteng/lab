@@ -61,6 +61,7 @@ describeIntegration('Query-only workflow tasks', () => {
       namespace: runtimeConfig.namespace,
       stickyScheduling: false,
       deployment: undefined,
+      workflowGuards: 'warn',
     })
     runtimePromise = runtime.run().catch((error) => {
       console.error('[temporal-bun-sdk] integration worker runtime exited', error)
