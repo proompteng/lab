@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from dataclasses import asdict, is_dataclass
@@ -75,11 +75,8 @@ class TorghutAlpacaClient:
         orders = self.trading.get_orders(request)
         return [self._model_to_dict(order) for order in orders]
 
-    def list_orders(self, status: QueryOrderStatus | str = QueryOrderStatus.ALL) -> List[Dict[str, Any]]:
-        if isinstance(status, str):
-            status_value = QueryOrderStatus(status.lower())
-        else:
-            status_value = status
+    def list_orders(self, status: str = "all") -> List[Dict[str, Any]]:
+        status_value = QueryOrderStatus(status.lower())
         request = GetOrdersRequest(status=status_value)
         orders = self.trading.get_orders(request)
         return [self._model_to_dict(order) for order in orders]
@@ -89,7 +86,10 @@ class TorghutAlpacaClient:
         return self._model_to_dict(order)
 
     def get_order_by_client_order_id(self, client_order_id: str) -> Dict[str, Any]:
-        order = self.trading.get_order_by_client_order_id(client_order_id)
+        getter = cast(Callable[[str], Any], getattr(self.trading, "get_order_by_client_order_id", None))
+        if getter is None:
+            raise AttributeError("Trading client does not support get_order_by_client_order_id")
+        order = getter(client_order_id)
         return self._model_to_dict(order)
 
     def submit_order(
