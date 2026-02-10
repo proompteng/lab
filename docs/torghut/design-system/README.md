@@ -30,6 +30,10 @@ The v1 documents are written to stay consistent with:
 - `docs/torghut/design-system/v1/torghut-autonomous-trading-system.md`
 
 ## Design doc set
+
+- `v2/` - research and profitability blueprint for a more autonomous system (not production-facing; may drift).
+  - Entry point: `docs/torghut/design-system/v2/00-index.md`
+
 - `v1/` - first cohesive design-system pass aligned to production reality as of **2026-02-08**.
 
 ### v1 Index
