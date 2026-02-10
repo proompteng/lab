@@ -49,4 +49,20 @@ class ReadinessClassifierTest {
       ReadinessClassifier.classifyKafkaFailure(ex, KafkaFailureContext.Produce),
     )
   }
+
+  @Test
+  fun `readiness response surfaces unknown when not ready and unset`() {
+    assertEquals(
+      ReadinessErrorClass.Unknown,
+      ReadinessClassifier.readinessErrorClassForResponse(false, null),
+    )
+  }
+
+  @Test
+  fun `readiness response clears error class when ready`() {
+    assertEquals(
+      null,
+      ReadinessClassifier.readinessErrorClassForResponse(true, ReadinessErrorClass.KafkaAuth),
+    )
+  }
 }
