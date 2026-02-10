@@ -46,6 +46,7 @@ spec:
     name: codex-agent
   implementationSpecRef:
     name: leader-election-design-20260207
+  ttlSecondsAfterFinished: 7200
   parameters:
     repository: proompteng/lab
     base: main
@@ -56,8 +57,6 @@ spec:
     stage: implementation
   runtime:
     type: workflow
-    config:
-      ttlSecondsAfterFinished: 7200
   secrets:
   - codex-github-token
   - codex-openai-key
@@ -80,6 +79,8 @@ Notes:
   (this repo typically uses `codex/...` prefixes).
 - Secrets are cluster- and provider-specific. If you reference a Secret (directly or via `systemPromptRef`) it must be
   allowed by policy and often must be listed in `spec.secrets` (see `docs/agents/rbac-matrix.md`).
+- `ttlSecondsAfterFinished` is a top-level `AgentRun.spec` field (see `charts/agents/crds/agents.proompteng.ai_agentruns.yaml`).
+  Do not put TTL under `spec.runtime.config` unless a specific runtime explicitly documents it.
 
 ## Verify The Run Is Using The Spec Text
 
@@ -140,4 +141,3 @@ Do not use system prompt customization to compensate for an incorrect user promp
 - Required secrets were not allowlisted or not included in `spec.secrets`.
 - The repo is not in the allowlist configured for the controllers deployment.
 - You expected “followers not-ready” behavior without having implemented leader election in code and chart.
-
