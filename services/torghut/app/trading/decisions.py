@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 from decimal import ROUND_DOWN, Decimal
-from typing import Any, Iterable, Optional, cast
+from typing import Any, Iterable, Optional
 
 from ..config import settings
 from ..models import Strategy
+from .features import SignalFeatures, extract_signal_features, optional_decimal
 from .models import SignalEnvelope, StrategyDecision
 from .prices import MarketSnapshot, PriceFetcher
 
@@ -55,21 +56,18 @@ class DecisionEngine:
         timeframe = signal.timeframe
         if timeframe is None:
             return None
-        payload = signal.payload or {}
-        macd, macd_signal = _extract_macd(payload)
-        rsi = _extract_rsi(payload)
-
-        if macd is None or macd_signal is None or rsi is None:
+        features = extract_signal_features(signal)
+        if features.macd is None or features.macd_signal is None or features.rsi is None:
             logger.debug("Signal missing indicators for strategy %s", strategy.id)
             return None
 
         action: Optional[str] = None
         rationale_parts: list[str] = []
-        if macd > macd_signal and rsi < 35:
+        if features.macd > features.macd_signal and features.rsi < 35:
             action = "buy"
             rationale_parts.append("macd_cross_up")
             rationale_parts.append("rsi_oversold")
-        elif macd < macd_signal and rsi > 65:
+        elif features.macd < features.macd_signal and features.rsi > 65:
             action = "sell"
             rationale_parts.append("macd_cross_down")
             rationale_parts.append("rsi_overbought")
@@ -77,7 +75,7 @@ class DecisionEngine:
         if action is None:
             return None
 
-        price = _extract_price(payload)
+        price = features.price
         snapshot: Optional[MarketSnapshot] = None
         if price is None and self.price_fetcher is not None:
             snapshot = self.price_fetcher.fetch_market_snapshot(signal)
@@ -97,9 +95,9 @@ class DecisionEngine:
             time_in_force="day",
             rationale=",".join(rationale_parts) if rationale_parts else None,
             params=_build_params(
-                macd=macd,
-                macd_signal=macd_signal,
-                rsi=rsi,
+                macd=features.macd,
+                macd_signal=features.macd_signal,
+                rsi=features.rsi,
                 price=price,
                 snapshot=snapshot,
             )
@@ -136,22 +134,6 @@ def _snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:
     }
 
 
-def _extract_macd(payload: dict[str, Any]) -> tuple[Optional[Decimal], Optional[Decimal]]:
-    macd_block = payload.get("macd")
-    if isinstance(macd_block, dict):
-        macd_dict = cast(dict[str, Any], macd_block)
-        macd_val = macd_dict.get("macd")
-        signal_val = macd_dict.get("signal")
-    else:
-        macd_val = payload.get("macd")
-        signal_val = payload.get("macd_signal")
-    return _optional_decimal(macd_val), _optional_decimal(signal_val)
-
-
-def _extract_rsi(payload: dict[str, Any]) -> Optional[Decimal]:
-    return _optional_decimal(payload.get("rsi14") or payload.get("rsi"))
-
-
 def _resolve_qty(
     strategy: Strategy,
     *,
@@ -173,8 +155,8 @@ def _resolve_qty(
         return default_qty, {"method": "default_qty", "reason": "missing_price"}
 
     # Prefer strategy-level sizing. Treat global max_position_pct_equity as a risk cap, not a sizing target.
-    max_notional = _optional_decimal(strategy.max_notional_per_trade)
-    max_pct = _optional_decimal(strategy.max_position_pct_equity)
+    max_notional = optional_decimal(strategy.max_notional_per_trade)
+    max_pct = optional_decimal(strategy.max_position_pct_equity)
 
     pct_notional: Optional[Decimal] = None
     if equity is not None and max_pct is not None and max_pct > 0:
@@ -193,7 +175,7 @@ def _resolve_qty(
         method = "max_position_pct_equity"
     else:
         # Fall back to a global max_notional to avoid fixed-share trading when no strategy sizing is configured.
-        global_notional = _optional_decimal(settings.trading_max_notional_per_trade)
+        global_notional = optional_decimal(settings.trading_max_notional_per_trade)
         if global_notional is not None and global_notional > 0:
             notional_budget = global_notional
             method = "global_max_notional_per_trade"
@@ -208,20 +190,4 @@ def _resolve_qty(
     return qty, {"method": method, "notional_budget": str(notional_budget), "price": str(price)}
 
 
-def _extract_price(payload: dict[str, Any]) -> Optional[Decimal]:
-    for key in ("price", "close", "c", "last"):
-        if key in payload:
-            return _optional_decimal(payload.get(key))
-    return None
-
-
-def _optional_decimal(value: Any) -> Optional[Decimal]:
-    if value is None:
-        return None
-    try:
-        return Decimal(str(value))
-    except (ArithmeticError, ValueError):
-        return None
-
-
-__all__ = ["DecisionEngine"]
+__all__ = ["DecisionEngine", "SignalFeatures", "extract_signal_features"]
