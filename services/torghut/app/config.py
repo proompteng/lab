@@ -86,6 +86,11 @@ class Settings(BaseSettings):
     llm_enabled: bool = Field(default=False, alias="LLM_ENABLED")
     llm_provider: Literal["jangar", "openai"] = Field(default="openai", alias="LLM_PROVIDER")
     llm_model: str = Field(default="gpt-5.3-codex", alias="LLM_MODEL")
+    # Used only when `LLM_PROVIDER=jangar` and the Jangar request fails.
+    # This should point at an OpenAI-compatible endpoint (e.g. vLLM, Ollama, llama.cpp server).
+    llm_self_hosted_base_url: Optional[str] = Field(default=None, alias="LLM_SELF_HOSTED_BASE_URL")
+    llm_self_hosted_api_key: Optional[str] = Field(default=None, alias="LLM_SELF_HOSTED_API_KEY")
+    llm_self_hosted_model: Optional[str] = Field(default=None, alias="LLM_SELF_HOSTED_MODEL")
     llm_prompt_version: str = Field(default="v1", alias="LLM_PROMPT_VERSION")
     llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=300, alias="LLM_MAX_TOKENS")
@@ -113,6 +118,8 @@ class Settings(BaseSettings):
             self.trading_account_label = self.trading_mode
         if self.jangar_base_url:
             self.jangar_base_url = self.jangar_base_url.strip().rstrip("/")
+        if self.llm_self_hosted_base_url:
+            self.llm_self_hosted_base_url = self.llm_self_hosted_base_url.strip().rstrip("/")
         if "llm_provider" not in self.model_fields_set and self.jangar_base_url:
             self.llm_provider = "jangar"
 
