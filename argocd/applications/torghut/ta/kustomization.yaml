@@ -3,6 +3,5 @@ kind: Kustomization
 namespace: torghut
 resources:
   - flinkdeployment.yaml
-  - service.yaml
   - pdb.yaml
   - configmap.yaml
