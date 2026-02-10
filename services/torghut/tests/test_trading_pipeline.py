@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.models import Base, Execution, LLMDecisionReview, Strategy, TradeDecision
 from app.trading.decisions import DecisionEngine
 from app.trading.execution import OrderExecutor
+from app.trading.firewall import OrderFirewall
 from app.trading.llm.review_engine import LLMReviewOutcome
 from app.trading.llm.schema import (
     LLMDecisionContext,
@@ -44,6 +45,7 @@ class FakeIngestor:
 class FakeAlpacaClient:
     def __init__(self) -> None:
         self.submitted: list[dict[str, str]] = []
+        self.cancel_all_calls = 0
 
     def get_account(self) -> dict[str, str]:
         return {"equity": "10000", "cash": "10000", "buying_power": "10000"}
@@ -61,6 +63,8 @@ class FakeAlpacaClient:
         limit_price: float | None = None,
         stop_price: float | None = None,
         extra_params: dict[str, str] | None = None,
+        *,
+        firewall_token: object | None = None,
     ) -> dict[str, str]:
         order = {
             "id": f"order-{len(self.submitted) + 1}",
@@ -75,6 +79,13 @@ class FakeAlpacaClient:
         }
         self.submitted.append(order)
         return order
+
+    def cancel_order(self, alpaca_order_id: str, *, firewall_token: object | None = None) -> bool:
+        return True
+
+    def cancel_all_orders(self, *, firewall_token: object | None = None) -> list[dict[str, str]]:
+        self.cancel_all_calls += 1
+        return [{"id": "order-1"}]
 
     def get_order(self, alpaca_order_id: str) -> dict[str, str]:
         return {
@@ -101,13 +112,15 @@ class RejectingAlpacaClient(FakeAlpacaClient):
         limit_price: float | None = None,
         stop_price: float | None = None,
         extra_params: dict[str, str] | None = None,
+        *,
+        firewall_token: object | None = None,
     ) -> dict[str, str]:
         self.submit_calls += 1
         raise Exception(
             '{"code":40310000,"existing_order_id":"order-existing","message":"potential wash trade detected","reject_reason":"opposite side market/stop order exists"}'
         )
 
-    def cancel_order(self, alpaca_order_id: str) -> bool:
+    def cancel_order(self, alpaca_order_id: str, *, firewall_token: object | None = None) -> bool:
         self.cancel_calls.append(alpaca_order_id)
         return True
 
@@ -258,6 +271,15 @@ class TestTradingPipeline(TestCase):
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
         Base.metadata.create_all(engine)
         self.session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        from app import config
+
+        self._original_kill_switch = config.settings.trading_kill_switch_enabled
+        config.settings.trading_kill_switch_enabled = False
+
+    def tearDown(self) -> None:
+        from app import config
+
+        config.settings.trading_kill_switch_enabled = self._original_kill_switch
 
     def test_decision_engine_macd_rsi(self) -> None:
         engine = DecisionEngine()
@@ -385,8 +407,10 @@ class TestTradingPipeline(TestCase):
                 timeframe="1Min",
             )
 
+            alpaca_client = FakeAlpacaClient()
             pipeline = TradingPipeline(
-                alpaca_client=FakeAlpacaClient(),
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -456,6 +480,7 @@ class TestTradingPipeline(TestCase):
             alpaca_client = CountingAlpacaClient()
             pipeline = TradingPipeline(
                 alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -517,8 +542,10 @@ class TestTradingPipeline(TestCase):
                 timeframe="1Min",
             )
 
+            alpaca_client = FakeAlpacaClient()
             pipeline = TradingPipeline(
-                alpaca_client=FakeAlpacaClient(),
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -590,8 +617,10 @@ class TestTradingPipeline(TestCase):
                 timeframe="1Min",
             )
 
+            alpaca_client = FakeAlpacaClient()
             pipeline = TradingPipeline(
-                alpaca_client=FakeAlpacaClient(),
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -663,6 +692,7 @@ class TestTradingPipeline(TestCase):
             alpaca = RejectingAlpacaClient()
             pipeline = TradingPipeline(
                 alpaca_client=alpaca,
+                order_firewall=OrderFirewall(alpaca),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -735,8 +765,10 @@ class TestTradingPipeline(TestCase):
                 timeframe="1Min",
             )
 
+            alpaca_client = FakeAlpacaClient()
             pipeline = TradingPipeline(
-                alpaca_client=FakeAlpacaClient(),
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -811,8 +843,10 @@ class TestTradingPipeline(TestCase):
                 timeframe="1Min",
             )
 
+            alpaca_client = FakeAlpacaClient()
             pipeline = TradingPipeline(
-                alpaca_client=FakeAlpacaClient(),
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -896,8 +930,10 @@ class TestTradingPipeline(TestCase):
 
             config.settings.trading_mode = "paper"
             config.settings.trading_live_enabled = False
+            alpaca_client = FakeAlpacaClient()
             pipeline = TradingPipeline(
-                alpaca_client=FakeAlpacaClient(),
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -927,8 +963,10 @@ class TestTradingPipeline(TestCase):
                 payload={"macd": {"macd": 1.2, "signal": 0.3}, "rsi14": 25, "price": 100},
                 timeframe="1Min",
             )
+            live_alpaca = FakeAlpacaClient()
             pipeline_live = TradingPipeline(
-                alpaca_client=FakeAlpacaClient(),
+                alpaca_client=live_alpaca,
+                order_firewall=OrderFirewall(live_alpaca),
                 ingestor=FakeIngestor([live_signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -1000,8 +1038,10 @@ class TestTradingPipeline(TestCase):
                 timeframe="1Min",
             )
 
+            alpaca_client = FakeAlpacaClient()
             pipeline = TradingPipeline(
-                alpaca_client=FakeAlpacaClient(),
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -1075,8 +1115,10 @@ class TestTradingPipeline(TestCase):
                 timeframe="1Min",
             )
 
+            alpaca_client = FakeAlpacaClient()
             pipeline = TradingPipeline(
-                alpaca_client=FakeAlpacaClient(),
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -1148,8 +1190,10 @@ class TestTradingPipeline(TestCase):
                 timeframe="1Min",
             )
 
+            alpaca_client = FakeAlpacaClient()
             pipeline = TradingPipeline(
-                alpaca_client=FakeAlpacaClient(),
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -1224,8 +1268,10 @@ class TestTradingPipeline(TestCase):
                 timeframe="1Min",
             )
 
+            alpaca_client = FakeAlpacaClient()
             pipeline = TradingPipeline(
-                alpaca_client=FakeAlpacaClient(),
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
