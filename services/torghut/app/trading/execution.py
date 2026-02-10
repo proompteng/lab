@@ -11,9 +11,9 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..alpaca_client import TorghutAlpacaClient
 from ..models import Execution, Strategy, TradeDecision
 from ..snapshots import sync_order_to_db
+from .firewall import OrderFirewall
 from .models import ExecutionRequest, StrategyDecision, decision_hash
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ class OrderExecutor:
     def submit_order(
         self,
         session: Session,
-        client: TorghutAlpacaClient,
+        firewall: OrderFirewall,
         decision: StrategyDecision,
         decision_row: TradeDecision,
         account_label: str,
@@ -76,7 +76,7 @@ class OrderExecutor:
             logger.info("Execution already exists for decision %s", decision_row.id)
             return None
 
-        existing_order = self._fetch_existing_order(client, decision_row.decision_hash)
+        existing_order = self._fetch_existing_order(firewall, decision_row.decision_hash)
         if existing_order is not None:
             execution = sync_order_to_db(session, existing_order, trade_decision_id=str(decision_row.id))
             _apply_execution_status(decision_row, execution, account_label)
@@ -97,7 +97,7 @@ class OrderExecutor:
             client_order_id=decision_row.decision_hash,
         )
 
-        order_response = client.submit_order(
+        order_response = firewall.submit_order(
             symbol=request.symbol,
             side=request.side,
             qty=float(request.qty),
@@ -154,12 +154,12 @@ class OrderExecutor:
 
     @staticmethod
     def _fetch_existing_order(
-        client: TorghutAlpacaClient, decision_hash_value: Optional[str]
+        firewall: OrderFirewall, decision_hash_value: Optional[str]
     ) -> Optional[dict[str, Any]]:
         if not decision_hash_value:
             return None
         try:
-            order = client.get_order_by_client_order_id(decision_hash_value)
+            order = firewall.get_order_by_client_order_id(decision_hash_value)
         except Exception as exc:  # pragma: no cover - external failure
             logger.warning("Failed to fetch broker order for client_order_id: %s", exc)
             return None

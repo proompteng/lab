@@ -27,6 +27,10 @@ from alpaca.trading.requests import (
 from .config import settings
 
 
+class OrderFirewallToken:
+    """Marker token required for broker order submission/cancellation."""
+
+
 class TorghutAlpacaClient:
     """Service-level Alpaca wrapper returning JSON-serializable dicts."""
 
@@ -102,7 +106,10 @@ class TorghutAlpacaClient:
         limit_price: Optional[float] = None,
         stop_price: Optional[float] = None,
         extra_params: Optional[Dict[str, Any]] = None,
+        *,
+        firewall_token: OrderFirewallToken,
     ) -> Dict[str, Any]:
+        self._require_firewall_token(firewall_token)
         side_enum = OrderSide(side.lower())
         tif_enum = TimeInForce(time_in_force.lower())
         payload = {"symbol": symbol, "qty": qty, "side": side_enum, "time_in_force": tif_enum}
@@ -130,11 +137,13 @@ class TorghutAlpacaClient:
         order = self.trading.submit_order(request)
         return self._model_to_dict(order)
 
-    def cancel_order(self, alpaca_order_id: str) -> bool:
+    def cancel_order(self, alpaca_order_id: str, *, firewall_token: OrderFirewallToken) -> bool:
+        self._require_firewall_token(firewall_token)
         self.trading.cancel_order_by_id(alpaca_order_id)
         return True
 
-    def cancel_all_orders(self) -> List[Dict[str, Any]]:
+    def cancel_all_orders(self, *, firewall_token: OrderFirewallToken) -> List[Dict[str, Any]]:
+        self._require_firewall_token(firewall_token)
         responses = self.trading.cancel_orders()
         return [self._model_to_dict(resp) for resp in responses]
 
@@ -238,6 +247,11 @@ class TorghutAlpacaClient:
         if unit == TimeFrameUnit.Month:
             return timedelta(days=30 * amount)
         raise ValueError(f"Unsupported timeframe unit: {unit}")
+
+    @staticmethod
+    def _require_firewall_token(token: object) -> None:
+        if not isinstance(token, OrderFirewallToken):
+            raise PermissionError("order_firewall_token_required")
 
 
 def _normalize_alpaca_base_url(base_url: Optional[str]) -> Optional[str]:

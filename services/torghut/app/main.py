@@ -93,6 +93,7 @@ def trading_status() -> dict[str, object]:
     return {
         "enabled": settings.trading_enabled,
         "mode": settings.trading_mode,
+        "kill_switch_enabled": settings.trading_kill_switch_enabled,
         "running": state.running,
         "last_run_at": state.last_run_at,
         "last_reconcile_at": state.last_reconcile_at,

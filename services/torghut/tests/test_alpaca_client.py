@@ -5,7 +5,7 @@ from typing import Any, List
 from unittest import TestCase
 from unittest.mock import patch
 
-from app.alpaca_client import TorghutAlpacaClient
+from app.alpaca_client import OrderFirewallToken, TorghutAlpacaClient
 
 
 class DummyModel:
@@ -82,6 +82,7 @@ class TestAlpacaClient(TestCase):
             qty=1,
             order_type="market",
             time_in_force="day",
+            firewall_token=OrderFirewallToken(),
         )
         self.assertEqual(submitted["status"], "accepted")
 
@@ -89,7 +90,7 @@ class TestAlpacaClient(TestCase):
         self.assertIn("AAPL", bars)
         self.assertEqual(len(bars["AAPL"]), 1)
 
-        cancelled = client.cancel_all_orders()
+        cancelled = client.cancel_all_orders(firewall_token=OrderFirewallToken())
         self.assertEqual(len(cancelled), 2)
 
     def test_market_data_uses_data_endpoint_by_default(self) -> None:
