@@ -112,6 +112,13 @@ def main() -> int:
     parser.add_argument("--strategy-config", type=Path, help="Optional strategy config (YAML/JSON).")
     parser.add_argument("--strategy-timeframe", type=str, default="1Min", help="Timeframe for default strategy.")
     parser.add_argument("--gate-policy", type=Path, help="Optional gate policy JSON file.")
+    parser.add_argument("--variants-tested", type=int, help="Total variants compared in this run.")
+    parser.add_argument(
+        "--variant-warning-threshold",
+        type=int,
+        default=25,
+        help="Warn when variants tested exceeds this threshold (default: 25).",
+    )
     parser.add_argument(
         "--promotion-target",
         choices=("shadow", "paper", "live"),
@@ -154,6 +161,8 @@ def main() -> int:
             git_sha=_resolve_git_sha(),
             run_id=args.run_id,
             strategy_config_path=str(args.strategy_config) if args.strategy_config else None,
+            variants_tested=args.variants_tested,
+            variant_warning_threshold=args.variant_warning_threshold,
         )
         gate_policy = EvaluationGatePolicy.from_path(args.gate_policy) if args.gate_policy else None
         report = generate_evaluation_report(

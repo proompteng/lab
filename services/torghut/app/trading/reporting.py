@@ -24,6 +24,8 @@ class EvaluationReportConfig:
     cost_model_config: CostModelConfig = field(default_factory=CostModelConfig)
     run_id: Optional[str] = None
     strategy_config_path: Optional[str] = None
+    variants_tested: Optional[int] = None
+    variant_warning_threshold: int = 25
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -34,6 +36,8 @@ class EvaluationReportConfig:
             "cost_model": _cost_model_payload(self.cost_model_config),
             "run_id": self.run_id,
             "strategy_config_path": self.strategy_config_path,
+            "variants_tested": self.variants_tested,
+            "variant_warning_threshold": self.variant_warning_threshold,
         }
 
 
@@ -62,6 +66,66 @@ class EvaluationMetrics:
             "turnover_ratio": str(self.turnover_ratio),
             "average_exposure": str(self.average_exposure),
             "cost_bps": str(self.cost_bps),
+        }
+
+
+@dataclass(frozen=True)
+class MultipleTestingSummary:
+    variants_tested: int
+    warning_threshold: int
+    warning_triggered: bool
+    warning_reason: Optional[str]
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "variants_tested": self.variants_tested,
+            "warning_threshold": self.warning_threshold,
+            "warning_triggered": self.warning_triggered,
+            "warning_reason": self.warning_reason,
+        }
+
+
+@dataclass(frozen=True)
+class RobustnessFoldMetrics:
+    name: str
+    decision_count: int
+    trade_count: int
+    net_pnl: Decimal
+    max_drawdown: Decimal
+    turnover_ratio: Decimal
+    cost_bps: Decimal
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "decision_count": self.decision_count,
+            "trade_count": self.trade_count,
+            "net_pnl": str(self.net_pnl),
+            "max_drawdown": str(self.max_drawdown),
+            "turnover_ratio": str(self.turnover_ratio),
+            "cost_bps": str(self.cost_bps),
+        }
+
+
+@dataclass(frozen=True)
+class RobustnessReport:
+    method: str
+    fold_metrics: list[RobustnessFoldMetrics]
+    net_pnl_mean: Decimal
+    net_pnl_stddev: Decimal
+    net_pnl_min: Decimal
+    net_pnl_max: Decimal
+    negative_fold_share: Decimal
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "method": self.method,
+            "fold_metrics": [metrics.to_payload() for metrics in self.fold_metrics],
+            "net_pnl_mean": str(self.net_pnl_mean),
+            "net_pnl_stddev": str(self.net_pnl_stddev),
+            "net_pnl_min": str(self.net_pnl_min),
+            "net_pnl_max": str(self.net_pnl_max),
+            "negative_fold_share": str(self.negative_fold_share),
         }
 
 
@@ -128,6 +192,8 @@ class EvaluationReport:
     config: EvaluationReportConfig
     metrics: EvaluationMetrics
     gates: EvaluationGateOutcome
+    multiple_testing: MultipleTestingSummary
+    robustness: RobustnessReport
     git_sha: Optional[str] = None
 
     def to_payload(self) -> dict[str, object]:
@@ -138,6 +204,8 @@ class EvaluationReport:
             "versions": {"git_sha": self.git_sha},
             "metrics": self.metrics.to_payload(),
             "gates": self.gates.to_payload(),
+            "multiple_testing": self.multiple_testing.to_payload(),
+            "robustness": self.robustness.to_payload(),
         }
 
 
@@ -156,8 +224,12 @@ def generate_evaluation_report(
     cost_model: Optional[TransactionCostModel] = None,
 ) -> EvaluationReport:
     decisions = _flatten_decisions(results)
-    metrics = _evaluate_metrics(decisions, cost_model or TransactionCostModel(config.cost_model_config))
+    resolved_cost_model = cost_model or TransactionCostModel(config.cost_model_config)
+    metrics = _evaluate_metrics(decisions, resolved_cost_model)
     gates = _evaluate_gates(metrics, gate_policy or EvaluationGatePolicy(), promotion_target)
+    variants_tested = _resolve_variants_tested(config)
+    multiple_testing = _evaluate_multiple_testing(variants_tested, config.variant_warning_threshold)
+    robustness = _evaluate_robustness(results, resolved_cost_model)
     generated_at = datetime.now(timezone.utc)
     return EvaluationReport(
         report_version="v1",
@@ -165,6 +237,8 @@ def generate_evaluation_report(
         config=config,
         metrics=metrics,
         gates=gates,
+        multiple_testing=multiple_testing,
+        robustness=robustness,
         git_sha=config.git_sha,
     )
 
@@ -246,6 +320,66 @@ def _evaluate_metrics(
         turnover_ratio=turnover_ratio,
         average_exposure=average_exposure,
         cost_bps=cost_bps,
+    )
+
+
+def _evaluate_multiple_testing(variants_tested: int, warning_threshold: int) -> MultipleTestingSummary:
+    if warning_threshold <= 0:
+        warning_threshold = 1
+    warning_triggered = variants_tested > warning_threshold
+    warning_reason = "variants_tested_exceeds_threshold" if warning_triggered else None
+    return MultipleTestingSummary(
+        variants_tested=variants_tested,
+        warning_threshold=warning_threshold,
+        warning_triggered=warning_triggered,
+        warning_reason=warning_reason,
+    )
+
+
+def _evaluate_robustness(
+    results: WalkForwardResults,
+    cost_model: TransactionCostModel,
+) -> RobustnessReport:
+    fold_metrics: list[RobustnessFoldMetrics] = []
+    for fold in results.folds:
+        metrics = _evaluate_metrics(fold.decisions, cost_model)
+        fold_metrics.append(
+            RobustnessFoldMetrics(
+                name=fold.fold.name,
+                decision_count=metrics.decision_count,
+                trade_count=metrics.trade_count,
+                net_pnl=metrics.net_pnl,
+                max_drawdown=metrics.max_drawdown,
+                turnover_ratio=metrics.turnover_ratio,
+                cost_bps=metrics.cost_bps,
+            )
+        )
+
+    if fold_metrics:
+        net_pnls = [metrics.net_pnl for metrics in fold_metrics]
+        net_pnl_mean = _decimal_mean(net_pnls)
+        net_pnl_stddev = _decimal_stddev(net_pnls, net_pnl_mean)
+        net_pnl_min = min(net_pnls)
+        net_pnl_max = max(net_pnls)
+        negative_fold_share = _decimal_ratio(
+            len([pnl for pnl in net_pnls if pnl < 0]),
+            len(net_pnls),
+        )
+    else:
+        net_pnl_mean = Decimal("0")
+        net_pnl_stddev = Decimal("0")
+        net_pnl_min = Decimal("0")
+        net_pnl_max = Decimal("0")
+        negative_fold_share = Decimal("0")
+
+    return RobustnessReport(
+        method="fold_stability",
+        fold_metrics=fold_metrics,
+        net_pnl_mean=net_pnl_mean,
+        net_pnl_stddev=net_pnl_stddev,
+        net_pnl_min=net_pnl_min,
+        net_pnl_max=net_pnl_max,
+        negative_fold_share=negative_fold_share,
     )
 
 
@@ -491,12 +625,45 @@ def _bps_from_cost(cost: Decimal, notional: Decimal) -> Decimal:
     return (cost / notional) * Decimal("10000")
 
 
+def _decimal_mean(values: list[Decimal]) -> Decimal:
+    if not values:
+        return Decimal("0")
+    return sum(values, Decimal("0")) / Decimal(str(len(values)))
+
+
+def _decimal_stddev(values: list[Decimal], mean: Decimal) -> Decimal:
+    if not values:
+        return Decimal("0")
+    variance = sum((value - mean) ** 2 for value in values) / Decimal(str(len(values)))
+    try:
+        return variance.sqrt()
+    except (ArithmeticError, ValueError):
+        return Decimal("0")
+
+
+def _decimal_ratio(numerator: int, denominator: int) -> Decimal:
+    if denominator <= 0:
+        return Decimal("0")
+    return Decimal(str(numerator)) / Decimal(str(denominator))
+
+
+def _resolve_variants_tested(config: EvaluationReportConfig) -> int:
+    if config.variants_tested is not None and config.variants_tested > 0:
+        return config.variants_tested
+    if config.strategies:
+        return len(config.strategies)
+    return 1
+
+
 __all__ = [
     "EvaluationGateOutcome",
     "EvaluationGatePolicy",
     "EvaluationMetrics",
     "EvaluationReport",
     "EvaluationReportConfig",
+    "MultipleTestingSummary",
+    "RobustnessFoldMetrics",
+    "RobustnessReport",
     "generate_evaluation_report",
     "write_evaluation_report",
 ]

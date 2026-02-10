@@ -66,3 +66,56 @@ class TestEvaluationReport(TestCase):
 
         turnover_ratio = report.metrics.turnover_ratio.quantize(Decimal("0.1"))
         self.assertEqual(turnover_ratio, Decimal("4.0"))
+
+    def test_report_includes_robustness_and_multiple_testing(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        source = FixtureSignalSource.from_path(fixture_path)
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 1, 0, 4, tzinfo=timezone.utc)
+        folds = generate_walk_forward_folds(
+            start,
+            end,
+            train_window=timedelta(minutes=1),
+            test_window=timedelta(minutes=2),
+            step=timedelta(minutes=2),
+        )
+
+        strategy = Strategy(
+            name="wf-robustness",
+            description=None,
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+        strategy.id = uuid.uuid4()
+
+        results = run_walk_forward(
+            folds,
+            strategies=[strategy],
+            signal_source=source,
+            decision_engine=DecisionEngine(),
+        )
+
+        config = EvaluationReportConfig(
+            evaluation_start=start,
+            evaluation_end=end,
+            signal_source="fixture",
+            strategies=[strategy],
+            git_sha="test-sha",
+            run_id="test-run",
+            variants_tested=30,
+            variant_warning_threshold=20,
+        )
+        report = generate_evaluation_report(results, config=config, gate_policy=EvaluationGatePolicy())
+
+        self.assertEqual(report.multiple_testing.variants_tested, 30)
+        self.assertTrue(report.multiple_testing.warning_triggered)
+        self.assertEqual(report.robustness.method, "fold_stability")
+        self.assertEqual(len(report.robustness.fold_metrics), 1)
+        self.assertEqual(report.robustness.fold_metrics[0].net_pnl, Decimal("1"))
+        self.assertEqual(report.robustness.net_pnl_mean, Decimal("1"))
+        self.assertEqual(report.robustness.net_pnl_stddev, Decimal("0"))
+        self.assertEqual(report.robustness.negative_fold_share, Decimal("0"))
