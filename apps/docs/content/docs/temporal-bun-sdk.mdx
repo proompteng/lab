@@ -94,7 +94,6 @@ Environment variables supported by the config loader:
 | `TEMPORAL_TLS_SERVER_NAME` | _unset_ | Overrides TLS server name verification. |
 | `TEMPORAL_ALLOW_INSECURE` / `ALLOW_INSECURE_TLS` | `false` | Accepts `1/true/on` to skip certificate verification. |
 | `TEMPORAL_WORKER_IDENTITY_PREFIX` | `temporal-bun-worker` | Worker identity prefix (host and PID are appended). |
-| `TEMPORAL_WORKER_DEPLOYMENT_NAME` | _unset_ | Optional worker deployment name (defaults to `<task-queue>-deployment`). |
 | `TEMPORAL_WORKER_BUILD_ID` | _unset_ | Worker build ID; auto-derived when unset. |
 | `TEMPORAL_WORKFLOW_CONCURRENCY` | `4` | Workflow poller concurrency. |
 | `TEMPORAL_ACTIVITY_CONCURRENCY` | `4` | Activity poller concurrency. |
@@ -125,18 +124,19 @@ by hand.
 
 ## Worker build IDs and versioning
 
-Workers derive their build ID from `TEMPORAL_WORKER_BUILD_ID`, the package
-version, or the configured identity. When you enable worker versioning via
-`deployment.versioningMode` in `WorkerRuntimeOptions`, the runtime will:
+Workers derive their build ID (in priority order) from:
 
-1. Probe worker-versioning support with `GetWorkerBuildIdCompatibility`.
-2. Register the build ID with `UpdateWorkerBuildIdCompatibility` before pollers start.
-3. Warn and continue when the server does not implement worker versioning
-   (for example, the Temporal CLI dev server), so local runs stay green.
+1. `deployment.buildId` passed to `createWorker(...)` / `WorkerRuntime.create(...)`
+2. `TEMPORAL_WORKER_BUILD_ID`
+3. a derived value based on the configured workflow sources (`workflowsPath`)
 
-This behavior is wired into `createWorker`, `runWorkerApp`, and
-`WorkerRuntime.create()`, so your build IDs are registered automatically once
-versioning is enabled.
+When you enable worker versioning via `deployment.versioningMode`, the worker
+includes deployment metadata (deployment name + build ID) in poll/response
+requests so the server can route workflow tasks to the correct build.
+
+The Bun SDK does not call the deprecated Build ID Compatibility APIs (Version
+Set-based “worker versioning v0.1”), since they may be disabled on some
+namespaces.
 
 ## OpenTelemetry export
 

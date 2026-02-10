@@ -76,6 +76,7 @@ describeIntegration('Temporal client resilience', () => {
       taskQueue: CLI_CONFIG.taskQueue,
       namespace: CLI_CONFIG.namespace,
       stickyScheduling: true,
+      workflowGuards: 'warn',
     })
     runtimePromise = runtime.run()
 

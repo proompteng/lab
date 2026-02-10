@@ -51,7 +51,6 @@ recovery work (resets, patches, or emergency worker pinning).
 - Determinism ledger and mismatch detection: `packages/temporal-bun-sdk/src/workflow/determinism.ts`
 - History replay reconstruction and diffing: `packages/temporal-bun-sdk/src/workflow/replay.ts`
 - Worker-side nondeterminism enrichment and retry: `packages/temporal-bun-sdk/src/worker/runtime.ts`
-- Worker build ID compatibility registration: `packages/temporal-bun-sdk/src/worker/build-id.ts`
 - Workflow versioning helpers surfaced to users:
   `packages/temporal-bun-sdk/src/workflow/context.ts` (`determinism.getVersion`, `determinism.patched`, `determinism.sideEffect`)
 
@@ -69,8 +68,6 @@ In production, all workers that can run workflows must be versioned and pinned:
 
 In strict mode, the worker fails fast if:
 
-- Worker versioning APIs are unsupported by the server.
-- Build ID registration is skipped.
 - Build ID is missing or looks accidental (e.g. equals identity).
 
 Rationale: this makes it operationally impossible for old workflow runs to ever
@@ -142,17 +139,6 @@ errors must become actionable:
 
 Add a strictness knob in config and as runtime options.
 
-### Env Vars
-
-- `TEMPORAL_WORKFLOW_GUARDS=strict|warn|off`
-  - `strict`: block side effects + enforce versioning policy at startup
-  - `warn`: log violations but do not throw (safe for gradual rollout)
-  - `off`: no runtime wrappers (not recommended)
-  - default: `strict` when `NODE_ENV=production`, otherwise `warn` (no env var required)
-- `TEMPORAL_WORKFLOW_LINT=strict|warn|off` (controls CLI lint default behavior)
-- `TEMPORAL_REPLAY_GATE_REQUIRED=1` (CI convenience toggle; defaults to enabled
-  for repos that declare workflows)
-
 ### Programmatic Options
 
 Extend `WorkerRuntimeOptions`:
@@ -165,19 +151,23 @@ type WorkerRuntimeOptions = {
 }
 ```
 
+Notes:
+
+- `workflowGuards` defaults to `strict` and is not controlled via env vars.
+- In production (`NODE_ENV=production`), the SDK rejects non-`strict` modes at runtime.
+
 ## Rollout Plan
 
-1. Introduce runtime guards in `warn` mode by default. Validate on one service.
-2. Introduce lint in `warn` mode in CI. Track violations, fix workflows.
-3. Enable build ID versioning and PINNED behavior in production environments.
-4. Flip runtime guards to `strict` in production.
-5. Flip lint to `strict` for workflow packages.
-6. Add replay gate with a small golden set, then expand over time.
+1. Keep runtime guards `strict` by default; do not allow env var toggles.
+2. Ensure workers use `WorkerVersioningMode.VERSIONED` + `VersioningBehavior.PINNED` with a stable build ID.
+3. Introduce lint in `warn` mode in CI. Track violations, fix workflows.
+4. Flip lint to `strict` for workflow packages.
+5. Add replay gate with a small golden set, then expand over time.
 
 ## Backwards Compatibility
 
-- Local development against `temporal server start-dev` often lacks versioning
-  APIs. In strict mode we must allow an explicit opt-out for local dev.
+- Strict mode may be too aggressive for certain local/dev scenarios. Allow an
+  explicit opt-out via programmatic options in non-production environments.
 - Runtime wrappers must be implemented as “context aware” wrappers that are
   no-ops outside workflow execution.
 - Lint must allow escape hatches with explicit annotations for rare legitimate
@@ -198,8 +188,11 @@ re-planning.
    - add `// TODO(TBS-NDG-001): ...` markers for each wrapper.
 3. Update worker startup policy:
    - `packages/temporal-bun-sdk/src/worker/runtime.ts`
-   - if `workflowGuards === 'strict'`, require versioning APIs to be supported
-     and build ID registration to succeed when `deployment.versioningMode === VERSIONED`.
+   - if `workflowGuards === 'strict'`, require:
+     - `deployment.versioningMode === VERSIONED`
+     - `deployment.versioningBehavior === PINNED`
+     - stable, non-empty `deployment.buildId`
+   - do not call legacy Build ID Compatibility APIs (v0.1) since they are disabled on some namespaces.
    - add `// TODO(TBS-NDG-002): enforce strict versioning policy`.
 4. Add CLI lint command:
    - new: `packages/temporal-bun-sdk/src/bin/lint-workflows-command.ts`

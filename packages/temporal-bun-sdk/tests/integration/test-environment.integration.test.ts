@@ -34,6 +34,7 @@ test('TestWorkflowEnvironment runs a worker end-to-end', { timeout: 30_000 }, as
       activities: integrationActivities,
       taskQueue,
       namespace: env.cliConfig.namespace,
+      workflowGuards: 'warn',
     })
 
     const workerPromise = worker.run()

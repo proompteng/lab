@@ -308,6 +308,9 @@ export class WorkerRuntime {
 
     const identity = options.identity ?? config.workerIdentity
     const workflowGuards = options.workflowGuards ?? config.workflowGuards
+    if (process.env.NODE_ENV === 'production' && workflowGuards !== 'strict') {
+      throw new Error('workflowGuards must be strict in production')
+    }
 
     // Install workflow runtime guards before importing any workflow code so top-level module
     // initialization is protected (e.g. `fetch()` / `Date.now()` in module scope).

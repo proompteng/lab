@@ -93,6 +93,7 @@ const setupIntegrationTestEnv = async (): Promise<IntegrationTestEnv> => {
       workflows: integrationWorkflows,
       activities: integrationActivities,
       stickyCache,
+      workflowGuards: 'warn',
       deployment: {
         versioningMode: WorkerVersioningMode.UNVERSIONED,
         versioningBehavior: VersioningBehavior.UNSPECIFIED,

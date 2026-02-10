@@ -226,7 +226,7 @@ can contribute independently without re-planning.
 - **Acceptance criteria**
   1. ✅ Configurable concurrency levels (workflow/activity) via config/env (`TEMPORAL_WORKFLOW_CONCURRENCY`, `TEMPORAL_ACTIVITY_CONCURRENCY`).
   2. ✅ Sticky task affinity using cache (TBS-001) with eviction metrics and tunable size/TTL (`TEMPORAL_STICKY_CACHE_SIZE`, `TEMPORAL_STICKY_TTL_MS`).
-  3. ✅ Build-id routing respected when scheduling tasks (`TEMPORAL_WORKER_DEPLOYMENT_NAME`, `TEMPORAL_WORKER_BUILD_ID`).
+  3. ✅ Build-id routing respected when scheduling tasks (deployment name defaults to `<task-queue>-deployment`; build ID via `TEMPORAL_WORKER_BUILD_ID` or a derived value).
   4. ✅ Graceful shutdown drains tasks; observability hooks from TBS-004 now emit lifecycle logs + metrics during drain.
   5. ✅ Load/perf harness (`tests/integration/worker-load.test.ts` and `scripts/run-worker-load.ts`) saturates workflow + activity pollers, enforces throughput/poll-latency/sticky-cache thresholds, and emits `.artifacts/worker-load/{metrics.jsonl,report.json}` for CI review.
 - **Dependencies**
@@ -565,8 +565,9 @@ before the release train can proceed.
 5. **Operational tooling.** Extend the CLI with “doctor”, “replay”, and “profile” commands that leverage the single-runtime architecture to run deterministic replays, capture telemetry snapshots, and surface build-id/namespace health without relying on external binaries.
 ## Worker versioning note
 
-When `WorkerVersioningMode.VERSIONED` is enabled, `WorkerRuntime.create()` probes worker-versioning support via `GetWorkerBuildIdCompatibility` and registers the build ID with `UpdateWorkerBuildIdCompatibility` before the scheduler starts. Transient codes (`Unavailable`, `DeadlineExceeded`, `Aborted`, `Internal`) are retried with backoff; any other failure aborts startup so deployments fail fast.
+When `WorkerVersioningMode.VERSIONED` is enabled, the worker includes deployment metadata (deployment name + build ID) in poll/response requests so the server can route workflow tasks to the correct build. The Bun SDK does not call the deprecated Build ID Compatibility APIs (Version Set-based “worker versioning v0.1”), since they may be disabled on some namespaces.
 
-If the capability probe returns `Unimplemented` or `FailedPrecondition`, the runtime logs a warning and skips registration. This is expected when running against the Temporal CLI dev server launched via `bun scripts/start-temporal-cli.ts`, which does not expose worker versioning yet. Production clusters must not rely on this fallback—missing registrations will still starve versioned task queues.
+Operationally, this means:
 
-Unit tests in `tests/worker.build-id-registration.test.ts` now cover both the successful registration path and the CLI fallback while we wire up end-to-end coverage in the integration harness.
+- Existing workflow runs will remain pinned to the build ID that last completed a workflow task.
+- Deploying a new build ID will not cause nondeterministic replay on older runs, but those older runs will require that the old build remains available (or that the workflow code is backward-compatible via `determinism.getVersion` / `determinism.patched`).
