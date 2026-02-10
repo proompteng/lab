@@ -21,6 +21,7 @@ import {
   IconActivity,
   IconBrain,
   IconChartCandle,
+  IconChartLine,
   IconDatabase,
   IconFileText,
   IconGitPullRequest,
@@ -96,6 +97,7 @@ const apiNav = [
 const torghutNav = [
   { to: '/torghut/symbols', label: 'Symbols', icon: IconList },
   { to: '/torghut/visuals', label: 'Visuals', icon: IconChartCandle },
+  { to: '/torghut/trading', label: 'Trading', icon: IconChartLine },
 ] as const
 
 export function AppSidebar() {
