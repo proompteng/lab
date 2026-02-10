@@ -10,9 +10,9 @@ from typing import Any, Optional, cast
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..alpaca_client import TorghutAlpacaClient
 from ..models import Execution, Strategy, TradeDecision
 from ..snapshots import sync_order_to_db
+from .firewall import OrderFirewall
 from .models import ExecutionRequest, StrategyDecision, decision_hash
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ class OrderExecutor:
     def submit_order(
         self,
         session: Session,
-        client: TorghutAlpacaClient,
+        firewall: OrderFirewall,
         decision: StrategyDecision,
         decision_row: TradeDecision,
         account_label: str,
@@ -74,7 +74,7 @@ class OrderExecutor:
             client_order_id=decision_row.decision_hash,
         )
 
-        order_response = client.submit_order(
+        order_response = firewall.submit_order(
             symbol=request.symbol,
             side=request.side,
             qty=float(request.qty),

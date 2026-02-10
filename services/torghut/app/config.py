@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     trading_cooldown_seconds: int = Field(default=0, alias="TRADING_COOLDOWN_SECONDS")
     trading_allow_shorts: bool = Field(default=False, alias="TRADING_ALLOW_SHORTS")
     trading_account_label: str = Field(default="paper", alias="TRADING_ACCOUNT_LABEL")
+    trading_kill_switch_enabled: bool = Field(default=True, alias="TRADING_KILL_SWITCH_ENABLED")
     trading_jangar_symbols_url: Optional[str] = Field(default=None, alias="JANGAR_SYMBOLS_URL")
     trading_clickhouse_url: Optional[str] = Field(default=None, alias="TA_CLICKHOUSE_URL")
     trading_clickhouse_username: Optional[str] = Field(default=None, alias="TA_CLICKHOUSE_USERNAME")

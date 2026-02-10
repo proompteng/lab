@@ -22,6 +22,7 @@ from ..snapshots import snapshot_account_and_positions
 from ..strategies import StrategyCatalog
 from .decisions import DecisionEngine
 from .execution import OrderExecutor
+from .firewall import OrderFirewall, OrderFirewallBlocked
 from .ingest import ClickHouseSignalIngestor
 from .llm import LLMReviewEngine, apply_policy
 from .models import SignalEnvelope, StrategyDecision
@@ -95,6 +96,7 @@ class TradingPipeline:
     def __init__(
         self,
         alpaca_client: TorghutAlpacaClient,
+        order_firewall: OrderFirewall,
         ingestor: ClickHouseSignalIngestor,
         decision_engine: DecisionEngine,
         risk_engine: RiskEngine,
@@ -109,6 +111,7 @@ class TradingPipeline:
         strategy_catalog: StrategyCatalog | None = None,
     ) -> None:
         self.alpaca_client = alpaca_client
+        self.order_firewall = order_firewall
         self.ingestor = ingestor
         self.decision_engine = decision_engine
         self.risk_engine = risk_engine
@@ -131,6 +134,7 @@ class TradingPipeline:
 
     def run_once(self) -> None:
         with self.session_factory() as session:
+            self.order_firewall.cancel_open_orders_if_kill_switch()
             if self.strategy_catalog is not None:
                 self.strategy_catalog.refresh(session)
             strategies = self._load_strategies(session)
@@ -215,6 +219,11 @@ class TradingPipeline:
             if self.executor.execution_exists(session, decision_row):
                 return
 
+            if self.order_firewall.status().kill_switch_enabled:
+                self.state.metrics.orders_rejected_total += 1
+                self.executor.mark_rejected(session, decision_row, "kill_switch_enabled")
+                return
+
             decision, snapshot = self._ensure_decision_price(decision, signal_price=decision.params.get("price"))
             if snapshot is not None:
                 params_update = decision.model_dump(mode="json").get("params", {})
@@ -252,18 +261,29 @@ class TradingPipeline:
             try:
                 execution = self.executor.submit_order(
                     session,
-                    self.alpaca_client,
+                    self.order_firewall,
                     decision,
                     decision_row,
                     self.account_label,
                 )
+            except OrderFirewallBlocked as exc:
+                self.state.metrics.orders_rejected_total += 1
+                self.executor.mark_rejected(session, decision_row, str(exc))
+                logger.warning(
+                    "Order blocked by firewall strategy_id=%s decision_id=%s symbol=%s reason=%s",
+                    decision.strategy_id,
+                    decision_row.id,
+                    decision.symbol,
+                    exc,
+                )
+                return
             except Exception as exc:
                 self.state.metrics.orders_rejected_total += 1
                 payload = _extract_json_error_payload(exc) or {}
                 existing_order_id = payload.get("existing_order_id")
                 if existing_order_id:
                     try:
-                        self.alpaca_client.cancel_order(str(existing_order_id))
+                        self.order_firewall.cancel_order(str(existing_order_id))
                         logger.info(
                             "Canceled conflicting Alpaca order decision_id=%s existing_order_id=%s",
                             decision_row.id,
@@ -751,8 +771,11 @@ class TradingScheduler:
     def _build_pipeline(self) -> TradingPipeline:
         price_fetcher = ClickHousePriceFetcher()
         strategy_catalog = StrategyCatalog.from_settings()
+        alpaca_client = TorghutAlpacaClient()
+        order_firewall = OrderFirewall(alpaca_client)
         return TradingPipeline(
-            alpaca_client=TorghutAlpacaClient(),
+            alpaca_client=alpaca_client,
+            order_firewall=order_firewall,
             ingestor=ClickHouseSignalIngestor(),
             decision_engine=DecisionEngine(price_fetcher=price_fetcher),
             risk_engine=RiskEngine(),

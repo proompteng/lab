@@ -74,6 +74,8 @@ spec:
               value: "10"
             - name: TRADING_ENABLED
               value: "true"
+            - name: TRADING_KILL_SWITCH_ENABLED
+              value: "false"
             - name: TRADING_MODE
               value: paper
             - name: TRADING_LIVE_ENABLED
