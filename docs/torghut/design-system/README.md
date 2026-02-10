@@ -85,6 +85,7 @@ The v1 documents are written to stay consistent with:
 | `v1/cost-model-and-budgets.md` | Cost model and budgets |
 | `v1/performance-low-latency-notes.md` | Performance and low-latency notes |
 | `v1/api-contracts-and-jangar-integration.md` | API contracts and Jangar integration |
+| `v1/component-jangar-trading-history-ui.md` | Component: Jangar trading history UI |
 | `v1/current-state-and-gap-analysis-2026-02-08.md` | Current state and gap analysis (2026-02-08) |
 | `v1/agentruns-handoff.md` | AgentRuns handoff (production handoff pack) |
 | `v1/torghut-autonomous-trading-system.md` | Merged production design (single doc) |

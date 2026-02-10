@@ -114,6 +114,33 @@ Output:
 - Helm charts present: `mise exec helm@3 -- kustomize build --enable-helm <path> | kubectl apply -n <ns> -f -`.
 - CNPG access: `kubectl cnpg psql -n <ns> <cluster> -- <psql args>` (psql flags after `--`).
 
+## AgentRuns (agents namespace)
+- Primary docs:
+- `docs/agents/agentrun-creation-guide.md` (prompt precedence + minimal fields).
+- `docs/agents/crd-yaml-spec.md` (CRD contract expectations).
+- Torghut-specific safety/templates: `docs/torghut/design-system/v1/agentruns-handoff.md`.
+- Prompt precedence (highest wins):
+- `AgentRun.spec.parameters.prompt` (avoid unless intentionally overriding the ImplementationSpec).
+- `ImplementationSpec.spec.text` (when using `spec.implementationSpecRef`).
+- `AgentRun.spec.implementation.inline.text` (inline impl).
+- Minimal reliable AgentRun fields:
+- `spec.agentRef.name`
+- `spec.runtime.type` (usually `workflow`)
+- `spec.implementationSpecRef.name` (or `spec.implementation.inline`)
+- `spec.parameters.*` required by the referenced ImplementationSpec contract
+- TTL:
+- Use `spec.ttlSecondsAfterFinished` (top-level). Do not rely on `spec.runtime.config.ttlSecondsAfterFinished` (runtime config is schemaless and not the canonical TTL field).
+- PR / VCS runs:
+- Set `spec.vcsRef.name` and `spec.vcsPolicy` (`required: true`, `mode: read-write`) when the run must open PRs.
+- Make `spec.parameters.head` a unique branch name (repo convention: `codex/...`).
+- Verification after apply:
+- Confirm the run is using the intended prompt: inspect the controller-generated ConfigMap labeled `agents.proompteng.ai/agent-run=<run-name>` and check `run.json.prompt`.
+- If a run fails early, check `agentrun.status.contract.requiredKeys` and compare to `spec.parameters`.
+- Monitoring:
+- `kubectl -n agents get agentrun <name>`
+- `kubectl -n agents get job -l agents.proompteng.ai/agent-run=<name> -o name`
+- `kubectl -n agents logs -f job/<job-name>`
+
 ## Temporal
 - Temporal CLI usage, address, namespace, and task queue defaults live in `skills/temporal/SKILL.md` (source of truth).
 
