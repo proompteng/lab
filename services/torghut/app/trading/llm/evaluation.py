@@ -71,7 +71,7 @@ def get_llm_daily_metrics(session: Session, now: datetime | None = None) -> dict
     error_reviews_int = int(error_reviews or 0)
     error_rate = error_reviews_int / total_reviews_int if total_reviews_int else 0.0
 
-    metrics = {
+    metrics: dict[str, object] = {
         "date": {
             "timezone": EASTERN_TZ.key,
             "start": start_local.isoformat(),
@@ -182,11 +182,11 @@ def _top_risk_flags(
         .join(TradeDecision)
         .where(*base_filters, LLMDecisionReview.risk_flags.is_not(None))
     )
-    rows = session.execute(stmt).scalars().all()
+    rows = cast(list[list[str] | str | None], session.execute(stmt).scalars().all())
     counter: Counter[str] = Counter()
     for flags in rows:
         if isinstance(flags, list):
-            for flag in flags:
+            for flag in cast(list[str], flags):
                 if flag is not None:
                     counter[str(flag)] += 1
         elif flags is not None:
