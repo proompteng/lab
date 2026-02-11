@@ -55,14 +55,17 @@ flowchart LR
 5) Record the required confirmation points in your ticket/incident:
    - `REPLAY_ID` (unique id used in group id + backups), example `2026-02-09T0315Z-INC1234`
    - `PREV_TA_GROUP_ID` (current steady-state group id)
+   - `PREV_TA_AUTO_OFFSET_RESET` (current steady-state offset reset policy)
+   - Replay start/end window is within Kafka retention and ClickHouse TTL (see below)
    - Confirmation that replay window is feasible (Kafka retention vs ClickHouse TTL)
    - Explicit approval if destructive Mode 2 is required
 
 ## Replay window constraints (summary)
 Replay is limited by both Kafka retention (inputs) and ClickHouse TTL (outputs):
 - **Kafka retention is the hard limit** for replay/backfill. If events have aged out, TA cannot replay them.
+- v1 ingest retention is expected to be **7–30 days**; confirm broker settings for each topic before proceeding.
 - **ClickHouse TTL limits how long replayed results persist.** If replayed data is older than the TTL, merges may delete
-  it shortly after replay.
+  it shortly after replay (v1 defaults: `ta_microbars` 30 days, `ta_signals` 14 days).
 See:
 - `docs/torghut/design-system/v1/component-kafka-topics-and-retention.md`
 - `docs/torghut/design-system/v1/component-clickhouse-capacity-ttl-and-disk-guardrails.md`
@@ -118,6 +121,7 @@ Required replay isolation inputs (do not skip):
 - `REPLAY_ID` (unique id); set `TA_GROUP_ID: "torghut-ta-replay-<REPLAY_ID>"`.
 - `TA_AUTO_OFFSET_RESET: "earliest"` for replay/backfill.
 - Preserve `PREV_TA_GROUP_ID` for rollback.
+- Preserve `PREV_TA_AUTO_OFFSET_RESET` for rollback.
 
 ## Automation (AgentRuns)
 AgentRuns should treat these procedures as two classes of automation:
@@ -126,7 +130,7 @@ AgentRuns should treat these procedures as two classes of automation:
 2) Actuation (gated): open a PR updating `argocd/applications/torghut/ta/**` (suspend/resume, new `TA_GROUP_ID`,
    restart nonce, image rollback), then trigger an Argo sync if your environment supports it.
 
-## Rollback
+## Rollback / recovery if replay fails
 - If a replay causes regressions or excessive lag, revert GitOps changes:
   - restore the previous `TA_GROUP_ID` in `argocd/applications/torghut/ta/configmap.yaml`,
   - restore previous `TA_AUTO_OFFSET_RESET` if it was changed,
