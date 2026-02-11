@@ -49,14 +49,16 @@ export function AppShell({ mainId, children }: { mainId: string; children: React
               {breadcrumbs.map((crumb, index) => {
                 const isLast = index === breadcrumbs.length - 1
                 return (
-                  <BreadcrumbItem key={crumb.to}>
-                    {isLast ? (
-                      <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
-                    ) : (
-                      <BreadcrumbLink render={<Link to={crumb.to} />}>{crumb.label}</BreadcrumbLink>
-                    )}
+                  <React.Fragment key={crumb.to}>
+                    <BreadcrumbItem>
+                      {isLast ? (
+                        <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
+                      ) : (
+                        <BreadcrumbLink render={<Link to={crumb.to} />}>{crumb.label}</BreadcrumbLink>
+                      )}
+                    </BreadcrumbItem>
                     {!isLast ? <BreadcrumbSeparator /> : null}
-                  </BreadcrumbItem>
+                  </React.Fragment>
                 )
               })}
             </BreadcrumbList>
