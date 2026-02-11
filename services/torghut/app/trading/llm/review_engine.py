@@ -142,7 +142,11 @@ class LLMReviewEngine:
         portfolio: PortfolioSnapshot,
         market: Optional[MarketSnapshot],
         recent_decisions: list[RecentDecisionSummary],
+        adjustment_allowed: Optional[bool] = None,
     ) -> LLMReviewRequest:
+        effective_adjustment_allowed = (
+            settings.llm_adjustment_allowed if adjustment_allowed is None else adjustment_allowed
+        )
         return LLMReviewRequest(
             decision=LLMDecisionContext(
                 strategy_id=decision.strategy_id,
@@ -162,7 +166,7 @@ class LLMReviewEngine:
             account=account,
             positions=positions,
             policy=LLMPolicyContext(
-                adjustment_allowed=settings.llm_adjustment_allowed,
+                adjustment_allowed=effective_adjustment_allowed,
                 min_qty_multiplier=Decimal(str(settings.llm_min_qty_multiplier)),
                 max_qty_multiplier=Decimal(str(settings.llm_max_qty_multiplier)),
                 allowed_order_types=sorted(allowed_order_types(decision.order_type)),

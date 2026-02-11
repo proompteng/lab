@@ -5,7 +5,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
 from datetime import datetime
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 from .alpaca_client import TorghutAlpacaClient
 from .config import settings
 from .db import ensure_schema, get_session, ping
+from .metrics import render_trading_metrics
 from .models import Execution, TradeDecision
 from .trading import TradingScheduler
 
@@ -113,6 +114,19 @@ def trading_metrics() -> dict[str, object]:
         app.state.trading_scheduler = scheduler
     metrics = scheduler.state.metrics
     return {"metrics": metrics.__dict__}
+
+
+@app.get("/metrics")
+def prometheus_metrics() -> Response:
+    """Expose Prometheus-formatted trading metrics counters."""
+
+    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    if scheduler is None:
+        scheduler = TradingScheduler()
+        app.state.trading_scheduler = scheduler
+    metrics = scheduler.state.metrics
+    payload = render_trading_metrics(metrics.__dict__)
+    return Response(content=payload, media_type="text/plain; version=0.0.4")
 
 
 @app.get("/trading/decisions")
