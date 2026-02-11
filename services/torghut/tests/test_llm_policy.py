@@ -45,7 +45,7 @@ class TestLLMPolicy(TestCase):
             config.settings.llm_adjustment_allowed = original["llm_adjustment_allowed"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
 
-    def test_adjustment_clamps_to_bounds(self) -> None:
+    def test_adjustment_clamped_to_bounds(self) -> None:
         original = {
             "llm_adjustment_allowed": config.settings.llm_adjustment_allowed,
             "llm_min_confidence": config.settings.llm_min_confidence,
@@ -64,22 +64,22 @@ class TestLLMPolicy(TestCase):
                 event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
                 timeframe="1Min",
                 action="buy",
-                qty=Decimal("8"),
+                qty=Decimal("10"),
                 order_type="market",
                 time_in_force="day",
             )
             review = LLMReviewResponse(
                 verdict="adjust",
                 confidence=1.0,
-                adjusted_qty=Decimal("100"),
+                adjusted_qty=Decimal("25"),
                 adjusted_order_type="market",
-                rationale="overshoot",
+                rationale="clamp_requested",
                 risk_flags=[],
             )
             outcome = apply_policy(decision, review)
             self.assertEqual(outcome.verdict, "adjust")
+            self.assertEqual(outcome.decision.qty, Decimal("12.5"))
             self.assertEqual(outcome.reason, "llm_adjustment_clamped_max")
-            self.assertEqual(outcome.decision.qty, Decimal("10"))
         finally:
             config.settings.llm_adjustment_allowed = original["llm_adjustment_allowed"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]

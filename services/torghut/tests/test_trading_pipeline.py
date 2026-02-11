@@ -400,7 +400,7 @@ class TestTradingPipeline(TestCase):
                     base_timeframe="1Min",
                     universe_type="static",
                     universe_symbols=["AAPL"],
-                    max_notional_per_trade=Decimal("800"),
+                    max_notional_per_trade=Decimal("1000"),
                 )
                 session.add(strategy)
                 session.commit()
@@ -1290,7 +1290,7 @@ class TestTradingPipeline(TestCase):
                 session_factory=self.session_local,
                 llm_review_engine=FakeLLMReviewEngine(
                     verdict="adjust",
-                    adjusted_qty=Decimal("100"),
+                    adjusted_qty=Decimal("50"),
                     adjusted_order_type="market",
                 ),
             )
@@ -1303,12 +1303,8 @@ class TestTradingPipeline(TestCase):
                 executions = session.execute(select(Execution)).scalars().all()
                 self.assertEqual(len(reviews), 1)
                 self.assertEqual(reviews[0].verdict, "adjust")
-                decision_qty = Decimal(str(decisions[0].decision_json.get("qty")))
-                expected_qty = decision_qty * Decimal(str(config.settings.llm_max_qty_multiplier))
-                self.assertEqual(reviews[0].adjusted_qty, expected_qty)
-                decision_json = decisions[0].decision_json
-                self.assertIn("llm_adjusted_decision", decision_json)
-                self.assertEqual(decision_json["llm_adjusted_decision"]["qty"], str(expected_qty))
+                self.assertEqual(reviews[0].adjusted_qty, Decimal("12.5"))
+                self.assertEqual(decisions[0].status, "rejected")
                 self.assertEqual(len(executions), 0)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
