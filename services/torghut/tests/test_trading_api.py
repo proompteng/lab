@@ -14,7 +14,7 @@ from app.db import get_session
 from app.main import app
 from app.trading.scheduler import TradingScheduler
 from app.config import settings
-from app.models import Base, Execution, Strategy, TradeDecision
+from app.models import Base, Execution, LLMDecisionReview, Strategy, TradeDecision
 
 
 class TestTradingApi(TestCase):
@@ -78,6 +78,23 @@ class TestTradingApi(TestCase):
                 last_update_at=datetime.now(timezone.utc),
             )
             session.add(execution)
+            review = LLMDecisionReview(
+                trade_decision_id=decision.id,
+                model="gpt-test",
+                prompt_version="v1",
+                input_json={"decision": {"action": "buy"}},
+                response_json={"verdict": "approve"},
+                verdict="approve",
+                confidence=Decimal("0.9"),
+                adjusted_qty=None,
+                adjusted_order_type=None,
+                rationale="ok",
+                risk_flags=["review"],
+                tokens_prompt=12,
+                tokens_completion=18,
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(review)
             session.commit()
 
     def tearDown(self) -> None:
@@ -96,6 +113,17 @@ class TestTradingApi(TestCase):
         payload = response.json()
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["symbol"], "AAPL")
+
+    def test_trading_llm_evaluation_endpoint(self) -> None:
+        response = self.client.get("/trading/llm-evaluation")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["totals"]["reviews"], 1)
+        self.assertEqual(payload["totals"]["errors"], 0)
+        self.assertEqual(payload["verdict_counts"]["approve"], 1)
+        self.assertEqual(payload["totals"]["tokens_prompt"], 12)
+        self.assertEqual(payload["totals"]["tokens_completion"], 18)
+        self.assertEqual(payload["top_risk_flags"][0]["flag"], "review")
 
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
