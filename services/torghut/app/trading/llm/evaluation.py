@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, TypedDict, cast
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import case, func, select
@@ -16,6 +16,14 @@ from ...models import LLMDecisionReview, TradeDecision
 
 EASTERN_TZ = ZoneInfo("America/New_York")
 VERDICT_ORDER = ("approve", "veto", "adjust", "error")
+
+
+class LLMTelemetryTotals(TypedDict):
+    total_reviews: int
+    error_reviews: int
+    tokens_prompt: int
+    tokens_completion: int
+    last_review_timestamp_seconds: int
 
 
 def get_llm_daily_metrics(session: Session, now: datetime | None = None) -> dict[str, object]:
@@ -83,7 +91,7 @@ def get_llm_daily_metrics(session: Session, now: datetime | None = None) -> dict
     return metrics
 
 
-def get_llm_telemetry_totals(session: Session) -> dict[str, object]:
+def get_llm_telemetry_totals(session: Session) -> LLMTelemetryTotals:
     """Return cumulative LLM telemetry counters for Prometheus export."""
 
     totals_stmt = (
@@ -108,16 +116,19 @@ def get_llm_telemetry_totals(session: Session) -> dict[str, object]:
     else:
         last_review_seconds = int(last_review_at.astimezone(timezone.utc).timestamp())
 
-    return {
-        "total_reviews": int(total_reviews or 0),
-        "error_reviews": int(error_reviews or 0),
-        "tokens_prompt": int(tokens_prompt or 0),
-        "tokens_completion": int(tokens_completion or 0),
-        "last_review_timestamp_seconds": last_review_seconds,
-    }
+    return cast(
+        LLMTelemetryTotals,
+        {
+            "total_reviews": int(total_reviews or 0),
+            "error_reviews": int(error_reviews or 0),
+            "tokens_prompt": int(tokens_prompt or 0),
+            "tokens_completion": int(tokens_completion or 0),
+            "last_review_timestamp_seconds": last_review_seconds,
+        },
+    )
 
 
-def render_llm_prometheus_metrics(payload: dict[str, object]) -> str:
+def render_llm_prometheus_metrics(payload: LLMTelemetryTotals) -> str:
     """Render Prometheus text exposition for LLM telemetry."""
 
     labels = 'namespace="torghut",service="torghut"'
@@ -162,7 +173,7 @@ def _top_risk_flags(
             .order_by(func.count().desc())
             .limit(limit)
         )
-        rows = session.execute(stmt).all()
+        rows = cast(list[tuple[str | None, int]], session.execute(stmt).all())
         return [{"flag": flag, "count": int(count)} for flag, count in rows if flag]
 
     stmt = (
