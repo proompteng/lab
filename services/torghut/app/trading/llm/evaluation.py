@@ -29,7 +29,7 @@ def build_llm_evaluation_metrics(session: Session, now: datetime | None = None) 
             "start_utc": start_utc.isoformat(),
             "end_utc": end_utc.isoformat(),
         },
-        **metrics,
+        "metrics": metrics,
     }
 
 
