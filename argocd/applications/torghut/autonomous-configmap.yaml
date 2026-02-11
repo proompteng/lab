@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torghut-autonomous-config
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: autonomy-control-plane
+    app.kubernetes.io/part-of: lab
+data:
+  autonomous-pipeline-dag.yaml: |
+    pipeline:
+      version: v3-dag-1
+      default_mode: paper
+      deterministic_checkpoints:
+        - feature_contract_validation
+        - gate_policy_evaluation
+        - risk_firewall_authority
+      stages:
+        - id: research_intake
+          next_on_pass: candidate_build
+          next_on_fail: research_intake
+        - id: candidate_build
+          next_on_pass: backtest_robustness
+          next_on_fail: research_intake
+        - id: backtest_robustness
+          next_on_pass: gate_policy_evaluation
+          next_on_fail: research_intake
+        - id: gate_policy_evaluation
+          next_on_pass: shadow_paper_deployment
+          next_on_fail: research_intake
+        - id: shadow_paper_deployment
+          next_on_pass: live_ramp
+          next_on_fail: research_intake
+        - id: live_ramp
+          next_on_pass: continuous_governance
+          next_on_fail: rollback_incident_workflow
+        - id: continuous_governance
+          next_on_fail: rollback_incident_workflow
+        - id: rollback_incident_workflow
+          next_on_pass: research_intake
+  autonomous-gate-policy.json: |
+    {
+      "policy_version": "v3-gates-1",
+      "required_feature_schema_version": "3.0.0",
+      "gate0_max_null_rate": "0.01",
+      "gate0_max_staleness_ms": 120000,
+      "gate0_min_symbol_coverage": 1,
+      "gate1_min_decision_count": 1,
+      "gate1_min_trade_count": 1,
+      "gate1_min_net_pnl": "0",
+      "gate1_max_negative_fold_ratio": "0.50",
+      "gate1_max_net_pnl_cv": "2.0",
+      "gate2_max_drawdown": "250",
+      "gate2_max_turnover_ratio": "8.0",
+      "gate2_max_cost_bps": "35",
+      "gate3_max_llm_error_ratio": "0.10",
+      "gate5_live_enabled": false,
+      "gate5_require_approval_token": true
+    }

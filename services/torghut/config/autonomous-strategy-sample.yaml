@@ -1,0 +1,11 @@
+strategies:
+  - strategy_id: legacy-macd-rsi-v3
+    strategy_type: legacy_macd_rsi
+    version: 1.0.0
+    enabled: true
+    base_timeframe: 1Min
+    priority: 100
+    params:
+      buy_rsi_threshold: 35
+      sell_rsi_threshold: 65
+      qty: 1
