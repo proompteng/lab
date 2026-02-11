@@ -8,10 +8,10 @@ export default defineNitroPlugin((nitroApp) => {
   }
 
   const h3App = app._h3 as
-    | {
+    | ({
         fetch?: (request: Request) => Promise<Response>
         request?: (input: RequestInfo | URL, init?: RequestInit, context?: unknown) => Promise<Response>
-      }
+      } & Record<string, unknown>)
     | undefined
 
   // Nitro 3.0.0 expects h3App.request(...), while some H3Core variants expose only fetch(...).
@@ -21,6 +21,22 @@ export default defineNitroPlugin((nitroApp) => {
       const request = toRequest(input, init) as Request & { context?: unknown }
       request.context = context ?? request.context
       return h3App.fetch?.(request) as Promise<Response>
+    }
+  }
+
+  // Some H3Core builds use "~findRoute/~getMiddleware" internals while Nitro wires "_findRoute/_getMiddleware".
+  // Mirror those hooks so Nitro route matching works regardless of the installed H3Core shape.
+  if (h3App) {
+    const legacyFindRoute = h3App._findRoute
+    const modernFindRoute = h3App['~findRoute']
+    if (typeof modernFindRoute === 'function' && typeof legacyFindRoute === 'function') {
+      h3App['~findRoute'] = legacyFindRoute
+    }
+
+    const legacyGetMiddleware = h3App._getMiddleware
+    const modernGetMiddleware = h3App['~getMiddleware']
+    if (typeof modernGetMiddleware === 'function' && typeof legacyGetMiddleware === 'function') {
+      h3App['~getMiddleware'] = legacyGetMiddleware
     }
   }
 
