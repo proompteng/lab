@@ -53,6 +53,9 @@ class TestWalkForwardHarness(TestCase):
         self.assertEqual(fold_result.signals_count, 2)
         self.assertEqual(len(fold_result.decisions), 2)
         self.assertEqual(results.feature_spec, "app.trading.features.extract_signal_features")
+        self.assertEqual(fold_result.fold_metrics()["decision_count"], 2)
+        self.assertEqual(fold_result.fold_metrics()["buy_count"], 1)
+        self.assertEqual(fold_result.fold_metrics()["sell_count"], 1)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "walkforward-results.json"
@@ -60,3 +63,7 @@ class TestWalkForwardHarness(TestCase):
             payload = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["feature_spec"], "app.trading.features.extract_signal_features")
             self.assertEqual(len(payload["folds"]), 1)
+            fold_payload = payload["folds"][0]
+            self.assertEqual(fold_payload["regime_label"], "vol=high|trend=up|liq=liquid")
+            self.assertEqual(fold_payload["metrics"]["signals_count"], 2)
+            self.assertEqual(fold_payload["metrics"]["decision_count"], 2)
