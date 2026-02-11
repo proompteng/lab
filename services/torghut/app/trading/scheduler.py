@@ -22,6 +22,7 @@ from ..snapshots import snapshot_account_and_positions
 from ..strategies import StrategyCatalog
 from .decisions import DecisionEngine
 from .execution import OrderExecutor
+from .execution_policy import ExecutionPolicy
 from .firewall import OrderFirewall, OrderFirewallBlocked
 from .ingest import ClickHouseSignalIngestor
 from .llm import LLMReviewEngine, apply_policy
@@ -110,6 +111,7 @@ class TradingPipeline:
         llm_review_engine: Optional[LLMReviewEngine] = None,
         price_fetcher: Optional[PriceFetcher] = None,
         strategy_catalog: StrategyCatalog | None = None,
+        execution_policy: Optional[ExecutionPolicy] = None,
     ) -> None:
         self.alpaca_client = alpaca_client
         self.order_firewall = order_firewall
@@ -126,6 +128,7 @@ class TradingPipeline:
         self._snapshot_cache = None
         self._snapshot_cached_at: Optional[datetime] = None
         self.strategy_catalog = strategy_catalog
+        self.execution_policy = execution_policy or ExecutionPolicy()
         if llm_review_engine is not None:
             self.llm_review_engine = llm_review_engine
         elif settings.llm_enabled:
@@ -220,11 +223,6 @@ class TradingPipeline:
             if self.executor.execution_exists(session, decision_row):
                 return
 
-            if self.order_firewall.status().kill_switch_enabled:
-                self.state.metrics.orders_rejected_total += 1
-                self.executor.mark_rejected(session, decision_row, "kill_switch_enabled")
-                return
-
             decision, snapshot = self._ensure_decision_price(decision, signal_price=decision.params.get("price"))
             if snapshot is not None:
                 params_update = decision.model_dump(mode="json").get("params", {})
@@ -260,6 +258,27 @@ class TradingPipeline:
                 self.executor.mark_rejected(session, decision_row, llm_reject_reason)
                 return
 
+            policy_outcome = self.execution_policy.evaluate(
+                decision,
+                strategy=strategy,
+                positions=positions,
+                market_snapshot=snapshot,
+                kill_switch_enabled=self.order_firewall.status().kill_switch_enabled,
+            )
+            decision = policy_outcome.decision
+            self.executor.update_decision_params(session, decision_row, policy_outcome.params_update())
+            if not policy_outcome.approved:
+                self.state.metrics.orders_rejected_total += 1
+                for reason in policy_outcome.reasons:
+                    logger.info(
+                        "Decision rejected by execution policy strategy_id=%s symbol=%s reason=%s",
+                        decision.strategy_id,
+                        decision.symbol,
+                        reason,
+                    )
+                self.executor.mark_rejected(session, decision_row, ";".join(policy_outcome.reasons))
+                return
+
             verdict = self.risk_engine.evaluate(session, decision, strategy, account, positions, symbol_allowlist)
             if not verdict.approved:
                 self.state.metrics.orders_rejected_total += 1
@@ -283,6 +302,7 @@ class TradingPipeline:
                     decision,
                     decision_row,
                     self.account_label,
+                    retry_delays=policy_outcome.retry_delays,
                 )
             except OrderFirewallBlocked as exc:
                 self.state.metrics.orders_rejected_total += 1

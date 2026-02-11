@@ -63,6 +63,23 @@ class Settings(BaseSettings):
     trading_max_notional_per_trade: Optional[float] = Field(
         default=None, alias="TRADING_MAX_NOTIONAL_PER_TRADE"
     )
+    trading_min_notional_per_trade: Optional[float] = Field(
+        default=None, alias="TRADING_MIN_NOTIONAL_PER_TRADE"
+    )
+    trading_max_participation_rate: Optional[float] = Field(
+        default=None, alias="TRADING_MAX_PARTICIPATION_RATE"
+    )
+    trading_execution_prefer_limit: bool = Field(default=True, alias="TRADING_EXECUTION_PREFER_LIMIT")
+    trading_execution_max_retries: int = Field(default=0, alias="TRADING_EXECUTION_MAX_RETRIES")
+    trading_execution_backoff_base_seconds: float = Field(
+        default=0.25, alias="TRADING_EXECUTION_BACKOFF_BASE_SECONDS"
+    )
+    trading_execution_backoff_multiplier: float = Field(
+        default=2.0, alias="TRADING_EXECUTION_BACKOFF_MULTIPLIER"
+    )
+    trading_execution_backoff_max_seconds: float = Field(
+        default=2.0, alias="TRADING_EXECUTION_BACKOFF_MAX_SECONDS"
+    )
     trading_max_position_pct_equity: Optional[float] = Field(
         default=None, alias="TRADING_MAX_POSITION_PCT_EQUITY"
     )
