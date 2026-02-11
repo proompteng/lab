@@ -2,26 +2,25 @@
 
 import logging
 import os
-from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
-from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
-from sqlalchemy import func, select, text
+from fastapi.responses import JSONResponse, PlainTextResponse
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .alpaca_client import TorghutAlpacaClient
 from .config import settings
 from .db import ensure_schema, get_session, ping
-from .models import Execution, LLMDecisionReview, TradeDecision
+from .models import Execution, TradeDecision
 from .trading import TradingScheduler
+from .trading.llm.evaluation import get_llm_daily_metrics, get_llm_telemetry_totals, render_llm_prometheus_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -118,12 +117,11 @@ def trading_metrics() -> dict[str, object]:
     return {"metrics": metrics.__dict__}
 
 
-@app.get("/trading/llm-evaluation/today")
-def llm_evaluation_today(session: Session = Depends(get_session)) -> Mapping[str, object]:
-    """Return today's LLM evaluation metrics in America/New_York."""
+@app.get("/trading/llm-evaluation")
+def trading_llm_evaluation(session: Session = Depends(get_session)) -> dict[str, object]:
+    """Return LLM evaluation metrics for today (America/New_York)."""
 
-    payload = _llm_evaluation_metrics(session)
-    return jsonable_encoder(payload)
+    return get_llm_daily_metrics(session)
 
 
 @app.get("/trading/decisions")
@@ -243,91 +241,24 @@ def trading_health(session: Session = Depends(get_session)) -> JSONResponse:
     return JSONResponse(status_code=status_code, content=jsonable_encoder(payload))
 
 
+@app.get("/metrics")
+def metrics(session: Session = Depends(get_session)) -> PlainTextResponse:
+    """Expose Prometheus metrics for LLM telemetry."""
+
+    try:
+        payload = get_llm_telemetry_totals(session)
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="database unavailable") from exc
+
+    return PlainTextResponse(render_llm_prometheus_metrics(payload))
+
+
 def _check_postgres(session: Session) -> dict[str, object]:
     try:
         ping(session)
     except SQLAlchemyError as exc:
         return {"ok": False, "detail": f"postgres error: {exc}"}
     return {"ok": True, "detail": "ok"}
-
-
-def _llm_evaluation_metrics(session: Session) -> dict[str, object]:
-    timezone_name = "America/New_York"
-    tz = ZoneInfo(timezone_name)
-    now_local = datetime.now(tz=tz)
-    start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-    end_local = start_local + timedelta(days=1)
-    start_utc = start_local.astimezone(timezone.utc)
-    end_utc = end_local.astimezone(timezone.utc)
-
-    base_stmt = (
-        select(
-            func.count(LLMDecisionReview.id),
-            func.avg(LLMDecisionReview.confidence),
-            func.coalesce(func.sum(LLMDecisionReview.tokens_prompt), 0),
-            func.coalesce(func.sum(LLMDecisionReview.tokens_completion), 0),
-        )
-        .select_from(LLMDecisionReview)
-        .join(TradeDecision, LLMDecisionReview.trade_decision_id == TradeDecision.id)
-        .where(LLMDecisionReview.created_at >= start_utc)
-        .where(LLMDecisionReview.created_at < end_utc)
-    )
-    total_reviews, avg_confidence, tokens_prompt, tokens_completion = session.execute(base_stmt).one()
-
-    verdict_stmt = (
-        select(LLMDecisionReview.verdict, func.count(LLMDecisionReview.id))
-        .select_from(LLMDecisionReview)
-        .join(TradeDecision, LLMDecisionReview.trade_decision_id == TradeDecision.id)
-        .where(LLMDecisionReview.created_at >= start_utc)
-        .where(LLMDecisionReview.created_at < end_utc)
-        .group_by(LLMDecisionReview.verdict)
-    )
-    verdict_counts: dict[str, int] = {key: 0 for key in ["approve", "veto", "adjust", "error"]}
-    for verdict, count in session.execute(verdict_stmt):
-        verdict_counts[str(verdict)] = int(count or 0)
-
-    total_reviews_int = int(total_reviews or 0)
-    error_count = verdict_counts.get("error", 0)
-    error_rate = (error_count / total_reviews_int) if total_reviews_int else 0.0
-
-    risk_stmt = text(
-        """
-        SELECT flag, count(*) AS count
-        FROM llm_decision_reviews AS review
-        JOIN trade_decisions AS decision ON decision.id = review.trade_decision_id
-        JOIN LATERAL jsonb_array_elements_text(
-          CASE
-            WHEN jsonb_typeof(review.risk_flags) = 'array' THEN review.risk_flags
-            ELSE '[]'::jsonb
-          END
-        ) AS flag ON TRUE
-        WHERE review.created_at >= :start_at
-          AND review.created_at < :end_at
-        GROUP BY flag
-        ORDER BY count DESC, flag ASC
-        LIMIT :limit
-        """
-    )
-    risk_rows = session.execute(
-        risk_stmt,
-        {"start_at": start_utc, "end_at": end_utc, "limit": 5},
-    ).all()
-    top_risk_flags = [{"flag": str(flag), "count": int(count or 0)} for flag, count in risk_rows]
-
-    payload: dict[str, object] = {
-        "date": start_local.date().isoformat(),
-        "timezone": timezone_name,
-        "window_start": start_local.isoformat(),
-        "window_end": end_local.isoformat(),
-        "total_reviews": total_reviews_int,
-        "verdict_counts": verdict_counts,
-        "error_rate": round(error_rate, 6),
-        "avg_confidence": float(avg_confidence) if avg_confidence is not None else None,
-        "tokens_prompt_total": int(tokens_prompt or 0),
-        "tokens_completion_total": int(tokens_completion or 0),
-        "top_risk_flags": top_risk_flags,
-    }
-    return payload
 
 
 def _check_clickhouse() -> dict[str, object]:
