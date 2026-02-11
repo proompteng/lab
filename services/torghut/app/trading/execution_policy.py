@@ -74,7 +74,7 @@ class ExecutionPolicy:
         market_snapshot: Optional[MarketSnapshot],
         kill_switch_enabled: Optional[bool] = None,
     ) -> ExecutionPolicyOutcome:
-        config = self._resolve_config(strategy=strategy, kill_switch_enabled=kill_switch_enabled)
+        config = self._sanitize_config(self._resolve_config(strategy=strategy, kill_switch_enabled=kill_switch_enabled))
         reasons: list[str] = []
 
         if config.kill_switch_enabled:
@@ -146,6 +146,33 @@ class ExecutionPolicy:
             retry_delays=retry_delays,
             impact_assumptions=impact_assumptions,
             selected_order_type=selected_order_type,
+        )
+
+    def _sanitize_config(self, config: ExecutionPolicyConfig) -> ExecutionPolicyConfig:
+        max_participation_rate = config.max_participation_rate
+        if max_participation_rate <= 0:
+            max_participation_rate = self.cost_model.config.max_participation_rate
+        if max_participation_rate > 1:
+            max_participation_rate = Decimal("1")
+
+        max_retries = max(config.max_retries, 0)
+        backoff_base_seconds = config.backoff_base_seconds if config.backoff_base_seconds > 0 else 0.1
+        backoff_multiplier = config.backoff_multiplier if config.backoff_multiplier >= 1 else 1.0
+        backoff_max_seconds = config.backoff_max_seconds
+        if backoff_max_seconds < backoff_base_seconds:
+            backoff_max_seconds = backoff_base_seconds
+
+        return ExecutionPolicyConfig(
+            min_notional=config.min_notional,
+            max_notional=config.max_notional,
+            max_participation_rate=max_participation_rate,
+            allow_shorts=config.allow_shorts,
+            kill_switch_enabled=config.kill_switch_enabled,
+            prefer_limit=config.prefer_limit,
+            max_retries=max_retries,
+            backoff_base_seconds=backoff_base_seconds,
+            backoff_multiplier=backoff_multiplier,
+            backoff_max_seconds=backoff_max_seconds,
         )
 
     def _resolve_config(

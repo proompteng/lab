@@ -139,6 +139,24 @@ class MultipleTestingSummary:
 
 
 @dataclass(frozen=True)
+class EvaluationImpactAssumptions:
+    default_execution_seconds: int
+    decisions_with_spread: int
+    decisions_with_volatility: int
+    decisions_with_adv: int
+    assumptions: dict[str, str]
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "default_execution_seconds": self.default_execution_seconds,
+            "decisions_with_spread": self.decisions_with_spread,
+            "decisions_with_volatility": self.decisions_with_volatility,
+            "decisions_with_adv": self.decisions_with_adv,
+            "assumptions": dict(self.assumptions),
+        }
+
+
+@dataclass(frozen=True)
 class EvaluationGatePolicy:
     policy_version: str = "v1"
     promotion_enabled: bool = False
@@ -203,6 +221,7 @@ class EvaluationReport:
     gates: EvaluationGateOutcome
     robustness: RobustnessReport
     multiple_testing: MultipleTestingSummary
+    impact_assumptions: EvaluationImpactAssumptions
     git_sha: Optional[str] = None
 
     def to_payload(self) -> dict[str, object]:
@@ -215,6 +234,7 @@ class EvaluationReport:
             "gates": self.gates.to_payload(),
             "robustness": self.robustness.to_payload(),
             "multiple_testing": self.multiple_testing.to_payload(),
+            "impact_assumptions": self.impact_assumptions.to_payload(),
         }
 
 
@@ -238,6 +258,7 @@ def generate_evaluation_report(
     gates = _evaluate_gates(metrics, gate_policy or EvaluationGatePolicy(), promotion_target)
     robustness = _evaluate_robustness(results, resolved_cost_model)
     multiple_testing = _evaluate_multiple_testing(config)
+    impact_assumptions = _collect_impact_assumptions(decisions, config.cost_model_config)
     generated_at = datetime.now(timezone.utc)
     return EvaluationReport(
         report_version="v2",
@@ -247,6 +268,7 @@ def generate_evaluation_report(
         gates=gates,
         robustness=robustness,
         multiple_testing=multiple_testing,
+        impact_assumptions=impact_assumptions,
         git_sha=config.git_sha,
     )
 
@@ -623,6 +645,37 @@ def _cost_model_payload(config: CostModelConfig) -> dict[str, str]:
     }
 
 
+def _collect_impact_assumptions(
+    decisions: list[WalkForwardDecision],
+    cost_model_config: CostModelConfig,
+) -> EvaluationImpactAssumptions:
+    spread_count = 0
+    volatility_count = 0
+    adv_count = 0
+    default_execution_seconds = 60
+
+    for item in decisions:
+        params = item.decision.params
+        if _decimal(params.get("spread")) is not None:
+            spread_count += 1
+        if _decimal(params.get("volatility")) is not None:
+            volatility_count += 1
+        if _decimal(params.get("adv")) is not None:
+            adv_count += 1
+
+    return EvaluationImpactAssumptions(
+        default_execution_seconds=default_execution_seconds,
+        decisions_with_spread=spread_count,
+        decisions_with_volatility=volatility_count,
+        decisions_with_adv=adv_count,
+        assumptions={
+            "commission_bps": str(cost_model_config.commission_bps),
+            "impact_bps_at_full_participation": str(cost_model_config.impact_bps_at_full_participation),
+            "max_participation_rate": str(cost_model_config.max_participation_rate),
+        },
+    )
+
+
 def _strategy_payload(strategy: Strategy) -> dict[str, object]:
     return {
         "id": str(strategy.id),
@@ -665,6 +718,7 @@ def _decimal_std(values: list[Decimal], mean: Decimal) -> Decimal:
 
 
 __all__ = [
+    "EvaluationImpactAssumptions",
     "EvaluationGateOutcome",
     "EvaluationGatePolicy",
     "EvaluationMetrics",
