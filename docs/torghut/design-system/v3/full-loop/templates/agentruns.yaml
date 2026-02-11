@@ -1,0 +1,183 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: torghut-v3-research-intake-sample
+  namespace: agents
+  labels:
+    torghut.proompteng.ai/purpose: research
+spec:
+  agentRef:
+    name: codex-research-agent
+  implementationSpecRef:
+    name: torghut-v3-research-intake-v1
+  runtime:
+    type: workflow
+  ttlSecondsAfterFinished: 3600
+  vcsPolicy:
+    required: false
+    mode: none
+  parameters:
+    researchPrompt: momentum plus regime thesis on NVDA/MSFT/MU
+    universe: NVDA,MSFT,MU,TSM,SNDK
+    featureSchemaVersion: v3
+    outputPath: docs/torghut/artifacts/research/candidate-a
+  workflow:
+    steps:
+      - name: implement
+        timeoutSeconds: 3600
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: torghut-v3-candidate-build-sample
+  namespace: agents
+  labels:
+    torghut.proompteng.ai/purpose: build
+spec:
+  agentRef:
+    name: codex-agent
+  implementationSpecRef:
+    name: torghut-v3-candidate-build-v1
+  runtime:
+    type: workflow
+  ttlSecondsAfterFinished: 7200
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/torghut-v3-candidate-build-sample
+    candidateSpecPath: docs/torghut/artifacts/research/candidate-a/spec.md
+    strategyCatalogPath: argocd/applications/torghut/strategy-configmap.yaml
+  workflow:
+    steps:
+      - name: implement
+        timeoutSeconds: 7200
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: torghut-v3-gate-eval-sample
+  namespace: agents
+  labels:
+    torghut.proompteng.ai/purpose: gate-evaluation
+spec:
+  agentRef:
+    name: codex-research-agent
+  implementationSpecRef:
+    name: torghut-v3-gate-evaluation-v1
+  runtime:
+    type: workflow
+  ttlSecondsAfterFinished: 3600
+  vcsPolicy:
+    required: false
+    mode: none
+  parameters:
+    gateConfigPath: docs/torghut/design-system/v3/full-loop/gates/policy-v1.json
+    metricsBundlePath: docs/torghut/artifacts/backtests/candidate-a/metrics.json
+    artifactPath: docs/torghut/artifacts/gates/candidate-a
+  workflow:
+    steps:
+      - name: implement
+        timeoutSeconds: 3600
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: torghut-v3-shadow-paper-sample
+  namespace: agents
+  labels:
+    torghut.proompteng.ai/purpose: paper-eval
+spec:
+  agentRef:
+    name: codex-agent
+  implementationSpecRef:
+    name: torghut-v3-shadow-paper-run-v1
+  runtime:
+    type: workflow
+  ttlSecondsAfterFinished: 7200
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/torghut-v3-shadow-paper-sample
+    torghutNamespace: torghut
+    gitopsPath: argocd/applications/torghut
+    strategyConfigPatchPath: docs/torghut/artifacts/gates/candidate-a/patch.yaml
+    evaluationWindow: P7D
+  workflow:
+    steps:
+      - name: implement
+        timeoutSeconds: 7200
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: torghut-v3-live-ramp-sample
+  namespace: agents
+  labels:
+    torghut.proompteng.ai/purpose: live-ramp
+    torghut.proompteng.ai/actuation: "true"
+spec:
+  agentRef:
+    name: codex-agent
+  implementationSpecRef:
+    name: torghut-v3-live-ramp-v1
+  runtime:
+    type: workflow
+  ttlSecondsAfterFinished: 7200
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/torghut-v3-live-ramp-sample
+    torghutNamespace: torghut
+    gitopsPath: argocd/applications/torghut
+    rampStage: L1
+    confirm: ACTUATE_TORGHUT
+    artifactPath: docs/torghut/artifacts/live-ramp/candidate-a
+  workflow:
+    steps:
+      - name: implement
+        timeoutSeconds: 7200
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: torghut-v3-incident-recovery-sample
+  namespace: agents
+  labels:
+    torghut.proompteng.ai/purpose: incident
+    torghut.proompteng.ai/actuation: "true"
+spec:
+  agentRef:
+    name: codex-agent
+  implementationSpecRef:
+    name: torghut-v3-incident-recovery-v1
+  runtime:
+    type: workflow
+  ttlSecondsAfterFinished: 7200
+  vcsPolicy:
+    required: false
+    mode: none
+  parameters:
+    incidentId: INC-2026-02-11-001
+    torghutNamespace: torghut
+    rollbackTarget: argocd/main@<commit>
+    confirm: ACTUATE_TORGHUT
+    artifactPath: docs/torghut/artifacts/incidents/INC-2026-02-11-001
+  workflow:
+    steps:
+      - name: implement
+        timeoutSeconds: 7200
