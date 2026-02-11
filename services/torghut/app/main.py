@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+from typing import cast
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
@@ -284,14 +285,14 @@ def _fetch_llm_evaluation_metrics(session: Session, now: datetime | None = None)
             tokens_prompt_total += int(review.tokens_prompt)
         if review.tokens_completion is not None:
             tokens_completion_total += int(review.tokens_completion)
-        risk_flags = review.risk_flags
+        risk_flags: object = review.risk_flags
         if isinstance(risk_flags, list):
-            for flag in risk_flags:
+            for flag in cast(list[object], risk_flags):
                 if flag is None:
                     continue
                 risk_counter[str(flag)] += 1
         elif isinstance(risk_flags, dict):
-            for flag in risk_flags.keys():
+            for flag in cast(dict[object, object], risk_flags).keys():
                 risk_counter[str(flag)] += 1
         elif risk_flags is not None:
             risk_counter[str(risk_flags)] += 1
