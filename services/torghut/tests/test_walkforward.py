@@ -67,3 +67,8 @@ class TestWalkForwardHarness(TestCase):
             self.assertEqual(fold_payload["regime_label"], "vol=high|trend=up|liq=liquid")
             self.assertEqual(fold_payload["metrics"]["signals_count"], 2)
             self.assertEqual(fold_payload["metrics"]["decision_count"], 2)
+            self.assertEqual(fold_payload["metrics"]["regime_label"], "vol=high|trend=up|liq=liquid")
+            self.assertEqual(
+                fold_payload["metrics"]["regime"]["label"],
+                "vol=high|trend=up|liq=liquid",
+            )
