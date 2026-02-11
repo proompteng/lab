@@ -1,6 +1,6 @@
 # AgentRun Creation Guide (Prompt Precedence)
 
-Status: Current (2026-02-07)
+Status: Current (2026-02-11)
 
 Docs index: [README](README.md)
 
@@ -77,10 +77,14 @@ Notes:
 
 - The `head` branch must be writable by the configured VCS provider and should follow the repo’s conventions
   (this repo typically uses `codex/...` prefixes).
+- For design-doc implementation runs, prefer a single workflow step named `implement`. Add a separate `plan` step only
+  when you need a distinct planning artifact.
 - Secrets are cluster- and provider-specific. If you reference a Secret (directly or via `systemPromptRef`) it must be
   allowed by policy and often must be listed in `spec.secrets` (see `docs/agents/rbac-matrix.md`).
 - `ttlSecondsAfterFinished` is a top-level `AgentRun.spec` field (see `charts/agents/crds/agents.proompteng.ai_agentruns.yaml`).
   Do not put TTL under `spec.runtime.config` unless a specific runtime explicitly documents it.
+- Keep `metadata.name` short enough for label propagation. The controller writes
+  `agents.proompteng.ai/agent-run=<run-name>` labels, so names longer than 63 characters can fail reconciliation.
 
 ## Verify The Run Is Using The Spec Text
 
@@ -97,6 +101,19 @@ kubectl get cm -n agents <run-spec-configmap> -o yaml | rg -n 'run.json:|\"promp
 If `run.json.prompt` contains your ImplementationSpec `text`, you did not override the prompt.
 
 If `run.json.prompt` contains your `parameters.prompt`, you did override it.
+
+## Parameter Wiring (Avoid Shell-Env Assumptions)
+
+AgentRun parameters are recorded in generated payload files (`run.json.parameters` and `agent-runner.json.inputs`).
+Do not assume parameters are exported as shell variables like `$confirm` or `$designDoc` inside the runner container.
+
+If you need literal values in the user prompt:
+
+- put them directly in `ImplementationSpec.spec.text`, or
+- verify your rendering path by inspecting generated payloads after apply.
+
+Treat `${key}` tokens in `ImplementationSpec.spec.text` as literal unless you have confirmed expansion in the generated
+`run.json.prompt`.
 
 ## Monitor Execution
 
@@ -136,8 +153,11 @@ Do not use system prompt customization to compensate for an incorrect user promp
 ## Common Pitfalls Checklist
 
 - You set `spec.parameters.prompt` and unintentionally narrowed the task scope.
+- You used a multi-step workflow (`plan` + `implement`) for a design-doc run that should have been a single `implement` step.
 - You referenced the wrong `ImplementationSpec` (check `spec.implementationSpecRef.name`).
+- You assumed `${parameter}` placeholders were auto-expanded in prompt text without verifying `run.json.prompt`.
 - You used a head branch that conflicts with another active run (see `docs/agents/version-control-provider-design.md`).
+- Your `AgentRun.metadata.name` exceeded 63 chars and failed when propagated into Kubernetes label values.
 - Required secrets were not allowlisted or not included in `spec.secrets`.
 - The repo is not in the allowlist configured for the controllers deployment.
 - You expected “followers not-ready” behavior without having implemented leader election in code and chart.

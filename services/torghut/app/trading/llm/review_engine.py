@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -35,6 +36,33 @@ _SYSTEM_PROMPT = (
     "Provide a concise rationale (<= 280 chars). "
     "Do not include chain-of-thought or extra keys."
 )
+
+_ALLOWED_DECISION_PARAMS = {
+    "macd",
+    "macd_signal",
+    "rsi",
+    "price",
+    "volatility",
+    "spread",
+    "price_snapshot",
+    "imbalance",
+    "sizing",
+}
+_ALLOWED_PRICE_SNAPSHOT_KEYS = {"as_of", "price", "spread", "source"}
+_ALLOWED_IMBALANCE_KEYS = {"spread"}
+_ALLOWED_SIZING_KEYS = {"method", "notional_budget", "price", "reason"}
+_ALLOWED_ACCOUNT_KEYS = {"equity", "cash", "buying_power"}
+_ALLOWED_POSITION_KEYS = {
+    "symbol",
+    "qty",
+    "side",
+    "market_value",
+    "avg_entry_price",
+    "current_price",
+    "unrealized_pl",
+    "unrealized_plpc",
+    "cost_basis",
+}
 
 
 @dataclass
@@ -143,6 +171,9 @@ class LLMReviewEngine:
         market: Optional[MarketSnapshot],
         recent_decisions: list[RecentDecisionSummary],
     ) -> LLMReviewRequest:
+        sanitized_account = _sanitize_account(account)
+        sanitized_positions = _sanitize_positions(positions)
+        sanitized_params = _sanitize_decision_params(decision.params or {})
         return LLMReviewRequest(
             decision=LLMDecisionContext(
                 strategy_id=decision.strategy_id,
@@ -154,13 +185,13 @@ class LLMReviewEngine:
                 event_ts=decision.event_ts,
                 timeframe=decision.timeframe,
                 rationale=decision.rationale,
-                params=decision.params,
+                params=sanitized_params,
             ),
             portfolio=portfolio,
             market=market,
             recent_decisions=recent_decisions,
-            account=account,
-            positions=positions,
+            account=sanitized_account,
+            positions=sanitized_positions,
             policy=LLMPolicyContext(
                 adjustment_allowed=settings.llm_adjustment_allowed,
                 min_qty_multiplier=Decimal(str(settings.llm_min_qty_multiplier)),
@@ -235,3 +266,53 @@ def load_prompt_template(version: str) -> str:
     if candidate.exists():
         return candidate.read_text(encoding="utf-8")
     return _SYSTEM_PROMPT
+
+
+def _sanitize_account(account: dict[str, Any]) -> dict[str, str]:
+    sanitized: dict[str, str] = {}
+    for key in _ALLOWED_ACCOUNT_KEYS:
+        value = account.get(key)
+        if value is None:
+            continue
+        sanitized[key] = str(value)
+    return sanitized
+
+
+def _sanitize_positions(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sanitized: list[dict[str, Any]] = []
+    for position in positions:
+        symbol = position.get("symbol")
+        if not symbol:
+            continue
+        cleaned: dict[str, Any] = {"symbol": str(symbol)}
+        for key in _ALLOWED_POSITION_KEYS:
+            if key == "symbol":
+                continue
+            value = position.get(key)
+            if value is None:
+                continue
+            cleaned[key] = value
+        sanitized.append(cleaned)
+    sanitized.sort(key=lambda item: item.get("symbol", ""))
+    return sanitized
+
+
+def _sanitize_decision_params(params: dict[str, Any]) -> dict[str, Any]:
+    sanitized: dict[str, Any] = {}
+    for key in _ALLOWED_DECISION_PARAMS:
+        value = params.get(key)
+        if value is None:
+            continue
+        if key == "price_snapshot" and isinstance(value, Mapping):
+            sanitized[key] = _sanitize_nested(cast(Mapping[str, Any], value), _ALLOWED_PRICE_SNAPSHOT_KEYS)
+        elif key == "imbalance" and isinstance(value, Mapping):
+            sanitized[key] = _sanitize_nested(cast(Mapping[str, Any], value), _ALLOWED_IMBALANCE_KEYS)
+        elif key == "sizing" and isinstance(value, Mapping):
+            sanitized[key] = _sanitize_nested(cast(Mapping[str, Any], value), _ALLOWED_SIZING_KEYS)
+        else:
+            sanitized[key] = value
+    return sanitized
+
+
+def _sanitize_nested(payload: Mapping[str, Any], allowed_keys: set[str]) -> dict[str, Any]:
+    return {key: payload[key] for key in allowed_keys if key in payload and payload[key] is not None}
