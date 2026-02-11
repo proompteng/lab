@@ -120,6 +120,27 @@ class TestAlpacaClient(TestCase):
                 firewall_token=object(),  # type: ignore[arg-type]
             )
 
+    def test_raw_trading_client_proxy_blocks_mutations(self) -> None:
+        client = TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            trading_client=DummyTradingClient(),
+            data_client=DummyDataClient(),
+        )
+
+        account = client.trading.get_account()
+        self.assertEqual(account.model_dump()["equity"], "10000")
+
+        with self.assertRaises(OrderFirewallViolation):
+            client.trading.submit_order(object())
+
+        with self.assertRaises(OrderFirewallViolation):
+            client.trading.cancel_order_by_id("order-1")
+
+        with self.assertRaises(OrderFirewallViolation):
+            client.trading.cancel_orders()
+
     def test_market_data_uses_data_endpoint_by_default(self) -> None:
         with patch("app.alpaca_client.StockHistoricalDataClient") as mock_data_client:
             TorghutAlpacaClient(

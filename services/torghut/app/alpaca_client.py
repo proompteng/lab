@@ -36,6 +36,21 @@ class OrderFirewallViolation(PermissionError):
     """Raised when broker mutation methods are called outside OrderFirewall."""
 
 
+class _TradingMutationGuardProxy:
+    """Expose non-mutating trading methods while blocking direct order mutations."""
+
+    _blocked_methods = frozenset({"submit_order", "cancel_order_by_id", "cancel_orders"})
+
+    def __init__(self, trading_client: TradingClient) -> None:
+        self._trading_client = trading_client
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._trading_client, name)
+        if name in self._blocked_methods and callable(attr):
+            raise OrderFirewallViolation("order_firewall_boundary_violation")
+        return attr
+
+
 class TorghutAlpacaClient:
     """Service-level Alpaca wrapper returning JSON-serializable dicts."""
 
@@ -55,12 +70,14 @@ class TorghutAlpacaClient:
         is_live = settings.trading_mode == "live"
 
         # Default to paper trading; override URL if provided.
-        self.trading = trading_client or TradingClient(
+        raw_trading_client = trading_client or TradingClient(
             api_key=key,
             secret_key=secret,
             paper=not is_live,
             url_override=base,
         )
+        self._trading = raw_trading_client
+        self.trading = _TradingMutationGuardProxy(raw_trading_client)
 
         # Market Data v2 (stocks).
         self.data = data_client or StockHistoricalDataClient(
@@ -72,30 +89,30 @@ class TorghutAlpacaClient:
 
     # ------------------- Trading helpers -------------------
     def get_account(self) -> Dict[str, Any]:
-        account = self.trading.get_account()
+        account = self._trading.get_account()
         return self._model_to_dict(account)
 
     def list_positions(self) -> List[Dict[str, Any]]:
-        positions = self.trading.get_all_positions()
+        positions = self._trading.get_all_positions()
         return [self._model_to_dict(pos) for pos in positions]
 
     def list_open_orders(self) -> List[Dict[str, Any]]:
         request = GetOrdersRequest(status=QueryOrderStatus.OPEN)
-        orders = self.trading.get_orders(request)
+        orders = self._trading.get_orders(request)
         return [self._model_to_dict(order) for order in orders]
 
     def list_orders(self, status: str = "all") -> List[Dict[str, Any]]:
         status_value = QueryOrderStatus(status.lower())
         request = GetOrdersRequest(status=status_value)
-        orders = self.trading.get_orders(request)
+        orders = self._trading.get_orders(request)
         return [self._model_to_dict(order) for order in orders]
 
     def get_order(self, alpaca_order_id: str) -> Dict[str, Any]:
-        order = self.trading.get_order_by_id(alpaca_order_id)
+        order = self._trading.get_order_by_id(alpaca_order_id)
         return self._model_to_dict(order)
 
     def get_order_by_client_order_id(self, client_order_id: str) -> Dict[str, Any]:
-        getter = cast(Callable[[str], Any], getattr(self.trading, "get_order_by_client_order_id", None))
+        getter = cast(Callable[[str], Any], getattr(self._trading, "get_order_by_client_order_id", None))
         if getter is None:
             raise AttributeError("Trading client does not support get_order_by_client_order_id")
         order = getter(client_order_id)
@@ -140,19 +157,19 @@ class TorghutAlpacaClient:
         else:
             raise ValueError(f"Unsupported order_type: {order_type}")
 
-        order = self.trading.submit_order(request)
+        order = self._trading.submit_order(request)
         return self._model_to_dict(order)
 
     def cancel_order(self, alpaca_order_id: str, *, firewall_token: OrderFirewallToken) -> bool:
         self._require_firewall_caller()
         self._require_firewall_token(firewall_token)
-        self.trading.cancel_order_by_id(alpaca_order_id)
+        self._trading.cancel_order_by_id(alpaca_order_id)
         return True
 
     def cancel_all_orders(self, *, firewall_token: OrderFirewallToken) -> List[Dict[str, Any]]:
         self._require_firewall_caller()
         self._require_firewall_token(firewall_token)
-        responses = self.trading.cancel_orders()
+        responses = self._trading.cancel_orders()
         return [self._model_to_dict(resp) for resp in responses]
 
     # ------------------- Market data -------------------
