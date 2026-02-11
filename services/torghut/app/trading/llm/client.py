@@ -173,7 +173,7 @@ def _coerce_usage(usage: Any) -> Optional[dict[str, int]]:
     return out or None
 
 
-def _parse_jangar_sse(stream: Any, timeout_seconds: Optional[float] = None) -> tuple[str, Optional[dict[str, int]]]:
+def _parse_jangar_sse(stream: Any, timeout_seconds: Optional[int] = None) -> tuple[str, Optional[dict[str, int]]]:
     """Parse Jangar's SSE stream and return the aggregated content + usage.
 
     Jangar emits OpenAI-like `data: {json}` frames plus a terminal `data: [DONE]`.
@@ -183,7 +183,6 @@ def _parse_jangar_sse(stream: Any, timeout_seconds: Optional[float] = None) -> t
 
     content_parts: list[str] = []
     usage: Optional[dict[str, int]] = None
-
     deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
 
     while True:
