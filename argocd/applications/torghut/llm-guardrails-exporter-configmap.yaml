@@ -134,6 +134,8 @@ data:
             "llm_validation_error_total",
             "llm_circuit_open_total",
             "llm_shadow_total",
+            "llm_guardrail_block_total",
+            "llm_guardrail_shadow_total",
             "llm_tokens_prompt_total",
             "llm_tokens_completion_total",
         ]

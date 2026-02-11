@@ -37,6 +37,21 @@ flowchart LR
 - Audit records for each review:
   - `llm_decision_reviews` table (`services/torghut/app/models/entities.py`)
 
+## Guardrail configuration (v1)
+These env vars are enforced by the trading service before AI output can influence execution:
+
+| Env var | Purpose | Safe default |
+| --- | --- | --- |
+| `LLM_ALLOWED_MODELS` | inventory allowlist (comma-separated) | empty (inventory required to disable shadow) |
+| `LLM_EVALUATION_REPORT` | evaluation evidence reference (report URL/id) | unset |
+| `LLM_EFFECTIVE_CHALLENGE_ID` | independent review reference | unset |
+| `LLM_SHADOW_COMPLETED_AT` | timestamp when shadow evaluation completed | unset |
+| `LLM_ADJUSTMENT_APPROVED` | explicit approval for adjustments | `false` |
+
+Enforcement behavior:
+- If `LLM_SHADOW_MODE=false` and any required evidence is missing, the service forces shadow mode and disables adjustments.
+- If the prompt template for `LLM_PROMPT_VERSION` is missing, LLM review is blocked and logged as a guardrail violation.
+
 ## Monitoring and incident response
 - Track:
   - veto rate vs baseline,
@@ -49,11 +64,13 @@ flowchart LR
 - LLM guardrails exporter (Prometheus):
   - Config: `argocd/applications/torghut/llm-guardrails-exporter-configmap.yaml`
   - Deployment/Service: `argocd/applications/torghut/llm-guardrails-exporter.yaml`
-- Key metrics:
+- Torghut also exposes `GET /metrics` for direct scrape/debug (`torghut_trading_*` counters).
+- Key metrics (exporter output):
   - `torghut_llm_veto_total`, `torghut_llm_requests_total` (veto rate)
   - `torghut_llm_parse_error_total` (parse error rate)
   - `torghut_llm_circuit_open_total` (circuit breaker events)
   - `torghut_llm_tokens_prompt_total`, `torghut_llm_tokens_completion_total` (token cost)
+  - `torghut_llm_guardrail_block_total` (guardrail blocks)
 - Baselines (tunable env vars on exporter):
   - `LLM_VETO_RATE_BASELINE`
   - `LLM_TOKENS_PER_REQUEST_BUDGET`
