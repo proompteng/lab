@@ -128,3 +128,58 @@ class TestEvaluationReport(TestCase):
         self.assertEqual(report.impact_assumptions.decisions_with_volatility, 2)
         self.assertEqual(report.impact_assumptions.decisions_with_adv, 2)
         self.assertEqual(report.impact_assumptions.assumptions["recorded_inputs_count"], "2")
+
+    def test_report_uses_deterministic_execution_seconds_mode_on_tie(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        source = FixtureSignalSource.from_path(fixture_path)
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 1, 0, 4, tzinfo=timezone.utc)
+        folds = generate_walk_forward_folds(
+            start,
+            end,
+            train_window=timedelta(minutes=1),
+            test_window=timedelta(minutes=2),
+            step=timedelta(minutes=2),
+        )
+
+        strategy = Strategy(
+            name="wf-report-impact-mode-tie",
+            description=None,
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+        strategy.id = uuid.uuid4()
+
+        results = run_walk_forward(
+            folds,
+            strategies=[strategy],
+            signal_source=source,
+            decision_engine=DecisionEngine(),
+        )
+
+        execution_seconds_values = [120, 60]
+        cursor = 0
+        for fold in results.folds:
+            for item in fold.decisions:
+                item.decision.params["impact_assumptions"] = {
+                    "inputs": {
+                        "execution_seconds": execution_seconds_values[cursor],
+                    }
+                }
+                cursor += 1
+
+        config = EvaluationReportConfig(
+            evaluation_start=start,
+            evaluation_end=end,
+            signal_source="fixture",
+            strategies=[strategy],
+            git_sha="test-sha",
+            run_id="test-run-impact-mode-tie",
+        )
+        report = generate_evaluation_report(results, config=config, gate_policy=EvaluationGatePolicy())
+
+        self.assertEqual(report.impact_assumptions.default_execution_seconds, 60)

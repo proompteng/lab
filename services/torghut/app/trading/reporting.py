@@ -679,7 +679,7 @@ def _collect_impact_assumptions(
 
     default_execution_seconds = 60
     if execution_seconds_values:
-        default_execution_seconds = max(set(execution_seconds_values), key=execution_seconds_values.count)
+        default_execution_seconds = _deterministic_mode_int(execution_seconds_values)
 
     return EvaluationImpactAssumptions(
         default_execution_seconds=default_execution_seconds,
@@ -762,6 +762,14 @@ def _as_int(value: Any) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _deterministic_mode_int(values: list[int]) -> int:
+    counts: dict[int, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    # Deterministic tie-break: choose the smallest value when counts match.
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
 
 
 def _bps_from_cost(cost: Decimal, notional: Decimal) -> Decimal:
