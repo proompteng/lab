@@ -1303,9 +1303,11 @@ class TestTradingPipeline(TestCase):
                 executions = session.execute(select(Execution)).scalars().all()
                 self.assertEqual(len(reviews), 1)
                 self.assertEqual(reviews[0].verdict, "adjust")
-                self.assertEqual(reviews[0].adjusted_qty, Decimal("10"))
+                decision_qty = Decimal(str(decisions[0].decision_json.get("qty")))
+                expected_qty = decision_qty * Decimal(str(config.settings.llm_max_qty_multiplier))
+                self.assertEqual(reviews[0].adjusted_qty, expected_qty)
                 self.assertEqual(len(executions), 1)
-                self.assertEqual(executions[0].submitted_qty, Decimal("10"))
+                self.assertEqual(executions[0].submitted_qty, expected_qty)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
