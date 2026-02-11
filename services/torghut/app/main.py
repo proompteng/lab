@@ -299,7 +299,7 @@ def _build_llm_evaluation_payload(session: Session) -> dict[str, object]:
         if risk_payload is None:
             continue
         if isinstance(risk_payload, list):
-            flags = []
+            flags: list[str] = []
             for flag in cast(list[object], risk_payload):
                 flag_str = str(flag).strip()
                 if flag_str:
