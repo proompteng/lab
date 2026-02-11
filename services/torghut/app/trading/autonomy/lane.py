@@ -149,7 +149,7 @@ def run_autonomous_lane(
 
     patch_path: Path | None = None
     if gate_report.promotion_allowed and gate_report.recommended_mode == 'paper':
-        resolved_configmap = strategy_configmap_path or Path('argocd/applications/torghut/strategy-configmap.yaml')
+        resolved_configmap = strategy_configmap_path or _default_strategy_configmap_path()
         patch_path = _write_paper_candidate_patch(
             configmap_path=resolved_configmap,
             runtime_strategies=runtime_strategies,
@@ -232,7 +232,7 @@ def _deterministic_run_id(
 
 
 def _required_feature_null_rate(signals: list[SignalEnvelope]) -> Decimal:
-    required_keys = ('macd', 'rsi14', 'price')
+    required_keys = ('macd', 'rsi', 'price')
     missing = 0
     total = 0
     for signal in signals:
@@ -243,11 +243,18 @@ def _required_feature_null_rate(signals: list[SignalEnvelope]) -> Decimal:
                 macd_block = payload.get('macd')
                 if not isinstance(macd_block, dict) or macd_block.get('macd') is None or macd_block.get('signal') is None:
                     missing += 1
+            elif key == 'rsi':
+                if payload.get('rsi14') is None and payload.get('rsi') is None:
+                    missing += 1
             elif payload.get(key) is None:
                 missing += 1
     if total == 0:
         return Decimal('1')
     return Decimal(missing) / Decimal(total)
+
+
+def _default_strategy_configmap_path() -> Path:
+    return Path(__file__).resolve().parents[5] / 'argocd' / 'applications' / 'torghut' / 'strategy-configmap.yaml'
 
 
 def _to_orm_strategies(runtime_strategies: list[StrategyRuntimeConfig]) -> list[Strategy]:

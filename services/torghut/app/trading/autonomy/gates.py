@@ -87,19 +87,21 @@ class GatePolicyMatrix:
         return cls(
             policy_version=str(payload.get('policy_version', 'v3-gates-1')),
             required_feature_schema_version=str(payload.get('required_feature_schema_version', '3.0.0')),
-            gate0_max_null_rate=_decimal(payload.get('gate0_max_null_rate', '0.01')) or Decimal('0.01'),
+            gate0_max_null_rate=_decimal_or_default(payload.get('gate0_max_null_rate'), Decimal('0.01')),
             gate0_max_staleness_ms=int(payload.get('gate0_max_staleness_ms', 120000)),
             gate0_min_symbol_coverage=int(payload.get('gate0_min_symbol_coverage', 1)),
             gate1_min_decision_count=int(payload.get('gate1_min_decision_count', 1)),
             gate1_min_trade_count=int(payload.get('gate1_min_trade_count', 1)),
-            gate1_min_net_pnl=_decimal(payload.get('gate1_min_net_pnl', '0')) or Decimal('0'),
-            gate1_max_negative_fold_ratio=_decimal(payload.get('gate1_max_negative_fold_ratio', '0.5'))
-            or Decimal('0.5'),
-            gate1_max_net_pnl_cv=_decimal(payload.get('gate1_max_net_pnl_cv', '2.0')) or Decimal('2.0'),
-            gate2_max_drawdown=_decimal(payload.get('gate2_max_drawdown', '250')) or Decimal('250'),
-            gate2_max_turnover_ratio=_decimal(payload.get('gate2_max_turnover_ratio', '8.0')) or Decimal('8.0'),
-            gate2_max_cost_bps=_decimal(payload.get('gate2_max_cost_bps', '35')) or Decimal('35'),
-            gate3_max_llm_error_ratio=_decimal(payload.get('gate3_max_llm_error_ratio', '0.10')) or Decimal('0.10'),
+            gate1_min_net_pnl=_decimal_or_default(payload.get('gate1_min_net_pnl'), Decimal('0')),
+            gate1_max_negative_fold_ratio=_decimal_or_default(
+                payload.get('gate1_max_negative_fold_ratio'),
+                Decimal('0.5'),
+            ),
+            gate1_max_net_pnl_cv=_decimal_or_default(payload.get('gate1_max_net_pnl_cv'), Decimal('2.0')),
+            gate2_max_drawdown=_decimal_or_default(payload.get('gate2_max_drawdown'), Decimal('250')),
+            gate2_max_turnover_ratio=_decimal_or_default(payload.get('gate2_max_turnover_ratio'), Decimal('8.0')),
+            gate2_max_cost_bps=_decimal_or_default(payload.get('gate2_max_cost_bps'), Decimal('35')),
+            gate3_max_llm_error_ratio=_decimal_or_default(payload.get('gate3_max_llm_error_ratio'), Decimal('0.10')),
             gate5_live_enabled=bool(payload.get('gate5_live_enabled', False)),
             gate5_require_approval_token=bool(payload.get('gate5_require_approval_token', True)),
         )
@@ -301,6 +303,13 @@ def _decimal(value: Any) -> Decimal | None:
         return Decimal(str(value))
     except (ArithmeticError, TypeError, ValueError):
         return None
+
+
+def _decimal_or_default(value: Any, default: Decimal) -> Decimal:
+    parsed = _decimal(value)
+    if parsed is None:
+        return default
+    return parsed
 
 
 __all__ = [

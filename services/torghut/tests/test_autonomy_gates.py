@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import tempfile
 from decimal import Decimal
+from pathlib import Path
 from unittest import TestCase
 
 from app.trading.autonomy.gates import GateInputs, GatePolicyMatrix, evaluate_gate_matrix
@@ -56,3 +59,22 @@ class TestAutonomyGates(TestCase):
 
         self.assertFalse(report.promotion_allowed)
         self.assertIn('live_rollout_disabled_by_policy', report.reasons)
+
+    def test_policy_loader_preserves_explicit_zero_thresholds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / 'policy.json'
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        'gate0_max_null_rate': '0',
+                        'gate1_min_net_pnl': '0',
+                        'gate3_max_llm_error_ratio': '0',
+                    }
+                ),
+                encoding='utf-8',
+            )
+            policy = GatePolicyMatrix.from_path(policy_path)
+
+        self.assertEqual(policy.gate0_max_null_rate, Decimal('0'))
+        self.assertEqual(policy.gate1_min_net_pnl, Decimal('0'))
+        self.assertEqual(policy.gate3_max_llm_error_ratio, Decimal('0'))
