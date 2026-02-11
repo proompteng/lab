@@ -72,7 +72,7 @@ class TestJangarFallbackChain(unittest.TestCase):
         self.assertTrue(fallback.called)
         self.assertEqual(response.content, expected.content)
 
-    def test_returns_passthrough_when_all_providers_fail_in_paper_mode(self) -> None:
+    def test_raises_when_all_providers_fail_in_paper_mode(self) -> None:
         settings.llm_provider = "jangar"
         settings.trading_mode = "paper"
 
@@ -80,10 +80,8 @@ class TestJangarFallbackChain(unittest.TestCase):
 
         with patch.object(LLMClient, "_request_review_via_jangar", side_effect=RuntimeError("nope")):
             with patch.object(LLMClient, "_request_review_via_self_hosted", side_effect=RuntimeError("nope2")):
-                response = client.request_review(messages=[], temperature=0.2, max_tokens=10)
-
-        self.assertIn('"verdict":"approve"', response.content.replace(" ", ""))
-        self.assertIn("llm_passthrough", response.content)
+                with self.assertRaises(RuntimeError):
+                    client.request_review(messages=[], temperature=0.2, max_tokens=10)
 
     def test_raises_when_all_providers_fail_in_live_mode(self) -> None:
         settings.llm_provider = "jangar"

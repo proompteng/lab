@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any, Optional, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -22,20 +23,6 @@ from ...config import settings
 class LLMClientResponse:
     content: str
     usage: Optional[dict[str, int]]
-
-def _passthrough_payload() -> str:
-    # Must satisfy `LLMReviewResponse` validation to behave like a true pass-through,
-    # meaning "do not veto or adjust due to LLM unavailability".
-    return json.dumps(
-        {
-            "verdict": "approve",
-            "confidence": 1.0,
-            "rationale": "llm_passthrough",
-            "risk_flags": ["llm_passthrough"],
-        },
-        separators=(",", ":"),
-    )
-
 
 class LLMClient:
     """Thin wrapper around the OpenAI client to keep it mockable."""
@@ -55,16 +42,13 @@ class LLMClient:
         if self._provider == "jangar":
             try:
                 return self._request_review_via_jangar(messages, temperature=temperature, max_tokens=max_tokens)
-            except Exception:
+            except Exception as primary_exc:
                 try:
                     return self._request_review_via_self_hosted(messages, temperature=temperature, max_tokens=max_tokens)
-                except Exception:
-                    # In live trading we keep fail-closed semantics: if both Jangar and the
-                    # self-hosted fallback fail, bubble up so the scheduler can veto.
-                    if settings.trading_mode == "live":
-                        raise
-                    # For paper trading: allow the strategy decision to proceed unchanged.
-                    return LLMClientResponse(content=_passthrough_payload(), usage=None)
+                except Exception as fallback_exc:
+                    primary = type(primary_exc).__name__
+                    fallback = type(fallback_exc).__name__
+                    raise RuntimeError(f"llm_providers_failed primary={primary} fallback={fallback}") from fallback_exc
 
         if self._client is None:
             raise RuntimeError("LLM provider configured as openai but OpenAI client was not initialized")
@@ -157,7 +141,7 @@ class LLMClient:
                 if status < 200 or status >= 300:
                     raw = response.read().decode("utf-8", errors="replace")
                     raise RuntimeError(f"jangar completion request failed ({status}): {raw}")
-                content, usage = _parse_jangar_sse(response)
+                content, usage = _parse_jangar_sse(response, timeout_seconds=self._timeout_seconds)
                 return LLMClientResponse(content=content, usage=usage)
         except HTTPError as exc:
             raw = exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else str(exc)
@@ -187,7 +171,7 @@ def _coerce_usage(usage: Any) -> Optional[dict[str, int]]:
     return out or None
 
 
-def _parse_jangar_sse(stream: Any) -> tuple[str, Optional[dict[str, int]]]:
+def _parse_jangar_sse(stream: Any, timeout_seconds: Optional[int] = None) -> tuple[str, Optional[dict[str, int]]]:
     """Parse Jangar's SSE stream and return the aggregated content + usage.
 
     Jangar emits OpenAI-like `data: {json}` frames plus a terminal `data: [DONE]`.
@@ -196,8 +180,13 @@ def _parse_jangar_sse(stream: Any) -> tuple[str, Optional[dict[str, int]]]:
 
     content_parts: list[str] = []
     usage: Optional[dict[str, int]] = None
+    deadline: Optional[float] = None
+    if timeout_seconds is not None:
+        deadline = monotonic() + timeout_seconds
 
     while True:
+        if deadline is not None and monotonic() > deadline:
+            raise TimeoutError("jangar completion timed out")
         line_bytes = stream.readline()
         if not line_bytes:
             break
