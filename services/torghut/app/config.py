@@ -168,6 +168,11 @@ class Settings(BaseSettings):
     llm_circuit_max_errors: int = Field(default=3, alias="LLM_CIRCUIT_MAX_ERRORS")
     llm_circuit_window_seconds: int = Field(default=300, alias="LLM_CIRCUIT_WINDOW_SECONDS")
     llm_circuit_cooldown_seconds: int = Field(default=600, alias="LLM_CIRCUIT_COOLDOWN_SECONDS")
+    llm_allowed_models_raw: Optional[str] = Field(default=None, alias="LLM_ALLOWED_MODELS")
+    llm_evaluation_report: Optional[str] = Field(default=None, alias="LLM_EVALUATION_REPORT")
+    llm_effective_challenge_id: Optional[str] = Field(default=None, alias="LLM_EFFECTIVE_CHALLENGE_ID")
+    llm_shadow_completed_at: Optional[str] = Field(default=None, alias="LLM_SHADOW_COMPLETED_AT")
+    llm_adjustment_approved: bool = Field(default=False, alias="LLM_ADJUSTMENT_APPROVED")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -185,6 +190,16 @@ class Settings(BaseSettings):
             self.llm_self_hosted_base_url = self.llm_self_hosted_base_url.strip().rstrip("/")
         if "llm_provider" not in self.model_fields_set and self.jangar_base_url:
             self.llm_provider = "jangar"
+        if self.llm_allowed_models_raw:
+            self.llm_allowed_models_raw = ",".join(
+                [item.strip() for item in self.llm_allowed_models_raw.split(",") if item.strip()]
+            )
+        if self.llm_evaluation_report:
+            self.llm_evaluation_report = self.llm_evaluation_report.strip()
+        if self.llm_effective_challenge_id:
+            self.llm_effective_challenge_id = self.llm_effective_challenge_id.strip()
+        if self.llm_shadow_completed_at:
+            self.llm_shadow_completed_at = self.llm_shadow_completed_at.strip()
 
     @property
     def sqlalchemy_dsn(self) -> str:
@@ -206,6 +221,12 @@ class Settings(BaseSettings):
         if not self.trading_static_symbols_raw:
             return []
         return [symbol.strip() for symbol in self.trading_static_symbols_raw.split(",") if symbol.strip()]
+
+    @property
+    def llm_allowed_models(self) -> set[str]:
+        if not self.llm_allowed_models_raw:
+            return set()
+        return {model.strip() for model in self.llm_allowed_models_raw.split(",") if model.strip()}
 
 
 @lru_cache(maxsize=1)

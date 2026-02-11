@@ -21,9 +21,15 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   const tag = options.tag ?? process.env.TORGHUT_IMAGE_TAG ?? 'latest'
   const context = resolve(repoRoot, options.context ?? 'services/torghut')
   const dockerfile = resolve(repoRoot, options.dockerfile ?? 'services/torghut/Dockerfile')
-  const rawPlatforms = options.platforms ??
-    process.env.TORGHUT_IMAGE_PLATFORMS?.split(',').map((p) => p.trim()) ?? ['linux/arm64']
-  const platforms = rawPlatforms.filter((platform) => platform)
+  const platformsEnv = process.env.TORGHUT_IMAGE_PLATFORMS
+  const platforms =
+    options.platforms ??
+    (platformsEnv
+      ? platformsEnv
+          .split(',')
+          .map((p) => p.trim())
+          .filter((p) => p.length > 0 && p.toLowerCase() !== 'none')
+      : ['linux/arm64'])
 
   const version = execGit(['describe', '--tags', '--always'])
   const commit = execGit(['rev-parse', 'HEAD'])
@@ -34,7 +40,7 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
     tag,
     context,
     dockerfile,
-    platforms: platforms.length ? platforms : undefined,
+    platforms,
     buildArgs: {
       TORGHUT_VERSION: version,
       TORGHUT_COMMIT: commit,

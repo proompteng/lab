@@ -46,6 +46,14 @@ flowchart TD
 | p95 latency | < timeout/2 | avoid backpressure |
 | circuit open events | rare | provider stability |
 
+## Promotion checklist (v1)
+Before disabling shadow mode or enabling adjustments, set and verify:
+- `LLM_EVALUATION_REPORT` (evaluation evidence reference)
+- `LLM_EFFECTIVE_CHALLENGE_ID` (independent review reference)
+- `LLM_SHADOW_COMPLETED_AT` (timestamp after shadow evaluation)
+- `LLM_ALLOWED_MODELS` includes the active `LLM_MODEL`
+- `LLM_ADJUSTMENT_APPROVED=true` (only if adjustments are allowed)
+
 ## Failure modes and recovery
 | Failure | Symptoms | Detection | Recovery |
 | --- | --- | --- | --- |
@@ -61,4 +69,3 @@ flowchart TD
 - **Decision:** New AI versions run in `LLM_SHADOW_MODE=true` before influencing executions.
 - **Rationale:** Real data reveals edge cases and drift.
 - **Consequences:** Adds time before AI can affect outcomes.
-

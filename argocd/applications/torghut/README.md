@@ -30,6 +30,7 @@ Replay is constrained by **both** Kafka retention (inputs) and ClickHouse TTL (o
 
 If you replay data older than the ClickHouse TTL, it may be deleted during merges shortly after replay (see
 `docs/torghut/design-system/v1/component-clickhouse-capacity-ttl-and-disk-guardrails.md`).
+Record the planned replay start/end timestamps in your ticket and confirm they fit within both windows.
 
 ### Safety gates (read first)
 - **Trading safety (prerequisite):** if there is any uncertainty about signal correctness (stale/corrupt/partial), pause
@@ -48,12 +49,14 @@ If you replay data older than the ClickHouse TTL, it may be deleted during merge
 Before touching the TA job or Kafka topics, record the following in your ticket/incident:
 - `REPLAY_ID` (unique id used in group id + any backups), example: `2026-02-09T0315Z-INC1234`
 - `PREV_TA_GROUP_ID` (current steady-state group id from `argocd/applications/torghut/ta/configmap.yaml`)
+- `PREV_TA_AUTO_OFFSET_RESET` (current steady-state offset reset policy)
 - Confirmation that trading is paused (or explicitly confirmed safe for paper-only replay)
 - Confirmation of replay window feasibility (Kafka retention vs ClickHouse TTL; see above)
 - If Mode 2 is required: explicit human approval + acknowledgement of destructive steps
 
 ### Inputs to capture (for rollback)
 - `PREV_TA_GROUP_ID` (current steady-state group id from `argocd/applications/torghut/ta/configmap.yaml`)
+- `PREV_TA_AUTO_OFFSET_RESET` (current steady-state offset reset policy)
 - `REPLAY_ID` (unique id used in group id + any backups), example: `2026-02-09T0315Z-INC1234`
 - Current TA job state: `running` vs `suspended`
 
@@ -72,6 +75,7 @@ Goal: recompute TA outputs from retained Kafka inputs without deleting topics or
    - Edit `argocd/applications/torghut/ta/configmap.yaml`:
      - `TA_GROUP_ID: "torghut-ta-replay-<REPLAY_ID>"`
      - `TA_AUTO_OFFSET_RESET: "earliest"`
+   - Confirm the new `TA_GROUP_ID` has never been used before; never reuse an old replay group id.
 4) Restart and resume TA (required to pick up ConfigMap env changes)
    - GitOps-first:
      - bump `spec.restartNonce` in `argocd/applications/torghut/ta/flinkdeployment.yaml`

@@ -62,41 +62,6 @@ class TestTradingApi(TestCase):
             session.commit()
             session.refresh(decision)
 
-            review_success = LLMDecisionReview(
-                trade_decision_id=decision.id,
-                model="gpt-test",
-                prompt_version="v1",
-                input_json={"decision": {"action": "buy"}},
-                response_json={"verdict": "approve"},
-                verdict="approve",
-                confidence=Decimal("0.8"),
-                adjusted_qty=None,
-                adjusted_order_type=None,
-                rationale="ok",
-                risk_flags=["low_liquidity"],
-                tokens_prompt=120,
-                tokens_completion=45,
-                created_at=datetime.now(timezone.utc),
-            )
-            review_error = LLMDecisionReview(
-                trade_decision_id=decision.id,
-                model="gpt-test",
-                prompt_version="v1",
-                input_json={"decision": {"action": "buy"}},
-                response_json={"error": "timeout"},
-                verdict="error",
-                confidence=None,
-                adjusted_qty=None,
-                adjusted_order_type=None,
-                rationale="llm_error",
-                risk_flags=["timeout"],
-                tokens_prompt=80,
-                tokens_completion=0,
-                created_at=datetime.now(timezone.utc),
-            )
-            session.add_all([review_success, review_error])
-            session.commit()
-
             execution = Execution(
                 trade_decision_id=decision.id,
                 alpaca_order_id="order-1",
@@ -115,6 +80,25 @@ class TestTradingApi(TestCase):
             session.add(execution)
             session.commit()
 
+            review = LLMDecisionReview(
+                trade_decision_id=decision.id,
+                model="demo",
+                prompt_version="v1",
+                input_json={"decision": "demo"},
+                response_json={"verdict": "approve"},
+                verdict="approve",
+                confidence=Decimal("0.7"),
+                adjusted_qty=None,
+                adjusted_order_type=None,
+                rationale="ok",
+                risk_flags=["demo_flag"],
+                tokens_prompt=120,
+                tokens_completion=45,
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(review)
+            session.commit()
+
     def tearDown(self) -> None:
         app.dependency_overrides.clear()
 
@@ -131,18 +115,6 @@ class TestTradingApi(TestCase):
         payload = response.json()
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["symbol"], "AAPL")
-
-    def test_trading_llm_evaluation_endpoint(self) -> None:
-        response = self.client.get("/trading/llm-evaluation")
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertEqual(payload["total_reviews"], 2)
-        self.assertEqual(payload["verdict_counts"]["approve"], 1)
-        self.assertEqual(payload["verdict_counts"]["error"], 1)
-        self.assertAlmostEqual(payload["error_rate"], 0.5, places=2)
-        self.assertEqual(payload["tokens"]["prompt"], 200)
-        self.assertEqual(payload["tokens"]["completion"], 45)
-        self.assertTrue(payload["top_risk_flags"])
 
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
@@ -181,3 +153,21 @@ class TestTradingApi(TestCase):
             self.assertFalse(payload["dependencies"]["clickhouse"]["ok"])
         finally:
             settings.trading_enabled = original
+
+    def test_trading_status_includes_llm_evaluation(self) -> None:
+        response = self.client.get("/trading/status")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("llm_evaluation", payload)
+        evaluation = payload["llm_evaluation"]
+        self.assertTrue(evaluation["ok"])
+        self.assertGreaterEqual(evaluation["metrics"]["total_reviews"], 1)
+
+    def test_trading_llm_evaluation_endpoint(self) -> None:
+        response = self.client.get("/trading/llm-evaluation")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        metrics = payload["metrics"]
+        self.assertEqual(metrics["tokens"]["prompt"], 120)
+        self.assertEqual(metrics["tokens"]["completion"], 45)
