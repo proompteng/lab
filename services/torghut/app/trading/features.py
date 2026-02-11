@@ -5,13 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional, cast
 
 from .models import SignalEnvelope
-
-FEATURE_SCHEMA_VERSION_V3 = "3.0.0"
 
 
 @dataclass(frozen=True)
@@ -25,18 +22,60 @@ class SignalFeatures:
 
 @dataclass(frozen=True)
 class FeatureVectorV3:
-    event_ts: datetime
+    schema_version: str
+    mapper_version: str
+    normalization_version: str
     symbol: str
     timeframe: str
-    seq: int
+    event_ts: str
+    macd: Optional[Decimal]
+    macd_signal: Optional[Decimal]
+    rsi: Optional[Decimal]
+    price: Optional[Decimal]
+    volatility: Optional[Decimal]
     source: str
-    feature_schema_version: str
-    values: dict[str, Any]
-    normalization_hash: str
+    seq: Optional[int]
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            'schema_version': self.schema_version,
+            'mapper_version': self.mapper_version,
+            'normalization_version': self.normalization_version,
+            'symbol': self.symbol,
+            'timeframe': self.timeframe,
+            'event_ts': self.event_ts,
+            'macd': _decimal_to_string(self.macd),
+            'macd_signal': _decimal_to_string(self.macd_signal),
+            'rsi': _decimal_to_string(self.rsi),
+            'price': _decimal_to_string(self.price),
+            'volatility': _decimal_to_string(self.volatility),
+            'source': self.source,
+            'seq': self.seq,
+        }
+
+    def parity_hash(self) -> str:
+        payload = json.dumps(self.to_payload(), sort_keys=True, separators=(',', ':'))
+        return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
 
-class FeatureNormalizationError(ValueError):
-    """Raised when signal payload cannot satisfy the v3 feature contract."""
+@dataclass(frozen=True)
+class FeatureContractResult:
+    vector: FeatureVectorV3
+    parity_hash: str
+    required_features: tuple[str, ...]
+    missing_required_features: tuple[str, ...]
+    valid: bool
+    reasons: tuple[str, ...]
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            'vector': self.vector.to_payload(),
+            'parity_hash': self.parity_hash,
+            'required_features': list(self.required_features),
+            'missing_required_features': list(self.missing_required_features),
+            'valid': self.valid,
+            'reasons': list(self.reasons),
+        }
 
 
 def extract_signal_features(signal: SignalEnvelope) -> SignalFeatures:
@@ -78,60 +117,45 @@ def extract_volatility(payload: dict[str, Any]) -> Optional[Decimal]:
     return None
 
 
-def normalize_feature_vector_v3(signal: SignalEnvelope) -> FeatureVectorV3:
-    payload = signal.payload or {}
-    macd, macd_signal = extract_macd(payload)
-    price = extract_price(payload)
-    rsi14 = extract_rsi(payload)
-    timeframe = signal.timeframe or "1Min"
-
-    values = {
-        "price": price,
-        "ema12": optional_decimal(payload.get("ema12")),
-        "ema26": optional_decimal(payload.get("ema26")),
-        "macd": macd,
-        "macd_signal": macd_signal,
-        "macd_hist": optional_decimal(payload.get("macd_hist")),
-        "vwap_session": optional_decimal(payload.get("vwap_session")),
-        "vwap_w5m": optional_decimal(payload.get("vwap_w5m")),
-        "rsi14": rsi14,
-        "boll_mid": optional_decimal(payload.get("boll_mid")),
-        "boll_upper": optional_decimal(payload.get("boll_upper")),
-        "boll_lower": optional_decimal(payload.get("boll_lower")),
-        "vol_realized_w60s": optional_decimal(payload.get("vol_realized_w60s") or payload.get("volatility")),
-        "imbalance_spread": optional_decimal(payload.get("imbalance_spread")),
-        "spread": optional_decimal(payload.get("spread")),
-        "signal_quality_flag": payload.get("signal_quality_flag"),
-        "staleness_ms": _staleness_ms(signal.event_ts, signal.ingest_ts),
-    }
-
-    required = ("price", "macd", "macd_signal", "rsi14")
-    missing = [name for name in required if values.get(name) is None]
-    if missing:
-        raise FeatureNormalizationError(f"missing_required_features:{'|'.join(sorted(missing))}")
-
-    normalized_payload = {
-        "event_ts": signal.event_ts.isoformat(),
-        "symbol": signal.symbol,
-        "timeframe": timeframe,
-        "seq": signal.seq or 0,
-        "source": signal.source or "unknown",
-        "feature_schema_version": FEATURE_SCHEMA_VERSION_V3,
-        "values": {key: _jsonable(values[key]) for key in sorted(values)},
-    }
-    normalization_hash = hashlib.sha256(
-        json.dumps(normalized_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-
-    return FeatureVectorV3(
-        event_ts=signal.event_ts,
+def normalize_feature_vector_v3(
+    signal: SignalEnvelope,
+    *,
+    schema_version: str = 'v3',
+    mapper_version: str = 'v1',
+    normalization_version: str = 'v1',
+    required_features: tuple[str, ...] = ('macd', 'macd_signal', 'rsi'),
+) -> FeatureContractResult:
+    features = extract_signal_features(signal)
+    timeframe = signal.timeframe or 'unknown'
+    source = signal.source or 'ta_signal'
+    vector = FeatureVectorV3(
+        schema_version=schema_version,
+        mapper_version=mapper_version,
+        normalization_version=normalization_version,
         symbol=signal.symbol,
         timeframe=timeframe,
-        seq=signal.seq or 0,
-        source=signal.source or "unknown",
-        feature_schema_version=FEATURE_SCHEMA_VERSION_V3,
-        values=values,
-        normalization_hash=normalization_hash,
+        event_ts=signal.event_ts.isoformat(),
+        macd=features.macd,
+        macd_signal=features.macd_signal,
+        rsi=features.rsi,
+        price=features.price,
+        volatility=features.volatility,
+        source=source,
+        seq=signal.seq,
+    )
+    missing = _missing_required_features(vector, required_features)
+    reasons: list[str] = []
+    if timeframe == 'unknown':
+        reasons.append('missing_timeframe')
+    if missing:
+        reasons.append('missing_required_features')
+    return FeatureContractResult(
+        vector=vector,
+        parity_hash=vector.parity_hash(),
+        required_features=required_features,
+        missing_required_features=missing,
+        valid=not reasons,
+        reasons=tuple(reasons),
     )
 
 
@@ -146,29 +170,37 @@ def optional_decimal(value: Any) -> Optional[Decimal]:
         return None
 
 
-def _staleness_ms(event_ts: datetime, ingest_ts: datetime | None) -> int:
-    # Use event/ingest timestamps only so replayed inputs remain deterministic.
-    reference = ingest_ts.astimezone(timezone.utc) if ingest_ts is not None else event_ts.astimezone(timezone.utc)
-    delta = reference - event_ts.astimezone(timezone.utc)
-    return max(0, int(delta.total_seconds() * 1000))
+def _decimal_to_string(value: Optional[Decimal]) -> Optional[str]:
+    if value is None:
+        return None
+    return str(value)
 
 
-def _jsonable(value: Any) -> Any:
-    if isinstance(value, Decimal):
-        return str(value)
-    return value
+def _missing_required_features(vector: FeatureVectorV3, required: tuple[str, ...]) -> tuple[str, ...]:
+    missing: list[str] = []
+    for feature in required:
+        if feature == 'macd' and vector.macd is None:
+            missing.append(feature)
+        elif feature == 'macd_signal' and vector.macd_signal is None:
+            missing.append(feature)
+        elif feature == 'rsi' and vector.rsi is None:
+            missing.append(feature)
+        elif feature == 'price' and vector.price is None:
+            missing.append(feature)
+        elif feature == 'volatility' and vector.volatility is None:
+            missing.append(feature)
+    return tuple(missing)
 
 
 __all__ = [
-    "FEATURE_SCHEMA_VERSION_V3",
-    "FeatureNormalizationError",
-    "FeatureVectorV3",
     "SignalFeatures",
+    'FeatureVectorV3',
+    'FeatureContractResult',
     "extract_signal_features",
     "extract_macd",
     "extract_rsi",
     "extract_price",
     "extract_volatility",
-    "normalize_feature_vector_v3",
+    'normalize_feature_vector_v3',
     "optional_decimal",
 ]

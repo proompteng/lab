@@ -32,25 +32,26 @@ Health checks:
 - `GET /healthz` – liveness (default port 8181)
 - `GET /db-check` – requires reachable Postgres at `DB_DSN` (default port 8181)
 
-## v3 autonomous lane (phase 1/2 foundation)
-Deterministic research -> gate evaluation -> paper candidate patch pipeline:
+## Torghut v3 Autonomous Lane (phase-1/phase-2 foundation)
+
+Run a deterministic local lane from research candidate input to gate report and paper patch artifacts:
 
 ```bash
 cd services/torghut
-uv run python scripts/run_autonomous_lane.py \
+uv run scripts/run_autonomous_lane.py \
+  --candidate-spec tests/fixtures/autonomy_candidate.json \
   --signals tests/fixtures/walkforward_signals.json \
-  --strategy-config config/autonomous-strategy-sample.yaml \
-  --gate-policy config/autonomous-gate-policy.json \
-  --output-dir artifacts/autonomy-lane
+  --strategy-config ../../argocd/applications/torghut/strategy-configmap.yaml \
+  --gate-policy config/autonomy-gates-v3.json \
+  --artifact-dir /tmp/torghut-autonomy \
+  --start 2026-01-01T00:00:00Z \
+  --end 2026-01-01T00:30:00Z
 ```
 
-Outputs:
-- `artifacts/autonomy-lane/research/candidate-spec.json`
-- `artifacts/autonomy-lane/backtest/walkforward-results.json`
-- `artifacts/autonomy-lane/backtest/evaluation-report.json`
-- `artifacts/autonomy-lane/gates/gate-evaluation.json`
-- `artifacts/autonomy-lane/paper-candidate/strategy-configmap-patch.yaml` (only when paper gates pass)
-
-Safety defaults:
-- live promotions are blocked unless gate policy explicitly enables them and approval token requirements are satisfied.
-- LLM remains bounded/advisory; deterministic risk/firewall controls remain final authority.
+Outputs include:
+- `research-artifact.json`
+- `walkforward-results.json`
+- `evaluation-report.json`
+- `metrics-bundle.json`
+- `gate-report.json`
+- `paper-candidate-patch.yaml`

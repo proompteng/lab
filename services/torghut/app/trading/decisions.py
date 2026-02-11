@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import logging
 from decimal import ROUND_DOWN, Decimal
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Literal, Optional
 
 from ..config import settings
 from ..models import Strategy
-from .features import SignalFeatures, extract_signal_features, optional_decimal
+from .features import (
+    SignalFeatures,
+    extract_signal_features,
+    normalize_feature_vector_v3,
+    optional_decimal,
+)
 from .models import SignalEnvelope, StrategyDecision
 from .prices import MarketSnapshot, PriceFetcher
+from .strategy_runtime import StrategyRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +26,7 @@ class DecisionEngine:
 
     def __init__(self, price_fetcher: Optional[PriceFetcher] = None) -> None:
         self.price_fetcher = price_fetcher
+        self.strategy_runtime = StrategyRuntime()
 
     def evaluate(
         self,
@@ -56,23 +63,45 @@ class DecisionEngine:
         timeframe = signal.timeframe
         if timeframe is None:
             return None
+        feature_contract = normalize_feature_vector_v3(
+            signal,
+            schema_version=settings.trading_feature_schema_version,
+            normalization_version=settings.trading_feature_normalization_version,
+        )
         features = extract_signal_features(signal)
+        action: Literal["buy", "sell"]
+        rationale_parts: list[str]
+        runtime_metadata: dict[str, Any]
+        if settings.trading_strategy_runtime_mode == "plugin_v3":
+            runtime_decision = self.strategy_runtime.evaluate(strategy, feature_contract, timeframe=timeframe)
+            if runtime_decision is None:
+                return None
+            action = runtime_decision.intent.action
+            rationale_parts = list(runtime_decision.intent.rationale)
+            runtime_metadata = runtime_decision.metadata()
+        else:
+            if features.macd is None or features.macd_signal is None or features.rsi is None:
+                logger.debug("Signal missing indicators for strategy %s", strategy.id)
+                return None
+            action = "buy"
+            rationale_parts = []
+            if features.macd > features.macd_signal and features.rsi < 35:
+                action = "buy"
+                rationale_parts.extend(["macd_cross_up", "rsi_oversold"])
+            elif features.macd < features.macd_signal and features.rsi > 65:
+                action = "sell"
+                rationale_parts.extend(["macd_cross_down", "rsi_overbought"])
+            else:
+                return None
+            runtime_metadata = {
+                "plugin_id": "legacy_builtin",
+                "plugin_version": "1.0.0",
+                "parameter_hash": "legacy",
+                "required_features": ["macd", "macd_signal", "rsi"],
+                "feature_contract": feature_contract.to_payload(),
+            }
         if features.macd is None or features.macd_signal is None or features.rsi is None:
             logger.debug("Signal missing indicators for strategy %s", strategy.id)
-            return None
-
-        action: Optional[str] = None
-        rationale_parts: list[str] = []
-        if features.macd > features.macd_signal and features.rsi < 35:
-            action = "buy"
-            rationale_parts.append("macd_cross_up")
-            rationale_parts.append("rsi_oversold")
-        elif features.macd < features.macd_signal and features.rsi > 65:
-            action = "sell"
-            rationale_parts.append("macd_cross_down")
-            rationale_parts.append("rsi_overbought")
-
-        if action is None:
             return None
 
         price = features.price
@@ -101,6 +130,7 @@ class DecisionEngine:
                 price=price,
                 volatility=features.volatility,
                 snapshot=snapshot,
+                runtime_metadata=runtime_metadata,
             )
             | {"sizing": sizing_meta},
         )
@@ -113,12 +143,14 @@ def _build_params(
     price: Optional[Decimal],
     volatility: Optional[Decimal],
     snapshot: Optional[MarketSnapshot],
+    runtime_metadata: dict[str, Any],
 ) -> dict[str, Any]:
     params: dict[str, Any] = {
         "macd": macd,
         "macd_signal": macd_signal,
         "rsi": rsi,
         "price": price,
+        "strategy_runtime": runtime_metadata,
     }
     if volatility is not None:
         params["volatility"] = volatility

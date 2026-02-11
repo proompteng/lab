@@ -53,6 +53,37 @@ class Settings(BaseSettings):
         alias="TRADING_STRATEGY_RELOAD_SECONDS",
         description="Seconds between strategy catalog reload checks.",
     )
+    trading_strategy_runtime_mode: Literal["legacy", "plugin_v3"] = Field(
+        default="legacy",
+        alias="TRADING_STRATEGY_RUNTIME_MODE",
+        description="Strategy runtime mode. legacy keeps current behavior; plugin_v3 enables plugin scaffolding.",
+    )
+    trading_feature_schema_version: str = Field(
+        default="v3",
+        alias="TRADING_FEATURE_SCHEMA_VERSION",
+        description="Feature contract schema version for normalized strategy input.",
+    )
+    trading_feature_normalization_version: str = Field(
+        default="v1",
+        alias="TRADING_FEATURE_NORMALIZATION_VERSION",
+        description="Feature normalization implementation version.",
+    )
+    trading_autonomy_enabled: bool = Field(default=False, alias="TRADING_AUTONOMY_ENABLED")
+    trading_autonomy_allow_live_promotion: bool = Field(
+        default=False,
+        alias="TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION",
+        description="Safety gate for autonomous promotion actions; live stays disabled by default.",
+    )
+    trading_autonomy_gate_policy_path: Optional[str] = Field(
+        default=None,
+        alias="TRADING_AUTONOMY_GATE_POLICY_PATH",
+        description="Optional path to v3 autonomous gate policy config JSON.",
+    )
+    trading_autonomy_artifact_dir: str = Field(
+        default="/tmp/torghut-autonomy",
+        alias="TRADING_AUTONOMY_ARTIFACT_DIR",
+        description="Output directory for autonomous lane artifacts.",
+    )
     trading_universe_source: Literal["jangar", "static"] = Field(
         default="static", alias="TRADING_UNIVERSE_SOURCE"
     )
