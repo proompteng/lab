@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import case, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from typing import cast
 from zoneinfo import ZoneInfo
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -298,7 +299,11 @@ def _build_llm_evaluation_payload(session: Session) -> dict[str, object]:
         if risk_payload is None:
             continue
         if isinstance(risk_payload, list):
-            flags = [str(flag).strip() for flag in risk_payload if str(flag).strip()]
+            flags = []
+            for flag in cast(list[object], risk_payload):
+                flag_str = str(flag).strip()
+                if flag_str:
+                    flags.append(flag_str)
         elif isinstance(risk_payload, str):
             flags = [risk_payload.strip()] if risk_payload.strip() else []
         else:
