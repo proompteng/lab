@@ -154,6 +154,25 @@ spec:
 - Wave 3: backtesting ledger + promotion gates + TCA integration.
 - Wave 4: autonomy/governance automation + LEAN/QLib/RD-Agent research lanes.
 
+## Implementation Snapshot (2026-02-11)
+Phase-1 and phase-2 foundations now implemented in `services/torghut/`:
+- plugin runtime scaffolding (`app/trading/strategy_runtime.py`) with deterministic parameter and feature hashes,
+- feature normalization boundary (`app/trading/features.py`) exposing `FeatureVectorV3` + parity hash metadata,
+- autonomous gate matrix evaluator (`app/trading/autonomy.py`) with Gate 0-5 outputs and machine-readable contracts,
+- end-to-end deterministic lane runner (`scripts/run_autonomous_lane.py`) producing research/backtest/gate artifacts and
+  paper-candidate patch output.
+
+Current safety posture:
+- live remains gated by default (`TRADING_LIVE_ENABLED=false`, `allow_live_promotion=false`),
+- deterministic risk/firewall remain final authority in runtime execution path,
+- LLM path remains bounded/advisory and cannot bypass gate/risk controls.
+
+Migration notes for next phases:
+- promote `TRADING_STRATEGY_RUNTIME_MODE=plugin_v3` after paper shadow validation and parity checks,
+- wire autonomous lane artifacts into AgentRun specs (`torghut-v3-backtest-robustness-v1` and
+  `torghut-v3-gate-evaluation-v1`) for CI-enforced promotion flow,
+- extend dataset/feature registry persistence and audit-pack exporters per full-loop docs 05 and 10.
+
 ## External References
 - LEAN: <https://github.com/QuantConnect/Lean>
 - Qlib: <https://github.com/microsoft/qlib>

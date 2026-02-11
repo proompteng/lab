@@ -4,6 +4,9 @@ namespace: torghut
 resources:
   - postgres-cluster.yaml
   - strategy-configmap.yaml
+  - autonomous-configmap.yaml
+  - autonomy-configmap.yaml
+  - autonomy-gate-policy-configmap.yaml
   - knative-service.yaml
   - tailscale-service.yaml
   - sealed-secrets.yaml

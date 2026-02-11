@@ -1,0 +1,145 @@
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest import TestCase
+
+from app.trading.autonomy.lane import run_autonomous_lane
+
+
+class TestAutonomousLane(TestCase):
+    def test_lane_emits_gate_report_and_paper_patch(self) -> None:
+        fixture_path = Path(__file__).parent / 'fixtures' / 'walkforward_signals.json'
+        strategy_config_path = Path(__file__).parent.parent / 'config' / 'autonomous-strategy-sample.yaml'
+        gate_policy_path = Path(__file__).parent.parent / 'config' / 'autonomous-gate-policy.json'
+        strategy_configmap_path = (
+            Path(__file__).parent.parent.parent.parent / 'argocd' / 'applications' / 'torghut' / 'strategy-configmap.yaml'
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / 'lane'
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target='paper',
+                strategy_configmap_path=strategy_configmap_path,
+                code_version='test-sha',
+            )
+
+            gate_payload = json.loads(result.gate_report_path.read_text(encoding='utf-8'))
+            self.assertIn('gates', gate_payload)
+            self.assertEqual(gate_payload['recommended_mode'], 'paper')
+            self.assertIsNotNone(result.paper_patch_path)
+            assert result.paper_patch_path is not None
+            self.assertTrue(result.paper_patch_path.exists())
+
+    def test_lane_blocks_live_without_policy_enablement(self) -> None:
+        fixture_path = Path(__file__).parent / 'fixtures' / 'walkforward_signals.json'
+        strategy_config_path = Path(__file__).parent.parent / 'config' / 'autonomous-strategy-sample.yaml'
+        gate_policy_path = Path(__file__).parent.parent / 'config' / 'autonomous-gate-policy.json'
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / 'lane-live'
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target='live',
+                code_version='test-sha',
+            )
+
+            gate_payload = json.loads(result.gate_report_path.read_text(encoding='utf-8'))
+            self.assertFalse(gate_payload['promotion_allowed'])
+            self.assertIn('live_rollout_disabled_by_policy', gate_payload['reasons'])
+            self.assertIsNone(result.paper_patch_path)
+
+    def test_lane_uses_repo_relative_default_configmap_path(self) -> None:
+        fixture_path = Path(__file__).parent / 'fixtures' / 'walkforward_signals.json'
+        strategy_config_path = Path(__file__).parent.parent / 'config' / 'autonomous-strategy-sample.yaml'
+        gate_policy_path = Path(__file__).parent.parent / 'config' / 'autonomous-gate-policy.json'
+        previous_cwd = Path.cwd()
+        try:
+            os.chdir(Path(__file__).parent.parent)
+            with tempfile.TemporaryDirectory() as tmpdir:
+                output_dir = Path(tmpdir) / 'lane-default-path'
+                result = run_autonomous_lane(
+                    signals_path=fixture_path,
+                    strategy_config_path=strategy_config_path,
+                    gate_policy_path=gate_policy_path,
+                    output_dir=output_dir,
+                    promotion_target='paper',
+                    code_version='test-sha',
+                )
+                self.assertIsNotNone(result.paper_patch_path)
+                assert result.paper_patch_path is not None
+                self.assertTrue(result.paper_patch_path.exists())
+        finally:
+            os.chdir(previous_cwd)
+
+    def test_lane_counts_rsi_alias_for_gate_null_rate(self) -> None:
+        strategy_config_path = Path(__file__).parent.parent / 'config' / 'autonomous-strategy-sample.yaml'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            signals_path = tmp / 'signals.json'
+            policy_path = tmp / 'policy.json'
+            output_dir = tmp / 'lane-rsi-alias'
+
+            signals_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            'event_ts': datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc).isoformat(),
+                            'symbol': 'AAPL',
+                            'timeframe': '1Min',
+                            'payload': {
+                                'macd': {'macd': '1.2', 'signal': '0.8'},
+                                'rsi': '24',
+                                'price': '101.5',
+                            },
+                            'seq': 1,
+                            'source': 'fixture',
+                        }
+                    ]
+                ),
+                encoding='utf-8',
+            )
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        'policy_version': 'v3-gates-1',
+                        'required_feature_schema_version': '3.0.0',
+                        'gate0_max_null_rate': '0',
+                        'gate0_max_staleness_ms': 120000,
+                        'gate0_min_symbol_coverage': 1,
+                        'gate1_min_decision_count': 0,
+                        'gate1_min_trade_count': 0,
+                        'gate1_min_net_pnl': '-100000',
+                        'gate1_max_negative_fold_ratio': '1',
+                        'gate1_max_net_pnl_cv': '100',
+                        'gate2_max_drawdown': '100000',
+                        'gate2_max_turnover_ratio': '1000',
+                        'gate2_max_cost_bps': '1000',
+                        'gate3_max_llm_error_ratio': '1',
+                        'gate5_live_enabled': False,
+                    }
+                ),
+                encoding='utf-8',
+            )
+
+            result = run_autonomous_lane(
+                signals_path=signals_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=policy_path,
+                output_dir=output_dir,
+                promotion_target='paper',
+                code_version='test-sha',
+            )
+            gate_payload = json.loads(result.gate_report_path.read_text(encoding='utf-8'))
+            gate0 = next(item for item in gate_payload['gates'] if item['gate_id'] == 'gate0_data_integrity')
+            self.assertEqual(gate0['status'], 'pass')
