@@ -81,6 +81,8 @@ class TradingMetrics:
     llm_error_total: int = 0
     llm_circuit_open_total: int = 0
     llm_shadow_total: int = 0
+    llm_tokens_prompt_total: int = 0
+    llm_tokens_completion_total: int = 0
 
 
 @dataclass
@@ -449,6 +451,11 @@ class TradingPipeline:
                 self.state.metrics.llm_approve_total += 1
             elif policy_outcome.verdict == "veto":
                 self.state.metrics.llm_veto_total += 1
+
+            if outcome.tokens_prompt is not None:
+                self.state.metrics.llm_tokens_prompt_total += outcome.tokens_prompt
+            if outcome.tokens_completion is not None:
+                self.state.metrics.llm_tokens_completion_total += outcome.tokens_completion
 
             self._persist_llm_review(
                 session=session,
