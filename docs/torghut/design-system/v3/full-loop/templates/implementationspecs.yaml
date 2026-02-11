@@ -1,0 +1,175 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-v3-research-intake-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - researchPrompt
+      - universe
+      - featureSchemaVersion
+      - outputPath
+  text: |
+    Objective: Produce a structured Torghut candidate spec from a research hypothesis.
+    Inputs: researchPrompt, universe, featureSchemaVersion, outputPath.
+    Output: candidate spec markdown + JSON metadata.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-v3-candidate-build-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - repository
+      - base
+      - head
+      - candidateSpecPath
+      - strategyCatalogPath
+  text: |
+    Objective: Implement strategy plugin and tests from candidate spec.
+    Inputs: repository, base, head, candidateSpecPath, strategyCatalogPath.
+    Output: PR-ready code changes and test evidence.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-v3-backtest-robustness-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - datasetSnapshotId
+      - strategyId
+      - strategyVersion
+      - costModelVersion
+      - artifactPath
+  text: |
+    Objective: Run walk-forward + stress tests and produce metrics artifacts.
+    Inputs: datasetSnapshotId, strategyId, strategyVersion, costModelVersion, artifactPath.
+    Output: metrics bundle + robustness report.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-v3-gate-evaluation-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - gateConfigPath
+      - metricsBundlePath
+      - artifactPath
+  text: |
+    Objective: Evaluate gates and emit deterministic pass/fail report.
+    Inputs: gateConfigPath, metricsBundlePath, artifactPath.
+    Output: gate decision JSON + markdown summary.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-v3-shadow-paper-run-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - torghutNamespace
+      - gitopsPath
+      - strategyConfigPatchPath
+      - evaluationWindow
+  text: |
+    Objective: Run approved candidate in shadow/paper and collect evaluation telemetry.
+    Inputs: torghutNamespace, gitopsPath, strategyConfigPatchPath, evaluationWindow.
+    Output: comparative telemetry and promotion recommendation.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-v3-live-ramp-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - torghutNamespace
+      - gitopsPath
+      - rampStage
+      - confirm
+      - artifactPath
+  text: |
+    Objective: Apply controlled live-ramp stage with policy checks.
+    Inputs: torghutNamespace, gitopsPath, rampStage, confirm, artifactPath.
+    Output: rollout report and stage health summary.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-v3-incident-recovery-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - incidentId
+      - torghutNamespace
+      - rollbackTarget
+      - confirm
+      - artifactPath
+  text: |
+    Objective: Execute containment, rollback, and recovery verification.
+    Inputs: incidentId, torghutNamespace, rollbackTarget, confirm, artifactPath.
+    Output: incident recovery report with verification checklist.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-v3-audit-evidence-impl-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - runId
+      - artifactRefs
+      - complianceProfile
+      - outputPath
+  text: |
+    Objective: Build audit/compliance evidence package for run.
+    Inputs: runId, artifactRefs, complianceProfile, outputPath.
+    Output: immutable evidence bundle and validation report.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-v3-loop-dag-impl-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - repository
+      - base
+      - head
+      - pipelineConfigPath
+      - artifactPath
+  text: |
+    Objective: Implement and validate full-loop stage DAG and transitions.
+    Inputs: repository, base, head, pipelineConfigPath, artifactPath.
+    Output: orchestration config + transition test evidence.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-v3-orchestration-playbook-impl-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - repository
+      - base
+      - head
+      - candidateId
+      - stage
+      - artifactPath
+  text: |
+    Objective: Implement AgentRun orchestration controls (retry, idempotency, lane ownership).
+    Inputs: repository, base, head, candidateId, stage, artifactPath.
+    Output: orchestration runbook + runnable templates.
