@@ -57,6 +57,7 @@ Definition of "significant scope" for this pack:
 8. `08-live-rollout-capital-ramp-plan.md`
 9. `09-incident-kill-switch-recovery-runbook.md`
 10. `10-audit-compliance-evidence-spec.md`
+11. `11-phase1-phase2-implementation-notes-2026-02-11.md`
 
 ## Templates
 - `templates/implementationspecs.yaml`

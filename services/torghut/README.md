@@ -31,3 +31,26 @@ uv run pyright
 Health checks:
 - `GET /healthz` – liveness (default port 8181)
 - `GET /db-check` – requires reachable Postgres at `DB_DSN` (default port 8181)
+
+## v3 autonomous lane (phase 1/2 foundation)
+Deterministic research -> gate evaluation -> paper candidate patch pipeline:
+
+```bash
+cd services/torghut
+uv run python scripts/run_autonomous_lane.py \
+  --signals tests/fixtures/walkforward_signals.json \
+  --strategy-config config/autonomous-strategy-sample.yaml \
+  --gate-policy config/autonomous-gate-policy.json \
+  --output-dir artifacts/autonomy-lane
+```
+
+Outputs:
+- `artifacts/autonomy-lane/research/candidate-spec.json`
+- `artifacts/autonomy-lane/backtest/walkforward-results.json`
+- `artifacts/autonomy-lane/backtest/evaluation-report.json`
+- `artifacts/autonomy-lane/gates/gate-evaluation.json`
+- `artifacts/autonomy-lane/paper-candidate/strategy-configmap-patch.yaml` (only when paper gates pass)
+
+Safety defaults:
+- live promotions are blocked unless gate policy explicitly enables them and approval token requirements are satisfied.
+- LLM remains bounded/advisory; deterministic risk/firewall controls remain final authority.
