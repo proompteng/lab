@@ -46,8 +46,8 @@ class FoldResult:
     signals_count: int = 0
 
     def to_payload(self) -> dict[str, object]:
-        metrics = self.fold_metrics()
         regime = _fold_regime_payload(self.decisions)
+        metrics = self.fold_metrics(regime=regime)
         return {
             "fold": _fold_payload(self.fold),
             "signals_count": self.signals_count,
@@ -57,7 +57,8 @@ class FoldResult:
             "decisions": [self._decision_payload(item) for item in self.decisions],
         }
 
-    def fold_metrics(self) -> dict[str, int]:
+    def fold_metrics(self, regime: dict[str, str] | None = None) -> dict[str, object]:
+        resolved_regime = regime or _fold_regime_payload(self.decisions)
         action_counts = {"buy": 0, "sell": 0, "hold": 0}
         for item in self.decisions:
             action = item.decision.action
@@ -70,6 +71,8 @@ class FoldResult:
             "buy_count": action_counts["buy"],
             "sell_count": action_counts["sell"],
             "hold_count": action_counts["hold"],
+            "regime_label": resolved_regime["label"],
+            "regime": resolved_regime,
         }
 
     @staticmethod
