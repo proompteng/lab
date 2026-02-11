@@ -325,6 +325,91 @@ data:
               description: |
                 The active Knative private revision for torghut is being scraped but up=0 for 5 minutes.
               runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
+      - name: torghut-llm.rules
+        rules:
+          - alert: TorghutLLMErrorRateHigh
+            expr: |
+              sum(
+                rate(
+                  torghut_llm_review_total{
+                    namespace="torghut",
+                    service="torghut",
+                    verdict="error"
+                  }[10m]
+                )
+              )
+              /
+              clamp_min(
+                sum(
+                  rate(
+                    torghut_llm_review_total{
+                      namespace="torghut",
+                      service="torghut"
+                    }[10m]
+                  )
+                ),
+                1
+              ) > 0.05
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM error rate is elevated
+              description: LLM error verdicts exceed 5% of reviews over the last 10 minutes.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-evaluation-and-benchmarks.md
+          - alert: TorghutLLMTokensSpike
+            expr: |
+              sum(
+                rate(
+                  torghut_llm_tokens_total{
+                    namespace="torghut",
+                    service="torghut"
+                  }[5m]
+                )
+              )
+              > 2
+              * sum(
+                rate(
+                  torghut_llm_tokens_total{
+                    namespace="torghut",
+                    service="torghut"
+                  }[1h]
+                )
+              )
+              and sum(
+                rate(
+                  torghut_llm_tokens_total{
+                    namespace="torghut",
+                    service="torghut"
+                  }[1h]
+                )
+              ) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM token usage spiking
+              description: LLM token usage is >2x the 1h rate for 10 minutes.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-evaluation-and-benchmarks.md
+          - alert: TorghutLLMTelemetryMissing
+            expr: |
+              absent(
+                sum(
+                  rate(
+                    torghut_llm_review_total{
+                      namespace="torghut",
+                      service="torghut"
+                    }[30m]
+                  )
+                )
+              ) == 1
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM telemetry missing
+              description: No LLM review metrics have been scraped for 30 minutes.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-evaluation-and-benchmarks.md
       - name: torghut-freshness.rules
         rules:
           - alert: TorghutSignalsStaleDuringMarketHours
