@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, timedelta, timezone
@@ -29,6 +30,10 @@ from .config import settings
 
 class OrderFirewallToken:
     """Marker token required for broker order submission/cancellation."""
+
+
+class OrderFirewallViolation(PermissionError):
+    """Raised when broker mutation methods are called outside OrderFirewall."""
 
 
 class TorghutAlpacaClient:
@@ -109,6 +114,7 @@ class TorghutAlpacaClient:
         *,
         firewall_token: OrderFirewallToken,
     ) -> Dict[str, Any]:
+        self._require_firewall_caller()
         self._require_firewall_token(firewall_token)
         side_enum = OrderSide(side.lower())
         tif_enum = TimeInForce(time_in_force.lower())
@@ -138,11 +144,13 @@ class TorghutAlpacaClient:
         return self._model_to_dict(order)
 
     def cancel_order(self, alpaca_order_id: str, *, firewall_token: OrderFirewallToken) -> bool:
+        self._require_firewall_caller()
         self._require_firewall_token(firewall_token)
         self.trading.cancel_order_by_id(alpaca_order_id)
         return True
 
     def cancel_all_orders(self, *, firewall_token: OrderFirewallToken) -> List[Dict[str, Any]]:
+        self._require_firewall_caller()
         self._require_firewall_token(firewall_token)
         responses = self.trading.cancel_orders()
         return [self._model_to_dict(resp) for resp in responses]
@@ -253,6 +261,20 @@ class TorghutAlpacaClient:
         if not isinstance(token, OrderFirewallToken):
             raise PermissionError("order_firewall_token_required")
 
+    @staticmethod
+    def _require_firewall_caller() -> None:
+        frame = inspect.currentframe()
+        try:
+            caller = frame.f_back if frame is not None else None
+            if caller is not None and caller.f_globals.get("__name__", "") == __name__:
+                caller = caller.f_back
+            caller_module = caller.f_globals.get("__name__", "") if caller is not None else ""
+            if caller_module == "app.trading.firewall":
+                return
+            raise OrderFirewallViolation("order_firewall_boundary_violation")
+        finally:
+            del frame
+
 
 def _normalize_alpaca_base_url(base_url: Optional[str]) -> Optional[str]:
     if not base_url:
@@ -263,4 +285,8 @@ def _normalize_alpaca_base_url(base_url: Optional[str]) -> Optional[str]:
     return trimmed
 
 
-__all__ = ["TorghutAlpacaClient"]
+__all__ = [
+    "OrderFirewallToken",
+    "OrderFirewallViolation",
+    "TorghutAlpacaClient",
+]

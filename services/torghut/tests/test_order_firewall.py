@@ -56,6 +56,7 @@ class TestOrderFirewall(TestCase):
 
         self.assertTrue(firewall.cancel_open_orders_if_kill_switch())
         self.assertEqual(client.cancel_all_calls, 1)
+        self.assertEqual(firewall.status().reason, "kill_switch_enabled")
 
         with self.assertRaises(OrderFirewallBlocked):
             firewall.submit_order(
@@ -81,3 +82,12 @@ class TestOrderFirewall(TestCase):
 
         self.assertEqual(response["symbol"], "AAPL")
         self.assertEqual(len(client.submissions), 1)
+
+    def test_kill_switch_noop_when_disabled(self) -> None:
+        settings.trading_kill_switch_enabled = False
+        client = FakeAlpacaClient()
+        firewall = OrderFirewall(client)
+
+        self.assertFalse(firewall.cancel_open_orders_if_kill_switch())
+        self.assertEqual(client.cancel_all_calls, 0)
+        self.assertEqual(firewall.status().reason, "ok")

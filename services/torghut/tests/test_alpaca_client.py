@@ -5,7 +5,9 @@ from typing import Any, List
 from unittest import TestCase
 from unittest.mock import patch
 
-from app.alpaca_client import OrderFirewallToken, TorghutAlpacaClient
+from app.alpaca_client import OrderFirewallViolation, TorghutAlpacaClient
+from app.config import settings
+from app.trading.firewall import OrderFirewall
 
 
 class DummyModel:
@@ -57,6 +59,13 @@ class DummyDataClient:
 
 
 class TestAlpacaClient(TestCase):
+    def setUp(self) -> None:
+        self.original_kill_switch = settings.trading_kill_switch_enabled
+        settings.trading_kill_switch_enabled = False
+
+    def tearDown(self) -> None:
+        settings.trading_kill_switch_enabled = self.original_kill_switch
+
     def test_alpaca_client_basic_wrappers(self) -> None:
         client = TorghutAlpacaClient(
             api_key="k",
@@ -76,13 +85,13 @@ class TestAlpacaClient(TestCase):
         self.assertEqual(orders[0]["id"], "order-1")
         self.assertIsInstance(orders[0]["uuid_id"], str)
 
-        submitted = client.submit_order(
+        firewall = OrderFirewall(client)
+        submitted = firewall.submit_order(
             symbol="AAPL",
             side="buy",
             qty=1,
             order_type="market",
             time_in_force="day",
-            firewall_token=OrderFirewallToken(),
         )
         self.assertEqual(submitted["status"], "accepted")
 
@@ -90,8 +99,26 @@ class TestAlpacaClient(TestCase):
         self.assertIn("AAPL", bars)
         self.assertEqual(len(bars["AAPL"]), 1)
 
-        cancelled = client.cancel_all_orders(firewall_token=OrderFirewallToken())
+        cancelled = firewall.cancel_all_orders()
         self.assertEqual(len(cancelled), 2)
+
+    def test_mutating_methods_require_firewall_boundary(self) -> None:
+        client = TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            trading_client=DummyTradingClient(),
+            data_client=DummyDataClient(),
+        )
+        with self.assertRaises(OrderFirewallViolation):
+            client.submit_order(
+                symbol="AAPL",
+                side="buy",
+                qty=1,
+                order_type="market",
+                time_in_force="day",
+                firewall_token=object(),  # type: ignore[arg-type]
+            )
 
     def test_market_data_uses_data_endpoint_by_default(self) -> None:
         with patch("app.alpaca_client.StockHistoricalDataClient") as mock_data_client:
