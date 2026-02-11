@@ -97,7 +97,7 @@ spec:
             - name: TRADING_STRATEGY_RELOAD_SECONDS
               value: "10"
             - name: TRADING_UNIVERSE_SOURCE
-              value: static
+              value: jangar
             - name: TRADING_STATIC_SYMBOLS
               value: CRWD,MU,NVDA
             - name: JANGAR_SYMBOLS_URL
