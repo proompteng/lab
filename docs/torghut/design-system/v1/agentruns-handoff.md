@@ -2,7 +2,7 @@
 
 ## Status
 - Version: `v1`
-- Last updated: **2026-02-08**
+- Last updated: **2026-02-11**
 - Source of truth (config): `argocd/applications/torghut/**`
 - Intended audience: AgentRuns implementers and oncall automation engineers
 
@@ -194,6 +194,9 @@ spec:
 Notes:
 - `ttlSecondsAfterFinished` is a top-level `AgentRun.spec` field (see `charts/agents/crds/agents.proompteng.ai_agentruns.yaml`).
 - Avoid setting `spec.parameters.prompt` unless you intend to override the ImplementationSpec text (prompt precedence is documented in `docs/agents/agentrun-creation-guide.md`).
+- For design-doc implementation runs, prefer a single workflow step `implement`; add `plan` only when a separate planning phase is required.
+- Keep `AgentRun.metadata.name` <= 63 characters to avoid controller reconciliation failures on propagated label values.
+- Do not assume AgentRun parameters are shell env vars inside the runner; verify values via generated `run.json`/`agent-runner.json` payloads.
 
 ### Progress updates (post-2026-02-08)
 - **2026-02-10:** The read-only Torghut health report procedure was exercised successfully via:
