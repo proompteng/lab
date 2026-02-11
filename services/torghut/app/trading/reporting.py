@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Mapping, Optional, cast
 
 from ..models import Strategy
 from .costs import CostModelConfig, CostModelInputs, OrderIntent, TransactionCostModel
@@ -242,6 +242,14 @@ class EvaluationReport:
 class _PositionState:
     qty: Decimal = Decimal("0")
     avg_price: Optional[Decimal] = None
+
+
+@dataclass(frozen=True)
+class _ResolvedImpactInputs:
+    spread: Optional[Decimal]
+    volatility: Optional[Decimal]
+    adv: Optional[Decimal]
+    execution_seconds: int
 
 
 def generate_evaluation_report(
@@ -652,16 +660,26 @@ def _collect_impact_assumptions(
     spread_count = 0
     volatility_count = 0
     adv_count = 0
-    default_execution_seconds = 60
+    execution_seconds_values: list[int] = []
+    decisions_with_recorded_inputs = 0
 
     for item in decisions:
         params = item.decision.params
-        if _decimal(params.get("spread")) is not None:
+        impact_inputs, from_recorded = _resolve_impact_inputs(params)
+        if from_recorded:
+            decisions_with_recorded_inputs += 1
+
+        if impact_inputs.spread is not None:
             spread_count += 1
-        if _decimal(params.get("volatility")) is not None:
+        if impact_inputs.volatility is not None:
             volatility_count += 1
-        if _decimal(params.get("adv")) is not None:
+        if impact_inputs.adv is not None:
             adv_count += 1
+        execution_seconds_values.append(impact_inputs.execution_seconds)
+
+    default_execution_seconds = 60
+    if execution_seconds_values:
+        default_execution_seconds = _deterministic_mode_int(execution_seconds_values)
 
     return EvaluationImpactAssumptions(
         default_execution_seconds=default_execution_seconds,
@@ -672,6 +690,8 @@ def _collect_impact_assumptions(
             "commission_bps": str(cost_model_config.commission_bps),
             "impact_bps_at_full_participation": str(cost_model_config.impact_bps_at_full_participation),
             "max_participation_rate": str(cost_model_config.max_participation_rate),
+            "recorded_inputs_count": str(decisions_with_recorded_inputs),
+            "fallback_inputs_count": str(max(len(decisions) - decisions_with_recorded_inputs, 0)),
         },
     )
 
@@ -695,6 +715,61 @@ def _decimal(value: Any) -> Optional[Decimal]:
         return Decimal(str(value))
     except (ArithmeticError, TypeError, ValueError):
         return None
+
+
+def _resolve_impact_inputs(params: dict[str, Any]) -> tuple[_ResolvedImpactInputs, bool]:
+    recorded = _recorded_impact_inputs(params)
+    if recorded is not None:
+        return recorded, True
+
+    execution_seconds = _as_int(params.get("execution_seconds"))
+    if execution_seconds is None or execution_seconds <= 0:
+        execution_seconds = 60
+    return _ResolvedImpactInputs(
+        spread=_decimal(params.get("spread")),
+        volatility=_decimal(params.get("volatility")),
+        adv=_decimal(params.get("adv")),
+        execution_seconds=execution_seconds,
+    ), False
+
+
+def _recorded_impact_inputs(params: dict[str, Any]) -> Optional[_ResolvedImpactInputs]:
+    raw = params.get("impact_assumptions")
+    if not isinstance(raw, dict):
+        return None
+    raw_payload = cast(dict[str, Any], raw)
+    inputs_raw = raw_payload.get("inputs")
+    if not isinstance(inputs_raw, Mapping):
+        return None
+    inputs = cast(Mapping[str, Any], inputs_raw)
+
+    execution_seconds = _as_int(inputs.get("execution_seconds"))
+    if execution_seconds is None or execution_seconds <= 0:
+        execution_seconds = 60
+
+    return _ResolvedImpactInputs(
+        spread=_decimal(inputs.get("spread")),
+        volatility=_decimal(inputs.get("volatility")),
+        adv=_decimal(inputs.get("adv")),
+        execution_seconds=execution_seconds,
+    )
+
+
+def _as_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _deterministic_mode_int(values: list[int]) -> int:
+    counts: dict[int, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    # Deterministic tie-break: choose the smallest value when counts match.
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
 
 
 def _bps_from_cost(cost: Decimal, notional: Decimal) -> Decimal:
