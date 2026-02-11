@@ -325,6 +325,70 @@ data:
               description: |
                 The active Knative private revision for torghut is being scraped but up=0 for 5 minutes.
               runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
+      - name: torghut-llm.rules
+        rules:
+          - alert: TorghutLLMErrorRateElevated
+            expr: |
+              sum(
+                rate(
+                  torghut_llm_review_total{
+                    namespace="torghut",
+                    service="torghut",
+                    verdict="error"
+                  }[10m]
+                )
+              )
+              /
+              clamp_min(
+                sum(
+                  rate(
+                    torghut_llm_review_total{
+                      namespace="torghut",
+                      service="torghut"
+                    }[10m]
+                  )
+                ),
+                1
+              ) > 0.05
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM error rate elevated
+              description: LLM review errors are >5% of reviews over the last 10 minutes.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-evaluation-and-benchmarks.md
+          - alert: TorghutLLMTokensSpike
+            expr: |
+              sum(
+                increase(
+                  torghut_llm_tokens_total{
+                    namespace="torghut",
+                    service="torghut"
+                  }[15m]
+                )
+              ) > 50000
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM token usage spike
+              description: Token usage exceeded 50k in 15 minutes, indicating a sudden cost spike.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-evaluation-and-benchmarks.md
+          - alert: TorghutLLMTelemetryMissing
+            expr: |
+              absent(
+                torghut_llm_review_total{
+                  namespace="torghut",
+                  service="torghut"
+                }
+              ) == 1
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM telemetry missing
+              description: No LLM review metrics are being scraped for torghut.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-evaluation-and-benchmarks.md
       - name: torghut-freshness.rules
         rules:
           - alert: TorghutSignalsStaleDuringMarketHours
