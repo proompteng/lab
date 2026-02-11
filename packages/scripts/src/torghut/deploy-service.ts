@@ -302,7 +302,7 @@ const buildWebsocketImage = async () => {
   )
   const platforms = process.env.TORGHUT_WS_IMAGE_PLATFORMS?.split(',')
     .map((entry) => entry.trim())
-    .filter(Boolean) ?? ['linux/arm64']
+    .filter((entry) => entry.length > 0 && entry.toLowerCase() !== 'none') ?? ['linux/arm64']
   const codexAuthPath = process.env.TORGHUT_WS_CODEX_AUTH_PATH
 
   return buildAndPushDockerImage({
@@ -327,7 +327,7 @@ const buildTechnicalAnalysisImage = async () => {
   )
   const platforms = process.env.TORGHUT_TA_IMAGE_PLATFORMS?.split(',')
     .map((entry) => entry.trim())
-    .filter(Boolean) ?? ['linux/arm64']
+    .filter((entry) => entry.length > 0 && entry.toLowerCase() !== 'none') ?? ['linux/arm64']
   const codexAuthPath = process.env.TORGHUT_TA_CODEX_AUTH_PATH
 
   return buildAndPushDockerImage({
