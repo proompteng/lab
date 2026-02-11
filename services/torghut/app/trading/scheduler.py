@@ -79,8 +79,12 @@ class TradingMetrics:
     llm_veto_total: int = 0
     llm_adjust_total: int = 0
     llm_error_total: int = 0
+    llm_parse_error_total: int = 0
+    llm_validation_error_total: int = 0
     llm_circuit_open_total: int = 0
     llm_shadow_total: int = 0
+    llm_tokens_prompt_total: int = 0
+    llm_tokens_completion_total: int = 0
 
 
 @dataclass
@@ -468,6 +472,10 @@ class TradingPipeline:
             )
 
             engine.circuit_breaker.record_success()
+            if outcome.tokens_prompt is not None:
+                self.state.metrics.llm_tokens_prompt_total += outcome.tokens_prompt
+            if outcome.tokens_completion is not None:
+                self.state.metrics.llm_tokens_completion_total += outcome.tokens_completion
             if settings.llm_shadow_mode:
                 self.state.metrics.llm_shadow_total += 1
                 return decision, None
@@ -478,6 +486,11 @@ class TradingPipeline:
         except Exception as exc:
             engine.circuit_breaker.record_error()
             self.state.metrics.llm_error_total += 1
+            error_code = str(exc)
+            if error_code == "llm_response_not_json":
+                self.state.metrics.llm_parse_error_total += 1
+            elif error_code == "llm_response_invalid":
+                self.state.metrics.llm_validation_error_total += 1
             fallback = self._resolve_llm_fallback()
             effective_verdict = "veto" if fallback == "veto" else "approve"
             response_json = {
