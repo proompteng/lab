@@ -9,6 +9,7 @@ from typing import Any, Iterable, Literal, Optional
 from ..config import settings
 from ..models import Strategy
 from .features import (
+    FeatureNormalizationError,
     SignalFeatures,
     extract_signal_features,
     normalize_feature_vector_v3,
@@ -63,17 +64,29 @@ class DecisionEngine:
         timeframe = signal.timeframe
         if timeframe is None:
             return None
-        feature_contract = normalize_feature_vector_v3(
-            signal,
-            schema_version=settings.trading_feature_schema_version,
-            normalization_version=settings.trading_feature_normalization_version,
-        )
         features = extract_signal_features(signal)
+
+        price = features.price
+        snapshot: Optional[MarketSnapshot] = None
+        if price is None and self.price_fetcher is not None:
+            snapshot = self.price_fetcher.fetch_market_snapshot(signal)
+            if snapshot is not None:
+                price = snapshot.price
+
         action: Literal["buy", "sell"]
         rationale_parts: list[str]
         runtime_metadata: dict[str, Any]
         if settings.trading_strategy_runtime_mode == "plugin_v3":
-            runtime_decision = self.strategy_runtime.evaluate(strategy, feature_contract, timeframe=timeframe)
+            normalized_payload = dict(signal.payload)
+            if price is not None and "price" not in normalized_payload:
+                normalized_payload["price"] = price
+            normalized_signal = signal.model_copy(update={"payload": normalized_payload})
+            try:
+                feature_vector = normalize_feature_vector_v3(normalized_signal)
+            except FeatureNormalizationError:
+                logger.debug("Feature normalization failed strategy=%s symbol=%s", strategy.id, signal.symbol)
+                return None
+            runtime_decision = self.strategy_runtime.evaluate(strategy, feature_vector, timeframe=timeframe)
             if runtime_decision is None:
                 return None
             action = runtime_decision.intent.action
@@ -97,19 +110,10 @@ class DecisionEngine:
                 "plugin_id": "legacy_builtin",
                 "plugin_version": "1.0.0",
                 "parameter_hash": "legacy",
-                "required_features": ["macd", "macd_signal", "rsi"],
-                "feature_contract": feature_contract.to_payload(),
+                "required_features": ["macd", "macd_signal", "rsi14", "price"],
             }
         if features.macd is None or features.macd_signal is None or features.rsi is None:
-            logger.debug("Signal missing indicators for strategy %s", strategy.id)
             return None
-
-        price = features.price
-        snapshot: Optional[MarketSnapshot] = None
-        if price is None and self.price_fetcher is not None:
-            snapshot = self.price_fetcher.fetch_market_snapshot(signal)
-            if snapshot is not None:
-                price = snapshot.price
 
         qty, sizing_meta = _resolve_qty(strategy, price=price, equity=equity)
 

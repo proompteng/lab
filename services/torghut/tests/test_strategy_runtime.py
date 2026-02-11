@@ -6,7 +6,7 @@ from decimal import Decimal
 from unittest import TestCase
 
 from app.models import Strategy
-from app.trading.features import normalize_feature_vector_v3
+from app.trading.features import FeatureNormalizationError, normalize_feature_vector_v3
 from app.trading.models import SignalEnvelope
 from app.trading.strategy_runtime import StrategyRuntime
 
@@ -43,10 +43,7 @@ class TestStrategyRuntime(TestCase):
         assert decision_b is not None
         self.assertEqual(decision_a.intent.action, 'buy')
         self.assertEqual(decision_a.parameter_hash, decision_b.parameter_hash)
-        self.assertEqual(
-            decision_a.feature_contract.parity_hash,
-            decision_b.feature_contract.parity_hash,
-        )
+        self.assertEqual(decision_a.feature_hash, decision_b.feature_hash)
 
     def test_runtime_missing_required_features_fails_closed(self) -> None:
         strategy = Strategy(
@@ -66,12 +63,7 @@ class TestStrategyRuntime(TestCase):
             timeframe='1Min',
             payload={'price': 101.5},
         )
-        feature_contract = normalize_feature_vector_v3(signal)
         runtime = StrategyRuntime()
-
-        decision = runtime.evaluate(strategy, feature_contract, timeframe='1Min')
-
-        self.assertIsNone(decision)
-        self.assertFalse(feature_contract.valid)
-        self.assertIn('missing_required_features', feature_contract.reasons)
-
+        with self.assertRaises(FeatureNormalizationError):
+            feature_vector = normalize_feature_vector_v3(signal)
+            runtime.evaluate(strategy, feature_vector, timeframe='1Min')

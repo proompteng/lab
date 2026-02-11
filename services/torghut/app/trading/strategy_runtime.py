@@ -1,4 +1,4 @@
-"""Strategy runtime scaffolding for deterministic v3 plugin execution."""
+"""Strategy runtime scaffolding for deterministic plugin execution."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Any, Literal, Protocol
 
 from ..models import Strategy
-from .features import FeatureContractResult
+from .features import FeatureVectorV3
 
 
 @dataclass(frozen=True)
@@ -29,7 +29,7 @@ class StrategyIntent:
     action: Literal['buy', 'sell']
     confidence: Decimal
     rationale: tuple[str, ...]
-    required_features: tuple[str, ...] = ('macd', 'macd_signal', 'rsi')
+    required_features: tuple[str, ...] = ('macd', 'macd_signal', 'rsi14', 'price')
 
 
 @dataclass(frozen=True)
@@ -38,15 +38,15 @@ class RuntimeDecision:
     plugin_id: str
     plugin_version: str
     parameter_hash: str
-    feature_contract: FeatureContractResult
+    feature_hash: str
 
     def metadata(self) -> dict[str, Any]:
         return {
             'plugin_id': self.plugin_id,
             'plugin_version': self.plugin_version,
             'parameter_hash': self.parameter_hash,
+            'feature_hash': self.feature_hash,
             'required_features': list(self.intent.required_features),
-            'feature_contract': self.feature_contract.to_payload(),
         }
 
 
@@ -55,29 +55,29 @@ class StrategyPlugin(Protocol):
     version: str
     required_features: tuple[str, ...]
 
-    def evaluate(self, context: StrategyContext, features: FeatureContractResult) -> StrategyIntent | None:
+    def evaluate(self, context: StrategyContext, features: FeatureVectorV3) -> StrategyIntent | None:
         ...
 
 
 class LegacyMacdRsiPlugin:
     plugin_id = 'legacy_macd_rsi'
     version = '1.0.0'
-    required_features = ('macd', 'macd_signal', 'rsi')
+    required_features = ('macd', 'macd_signal', 'rsi14', 'price')
 
-    def evaluate(self, context: StrategyContext, features: FeatureContractResult) -> StrategyIntent | None:
-        if not features.valid:
+    def evaluate(self, context: StrategyContext, features: FeatureVectorV3) -> StrategyIntent | None:
+        macd = _decimal(features.values.get('macd'))
+        macd_signal = _decimal(features.values.get('macd_signal'))
+        rsi14 = _decimal(features.values.get('rsi14'))
+        if macd is None or macd_signal is None or rsi14 is None:
             return None
-        vector = features.vector
-        if vector.macd is None or vector.macd_signal is None or vector.rsi is None:
-            return None
-        if vector.macd > vector.macd_signal and vector.rsi < Decimal('35'):
+        if macd > macd_signal and rsi14 < Decimal('35'):
             return StrategyIntent(
                 action='buy',
                 confidence=Decimal('0.65'),
                 rationale=('macd_cross_up', 'rsi_oversold'),
                 required_features=self.required_features,
             )
-        if vector.macd < vector.macd_signal and vector.rsi > Decimal('65'):
+        if macd < macd_signal and rsi14 > Decimal('65'):
             return StrategyIntent(
                 action='sell',
                 confidence=Decimal('0.65'),
@@ -93,7 +93,7 @@ class StrategyRuntime:
     def __init__(self, plugins: dict[str, StrategyPlugin] | None = None) -> None:
         self.plugins = plugins or {'legacy_macd_rsi': LegacyMacdRsiPlugin()}
 
-    def evaluate(self, strategy: Strategy, features: FeatureContractResult, *, timeframe: str) -> RuntimeDecision | None:
+    def evaluate(self, strategy: Strategy, features: FeatureVectorV3, *, timeframe: str) -> RuntimeDecision | None:
         plugin_type = self._strategy_plugin_type(strategy)
         plugin = self.plugins.get(plugin_type)
         if plugin is None:
@@ -103,8 +103,8 @@ class StrategyRuntime:
             strategy_name=str(strategy.name),
             strategy_type=plugin_type,
             strategy_version=self._strategy_version(strategy),
-            event_ts=features.vector.event_ts,
-            symbol=features.vector.symbol,
+            event_ts=features.event_ts.isoformat(),
+            symbol=features.symbol,
             timeframe=timeframe,
             params=self._strategy_params(strategy),
         )
@@ -116,7 +116,7 @@ class StrategyRuntime:
             plugin_id=plugin.plugin_id,
             plugin_version=plugin.version,
             parameter_hash=self._parameter_hash(context.params),
-            feature_contract=features,
+            feature_hash=features.normalization_hash,
         )
 
     @staticmethod
@@ -154,3 +154,14 @@ class StrategyRuntime:
     def _parameter_hash(params: dict[str, Any]) -> str:
         payload = json.dumps(params, sort_keys=True, separators=(',', ':'), default=str)
         return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+
+def _decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    try:
+        return Decimal(str(value))
+    except (ArithmeticError, TypeError, ValueError):
+        return None
