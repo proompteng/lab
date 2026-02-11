@@ -1466,8 +1466,8 @@ class TestTradingPipeline(TestCase):
                 session_factory=self.session_local,
                 llm_review_engine=FakeLLMReviewEngine(
                     verdict="adjust",
-                    adjusted_qty=Decimal("10"),
-                    adjusted_order_type="limit",
+                    adjusted_qty=Decimal("50"),
+                    adjusted_order_type="market",
                 ),
             )
 
@@ -1478,7 +1478,8 @@ class TestTradingPipeline(TestCase):
                 decisions = session.execute(select(TradeDecision)).scalars().all()
                 executions = session.execute(select(Execution)).scalars().all()
                 self.assertEqual(len(reviews), 1)
-                self.assertEqual(reviews[0].verdict, "veto")
+                self.assertEqual(reviews[0].verdict, "adjust")
+                self.assertEqual(reviews[0].adjusted_qty, Decimal("12.5"))
                 self.assertEqual(decisions[0].status, "rejected")
                 self.assertEqual(len(executions), 0)
         finally:

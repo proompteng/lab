@@ -52,6 +52,12 @@ stateDiagram-v2
 Note: Live mode is itself gated by `TRADING_LIVE_ENABLED=true`; this document assumes that is rare and carefully reviewed.
 Current deployed paper configuration (2026-02-09) sets `LLM_FAIL_MODE=pass_through` (see `argocd/applications/torghut/knative-service.yaml`).
 
+## Provider fallback chain (v1)
+- Primary provider is set by `LLM_PROVIDER`.
+- When `LLM_PROVIDER=jangar`, failures trigger the self-hosted fallback (`LLM_SELF_HOSTED_*`) before surfacing an error.
+- If all providers fail or time out, the review is treated as an error: the circuit breaker records it and the scheduler applies
+  `LLM_FAIL_MODE` (paper) or veto (live).
+
 ## Failure modes and recovery
 | Failure | Symptoms | Detection | Recovery |
 | --- | --- | --- | --- |

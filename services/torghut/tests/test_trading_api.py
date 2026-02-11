@@ -14,7 +14,7 @@ from app.db import get_session
 from app.main import app
 from app.trading.scheduler import TradingScheduler
 from app.config import settings
-from app.models import Base, Execution, Strategy, TradeDecision
+from app.models import Base, Execution, LLMDecisionReview, Strategy, TradeDecision
 
 
 class TestTradingApi(TestCase):
@@ -80,6 +80,25 @@ class TestTradingApi(TestCase):
             session.add(execution)
             session.commit()
 
+            review = LLMDecisionReview(
+                trade_decision_id=decision.id,
+                model="demo",
+                prompt_version="v1",
+                input_json={"decision": "demo"},
+                response_json={"verdict": "approve"},
+                verdict="approve",
+                confidence=Decimal("0.7"),
+                adjusted_qty=None,
+                adjusted_order_type=None,
+                rationale="ok",
+                risk_flags=["demo_flag"],
+                tokens_prompt=120,
+                tokens_completion=45,
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(review)
+            session.commit()
+
     def tearDown(self) -> None:
         app.dependency_overrides.clear()
 
@@ -134,3 +153,21 @@ class TestTradingApi(TestCase):
             self.assertFalse(payload["dependencies"]["clickhouse"]["ok"])
         finally:
             settings.trading_enabled = original
+
+    def test_trading_status_includes_llm_evaluation(self) -> None:
+        response = self.client.get("/trading/status")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("llm_evaluation", payload)
+        evaluation = payload["llm_evaluation"]
+        self.assertTrue(evaluation["ok"])
+        self.assertGreaterEqual(evaluation["metrics"]["total_reviews"], 1)
+
+    def test_trading_llm_evaluation_endpoint(self) -> None:
+        response = self.client.get("/trading/llm-evaluation")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        metrics = payload["metrics"]
+        self.assertEqual(metrics["tokens"]["prompt"], 120)
+        self.assertEqual(metrics["tokens"]["completion"], 45)

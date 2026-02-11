@@ -484,6 +484,11 @@ class TradingPipeline:
             elif policy_outcome.verdict == "veto":
                 self.state.metrics.llm_veto_total += 1
 
+            if outcome.tokens_prompt is not None:
+                self.state.metrics.llm_tokens_prompt_total += outcome.tokens_prompt
+            if outcome.tokens_completion is not None:
+                self.state.metrics.llm_tokens_completion_total += outcome.tokens_completion
+
             self._persist_llm_review(
                 session=session,
                 decision_row=decision_row,
@@ -577,13 +582,15 @@ class TradingPipeline:
             decision.strategy_id,
             decision.symbol,
         )
-        request_payload = {
-            "decision": decision.model_dump(mode="json"),
-            "portfolio": portfolio_snapshot.model_dump(mode="json"),
-            "market": market_snapshot.model_dump(mode="json") if market_snapshot else None,
-            "recent_decisions": [item.model_dump(mode="json") for item in recent_decisions],
-            "reason": reason,
-        }
+        engine = self.llm_review_engine or LLMReviewEngine()
+        request_payload = engine.build_request(
+            decision=decision,
+            account=account,
+            positions=positions,
+            portfolio=portfolio_snapshot,
+            market=market_snapshot,
+            recent_decisions=recent_decisions,
+        ).model_dump(mode="json")
         self._persist_llm_review(
             session=session,
             decision_row=decision_row,

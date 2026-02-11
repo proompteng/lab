@@ -5,9 +5,9 @@ import os
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
 from datetime import datetime
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -20,6 +20,7 @@ from .db import ensure_schema, get_session, ping
 from .metrics import render_trading_metrics
 from .models import Execution, TradeDecision
 from .trading import TradingScheduler
+from .trading.llm.evaluation import build_llm_evaluation_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, bool]:
 
 
 @app.get("/trading/status")
-def trading_status() -> dict[str, object]:
+def trading_status(session: Session = Depends(get_session)) -> dict[str, object]:
     """Return trading loop status and metrics."""
 
     scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
@@ -91,6 +92,7 @@ def trading_status() -> dict[str, object]:
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
     state = scheduler.state
+    llm_evaluation = _load_llm_evaluation(session)
     return {
         "enabled": settings.trading_enabled,
         "mode": settings.trading_mode,
@@ -101,6 +103,7 @@ def trading_status() -> dict[str, object]:
         "last_error": state.last_error,
         "metrics": state.metrics.__dict__,
         "llm": scheduler.llm_status(),
+        "llm_evaluation": llm_evaluation,
     }
 
 
@@ -114,6 +117,17 @@ def trading_metrics() -> dict[str, object]:
         app.state.trading_scheduler = scheduler
     metrics = scheduler.state.metrics
     return {"metrics": metrics.__dict__}
+
+
+@app.get("/trading/llm-evaluation")
+def trading_llm_evaluation(session: Session = Depends(get_session)) -> JSONResponse:
+    """Return today's LLM evaluation metrics in America/New_York time."""
+
+    try:
+        payload = build_llm_evaluation_metrics(session)
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="database unavailable") from exc
+    return JSONResponse(status_code=200, content=jsonable_encoder(payload))
 
 
 @app.get("/metrics")
@@ -290,3 +304,10 @@ def _check_alpaca() -> dict[str, object]:
     except Exception as exc:  # pragma: no cover - depends on network
         return {"ok": False, "detail": f"alpaca error: {exc}"}
     return {"ok": True, "detail": "ok"}
+
+
+def _load_llm_evaluation(session: Session) -> dict[str, object]:
+    try:
+        return build_llm_evaluation_metrics(session)
+    except SQLAlchemyError:
+        return {"ok": False, "error": "database_unavailable"}
