@@ -66,15 +66,21 @@ Outputs are validated against a strict schema and then clamped:
 | Env var | Purpose | Safe default |
 | --- | --- | --- |
 | `LLM_ADJUSTMENT_ALLOWED` | allow AI adjustments | `false` |
+| `LLM_ADJUSTMENT_APPROVED` | explicit approval for adjustments | `false` |
 | `LLM_MIN_QTY_MULTIPLIER` | lower clamp | `0.5` |
 | `LLM_MAX_QTY_MULTIPLIER` | upper clamp | `1.25` |
 | `LLM_MIN_CONFIDENCE` | confidence gate | `0.5` |
+| `LLM_ALLOWED_MODELS` | model inventory allowlist | empty (enforced before impact) |
 
 ## Failure modes and recovery
 | Failure | Symptoms | Detection | Recovery |
 | --- | --- | --- | --- |
 | AI suggests unsafe adjustment | qty too high | policy guard clamps; audit shows clamp | treat as model risk; tighten bounds; retrain/evaluate |
 | Schema mismatch | parse errors | llm_parse_error counters | revert prompt/schema; keep AI disabled |
+
+## Guardrail notes
+- Adjustments require both `LLM_ADJUSTMENT_ALLOWED=true` and `LLM_ADJUSTMENT_APPROVED=true`.
+- When `LLM_SHADOW_MODE=false`, model inventory and evaluation evidence are enforced before allowing AI impact.
 
 ## Security considerations
 - Prompt injection defenses: no untrusted text, strict output schema.
@@ -85,4 +91,3 @@ Outputs are validated against a strict schema and then clamped:
 - **Decision:** `LLM_ADJUSTMENT_ALLOWED=false` unless explicitly enabled.
 - **Rationale:** Veto/approve provides value without letting AI change trade sizing.
 - **Consequences:** Some potential improvements are unavailable until explicitly reviewed and enabled.
-

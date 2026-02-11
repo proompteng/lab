@@ -13,6 +13,8 @@ resources:
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
+  - llm-guardrails-exporter-configmap.yaml
+  - llm-guardrails-exporter.yaml
   - clickhouse
   - ws
   - ta

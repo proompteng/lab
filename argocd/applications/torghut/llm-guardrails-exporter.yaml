@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torghut-llm-guardrails-exporter
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-llm-guardrails-exporter
+    app.kubernetes.io/part-of: torghut
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: torghut-llm-guardrails-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: torghut-llm-guardrails-exporter
+        app.kubernetes.io/part-of: torghut
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      containers:
+        - name: exporter
+          image: python:3.12-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - /app/exporter.py
+          env:
+            - name: TORGHUT_BASE_URL
+              value: http://torghut.torghut.svc.cluster.local
+            - name: TORGHUT_METRICS_PATH
+              value: /trading/metrics
+            - name: TORGHUT_STATUS_PATH
+              value: /trading/status
+            - name: LLM_VETO_RATE_BASELINE
+              value: "0.4"
+            - name: LLM_TOKENS_PER_REQUEST_BUDGET
+              value: "800"
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          ports:
+            - name: metrics
+              containerPort: 9110
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: app
+              mountPath: /app
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 2
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 2
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: app
+          configMap:
+            name: torghut-llm-guardrails-exporter
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: torghut-llm-guardrails-exporter
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-llm-guardrails-exporter
+    app.kubernetes.io/part-of: torghut
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: torghut-llm-guardrails-exporter
+  ports:
+    - name: metrics
+      port: 9110
+      targetPort: metrics

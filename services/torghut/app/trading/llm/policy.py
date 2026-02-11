@@ -20,7 +20,11 @@ class PolicyOutcome:
     reason: Optional[str] = None
 
 
-def apply_policy(decision: StrategyDecision, review: LLMReviewResponse) -> PolicyOutcome:
+def apply_policy(
+    decision: StrategyDecision,
+    review: LLMReviewResponse,
+    adjustment_allowed: Optional[bool] = None,
+) -> PolicyOutcome:
     """Apply policy constraints to the LLM review response."""
 
     min_confidence = settings.llm_min_confidence
@@ -33,7 +37,10 @@ def apply_policy(decision: StrategyDecision, review: LLMReviewResponse) -> Polic
     if review.verdict == "approve":
         return PolicyOutcome("approve", decision)
 
-    if not settings.llm_adjustment_allowed:
+    if adjustment_allowed is None:
+        adjustment_allowed = settings.llm_adjustment_allowed
+
+    if not adjustment_allowed:
         return PolicyOutcome("veto", decision, "llm_adjustment_disallowed")
 
     adjusted_qty = review.adjusted_qty

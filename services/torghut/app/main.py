@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 from .alpaca_client import TorghutAlpacaClient
 from .config import settings
 from .db import ensure_schema, get_session, ping
+from .metrics import render_trading_metrics
 from .models import Execution, TradeDecision
 from .trading import TradingScheduler
 from .trading.llm.evaluation import build_llm_evaluation_metrics
@@ -131,32 +132,14 @@ def trading_llm_evaluation(session: Session = Depends(get_session)) -> JSONRespo
 
 @app.get("/metrics")
 def prometheus_metrics() -> Response:
-    """Expose Prometheus metrics for the torghut trading loop."""
+    """Expose Prometheus-formatted trading metrics counters."""
 
     scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
     if scheduler is None:
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
     metrics = scheduler.state.metrics
-    tokens_total = metrics.llm_tokens_prompt_total + metrics.llm_tokens_completion_total
-    lines = [
-        "# HELP torghut_llm_requests_total Total LLM review requests issued by torghut.",
-        "# TYPE torghut_llm_requests_total counter",
-        f"torghut_llm_requests_total {metrics.llm_requests_total}",
-        "# HELP torghut_llm_errors_total Total LLM review errors.",
-        "# TYPE torghut_llm_errors_total counter",
-        f"torghut_llm_errors_total {metrics.llm_error_total}",
-        "# HELP torghut_llm_tokens_prompt_total Prompt tokens consumed by torghut LLM reviews.",
-        "# TYPE torghut_llm_tokens_prompt_total counter",
-        f"torghut_llm_tokens_prompt_total {metrics.llm_tokens_prompt_total}",
-        "# HELP torghut_llm_tokens_completion_total Completion tokens consumed by torghut LLM reviews.",
-        "# TYPE torghut_llm_tokens_completion_total counter",
-        f"torghut_llm_tokens_completion_total {metrics.llm_tokens_completion_total}",
-        "# HELP torghut_llm_tokens_total Total prompt + completion tokens consumed by torghut LLM reviews.",
-        "# TYPE torghut_llm_tokens_total counter",
-        f"torghut_llm_tokens_total {tokens_total}",
-    ]
-    payload = "\n".join(lines) + "\n"
+    payload = render_trading_metrics(metrics.__dict__)
     return Response(content=payload, media_type="text/plain; version=0.0.4")
 
 
