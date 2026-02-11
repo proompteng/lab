@@ -2,6 +2,7 @@
 
 import logging
 import os
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -118,7 +119,7 @@ def trading_metrics() -> dict[str, object]:
 
 
 @app.get("/trading/llm-evaluation/today")
-def llm_evaluation_today(session: Session = Depends(get_session)) -> dict[str, object]:
+def llm_evaluation_today(session: Session = Depends(get_session)) -> Mapping[str, object]:
     """Return today's LLM evaluation metrics in America/New_York."""
 
     payload = _llm_evaluation_metrics(session)
@@ -313,7 +314,7 @@ def _llm_evaluation_metrics(session: Session) -> dict[str, object]:
     ).all()
     top_risk_flags = [{"flag": str(flag), "count": int(count or 0)} for flag, count in risk_rows]
 
-    payload = {
+    payload: dict[str, object] = {
         "date": start_local.date().isoformat(),
         "timezone": timezone_name,
         "window_start": start_local.isoformat(),
