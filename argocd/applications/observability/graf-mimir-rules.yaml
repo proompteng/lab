@@ -329,93 +329,43 @@ data:
         rules:
           - alert: TorghutLLMErrorRateHigh
             expr: |
-              sum(
-                rate(
-                  torghut_llm_review_total{
-                    namespace="torghut",
-                    service=~"torghut-[0-9]{5}-private",
-                    verdict="error"
-                  }[10m]
-                )
-              )
-              /
-              clamp_min(
-                sum(
-                  rate(
-                    torghut_llm_review_total{
-                      namespace="torghut",
-                      service=~"torghut-[0-9]{5}-private"
-                    }[10m]
-                  )
-                ),
-                1
-              )
-              > 0.1
+              sum(increase(torghut_llm_review_errors_total{namespace="torghut", service="torghut"}[15m])) /
+              clamp_min(sum(increase(torghut_llm_reviews_total{namespace="torghut", service="torghut"}[15m])), 1) > 0.05
             for: 10m
             labels:
               severity: warning
+              service: torghut
+              component: llm
             annotations:
               summary: Torghut LLM error rate elevated
-              description: |
-                LLM review error rate exceeded 10% over 10 minutes.
-                Check upstream LLM availability and consider disabling AI advisory if needed.
-              runbook_url: docs/torghut/design-system/v1/trading-safety-kill-switches.md
-          - alert: TorghutLLMTokensSpike
+              description: LLM review error verdicts exceed 5% over the last 15 minutes.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-evaluation-and-benchmarks.md
+          - alert: TorghutLLMTokenSpike
             expr: |
-              sum(
-                rate(
-                  torghut_llm_tokens_total{
-                    namespace="torghut",
-                    service=~"torghut-[0-9]{5}-private"
-                  }[10m]
-                )
-              )
-              >
-              2
-              *
-              sum(
-                rate(
-                  torghut_llm_tokens_total{
-                    namespace="torghut",
-                    service=~"torghut-[0-9]{5}-private"
-                  }[1h]
-                )
-              )
-              and
-              sum(
-                rate(
-                  torghut_llm_tokens_total{
-                    namespace="torghut",
-                    service=~"torghut-[0-9]{5}-private"
-                  }[10m]
-                )
-              ) > 1
-            for: 15m
+              sum(increase(torghut_llm_prompt_tokens_total{namespace="torghut", service="torghut"}[15m])) +
+              sum(increase(torghut_llm_completion_tokens_total{namespace="torghut", service="torghut"}[15m])) > 200000
+            for: 10m
             labels:
               severity: warning
+              service: torghut
+              component: llm
             annotations:
               summary: Torghut LLM token usage spike
-              description: |
-                LLM token consumption is >2x the 1h baseline for 15 minutes.
-                Check prompt changes, upstream model behavior, and cost controls.
-              runbook_url: docs/torghut/design-system/v1/trading-safety-kill-switches.md
+              description: Prompt + completion tokens exceeded 200k in 15 minutes.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-evaluation-and-benchmarks.md
           - alert: TorghutLLMTelemetryMissing
             expr: |
-              absent(
-                torghut_llm_review_total{
-                  namespace="torghut",
-                  service=~"torghut-[0-9]{5}-private"
-                }
-              ) == 1
+              (time() - max(torghut_llm_review_last_created_at_seconds{namespace="torghut", service="torghut"})) > 1800
+              and max(torghut_llm_review_last_created_at_seconds{namespace="torghut", service="torghut"}) > 0
             for: 15m
             labels:
               severity: warning
+              service: torghut
+              component: llm
             annotations:
               summary: Torghut LLM telemetry missing
-              description: |
-                No LLM review telemetry has been scraped for 15 minutes.
-                Verify torghut metrics endpoints and Alloy scrape configuration.
-              runbook_url: docs/torghut/design-system/v1/trading-safety-kill-switches.md
+              description: No new LLM reviews have been recorded for 30 minutes.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-evaluation-and-benchmarks.md
       - name: torghut-freshness.rules
         rules:
           - alert: TorghutSignalsStaleDuringMarketHours

@@ -5,6 +5,7 @@ resources:
   - postgres-cluster.yaml
   - strategy-configmap.yaml
   - knative-service.yaml
+  - metrics-service.yaml
   - tailscale-service.yaml
   - sealed-secrets.yaml
   - serviceaccount.yaml
