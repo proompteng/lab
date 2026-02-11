@@ -240,6 +240,8 @@ spec:
             httpGet:
               path: /health
               port: 8080
+            timeoutSeconds: 5
+            failureThreshold: 6
             successThreshold: 1
           resources:
             requests:
