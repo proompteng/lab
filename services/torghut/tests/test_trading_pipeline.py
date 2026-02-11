@@ -400,7 +400,7 @@ class TestTradingPipeline(TestCase):
                     base_timeframe="1Min",
                     universe_type="static",
                     universe_symbols=["AAPL"],
-                    max_notional_per_trade=Decimal("1000"),
+                    max_notional_per_trade=Decimal("800"),
                 )
                 session.add(strategy)
                 session.commit()
@@ -1290,8 +1290,8 @@ class TestTradingPipeline(TestCase):
                 session_factory=self.session_local,
                 llm_review_engine=FakeLLMReviewEngine(
                     verdict="adjust",
-                    adjusted_qty=Decimal("10"),
-                    adjusted_order_type="limit",
+                    adjusted_qty=Decimal("100"),
+                    adjusted_order_type="market",
                 ),
             )
 
@@ -1302,9 +1302,10 @@ class TestTradingPipeline(TestCase):
                 decisions = session.execute(select(TradeDecision)).scalars().all()
                 executions = session.execute(select(Execution)).scalars().all()
                 self.assertEqual(len(reviews), 1)
-                self.assertEqual(reviews[0].verdict, "veto")
-                self.assertEqual(decisions[0].status, "rejected")
-                self.assertEqual(len(executions), 0)
+                self.assertEqual(reviews[0].verdict, "adjust")
+                self.assertEqual(reviews[0].adjusted_qty, Decimal("10"))
+                self.assertEqual(len(executions), 1)
+                self.assertEqual(executions[0].submitted_qty, Decimal("10"))
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]

@@ -48,8 +48,13 @@ def apply_policy(decision: StrategyDecision, review: LLMReviewResponse) -> Polic
     if adjusted_qty_dec <= 0:
         return PolicyOutcome("veto", decision, "llm_adjustment_non_positive")
 
-    if adjusted_qty_dec < min_qty or adjusted_qty_dec > max_qty:
-        return PolicyOutcome("veto", decision, "llm_adjustment_out_of_bounds")
+    clamped_reason: Optional[str] = None
+    if adjusted_qty_dec < min_qty:
+        adjusted_qty_dec = min_qty
+        clamped_reason = "llm_adjustment_clamped_min"
+    elif adjusted_qty_dec > max_qty:
+        adjusted_qty_dec = max_qty
+        clamped_reason = "llm_adjustment_clamped_max"
 
     adjusted_order_type = review.adjusted_order_type
     if adjusted_order_type is None:
@@ -72,7 +77,7 @@ def apply_policy(decision: StrategyDecision, review: LLMReviewResponse) -> Polic
             "limit_price": limit_price,
         }
     )
-    return PolicyOutcome("adjust", updated)
+    return PolicyOutcome("adjust", updated, clamped_reason)
 
 
 def allowed_order_types(current: str) -> set[str]:

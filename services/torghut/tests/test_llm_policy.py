@@ -44,3 +44,44 @@ class TestLLMPolicy(TestCase):
         finally:
             config.settings.llm_adjustment_allowed = original["llm_adjustment_allowed"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
+
+    def test_adjustment_clamps_to_bounds(self) -> None:
+        original = {
+            "llm_adjustment_allowed": config.settings.llm_adjustment_allowed,
+            "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_min_qty_multiplier": config.settings.llm_min_qty_multiplier,
+            "llm_max_qty_multiplier": config.settings.llm_max_qty_multiplier,
+        }
+        config.settings.llm_adjustment_allowed = True
+        config.settings.llm_min_confidence = 0.0
+        config.settings.llm_min_qty_multiplier = 0.5
+        config.settings.llm_max_qty_multiplier = 1.25
+
+        try:
+            decision = StrategyDecision(
+                strategy_id="strategy",
+                symbol="AAPL",
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("8"),
+                order_type="market",
+                time_in_force="day",
+            )
+            review = LLMReviewResponse(
+                verdict="adjust",
+                confidence=1.0,
+                adjusted_qty=Decimal("100"),
+                adjusted_order_type="market",
+                rationale="overshoot",
+                risk_flags=[],
+            )
+            outcome = apply_policy(decision, review)
+            self.assertEqual(outcome.verdict, "adjust")
+            self.assertEqual(outcome.reason, "llm_adjustment_clamped_max")
+            self.assertEqual(outcome.decision.qty, Decimal("10"))
+        finally:
+            config.settings.llm_adjustment_allowed = original["llm_adjustment_allowed"]
+            config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_min_qty_multiplier = original["llm_min_qty_multiplier"]
+            config.settings.llm_max_qty_multiplier = original["llm_max_qty_multiplier"]
