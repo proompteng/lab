@@ -63,6 +63,9 @@ class TestEvaluationReport(TestCase):
         self.assertEqual(report.metrics.max_drawdown, Decimal("0"))
         self.assertEqual(report.gates.recommended_mode, "shadow")
         self.assertFalse(report.gates.promotion_allowed)
+        self.assertEqual(report.impact_assumptions.default_execution_seconds, 60)
+        self.assertEqual(report.impact_assumptions.decisions_with_adv, 0)
+        self.assertIn("impact_bps_at_full_participation", report.impact_assumptions.assumptions)
 
         turnover_ratio = report.metrics.turnover_ratio.quantize(Decimal("0.1"))
         self.assertEqual(turnover_ratio, Decimal("4.0"))
