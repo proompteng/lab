@@ -112,6 +112,14 @@ spec:
               value: "true"
             - name: LLM_FAIL_MODE
               value: pass_through
+            - name: LLM_TIMEOUT_SECONDS
+              value: "20"
+            - name: LLM_CIRCUIT_MAX_ERRORS
+              value: "3"
+            - name: LLM_CIRCUIT_WINDOW_SECONDS
+              value: "300"
+            - name: LLM_CIRCUIT_COOLDOWN_SECONDS
+              value: "600"
             - name: LLM_SELF_HOSTED_BASE_URL
               value: http://192.168.1.190:11434/v1
             - name: LLM_SELF_HOSTED_MODEL
