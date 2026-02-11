@@ -26,6 +26,7 @@ from .execution_policy import ExecutionPolicy
 from .firewall import OrderFirewall, OrderFirewallBlocked
 from .ingest import ClickHouseSignalIngestor
 from .llm import LLMReviewEngine, apply_policy
+from .llm.guardrails import evaluate_llm_guardrails
 from .models import SignalEnvelope, StrategyDecision
 from .portfolio import PortfolioSizingResult, sizer_from_settings
 from .prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
@@ -79,8 +80,12 @@ class TradingMetrics:
     llm_veto_total: int = 0
     llm_adjust_total: int = 0
     llm_error_total: int = 0
+    llm_parse_error_total: int = 0
+    llm_validation_error_total: int = 0
     llm_circuit_open_total: int = 0
     llm_shadow_total: int = 0
+    llm_guardrail_block_total: int = 0
+    llm_guardrail_shadow_total: int = 0
     llm_tokens_prompt_total: int = 0
     llm_tokens_completion_total: int = 0
 
@@ -394,6 +399,20 @@ class TradingPipeline:
         if not settings.llm_enabled:
             return decision, None
 
+        guardrails = evaluate_llm_guardrails()
+        if not guardrails.allow_requests:
+            self.state.metrics.llm_guardrail_block_total += 1
+            return self._handle_llm_unavailable(
+                session,
+                decision,
+                decision_row,
+                account,
+                positions,
+                reason="llm_guardrail_blocked",
+                shadow_mode=True,
+                risk_flags=list(guardrails.reasons),
+            )
+
         engine = self.llm_review_engine or LLMReviewEngine()
         if engine.circuit_breaker.is_open():
             self.state.metrics.llm_circuit_open_total += 1
@@ -404,6 +423,7 @@ class TradingPipeline:
                 account,
                 positions,
                 reason="llm_circuit_open",
+                shadow_mode=guardrails.shadow_mode,
             )
         request_json: dict[str, Any] = {}
         try:
@@ -422,6 +442,7 @@ class TradingPipeline:
                 portfolio_snapshot,
                 market_snapshot,
                 recent_decisions,
+                adjustment_allowed=guardrails.adjustment_allowed,
             )
             request_json = request.model_dump(mode="json")
             outcome = engine.review(
@@ -433,12 +454,23 @@ class TradingPipeline:
                 market=market_snapshot,
                 recent_decisions=recent_decisions,
             )
-            policy_outcome = apply_policy(decision, outcome.response)
+            policy_outcome = apply_policy(
+                decision,
+                outcome.response,
+                adjustment_allowed=guardrails.adjustment_allowed,
+            )
 
-            response_json = dict(outcome.response_json)
+            response_json: dict[str, Any] = dict(outcome.response_json)
             if policy_outcome.reason:
                 response_json["policy_override"] = policy_outcome.reason
                 response_json["policy_verdict"] = policy_outcome.verdict
+            if guardrails.reasons:
+                response_json["mrm_guardrails"] = list(guardrails.reasons)
+
+            if outcome.tokens_prompt is not None:
+                self.state.metrics.llm_tokens_prompt_total += outcome.tokens_prompt
+            if outcome.tokens_completion is not None:
+                self.state.metrics.llm_tokens_completion_total += outcome.tokens_completion
 
             adjusted_qty = None
             adjusted_order_type = None
@@ -475,8 +507,10 @@ class TradingPipeline:
             )
 
             engine.circuit_breaker.record_success()
-            if settings.llm_shadow_mode:
+            if guardrails.shadow_mode:
                 self.state.metrics.llm_shadow_total += 1
+                if not settings.llm_shadow_mode:
+                    self.state.metrics.llm_guardrail_shadow_total += 1
                 return decision, None
             if policy_outcome.verdict == "veto":
                 return decision, policy_outcome.reason or "llm_veto"
@@ -485,6 +519,11 @@ class TradingPipeline:
         except Exception as exc:
             engine.circuit_breaker.record_error()
             self.state.metrics.llm_error_total += 1
+            error_label = _classify_llm_error(exc)
+            if error_label == "llm_response_not_json":
+                self.state.metrics.llm_parse_error_total += 1
+            elif error_label == "llm_response_invalid":
+                self.state.metrics.llm_validation_error_total += 1
             fallback = self._resolve_llm_fallback()
             effective_verdict = "veto" if fallback == "veto" else "approve"
             response_json = {
@@ -492,6 +531,8 @@ class TradingPipeline:
                 "fallback": fallback,
                 "effective_verdict": effective_verdict,
             }
+            if guardrails.reasons:
+                response_json["mrm_guardrails"] = list(guardrails.reasons)
             if not request_json:
                 request_json = {"decision": decision.model_dump(mode="json")}
             self._persist_llm_review(
@@ -506,10 +547,15 @@ class TradingPipeline:
                 adjusted_qty=None,
                 adjusted_order_type=None,
                 rationale=f"llm_error_{fallback}",
-                risk_flags=[type(exc).__name__],
+                risk_flags=[type(exc).__name__] + list(guardrails.reasons),
                 tokens_prompt=None,
                 tokens_completion=None,
             )
+            if guardrails.shadow_mode:
+                self.state.metrics.llm_shadow_total += 1
+                if not settings.llm_shadow_mode:
+                    self.state.metrics.llm_guardrail_shadow_total += 1
+                return decision, None
             if fallback == "veto":
                 logger.warning("LLM review failed; vetoing decision_id=%s error=%s", decision_row.id, exc)
                 return decision, "llm_error"
@@ -524,6 +570,8 @@ class TradingPipeline:
         account: dict[str, str],
         positions: list[dict[str, Any]],
         reason: str,
+        shadow_mode: bool,
+        risk_flags: Optional[list[str]] = None,
     ) -> tuple[StrategyDecision, Optional[str]]:
         fallback = self._resolve_llm_fallback()
         effective_verdict = "veto" if fallback == "veto" else "approve"
@@ -555,12 +603,14 @@ class TradingPipeline:
             adjusted_qty=None,
             adjusted_order_type=None,
             rationale=reason,
-            risk_flags=[reason],
+            risk_flags=[reason] + (risk_flags or []),
             tokens_prompt=None,
             tokens_completion=None,
         )
-        if settings.llm_shadow_mode:
+        if shadow_mode:
             self.state.metrics.llm_shadow_total += 1
+            if not settings.llm_shadow_mode:
+                self.state.metrics.llm_guardrail_shadow_total += 1
             return decision, None
         if fallback == "veto":
             return decision, "llm_error"
@@ -709,6 +759,15 @@ def _coerce_json(value: Any) -> dict[str, Any]:
         raw = cast(Mapping[str, Any], value)
         return {str(key): val for key, val in raw.items()}
     return {}
+
+
+def _classify_llm_error(error: Exception) -> Optional[str]:
+    message = str(error)
+    if message == "llm_response_not_json":
+        return "llm_response_not_json"
+    if message == "llm_response_invalid":
+        return "llm_response_invalid"
+    return None
 
 
 def _price_snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:

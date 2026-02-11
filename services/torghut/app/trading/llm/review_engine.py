@@ -170,7 +170,11 @@ class LLMReviewEngine:
         portfolio: PortfolioSnapshot,
         market: Optional[MarketSnapshot],
         recent_decisions: list[RecentDecisionSummary],
+        adjustment_allowed: Optional[bool] = None,
     ) -> LLMReviewRequest:
+        effective_adjustment_allowed = (
+            settings.llm_adjustment_allowed if adjustment_allowed is None else adjustment_allowed
+        )
         sanitized_account = _sanitize_account(account)
         sanitized_positions = _sanitize_positions(positions)
         sanitized_params = _sanitize_decision_params(decision.params or {})
@@ -193,7 +197,7 @@ class LLMReviewEngine:
             account=sanitized_account,
             positions=sanitized_positions,
             policy=LLMPolicyContext(
-                adjustment_allowed=settings.llm_adjustment_allowed,
+                adjustment_allowed=effective_adjustment_allowed,
                 min_qty_multiplier=Decimal(str(settings.llm_min_qty_multiplier)),
                 max_qty_multiplier=Decimal(str(settings.llm_max_qty_multiplier)),
                 allowed_order_types=sorted(allowed_order_types(decision.order_type)),

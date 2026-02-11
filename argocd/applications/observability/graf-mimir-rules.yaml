@@ -368,6 +368,206 @@ data:
               summary: Torghut LLM telemetry missing
               description: torghut LLM review metrics are not being scraped for 15 minutes.
               runbook_url: docs/torghut/design-system/v1/observability-metrics-logs-traces.md
+      - name: torghut-mrm.rules
+        rules:
+          - alert: TorghutLLMGuardrailsExporterDown
+            expr: |
+              max(
+                up{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              ) == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut LLM guardrails exporter is down
+              description: LLM guardrails metrics are not being scraped (up=0) for 5 minutes.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
+          - alert: TorghutLLMGuardrailsScrapeFailing
+            expr: |
+              torghut_llm_guardrails_last_scrape_success{
+                job="torghut",
+                namespace="torghut",
+                service="torghut-llm-guardrails-exporter"
+              } == 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM guardrails scrape failing
+              description: |
+                The LLM guardrails exporter cannot reach /trading/metrics or /trading/status.
+                Review torghut service health and network policies.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
+          - alert: TorghutLLMGuardrailsBlocking
+            expr: |
+              increase(
+                torghut_llm_guardrail_block_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }[10m]
+              ) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM guardrails are blocking reviews
+              description: |
+                Model risk management guardrails are blocking LLM review requests.
+                Check the configured evaluation evidence, inventory, and prompt version.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
+          - alert: TorghutLLMParseErrorRateHigh
+            expr: |
+              (
+                rate(
+                  torghut_llm_parse_error_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-llm-guardrails-exporter"
+                  }[15m]
+                )
+                /
+                rate(
+                  torghut_llm_requests_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-llm-guardrails-exporter"
+                  }[15m]
+                )
+              ) > 0.05
+              and
+              rate(
+                torghut_llm_requests_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }[15m]
+              ) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM parse error rate elevated
+              description: |
+                LLM responses are failing JSON parsing over the last 15 minutes.
+                This is a model risk incident; consider disabling LLM or tightening prompts.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
+          - alert: TorghutLLMVetoRateSpike
+            expr: |
+              (
+                rate(
+                  torghut_llm_veto_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-llm-guardrails-exporter"
+                  }[30m]
+                )
+                /
+                rate(
+                  torghut_llm_requests_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-llm-guardrails-exporter"
+                  }[30m]
+                )
+              )
+              > (
+                max(
+                  torghut_llm_veto_rate_baseline{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-llm-guardrails-exporter"
+                  }
+                ) * 1.5
+              )
+              and
+              rate(
+                torghut_llm_requests_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }[30m]
+              ) > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM veto rate spiked versus baseline
+              description: |
+                LLM veto rate is 1.5x higher than baseline. Investigate drift, prompt changes,
+                or upstream signal integrity. Keep AI in shadow mode until resolved.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
+          - alert: TorghutLLMCircuitOpened
+            expr: |
+              increase(
+                torghut_llm_circuit_open_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }[10m]
+              ) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM circuit breaker opened recently
+              description: Circuit breaker events indicate repeated LLM failures or timeouts in the last 10 minutes.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
+          - alert: TorghutLLMTokenBudgetExceeded
+            expr: |
+              (
+                increase(
+                  torghut_llm_tokens_prompt_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-llm-guardrails-exporter"
+                  }[30m]
+                )
+                +
+                increase(
+                  torghut_llm_tokens_completion_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-llm-guardrails-exporter"
+                  }[30m]
+                )
+              )
+              /
+              increase(
+                torghut_llm_requests_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }[30m]
+              )
+              > max(
+                torghut_llm_tokens_per_request_budget{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              )
+              and
+              increase(
+                torghut_llm_requests_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }[30m]
+              ) > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM token budget exceeded
+              description: |
+                Average LLM tokens per request are above the configured budget.
+                Consider shortening prompts or lowering max tokens.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
       - name: torghut-freshness.rules
         rules:
           - alert: TorghutSignalsStaleDuringMarketHours

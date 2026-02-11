@@ -106,12 +106,18 @@ spec:
               value: http://jangar.jangar.svc.cluster.local
             - name: LLM_PROVIDER
               value: jangar
+            - name: LLM_MODEL
+              value: gpt-5.3-codex
+            - name: LLM_ALLOWED_MODELS
+              value: gpt-5.3-codex
             - name: LLM_ENABLED
               value: "true"
             - name: LLM_SHADOW_MODE
               value: "true"
             - name: LLM_FAIL_MODE
               value: pass_through
+            - name: LLM_ADJUSTMENT_APPROVED
+              value: "false"
             - name: LLM_SELF_HOSTED_BASE_URL
               value: http://192.168.1.190:11434/v1
             - name: LLM_SELF_HOSTED_MODEL
