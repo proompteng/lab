@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -280,8 +281,6 @@ def _sanitize_account(account: dict[str, Any]) -> dict[str, str]:
 def _sanitize_positions(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     sanitized: list[dict[str, Any]] = []
     for position in positions:
-        if not isinstance(position, dict):
-            continue
         symbol = position.get("symbol")
         if not symbol:
             continue
@@ -304,16 +303,16 @@ def _sanitize_decision_params(params: dict[str, Any]) -> dict[str, Any]:
         value = params.get(key)
         if value is None:
             continue
-        if key == "price_snapshot" and isinstance(value, dict):
-            sanitized[key] = _sanitize_nested(value, _ALLOWED_PRICE_SNAPSHOT_KEYS)
-        elif key == "imbalance" and isinstance(value, dict):
-            sanitized[key] = _sanitize_nested(value, _ALLOWED_IMBALANCE_KEYS)
-        elif key == "sizing" and isinstance(value, dict):
-            sanitized[key] = _sanitize_nested(value, _ALLOWED_SIZING_KEYS)
+        if key == "price_snapshot" and isinstance(value, Mapping):
+            sanitized[key] = _sanitize_nested(cast(Mapping[str, Any], value), _ALLOWED_PRICE_SNAPSHOT_KEYS)
+        elif key == "imbalance" and isinstance(value, Mapping):
+            sanitized[key] = _sanitize_nested(cast(Mapping[str, Any], value), _ALLOWED_IMBALANCE_KEYS)
+        elif key == "sizing" and isinstance(value, Mapping):
+            sanitized[key] = _sanitize_nested(cast(Mapping[str, Any], value), _ALLOWED_SIZING_KEYS)
         else:
             sanitized[key] = value
     return sanitized
 
 
-def _sanitize_nested(payload: dict[str, Any], allowed_keys: set[str]) -> dict[str, Any]:
+def _sanitize_nested(payload: Mapping[str, Any], allowed_keys: set[str]) -> dict[str, Any]:
     return {key: payload[key] for key in allowed_keys if key in payload and payload[key] is not None}
