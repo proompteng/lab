@@ -145,6 +145,9 @@ spec:
               value: v0.536.1-1-g512274e1
             - name: TORGHUT_COMMIT
               value: 512274e18a8256ba19648dcf46a39254450a76ba
+          envFrom:
+            - configMapRef:
+                name: torghut-autonomy-config
           livenessProbe:
             httpGet:
               path: /healthz
@@ -164,7 +167,13 @@ spec:
             - name: strategy-config
               mountPath: /etc/torghut
               readOnly: true
+            - name: autonomy-gate-policy
+              mountPath: /etc/torghut/autonomy
+              readOnly: true
       volumes:
         - name: strategy-config
           configMap:
             name: torghut-strategy-config
+        - name: autonomy-gate-policy
+          configMap:
+            name: torghut-autonomy-gate-policy

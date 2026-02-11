@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torghut-autonomy-gate-policy
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: autonomy-runtime
+    app.kubernetes.io/part-of: lab
+data:
+  autonomy-gates-v3.json: |
+    {
+      "policy_version": "v3",
+      "allow_live_promotion": false,
+      "auto_freeze_failure_count": 3,
+      "gate_1_max_negative_fold_count": 0,
+      "gate_2_max_drawdown": 0.35,
+      "gate_2_max_turnover_ratio": 5.0,
+      "gate_5_required_paper_days": 14
+    }

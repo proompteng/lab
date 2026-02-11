@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torghut-autonomy-config
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: autonomy-runtime
+    app.kubernetes.io/part-of: lab
+data:
+  TRADING_STRATEGY_RUNTIME_MODE: legacy
+  TRADING_FEATURE_SCHEMA_VERSION: v3
+  TRADING_FEATURE_NORMALIZATION_VERSION: v1
+  TRADING_AUTONOMY_ENABLED: "false"
+  TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION: "false"
+  TRADING_AUTONOMY_GATE_POLICY_PATH: /etc/torghut/autonomy/autonomy-gates-v3.json
+  TRADING_AUTONOMY_ARTIFACT_DIR: /var/run/torghut/autonomy
