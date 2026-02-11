@@ -45,6 +45,8 @@ class TestRegimeClassifier(TestCase):
 
         label_one = classify_regime(decisions)
         label_two = classify_regime(decisions)
+        reversed_label = classify_regime(list(reversed(decisions)))
 
         self.assertEqual(label_one, label_two)
+        self.assertEqual(label_one, reversed_label)
         self.assertEqual(label_one.label(), 'vol=high|trend=up|liq=liquid')

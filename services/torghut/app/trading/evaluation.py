@@ -46,10 +46,30 @@ class FoldResult:
     signals_count: int = 0
 
     def to_payload(self) -> dict[str, object]:
+        metrics = self.fold_metrics()
+        regime = _fold_regime_payload(self.decisions)
         return {
             "fold": _fold_payload(self.fold),
             "signals_count": self.signals_count,
+            "metrics": metrics,
+            "regime_label": regime["label"],
+            "regime": regime,
             "decisions": [self._decision_payload(item) for item in self.decisions],
+        }
+
+    def fold_metrics(self) -> dict[str, int]:
+        action_counts = {"buy": 0, "sell": 0, "hold": 0}
+        for item in self.decisions:
+            action = item.decision.action
+            if action in action_counts:
+                action_counts[action] += 1
+
+        return {
+            "signals_count": self.signals_count,
+            "decision_count": len(self.decisions),
+            "buy_count": action_counts["buy"],
+            "sell_count": action_counts["sell"],
+            "hold_count": action_counts["hold"],
         }
 
     @staticmethod
@@ -176,6 +196,12 @@ def _decimal_str(value: object) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _fold_regime_payload(decisions: list[WalkForwardDecision]) -> dict[str, str]:
+    from .regime import classify_regime
+
+    return classify_regime(decisions).to_payload()
 
 
 __all__ = [
