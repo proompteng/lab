@@ -24,6 +24,12 @@ internal class ForwarderMetrics(
     ReadinessErrorClass
       .entries
       .associateWith { AtomicInteger(0) }
+  private val readinessGateStatus =
+    mapOf(
+      "alpaca_ws" to AtomicInteger(0),
+      "kafka" to AtomicInteger(0),
+      "trade_updates" to AtomicInteger(0),
+    )
 
   private val lagSummary: DistributionSummary =
     DistributionSummary
@@ -52,6 +58,13 @@ internal class ForwarderMetrics(
         .tag("error_class", errorClass.id)
         .register(registry)
     }
+
+    readinessGateStatus.forEach { (gate, value) ->
+      Gauge
+        .builder("torghut_ws_readyz_gate_status", value) { it.get().toDouble() }
+        .tag("gate", gate)
+        .register(registry)
+    }
   }
 
   fun setReady(ready: Boolean) {
@@ -62,6 +75,12 @@ internal class ForwarderMetrics(
     readinessErrorClassGauge.forEach { (cls, value) ->
       value.set(if (cls == errorClass) 1 else 0)
     }
+  }
+
+  fun setReadinessGates(gates: ReadinessGates) {
+    readinessGateStatus["alpaca_ws"]?.set(if (gates.alpacaWs) 1 else 0)
+    readinessGateStatus["kafka"]?.set(if (gates.kafka) 1 else 0)
+    readinessGateStatus["trade_updates"]?.set(if (gates.tradeUpdates) 1 else 0)
   }
 
   fun recordReadinessError(errorClass: ReadinessErrorClass) {

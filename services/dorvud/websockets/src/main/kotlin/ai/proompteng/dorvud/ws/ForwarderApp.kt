@@ -943,6 +943,8 @@ class ForwarderApp(
   private fun markReady(value: Boolean) {
     val previous = ready.getAndSet(value)
     metrics.setReady(value)
+    val gates = currentReadinessGates()
+    metrics.setReadinessGates(gates)
     if (value) {
       readinessErrorClass.set(null)
       reportedNotReadyClass.set(null)
@@ -950,12 +952,12 @@ class ForwarderApp(
       return
     }
 
-    val errorClass = currentReadinessErrorClass(value, currentReadinessGates()) ?: ReadinessErrorClass.Unknown
+    val errorClass = currentReadinessErrorClass(value, gates) ?: ReadinessErrorClass.Unknown
     metrics.setReadinessErrorClass(errorClass)
     if (previous) {
       logger.warn {
         "readiness changed to not_ready error_class=${errorClass.id} " +
-          "gates=alpaca_ws:${wsReady.get()} kafka:${kafkaReady.get()} trade_updates:${tradeUpdatesGate()}"
+          "gates=alpaca_ws:${gates.alpacaWs} kafka:${gates.kafka} trade_updates:${gates.tradeUpdates}"
       }
       reportedNotReadyClass.set(errorClass)
       metrics.recordReadinessError(errorClass)

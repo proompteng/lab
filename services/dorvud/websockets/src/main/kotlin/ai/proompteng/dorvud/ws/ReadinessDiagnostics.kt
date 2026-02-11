@@ -64,13 +64,9 @@ internal object ReadinessClassifier {
   ): ReadinessErrorClass? {
     if (ready) return null
     return when {
-      !gates.alpacaWs -> alpacaErrorClass ?: fallbackErrorClass ?: ReadinessErrorClass.Unknown
-      !gates.kafka -> kafkaErrorClass ?: fallbackErrorClass ?: ReadinessErrorClass.Unknown
-      !gates.tradeUpdates ->
-        tradeUpdatesErrorClass
-          ?: alpacaErrorClass
-          ?: fallbackErrorClass
-          ?: ReadinessErrorClass.Unknown
+      !gates.alpacaWs -> alpacaErrorClass ?: ReadinessErrorClass.Unknown
+      !gates.kafka -> kafkaErrorClass ?: ReadinessErrorClass.Unknown
+      !gates.tradeUpdates -> tradeUpdatesErrorClass ?: ReadinessErrorClass.Unknown
       else -> fallbackErrorClass ?: ReadinessErrorClass.Unknown
     }
   }
