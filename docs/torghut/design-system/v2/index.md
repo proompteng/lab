@@ -34,6 +34,7 @@ Pick one initial alpha family:
 
 ## Next (Once MVP Is Stable)
 - `alpha-discovery-loop.md`
+- `quant-research-merge-and-alpha-tsmom-v1.md`
 - `research-ledger.md`
 - `research-reading-list.md`
 - `agent-swarm-implementation.md`

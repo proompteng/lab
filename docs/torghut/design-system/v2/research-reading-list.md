@@ -63,6 +63,18 @@ high-level and focuses on process, risk, and tooling rather than alpha specifics
 - JaxMARL-HFT: a multi-agent environment for high-frequency trading (2025)
   - https://arxiv.org/abs/2508.16588
 
+## Modern ML For Market Data (Advanced)
+These are useful primarily as design constraints (data realism, evaluation discipline), not as a shortcut to alpha.
+
+- LiT: Limit Order Book Time-series Transformer for High-frequency Trading (2025)
+  - https://arxiv.org/abs/2508.11012
+- Trading with Transformers: Market Entry and Exit from the Limit Order Book using Deep Learning (TLOB) (2025)
+  - https://arxiv.org/abs/2506.01855
+- KANFormer: Kolmogorov-Arnold Transformer for robust time series forecasting (2025)
+  - https://arxiv.org/abs/2506.15441
+- T-KAN: Time series modeling with Kolmogorov-Arnold networks (2026)
+  - https://arxiv.org/abs/2601.14079
+
 ## Quant Research That Transfers To Production
 
 ### Backtest validity and data snooping
