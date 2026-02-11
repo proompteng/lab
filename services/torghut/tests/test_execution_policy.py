@@ -73,6 +73,17 @@ class TestExecutionPolicy(TestCase):
         self.assertFalse(outcome.approved)
         self.assertIn("max_notional_exceeded", outcome.reasons)
 
+    def test_min_notional_enforced(self) -> None:
+        policy = ExecutionPolicy(config=_config(min_notional=Decimal("250")))
+        outcome = policy.evaluate(
+            _decision(qty=Decimal("2"), price=Decimal("100")),
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+        )
+        self.assertFalse(outcome.approved)
+        self.assertIn("min_notional_not_met", outcome.reasons)
+
     def test_approved_orders_stay_within_caps(self) -> None:
         policy = ExecutionPolicy(
             config=_config(
@@ -103,6 +114,17 @@ class TestExecutionPolicy(TestCase):
             _decision(action="sell", qty=Decimal("2")),
             strategy=None,
             positions=[{"symbol": "AAPL", "qty": "5", "side": "long"}],
+            market_snapshot=None,
+        )
+        self.assertTrue(outcome.approved)
+        self.assertNotIn("shorts_not_allowed", outcome.reasons)
+
+    def test_shorts_allowed_when_enabled(self) -> None:
+        policy = ExecutionPolicy(config=_config(allow_shorts=True))
+        outcome = policy.evaluate(
+            _decision(action="sell", qty=Decimal("2")),
+            strategy=None,
+            positions=[],
             market_snapshot=None,
         )
         self.assertTrue(outcome.approved)
