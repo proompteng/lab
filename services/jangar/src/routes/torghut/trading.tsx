@@ -1,5 +1,6 @@
 import {
   Button,
+  Calendar,
   Card,
   CardAction,
   CardContent,
@@ -10,7 +11,9 @@ import {
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
-  Input,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   Select,
   SelectContent,
   SelectItem,
@@ -19,8 +22,11 @@ import {
   Skeleton,
 } from '@proompteng/design/ui'
 import { createFileRoute } from '@tanstack/react-router'
+import { CalendarIcon } from 'lucide-react'
 import * as React from 'react'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
+
+import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/torghut/trading')({
   component: TorghutTrading,
@@ -92,6 +98,8 @@ type RejectedDecision = {
 }
 
 const DEFAULT_TZ = 'America/New_York'
+const MIN_TRADING_DAY = '2020-01-01'
+const MAX_TRADING_DAY = '2100-12-31'
 
 const formatEtDayToday = () => {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -111,6 +119,39 @@ const formatEtDayToday = () => {
   if (!year || !month || !day) return new Date().toISOString().slice(0, 10)
   return `${year}-${month}-${day}`
 }
+
+const parseTradingDay = (value: string): Date | null => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return null
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const parsed = new Date(year, month - 1, day)
+  if (Number.isNaN(parsed.getTime())) return null
+  if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) return null
+  return parsed
+}
+
+const formatTradingDay = (date: Date): string => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const formatTradingDayLabel = (value: string): string => {
+  const parsed = parseTradingDay(value)
+  if (!parsed) return value
+  return new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(parsed)
+}
+
+const minTradingDayDate = parseTradingDay(MIN_TRADING_DAY) ?? new Date(2020, 0, 1)
+const maxTradingDayDate = parseTradingDay(MAX_TRADING_DAY) ?? new Date(2100, 11, 31)
 
 const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 })
 const compactNumber = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 })
@@ -164,6 +205,7 @@ const reasonHistogramConfig = {
 
 function TorghutTrading() {
   const [day, setDay] = React.useState(() => formatEtDayToday())
+  const [isDayPickerOpen, setIsDayPickerOpen] = React.useState(false)
   const [strategies, setStrategies] = React.useState<StrategyItem[]>([])
   const [strategyId, setStrategyId] = React.useState<string>('')
   const [strategiesError, setStrategiesError] = React.useState<string | null>(null)
@@ -333,14 +375,33 @@ function TorghutTrading() {
             <label className="text-xs font-medium" htmlFor="trading-day">
               Trading day (ET)
             </label>
-            <Input
-              id="trading-day"
-              type="date"
-              value={day}
-              onChange={(event) => setDay(event.target.value)}
-              min="2020-01-01"
-              max="2100-12-31"
-            />
+            <Popover open={isDayPickerOpen} onOpenChange={setIsDayPickerOpen}>
+              <PopoverTrigger
+                id="trading-day"
+                aria-label="Select trading day"
+                render={
+                  <Button variant="outline" className={cn('w-full justify-between px-3 text-left font-normal')}>
+                    <span className="tabular-nums">{formatTradingDayLabel(day)}</span>
+                    <CalendarIcon className="size-4 text-muted-foreground" />
+                  </Button>
+                }
+              />
+              <PopoverContent align="start" className="w-auto p-0">
+                <Calendar
+                  mode="single"
+                  selected={parseTradingDay(day) ?? undefined}
+                  onSelect={(selectedDay) => {
+                    if (!selectedDay) return
+                    setDay(formatTradingDay(selectedDay))
+                    setIsDayPickerOpen(false)
+                  }}
+                  captionLayout="dropdown"
+                  startMonth={minTradingDayDate}
+                  endMonth={maxTradingDayDate}
+                  disabled={(date) => date < minTradingDayDate || date > maxTradingDayDate}
+                />
+              </PopoverContent>
+            </Popover>
           </div>
           <div className="space-y-2 md:col-span-2">
             <label className="text-xs font-medium" htmlFor="trading-strategy">

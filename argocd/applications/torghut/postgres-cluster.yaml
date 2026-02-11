@@ -18,9 +18,9 @@ spec:
   inheritedMetadata:
     annotations:
       reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
-      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "pgadmin"
+      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "pgadmin,jangar"
       reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
-      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "pgadmin"
+      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "pgadmin,jangar"
   monitoring:
     enablePodMonitor: true
 # CNPG will emit application credentials in `torghut-db-app` (uri, user, password, host, port, dbname)

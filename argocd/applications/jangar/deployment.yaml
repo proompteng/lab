@@ -189,6 +189,12 @@ spec:
                 secretKeyRef:
                   name: jangar-db-app
                   key: uri
+            - name: TORGHUT_DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: uri
+                  optional: true
             - name: PGSSLMODE
               value: require
             - name: JANGAR_DB_CA_CERT
