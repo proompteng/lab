@@ -24,6 +24,7 @@ class LLMClientResponse:
     content: str
     usage: Optional[dict[str, int]]
 
+
 class LLMClient:
     """Thin wrapper around the OpenAI client to keep it mockable."""
 
