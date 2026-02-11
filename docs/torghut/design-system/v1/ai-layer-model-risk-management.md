@@ -45,6 +45,20 @@ flowchart LR
   - cost metrics (tokens).
 - Treat spikes as incidents if they affect trading behavior (even paper).
 
+### Guardrails instrumentation (v1)
+- LLM guardrails exporter (Prometheus):
+  - Config: `argocd/applications/torghut/llm-guardrails-exporter-configmap.yaml`
+  - Deployment/Service: `argocd/applications/torghut/llm-guardrails-exporter.yaml`
+- Key metrics:
+  - `torghut_llm_veto_total`, `torghut_llm_requests_total` (veto rate)
+  - `torghut_llm_parse_error_total` (parse error rate)
+  - `torghut_llm_circuit_open_total` (circuit breaker events)
+  - `torghut_llm_tokens_prompt_total`, `torghut_llm_tokens_completion_total` (token cost)
+- Baselines (tunable env vars on exporter):
+  - `LLM_VETO_RATE_BASELINE`
+  - `LLM_TOKENS_PER_REQUEST_BUDGET`
+- Alerts live in `argocd/applications/observability/graf-mimir-rules.yaml` under `torghut-mrm.rules`.
+
 ## Security considerations
 - Prompt injection and output handling are MRM concerns (see `v1/security-threat-model.md`).
 - API keys are high-value secrets; rotate regularly and restrict usage.
@@ -54,4 +68,3 @@ flowchart LR
 - **Decision:** Prompt/model changes require documented evaluation (offline + shadow) before affecting execution.
 - **Rationale:** Prevents silent regressions.
 - **Consequences:** Slower iteration; acceptable for safety.
-
