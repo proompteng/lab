@@ -460,7 +460,7 @@ class TradingPipeline:
                 adjustment_allowed=guardrails.adjustment_allowed,
             )
 
-            response_json = dict(outcome.response_json)
+            response_json: dict[str, Any] = dict(outcome.response_json)
             if policy_outcome.reason:
                 response_json["policy_override"] = policy_outcome.reason
                 response_json["policy_verdict"] = policy_outcome.verdict

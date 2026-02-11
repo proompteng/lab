@@ -31,7 +31,7 @@ def evaluate_llm_guardrails() -> LLMRiskGuardrails:
         reasons.append("llm_prompt_template_missing")
 
     if not settings.llm_shadow_mode:
-        evidence_missing = []
+        evidence_missing: list[str] = []
         allowed_models = settings.llm_allowed_models
         if not allowed_models:
             evidence_missing.append("llm_model_inventory_missing")
