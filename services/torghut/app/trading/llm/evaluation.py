@@ -182,11 +182,11 @@ def _top_risk_flags(
         .join(TradeDecision)
         .where(*base_filters, LLMDecisionReview.risk_flags.is_not(None))
     )
-    rows = cast(list[list[str] | str | None], session.execute(stmt).scalars().all())
+    rows = cast(list[list[str | None] | str | None], session.execute(stmt).scalars().all())
     counter: Counter[str] = Counter()
     for flags in rows:
         if isinstance(flags, list):
-            for flag in cast(list[str], flags):
+            for flag in flags:
                 if flag is not None:
                     counter[str(flag)] += 1
         elif flags is not None:
