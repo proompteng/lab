@@ -2,9 +2,11 @@
 
 import logging
 import os
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
@@ -17,7 +19,7 @@ from urllib.request import Request, urlopen
 from .alpaca_client import TorghutAlpacaClient
 from .config import settings
 from .db import ensure_schema, get_session, ping
-from .models import Execution, TradeDecision
+from .models import Execution, LLMDecisionReview, TradeDecision
 from .trading import TradingScheduler
 
 logger = logging.getLogger(__name__)
@@ -48,6 +50,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="torghut", lifespan=lifespan)
 app.state.settings = settings
+
+NY_TZ = ZoneInfo("America/New_York")
 
 
 @app.get("/healthz")
@@ -82,7 +86,7 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, bool]:
 
 
 @app.get("/trading/status")
-def trading_status() -> dict[str, object]:
+def trading_status(session: Session = Depends(get_session)) -> dict[str, object]:
     """Return trading loop status and metrics."""
 
     scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
@@ -100,6 +104,7 @@ def trading_status() -> dict[str, object]:
         "last_error": state.last_error,
         "metrics": state.metrics.__dict__,
         "llm": scheduler.llm_status(),
+        "llm_evaluation": _llm_evaluation_payload(session),
     }
 
 
@@ -113,6 +118,15 @@ def trading_metrics() -> dict[str, object]:
         app.state.trading_scheduler = scheduler
     metrics = scheduler.state.metrics
     return {"metrics": metrics.__dict__}
+
+
+@app.get("/trading/llm-evaluation")
+def trading_llm_evaluation(session: Session = Depends(get_session)) -> JSONResponse:
+    """Return today's LLM evaluation metrics (America/New_York)."""
+
+    payload = _llm_evaluation_payload(session)
+    status_code = 200 if payload["ok"] else 503
+    return JSONResponse(status_code=status_code, content=jsonable_encoder(payload))
 
 
 @app.get("/trading/decisions")
@@ -230,6 +244,86 @@ def trading_health(session: Session = Depends(get_session)) -> JSONResponse:
 
     status_code = 200 if overall_ok else 503
     return JSONResponse(status_code=status_code, content=jsonable_encoder(payload))
+
+
+def _llm_evaluation_payload(session: Session) -> dict[str, object]:
+    try:
+        metrics = _fetch_llm_evaluation_metrics(session)
+    except SQLAlchemyError as exc:
+        return {"ok": False, "detail": f"llm evaluation error: {exc}"}
+    return {"ok": True, "metrics": metrics}
+
+
+def _fetch_llm_evaluation_metrics(session: Session, now: datetime | None = None) -> dict[str, object]:
+    now_ny = _current_time_ny() if now is None else now.astimezone(NY_TZ)
+    start_ny = now_ny.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_ny = start_ny + timedelta(days=1)
+    start_utc = start_ny.astimezone(timezone.utc)
+    end_utc = end_ny.astimezone(timezone.utc)
+
+    stmt = (
+        select(LLMDecisionReview)
+        .join(TradeDecision, LLMDecisionReview.trade_decision_id == TradeDecision.id)
+        .where(LLMDecisionReview.created_at >= start_utc)
+        .where(LLMDecisionReview.created_at < end_utc)
+    )
+    reviews = session.execute(stmt).scalars().all()
+
+    verdict_counts = {"approve": 0, "veto": 0, "adjust": 0, "error": 0}
+    risk_counter: Counter[str] = Counter()
+    confidences: list[float] = []
+    tokens_prompt_total = 0
+    tokens_completion_total = 0
+
+    for review in reviews:
+        verdict = str(review.verdict)
+        verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
+        if review.confidence is not None:
+            confidences.append(float(review.confidence))
+        if review.tokens_prompt is not None:
+            tokens_prompt_total += int(review.tokens_prompt)
+        if review.tokens_completion is not None:
+            tokens_completion_total += int(review.tokens_completion)
+        risk_flags = review.risk_flags
+        if isinstance(risk_flags, list):
+            for flag in risk_flags:
+                if flag is None:
+                    continue
+                risk_counter[str(flag)] += 1
+        elif isinstance(risk_flags, dict):
+            for flag in risk_flags.keys():
+                risk_counter[str(flag)] += 1
+        elif risk_flags is not None:
+            risk_counter[str(risk_flags)] += 1
+
+    total_reviews = len(reviews)
+    error_count = verdict_counts.get("error", 0)
+    error_rate = (error_count / total_reviews) if total_reviews else 0.0
+    avg_confidence = (sum(confidences) / len(confidences)) if confidences else None
+    top_risk_flags = [
+        {"flag": flag, "count": count}
+        for flag, count in sorted(risk_counter.items(), key=lambda item: item[1], reverse=True)
+    ]
+
+    return {
+        "date": start_ny.date().isoformat(),
+        "timezone": "America/New_York",
+        "window_start": start_ny.isoformat(),
+        "window_end": end_ny.isoformat(),
+        "total_reviews": total_reviews,
+        "verdict_counts": verdict_counts,
+        "error_rate": error_rate,
+        "avg_confidence": avg_confidence,
+        "tokens": {
+            "prompt": tokens_prompt_total,
+            "completion": tokens_completion_total,
+        },
+        "top_risk_flags": top_risk_flags,
+    }
+
+
+def _current_time_ny() -> datetime:
+    return datetime.now(NY_TZ)
 
 
 def _check_postgres(session: Session) -> dict[str, object]:
