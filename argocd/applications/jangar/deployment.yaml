@@ -26,7 +26,7 @@ spec:
       serviceAccountName: jangar-inspector
       containers:
         - name: app
-          image: registry.ide-newton.ts.net/lab/jangar:latest
+          image: registry.ide-newton.ts.net/lab/jangar:4acded88@sha256:bd911be112de8997faa95c38d54bf2f86da81f5c34797d3a799bf91a9d15f473
           imagePullPolicy: Always
           env:
             - name: NODE_ENV
