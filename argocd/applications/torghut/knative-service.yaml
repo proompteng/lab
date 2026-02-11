@@ -25,7 +25,7 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:0d9bf959ff06655db16be18262a2de45a650ad5e87309396e72eaf4d0232daa5
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:5415e6395688b3250636e7e0331925b7fd8b8ef529abc755d8d6d5e133d147d5
           ports:
             - name: http1
               containerPort: 8181
@@ -106,12 +106,18 @@ spec:
               value: http://jangar.jangar.svc.cluster.local
             - name: LLM_PROVIDER
               value: jangar
+            - name: LLM_MODEL
+              value: gpt-5.3-codex
+            - name: LLM_ALLOWED_MODELS
+              value: gpt-5.3-codex
             - name: LLM_ENABLED
               value: "true"
             - name: LLM_SHADOW_MODE
               value: "true"
             - name: LLM_FAIL_MODE
               value: pass_through
+            - name: LLM_ADJUSTMENT_APPROVED
+              value: "false"
             - name: LLM_SELF_HOSTED_BASE_URL
               value: http://192.168.1.190:11434/v1
             - name: LLM_SELF_HOSTED_MODEL
@@ -128,9 +134,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.529.2
+              value: v0.536.1-1-g512274e1
             - name: TORGHUT_COMMIT
-              value: 9e421ad9491bfce13eecbb4a68e8bad6ccfab2d8
+              value: 512274e18a8256ba19648dcf46a39254450a76ba
           livenessProbe:
             httpGet:
               path: /healthz

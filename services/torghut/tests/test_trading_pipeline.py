@@ -173,6 +173,7 @@ class FakeLLMReviewEngine:
         portfolio: PortfolioSnapshot | None = None,
         market: MarketSnapshot | None = None,
         recent_decisions: list[RecentDecisionSummary] | None = None,
+        adjustment_allowed: bool | None = None,
     ) -> LLMReviewRequest:
         portfolio_snapshot = portfolio or PortfolioSnapshot(
             equity=Decimal("10000"),
@@ -201,7 +202,7 @@ class FakeLLMReviewEngine:
             account=account,
             positions=positions,
             policy=LLMPolicyContext(
-                adjustment_allowed=True,
+                adjustment_allowed=True if adjustment_allowed is None else adjustment_allowed,
                 min_qty_multiplier=Decimal("0.5"),
                 max_qty_multiplier=Decimal("1.25"),
                 allowed_order_types=["limit", "market"],
@@ -270,6 +271,14 @@ class FakeCircuitBreaker:
 
     def record_success(self) -> None:
         return None
+
+
+def _set_llm_guardrails(config, *, adjustment_approved: bool = False) -> None:
+    config.settings.llm_allowed_models_raw = config.settings.llm_model
+    config.settings.llm_evaluation_report = "eval-2026-02-08"
+    config.settings.llm_effective_challenge_id = "mrm-review-2026-02-08"
+    config.settings.llm_shadow_completed_at = "2026-02-08T00:00:00Z"
+    config.settings.llm_adjustment_approved = adjustment_approved
 
 
 class TestTradingPipeline(TestCase):
@@ -594,6 +603,11 @@ class TestTradingPipeline(TestCase):
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
             "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
@@ -602,6 +616,7 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
         config.settings.llm_min_confidence = 0.0
+        _set_llm_guardrails(config)
 
         try:
             with self.session_local() as session:
@@ -656,6 +671,11 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
+            config.settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
+            config.settings.llm_adjustment_approved = original["llm_adjustment_approved"]
 
     def test_pipeline_order_submit_rejection_does_not_crash_or_retry(self) -> None:
         from app import config
@@ -742,6 +762,11 @@ class TestTradingPipeline(TestCase):
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
             "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
@@ -750,6 +775,7 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
         config.settings.llm_min_confidence = 0.0
+        _set_llm_guardrails(config)
 
         try:
             with self.session_local() as session:
@@ -806,6 +832,11 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
+            config.settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
+            config.settings.llm_adjustment_approved = original["llm_adjustment_approved"]
 
     def test_pipeline_llm_adjust(self) -> None:
         from app import config
@@ -819,6 +850,11 @@ class TestTradingPipeline(TestCase):
             "llm_enabled": config.settings.llm_enabled,
             "llm_min_confidence": config.settings.llm_min_confidence,
             "llm_adjustment_allowed": config.settings.llm_adjustment_allowed,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
@@ -828,6 +864,7 @@ class TestTradingPipeline(TestCase):
         config.settings.llm_enabled = True
         config.settings.llm_min_confidence = 0.0
         config.settings.llm_adjustment_allowed = True
+        _set_llm_guardrails(config, adjustment_approved=True)
 
         try:
             with self.session_local() as session:
@@ -893,6 +930,11 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
             config.settings.llm_adjustment_allowed = original["llm_adjustment_allowed"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
+            config.settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
+            config.settings.llm_adjustment_approved = original["llm_adjustment_approved"]
 
     def test_pipeline_llm_failure_fallbacks(self) -> None:
         from app import config
@@ -906,6 +948,11 @@ class TestTradingPipeline(TestCase):
             "llm_enabled": config.settings.llm_enabled,
             "llm_fail_mode": config.settings.llm_fail_mode,
             "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
         }
         config.settings.trading_enabled = True
         config.settings.trading_universe_source = "static"
@@ -913,6 +960,7 @@ class TestTradingPipeline(TestCase):
         config.settings.llm_enabled = True
         config.settings.llm_fail_mode = "pass_through"
         config.settings.llm_min_confidence = 0.0
+        _set_llm_guardrails(config)
 
         try:
             with self.session_local() as session:
@@ -1001,6 +1049,11 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_fail_mode = original["llm_fail_mode"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
+            config.settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
+            config.settings.llm_adjustment_approved = original["llm_adjustment_approved"]
 
     def test_pipeline_llm_shadow_mode(self) -> None:
         from app import config
@@ -1081,6 +1134,101 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_shadow_mode = original["llm_shadow_mode"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
 
+    def test_pipeline_llm_guardrails_force_shadow(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = True
+        config.settings.llm_shadow_mode = False
+        config.settings.llm_min_confidence = 0.0
+        config.settings.llm_allowed_models_raw = None
+        config.settings.llm_evaluation_report = None
+        config.settings.llm_effective_challenge_id = None
+        config.settings.llm_shadow_completed_at = None
+        config.settings.llm_adjustment_approved = False
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                timeframe="1Min",
+            )
+
+            alpaca_client = FakeAlpacaClient()
+            pipeline = TradingPipeline(
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+                llm_review_engine=FakeLLMReviewEngine(verdict="veto"),
+            )
+
+            pipeline.run_once()
+
+            with self.session_local() as session:
+                reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                decisions = session.execute(select(TradeDecision)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(len(reviews), 1)
+                self.assertEqual(reviews[0].verdict, "veto")
+                self.assertEqual(decisions[0].status, "submitted")
+                self.assertEqual(len(executions), 1)
+                self.assertEqual(pipeline.state.metrics.llm_guardrail_shadow_total, 1)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original["trading_universe_source"]
+            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
+            config.settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
+            config.settings.llm_adjustment_approved = original["llm_adjustment_approved"]
+
     def test_pipeline_llm_circuit_open(self) -> None:
         from app import config
 
@@ -1092,6 +1240,11 @@ class TestTradingPipeline(TestCase):
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
             "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
@@ -1100,6 +1253,7 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
         config.settings.llm_fail_mode = "pass_through"
+        _set_llm_guardrails(config)
 
         try:
             with self.session_local() as session:
@@ -1155,6 +1309,11 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
+            config.settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
+            config.settings.llm_adjustment_approved = original["llm_adjustment_approved"]
 
     def test_pipeline_llm_min_confidence(self) -> None:
         from app import config
@@ -1167,6 +1326,11 @@ class TestTradingPipeline(TestCase):
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
             "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
@@ -1175,6 +1339,7 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
         config.settings.llm_min_confidence = 0.9
+        _set_llm_guardrails(config)
 
         try:
             with self.session_local() as session:
@@ -1231,6 +1396,11 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
+            config.settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
+            config.settings.llm_adjustment_approved = original["llm_adjustment_approved"]
 
     def test_pipeline_llm_adjust_out_of_bounds(self) -> None:
         from app import config
@@ -1244,6 +1414,11 @@ class TestTradingPipeline(TestCase):
             "llm_enabled": config.settings.llm_enabled,
             "llm_adjustment_allowed": config.settings.llm_adjustment_allowed,
             "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
@@ -1253,6 +1428,7 @@ class TestTradingPipeline(TestCase):
         config.settings.llm_enabled = True
         config.settings.llm_adjustment_allowed = True
         config.settings.llm_min_confidence = 0.0
+        _set_llm_guardrails(config, adjustment_approved=True)
 
         try:
             with self.session_local() as session:
@@ -1290,8 +1466,8 @@ class TestTradingPipeline(TestCase):
                 session_factory=self.session_local,
                 llm_review_engine=FakeLLMReviewEngine(
                     verdict="adjust",
-                    adjusted_qty=Decimal("10"),
-                    adjusted_order_type="limit",
+                    adjusted_qty=Decimal("50"),
+                    adjusted_order_type="market",
                 ),
             )
 
@@ -1302,7 +1478,8 @@ class TestTradingPipeline(TestCase):
                 decisions = session.execute(select(TradeDecision)).scalars().all()
                 executions = session.execute(select(Execution)).scalars().all()
                 self.assertEqual(len(reviews), 1)
-                self.assertEqual(reviews[0].verdict, "veto")
+                self.assertEqual(reviews[0].verdict, "adjust")
+                self.assertEqual(reviews[0].adjusted_qty, Decimal("12.5"))
                 self.assertEqual(decisions[0].status, "rejected")
                 self.assertEqual(len(executions), 0)
         finally:
@@ -1314,3 +1491,8 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_adjustment_allowed = original["llm_adjustment_allowed"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
+            config.settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
+            config.settings.llm_adjustment_approved = original["llm_adjustment_approved"]
