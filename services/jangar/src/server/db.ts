@@ -560,6 +560,70 @@ type AgentsControlPlaneResourcesCurrent = {
   updated_at: Generated<Timestamp>
 }
 
+type TorghutQuantMetricsLatest = {
+  id: Generated<string>
+  strategy_id: string
+  account: string
+  window: string
+  metric_name: string
+  status: string
+  quality: string
+  unit: string
+  value_numeric: number | string | null
+  value_json: JsonValue
+  meta_json: JsonValue
+  formula_version: string
+  as_of: Timestamp
+  freshness_seconds: number
+  updated_at: Generated<Timestamp>
+}
+
+type TorghutQuantMetricsSeries = {
+  id: Generated<string>
+  strategy_id: string
+  account: string
+  window: string
+  metric_name: string
+  status: string
+  quality: string
+  unit: string
+  value_numeric: number | string | null
+  value_json: JsonValue
+  meta_json: JsonValue
+  formula_version: string
+  as_of: Timestamp
+  freshness_seconds: number
+  created_at: Generated<Timestamp>
+}
+
+type TorghutQuantAlerts = {
+  id: Generated<string>
+  alert_id: string
+  strategy_id: string
+  account: string
+  severity: string
+  metric_name: string
+  window: string
+  threshold_json: JsonValue
+  observed_json: JsonValue
+  opened_at: Timestamp
+  resolved_at: Timestamp | null
+  state: string
+  updated_at: Generated<Timestamp>
+}
+
+type TorghutQuantPipelineHealth = {
+  id: Generated<string>
+  strategy_id: string
+  account: string
+  stage: string
+  ok: boolean
+  lag_seconds: number
+  as_of: Timestamp
+  details: JsonValue
+  created_at: Generated<Timestamp>
+}
+
 export type Database = {
   'atlas.repositories': AtlasRepositories
   'atlas.file_keys': AtlasFileKeys
@@ -595,6 +659,10 @@ export type Database = {
   orchestration_runs: JangarOrchestrationRuns
   audit_events: JangarAuditEvents
   'agents_control_plane.resources_current': AgentsControlPlaneResourcesCurrent
+  'torghut_control_plane.quant_metrics_latest': TorghutQuantMetricsLatest
+  'torghut_control_plane.quant_metrics_series': TorghutQuantMetricsSeries
+  'torghut_control_plane.quant_alerts': TorghutQuantAlerts
+  'torghut_control_plane.quant_pipeline_health': TorghutQuantPipelineHealth
   'codex_judge.runs': CodexJudgeRuns
   'codex_judge.artifacts': CodexJudgeArtifacts
   'codex_judge.evaluations': CodexJudgeEvaluations

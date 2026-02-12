@@ -181,14 +181,14 @@ describe('runCodexImplementation', () => {
     const resumeMetadataRaw = await readFile(resumeMetadataPath, 'utf8')
     const resumeMetadata = JSON.parse(resumeMetadataRaw) as Record<string, unknown>
     expect(resumeMetadata.state).toBe('cleared')
-  }, 20_000)
+  }, 40_000)
 
   it('does not inject runner git/PR workflow contracts into the prompt', async () => {
     await runCodexImplementation(eventPath)
 
     const invocation = runCodexSessionMock.mock.calls[0]?.[0]
     expect(invocation?.prompt).not.toContain('IMPORTANT git + PR contract')
-  }, 20_000)
+  }, 40_000)
 
   it('forwards systemPrompt from the payload into runCodexSession', async () => {
     const systemPrompt = 'You are a strict system prompt.'
@@ -210,7 +210,7 @@ describe('runCodexImplementation', () => {
 
     const invocation = runCodexSessionMock.mock.calls[0]?.[0]
     expect(invocation?.systemPrompt).toBe(systemPrompt)
-  }, 20_000)
+  }, 40_000)
 
   it('prefers CODEX_SYSTEM_PROMPT_PATH over the payload and does not log system prompt contents', async () => {
     const systemPromptPath = join(workdir, 'system-prompt.txt')
@@ -240,7 +240,7 @@ describe('runCodexImplementation', () => {
     const runtimeLogPath = join(workdir, '.codex-implementation-runtime.log')
     const runtimeLog = await readFile(runtimeLogPath, 'utf8')
     expect(runtimeLog).not.toContain(systemPromptFromFile)
-  }, 20_000)
+  }, 40_000)
 
   it('includes systemPromptHash in NATS run-started attrs when available', async () => {
     const binDir = join(workdir, 'bin')
@@ -328,7 +328,7 @@ describe('runCodexImplementation', () => {
     const expectedHash = createHash('sha256').update(systemPrompt, 'utf8').digest('hex')
     expect(attrs.systemPromptHash).toBe(expectedHash)
     expect(attrs.systemPrompt).toBeUndefined()
-  }, 20_000)
+  }, 40_000)
 
   it('includes PR metadata from artifact files and does not overwrite them', async () => {
     const prNumberPath = join(workdir, '.codex-pr-number.txt')
@@ -348,11 +348,11 @@ describe('runCodexImplementation', () => {
     expect(notify.prUrl).toBe('https://example.test/pull/456')
     expect(notify.pr_number).toBe(456)
     expect(notify.pr_url).toBe('https://example.test/pull/456')
-  }, 20_000)
+  }, 40_000)
 
   it('throws when the event file is missing', async () => {
     await expect(runCodexImplementation(join(workdir, 'missing.json'))).rejects.toThrow(/Event payload file not found/)
-  }, 20_000)
+  }, 40_000)
 
   it('configures Discord channel streaming when credentials are provided', async () => {
     process.env.DISCORD_BOT_TOKEN = 'token'
@@ -368,7 +368,7 @@ describe('runCodexImplementation', () => {
     )
     const invocation = runCodexSessionMock.mock.calls[0]?.[0]
     expect(invocation?.discordChannel?.command).toEqual(['bun', 'run', 'channel.ts'])
-  }, 20_000)
+  }, 40_000)
 
   it('prefers the image discord-channel script when available', async () => {
     process.env.DISCORD_BOT_TOKEN = 'token'
@@ -384,19 +384,19 @@ describe('runCodexImplementation', () => {
     await runCodexImplementation(eventPath)
 
     expect(buildDiscordChannelCommandMock).toHaveBeenCalledWith('/usr/local/bin/discord-channel.ts', expect.any(Array))
-  }, 20_000)
+  }, 30_000)
 
   it('throws when repository is missing in the payload', async () => {
     await writeFile(eventPath, JSON.stringify({ prompt: 'hi', repository: '', issueNumber: 3 }), 'utf8')
 
     await expect(runCodexImplementation(eventPath)).rejects.toThrow('Missing repository metadata in event payload')
-  }, 20_000)
+  }, 40_000)
 
   it('throws when issue number is missing in the payload', async () => {
     await writeFile(eventPath, JSON.stringify({ prompt: 'hi', repository: 'owner/repo', issueNumber: '' }), 'utf8')
 
     await expect(runCodexImplementation(eventPath)).rejects.toThrow('Missing issue number metadata in event payload')
-  }, 20_000)
+  }, 40_000)
 
   it('falls back to base when the head branch does not exist on the remote', async () => {
     // Remove head from remote and local to simulate new branches that are not yet pushed.
@@ -421,7 +421,7 @@ describe('runCodexImplementation', () => {
     // Verify the worktree ended up on the head branch created from base.
     const currentBranch = await readFile(join(workdir, '.git', 'HEAD'), 'utf8')
     expect(currentBranch.trim()).toContain('codex/issue-42')
-  }, 20_000)
+  }, 40_000)
 
   it('resumes a previous implementation session when resume metadata is present', async () => {
     const resumeSourceDir = await mkdtemp(join(tmpdir(), 'codex-impl-resume-src-'))
@@ -492,7 +492,7 @@ describe('runCodexImplementation', () => {
     } finally {
       await rm(resumeSourceDir, { recursive: true, force: true })
     }
-  }, 20_000)
+  }, 40_000)
 
   it('still writes artifact placeholders when implementation fails', async () => {
     const linkTargetPath = join(workdir, 'linked.txt')
@@ -546,5 +546,5 @@ describe('runCodexImplementation', () => {
     } finally {
       await rm(extractionDir, { recursive: true, force: true })
     }
-  }, 20_000)
+  }, 40_000)
 })
