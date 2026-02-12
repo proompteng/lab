@@ -12,6 +12,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, cast
 from uuid import UUID
 
+from alpaca.common.exceptions import APIError
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
@@ -111,11 +112,22 @@ class TorghutAlpacaClient:
         order = self._trading.get_order_by_id(alpaca_order_id)
         return self._model_to_dict(order)
 
-    def get_order_by_client_order_id(self, client_order_id: str) -> Dict[str, Any]:
-        getter = cast(Callable[[str], Any], getattr(self._trading, "get_order_by_client_order_id", None))
+    def get_order_by_client_order_id(self, client_order_id: str) -> Dict[str, Any] | None:
+        # alpaca-py renamed this helper across versions.
+        getter = cast(Callable[[str], Any] | None, getattr(self._trading, "get_order_by_client_order_id", None))
         if getter is None:
-            raise AttributeError("Trading client does not support get_order_by_client_order_id")
-        order = getter(client_order_id)
+            getter = cast(Callable[[str], Any] | None, getattr(self._trading, "get_order_by_client_id", None))
+        if getter is None:
+            return None
+
+        try:
+            order = getter(client_order_id)
+        except APIError as exc:
+            status_code = getattr(exc, "status_code", None)
+            if isinstance(status_code, int) and status_code == 404:
+                return None
+            raise
+
         return self._model_to_dict(order)
 
     def submit_order(
