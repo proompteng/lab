@@ -22,8 +22,8 @@
       "types": "./src/hooks.ts",
       "default": "./src/hooks.ts"
     },
-    "./tailwind.css": "./tailwind.css",
-    "./globals.css": "./globals.css"
+    "./tailwind.css": "./src/styles/tailwind.css",
+    "./globals.css": "./src/styles/globals.css"
   },
   "scripts": {
     "build": "tsc --project tsconfig.json --pretty false",
