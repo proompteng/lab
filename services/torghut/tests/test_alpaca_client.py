@@ -102,6 +102,35 @@ class TestAlpacaClient(TestCase):
         cancelled = firewall.cancel_all_orders()
         self.assertEqual(len(cancelled), 2)
 
+    def test_get_order_by_client_order_id_falls_back_to_client_id(self) -> None:
+        class TradingClientWithClientId(DummyTradingClient):
+            def get_order_by_client_id(self, client_id: str):  # type: ignore[override]
+                return DummyModel(id="order-xyz", client_order_id=client_id)
+
+        client = TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            trading_client=TradingClientWithClientId(),
+            data_client=DummyDataClient(),
+        )
+
+        order = client.get_order_by_client_order_id("client-123")
+        assert order is not None
+        self.assertEqual(order["id"], "order-xyz")
+        self.assertEqual(order["client_order_id"], "client-123")
+
+    def test_get_order_by_client_order_id_returns_none_when_unavailable(self) -> None:
+        client = TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            trading_client=DummyTradingClient(),
+            data_client=DummyDataClient(),
+        )
+
+        self.assertIsNone(client.get_order_by_client_order_id("client-123"))
+
     def test_mutating_methods_require_firewall_boundary(self) -> None:
         client = TorghutAlpacaClient(
             api_key="k",
