@@ -167,9 +167,11 @@ spec:
       - base
       - head
       - candidateId
+      - runId
       - stage
       - artifactPath
+      - policyPath
   text: |
     Objective: Implement AgentRun orchestration controls (retry, idempotency, lane ownership).
-    Inputs: repository, base, head, candidateId, stage, artifactPath.
-    Output: orchestration runbook + runnable templates.
+    Inputs: repository, base, head, candidateId, runId, stage, artifactPath, policyPath.
+    Output: orchestration runbook + runnable templates + observability contract.

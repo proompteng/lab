@@ -152,6 +152,37 @@ Troubleshooting:
   `*_NAMESPACE` variables if needed).
 - Ensure the referenced Orchestration exists and watch OrchestrationRun status for progress.
 
+## Torghut v3 orchestration guard checks
+- Source templates:
+  - `docs/torghut/design-system/v3/full-loop/templates/agentruns.yaml`
+  - `docs/torghut/design-system/v3/full-loop/templates/orchestration-policy.yaml`
+  - `docs/torghut/design-system/v3/full-loop/templates/orchestration-observability.yaml`
+- Validate stage transition guard decisions before advancing a candidate:
+```bash
+cd services/torghut
+uv run python scripts/orchestration_guard.py check-transition \
+  --state artifacts/orchestration/candidate-state.json \
+  --candidate-id cand-abc123 \
+  --run-id run-abc123 \
+  --from-stage gate-evaluation \
+  --to-stage shadow-paper \
+  --previous-artifact artifacts/gates/cand-abc123/report.json \
+  --previous-gate-passed \
+  --risk-controls-passed \
+  --execution-controls-passed \
+  --mode gitops
+```
+- Evaluate retry/pause behavior after a stage failure:
+```bash
+cd services/torghut
+uv run python scripts/orchestration_guard.py evaluate-failure \
+  --state artifacts/orchestration/candidate-state.json \
+  --stage candidate-build \
+  --failure-class transient \
+  --attempt 2
+```
+- Use emergency mode only for ticketed incidents. Mutable actions remain GitOps-first by default.
+
 ## Jangar /health 500 (router init error)
 - Symptom: `/health` returns 500 with `ReferenceError: Cannot access 'aE' before initialization`.
 - Root cause: Jangar builds picked up an incompatible Nitro `latest` bundle output.
