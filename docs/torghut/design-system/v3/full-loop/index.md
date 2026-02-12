@@ -58,6 +58,11 @@ Definition of "significant scope" for this pack:
 9. `09-incident-kill-switch-recovery-runbook.md`
 10. `10-audit-compliance-evidence-spec.md`
 11. `11-phase1-phase2-implementation-notes-2026-02-11.md`
+12. `12-autonomous-gap-closure-roadmap.md`
+13. `13-research-ledger-promotion-evidence-spec.md`
+14. `14-lean-router-and-execution-governance-spec.md`
+15. `15-llm-advisory-rollout-spec.md`
+16. `16-autonomous-quant-readiness-execution-plan.md`
 
 ## Templates
 - `templates/implementationspecs.yaml`

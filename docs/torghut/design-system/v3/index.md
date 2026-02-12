@@ -104,6 +104,11 @@ For end-to-end autonomous operation (research -> strategy -> backtest -> paper -
 - `docs/torghut/design-system/v3/full-loop/08-live-rollout-capital-ramp-plan.md`
 - `docs/torghut/design-system/v3/full-loop/09-incident-kill-switch-recovery-runbook.md`
 - `docs/torghut/design-system/v3/full-loop/10-audit-compliance-evidence-spec.md`
+- `docs/torghut/design-system/v3/full-loop/12-autonomous-gap-closure-roadmap.md`
+- `docs/torghut/design-system/v3/full-loop/13-research-ledger-promotion-evidence-spec.md`
+- `docs/torghut/design-system/v3/full-loop/14-lean-router-and-execution-governance-spec.md`
+- `docs/torghut/design-system/v3/full-loop/15-llm-advisory-rollout-spec.md`
+- `docs/torghut/design-system/v3/full-loop/16-autonomous-quant-readiness-execution-plan.md`
 - `docs/torghut/design-system/v3/full-loop/templates/implementationspecs.yaml`
 - `docs/torghut/design-system/v3/full-loop/templates/agentruns.yaml`
 
