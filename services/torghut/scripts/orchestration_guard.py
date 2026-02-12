@@ -146,21 +146,26 @@ def evaluate_transition(
         raise GuardError('Policy must include transitions map')
     transitions_map = cast(dict[str, list[str]], transitions)
 
-    if from_stage:
-        allowed_targets = transitions_map.get(from_stage, [])
+    active_stage_raw = state.get('activeStage')
+    active_stage = str(active_stage_raw).strip() if isinstance(active_stage_raw, str) else None
+    if active_stage and active_stage not in stage_definitions:
+        raise GuardError(f'Unknown active stage in state: {active_stage}')
+
+    if active_stage and from_stage and active_stage != from_stage:
+        return {'allowed': False, 'reason': f'active_stage_mismatch:{active_stage}', 'nextAction': 'halt'}
+
+    source_stage = from_stage or active_stage
+    if source_stage:
+        allowed_targets = transitions_map.get(source_stage, [])
         if to_stage not in allowed_targets:
             return {
                 'allowed': False,
-                'reason': f'illegal_transition:{from_stage}->{to_stage}',
+                'reason': f'illegal_transition:{source_stage}->{to_stage}',
                 'nextAction': 'halt',
             }
 
     if str(state.get('candidateId', candidate_id)) != candidate_id:
         return {'allowed': False, 'reason': 'candidate_mismatch', 'nextAction': 'halt'}
-
-    active_stage = state.get('activeStage')
-    if active_stage and from_stage and active_stage != from_stage:
-        return {'allowed': False, 'reason': f'active_stage_mismatch:{active_stage}', 'nextAction': 'halt'}
 
     paused = bool(state.get('paused', False))
     if paused:

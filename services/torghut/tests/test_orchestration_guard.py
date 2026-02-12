@@ -60,6 +60,28 @@ class TestOrchestrationGuard(TestCase):
         self.assertFalse(result['allowed'])
         self.assertEqual(result['nextAction'], 'halt')
 
+    def test_blocks_illegal_transition_when_from_stage_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact = Path(tmpdir) / 'report.json'
+            artifact.write_text('{"ok":true}', encoding='utf-8')
+            result = evaluate_transition(
+                policy=self.policy,
+                state=self.state,
+                candidate_id='cand-abc123',
+                run_id='run-abc123',
+                from_stage=None,
+                to_stage='live-ramp',
+                previous_artifact=artifact,
+                previous_gate_passed=True,
+                risk_controls_passed=True,
+                execution_controls_passed=True,
+                mode='gitops',
+                emergency_ticket=None,
+            )
+        self.assertFalse(result['allowed'])
+        self.assertEqual(result['nextAction'], 'halt')
+        self.assertEqual(result['reason'], 'illegal_transition:gate-evaluation->live-ramp')
+
     def test_allows_ticketed_emergency_transition(self) -> None:
         state: dict[str, Any] = {
             'candidateId': 'cand-abc123',
