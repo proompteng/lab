@@ -112,6 +112,11 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
             "last_patch": state.last_autonomy_patch,
             "last_recommendation": state.last_autonomy_recommendation,
             "last_error": state.last_autonomy_error,
+            "last_reason": state.last_autonomy_reason,
+            "last_ingest_signal_count": state.last_ingest_signals_total,
+            "last_ingest_reason": state.last_ingest_reason,
+            "last_ingest_window_start": state.last_ingest_window_start,
+            "last_ingest_window_end": state.last_ingest_window_end,
         },
         "metrics": state.metrics.__dict__,
         "llm": scheduler.llm_status(),
@@ -155,6 +160,11 @@ def trading_autonomy() -> dict[str, object]:
         "last_patch": state.last_autonomy_patch,
         "last_recommendation": state.last_autonomy_recommendation,
         "last_error": state.last_autonomy_error,
+        "last_reason": state.last_autonomy_reason,
+        "last_ingest_signal_count": state.last_ingest_signals_total,
+        "last_ingest_reason": state.last_ingest_reason,
+        "last_ingest_window_start": state.last_ingest_window_start,
+        "last_ingest_window_end": state.last_ingest_window_end,
     }
 
 

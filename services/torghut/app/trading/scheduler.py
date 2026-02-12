@@ -104,10 +104,15 @@ class TradingState:
     autonomy_patches_total: int = 0
     last_autonomy_run_at: Optional[datetime] = None
     last_autonomy_error: Optional[str] = None
+    last_autonomy_reason: Optional[str] = None
     last_autonomy_run_id: Optional[str] = None
     last_autonomy_gates: Optional[str] = None
     last_autonomy_patch: Optional[str] = None
     last_autonomy_recommendation: Optional[str] = None
+    last_ingest_signals_total: int = 0
+    last_ingest_window_start: Optional[datetime] = None
+    last_ingest_window_end: Optional[datetime] = None
+    last_ingest_reason: Optional[str] = None
     metrics: TradingMetrics = field(default_factory=TradingMetrics)
 
 
@@ -168,7 +173,12 @@ class TradingPipeline:
                 return
 
             batch = self.ingestor.fetch_signals(session)
+            self.state.last_ingest_signals_total = len(batch.signals)
+            self.state.last_ingest_window_start = batch.query_start
+            self.state.last_ingest_window_end = batch.query_end
+            self.state.last_ingest_reason = batch.no_signal_reason
             if not batch.signals:
+                self.ingestor.commit_cursor(session, batch)
                 return
 
             account_snapshot = self._get_account_snapshot(session)
@@ -1090,6 +1100,7 @@ class TradingScheduler:
         self.state.autonomy_signals_total = len(signals)
         self.state.last_autonomy_run_at = now
         if not signals:
+            self.state.last_autonomy_reason = "no_signals_in_window"
             self.state.last_autonomy_run_id = None
             self.state.last_autonomy_gates = None
             self.state.last_autonomy_patch = None
@@ -1132,6 +1143,7 @@ class TradingScheduler:
         self.state.autonomy_runs_total += 1
         self.state.last_autonomy_run_id = result.run_id
         self.state.last_autonomy_gates = str(result.gate_report_path)
+        self.state.last_autonomy_reason = None
 
         gate_report = json.loads(result.gate_report_path.read_text(encoding='utf-8'))
         self.state.last_autonomy_recommendation = str(gate_report.get('recommended_mode'))

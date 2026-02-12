@@ -96,12 +96,14 @@ class Reconciler:
             if not order:
                 continue
 
+            expected_route = _coerce_route_text(order.get("_execution_route_expected"))
+            actual_route = execution_route_actual(order, client)
             execution = sync_order_to_db(
                 session,
                 order,
                 trade_decision_id=str(decision.id),
-                execution_expected_adapter=_coerce_route_text(order.get("_execution_route_expected")),
-                execution_actual_adapter=execution_route_actual(order, client),
+                execution_expected_adapter=expected_route,
+                execution_actual_adapter=actual_route,
             )
             _update_trade_decision(session, execution)
             updates += 1
@@ -128,6 +130,10 @@ def _apply_order_update(
         execution.execution_expected_adapter = execution_expected_adapter
     if execution_actual_adapter:
         execution.execution_actual_adapter = execution_actual_adapter
+    elif execution.execution_actual_adapter is None and execution.execution_expected_adapter is not None:
+        execution.execution_actual_adapter = execution.execution_expected_adapter
+    if execution.execution_expected_adapter is None and execution.execution_actual_adapter is not None:
+        execution.execution_expected_adapter = execution.execution_actual_adapter
     execution.raw_order = coerce_json_payload(order)
     execution.last_update_at = datetime.now(timezone.utc)
     return True

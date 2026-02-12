@@ -34,11 +34,13 @@ from app.trading.universe import UniverseResolver
 class FakeIngestor:
     def __init__(self, signals: list[SignalEnvelope]) -> None:
         self.signals = signals
+        self.committed_batches = 0
 
     def fetch_signals(self, session: Session) -> SignalBatch:
         return SignalBatch(signals=self.signals, cursor_at=None, cursor_seq=None, cursor_symbol=None)
 
     def commit_cursor(self, session: Session, batch: SignalBatch) -> None:
+        self.committed_batches += 1
         return None
 
 
@@ -295,6 +297,61 @@ class TestTradingPipeline(TestCase):
         from app import config
 
         config.settings.trading_kill_switch_enabled = self._original_kill_switch
+
+    def test_pipeline_empty_signal_batch_commits_cursor(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="empty-signal regression",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            ingestor = FakeIngestor([])
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=ingestor,
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+
+            pipeline.run_once()
+            self.assertEqual(ingestor.committed_batches, 1)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original["trading_universe_source"]
+            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
 
     def test_decision_engine_macd_rsi(self) -> None:
         engine = DecisionEngine()

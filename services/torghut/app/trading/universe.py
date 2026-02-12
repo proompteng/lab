@@ -32,7 +32,16 @@ class UniverseResolver:
             symbols = set(settings.trading_static_symbols)
             return _filter_symbols(symbols)
         if settings.trading_universe_source == "jangar":
-            return self._fetch_from_jangar()
+            symbols = self._fetch_from_jangar()
+            if symbols:
+                return symbols
+            if self._cache:
+                logger.warning(
+                    "Jangar fetch returned no symbols; reusing cached universe with %d symbols",
+                    len(self._cache.symbols),
+                )
+                return self._cache.symbols
+            return set()
         logger.warning("Unknown trading universe source: %s", settings.trading_universe_source)
         return set()
 

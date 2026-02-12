@@ -58,7 +58,10 @@ def sync_order_to_db(
     resolved_expected_adapter = (
         execution_expected_adapter
         or _coerce_route_text(order_response.get("_execution_route_expected"))
+        or _coerce_route_text(order_response.get("_execution_route_actual"))
+        or _coerce_route_text(order_response.get("_execution_adapter"))
         or _coerce_route_text(order_response.get("execution_expected_adapter"))
+        or _coerce_route_text(order_response.get("execution_actual_adapter"))
     )
     resolved_actual_adapter = (
         execution_actual_adapter
