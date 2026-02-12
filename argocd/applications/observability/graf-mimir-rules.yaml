@@ -729,7 +729,7 @@ data:
               runbook_url: docs/runbooks/torghut-quant-control-plane.md
           - alert: JangarQuantControlPlaneStreamErrors
             expr: |
-              sum(rate(jangar_sse_errors_total{stream="control-plane"}[10m])) > 0.05
+              sum(rate(jangar_sse_errors_total{stream="torghut-quant"}[10m])) > 0.05
             for: 10m
             labels:
               severity: warning

@@ -313,6 +313,12 @@ export const getTorghutQuantEmitter = () => ensureGlobal().emitter
 
 export const getTorghutQuantStreamHeartbeatMs = () => ensureGlobal().config.streamHeartbeatMs
 
+const resolveStrategyAccountsForCompute = (accounts: string[]) => {
+  const normalized = accounts.map((account) => account.trim()).filter(Boolean)
+  if (normalized.length === 0) return ['']
+  return ['', ...normalized]
+}
+
 const runComputeCycle = async (windows: QuantWindow[]) => {
   const state = ensureGlobal()
   const config = state.config
@@ -331,8 +337,8 @@ const runComputeCycle = async (windows: QuantWindow[]) => {
 
   for (const strategy of enabledStrategies) {
     const accounts = await listTorghutStrategyAccounts({ pool: torghut.pool, strategyId: strategy.id, limit: 50 })
-    // If no account labels are known yet, compute a synthetic "global" frame so the UI can still load.
-    const strategyAccounts = accounts.length > 0 ? accounts : ['']
+    // Always compute an aggregate frame (account='') so the snapshot API works for multi-account strategies.
+    const strategyAccounts = resolveStrategyAccountsForCompute(accounts)
 
     for (const account of strategyAccounts) {
       for (const window of windows) {
@@ -480,4 +486,8 @@ export const startTorghutQuantRuntime = () => {
         heavyInFlight = false
       })
   }, state.config.heavyComputeIntervalMs)
+}
+
+export const __private = {
+  resolveStrategyAccountsForCompute,
 }
