@@ -28,11 +28,21 @@ FLAT_SIGNAL_COLUMNS = [
     "symbol",
     "macd",
     "macd_signal",
+    "macd_hist",
     "signal",
     "rsi",
     "rsi14",
     "ema",
+    "ema12",
+    "ema26",
     "vwap",
+    "vwap_session",
+    "vwap_w5m",
+    "boll_mid",
+    "boll_upper",
+    "boll_lower",
+    "imbalance_spread",
+    "vol_realized_w60s",
     "signal_json",
     "timeframe",
     "price",
@@ -517,6 +527,22 @@ def _payload_from_flat_row(row: dict[str, Any]) -> dict[str, Any]:
     if imbalance_spread is not None and "imbalance" not in payload:
         payload["imbalance"] = {"spread": imbalance_spread}
 
+    # Preserve extended TA fields required by plugin_v3 strategy runtime.
+    for key in (
+        "macd_hist",
+        "ema12",
+        "ema26",
+        "vwap_session",
+        "vwap_w5m",
+        "boll_mid",
+        "boll_upper",
+        "boll_lower",
+        "imbalance_spread",
+        "vol_realized_w60s",
+    ):
+        if row.get(key) is not None and key not in payload:
+            payload[key] = row.get(key)
+
     return payload
 
 
@@ -558,11 +584,21 @@ def _select_columns(columns: set[str], time_column: str) -> list[str]:
         "timeframe",
         "macd",
         "macd_signal",
+        "macd_hist",
         "signal",
         "rsi",
         "rsi14",
         "ema",
+        "ema12",
+        "ema26",
         "vwap",
+        "vwap_session",
+        "vwap_w5m",
+        "boll_mid",
+        "boll_upper",
+        "boll_lower",
+        "imbalance_spread",
+        "vol_realized_w60s",
         "signal_json",
         "close",
         "price",

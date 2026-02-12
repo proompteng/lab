@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from typing import Any, Optional, cast
 
 from sqlalchemy import or_, select
@@ -15,14 +15,13 @@ from sqlalchemy.orm import Session
 from ..models import Execution, Strategy, TradeDecision, coerce_json_payload
 from ..snapshots import sync_order_to_db
 from .execution_policy import should_retry_order_error
-from .firewall import OrderFirewall
 from .models import ExecutionRequest, StrategyDecision, decision_hash
 
 logger = logging.getLogger(__name__)
 
 
 class OrderExecutor:
-    """Submit orders to Alpaca with idempotency guards."""
+    """Submit orders to a broker adapter with idempotency guards."""
 
     def ensure_decision(
         self, session: Session, decision: StrategyDecision, strategy: Strategy, account_label: str
@@ -33,7 +32,7 @@ class OrderExecutor:
         if existing:
             return existing
 
-        decision_payload = coerce_json_payload(decision.model_dump(mode="json"))
+        decision_payload = coerce_json_payload(decision.model_dump(mode='json'))
         decision_row = TradeDecision(
             strategy_id=strategy.id,
             alpaca_account_label=account_label,
@@ -41,7 +40,7 @@ class OrderExecutor:
             timeframe=decision.timeframe,
             decision_json=decision_payload,
             rationale=decision.rationale,
-            status="planned",
+            status='planned',
             decision_hash=digest,
         )
         session.add(decision_row)
@@ -69,7 +68,7 @@ class OrderExecutor:
     def submit_order(
         self,
         session: Session,
-        firewall: OrderFirewall,
+        execution_client: Any,
         decision: StrategyDecision,
         decision_row: TradeDecision,
         account_label: str,
@@ -78,16 +77,16 @@ class OrderExecutor:
     ) -> Optional[Execution]:
         existing_execution = self._fetch_execution(session, decision_row)
         if existing_execution is not None:
-            logger.info("Execution already exists for decision %s", decision_row.id)
+            logger.info('Execution already exists for decision %s', decision_row.id)
             return None
 
-        existing_order = self._fetch_existing_order(firewall, decision_row.decision_hash)
+        existing_order = self._fetch_existing_order(execution_client, decision_row.decision_hash)
         if existing_order is not None:
             execution = sync_order_to_db(session, existing_order, trade_decision_id=str(decision_row.id))
             _apply_execution_status(decision_row, execution, account_label)
             session.add(decision_row)
             session.commit()
-            logger.info("Backfilled execution for decision %s from broker state", decision_row.id)
+            logger.info('Backfilled execution for decision %s from broker state', decision_row.id)
             return None
 
         request = ExecutionRequest(
@@ -108,7 +107,7 @@ class OrderExecutor:
         attempt = 0
         while True:
             try:
-                order_response = firewall.submit_order(
+                order_response = execution_client.submit_order(
                     symbol=request.symbol,
                     side=request.side,
                     qty=float(request.qty),
@@ -116,7 +115,7 @@ class OrderExecutor:
                     time_in_force=request.time_in_force,
                     limit_price=float(request.limit_price) if request.limit_price is not None else None,
                     stop_price=float(request.stop_price) if request.stop_price is not None else None,
-                    extra_params={"client_order_id": request.client_order_id},
+                    extra_params={'client_order_id': request.client_order_id},
                 )
                 break
             except Exception as exc:
@@ -125,7 +124,7 @@ class OrderExecutor:
                 delay = retry_delays[attempt]
                 attempt += 1
                 logger.warning(
-                    "Retrying order submission attempt=%s decision_id=%s error=%s",
+                    'Retrying order submission attempt=%s decision_id=%s error=%s',
                     attempt,
                     decision_row.id,
                     exc,
@@ -138,22 +137,22 @@ class OrderExecutor:
             execution,
             account_label,
             submitted_at=datetime.now(timezone.utc),
-            status_override="submitted",
+            status_override='submitted',
         )
         session.add(decision_row)
         session.commit()
         return execution
 
     def mark_rejected(self, session: Session, decision_row: TradeDecision, reason: str) -> None:
-        decision_row.status = "rejected"
+        decision_row.status = 'rejected'
         decision_json = _coerce_json(decision_row.decision_json)
-        existing = decision_json.get("risk_reasons")
+        existing = decision_json.get('risk_reasons')
         if isinstance(existing, list):
             risk_reasons = [str(item) for item in cast(list[Any], existing)]
         else:
             risk_reasons = []
         risk_reasons.append(reason)
-        decision_json["risk_reasons"] = risk_reasons
+        decision_json['risk_reasons'] = risk_reasons
         decision_row.decision_json = decision_json
         session.add(decision_row)
         session.commit()
@@ -165,27 +164,31 @@ class OrderExecutor:
         params_update: Mapping[str, Any],
     ) -> None:
         decision_json = _coerce_json(decision_row.decision_json)
-        params_value = decision_json.get("params")
+        params_value = decision_json.get('params')
         if isinstance(params_value, Mapping):
             params = dict(cast(Mapping[str, Any], params_value))
         else:
             params = {}
         params.update(params_update)
-        decision_json["params"] = params
+        decision_json['params'] = params
         decision_row.decision_json = decision_json
         session.add(decision_row)
         session.commit()
 
     @staticmethod
     def _fetch_existing_order(
-        firewall: OrderFirewall, decision_hash_value: Optional[str]
+        execution_client: Any,
+        decision_hash_value: Optional[str],
     ) -> Optional[dict[str, Any]]:
         if not decision_hash_value:
             return None
         try:
-            order = firewall.get_order_by_client_order_id(decision_hash_value)
+            getter = getattr(execution_client, 'get_order_by_client_order_id', None)
+            if getter is None:
+                return None
+            order = getter(decision_hash_value)
         except Exception as exc:  # pragma: no cover - external failure
-            logger.warning("Failed to fetch broker order for client_order_id: %s", exc)
+            logger.warning('Failed to fetch broker order for client_order_id: %s', exc)
             return None
         if not order:
             return None
@@ -206,12 +209,12 @@ def _apply_execution_status(
     submitted_at: Optional[datetime] = None,
     status_override: Optional[str] = None,
 ) -> None:
-    decision_row.status = status_override or execution.status or "submitted"
+    decision_row.status = status_override or execution.status or 'submitted'
     decision_row.alpaca_account_label = account_label
     if submitted_at is not None and decision_row.executed_at is None:
         decision_row.executed_at = submitted_at
-    if execution.status == "filled" and decision_row.executed_at is None:
+    if execution.status == 'filled' and decision_row.executed_at is None:
         decision_row.executed_at = datetime.now(timezone.utc)
 
 
-__all__ = ["OrderExecutor"]
+__all__ = ['OrderExecutor']

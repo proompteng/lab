@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torghut-lean-runner
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-lean-runner
+    app.kubernetes.io/component: execution
+    app.kubernetes.io/part-of: lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: torghut-lean-runner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: torghut-lean-runner
+        app.kubernetes.io/component: execution
+        app.kubernetes.io/part-of: lab
+    spec:
+      serviceAccountName: torghut-runtime
+      containers:
+        - name: lean-runner
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:4d5607ec723137b171101ab8deb1ca6a342f5b12be2dcf56b881816260c5fbd8
+          imagePullPolicy: IfNotPresent
+          command:
+            - uvicorn
+            - app.lean_runner:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8088"
+          ports:
+            - name: http
+              containerPort: 8088
+          env:
+            - name: APP_ENV
+              value: prod
+            - name: TRADING_MODE
+              value: live
+            - name: APCA_API_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-alpaca
+                  key: APCA_API_KEY_ID
+                  optional: true
+            - name: APCA_API_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-alpaca
+                  key: APCA_API_SECRET_KEY
+                  optional: true
+            - name: APCA_API_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-alpaca
+                  key: APCA_API_BASE_URL
+                  optional: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi

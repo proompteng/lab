@@ -22,6 +22,7 @@ from ..snapshots import snapshot_account_and_positions
 from ..strategies import StrategyCatalog
 from .decisions import DecisionEngine
 from .execution import OrderExecutor
+from .execution_adapters import ExecutionAdapter, adapter_enabled_for_symbol, build_execution_adapter
 from .execution_policy import ExecutionPolicy
 from .firewall import OrderFirewall, OrderFirewallBlocked
 from .ingest import ClickHouseSignalIngestor
@@ -110,6 +111,7 @@ class TradingPipeline:
         decision_engine: DecisionEngine,
         risk_engine: RiskEngine,
         executor: OrderExecutor,
+        execution_adapter: ExecutionAdapter,
         reconciler: Reconciler,
         universe_resolver: UniverseResolver,
         state: TradingState,
@@ -126,6 +128,7 @@ class TradingPipeline:
         self.decision_engine = decision_engine
         self.risk_engine = risk_engine
         self.executor = executor
+        self.execution_adapter = execution_adapter
         self.reconciler = reconciler
         self.universe_resolver = universe_resolver
         self.state = state
@@ -195,7 +198,7 @@ class TradingPipeline:
 
     def reconcile(self) -> int:
         with self.session_factory() as session:
-            updates = self.reconciler.reconcile(session, self.alpaca_client)
+            updates = self.reconciler.reconcile(session, self.execution_adapter)
             if updates:
                 self.state.metrics.reconcile_updates_total += updates
             return updates
@@ -302,10 +305,23 @@ class TradingPipeline:
             if not settings.trading_enabled:
                 return
 
+            execution_client = self._execution_client_for_symbol(decision.symbol)
+            selected_adapter_name = self._execution_client_name(execution_client)
+            self.executor.update_decision_params(
+                session,
+                decision_row,
+                {
+                    "execution_adapter": {
+                        "selected": selected_adapter_name,
+                        "policy": settings.trading_execution_adapter_policy,
+                        "symbol": decision.symbol,
+                    }
+                },
+            )
             try:
                 execution = self.executor.submit_order(
                     session,
-                    self.order_firewall,
+                    execution_client,
                     decision,
                     decision_row,
                     self.account_label,
@@ -352,12 +368,27 @@ class TradingPipeline:
                 return
 
             if execution:
+                actual_adapter_name = str(getattr(execution_client, "last_route", selected_adapter_name))
+                if actual_adapter_name != selected_adapter_name:
+                    self.executor.update_decision_params(
+                        session,
+                        decision_row,
+                        {
+                            "execution_adapter": {
+                                "selected": selected_adapter_name,
+                                "actual": actual_adapter_name,
+                                "policy": settings.trading_execution_adapter_policy,
+                                "symbol": decision.symbol,
+                            }
+                        },
+                    )
                 self.state.metrics.orders_submitted_total += 1
                 logger.info(
-                    "Order submitted strategy_id=%s decision_id=%s symbol=%s alpaca_order_id=%s",
+                    "Order submitted strategy_id=%s decision_id=%s symbol=%s adapter=%s alpaca_order_id=%s",
                     decision.strategy_id,
                     decision_row.id,
                     decision.symbol,
+                    actual_adapter_name,
                     execution.alpaca_order_id,
                 )
         except Exception as exc:
@@ -371,6 +402,20 @@ class TradingPipeline:
                 self.state.metrics.orders_rejected_total += 1
                 self.executor.mark_rejected(session, decision_row, f"decision_handler_error {type(exc).__name__}")
             return
+
+    def _execution_client_for_symbol(self, symbol: str) -> Any:
+        if adapter_enabled_for_symbol(symbol):
+            return self.execution_adapter
+        return self.order_firewall
+
+    @staticmethod
+    def _execution_client_name(client: Any) -> str:
+        raw_name = getattr(client, "name", None)
+        if raw_name:
+            return str(raw_name)
+        if isinstance(client, OrderFirewall):
+            return "alpaca"
+        return type(client).__name__
 
     def _apply_portfolio_sizing(
         self,
@@ -902,6 +947,7 @@ class TradingScheduler:
         strategy_catalog = StrategyCatalog.from_settings()
         alpaca_client = TorghutAlpacaClient()
         order_firewall = OrderFirewall(alpaca_client)
+        execution_adapter = build_execution_adapter(alpaca_client=alpaca_client, order_firewall=order_firewall)
         return TradingPipeline(
             alpaca_client=alpaca_client,
             order_firewall=order_firewall,
@@ -909,6 +955,7 @@ class TradingScheduler:
             decision_engine=DecisionEngine(price_fetcher=price_fetcher),
             risk_engine=RiskEngine(),
             executor=OrderExecutor(),
+            execution_adapter=execution_adapter,
             reconciler=Reconciler(),
             universe_resolver=UniverseResolver(),
             state=self.state,

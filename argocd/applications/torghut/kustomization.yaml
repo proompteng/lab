@@ -18,6 +18,8 @@ resources:
   - alloy-deployment.yaml
   - llm-guardrails-exporter-configmap.yaml
   - llm-guardrails-exporter.yaml
+  - lean-runner-deployment.yaml
+  - lean-runner-service.yaml
   - clickhouse
   - ws
   - ta
