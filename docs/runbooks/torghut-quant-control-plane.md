@@ -33,8 +33,8 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - `kubectl -n torghut get deploy torghut-clickhouse-guardrails-exporter torghut-ws torghut-ta`
    - Check `TorghutSignalsStaleDuringMarketHours` and `TorghutMicrobarsStaleDuringMarketHours` alerts.
 4. Check Jangar SSE health for control-plane dashboards.
-   - Review Jangar logs for `control-plane` stream errors.
-   - Verify the control-plane UI connection in Jangar (`/agents/control-plane`).
+   - Review Jangar logs for `torghut-quant` stream errors.
+   - Verify the quant control-plane UI connection in Jangar (`/control-plane/torghut/quant/`).
 
 ## Mitigations
 
