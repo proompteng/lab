@@ -123,7 +123,8 @@ class TorghutAlpacaClient:
         try:
             order = getter(client_order_id)
         except APIError as exc:
-            if exc.status_code == 404:
+            status_code = getattr(exc, "status_code", None)
+            if isinstance(status_code, int) and status_code == 404:
                 return None
             raise
 
