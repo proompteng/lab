@@ -87,11 +87,66 @@ class LegacyMacdRsiPlugin:
         return None
 
 
+class IntradayTsmomPlugin:
+    """Intraday trend-following plugin with stricter momentum/volatility filters."""
+
+    plugin_id = 'intraday_tsmom'
+    version = '1.1.0'
+    required_features = ('price', 'ema12', 'ema26', 'macd', 'macd_signal', 'rsi14', 'vol_realized_w60s')
+
+    def evaluate(self, context: StrategyContext, features: FeatureVectorV3) -> StrategyIntent | None:
+        _ = context
+        ema12 = _decimal(features.values.get('ema12'))
+        ema26 = _decimal(features.values.get('ema26'))
+        macd = _decimal(features.values.get('macd'))
+        macd_signal = _decimal(features.values.get('macd_signal'))
+        rsi14 = _decimal(features.values.get('rsi14'))
+        vol = _decimal(features.values.get('vol_realized_w60s'))
+
+        if ema12 is None or ema26 is None or macd is None or macd_signal is None or rsi14 is None:
+            return None
+
+        macd_hist = macd - macd_signal
+        trend_up = ema12 > ema26 and macd > macd_signal
+        trend_down = ema12 < ema26 and macd < macd_signal
+        # Profit-focused filter: avoid noisy low-conviction and high-volatility windows.
+        vol_ok = vol is None or (Decimal('0.001') <= vol <= Decimal('0.012'))
+
+        if trend_up and vol_ok and macd_hist >= Decimal('0.04') and Decimal('52') <= rsi14 <= Decimal('62'):
+            confidence = Decimal('0.64')
+            if macd_hist >= Decimal('0.10'):
+                confidence += Decimal('0.05')
+            if vol is not None and vol <= Decimal('0.008'):
+                confidence += Decimal('0.03')
+            return StrategyIntent(
+                action='buy',
+                confidence=min(confidence, Decimal('0.82')),
+                rationale=('tsmom_trend_up', 'momentum_confirmed', 'volatility_within_budget'),
+                required_features=self.required_features,
+            )
+
+        if trend_down and rsi14 >= Decimal('66') and (macd_signal - macd) >= Decimal('0.06'):
+            confidence = Decimal('0.62')
+            if rsi14 >= Decimal('72'):
+                confidence += Decimal('0.03')
+            return StrategyIntent(
+                action='sell',
+                confidence=min(confidence, Decimal('0.78')),
+                rationale=('tsmom_trend_down', 'momentum_reversal_exit'),
+                required_features=self.required_features,
+            )
+
+        return None
+
+
 class StrategyRuntime:
     """Deterministic strategy plugin runtime for phase-1/phase-2 scaffolding."""
 
     def __init__(self, plugins: dict[str, StrategyPlugin] | None = None) -> None:
-        self.plugins = plugins or {'legacy_macd_rsi': LegacyMacdRsiPlugin()}
+        self.plugins = plugins or {
+            'legacy_macd_rsi': LegacyMacdRsiPlugin(),
+            'intraday_tsmom_v1': IntradayTsmomPlugin(),
+        }
 
     def evaluate(self, strategy: Strategy, features: FeatureVectorV3, *, timeframe: str) -> RuntimeDecision | None:
         plugin_type = self._strategy_plugin_type(strategy)
@@ -126,6 +181,8 @@ class StrategyRuntime:
             return 'legacy_macd_rsi'
         if str(raw) in {'static', 'legacy_macd_rsi'}:
             return 'legacy_macd_rsi'
+        if str(raw) in {'intraday_tsmom', 'intraday_tsmom_v1', 'tsmom_intraday'}:
+            return 'intraday_tsmom_v1'
         return str(raw)
 
     @staticmethod

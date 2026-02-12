@@ -12,9 +12,15 @@ data:
     strategies:
       - name: macd-rsi-default
         description: MACD/RSI demo strategy
-        enabled: true
+        enabled: false
         base_timeframe: "1Sec"
         universe_type: static
-        symbols: []
         max_notional_per_trade: 500
         max_position_pct_equity: 0.05
+      - name: intraday-tsmom-profit-v2
+        description: Intraday momentum strategy tuned for higher selectivity, version=1.1.0
+        enabled: true
+        base_timeframe: "1Sec"
+        universe_type: intraday_tsmom_v1
+        max_notional_per_trade: 600
+        max_position_pct_equity: 0.035

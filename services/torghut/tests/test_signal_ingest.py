@@ -47,6 +47,9 @@ class TestSignalIngest(TestCase):
             "macd": 0.8,
             "signal": 0.4,
             "rsi": 55.0,
+            "ema12": 351.2,
+            "ema26": 349.9,
+            "vol_realized_w60s": 0.009,
             "signal_json": '{"vwap": 350.1}',
         }
         signal = ingestor.parse_row(row)
@@ -56,12 +59,17 @@ class TestSignalIngest(TestCase):
         self.assertIn("macd", signal.payload)
         self.assertEqual(signal.payload.get("rsi"), 55.0)
         self.assertEqual(signal.payload.get("vwap"), 350.1)
+        self.assertEqual(signal.payload.get("ema12"), 351.2)
+        self.assertEqual(signal.payload.get("ema26"), 349.9)
+        self.assertEqual(signal.payload.get("vol_realized_w60s"), 0.009)
 
     def test_build_query_flat_schema(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="flat", table="torghut.ta_signals", fast_forward_stale_cursor=False)
         query = ingestor._build_query(datetime(2026, 1, 1, tzinfo=timezone.utc), None, None)
-        self.assertIn("SELECT ts, symbol, macd, macd_signal, signal, rsi, rsi14, ema, vwap", query)
+        self.assertIn("SELECT ts, symbol, macd, macd_signal, macd_hist, signal, rsi, rsi14, ema, ema12, ema26", query)
         self.assertIn("signal_json, timeframe, price, close, spread", query)
+        self.assertIn("ema12, ema26", query)
+        self.assertIn("vol_realized_w60s", query)
         self.assertIn("FROM torghut.ta_signals", query)
         self.assertIn("WHERE ts >= toDateTime64", query)
         self.assertNotIn("payload", query)
@@ -105,8 +113,13 @@ class TestSignalIngest(TestCase):
             symbol="AAPL",
         )
         assert ingestor.last_query is not None
-        self.assertIn("SELECT ts, symbol, macd, macd_signal, signal, rsi, rsi14, ema, vwap", ingestor.last_query)
+        self.assertIn(
+            "SELECT ts, symbol, macd, macd_signal, macd_hist, signal, rsi, rsi14, ema, ema12, ema26",
+            ingestor.last_query,
+        )
         self.assertIn("signal_json, timeframe, price, close, spread", ingestor.last_query)
+        self.assertIn("ema12, ema26", ingestor.last_query)
+        self.assertIn("vol_realized_w60s", ingestor.last_query)
         self.assertIn("WHERE ts >= toDateTime64", ingestor.last_query)
         self.assertIn("AND ts <= toDateTime64", ingestor.last_query)
 
