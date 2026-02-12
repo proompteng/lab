@@ -77,3 +77,63 @@ class TestAutonomyRuntime(TestCase):
 
         self.assertEqual(len(result.decisions), 1)
         self.assertTrue(any(error.startswith('plugin_not_found:missing_plugin@9.9.9') for error in result.errors))
+
+    def test_intraday_tsmom_v1_plugin_emits_buy(self) -> None:
+        runtime = StrategyRuntime(default_runtime_registry())
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Min',
+            payload={
+                'macd': {'macd': '0.12', 'signal': '0.03'},
+                'rsi14': '56',
+                'price': '101.5',
+                'ema12': '101.0',
+                'ema26': '100.5',
+                'vol_realized_w60s': '0.008',
+            },
+        )
+
+        result = runtime.evaluate(
+            signal,
+            [
+                StrategyRuntimeConfig(
+                    strategy_id='tsmom',
+                    strategy_type='intraday_tsmom_v1',
+                    version='1.1.0',
+                    params={},
+                )
+            ],
+        )
+        self.assertEqual(len(result.decisions), 1)
+        self.assertEqual(result.decisions[0].action, 'buy')
+
+    def test_intraday_tsmom_v1_plugin_emits_sell(self) -> None:
+        runtime = StrategyRuntime(default_runtime_registry())
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 0, 2, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Min',
+            payload={
+                'macd': {'macd': '-0.22', 'signal': '-0.10'},
+                'rsi14': '72',
+                'price': '100.0',
+                'ema12': '100.3',
+                'ema26': '100.8',
+                'vol_realized_w60s': '0.006',
+            },
+        )
+
+        result = runtime.evaluate(
+            signal,
+            [
+                StrategyRuntimeConfig(
+                    strategy_id='tsmom',
+                    strategy_type='intraday_tsmom_v1',
+                    version='1.1.0',
+                    params={},
+                )
+            ],
+        )
+        self.assertEqual(len(result.decisions), 1)
+        self.assertEqual(result.decisions[0].action, 'sell')

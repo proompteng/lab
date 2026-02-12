@@ -155,3 +155,40 @@ class TestExecutionPolicy(TestCase):
         self.assertIn("inputs", assumptions)
         self.assertIn("estimate", assumptions)
         self.assertEqual(outcome.decision.order_type, "limit")
+
+    def test_near_touch_prices_are_quantized_to_tick_size(self) -> None:
+        policy = ExecutionPolicy(config=_config(prefer_limit=True))
+        decision = _decision(
+            action="buy",
+            qty=Decimal("1"),
+            price=Decimal("635.815"),
+            order_type="market",
+        )
+        outcome = policy.evaluate(
+            decision,
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+        )
+        self.assertEqual(outcome.decision.order_type, "limit")
+        self.assertEqual(outcome.decision.limit_price, Decimal("635.82"))
+
+    def test_limit_and_stop_prices_are_quantized(self) -> None:
+        decision = _decision(
+            action="sell",
+            qty=Decimal("10"),
+            order_type="limit",
+            price=Decimal("120.1234"),
+        )
+        decision = decision.model_copy(
+            update={"params": {"price": Decimal("120.1234"), "limit_price": Decimal("120.1234"), "spread": Decimal("0.020")}}
+        )
+        policy = ExecutionPolicy(config=_config(prefer_limit=False))
+        outcome = policy.evaluate(
+            decision,
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+        )
+        self.assertEqual(outcome.decision.order_type, "limit")
+        self.assertEqual(outcome.decision.limit_price, Decimal("120.12"))

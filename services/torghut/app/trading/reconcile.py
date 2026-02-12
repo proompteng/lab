@@ -42,7 +42,14 @@ class Reconciler:
                 logger.warning("Failed to reconcile order %s: %s", alpaca_order_id, exc)
                 continue
 
-            updated = _apply_order_update(execution, order)
+            expected_adapter = _coerce_route_text(execution.execution_expected_adapter)
+            actual_adapter = _coerce_route_text(execution.execution_actual_adapter)
+            updated = _apply_order_update(
+                execution,
+                order,
+                execution_expected_adapter=expected_adapter,
+                execution_actual_adapter=actual_adapter,
+            )
             if updated:
                 updates += 1
                 _update_trade_decision(session, execution)
@@ -89,13 +96,25 @@ class Reconciler:
             if not order:
                 continue
 
-            execution = sync_order_to_db(session, order, trade_decision_id=str(decision.id))
+            execution = sync_order_to_db(
+                session,
+                order,
+                trade_decision_id=str(decision.id),
+                execution_expected_adapter=_coerce_route_text(order.get("_execution_route_expected")),
+                execution_actual_adapter=execution_route_actual(order, client),
+            )
             _update_trade_decision(session, execution)
             updates += 1
         return updates
 
 
-def _apply_order_update(execution: Execution, order: dict[str, str]) -> bool:
+def _apply_order_update(
+    execution: Execution,
+    order: dict[str, str],
+    *,
+    execution_expected_adapter: str | None = None,
+    execution_actual_adapter: str | None = None,
+) -> bool:
     status = order.get("status")
     if status is None:
         return False
@@ -105,9 +124,38 @@ def _apply_order_update(execution: Execution, order: dict[str, str]) -> bool:
     avg_price = order.get("filled_avg_price") or order.get("avg_fill_price")
     if avg_price is not None:
         execution.avg_fill_price = Decimal(str(avg_price))
+    if execution_expected_adapter:
+        execution.execution_expected_adapter = execution_expected_adapter
+    if execution_actual_adapter:
+        execution.execution_actual_adapter = execution_actual_adapter
     execution.raw_order = coerce_json_payload(order)
     execution.last_update_at = datetime.now(timezone.utc)
     return True
+
+
+def execution_route_actual(order: dict[str, str], client: Any) -> str | None:
+    adapter = _coerce_route_text(order.get("_execution_route_actual")) if isinstance(order, dict) else None
+    if adapter:
+        return adapter
+    adapter = _coerce_route_text(order.get("_execution_adapter")) if isinstance(order, dict) else None
+    if adapter:
+        return adapter
+    raw = str(getattr(client, "last_route", "")) if client is not None else None
+    return _coerce_route_text(raw)
+
+
+def _coerce_route_text(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if normalized == 'alpaca_fallback':
+            return 'alpaca'
+        return normalized
+    return None
+
 
 
 def _update_trade_decision(session: Session, execution: Execution) -> None:

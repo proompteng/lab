@@ -179,3 +179,58 @@ class TestOrderIdempotency(TestCase):
             refreshed_decision = session.get(TradeDecision, decision_row.id)
             assert refreshed_decision is not None
             self.assertEqual(refreshed_decision.status, 'accepted')
+
+    def test_reconciler_backfill_normalizes_fallback_route_for_new_execution(self) -> None:
+        class FallbackAwareAlpacaClient(FakeAlpacaClient):
+            last_route = 'alpaca_fallback'
+
+            def get_order_by_client_order_id(self, client_order_id: str) -> dict[str, str] | None:
+                return {
+                    'id': 'order-2',
+                    'client_order_id': client_order_id,
+                    'symbol': 'AAPL',
+                    'side': 'buy',
+                    'type': 'market',
+                    'time_in_force': 'day',
+                    'qty': '1',
+                    'filled_qty': '0',
+                    'status': 'accepted',
+                    '_execution_route_expected': 'lean',
+                    '_execution_route_actual': 'alpaca_fallback',
+                }
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name='demo',
+                description='demo',
+                enabled=True,
+                base_timeframe='1Min',
+                universe_type='static',
+                universe_symbols=['AAPL'],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision_row = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label='paper',
+                symbol='AAPL',
+                timeframe='1Min',
+                decision_json={'symbol': 'AAPL'},
+                rationale=None,
+                status='planned',
+                decision_hash='decision-hash-2',
+            )
+            session.add(decision_row)
+            session.commit()
+            session.refresh(decision_row)
+
+            reconciler = Reconciler()
+            updates = reconciler.reconcile(session, FallbackAwareAlpacaClient())
+
+            self.assertEqual(updates, 1)
+            execution = session.execute(select(Execution).where(Execution.trade_decision_id == decision_row.id)).scalar_one()
+            assert execution is not None
+            self.assertEqual(execution.execution_expected_adapter, 'lean')
+            self.assertEqual(execution.execution_actual_adapter, 'alpaca')
