@@ -13,6 +13,7 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Creating AgentRuns safely (prompt precedence): `agentrun-creation-guide.md`
 - How to validate changes in CI: `ci-validation-plan.md`
 - How to install/upgrade/debug (ops): `runbooks.md`
+- Fast Jangar/Torghut live analysis workflow: `designs/jangar-torghut-live-analysis-playbook.md`
 - Security baseline: `threat-model.md`
 - RBAC requirements: `rbac-matrix.md`
 - Production bar (non-negotiables): `production-readiness-design.md`
@@ -168,6 +169,9 @@ If you are changing behavior, update 1-3 first, then ensure 4-5 describe the res
 - [designs/handoff-common.md](designs/handoff-common.md)
 - [designs/implementation-contract-enforcement.md](designs/implementation-contract-enforcement.md)
 - [designs/integration-test-harness.md](designs/integration-test-harness.md)
+- [designs/jangar-quant-performance-control-plane.md](designs/jangar-quant-performance-control-plane.md)
+- [designs/jangar-trading-control-plan.md](designs/jangar-trading-control-plan.md)
+- [designs/jangar-torghut-live-analysis-playbook.md](designs/jangar-torghut-live-analysis-playbook.md)
 - [designs/job-gc-visibility.md](designs/job-gc-visibility.md)
 - [designs/leader-election-ha.md](designs/leader-election-ha.md)
 - [designs/load-testing-benchmarking.md](designs/load-testing-benchmarking.md)

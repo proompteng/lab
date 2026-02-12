@@ -2,7 +2,7 @@
 
 ## Status
 - Version: `v3`
-- Date: `2026-02-11`
+- Date: `2026-02-12`
 - Maturity: `production handoff package`
 - Primary scope: Torghut quant strategy engine modernization with AgentRun-ready implementation contracts.
 
@@ -13,7 +13,7 @@ human engineers or AgentRuns with minimal interpretation risk.
 The package is explicitly grounded in:
 - current source code in `services/torghut/`,
 - current GitOps manifests in `argocd/applications/torghut/`,
-- sampled cluster/runtime state on `2026-02-11`,
+- sampled cluster/runtime state on `2026-02-11` and `2026-02-12`,
 - current open-source quant ecosystem evidence from maintainers/docs/repos.
 
 ## Audience
@@ -71,7 +71,13 @@ Runtime/data snapshot commands executed on `2026-02-11` UTC:
 - `kubectl cnpg psql -n torghut torghut-db -- -d torghut ...`
 - `kubectl exec -n torghut chi-torghut-clickhouse-default-0-0-0 -- clickhouse-client ...`
 
-## Design Pack (10 Documents)
+Fast refresh workflow for subsequent analysis passes:
+- `docs/agents/designs/jangar-torghut-live-analysis-playbook.md`
+
+Quant control-plane reference:
+- `docs/agents/designs/jangar-quant-performance-control-plane.md`
+
+## Design Pack (12 Documents)
 1. `index.md`
 2. `current-state-baseline-2026-02-11.md`
 3. `flexible-strategy-engine-architecture.md`
@@ -81,7 +87,9 @@ Runtime/data snapshot commands executed on `2026-02-11` UTC:
 7. `backtesting-walkforward-and-research-ledger.md`
 8. `portfolio-risk-capacity-and-regime-allocation.md`
 9. `execution-tca-and-broker-abstraction.md`
-10. `autonomy-governance-and-rollout-plan.md`
+10. `jangar-bespoke-decision-endpoint-and-intraday-loop-design.md`
+11. `jangar-market-intelligence-and-lean-integration-plan.md`
+12. `autonomy-governance-and-rollout-plan.md`
 
 ## Full-Loop Autonomous Pack
 For end-to-end autonomous operation (research -> strategy -> backtest -> paper -> live -> recovery), use:

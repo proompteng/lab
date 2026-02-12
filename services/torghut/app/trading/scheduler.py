@@ -881,11 +881,20 @@ class TradingScheduler:
         circuit_snapshot = None
         if self._pipeline and self._pipeline.llm_review_engine:
             circuit_snapshot = self._pipeline.llm_review_engine.circuit_breaker.snapshot()
+        guardrails = evaluate_llm_guardrails()
         return {
             "enabled": settings.llm_enabled,
+            # Keep configured shadow_mode for backward compatibility.
             "shadow_mode": settings.llm_shadow_mode,
+            # Effective runtime posture after model-risk guardrails.
+            "effective_shadow_mode": guardrails.shadow_mode,
             "fail_mode": settings.llm_fail_mode,
             "circuit": circuit_snapshot,
+            "guardrails": {
+                "allow_requests": guardrails.allow_requests,
+                "effective_adjustment_allowed": guardrails.adjustment_allowed,
+                "reasons": list(guardrails.reasons),
+            },
         }
 
     def _build_pipeline(self) -> TradingPipeline:

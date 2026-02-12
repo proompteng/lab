@@ -191,7 +191,10 @@ Map risks to OWASP LLM Top 10 classes and mitigations:
 - Metrics: llm_requests_total, llm_veto_total, llm_adjust_total, llm_error_total,
   llm_circuit_open_total, llm_shadow_total.
 - `/trading/status` surfaces LLM circuit breaker state (`open`, `open_until`, `recent_error_count`)
-  alongside shadow/fail configuration for ops dashboards.
+  plus both configured and effective shadow posture for ops dashboards:
+  - `llm.shadow_mode` (configured),
+  - `llm.effective_shadow_mode` (after guardrails),
+  - `llm.guardrails.reasons` (active guardrail reasons).
 - Cost tracking: tokens_prompt, tokens_completion, dollars_estimate.
 
 ## Storage Schema Additions

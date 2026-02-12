@@ -163,6 +163,40 @@ class TestTradingApi(TestCase):
         self.assertTrue(evaluation["ok"])
         self.assertGreaterEqual(evaluation["metrics"]["total_reviews"], 1)
 
+    def test_trading_status_reports_effective_llm_guardrails(self) -> None:
+        original = {
+            "llm_shadow_mode": settings.llm_shadow_mode,
+            "llm_enabled": settings.llm_enabled,
+            "llm_allowed_models_raw": settings.llm_allowed_models_raw,
+            "llm_evaluation_report": settings.llm_evaluation_report,
+            "llm_effective_challenge_id": settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": settings.llm_shadow_completed_at,
+        }
+        settings.llm_enabled = True
+        settings.llm_shadow_mode = False
+        settings.llm_allowed_models_raw = None
+        settings.llm_evaluation_report = None
+        settings.llm_effective_challenge_id = None
+        settings.llm_shadow_completed_at = None
+
+        try:
+            response = self.client.get("/trading/status")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            llm = payload["llm"]
+            self.assertFalse(llm["shadow_mode"])
+            self.assertTrue(llm["effective_shadow_mode"])
+            self.assertIn("guardrails", llm)
+            self.assertTrue(llm["guardrails"]["allow_requests"])
+            self.assertIn("llm_evaluation_report_missing", llm["guardrails"]["reasons"])
+        finally:
+            settings.llm_shadow_mode = original["llm_shadow_mode"]
+            settings.llm_enabled = original["llm_enabled"]
+            settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            settings.llm_evaluation_report = original["llm_evaluation_report"]
+            settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
+            settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
+
     def test_trading_llm_evaluation_endpoint(self) -> None:
         response = self.client.get("/trading/llm-evaluation")
         self.assertEqual(response.status_code, 200)

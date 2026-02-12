@@ -13,6 +13,7 @@ class TestOrchestrationGuard(TestCase):
         self.policy = load_policy()
         self.state: dict[str, Any] = {
             'candidateId': 'cand-abc123',
+            'runId': 'run-abc123',
             'activeStage': 'gate-evaluation',
             'paused': False,
             'failureCounts': {},
@@ -82,9 +83,95 @@ class TestOrchestrationGuard(TestCase):
         self.assertEqual(result['nextAction'], 'halt')
         self.assertEqual(result['reason'], 'illegal_transition:gate-evaluation->live-ramp')
 
+    def test_blocks_transition_without_known_source_stage(self) -> None:
+        state: dict[str, Any] = {
+            'candidateId': 'cand-abc123',
+            'runId': 'run-abc123',
+            'paused': False,
+            'failureCounts': {},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact = Path(tmpdir) / 'report.json'
+            artifact.write_text('{"ok":true}', encoding='utf-8')
+            result = evaluate_transition(
+                policy=self.policy,
+                state=state,
+                candidate_id='cand-abc123',
+                run_id='run-abc123',
+                from_stage=None,
+                to_stage='live-ramp',
+                previous_artifact=artifact,
+                previous_gate_passed=True,
+                risk_controls_passed=True,
+                execution_controls_passed=True,
+                mode='gitops',
+                emergency_ticket=None,
+            )
+        self.assertFalse(result['allowed'])
+        self.assertEqual(result['nextAction'], 'halt')
+        self.assertEqual(result['reason'], 'missing_source_stage')
+
+    def test_blocks_transition_when_run_id_missing_in_state(self) -> None:
+        state: dict[str, Any] = {
+            'candidateId': 'cand-abc123',
+            'activeStage': 'gate-evaluation',
+            'paused': False,
+            'failureCounts': {},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact = Path(tmpdir) / 'report.json'
+            artifact.write_text('{"ok":true}', encoding='utf-8')
+            result = evaluate_transition(
+                policy=self.policy,
+                state=state,
+                candidate_id='cand-abc123',
+                run_id='run-abc123',
+                from_stage='gate-evaluation',
+                to_stage='shadow-paper',
+                previous_artifact=artifact,
+                previous_gate_passed=True,
+                risk_controls_passed=True,
+                execution_controls_passed=True,
+                mode='gitops',
+                emergency_ticket=None,
+            )
+        self.assertFalse(result['allowed'])
+        self.assertEqual(result['nextAction'], 'halt')
+        self.assertEqual(result['reason'], 'missing_run_id')
+
+    def test_blocks_transition_when_run_id_mismatches_state(self) -> None:
+        state: dict[str, Any] = {
+            'candidateId': 'cand-abc123',
+            'runId': 'run-stale-1',
+            'activeStage': 'gate-evaluation',
+            'paused': False,
+            'failureCounts': {},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact = Path(tmpdir) / 'report.json'
+            artifact.write_text('{"ok":true}', encoding='utf-8')
+            result = evaluate_transition(
+                policy=self.policy,
+                state=state,
+                candidate_id='cand-abc123',
+                run_id='run-abc123',
+                from_stage='gate-evaluation',
+                to_stage='shadow-paper',
+                previous_artifact=artifact,
+                previous_gate_passed=True,
+                risk_controls_passed=True,
+                execution_controls_passed=True,
+                mode='gitops',
+                emergency_ticket=None,
+            )
+        self.assertFalse(result['allowed'])
+        self.assertEqual(result['nextAction'], 'halt')
+        self.assertEqual(result['reason'], 'run_mismatch:run-stale-1')
+
     def test_allows_ticketed_emergency_transition(self) -> None:
         state: dict[str, Any] = {
             'candidateId': 'cand-abc123',
+            'runId': 'run-abc123',
             'activeStage': 'live-ramp',
             'paused': False,
             'failureCounts': {},

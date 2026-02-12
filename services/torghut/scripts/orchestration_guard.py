@@ -154,15 +154,25 @@ def evaluate_transition(
     if active_stage and from_stage and active_stage != from_stage:
         return {'allowed': False, 'reason': f'active_stage_mismatch:{active_stage}', 'nextAction': 'halt'}
 
+    state_run_id_raw = state.get('runId')
+    if not isinstance(state_run_id_raw, str):
+        state_run_id_raw = state.get('run_id')
+    state_run_id = str(state_run_id_raw).strip() if isinstance(state_run_id_raw, str) else None
+    if not state_run_id:
+        return {'allowed': False, 'reason': 'missing_run_id', 'nextAction': 'halt'}
+    if state_run_id != run_id:
+        return {'allowed': False, 'reason': f'run_mismatch:{state_run_id}', 'nextAction': 'halt'}
+
     source_stage = from_stage or active_stage
-    if source_stage:
-        allowed_targets = transitions_map.get(source_stage, [])
-        if to_stage not in allowed_targets:
-            return {
-                'allowed': False,
-                'reason': f'illegal_transition:{source_stage}->{to_stage}',
-                'nextAction': 'halt',
-            }
+    if not source_stage:
+        return {'allowed': False, 'reason': 'missing_source_stage', 'nextAction': 'halt'}
+    allowed_targets = transitions_map.get(source_stage, [])
+    if to_stage not in allowed_targets:
+        return {
+            'allowed': False,
+            'reason': f'illegal_transition:{source_stage}->{to_stage}',
+            'nextAction': 'halt',
+        }
 
     if str(state.get('candidateId', candidate_id)) != candidate_id:
         return {'allowed': False, 'reason': 'candidate_mismatch', 'nextAction': 'halt'}
