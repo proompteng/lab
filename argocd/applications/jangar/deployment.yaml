@@ -116,6 +116,8 @@ spec:
               value: "false"
             - name: JANGAR_AGENTS_CONTROLLER_ENABLED
               value: "false"
+            - name: JANGAR_PRIMITIVES_RECONCILER
+              value: "false"
             - name: JANGAR_CI_MAX_WAIT_MS
               value: "3600000"
             - name: JANGAR_REVIEW_MAX_WAIT_MS
