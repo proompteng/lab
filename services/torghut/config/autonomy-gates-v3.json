@@ -1,9 +1,18 @@
 {
-  "policy_version": "v3",
-  "allow_live_promotion": false,
-  "auto_freeze_failure_count": 3,
-  "gate_1_max_negative_fold_count": 0,
-  "gate_2_max_drawdown": 0.35,
-  "gate_2_max_turnover_ratio": 5.0,
-  "gate_5_required_paper_days": 14
+  "policy_version": "v3-gates-1",
+  "required_feature_schema_version": "3.0.0",
+  "gate0_max_null_rate": "0.01",
+  "gate0_max_staleness_ms": 120000,
+  "gate0_min_symbol_coverage": 1,
+  "gate1_min_decision_count": 1,
+  "gate1_min_trade_count": 1,
+  "gate1_min_net_pnl": "0",
+  "gate1_max_negative_fold_ratio": "0.50",
+  "gate1_max_net_pnl_cv": "2.0",
+  "gate2_max_drawdown": "250",
+  "gate2_max_turnover_ratio": "8.0",
+  "gate2_max_cost_bps": "35",
+  "gate3_max_llm_error_ratio": "0.10",
+  "gate5_live_enabled": false,
+  "gate5_require_approval_token": true
 }

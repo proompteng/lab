@@ -112,6 +112,18 @@ class Execution(Base, TimestampMixin):
     )
     avg_fill_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
     status: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    execution_expected_adapter: Mapped[Optional[str]] = mapped_column(
+        String(length=32), nullable=True
+    )
+    execution_actual_adapter: Mapped[Optional[str]] = mapped_column(
+        String(length=32), nullable=True
+    )
+    execution_fallback_reason: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    execution_fallback_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, default=0, server_default=text("0")
+    )
     raw_order: Mapped[Any] = mapped_column(JSONType, nullable=True)
     last_update_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -120,6 +132,131 @@ class Execution(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_executions_alpaca_order_id", "alpaca_order_id"),
         Index("ix_executions_symbol_status", "symbol", "status"),
+        Index("ix_executions_expected_adapter", "execution_expected_adapter"),
+        Index("ix_executions_actual_adapter", "execution_actual_adapter"),
+    )
+
+
+class ResearchRun(Base, TimestampMixin):
+    """Durable research execution metadata for autonomous lane runs."""
+
+    __tablename__ = "research_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(
+        String(length=32), nullable=False, default="running", server_default=text("'running'")
+    )
+    strategy_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    strategy_name: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
+    strategy_type: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    strategy_version: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    code_commit: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    feature_version: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    feature_schema_version: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    feature_spec_hash: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    signal_source: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    dataset_version: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    dataset_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    dataset_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    dataset_snapshot_ref: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
+    runner_version: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    runner_binary_hash: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+
+    __table_args__ = (
+        Index("ix_research_runs_status", "status"),
+        Index("ix_research_runs_created_at", "created_at"),
+    )
+
+
+class ResearchCandidate(Base, CreatedAtMixin):
+    """Candidate metadata selected by an autonomous research lane."""
+
+    __tablename__ = "research_candidates"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    candidate_id: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
+    candidate_hash: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    parameter_set: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    decision_count: Mapped[int] = mapped_column(BigInteger(), nullable=False, default=0, server_default=text("0"))
+    trade_count: Mapped[int] = mapped_column(BigInteger(), nullable=False, default=0, server_default=text("0"))
+    symbols_covered: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    universe_definition: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    promotion_target: Mapped[Optional[str]] = mapped_column(String(length=16), nullable=True)
+
+    __table_args__ = (
+        Index("ix_research_candidates_run_id", "run_id"),
+        Index("ix_research_candidates_candidate_id", "candidate_id"),
+    )
+
+
+class ResearchFoldMetrics(Base, CreatedAtMixin):
+    """Fold-level metric records for offline robustness checks."""
+
+    __tablename__ = "research_fold_metrics"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    candidate_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    fold_name: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    fold_order: Mapped[int] = mapped_column(BigInteger(), nullable=False, default=0, server_default=text("0"))
+    train_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    train_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    test_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    test_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    decision_count: Mapped[int] = mapped_column(BigInteger(), nullable=False, default=0, server_default=text("0"))
+    trade_count: Mapped[int] = mapped_column(BigInteger(), nullable=False, default=0, server_default=text("0"))
+    gross_pnl: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    net_pnl: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    max_drawdown: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    turnover_ratio: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    cost_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    cost_assumptions: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    regime_label: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+
+    __table_args__ = (
+        Index("ix_research_fold_metrics_candidate", "candidate_id"),
+        Index("ix_research_fold_metrics_fold_order", "fold_order"),
+    )
+
+
+class ResearchStressMetrics(Base, CreatedAtMixin):
+    """Stress-case and resilience metrics for robustness checks."""
+
+    __tablename__ = "research_stress_metrics"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    candidate_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    stress_case: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    metric_bundle: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    pessimistic_pnl_delta: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+
+    __table_args__ = (
+        Index("ix_research_stress_metrics_candidate", "candidate_id"),
+        Index("ix_research_stress_metrics_case", "stress_case"),
+    )
+
+
+class ResearchPromotion(Base, CreatedAtMixin):
+    """Promotion request/decision audit rows for research candidates."""
+
+    __tablename__ = "research_promotions"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    candidate_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    requested_mode: Mapped[Optional[str]] = mapped_column(String(length=16), nullable=True)
+    approved_mode: Mapped[Optional[str]] = mapped_column(String(length=16), nullable=True)
+    approver: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    approver_role: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    approve_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    deny_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    paper_candidate_patch_ref: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
+    effective_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_research_promotions_candidate", "candidate_id"),
+        Index("ix_research_promotions_requested_mode", "requested_mode"),
+        Index("ix_research_promotions_approved_mode", "approved_mode"),
     )
 
 
@@ -209,6 +346,11 @@ __all__ = [
     "PositionSnapshot",
     "ToolRunLog",
     "TradeCursor",
+    "ResearchRun",
+    "ResearchCandidate",
+    "ResearchFoldMetrics",
+    "ResearchStressMetrics",
+    "ResearchPromotion",
     "LLMDecisionReview",
     "TimestampMixin",
     "CreatedAtMixin",

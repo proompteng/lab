@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Iterable, Optional
 
 from ..config import settings
@@ -227,10 +227,14 @@ class ExecutionPolicy:
             limit_price = _near_touch_limit_price(price, spread, decision.action)
 
         if selected_order_type in {"limit", "stop_limit"} and limit_price is None and price is not None:
-            limit_price = price
+            limit_price = _normalize_price_for_trading(price)
+        elif limit_price is not None:
+            limit_price = _normalize_price_for_trading(limit_price)
 
         if selected_order_type in {"stop", "stop_limit"} and stop_price is None and price is not None:
-            stop_price = price
+            stop_price = _normalize_price_for_trading(price)
+        elif stop_price is not None:
+            stop_price = _normalize_price_for_trading(stop_price)
 
         updated = decision.model_copy(
             update={
@@ -244,11 +248,28 @@ class ExecutionPolicy:
 
 def _near_touch_limit_price(price: Decimal, spread: Optional[Decimal], action: str) -> Decimal:
     if spread is None or spread <= 0:
-        return price
+        return _normalize_price_for_trading(price)
     half_spread = spread / Decimal("2")
     if action == "buy":
-        return price + half_spread
-    return price - half_spread
+        return _normalize_price_for_trading(price + half_spread)
+    return _normalize_price_for_trading(price - half_spread)
+
+
+def _normalize_price_for_trading(price: Decimal) -> Decimal:
+    """Align broker-facing prices to common US-equity tick sizes.
+
+    This keeps order pricing deterministic and avoids sub-penny rejects from
+    downstream execution adapters.
+    """
+
+    tick_size = _tick_size_for_price(price)
+    return price.quantize(tick_size, rounding=ROUND_HALF_UP)
+
+
+def _tick_size_for_price(price: Decimal) -> Decimal:
+    if price.copy_abs() < Decimal("1"):
+        return Decimal("0.0001")
+    return Decimal("0.01")
 
 
 def _build_retry_delays(config: ExecutionPolicyConfig) -> list[float]:

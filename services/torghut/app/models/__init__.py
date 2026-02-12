@@ -3,6 +3,11 @@
 from .base import Base, GUID, JSONType, coerce_json_payload, metadata_obj
 from .entities import (
     CreatedAtMixin,
+    ResearchCandidate,
+    ResearchFoldMetrics,
+    ResearchPromotion,
+    ResearchRun,
+    ResearchStressMetrics,
     Execution,
     LLMDecisionReview,
     PositionSnapshot,
@@ -23,6 +28,11 @@ __all__ = [
     "Execution",
     "LLMDecisionReview",
     "PositionSnapshot",
+    "ResearchCandidate",
+    "ResearchFoldMetrics",
+    "ResearchPromotion",
+    "ResearchRun",
+    "ResearchStressMetrics",
     "Strategy",
     "TimestampMixin",
     "ToolRunLog",

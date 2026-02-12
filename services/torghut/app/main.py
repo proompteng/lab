@@ -95,12 +95,24 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
     llm_evaluation = _load_llm_evaluation(session)
     return {
         "enabled": settings.trading_enabled,
+        "autonomy_enabled": settings.trading_autonomy_enabled,
         "mode": settings.trading_mode,
         "kill_switch_enabled": settings.trading_kill_switch_enabled,
         "running": state.running,
         "last_run_at": state.last_run_at,
         "last_reconcile_at": state.last_reconcile_at,
         "last_error": state.last_error,
+        "autonomy": {
+            "runs_total": state.autonomy_runs_total,
+            "signals_total": state.autonomy_signals_total,
+            "patches_total": state.autonomy_patches_total,
+            "last_run_at": state.last_autonomy_run_at,
+            "last_run_id": state.last_autonomy_run_id,
+            "last_gates": state.last_autonomy_gates,
+            "last_patch": state.last_autonomy_patch,
+            "last_recommendation": state.last_autonomy_recommendation,
+            "last_error": state.last_autonomy_error,
+        },
         "metrics": state.metrics.__dict__,
         "llm": scheduler.llm_status(),
         "llm_evaluation": llm_evaluation,
@@ -117,6 +129,33 @@ def trading_metrics() -> dict[str, object]:
         app.state.trading_scheduler = scheduler
     metrics = scheduler.state.metrics
     return {"metrics": metrics.__dict__}
+
+
+@app.get("/trading/autonomy")
+def trading_autonomy() -> dict[str, object]:
+    """Return autonomous control-plane status and last lane artifacts."""
+
+    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    if scheduler is None:
+        scheduler = TradingScheduler()
+        app.state.trading_scheduler = scheduler
+    state = scheduler.state
+    return {
+        "enabled": settings.trading_autonomy_enabled,
+        "gate_policy_path": settings.trading_autonomy_gate_policy_path,
+        "artifact_dir": settings.trading_autonomy_artifact_dir,
+        "poll_interval_seconds": settings.trading_autonomy_interval_seconds,
+        "signal_lookback_minutes": settings.trading_autonomy_signal_lookback_minutes,
+        "runs_total": state.autonomy_runs_total,
+        "signals_total": state.autonomy_signals_total,
+        "patches_total": state.autonomy_patches_total,
+        "last_run_at": state.last_autonomy_run_at,
+        "last_run_id": state.last_autonomy_run_id,
+        "last_gates": state.last_autonomy_gates,
+        "last_patch": state.last_autonomy_patch,
+        "last_recommendation": state.last_autonomy_recommendation,
+        "last_error": state.last_autonomy_error,
+    }
 
 
 @app.get("/trading/llm-evaluation")
@@ -206,6 +245,10 @@ def trading_executions(
             "submitted_qty": execution.submitted_qty,
             "filled_qty": execution.filled_qty,
             "avg_fill_price": execution.avg_fill_price,
+            "execution_expected_adapter": execution.execution_expected_adapter,
+            "execution_actual_adapter": execution.execution_actual_adapter,
+            "execution_fallback_reason": execution.execution_fallback_reason,
+            "execution_fallback_count": execution.execution_fallback_count,
             "status": execution.status,
             "created_at": execution.created_at,
             "last_update_at": execution.last_update_at,

@@ -40,13 +40,40 @@ def snapshot_account_and_positions(
 
 
 def sync_order_to_db(
-    session: Session, order_response: dict[str, Any], trade_decision_id: Optional[str] = None
+    session: Session,
+    order_response: dict[str, Any],
+    trade_decision_id: Optional[str] = None,
+    *,
+    execution_expected_adapter: str | None = None,
+    execution_actual_adapter: str | None = None,
+    execution_fallback_reason: str | None = None,
+    execution_fallback_count: int | None = None,
 ) -> Execution:
     """Create or update an Execution row from an Alpaca order response."""
 
     alpaca_order_id = order_response.get("id") or order_response.get("order_id")
     if alpaca_order_id is None:
         raise ValueError("order_response must include an 'id' field")
+
+    resolved_expected_adapter = (
+        execution_expected_adapter
+        or _coerce_route_text(order_response.get("_execution_route_expected"))
+        or _coerce_route_text(order_response.get("execution_expected_adapter"))
+    )
+    resolved_actual_adapter = (
+        execution_actual_adapter
+        or _coerce_route_text(order_response.get("_execution_route_actual"))
+        or _coerce_route_text(order_response.get("_execution_adapter"))
+        or _coerce_route_text(order_response.get("execution_actual_adapter"))
+    )
+    resolved_fallback_reason = (
+        execution_fallback_reason
+        or _coerce_text(order_response.get("_execution_fallback_reason"))
+        or _coerce_text(order_response.get("_fallback_reason"))
+    )
+    resolved_fallback_count = execution_fallback_count
+    if resolved_fallback_count is None:
+        resolved_fallback_count = _coerce_int(order_response.get("_execution_fallback_count"))
 
     stmt = select(Execution).where(Execution.alpaca_order_id == alpaca_order_id)
     existing = session.execute(stmt).scalar_one_or_none()
@@ -70,6 +97,10 @@ def sync_order_to_db(
         "filled_qty": Decimal(str(order_response.get("filled_qty", 0))),
         "avg_fill_price": _optional_decimal(order_response.get("filled_avg_price")),
         "status": order_response.get("status"),
+        "execution_expected_adapter": resolved_expected_adapter,
+        "execution_actual_adapter": resolved_actual_adapter,
+        "execution_fallback_reason": resolved_fallback_reason,
+        "execution_fallback_count": resolved_fallback_count,
         "raw_order": coerce_json_payload(order_response),
         "last_update_at": datetime.now(timezone.utc),
     }
@@ -105,6 +136,42 @@ def sync_order_to_db(
         session.commit()
         session.refresh(existing)
         return existing
+
+
+def _coerce_int(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
+
+
+def _coerce_text(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.strip() or None
+    return None
+
+
+def _coerce_route_text(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if normalized == 'alpaca_fallback':
+            return 'alpaca'
+        return normalized
+    return None
 
 
 def _optional_decimal(value: Any) -> Optional[Decimal]:

@@ -159,6 +159,117 @@ class LegacyMacdRsiPlugin:
         return None
 
 
+class IntradayTsmomV1Plugin:
+    """Intraday momentum plugin with volatility gating and confidence shaping."""
+
+    strategy_type = 'intraday_tsmom_v1'
+    version = '1.1.0'
+
+    def validate_params(self, params: dict[str, Any]) -> None:
+        if 'bullish_hist_min' in params:
+            if _decimal(params.get('bullish_hist_min')) is None:
+                raise ValueError('invalid_bullish_hist_min')
+        if 'bearish_hist_min' in params:
+            if _decimal(params.get('bearish_hist_min')) is None:
+                raise ValueError('invalid_bearish_hist_min')
+        if 'min_bull_rsi' in params:
+            min_bull_rsi = _decimal(params.get('min_bull_rsi'))
+            if min_bull_rsi is None:
+                raise ValueError('invalid_min_bull_rsi')
+            if min_bull_rsi < 0 or min_bull_rsi > 100:
+                raise ValueError('min_bull_rsi_out_of_range')
+        if 'max_bull_rsi' in params:
+            max_bull_rsi = _decimal(params.get('max_bull_rsi'))
+            if max_bull_rsi is None:
+                raise ValueError('invalid_max_bull_rsi')
+            if max_bull_rsi < 0 or max_bull_rsi > 100:
+                raise ValueError('max_bull_rsi_out_of_range')
+
+    def required_features(self) -> set[str]:
+        return {'price', 'ema12', 'ema26', 'macd', 'macd_signal', 'rsi14', 'vol_realized_w60s'}
+
+    def warmup_bars(self) -> int:
+        return 0
+
+    def on_event(self, fv: FeatureVectorV3, ctx: StrategyContext) -> StrategyIntent | None:
+        ema12 = _decimal(fv.values.get('ema12'))
+        ema26 = _decimal(fv.values.get('ema26'))
+        macd = _decimal(fv.values.get('macd'))
+        macd_signal = _decimal(fv.values.get('macd_signal'))
+        rsi14 = _decimal(fv.values.get('rsi14'))
+        vol = _decimal(fv.values.get('vol_realized_w60s'))
+
+        if None in (ema12, ema26, macd, macd_signal, rsi14):
+            return None
+
+        macd_hist = macd - macd_signal
+        trend_up = ema12 > ema26 and macd > macd_signal
+        trend_down = ema12 < ema26 and macd < macd_signal
+
+        bullish_hist_min = _decimal(ctx.params.get('bullish_hist_min')) or Decimal('0.04')
+        bearish_hist_min = _decimal(ctx.params.get('bearish_hist_min')) or Decimal('0.05')
+        min_bull_rsi = _decimal(ctx.params.get('min_bull_rsi')) or Decimal('52')
+        max_bull_rsi = _decimal(ctx.params.get('max_bull_rsi')) or Decimal('62')
+        min_bear_rsi = _decimal(ctx.params.get('min_bear_rsi')) or Decimal('66')
+        bearish_hist_cap = _decimal(ctx.params.get('bearish_hist_cap')) or Decimal('0.12')
+
+        vol_floor = _decimal(ctx.params.get('vol_floor')) or Decimal('0.001')
+        vol_ceil = _decimal(ctx.params.get('vol_ceil')) or Decimal('0.012')
+
+        vol_ok = vol is None or (vol_floor <= vol <= vol_ceil)
+
+        if trend_up and vol_ok and macd_hist >= bullish_hist_min and min_bull_rsi <= rsi14 <= max_bull_rsi:
+            confidence = Decimal('0.64')
+            if macd_hist >= bullish_hist_min * Decimal('2'):
+                confidence += Decimal('0.05')
+            if vol is not None and vol <= Decimal('0.008'):
+                confidence += Decimal('0.03')
+            if rsi14 >= max_bull_rsi:
+                confidence += Decimal('0.02')
+            return StrategyIntent(
+                strategy_id=ctx.strategy_id,
+                symbol=fv.symbol,
+                direction='long',
+                confidence=min(confidence, Decimal('0.84')),
+                target_qty=_decimal(ctx.params.get('qty')) or Decimal('1'),
+                horizon='intraday',
+                rationale=['tsmom_trend_up', 'momentum_confirmed', 'volatility_within_budget'],
+                meta={
+                    'strategy_type': ctx.strategy_type,
+                    'schema': fv.feature_schema_version,
+                    'feature_hash': fv.normalization_hash,
+                    'macd_hist': str(macd_hist),
+                },
+            )
+
+        if (
+            trend_down
+            and -macd_hist >= bearish_hist_min
+            and -macd_hist <= bearish_hist_cap
+            and rsi14 >= min_bear_rsi
+        ):
+            confidence = Decimal('0.62')
+            if rsi14 >= Decimal('72'):
+                confidence += Decimal('0.03')
+            return StrategyIntent(
+                strategy_id=ctx.strategy_id,
+                symbol=fv.symbol,
+                direction='short',
+                confidence=min(confidence, Decimal('0.80')),
+                target_qty=_decimal(ctx.params.get('qty')) or Decimal('1'),
+                horizon='intraday',
+                rationale=['tsmom_trend_down', 'momentum_reversal_exit'],
+                meta={
+                    'strategy_type': ctx.strategy_type,
+                    'schema': fv.feature_schema_version,
+                    'feature_hash': fv.normalization_hash,
+                    'macd_hist': str(macd_hist),
+                },
+            )
+
+        return None
+
+
 class StrategyRuntime:
     """Evaluate enabled strategy plugins against normalized features."""
 
@@ -217,6 +328,7 @@ class StrategyRuntime:
 def default_runtime_registry() -> StrategyPluginRegistry:
     registry = StrategyPluginRegistry()
     registry.register(LegacyMacdRsiPlugin())
+    registry.register(IntradayTsmomV1Plugin())
     return registry
 
 
@@ -261,6 +373,7 @@ def _decimal(value: Any) -> Decimal | None:
 
 __all__ = [
     'LegacyMacdRsiPlugin',
+    'IntradayTsmomV1Plugin',
     'RuntimeEvaluationResult',
     'StrategyContext',
     'StrategyIntent',

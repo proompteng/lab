@@ -133,3 +133,25 @@ class TestSnapshots(TestCase):
             )
 
             self.assertEqual(execution.raw_order["meta"]["strategy_run_id"], str(sample_id))
+
+    def test_sync_order_to_db_normalizes_fallback_route_marker(self) -> None:
+        with Session(self.engine) as session:
+            execution = sync_order_to_db(
+                session,
+                {
+                    "id": "order-fallback",
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "type": "market",
+                    "time_in_force": "day",
+                    "qty": "1",
+                    "filled_qty": "0",
+                    "status": "accepted",
+                    "execution_expected_adapter": "lean",
+                    "_execution_route_actual": "alpaca_fallback",
+                    "_execution_adapter": "alpaca_fallback",
+                },
+            )
+
+            self.assertEqual(execution.execution_expected_adapter, 'lean')
+            self.assertEqual(execution.execution_actual_adapter, 'alpaca')

@@ -74,10 +74,21 @@ class Settings(BaseSettings):
         alias="TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION",
         description="Safety gate for autonomous promotion actions; live stays disabled by default.",
     )
+    trading_autonomy_approval_token: Optional[str] = Field(
+        default=None,
+        alias="TRADING_AUTONOMY_APPROVAL_TOKEN",
+        description="Optional approval token for live promotion when required by policy.",
+    )
     trading_autonomy_gate_policy_path: Optional[str] = Field(
         default=None,
         alias="TRADING_AUTONOMY_GATE_POLICY_PATH",
         description="Optional path to v3 autonomous gate policy config JSON.",
+    )
+    trading_autonomy_interval_seconds: int = Field(default=300, alias="TRADING_AUTONOMY_INTERVAL_SECONDS")
+    trading_autonomy_signal_lookback_minutes: int = Field(
+        default=15,
+        alias="TRADING_AUTONOMY_SIGNAL_LOOKBACK_MINUTES",
+        description="Lookback window for signals passed to autonomous lane runs.",
     )
     trading_autonomy_artifact_dir: str = Field(
         default="/tmp/torghut-autonomy",
@@ -255,6 +266,8 @@ class Settings(BaseSettings):
             self.trading_execution_adapter_symbols_raw = ",".join(
                 [item.strip() for item in self.trading_execution_adapter_symbols_raw.split(",") if item.strip()]
             )
+        if self.trading_autonomy_approval_token:
+            self.trading_autonomy_approval_token = self.trading_autonomy_approval_token.strip() or None
         if "llm_provider" not in self.model_fields_set and self.jangar_base_url:
             self.llm_provider = "jangar"
         if self.llm_allowed_models_raw:

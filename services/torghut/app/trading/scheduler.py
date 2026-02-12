@@ -9,7 +9,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Optional, cast
+from pathlib import Path
+from typing import Any, Literal, Optional, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -33,6 +34,7 @@ from .portfolio import PortfolioSizingResult, sizer_from_settings
 from .prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
 from .reconcile import Reconciler
 from .risk import RiskEngine
+from .autonomy import run_autonomous_lane
 from .universe import UniverseResolver
 from .llm.schema import MarketSnapshot as LLMMarketSnapshot
 from .llm.schema import PortfolioSnapshot, RecentDecisionSummary
@@ -97,6 +99,15 @@ class TradingState:
     last_run_at: Optional[datetime] = None
     last_reconcile_at: Optional[datetime] = None
     last_error: Optional[str] = None
+    autonomy_runs_total: int = 0
+    autonomy_signals_total: int = 0
+    autonomy_patches_total: int = 0
+    last_autonomy_run_at: Optional[datetime] = None
+    last_autonomy_error: Optional[str] = None
+    last_autonomy_run_id: Optional[str] = None
+    last_autonomy_gates: Optional[str] = None
+    last_autonomy_patch: Optional[str] = None
+    last_autonomy_recommendation: Optional[str] = None
     metrics: TradingMetrics = field(default_factory=TradingMetrics)
 
 
@@ -325,6 +336,7 @@ class TradingPipeline:
                     decision,
                     decision_row,
                     self.account_label,
+                    execution_expected_adapter=selected_adapter_name,
                     retry_delays=policy_outcome.retry_delays,
                 )
             except OrderFirewallBlocked as exc:
@@ -369,6 +381,8 @@ class TradingPipeline:
 
             if execution:
                 actual_adapter_name = str(getattr(execution_client, "last_route", selected_adapter_name))
+                if actual_adapter_name == "alpaca_fallback":
+                    actual_adapter_name = "alpaca"
                 if actual_adapter_name != selected_adapter_name:
                     self.executor.update_decision_params(
                         session,
@@ -904,6 +918,28 @@ def _coerce_strategy_symbols(raw: object) -> set[str]:
     return set()
 
 
+def _resolve_autonomy_artifact_root(raw_root: Path) -> Path:
+    preferred_root = raw_root.expanduser()
+    fallback_roots = [Path("/tmp/torghut/autonomy"), Path("/tmp/torghut"), Path("/tmp")]
+
+    for root in [preferred_root, *fallback_roots]:
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            test_file = root / ".autonomy-write-check"
+            test_file.write_text("ok", encoding="utf-8")
+            try:
+                test_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return root
+        except OSError as exc:
+            if root == preferred_root:
+                logger.warning("Autonomy artifact root not writable at %s; trying fallback (%s)", preferred_root, exc)
+            elif root in fallback_roots:
+                logger.warning("Autonomy artifact fallback root not writable at %s; trying next fallback (%s)", root, exc)
+    raise RuntimeError("unable_to_resolve_autonomy_artifact_root")
+
+
 def _optional_decimal(value: Any) -> Optional[Decimal]:
     if value is None:
         return None
@@ -988,7 +1024,9 @@ class TradingScheduler:
     async def _run_loop(self) -> None:
         poll_interval = settings.trading_poll_ms / 1000
         reconcile_interval = settings.trading_reconcile_ms / 1000
+        autonomy_interval = max(30, settings.trading_autonomy_interval_seconds)
         last_reconcile = datetime.now(timezone.utc)
+        last_autonomy = datetime.now(timezone.utc)
 
         while not self._stop_event.is_set():
             try:
@@ -1016,7 +1054,95 @@ class TradingScheduler:
                     self.state.last_error = str(exc)
                 last_reconcile = now
 
+            if settings.trading_autonomy_enabled and now - last_autonomy >= timedelta(seconds=autonomy_interval):
+                try:
+                    if self._pipeline is None:
+                        raise RuntimeError("trading_pipeline_not_initialized")
+                    await asyncio.to_thread(self._run_autonomous_cycle)
+                    self.state.last_autonomy_error = None
+                except Exception as exc:  # pragma: no cover - loop guard
+                    logger.exception("Autonomous loop failed: %s", exc)
+                    self.state.last_error = str(exc)
+                    self.state.last_autonomy_error = str(exc)
+                finally:
+                    last_autonomy = now
+
             await asyncio.sleep(poll_interval)
+
+    def _run_autonomous_cycle(self) -> None:
+        if self._pipeline is None:
+            raise RuntimeError("trading_pipeline_not_initialized")
+
+        strategy_config_path = settings.trading_strategy_config_path
+        gate_policy_path = settings.trading_autonomy_gate_policy_path
+        if not strategy_config_path:
+            raise RuntimeError("strategy_config_path_missing_for_autonomy")
+        if not gate_policy_path:
+            raise RuntimeError("autonomy_gate_policy_path_missing")
+
+        artifact_root = _resolve_autonomy_artifact_root(Path(settings.trading_autonomy_artifact_dir))
+
+        now = datetime.now(timezone.utc)
+        lookback_minutes = max(1, int(settings.trading_autonomy_signal_lookback_minutes))
+        start = now - timedelta(minutes=lookback_minutes)
+        signals = self._pipeline.ingestor.fetch_signals_between(start=start, end=now)
+
+        self.state.autonomy_signals_total = len(signals)
+        self.state.last_autonomy_run_at = now
+        if not signals:
+            self.state.last_autonomy_run_id = None
+            self.state.last_autonomy_gates = None
+            self.state.last_autonomy_patch = None
+            self.state.last_autonomy_recommendation = None
+            self.state.last_autonomy_error = None
+            return
+
+        run_output_dir = artifact_root / now.strftime("%Y%m%dT%H%M%S")
+        run_output_dir.mkdir(parents=True, exist_ok=True)
+        signals_path = run_output_dir / "signals.json"
+        signal_payloads = [signal.model_dump(mode="json") for signal in signals]
+        signals_path.write_text(json.dumps(signal_payloads, indent=2), encoding="utf-8")
+
+        promotion_target: Literal["paper", "live"]
+        approval_token: str | None
+        if settings.trading_autonomy_allow_live_promotion and settings.trading_autonomy_approval_token:
+            promotion_target = "live"
+            approval_token = settings.trading_autonomy_approval_token
+        elif settings.trading_autonomy_allow_live_promotion and not settings.trading_autonomy_approval_token:
+            logger.warning("Autonomy live promotion enabled but no approval token configured; fallback to paper target.")
+            promotion_target = "paper"
+            approval_token = None
+        else:
+            promotion_target = "paper"
+            approval_token = None
+
+        result = run_autonomous_lane(
+            signals_path=signals_path,
+            strategy_config_path=Path(strategy_config_path),
+            gate_policy_path=Path(gate_policy_path),
+            output_dir=run_output_dir,
+            promotion_target=promotion_target,
+            strategy_configmap_path=Path('/etc/torghut/strategies.yaml'),
+            code_version='live',
+            approval_token=approval_token,
+            persist_results=True,
+            session_factory=self._pipeline.session_factory,
+        )
+
+        self.state.autonomy_runs_total += 1
+        self.state.last_autonomy_run_id = result.run_id
+        self.state.last_autonomy_gates = str(result.gate_report_path)
+
+        gate_report = json.loads(result.gate_report_path.read_text(encoding='utf-8'))
+        self.state.last_autonomy_recommendation = str(gate_report.get('recommended_mode'))
+        self.state.last_autonomy_error = None
+
+        if result.paper_patch_path is not None:
+            self.state.last_autonomy_patch = str(result.paper_patch_path)
+            self.state.autonomy_patches_total += 1
+            return
+
+        self.state.last_autonomy_patch = None
 
 
 __all__ = ["TradingScheduler", "TradingState", "TradingMetrics"]
