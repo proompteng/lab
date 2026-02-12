@@ -8,7 +8,7 @@ metadata:
 spec:
   image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:5c6a23dde129d6e041bde539dd5409941d0cee3d6fc04001b8f9e9d1692c96cd
   imagePullPolicy: IfNotPresent
-  restartNonce: 1
+  restartNonce: 2
   flinkVersion: v2_0
   serviceAccount: torghut-runtime
   logConfiguration:
@@ -90,6 +90,7 @@ spec:
     restart-strategy.fixed-delay.attempts: "5"
     restart-strategy.fixed-delay.delay: 5 s
     execution.checkpointing.unaligned: "true"
+    execution.checkpointing.tolerable-failed-checkpoints: "3"
     metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
     metrics.reporter.prom.port: "9249"
     fs.s3a.endpoint: http://observability-minio.minio.svc.cluster.local:9000
