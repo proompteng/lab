@@ -69,6 +69,7 @@ Reference observability artifact:
   - `check-transition` enforces:
     - legal `from_stage -> to_stage` edges,
     - active-stage ownership per candidate,
+    - run ownership per candidate (`state.runId` must match requested `run_id`),
     - previous artifact + gate requirements,
     - deterministic risk/execution controls as final authority,
     - GitOps-first mutable actions with ticketed emergency override.
@@ -134,6 +135,7 @@ Minimum deliverables:
   - `base`
   - `head`
   - `candidateId`
+  - `runId`
   - `stage`
   - `artifactPath`
 - Exit criteria:

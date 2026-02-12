@@ -64,7 +64,10 @@ Trading audit + metrics:
 - `GET /trading/decisions?symbol=&since=` returns recent decision rows.
 - `GET /trading/executions?symbol=&since=` returns recent executions.
 - `GET /trading/metrics` returns counters for decisions, orders, and LLM outcomes.
-- `GET /trading/status` includes LLM circuit breaker state (`llm.circuit.open`) and shadow mode flags.
+- `GET /trading/status` includes LLM circuit breaker state (`llm.circuit.open`) and shadow posture:
+  - `llm.shadow_mode` = configured mode (`LLM_SHADOW_MODE`).
+  - `llm.effective_shadow_mode` = runtime mode after guardrails.
+  - `llm.guardrails.reasons` = why guardrails forced/bounded behavior.
 
 LLM review operations:
 - **Shadow mode**: set `LLM_ENABLED=true`, `LLM_SHADOW_MODE=true`. Reviews are stored but do not veto/adjust orders.
