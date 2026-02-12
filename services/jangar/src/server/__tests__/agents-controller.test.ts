@@ -253,10 +253,7 @@ describe('agents controller reconcileAgentRun', () => {
     })
     const kube = buildKube({ patch: patchMock })
     const agentRun = buildAgentRun()
-    agentRun.metadata = {
-      ...(agentRun.metadata as Record<string, unknown>),
-      finalizers: [],
-    }
+    agentRun.metadata.finalizers = []
 
     await expect(
       __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0),
@@ -275,10 +272,7 @@ describe('agents controller reconcileAgentRun', () => {
     })
     const kube = buildKube({ patch: patchMock })
     const agentRun = buildAgentRun()
-    agentRun.metadata = {
-      ...(agentRun.metadata as Record<string, unknown>),
-      deletionTimestamp: new Date().toISOString(),
-    }
+    ;(agentRun.metadata as unknown as Record<string, unknown>).deletionTimestamp = new Date().toISOString()
 
     await expect(
       __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0),
