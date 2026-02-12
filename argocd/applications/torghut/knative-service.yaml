@@ -25,7 +25,7 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:4d5607ec723137b171101ab8deb1ca6a342f5b12be2dcf56b881816260c5fbd8
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:cb6828a896a7af4d9041b3cb46640cd06378633c76a3e13e0daed6d11795a860
           ports:
             - name: http1
               containerPort: 8181
@@ -156,9 +156,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.546.1
+              value: v0.546.1-7-g3c0a0c40
             - name: TORGHUT_COMMIT
-              value: 665a2ab351cb393f1a60cb1b123dae3eadcce6ff
+              value: 3c0a0c409afd68134c91724cd90ae8e0e7dbc398
           envFrom:
             - configMapRef:
                 name: torghut-autonomy-config
