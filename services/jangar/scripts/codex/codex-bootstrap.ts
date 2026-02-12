@@ -92,8 +92,12 @@ const normalizeDockerEnv = () => {
 }
 
 const configureBunCache = async (targetDir: string) => {
+  const isTestEnv = process.env.NODE_ENV === 'test' || process.env.VITEST
+  // Tests should never touch the real workspace Bun cache; it can be large and make unit tests flaky/slow.
   const workspaceRoot = process.env.WORKSPACE ?? dirname(targetDir)
-  const cacheDir = process.env.BUN_INSTALL_CACHE_DIR?.trim() || join(workspaceRoot, '.bun-install-cache')
+  const cacheDir = isTestEnv
+    ? join(targetDir, '.bun-install-cache')
+    : process.env.BUN_INSTALL_CACHE_DIR?.trim() || join(workspaceRoot, '.bun-install-cache')
   if (!process.env.BUN_INSTALL_CACHE_DIR) {
     process.env.BUN_INSTALL_CACHE_DIR = cacheDir
   }
