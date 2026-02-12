@@ -90,7 +90,10 @@ const toolsListResult = {
       inputSchema: {
         type: 'object',
         properties: {
-          namespace: { type: 'string', description: 'Optional namespace (defaults to "default")' },
+          namespace: {
+            type: 'string',
+            description: 'Optional namespace filter (omit to search across all namespaces)',
+          },
           query: { type: 'string', description: 'Search query (required)' },
           limit: { type: 'integer', description: 'Max results (default 10, max 50)', minimum: 1, maximum: 50 },
         },

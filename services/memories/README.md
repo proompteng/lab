@@ -41,7 +41,7 @@ bun run retrieve-memory --query "what did we build" --limit 5
 ```
 
 - `--query` or `--query-file` – the prompt used to search the memory store.
-- `--task-name` – namespace filter.
+- `--task-name` – optional namespace filter. If omitted, searches across all namespaces.
 - `--limit` – up to how many matches to return (defaults to `5`).
 - `--repository-ref`, `--source`, `--tags` are ignored by the REST endpoint and will emit a warning when supplied.
 

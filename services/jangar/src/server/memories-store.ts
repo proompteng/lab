@@ -301,10 +301,8 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
   const retrieve: MemoriesStore['retrieve'] = async ({ namespace, query, limit }) => {
     await ensureSchema()
 
-    const resolvedNamespace = (namespace && namespace.trim().length > 0 ? namespace.trim() : DEFAULT_NAMESPACE).slice(
-      0,
-      200,
-    )
+    const rawNamespace = typeof namespace === 'string' ? namespace.trim() : ''
+    const resolvedNamespace = rawNamespace.length > 0 ? rawNamespace.slice(0, 200) : null
     const resolvedQuery = query.trim()
     if (resolvedQuery.length === 0) {
       throw new Error('query is required')
@@ -316,13 +314,11 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     const vectorString = vectorToPgArray(embedding)
 
     const distanceExpr = sql<number>`embedding <=> ${vectorString}::vector`
-    const rows = await db
+    const baseQuery = db
       .selectFrom('memories.entries')
       .select(['id', 'task_name', 'content', 'summary', 'tags', 'metadata', 'created_at', distanceExpr.as('distance')])
-      .where('task_name', '=', resolvedNamespace)
-      .orderBy(distanceExpr)
-      .limit(resolvedLimit)
-      .execute()
+    const scopedQuery = resolvedNamespace ? baseQuery.where('task_name', '=', resolvedNamespace) : baseQuery
+    const rows = await scopedQuery.orderBy(distanceExpr).limit(resolvedLimit).execute()
 
     const ids = rows.map((row) => row.id)
     if (ids.length > 0) {
@@ -330,7 +326,6 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
         .updateTable('memories.entries')
         .set({
           last_accessed_at: sql`now()`,
-          updated_at: sql`now()`,
         })
         .where(sql<boolean>`id = ANY(${sql.value(ids)}::uuid[])`)
         .execute()

@@ -91,7 +91,7 @@ export const parseRetrieveMemoryInput = (
     return { ok: false, message: `Query is too large (max ${MAX_QUERY_CHARS} chars).` }
   }
 
-  const namespace = normalizeNamespace(payload.namespace)
+  const namespace = normalizeOptionalNamespace(payload.namespace)
   const limit = clampLimit(payload.limit, fallbackLimit)
 
   return {
