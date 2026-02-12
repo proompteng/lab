@@ -5,6 +5,7 @@ import {
   getPrometheusMetricsPath,
   handlePrometheusMetricsRequest,
   isPrometheusMetricsEnabled,
+  renderPrometheusMetrics,
 } from './src/server/metrics'
 
 type UnknownRecord = Record<string, unknown>
@@ -71,14 +72,27 @@ const toRequest = (event: unknown) => {
   return new Request('/', { method: 'GET' })
 }
 
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   const request = toRequest(event)
   if (isPrometheusMetricsEnabled()) {
     const metricsPath = getPrometheusMetricsPath()
     const url = new URL(request.url)
-    if (url.pathname === metricsPath && event?.node?.req && event?.node?.res) {
-      handlePrometheusMetricsRequest(event.node.req, event.node.res)
-      return
+    if (url.pathname === metricsPath) {
+      if (event?.node?.req && event?.node?.res) {
+        handlePrometheusMetricsRequest(event.node.req, event.node.res)
+        return
+      }
+      const rendered = await renderPrometheusMetrics()
+      if (!rendered.ok) {
+        return new Response(JSON.stringify({ ok: false, message: rendered.message }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response(rendered.body, {
+        status: 200,
+        headers: { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' },
+      })
     }
   }
   return serverEntry.fetch(request)

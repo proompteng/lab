@@ -1,5 +1,4 @@
 import { defineNitroPlugin } from 'nitro/runtime'
-import { toRequest } from 'h3'
 
 export default defineNitroPlugin((nitroApp) => {
   const app = nitroApp as typeof nitroApp & {
@@ -18,7 +17,7 @@ export default defineNitroPlugin((nitroApp) => {
   // Add a compatible request shim so request handling stays stable across h3 implementations.
   if (h3App && typeof h3App.request !== 'function' && typeof h3App.fetch === 'function') {
     h3App.request = (input, init, context) => {
-      const request = toRequest(input, init) as Request & { context?: unknown }
+      const request = new Request(input, init) as Request & { context?: unknown }
       request.context = context ?? request.context
       return h3App.fetch?.(request) as Promise<Response>
     }
