@@ -138,6 +138,23 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
 metadata:
+  name: torghut-v3-audit-evidence-impl-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - runId
+      - artifactRefs
+      - complianceProfile
+      - outputPath
+  text: |
+    Objective: Compatibility alias for the canonical torghut-v3-audit-pack-v1 evidence workflow.
+    Inputs: runId, artifactRefs, complianceProfile, outputPath.
+    Output: immutable evidence bundle and validation report.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
   name: torghut-v3-implspec-catalog-ops-v1
   namespace: agents
 spec:
