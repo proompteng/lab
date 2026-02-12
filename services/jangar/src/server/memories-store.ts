@@ -330,7 +330,7 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     const rows = await db.transaction().execute(async (trx) => {
       // pgvector's ivfflat index is approximate; with the default probes=1 it can return too few (or even zero)
       // results for some queries. Set a higher probes value for this retrieval call to improve recall.
-      await sql`SET LOCAL ivfflat.probes = ${ivfflatProbes}`.execute(trx)
+      await sql`SET LOCAL ivfflat.probes = ${sql.raw(String(ivfflatProbes))}`.execute(trx)
 
       const baseQuery = trx
         .selectFrom('memories.entries')
