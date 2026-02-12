@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2026-02-11T08:00:23.493Z"
+    deploy.knative.dev/rollout: "2026-02-12T06:09:59.378Z"
 spec:
   replicas: 1
   strategy:
