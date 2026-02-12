@@ -1,0 +1,107 @@
+version: torghut-v3-orchestration-policy-v1
+description: >
+  Deterministic stage transition and failure governance policy for Torghut v3
+  autonomous orchestration.
+
+stages:
+  - stage: research-intake
+    lane: lane-a
+    mutableAction: false
+    requirePreviousArtifact: false
+    requirePreviousGatePass: false
+  - stage: candidate-build
+    lane: lane-b
+    mutableAction: true
+    requirePreviousArtifact: true
+    requirePreviousGatePass: true
+  - stage: backtest-robustness
+    lane: lane-c
+    mutableAction: false
+    requirePreviousArtifact: true
+    requirePreviousGatePass: true
+  - stage: gate-evaluation
+    lane: lane-d
+    mutableAction: false
+    requirePreviousArtifact: true
+    requirePreviousGatePass: true
+  - stage: shadow-paper
+    lane: lane-e
+    mutableAction: true
+    requirePreviousArtifact: true
+    requirePreviousGatePass: true
+  - stage: live-ramp
+    lane: lane-e
+    mutableAction: true
+    requirePreviousArtifact: true
+    requirePreviousGatePass: true
+  - stage: continuous-monitoring
+    lane: lane-f
+    mutableAction: false
+    requirePreviousArtifact: true
+    requirePreviousGatePass: true
+  - stage: incident-recovery
+    lane: lane-f
+    mutableAction: true
+    requirePreviousArtifact: true
+    requirePreviousGatePass: false
+  - stage: audit-evidence
+    lane: lane-f
+    mutableAction: false
+    requirePreviousArtifact: true
+    requirePreviousGatePass: false
+
+transitions:
+  research-intake:
+    - candidate-build
+  candidate-build:
+    - backtest-robustness
+  backtest-robustness:
+    - gate-evaluation
+  gate-evaluation:
+    - research-intake
+    - shadow-paper
+  shadow-paper:
+    - live-ramp
+    - incident-recovery
+  live-ramp:
+    - continuous-monitoring
+    - incident-recovery
+  continuous-monitoring:
+    - live-ramp
+    - incident-recovery
+  incident-recovery:
+    - research-intake
+    - audit-evidence
+  audit-evidence: []
+
+failurePolicies:
+  transient:
+    maxRetries: 4
+    initialBackoffSeconds: 15
+    backoffMultiplier: 2
+    maxBackoffSeconds: 300
+    autopauseAfterFailures: 5
+  deterministic:
+    maxRetries: 0
+    initialBackoffSeconds: 0
+    backoffMultiplier: 1
+    maxBackoffSeconds: 0
+    autopauseAfterFailures: 2
+  spec:
+    maxRetries: 0
+    initialBackoffSeconds: 0
+    backoffMultiplier: 1
+    maxBackoffSeconds: 0
+    autopauseAfterFailures: 2
+  policy:
+    maxRetries: 0
+    initialBackoffSeconds: 0
+    backoffMultiplier: 1
+    maxBackoffSeconds: 0
+    autopauseAfterFailures: 1
+
+controls:
+  riskControlsAuthority: final
+  executionControlsAuthority: final
+  mutableActionMode: gitops-first
+  emergencyOverrideRequiresTicket: true

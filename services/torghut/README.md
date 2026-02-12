@@ -54,3 +54,30 @@ Outputs:
 Safety defaults:
 - live promotions are blocked unless gate policy explicitly enables them and approval token requirements are satisfied.
 - LLM remains bounded/advisory; deterministic risk/firewall controls remain final authority.
+
+## v3 orchestration guard CLI
+Validate stage transitions and retry/failure actions with policy-driven guardrails:
+
+```bash
+cd services/torghut
+uv run python scripts/orchestration_guard.py check-transition \
+  --state artifacts/orchestration/candidate-state.json \
+  --candidate-id cand-abc123 \
+  --run-id run-abc123 \
+  --from-stage gate-evaluation \
+  --to-stage shadow-paper \
+  --previous-artifact artifacts/gates/cand-abc123/report.json \
+  --previous-gate-passed \
+  --risk-controls-passed \
+  --execution-controls-passed \
+  --mode gitops
+```
+
+```bash
+cd services/torghut
+uv run python scripts/orchestration_guard.py evaluate-failure \
+  --state artifacts/orchestration/candidate-state.json \
+  --stage candidate-build \
+  --failure-class transient \
+  --attempt 2
+```

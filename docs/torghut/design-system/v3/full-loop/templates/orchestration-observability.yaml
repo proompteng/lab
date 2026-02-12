@@ -1,0 +1,104 @@
+version: torghut-v3-orchestration-observability-v1
+description: Dashboard and alert contract for AgentRun orchestration lanes/stages.
+
+labels:
+  required:
+    - candidate_id
+    - run_id
+    - stage
+    - lane
+    - failure_class
+    - mode
+
+metrics:
+  - name: torghut_orchestration_stage_duration_seconds
+    type: histogram
+    unit: seconds
+    description: Duration of each stage execution attempt.
+    labels:
+      - candidate_id
+      - run_id
+      - stage
+      - lane
+      - result
+  - name: torghut_orchestration_retry_total
+    type: counter
+    unit: attempts
+    description: Count of retry attempts by stage and failure class.
+    labels:
+      - candidate_id
+      - run_id
+      - stage
+      - failure_class
+  - name: torghut_orchestration_failure_total
+    type: counter
+    unit: failures
+    description: Failure classes emitted by the orchestration guard.
+    labels:
+      - candidate_id
+      - run_id
+      - stage
+      - failure_class
+  - name: torghut_orchestration_queue_depth
+    type: gauge
+    unit: runs
+    description: Number of candidate runs waiting per stage.
+    labels:
+      - stage
+      - lane
+  - name: torghut_orchestration_handoff_latency_seconds
+    type: histogram
+    unit: seconds
+    description: Time between stage complete and next stage start.
+    labels:
+      - candidate_id
+      - run_id
+      - from_stage
+      - to_stage
+
+alerts:
+  - name: TorghutOrchestrationRetryStorm
+    expr: sum(rate(torghut_orchestration_retry_total[15m])) by (stage) > 0.5
+    for: 20m
+    severity: warning
+    summary: Retry volume indicates persistent stage instability.
+  - name: TorghutOrchestrationFailureSpike
+    expr: sum(rate(torghut_orchestration_failure_total[10m])) by (failure_class) > 0.2
+    for: 10m
+    severity: critical
+    summary: Elevated deterministic/policy failures require immediate review.
+  - name: TorghutOrchestrationQueueBacklog
+    expr: max(torghut_orchestration_queue_depth) by (stage) > 10
+    for: 15m
+    severity: warning
+    summary: Stage queue depth exceeds operational threshold.
+
+dashboard:
+  title: Torghut v3 Orchestration
+  panels:
+    - title: Stage Duration p95
+      metric: torghut_orchestration_stage_duration_seconds
+      stat: p95
+      groupBy:
+        - stage
+    - title: Retry Count by Stage
+      metric: torghut_orchestration_retry_total
+      stat: rate
+      groupBy:
+        - stage
+    - title: Failure Classes
+      metric: torghut_orchestration_failure_total
+      stat: rate
+      groupBy:
+        - failure_class
+    - title: Queue Depth
+      metric: torghut_orchestration_queue_depth
+      stat: max
+      groupBy:
+        - stage
+    - title: Handoff Latency p95
+      metric: torghut_orchestration_handoff_latency_seconds
+      stat: p95
+      groupBy:
+        - from_stage
+        - to_stage
