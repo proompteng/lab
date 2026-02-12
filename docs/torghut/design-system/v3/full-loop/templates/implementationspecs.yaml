@@ -96,10 +96,9 @@ spec:
       - gitopsPath
       - rampStage
       - confirm
-      - artifactPath
   text: |
     Objective: Apply controlled live-ramp stage with policy checks.
-    Inputs: torghutNamespace, gitopsPath, rampStage, confirm, artifactPath.
+    Inputs: torghutNamespace, gitopsPath, rampStage, confirm.
     Output: rollout report and stage health summary.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
@@ -110,20 +109,19 @@ metadata:
 spec:
   contract:
     requiredKeys:
-      - incidentId
       - torghutNamespace
+      - incidentId
       - rollbackTarget
       - confirm
-      - artifactPath
   text: |
     Objective: Execute containment, rollback, and recovery verification.
-    Inputs: incidentId, torghutNamespace, rollbackTarget, confirm, artifactPath.
+    Inputs: torghutNamespace, incidentId, rollbackTarget, confirm.
     Output: incident recovery report with verification checklist.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
 metadata:
-  name: torghut-v3-audit-evidence-impl-v1
+  name: torghut-v3-audit-pack-v1
   namespace: agents
 spec:
   contract:
@@ -136,6 +134,23 @@ spec:
     Objective: Build audit/compliance evidence package for run.
     Inputs: runId, artifactRefs, complianceProfile, outputPath.
     Output: immutable evidence bundle and validation report.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-v3-implspec-catalog-ops-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - repository
+      - base
+      - head
+      - catalogPath
+  text: |
+    Objective: Keep full-loop ImplementationSpec catalog manifests and AgentRun templates synchronized.
+    Inputs: repository, base, head, catalogPath.
+    Output: updated manifests, required-key checks, and template/documentation alignment.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec

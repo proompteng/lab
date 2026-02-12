@@ -58,12 +58,12 @@ Minimum deliverables:
 - promotion-ready report schema.
 
 ## AgentRun Handoff Bundle
-- `ImplementationSpec`: `torghut-v3-shadow-paper-eval-impl-v1`.
+- `ImplementationSpec`: `torghut-v3-shadow-paper-run-v1`.
 - Required keys:
-  - `candidateId`
-  - `championId`
+  - `torghutNamespace`
+  - `gitopsPath`
+  - `strategyConfigPatchPath`
   - `evaluationWindow`
-  - `artifactPath`
 - Exit criteria:
   - shadow and paper workflows produce comparable reports,
   - gate evaluator consumes report outputs,

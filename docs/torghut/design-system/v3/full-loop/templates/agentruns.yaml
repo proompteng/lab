@@ -60,6 +60,35 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
+  name: torghut-v3-backtest-robustness-sample
+  namespace: agents
+  labels:
+    torghut.proompteng.ai/purpose: backtest
+spec:
+  agentRef:
+    name: codex-research-agent
+  implementationSpecRef:
+    name: torghut-v3-backtest-robustness-v1
+  runtime:
+    type: workflow
+  ttlSecondsAfterFinished: 3600
+  vcsPolicy:
+    required: false
+    mode: none
+  parameters:
+    datasetSnapshotId: ds-2026-02-11-us-largecap-v3
+    strategyId: candidate-a
+    strategyVersion: v1
+    costModelVersion: tca-v3
+    artifactPath: docs/torghut/artifacts/backtests/candidate-a
+  workflow:
+    steps:
+      - name: implement
+        timeoutSeconds: 3600
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
   name: torghut-v3-gate-eval-sample
   namespace: agents
   labels:
@@ -124,7 +153,7 @@ metadata:
   namespace: agents
   labels:
     torghut.proompteng.ai/purpose: live-ramp
-    torghut.proompteng.ai/actuation: "true"
+    torghut.proompteng.ai/actuation: 'true'
 spec:
   agentRef:
     name: codex-agent
@@ -146,7 +175,6 @@ spec:
     gitopsPath: argocd/applications/torghut
     rampStage: L1
     confirm: ACTUATE_TORGHUT
-    artifactPath: docs/torghut/artifacts/live-ramp/candidate-a
   workflow:
     steps:
       - name: implement
@@ -159,7 +187,7 @@ metadata:
   namespace: agents
   labels:
     torghut.proompteng.ai/purpose: incident
-    torghut.proompteng.ai/actuation: "true"
+    torghut.proompteng.ai/actuation: 'true'
 spec:
   agentRef:
     name: codex-agent
@@ -172,11 +200,68 @@ spec:
     required: false
     mode: none
   parameters:
-    incidentId: INC-2026-02-11-001
     torghutNamespace: torghut
+    incidentId: INC-2026-02-11-001
     rollbackTarget: argocd/main@<commit>
     confirm: ACTUATE_TORGHUT
-    artifactPath: docs/torghut/artifacts/incidents/INC-2026-02-11-001
+  workflow:
+    steps:
+      - name: implement
+        timeoutSeconds: 7200
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: torghut-v3-audit-pack-sample
+  namespace: agents
+  labels:
+    torghut.proompteng.ai/purpose: audit
+spec:
+  agentRef:
+    name: codex-research-agent
+  implementationSpecRef:
+    name: torghut-v3-audit-pack-v1
+  runtime:
+    type: workflow
+  ttlSecondsAfterFinished: 3600
+  vcsPolicy:
+    required: false
+    mode: none
+  parameters:
+    runId: run-candidate-a-2026-02-11
+    artifactRefs: docs/torghut/artifacts/gates/candidate-a/report.json,docs/torghut/artifacts/live-ramp/candidate-a
+    complianceProfile: torghut-us-equities-v1
+    outputPath: docs/torghut/artifacts/audit/candidate-a
+  workflow:
+    steps:
+      - name: implement
+        timeoutSeconds: 3600
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: torghut-v3-implspec-catalog-ops-sample
+  namespace: agents
+  labels:
+    torghut.proompteng.ai/purpose: catalog-ops
+spec:
+  agentRef:
+    name: codex-agent
+  implementationSpecRef:
+    name: torghut-v3-implspec-catalog-ops-v1
+  runtime:
+    type: workflow
+  ttlSecondsAfterFinished: 7200
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-write
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/torghut-v3-implspec-catalog-sample
+    catalogPath: docs/torghut/design-system/v3/full-loop/03-implementationspec-catalog.md
   workflow:
     steps:
       - name: implement

@@ -119,12 +119,10 @@ Minimum deliverables:
 - CI checks and failure alert hooks.
 
 ## AgentRun Handoff Bundle
-- `ImplementationSpec`: `torghut-v3-gate-matrix-impl-v1`.
+- `ImplementationSpec`: `torghut-v3-gate-evaluation-v1`.
 - Required keys:
-  - `repository`
-  - `base`
-  - `head`
   - `gateConfigPath`
+  - `metricsBundlePath`
   - `artifactPath`
 - Expected artifacts:
   - gate evaluator scripts,

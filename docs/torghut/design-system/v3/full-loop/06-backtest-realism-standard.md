@@ -68,10 +68,11 @@ Minimum deliverables:
 - regression tests.
 
 ## AgentRun Handoff Bundle
-- `ImplementationSpec`: `torghut-v3-backtest-realism-impl-v1`.
+- `ImplementationSpec`: `torghut-v3-backtest-robustness-v1`.
 - Required keys:
-  - `strategyId`
   - `datasetSnapshotId`
+  - `strategyId`
+  - `strategyVersion`
   - `costModelVersion`
   - `artifactPath`
 - Exit criteria:
