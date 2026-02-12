@@ -87,6 +87,7 @@ const agentsStudioNav: AppNavItem = {
 const controlPlaneNav: AppNavItem[] = [
   { to: '/control-plane/implementation-specs', label: 'Specs', icon: IconFileText },
   { to: '/control-plane/runs', label: 'Runs', icon: IconActivity },
+  { to: '/control-plane/torghut/quant', label: 'Torghut Quant', icon: IconChartLine },
 ]
 
 const apiNav = [
