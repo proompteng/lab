@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
 import { Memories, MemoriesLive } from '~/server/memories'
-import { normalizeNamespace, parsePersistMemoryInput, parseRetrieveMemoryInput } from '~/server/memories-http'
+import { parsePersistMemoryInput, parseRetrieveMemoryInput } from '~/server/memories-http'
 
 export const Route = createFileRoute('/api/memories')({
   server: {
@@ -43,7 +43,7 @@ export const getMemoriesHandlerEffect = (request: Request) =>
     Effect.gen(function* () {
       const url = new URL(request.url)
       const payload = {
-        namespace: normalizeNamespace(url.searchParams.get('namespace')),
+        namespace: url.searchParams.get('namespace'),
         query: url.searchParams.get('query') ?? '',
         limit: url.searchParams.get('limit') ?? undefined,
       }

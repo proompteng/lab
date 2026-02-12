@@ -62,6 +62,15 @@ describe('memories http input parsing', () => {
     expect(parsed.value.limit).toBe(50)
   })
 
+  it('treats namespace as an optional filter for retrieve payloads', () => {
+    const parsed = parseRetrieveMemoryInput({ query: 'find me' })
+
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+
+    expect(parsed.value.namespace).toBeUndefined()
+  })
+
   it('rejects missing query for retrieve payloads', () => {
     const parsed = parseRetrieveMemoryInput({ namespace: 'demo' })
     expect(parsed.ok).toBe(false)

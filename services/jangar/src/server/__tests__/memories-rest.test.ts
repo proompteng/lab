@@ -26,7 +26,7 @@ const makeService = (): { service: MemoriesService; saved: MemoryRecord[] } => {
     retrieve: ({ namespace, query, limit }) =>
       Effect.sync(() =>
         saved
-          .filter((mem) => mem.namespace === (namespace ?? 'default'))
+          .filter((mem) => (!namespace ? true : mem.namespace === namespace))
           .filter((mem) => mem.content.includes(query) || (mem.summary ?? '').includes(query))
           .slice(0, limit ?? 10),
       ),
