@@ -65,6 +65,7 @@
 ## Testing Guidelines
 - Co-locate tests: `*.test.ts(x)`, `*_test.go`, `src/test/kotlin/*Test.kt`, `test/**`, `alchimie_tests/`.
 - Prefer fast unit tests; add integration tests when needed.
+- For bug fixes, add a regression test that fails before the fix and passes after. If not feasible, document why and the exact manual validation performed.
 
 ## Agent Execution Guidelines
 - Use precise code pointers (file paths, identifiers, stack traces) to narrow search.
@@ -95,6 +96,7 @@ Output:
 
 ## Review Guidelines
 - Focus on correctness regressions, error handling, and missing tests.
+- Treat bug fixes without regression tests as blocking unless explicitly justified.
 - Flag infra changes in `argocd/`, `tofu/`, `kubernetes/`, or `ansible/` for rollout/impact notes.
 - Treat security issues (secrets, auth gaps, PII logging) as highest priority.
 
