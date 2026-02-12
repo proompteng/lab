@@ -16,7 +16,7 @@ export const up = async (db: Kysely<Database>) => {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       strategy_id UUID NOT NULL,
       account TEXT NOT NULL DEFAULT '',
-      window TEXT NOT NULL,
+      "window" TEXT NOT NULL,
       metric_name TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'ok',
       quality TEXT NOT NULL DEFAULT 'good',
@@ -33,12 +33,12 @@ export const up = async (db: Kysely<Database>) => {
 
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS torghut_qm_latest_uniq
-    ON torghut_control_plane.quant_metrics_latest(strategy_id, account, window, metric_name);
+    ON torghut_control_plane.quant_metrics_latest(strategy_id, account, "window", metric_name);
   `.execute(db)
 
   await sql`
     CREATE INDEX IF NOT EXISTS torghut_qm_latest_strategy_window_idx
-    ON torghut_control_plane.quant_metrics_latest(strategy_id, window);
+    ON torghut_control_plane.quant_metrics_latest(strategy_id, "window");
   `.execute(db)
 
   await sql`
@@ -46,7 +46,7 @@ export const up = async (db: Kysely<Database>) => {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       strategy_id UUID NOT NULL,
       account TEXT NOT NULL DEFAULT '',
-      window TEXT NOT NULL,
+      "window" TEXT NOT NULL,
       metric_name TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'ok',
       quality TEXT NOT NULL DEFAULT 'good',
@@ -63,7 +63,7 @@ export const up = async (db: Kysely<Database>) => {
 
   await sql`
     CREATE INDEX IF NOT EXISTS torghut_qm_series_lookup_idx
-    ON torghut_control_plane.quant_metrics_series(strategy_id, account, window, metric_name, as_of DESC);
+    ON torghut_control_plane.quant_metrics_series(strategy_id, account, "window", metric_name, as_of DESC);
   `.execute(db)
 
   await sql`
@@ -79,7 +79,7 @@ export const up = async (db: Kysely<Database>) => {
       account TEXT NOT NULL DEFAULT '',
       severity TEXT NOT NULL DEFAULT 'warning',
       metric_name TEXT NOT NULL,
-      window TEXT NOT NULL,
+      "window" TEXT NOT NULL,
       threshold_json JSONB NOT NULL DEFAULT '{}'::jsonb,
       observed_json JSONB NOT NULL DEFAULT '{}'::jsonb,
       opened_at TIMESTAMPTZ NOT NULL DEFAULT now(),
