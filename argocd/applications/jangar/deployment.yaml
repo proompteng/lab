@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2026-02-12T06:09:59.378Z"
+    deploy.knative.dev/rollout: "2026-02-12T06:58:24.044Z"
 spec:
   replicas: 1
   strategy:
@@ -113,6 +113,8 @@ spec:
             - name: JANGAR_GITHUB_MERGE_FORCE
               value: "false"
             - name: JANGAR_GITHUB_FILES_BACKFILL_ENABLED
+              value: "false"
+            - name: JANGAR_AGENTS_CONTROLLER_ENABLED
               value: "false"
             - name: JANGAR_CI_MAX_WAIT_MS
               value: "3600000"

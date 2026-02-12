@@ -245,6 +245,50 @@ describe('AgentRun artifacts limits', () => {
 })
 
 describe('agents controller reconcileAgentRun', () => {
+  it('ignores NotFound when adding AgentRun finalizer', async () => {
+    const patchMock = vi.fn(async () => {
+      throw new Error(
+        'kubectl patch failed: Error from server (NotFound): agentruns.agents.proompteng.ai "run-1" not found',
+      )
+    })
+    const kube = buildKube({ patch: patchMock })
+    const agentRun = buildAgentRun()
+    agentRun.metadata = {
+      ...(agentRun.metadata as Record<string, unknown>),
+      finalizers: [],
+    }
+
+    await expect(
+      __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0),
+    ).resolves.toBeUndefined()
+
+    expect(patchMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', {
+      metadata: { finalizers: [finalizer] },
+    })
+  })
+
+  it('ignores NotFound when removing AgentRun finalizer during deletion', async () => {
+    const patchMock = vi.fn(async () => {
+      throw new Error(
+        'kubectl patch failed: Error from server (NotFound): agentruns.agents.proompteng.ai "run-1" not found',
+      )
+    })
+    const kube = buildKube({ patch: patchMock })
+    const agentRun = buildAgentRun()
+    agentRun.metadata = {
+      ...(agentRun.metadata as Record<string, unknown>),
+      deletionTimestamp: new Date().toISOString(),
+    }
+
+    await expect(
+      __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0),
+    ).resolves.toBeUndefined()
+
+    expect(patchMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', {
+      metadata: { finalizers: [] },
+    })
+  })
+
   it('allows immutable spec mutations before Accepted', async () => {
     const kube = buildKube({
       get: vi.fn(async (resource: string) => {
