@@ -155,3 +155,23 @@ class TestSnapshots(TestCase):
 
             self.assertEqual(execution.execution_expected_adapter, 'lean')
             self.assertEqual(execution.execution_actual_adapter, 'alpaca')
+
+    def test_sync_order_to_db_resolves_expected_from_actual_marker(self) -> None:
+        with Session(self.engine) as session:
+            execution = sync_order_to_db(
+                session,
+                {
+                    "id": "order-only-actual",
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "type": "market",
+                    "time_in_force": "day",
+                    "qty": "1",
+                    "filled_qty": "0",
+                    "status": "accepted",
+                    "_execution_adapter": "lean",
+                },
+            )
+
+            self.assertEqual(execution.execution_expected_adapter, 'lean')
+            self.assertEqual(execution.execution_actual_adapter, 'lean')

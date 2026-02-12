@@ -40,6 +40,14 @@ execution controls remain final authority.
 | `08-live-rollout-capital-ramp-plan.md` | Large | staged rollout configs + approval hooks + auto-rollback scripts |
 | `09-incident-kill-switch-recovery-runbook.md` | Medium | runbooks + executable incident scripts + recovery verification |
 | `10-audit-compliance-evidence-spec.md` | Medium | evidence package schema + retention policy + audit exporter |
+| `11-phase1-phase2-implementation-notes-2026-02-11.md` | Draft | implementation backfill + notes for completion work |
+| `12-autonomous-gap-closure-roadmap.md` | Medium | roadmap of sequencing for remaining gaps |
+| `13-research-ledger-promotion-evidence-spec.md` | Large | replayable evidence and gate/ledger contract |
+| `14-lean-router-and-execution-governance-spec.md` | Medium | adapter routing safety and provenance requirements |
+| `15-llm-advisory-rollout-spec.md` | Medium | LLM advisory mode controls |
+| `16-autonomous-quant-readiness-execution-plan.md` | Large | phase-based readiness and evidence plan |
+| `17-autonomous-quant-completion-gap-and-rollout.md` | Critical | implementation + rollout checklist for remaining blockers |
+| `18-autonomous-quant-full-readiness-roadmap.md` | Critical | current missing subsystems, control checks, and execution sequence |
 
 Definition of "significant scope" for this pack:
 - touches at least 2 code/config areas,
@@ -63,6 +71,8 @@ Definition of "significant scope" for this pack:
 14. `14-lean-router-and-execution-governance-spec.md`
 15. `15-llm-advisory-rollout-spec.md`
 16. `16-autonomous-quant-readiness-execution-plan.md`
+17. `17-autonomous-quant-completion-gap-and-rollout.md`
+18. `18-autonomous-quant-full-readiness-roadmap.md`
 
 ## Templates
 - `templates/implementationspecs.yaml`

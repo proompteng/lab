@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -36,3 +37,18 @@ class TestUniverseResolver(TestCase):
         resolver = UniverseResolver()
         with patch("app.trading.universe.urlopen", side_effect=RuntimeError("boom")):
             self.assertEqual(resolver.get_symbols(), set())
+
+    def test_jangar_failure_uses_cached_symbols(self) -> None:
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_jangar_symbols_url = "http://example"
+
+        resolver = UniverseResolver()
+
+        sample_payload = json.dumps(["MSFT", "NVDA", "invalid!"])
+        with patch("app.trading.universe.urlopen") as mock_urlopen:
+            response = mock_urlopen.return_value.__enter__.return_value
+            response.read.return_value = sample_payload.encode()
+            self.assertEqual(resolver.get_symbols(), {"MSFT", "NVDA"})
+
+        with patch("app.trading.universe.urlopen", side_effect=RuntimeError("boom")):
+            self.assertEqual(resolver.get_symbols(), {"MSFT", "NVDA"})
