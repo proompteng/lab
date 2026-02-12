@@ -6,7 +6,7 @@ It is intentionally constrained to order-routing operations and delegates to Alp
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from enum import Enum
@@ -49,11 +49,6 @@ def _client() -> TradingClient:
         client = _build_trading_client()
         app.state.trading_client = client
     return cast(TradingClient, client)
-
-
-@app.on_event('startup')
-def startup() -> None:
-    app.state.trading_client = _build_trading_client()
 
 
 @app.get('/healthz')
@@ -215,7 +210,8 @@ def _model_to_dict(model: Any) -> dict[str, Any]:
             mapped = cast(Mapping[object, Any], value)
             return {str(key): to_jsonable(item) for key, item in mapped.items()}
         if isinstance(value, (list, tuple, set, frozenset)):
-            return [to_jsonable(item) for item in value]
+            items = cast(Iterable[Any], value)
+            return [to_jsonable(item) for item in items]
         return str(value)
 
     if hasattr(model, 'model_dump'):

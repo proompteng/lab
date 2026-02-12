@@ -180,11 +180,13 @@ class LeanExecutionAdapter:
             fallback=lambda: self._fallback_cancel_all(),
         )
         if isinstance(payload, list):
-            return [cast(dict[str, Any], item) for item in payload if isinstance(item, Mapping)]
+            items = cast(list[Any], payload)
+            return [cast(dict[str, Any], item) for item in items if isinstance(item, Mapping)]
         if isinstance(payload, Mapping):
             orders = cast(Mapping[str, Any], payload).get('orders')
             if isinstance(orders, list):
-                return [cast(dict[str, Any], item) for item in orders if isinstance(item, Mapping)]
+                items = cast(list[Any], orders)
+                return [cast(dict[str, Any], item) for item in items if isinstance(item, Mapping)]
         return []
 
     def get_order(self, order_id: str) -> dict[str, Any]:
@@ -219,11 +221,13 @@ class LeanExecutionAdapter:
             fallback=lambda: self._fallback_list_orders(status),
         )
         if isinstance(payload, list):
-            return [cast(dict[str, Any], item) for item in payload if isinstance(item, Mapping)]
+            items = cast(list[Any], payload)
+            return [cast(dict[str, Any], item) for item in items if isinstance(item, Mapping)]
         if isinstance(payload, Mapping):
             orders = cast(Mapping[str, Any], payload).get('orders')
             if isinstance(orders, list):
-                return [cast(dict[str, Any], item) for item in orders if isinstance(item, Mapping)]
+                items = cast(list[Any], orders)
+                return [cast(dict[str, Any], item) for item in items if isinstance(item, Mapping)]
         return []
 
     def _request_json(self, method: str, path: str, payload: Optional[dict[str, Any]] = None) -> Any:
