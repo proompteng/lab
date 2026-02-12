@@ -22,11 +22,15 @@ failure containment.
 - Stage transition requires previous stage artifact + gate result.
 - Every run has deterministic `run_id` and `candidate_id`.
 - Every mutable action is GitOps-first unless incident path explicitly demands emergency mode.
+- Deterministic risk and execution controls remain final authority on all stage advances.
 
 ## Retry and Failure Policy
 - transient failure classes: retry with exponential backoff and max retry cap.
 - deterministic/spec failures: no retry; return actionable error.
 - repeated failures on same stage: candidate auto-paused for human review.
+
+Reference policy artifact:
+- `docs/torghut/design-system/v3/full-loop/templates/orchestration-policy.yaml`
 
 ## Idempotency Requirements
 - all stage runs must be idempotent by `candidate_id + stage + run_id`.
@@ -45,6 +49,59 @@ Track:
 - fail class distribution,
 - stage queue depth,
 - handoff latency between lanes.
+
+Reference observability artifact:
+- `docs/torghut/design-system/v3/full-loop/templates/orchestration-observability.yaml`
+
+## Implemented Artifacts
+### Stage Orchestration Templates
+- `docs/torghut/design-system/v3/full-loop/templates/agentruns.yaml`
+  - reusable lane/stage AgentRun templates:
+    - lane-a `research-intake`
+    - lane-b `candidate-build`
+    - lane-c `backtest-robustness`
+    - lane-d `gate-evaluation`
+    - lane-e `shadow-paper`, `live-ramp`
+    - lane-f `incident-recovery`, `audit-evidence`
+
+### Stage Transition Guard CLI
+- `services/torghut/scripts/orchestration_guard.py`
+  - `check-transition` enforces:
+    - legal `from_stage -> to_stage` edges,
+    - active-stage ownership per candidate,
+    - previous artifact + gate requirements,
+    - deterministic risk/execution controls as final authority,
+    - GitOps-first mutable actions with ticketed emergency override.
+  - `evaluate-failure` enforces:
+    - transient retry with exponential backoff,
+    - deterministic/spec/policy no-retry handling,
+    - auto-pause thresholds for repeated failures.
+
+Example transition check:
+```bash
+cd services/torghut
+uv run python scripts/orchestration_guard.py check-transition \
+  --state artifacts/orchestration/candidate-state.json \
+  --candidate-id cand-abc123 \
+  --run-id run-abc123 \
+  --from-stage gate-evaluation \
+  --to-stage shadow-paper \
+  --previous-artifact artifacts/gates/cand-abc123/report.json \
+  --previous-gate-passed \
+  --risk-controls-passed \
+  --execution-controls-passed \
+  --mode gitops
+```
+
+Example failure evaluation:
+```bash
+cd services/torghut
+uv run python scripts/orchestration_guard.py evaluate-failure \
+  --state artifacts/orchestration/candidate-state.json \
+  --stage candidate-build \
+  --failure-class transient \
+  --attempt 2
+```
 
 ## Agent Implementation Scope (Significant)
 Workstream A: orchestration manifests

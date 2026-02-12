@@ -62,6 +62,8 @@ Definition of "significant scope" for this pack:
 ## Templates
 - `templates/implementationspecs.yaml`
 - `templates/agentruns.yaml`
+- `templates/orchestration-policy.yaml`
+- `templates/orchestration-observability.yaml`
 
 ## Cross-References
 - Core v3 architecture: `docs/torghut/design-system/v3/flexible-strategy-engine-architecture.md`

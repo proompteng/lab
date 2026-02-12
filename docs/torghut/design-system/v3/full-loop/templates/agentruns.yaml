@@ -1,10 +1,13 @@
+# Reusable AgentRun templates for Torghut v3 orchestration lanes and stages.
+# Replace ${...} placeholders before applying.
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: torghut-v3-research-intake-sample
+  name: torghut-v3-lane-a-research-template
   namespace: agents
   labels:
-    torghut.proompteng.ai/purpose: research
+    torghut.proompteng.ai/lane: lane-a
+    torghut.proompteng.ai/stage: research-intake
 spec:
   agentRef:
     name: codex-research-agent
@@ -17,22 +20,29 @@ spec:
     required: false
     mode: none
   parameters:
-    researchPrompt: momentum plus regime thesis on NVDA/MSFT/MU
-    universe: NVDA,MSFT,MU,TSM,SNDK
-    featureSchemaVersion: v3
-    outputPath: docs/torghut/artifacts/research/candidate-a
+    candidateId: ${candidateId}
+    runId: ${runId}
+    stage: research-intake
+    artifactPath: ${artifactPath}
+    researchPrompt: ${researchPrompt}
+    universe: ${universe}
+    featureSchemaVersion: ${featureSchemaVersion}
+    outputPath: ${outputPath}
   workflow:
     steps:
       - name: implement
+        retries: 2
+        retryBackoffSeconds: 15
         timeoutSeconds: 3600
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: torghut-v3-candidate-build-sample
+  name: torghut-v3-lane-b-build-template
   namespace: agents
   labels:
-    torghut.proompteng.ai/purpose: build
+    torghut.proompteng.ai/lane: lane-b
+    torghut.proompteng.ai/stage: candidate-build
 spec:
   agentRef:
     name: codex-agent
@@ -47,23 +57,30 @@ spec:
     required: true
     mode: read-write
   parameters:
-    repository: proompteng/lab
-    base: main
-    head: codex/torghut-v3-candidate-build-sample
-    candidateSpecPath: docs/torghut/artifacts/research/candidate-a/spec.md
+    repository: ${repository}
+    base: ${base}
+    head: ${head}
+    candidateId: ${candidateId}
+    runId: ${runId}
+    stage: candidate-build
+    artifactPath: ${artifactPath}
+    candidateSpecPath: ${candidateSpecPath}
     strategyCatalogPath: argocd/applications/torghut/strategy-configmap.yaml
   workflow:
     steps:
       - name: implement
+        retries: 4
+        retryBackoffSeconds: 15
         timeoutSeconds: 7200
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: torghut-v3-backtest-robustness-sample
+  name: torghut-v3-lane-c-backtest-template
   namespace: agents
   labels:
-    torghut.proompteng.ai/purpose: backtest
+    torghut.proompteng.ai/lane: lane-c
+    torghut.proompteng.ai/stage: backtest-robustness
 spec:
   agentRef:
     name: codex-research-agent
@@ -71,28 +88,34 @@ spec:
     name: torghut-v3-backtest-robustness-v1
   runtime:
     type: workflow
-  ttlSecondsAfterFinished: 3600
+  ttlSecondsAfterFinished: 7200
   vcsPolicy:
     required: false
     mode: none
   parameters:
-    datasetSnapshotId: ds-2026-02-11-us-largecap-v3
-    strategyId: candidate-a
-    strategyVersion: v1
-    costModelVersion: tca-v3
-    artifactPath: docs/torghut/artifacts/backtests/candidate-a
+    candidateId: ${candidateId}
+    runId: ${runId}
+    stage: backtest-robustness
+    artifactPath: ${artifactPath}
+    datasetSnapshotId: ${datasetSnapshotId}
+    strategyId: ${strategyId}
+    strategyVersion: ${strategyVersion}
+    costModelVersion: ${costModelVersion}
   workflow:
     steps:
       - name: implement
-        timeoutSeconds: 3600
+        retries: 4
+        retryBackoffSeconds: 15
+        timeoutSeconds: 7200
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: torghut-v3-gate-eval-sample
+  name: torghut-v3-lane-d-gate-template
   namespace: agents
   labels:
-    torghut.proompteng.ai/purpose: gate-evaluation
+    torghut.proompteng.ai/lane: lane-d
+    torghut.proompteng.ai/stage: gate-evaluation
 spec:
   agentRef:
     name: codex-research-agent
@@ -105,21 +128,27 @@ spec:
     required: false
     mode: none
   parameters:
-    gateConfigPath: docs/torghut/design-system/v3/full-loop/gates/policy-v1.json
-    metricsBundlePath: docs/torghut/artifacts/backtests/candidate-a/metrics.json
-    artifactPath: docs/torghut/artifacts/gates/candidate-a
+    candidateId: ${candidateId}
+    runId: ${runId}
+    stage: gate-evaluation
+    artifactPath: ${artifactPath}
+    gateConfigPath: ${gateConfigPath}
+    metricsBundlePath: ${metricsBundlePath}
   workflow:
     steps:
       - name: implement
+        retries: 2
+        retryBackoffSeconds: 15
         timeoutSeconds: 3600
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: torghut-v3-shadow-paper-sample
+  name: torghut-v3-lane-e-shadow-template
   namespace: agents
   labels:
-    torghut.proompteng.ai/purpose: paper-eval
+    torghut.proompteng.ai/lane: lane-e
+    torghut.proompteng.ai/stage: shadow-paper
 spec:
   agentRef:
     name: codex-agent
@@ -134,25 +163,32 @@ spec:
     required: true
     mode: read-write
   parameters:
-    repository: proompteng/lab
-    base: main
-    head: codex/torghut-v3-shadow-paper-sample
-    torghutNamespace: torghut
+    repository: ${repository}
+    base: ${base}
+    head: ${head}
+    candidateId: ${candidateId}
+    runId: ${runId}
+    stage: shadow-paper
+    artifactPath: ${artifactPath}
+    torghutNamespace: ${torghutNamespace}
     gitopsPath: argocd/applications/torghut
-    strategyConfigPatchPath: docs/torghut/artifacts/gates/candidate-a/patch.yaml
-    evaluationWindow: P7D
+    strategyConfigPatchPath: ${strategyConfigPatchPath}
+    evaluationWindow: ${evaluationWindow}
   workflow:
     steps:
       - name: implement
+        retries: 3
+        retryBackoffSeconds: 30
         timeoutSeconds: 7200
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: torghut-v3-live-ramp-sample
+  name: torghut-v3-lane-e-live-ramp-template
   namespace: agents
   labels:
-    torghut.proompteng.ai/purpose: live-ramp
+    torghut.proompteng.ai/lane: lane-e
+    torghut.proompteng.ai/stage: live-ramp
     torghut.proompteng.ai/actuation: 'true'
 spec:
   agentRef:
@@ -168,25 +204,32 @@ spec:
     required: true
     mode: read-write
   parameters:
-    repository: proompteng/lab
-    base: main
-    head: codex/torghut-v3-live-ramp-sample
-    torghutNamespace: torghut
+    repository: ${repository}
+    base: ${base}
+    head: ${head}
+    candidateId: ${candidateId}
+    runId: ${runId}
+    stage: live-ramp
+    artifactPath: ${artifactPath}
+    torghutNamespace: ${torghutNamespace}
     gitopsPath: argocd/applications/torghut
-    rampStage: L1
-    confirm: ACTUATE_TORGHUT
+    rampStage: ${rampStage}
+    confirm: ${confirm}
   workflow:
     steps:
       - name: implement
+        retries: 1
+        retryBackoffSeconds: 60
         timeoutSeconds: 7200
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: torghut-v3-incident-recovery-sample
+  name: torghut-v3-lane-f-incident-template
   namespace: agents
   labels:
-    torghut.proompteng.ai/purpose: incident
+    torghut.proompteng.ai/lane: lane-f
+    torghut.proompteng.ai/stage: incident-recovery
     torghut.proompteng.ai/actuation: 'true'
 spec:
   agentRef:
@@ -200,22 +243,28 @@ spec:
     required: false
     mode: none
   parameters:
-    torghutNamespace: torghut
-    incidentId: INC-2026-02-11-001
-    rollbackTarget: argocd/main@<commit>
-    confirm: ACTUATE_TORGHUT
+    candidateId: ${candidateId}
+    runId: ${runId}
+    stage: incident-recovery
+    artifactPath: ${artifactPath}
+    incidentId: ${incidentId}
+    torghutNamespace: ${torghutNamespace}
+    rollbackTarget: ${rollbackTarget}
+    confirm: ${confirm}
   workflow:
     steps:
       - name: implement
+        retries: 0
         timeoutSeconds: 7200
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: torghut-v3-audit-pack-sample
+  name: torghut-v3-lane-f-audit-template
   namespace: agents
   labels:
-    torghut.proompteng.ai/purpose: audit
+    torghut.proompteng.ai/lane: lane-f
+    torghut.proompteng.ai/stage: audit-evidence
 spec:
   agentRef:
     name: codex-research-agent
@@ -228,13 +277,18 @@ spec:
     required: false
     mode: none
   parameters:
-    runId: run-candidate-a-2026-02-11
-    artifactRefs: docs/torghut/artifacts/gates/candidate-a/report.json,docs/torghut/artifacts/live-ramp/candidate-a
-    complianceProfile: torghut-us-equities-v1
-    outputPath: docs/torghut/artifacts/audit/candidate-a
+    candidateId: ${candidateId}
+    runId: ${runId}
+    stage: audit-evidence
+    artifactPath: ${artifactPath}
+    complianceProfile: ${complianceProfile}
+    artifactRefs: ${artifactRefs}
+    outputPath: ${outputPath}
   workflow:
     steps:
       - name: implement
+        retries: 1
+        retryBackoffSeconds: 30
         timeoutSeconds: 3600
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
@@ -258,10 +312,10 @@ spec:
     required: true
     mode: read-write
   parameters:
-    repository: proompteng/lab
-    base: main
-    head: codex/torghut-v3-implspec-catalog-sample
-    catalogPath: docs/torghut/design-system/v3/full-loop/03-implementationspec-catalog.md
+    repository: ${repository}
+    base: ${base}
+    head: ${head}
+    catalogPath: ${catalogPath}
   workflow:
     steps:
       - name: implement
