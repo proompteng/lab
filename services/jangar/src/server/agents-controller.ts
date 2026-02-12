@@ -263,6 +263,12 @@ let lastIdempotencyPruneAtMs = 0
 
 const nowIso = () => new Date().toISOString()
 
+const isKubeNotFoundError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  const normalized = message.toLowerCase()
+  return normalized.includes('notfound') || normalized.includes(' not found')
+}
+
 const hasJobCondition = (job: Record<string, unknown>, conditionType: string) => {
   const status = asRecord(job.status) ?? {}
   const conditions = Array.isArray(status.conditions) ? status.conditions : []
@@ -5126,17 +5132,29 @@ const reconcileAgentRun = async (
           console.warn('[jangar] runtime cleanup failed', error)
         }
       }
-      await kube.patch(RESOURCE_MAP.AgentRun, name, namespace, {
-        metadata: { finalizers: finalizers.filter((item) => item !== finalizer) },
-      })
+      try {
+        await kube.patch(RESOURCE_MAP.AgentRun, name, namespace, {
+          metadata: { finalizers: finalizers.filter((item) => item !== finalizer) },
+        })
+      } catch (error) {
+        if (!isKubeNotFoundError(error)) {
+          throw error
+        }
+      }
     }
     return
   }
 
   if (!hasFinalizer) {
-    await kube.patch(RESOURCE_MAP.AgentRun, name, namespace, {
-      metadata: { finalizers: [...finalizers, finalizer] },
-    })
+    try {
+      await kube.patch(RESOURCE_MAP.AgentRun, name, namespace, {
+        metadata: { finalizers: [...finalizers, finalizer] },
+      })
+    } catch (error) {
+      if (!isKubeNotFoundError(error)) {
+        throw error
+      }
+    }
     return
   }
 
