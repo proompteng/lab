@@ -107,6 +107,11 @@ For end-to-end autonomous operation (research -> strategy -> backtest -> paper -
 - `docs/torghut/design-system/v3/full-loop/templates/implementationspecs.yaml`
 - `docs/torghut/design-system/v3/full-loop/templates/agentruns.yaml`
 
+## Operational Snapshot Package (Current-State Review)
+- `docs/torghut/design-system/v3/current-state-snapshot-2026-02-12.md`
+- `docs/torghut/design-system/v3/system-state-assessment-runbook.md`
+- `docs/torghut/design-system/v3/system-state-snapshot-design.md`
+
 Significant-scope standard for every design doc:
 - At least 2 owned code/config areas.
 - At least 3 concrete deliverables.
