@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: torghut-lean-runner
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-lean-runner
+    app.kubernetes.io/component: execution
+    app.kubernetes.io/part-of: lab
+spec:
+  selector:
+    app.kubernetes.io/name: torghut-lean-runner
+  ports:
+    - name: http
+      port: 8088
+      targetPort: http

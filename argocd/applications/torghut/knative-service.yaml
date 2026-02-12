@@ -25,7 +25,7 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:d1dc99e93e788285658ee9df45e9b453adb65e861252d25169f0572a65f560a6
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:4d5607ec723137b171101ab8deb1ca6a342f5b12be2dcf56b881816260c5fbd8
           ports:
             - name: http1
               containerPort: 8181
@@ -77,9 +77,9 @@ spec:
             - name: TRADING_KILL_SWITCH_ENABLED
               value: "false"
             - name: TRADING_MODE
-              value: paper
+              value: live
             - name: TRADING_LIVE_ENABLED
-              value: "false"
+              value: "true"
             - name: TRADING_SIGNAL_SOURCE
               value: clickhouse
             - name: TRADING_SIGNAL_TABLE
@@ -90,6 +90,16 @@ spec:
               value: "5000"
             - name: TRADING_RECONCILE_MS
               value: "15000"
+            - name: TRADING_EXECUTION_ADAPTER
+              value: lean
+            - name: TRADING_EXECUTION_FALLBACK_ADAPTER
+              value: alpaca
+            - name: TRADING_EXECUTION_ADAPTER_POLICY
+              value: all
+            - name: TRADING_LEAN_RUNNER_URL
+              value: http://torghut-lean-runner.torghut.svc.cluster.local:8088
+            - name: TRADING_LEAN_RUNNER_TIMEOUT_SECONDS
+              value: "5"
             - name: TRADING_STRATEGY_CONFIG_PATH
               value: /etc/torghut/strategies.yaml
             - name: TRADING_STRATEGY_CONFIG_MODE
@@ -98,8 +108,6 @@ spec:
               value: "10"
             - name: TRADING_UNIVERSE_SOURCE
               value: jangar
-            - name: TRADING_STATIC_SYMBOLS
-              value: CRWD,MU,NVDA
             - name: JANGAR_SYMBOLS_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/symbols
             - name: JANGAR_BASE_URL
@@ -111,7 +119,7 @@ spec:
             - name: LLM_ALLOWED_MODELS
               value: gpt-5.3-codex
             - name: LLM_ENABLED
-              value: "true"
+              value: "false"
             - name: LLM_SHADOW_MODE
               value: "false"
             - name: LLM_EVALUATION_REPORT
@@ -148,9 +156,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.546.1-3-g993d6b35
+              value: v0.546.1
             - name: TORGHUT_COMMIT
-              value: 993d6b35f279d59cd45e1ba00ac21fb3cc7a030b
+              value: 665a2ab351cb393f1a60cb1b123dae3eadcce6ff
           envFrom:
             - configMapRef:
                 name: torghut-autonomy-config

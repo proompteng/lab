@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/component: autonomy-runtime
     app.kubernetes.io/part-of: lab
 data:
-  TRADING_STRATEGY_RUNTIME_MODE: legacy
+  TRADING_STRATEGY_RUNTIME_MODE: plugin_v3
   TRADING_FEATURE_SCHEMA_VERSION: v3
   TRADING_FEATURE_NORMALIZATION_VERSION: v1
   TRADING_AUTONOMY_ENABLED: "false"

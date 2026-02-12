@@ -1,14 +1,14 @@
-"""Reconcile Alpaca order status updates."""
+"""Reconcile broker order status updates."""
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..alpaca_client import TorghutAlpacaClient
 from ..models import Execution, TradeDecision, coerce_json_payload
 from ..snapshots import sync_order_to_db
 from .risk import FINAL_STATUSES
@@ -20,9 +20,9 @@ BACKFILL_DECISION_LIMIT = 200
 
 
 class Reconciler:
-    """Pull order updates from Alpaca and update executions."""
+    """Pull order updates from execution adapter and update executions."""
 
-    def reconcile(self, session: Session, client: TorghutAlpacaClient) -> int:
+    def reconcile(self, session: Session, client: Any) -> int:
         updates = 0
         updates += self._reconcile_existing_executions(session, client)
         updates += self._backfill_missing_executions(session, client)
@@ -30,7 +30,7 @@ class Reconciler:
             session.commit()
         return updates
 
-    def _reconcile_existing_executions(self, session: Session, client: TorghutAlpacaClient) -> int:
+    def _reconcile_existing_executions(self, session: Session, client: Any) -> int:
         stmt = select(Execution).where(~Execution.status.in_(FINAL_STATUSES))
         executions = session.execute(stmt).scalars().all()
         updates = 0
@@ -48,7 +48,7 @@ class Reconciler:
                 _update_trade_decision(session, execution)
         return updates
 
-    def _backfill_missing_executions(self, session: Session, client: TorghutAlpacaClient) -> int:
+    def _backfill_missing_executions(self, session: Session, client: Any) -> int:
         # Avoid scanning broker history unboundedly; reconcile only local decisions that are
         # missing an Execution and ask the broker for those specific client_order_ids.
         cutoff = datetime.now(timezone.utc) - timedelta(days=BACKFILL_DECISION_LOOKBACK_DAYS)

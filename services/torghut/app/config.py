@@ -111,6 +111,36 @@ class Settings(BaseSettings):
     trading_execution_backoff_max_seconds: float = Field(
         default=2.0, alias="TRADING_EXECUTION_BACKOFF_MAX_SECONDS"
     )
+    trading_execution_adapter: Literal["alpaca", "lean"] = Field(
+        default="alpaca",
+        alias="TRADING_EXECUTION_ADAPTER",
+        description="Primary execution adapter selection.",
+    )
+    trading_execution_fallback_adapter: Literal["none", "alpaca"] = Field(
+        default="alpaca",
+        alias="TRADING_EXECUTION_FALLBACK_ADAPTER",
+        description="Fallback adapter when primary adapter fails.",
+    )
+    trading_execution_adapter_policy: Literal["all", "allowlist"] = Field(
+        default="allowlist",
+        alias="TRADING_EXECUTION_ADAPTER_POLICY",
+        description="Execution adapter routing policy.",
+    )
+    trading_execution_adapter_symbols_raw: Optional[str] = Field(
+        default=None,
+        alias="TRADING_EXECUTION_ADAPTER_SYMBOLS",
+        description="Comma-separated symbol allowlist for adapter routing.",
+    )
+    trading_lean_runner_url: Optional[str] = Field(
+        default=None,
+        alias="TRADING_LEAN_RUNNER_URL",
+        description="Base URL for LEAN runner API.",
+    )
+    trading_lean_runner_timeout_seconds: int = Field(
+        default=5,
+        alias="TRADING_LEAN_RUNNER_TIMEOUT_SECONDS",
+        description="HTTP timeout for LEAN runner calls.",
+    )
     trading_max_position_pct_equity: Optional[float] = Field(
         default=None, alias="TRADING_MAX_POSITION_PCT_EQUITY"
     )
@@ -219,6 +249,12 @@ class Settings(BaseSettings):
             self.jangar_base_url = self.jangar_base_url.strip().rstrip("/")
         if self.llm_self_hosted_base_url:
             self.llm_self_hosted_base_url = self.llm_self_hosted_base_url.strip().rstrip("/")
+        if self.trading_lean_runner_url:
+            self.trading_lean_runner_url = self.trading_lean_runner_url.strip().rstrip("/")
+        if self.trading_execution_adapter_symbols_raw:
+            self.trading_execution_adapter_symbols_raw = ",".join(
+                [item.strip() for item in self.trading_execution_adapter_symbols_raw.split(",") if item.strip()]
+            )
         if "llm_provider" not in self.model_fields_set and self.jangar_base_url:
             self.llm_provider = "jangar"
         if self.llm_allowed_models_raw:
@@ -252,6 +288,16 @@ class Settings(BaseSettings):
         if not self.trading_static_symbols_raw:
             return []
         return [symbol.strip() for symbol in self.trading_static_symbols_raw.split(",") if symbol.strip()]
+
+    @property
+    def trading_execution_adapter_symbols(self) -> set[str]:
+        if not self.trading_execution_adapter_symbols_raw:
+            return set()
+        return {
+            symbol.strip()
+            for symbol in self.trading_execution_adapter_symbols_raw.split(",")
+            if symbol.strip()
+        }
 
     @property
     def llm_allowed_models(self) -> set[str]:
