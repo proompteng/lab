@@ -116,35 +116,6 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: torghut-v3-backtest-robustness-sample
-  namespace: agents
-  labels:
-    torghut.proompteng.ai/purpose: backtest
-spec:
-  agentRef:
-    name: codex-research-agent
-  implementationSpecRef:
-    name: torghut-v3-backtest-robustness-v1
-  runtime:
-    type: workflow
-  ttlSecondsAfterFinished: 3600
-  vcsPolicy:
-    required: false
-    mode: none
-  parameters:
-    datasetSnapshotId: us-equities-1m-2026-02-10
-    strategyId: tsmom-regime-v3
-    strategyVersion: 1.0.0
-    costModelVersion: v3
-    artifactPath: docs/torghut/artifacts/backtests/candidate-a
-  workflow:
-    steps:
-      - name: implement
-        timeoutSeconds: 3600
----
-apiVersion: agents.proompteng.ai/v1alpha1
-kind: AgentRun
-metadata:
   name: torghut-v3-shadow-paper-sample
   namespace: agents
   labels:
@@ -295,31 +266,3 @@ spec:
     steps:
       - name: implement
         timeoutSeconds: 7200
----
-apiVersion: agents.proompteng.ai/v1alpha1
-kind: AgentRun
-metadata:
-  name: torghut-v3-audit-pack-sample
-  namespace: agents
-  labels:
-    torghut.proompteng.ai/purpose: audit
-spec:
-  agentRef:
-    name: codex-research-agent
-  implementationSpecRef:
-    name: torghut-v3-audit-pack-v1
-  runtime:
-    type: workflow
-  ttlSecondsAfterFinished: 3600
-  vcsPolicy:
-    required: false
-    mode: none
-  parameters:
-    runId: run-2026-02-11-candidate-a
-    artifactRefs: docs/torghut/artifacts/gates/candidate-a/report.json,docs/torghut/artifacts/live-ramp/candidate-a
-    complianceProfile: torghut-v3-standard
-    outputPath: docs/torghut/artifacts/audit/run-2026-02-11-candidate-a
-  workflow:
-    steps:
-      - name: implement
-        timeoutSeconds: 3600

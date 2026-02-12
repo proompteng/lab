@@ -191,11 +191,18 @@ describe('Torghut v3 full-loop catalog templates', () => {
   it('provides AgentRun coverage and required-key parameters for each catalog spec', () => {
     const docs = splitYamlDocs(readFileSync(AGENT_RUNS_PATH, 'utf8'))
     const seenSpecs = new Set<string>()
+    const seenRunNames = new Set<string>()
 
     for (const doc of docs) {
       const lines = doc.split('\n')
       const kind = getMappingValue(lines, ['kind'])
       if (kind !== 'AgentRun') continue
+
+      const runName = getMappingValue(lines, ['metadata', 'name'])
+      if (runName) {
+        expect(seenRunNames.has(runName), `duplicate AgentRun metadata.name ${runName}`).toBe(false)
+        seenRunNames.add(runName)
+      }
 
       const specName = getMappingValue(lines, ['spec', 'implementationSpecRef', 'name'])
       if (!specName) continue
