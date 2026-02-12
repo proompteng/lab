@@ -199,10 +199,24 @@ spec:
                   name: torghut-db-app
                   key: uri
                   optional: true
+            - name: TORGHUT_DB_SSLMODE
+              value: verify-ca
+            - name: TORGHUT_DB_CA_CERT
+              value: /etc/ssl/certs/torghut-db/ca.crt
             - name: PGSSLMODE
               value: require
             - name: JANGAR_DB_CA_CERT
               value: /etc/ssl/certs/jangar-db/ca.crt
+            - name: JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED
+              value: "false"
+            - name: JANGAR_TORGHUT_QUANT_COMPUTE_INTERVAL_MS
+              value: "1000"
+            - name: JANGAR_TORGHUT_QUANT_HEAVY_COMPUTE_INTERVAL_MS
+              value: "30000"
+            - name: JANGAR_TORGHUT_QUANT_STREAM_HEARTBEAT_MS
+              value: "15000"
+            - name: JANGAR_TORGHUT_QUANT_MAX_STALENESS_SECONDS
+              value: "15"
             - name: CH_HOST
               value: torghut-clickhouse.torghut.svc
             - name: CH_PORT
@@ -271,6 +285,9 @@ spec:
             - name: jangar-db-ca
               mountPath: /etc/ssl/certs/jangar-db
               readOnly: true
+            - name: torghut-db-ca
+              mountPath: /etc/ssl/certs/torghut-db
+              readOnly: true
         - name: docker
           image: docker:25.0-dind
           imagePullPolicy: IfNotPresent
@@ -307,3 +324,6 @@ spec:
         - name: jangar-db-ca
           secret:
             secretName: jangar-db-ca
+        - name: torghut-db-ca
+          secret:
+            secretName: torghut-db-ca

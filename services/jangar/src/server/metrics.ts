@@ -33,6 +33,10 @@ type JangarMetrics = {
   agentConcurrency: Histogram
   agentRunOutcomes: Counter
   reconcileDurationMs: Histogram
+  torghutQuantFrames: Counter
+  torghutQuantStaleFrames: Counter
+  torghutQuantComputeErrors: Counter
+  torghutQuantComputeDurationMs: Histogram
 }
 
 type MetricsState = {
@@ -44,7 +48,7 @@ type MetricsState = {
   prometheusExporter?: PrometheusExporter
 }
 
-type SseStream = 'chat' | 'agent-events' | 'control-plane'
+type SseStream = 'chat' | 'agent-events' | 'control-plane' | 'torghut-quant'
 
 type AgentCommsErrorStage = 'fetch' | 'insert' | 'decode' | 'unknown'
 
@@ -137,6 +141,26 @@ export const recordReconcileDurationMs = (durationMs: number, attributes?: Metri
   if (!metricsState.enabled) return
   if (Number.isFinite(durationMs) && durationMs >= 0) {
     recordHistogram(metricsState.metrics?.reconcileDurationMs, durationMs, attributes)
+  }
+}
+
+export const recordTorghutQuantFrame = (window: string, freshnessSeconds: number, maxStalenessSeconds: number) => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.torghutQuantFrames, 1, { window })
+  if (freshnessSeconds > maxStalenessSeconds) {
+    recordCounter(metricsState.metrics?.torghutQuantStaleFrames, 1, { window })
+  }
+}
+
+export const recordTorghutQuantComputeError = (stage: string) => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.torghutQuantComputeErrors, 1, { stage })
+}
+
+export const recordTorghutQuantComputeDurationMs = (durationMs: number, attributes?: MetricsAttributes) => {
+  if (!metricsState.enabled) return
+  if (Number.isFinite(durationMs) && durationMs >= 0) {
+    recordHistogram(metricsState.metrics?.torghutQuantComputeDurationMs, durationMs, attributes)
   }
 }
 
@@ -367,6 +391,19 @@ const createMetricsState = (): MetricsState => {
         description: 'Time spent reconciling agents controller resources.',
         unit: 'ms',
       }),
+      torghutQuantFrames: meter.createCounter('jangar_torghut_quant_frames_total', {
+        description: 'Count of torghut quant control-plane frames computed (per window).',
+      }),
+      torghutQuantStaleFrames: meter.createCounter('jangar_torghut_quant_stale_frames_total', {
+        description: 'Count of torghut quant frames that were stale according to max staleness threshold.',
+      }),
+      torghutQuantComputeErrors: meter.createCounter('jangar_torghut_quant_compute_errors_total', {
+        description: 'Count of torghut quant compute errors.',
+      }),
+      torghutQuantComputeDurationMs: meter.createHistogram('jangar_torghut_quant_compute_duration_ms', {
+        description: 'Time spent computing torghut quant control-plane frames.',
+        unit: 'ms',
+      }),
     }
 
     let shuttingDown = false
@@ -409,4 +446,32 @@ export const handlePrometheusMetricsRequest = (req: unknown, res: unknown) => {
   if (!exporter) return
   // The Prometheus exporter expects Node HTTP req/res objects.
   exporter.getMetricsRequestHandler(req as never, res as never)
+}
+
+export const renderPrometheusMetrics = async (): Promise<
+  { ok: true; body: string } | { ok: false; message: string }
+> => {
+  const exporter = metricsState.prometheusExporter
+  if (!exporter) return { ok: false, message: 'prometheus metrics disabled' }
+
+  try {
+    // @opentelemetry/exporter-prometheus only exposes a Node req/res handler.
+    // In fetch runtimes (Nitro/h3 without event.node), we render via its internal serializer.
+    const anyExporter = exporter as unknown as {
+      collect: () => Promise<{ resourceMetrics: unknown; errors: unknown[] }>
+      _serializer?: { serialize: (resourceMetrics: unknown) => string }
+    }
+
+    const { resourceMetrics, errors } = await anyExporter.collect()
+    if (errors?.length) {
+      diag.error('PrometheusExporter: metrics collection errors', ...errors)
+    }
+
+    const serializer = anyExporter._serializer
+    if (!serializer) return { ok: false, message: 'prometheus exporter serializer unavailable' }
+    return { ok: true, body: serializer.serialize(resourceMetrics) }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { ok: true, body: `# failed to export metrics: ${message}\n` }
+  }
 }
