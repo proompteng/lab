@@ -92,6 +92,23 @@ Required keys:
 - `complianceProfile`
 - `outputPath`
 
+## Canonical Template Mapping
+
+| ImplementationSpec | AgentRun template |
+| --- | --- |
+| `torghut-v3-research-intake-v1` | `torghut-v3-research-intake-sample` |
+| `torghut-v3-candidate-build-v1` | `torghut-v3-candidate-build-sample` |
+| `torghut-v3-backtest-robustness-v1` | `torghut-v3-backtest-robustness-sample` |
+| `torghut-v3-gate-evaluation-v1` | `torghut-v3-gate-eval-sample` |
+| `torghut-v3-shadow-paper-run-v1` | `torghut-v3-shadow-paper-sample` |
+| `torghut-v3-live-ramp-v1` | `torghut-v3-live-ramp-sample` |
+| `torghut-v3-incident-recovery-v1` | `torghut-v3-incident-recovery-sample` |
+| `torghut-v3-audit-pack-v1` | `torghut-v3-audit-pack-sample` |
+
+Compatibility note:
+- `torghut-v3-audit-evidence-impl-v1` is retained as a temporary alias for one release cycle, while
+  `torghut-v3-audit-pack-v1` is canonical for new runs.
+
 ## Naming and Versioning Rules
 - use `torghut-v3-<lane>-v<major>` naming,
 - breaking contract change requires major version bump,

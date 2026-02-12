@@ -63,13 +63,12 @@ Minimum deliverables:
 - postmortem template.
 
 ## AgentRun Handoff Bundle
-- `ImplementationSpec`: `torghut-v3-incident-recovery-impl-v1`.
+- `ImplementationSpec`: `torghut-v3-incident-recovery-v1`.
 - Required keys:
-  - `incidentId`
   - `torghutNamespace`
+  - `incidentId`
   - `rollbackTarget`
   - `confirm`
-  - `artifactPath`
 - Exit criteria:
   - incident drill passes,
   - kill switch dry-run passes,

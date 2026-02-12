@@ -58,13 +58,12 @@ Minimum deliverables:
 - live stage audit logs.
 
 ## AgentRun Handoff Bundle
-- `ImplementationSpec`: `torghut-v3-live-ramp-impl-v1`.
+- `ImplementationSpec`: `torghut-v3-live-ramp-v1`.
 - Required keys:
   - `torghutNamespace`
   - `gitopsPath`
   - `rampStage`
   - `confirm`
-  - `artifactPath`
 - Exit criteria:
   - stage transition dry run succeeds,
   - rollback trigger simulation succeeds,

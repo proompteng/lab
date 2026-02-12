@@ -63,7 +63,8 @@ Minimum deliverables:
 - audit report templates.
 
 ## AgentRun Handoff Bundle
-- `ImplementationSpec`: `torghut-v3-audit-evidence-impl-v1`.
+- `ImplementationSpec`: `torghut-v3-audit-pack-v1`.
+- Compatibility alias (deprecated): `torghut-v3-audit-evidence-impl-v1`.
 - Required keys:
   - `runId`
   - `artifactRefs`
