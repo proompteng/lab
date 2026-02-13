@@ -32,6 +32,25 @@ If you replay data older than the ClickHouse TTL, it may be deleted during merge
 `docs/torghut/design-system/v1/component-clickhouse-capacity-ttl-and-disk-guardrails.md`).
 Record the planned replay start/end timestamps in your ticket and confirm they fit within both windows.
 
+### Replay workflow runner script (non-destructive mode)
+
+Use the replay runner for deterministic plan output and optional scripted actuation:
+
+```bash
+python3 services/torghut/scripts/ta_replay_runner.py --replay-id 2026-02-13-torghut-ops --mode plan
+```
+
+To execute the same steps with kubectl patches (non-destructive mode only):
+
+```bash
+python3 services/torghut/scripts/ta_replay_runner.py \
+  --replay-id 2026-02-13-torghut-ops \
+  --mode apply \
+  --confirm REPLAY_TA_CANARY
+```
+
+This script intentionally keeps defaults conservative and does not automate destructive Mode 2 actions.
+
 ### Safety gates (read first)
 - **Trading safety (prerequisite):** if there is any uncertainty about signal correctness (stale/corrupt/partial), pause
   trading first and keep it paused until verification passes.
