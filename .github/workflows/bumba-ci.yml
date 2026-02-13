@@ -34,7 +34,7 @@ jobs:
     if: github.event_name == 'pull_request'
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      bun-version: 1.3.5
+      bun-version: 1.3.9
       node-version: 24.11.1
       install-command: bun install --frozen-lockfile --ignore-scripts && bun run --filter @proompteng/temporal-bun-sdk build
       lint-command: bunx biome check services/bumba packages/scripts/src/bumba argocd/applications/bumba
@@ -53,5 +53,5 @@ jobs:
       new_tag: ${{ github.sha }}
       turbo_scope: '@proompteng/bumba'
       turbo_copy: 'tsconfig.base.json'
-      bun_version: 1.3.5
+      bun_version: 1.3.9
     secrets: inherit

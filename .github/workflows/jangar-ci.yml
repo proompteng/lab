@@ -18,7 +18,7 @@ jobs:
   lint-and-typecheck:
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      bun-version: 1.3.5
+      bun-version: 1.3.9
       node-version: 24.11.1
       install-command: ELECTRON_SKIP_BINARY_DOWNLOAD=1 bun install --frozen-lockfile --ignore-scripts && bun run --filter @proompteng/temporal-bun-sdk build && cd services/jangar && bun install --frozen-lockfile --ignore-scripts
       lint-command: bunx biome check services/jangar packages/scripts/src/jangar argocd/applications/jangar
