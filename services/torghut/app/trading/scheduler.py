@@ -92,11 +92,11 @@ class TradingMetrics:
     llm_guardrail_shadow_total: int = 0
     llm_tokens_prompt_total: int = 0
     llm_tokens_completion_total: int = 0
-    execution_requests_total: dict[str, int] = field(default_factory=dict)
-    execution_fallback_total: dict[str, int] = field(default_factory=dict)
-    execution_fallback_reason_total: dict[str, int] = field(default_factory=dict)
+    execution_requests_total: dict[str, int] = field(default_factory=lambda: cast(dict[str, int], {}))
+    execution_fallback_total: dict[str, int] = field(default_factory=lambda: cast(dict[str, int], {}))
+    execution_fallback_reason_total: dict[str, int] = field(default_factory=lambda: cast(dict[str, int], {}))
     no_signal_windows_total: int = 0
-    no_signal_reason_total: dict[str, int] = field(default_factory=dict)
+    no_signal_reason_total: dict[str, int] = field(default_factory=lambda: cast(dict[str, int], {}))
     no_signal_streak: int = 0
 
     def record_execution_request(self, adapter: str | None) -> None:
@@ -426,6 +426,10 @@ class TradingPipeline:
                     decision.symbol,
                     exc,
                 )
+                return
+
+            if execution is None:
+                self.state.metrics.orders_submitted_total += 1
                 return
 
             actual_adapter_name = str(getattr(execution_client, "last_route", selected_adapter_name))
@@ -1169,11 +1173,13 @@ class TradingScheduler:
             self.state.last_autonomy_recommendation = None
             self.state.last_autonomy_error = None
             self.state.last_autonomy_reason = reason
+            query_start = autonomy_batch.query_start or start
+            query_end = autonomy_batch.query_end or now
             try:
                 self.state.last_autonomy_run_id = upsert_autonomy_no_signal_run(
                     session_factory=self._pipeline.session_factory,
-                    query_start=autonomy_batch.query_start,
-                    query_end=autonomy_batch.query_end,
+                    query_start=query_start,
+                    query_end=query_end,
                     strategy_config_path=Path(strategy_config_path),
                     gate_policy_path=Path(gate_policy_path),
                     no_signal_reason=reason,
@@ -1186,8 +1192,8 @@ class TradingScheduler:
                 logger.exception(
                     "Autonomy no-signal persistence failed; ingest_reason=%s window_start=%s window_end=%s",
                     reason,
-                    autonomy_batch.query_start,
-                    autonomy_batch.query_end,
+                    query_start,
+                    query_end,
                 )
                 return
             logger.warning(

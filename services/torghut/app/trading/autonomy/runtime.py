@@ -199,7 +199,7 @@ class IntradayTsmomV1Plugin:
         rsi14 = _decimal(fv.values.get('rsi14'))
         vol = _decimal(fv.values.get('vol_realized_w60s'))
 
-        if None in (ema12, ema26, macd, macd_signal, rsi14):
+        if ema12 is None or ema26 is None or macd is None or macd_signal is None or rsi14 is None:
             return None
 
         macd_hist = macd - macd_signal

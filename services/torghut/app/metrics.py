@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import cast
 
 
 def _escape_label_value(value: str | int | float) -> str:
@@ -32,9 +33,14 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                     metric_name = "torghut_trading_execution_requests_total"
                     lines.append(f"# HELP {metric_name} Count of execution requests by adapter.")
                     lines.append(f"# TYPE {metric_name} counter")
-                    for adapter, count in sorted(value.items()):
-                        if not isinstance(adapter, str) or not isinstance(count, (int, float)):
-                            continue
+                    sorted_items = sorted(
+                        [
+                            (str(adapter), int(count))
+                            for adapter, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for adapter, count in sorted_items:
                         lines.extend(
                             _render_labeled_metric(
                                 metric_name=metric_name,
@@ -47,9 +53,14 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                     metric_name = "torghut_trading_execution_fallback_total"
                     lines.append(f"# HELP {metric_name} Count of execution fallbacks by adapter transition.")
                     lines.append(f"# TYPE {metric_name} counter")
-                    for transition, count in sorted(value.items()):
-                        if not isinstance(transition, str) or not isinstance(count, (int, float)):
-                            continue
+                    sorted_items = sorted(
+                        [
+                            (str(transition), int(count))
+                            for transition, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for transition, count in sorted_items:
                         expected_adapter = "unknown"
                         actual_adapter = "unknown"
                         if "->" in transition:
@@ -66,9 +77,14 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                     metric_name = "torghut_trading_execution_fallback_reason_total"
                     lines.append(f"# HELP {metric_name} Count of execution fallbacks by reason.")
                     lines.append(f"# TYPE {metric_name} counter")
-                    for reason, count in sorted(value.items()):
-                        if not isinstance(reason, str) or not isinstance(count, (int, float)):
-                            continue
+                    sorted_items = sorted(
+                        [
+                            (str(reason), int(count))
+                            for reason, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for reason, count in sorted_items:
                         lines.extend(
                             _render_labeled_metric(
                                 metric_name=metric_name,
@@ -81,9 +97,14 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                     metric_name = "torghut_trading_no_signal_reason_total"
                     lines.append(f"# HELP {metric_name} Count of autonomy cycles skipped by no-signal reason.")
                     lines.append(f"# TYPE {metric_name} counter")
-                    for reason, count in sorted(value.items()):
-                        if not isinstance(reason, str) or not isinstance(count, (int, float)):
-                            continue
+                    sorted_items = sorted(
+                        [
+                            (str(reason), int(count))
+                            for reason, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for reason, count in sorted_items:
                         lines.extend(
                             _render_labeled_metric(
                                 metric_name=metric_name,

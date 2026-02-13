@@ -106,6 +106,7 @@ Output:
 
 ## CI/CD
 - Wait until all checks are green before reporting that a PR is ready (example: `gh pr checks 2298 --watch -R proompteng/lab`).
+- Before opening or updating a PR, ensure all mandatory checks are green and fix CI breakages (especially strict type-checks like Pyright) before requesting review or merge.
 
 ## Generated Artifacts & Safety
 - Do not edit generated directories (`dist/`, `build/`, `_generated`) or lockfiles (`bun.lock`, `bun.lockb`); regenerate via the owning tool.
