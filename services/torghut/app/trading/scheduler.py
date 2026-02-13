@@ -26,7 +26,7 @@ from .execution import OrderExecutor
 from .execution_adapters import ExecutionAdapter, adapter_enabled_for_symbol, build_execution_adapter
 from .execution_policy import ExecutionPolicy
 from .firewall import OrderFirewall, OrderFirewallBlocked
-from .ingest import ClickHouseSignalIngestor
+from .ingest import ClickHouseSignalIngestor, SignalBatch
 from .llm import LLMReviewEngine, apply_policy
 from .llm.guardrails import evaluate_llm_guardrails
 from .models import SignalEnvelope, StrategyDecision
@@ -97,7 +97,10 @@ class TradingMetrics:
     execution_fallback_reason_total: dict[str, int] = field(default_factory=lambda: cast(dict[str, int], {}))
     no_signal_windows_total: int = 0
     no_signal_reason_total: dict[str, int] = field(default_factory=lambda: cast(dict[str, int], {}))
+    no_signal_reason_streak: dict[str, int] = field(default_factory=lambda: cast(dict[str, int], {}))
     no_signal_streak: int = 0
+    signal_lag_seconds: int | None = None
+    signal_staleness_alert_total: dict[str, int] = field(default_factory=lambda: cast(dict[str, int], {}))
 
     def record_execution_request(self, adapter: str | None) -> None:
         adapter_name = coerce_route_text(adapter)
@@ -128,6 +131,17 @@ class TradingMetrics:
         self.no_signal_windows_total += 1
         current = self.no_signal_reason_total.get(normalized, 0)
         self.no_signal_reason_total[normalized] = current + 1
+        for existing_reason in list(self.no_signal_reason_streak):
+            if existing_reason != normalized:
+                del self.no_signal_reason_streak[existing_reason]
+        self.no_signal_reason_streak[normalized] = self.no_signal_reason_streak.get(normalized, 0) + 1
+
+    def record_signal_staleness_alert(self, reason: str | None) -> None:
+        normalized = reason.strip() if isinstance(reason, str) else ""
+        if not normalized:
+            normalized = "unknown"
+        current = self.signal_staleness_alert_total.get(normalized, 0)
+        self.signal_staleness_alert_total[normalized] = current + 1
 
 
 @dataclass
@@ -216,8 +230,12 @@ class TradingPipeline:
             self.state.last_ingest_window_end = batch.query_end
             self.state.last_ingest_reason = batch.no_signal_reason
             if not batch.signals:
+                self.record_no_signal_batch(batch)
                 self.ingestor.commit_cursor(session, batch)
                 return
+            self.state.metrics.no_signal_reason_streak = {}
+            self.state.metrics.no_signal_streak = 0
+            self.state.metrics.signal_lag_seconds = None
 
             account_snapshot = self._get_account_snapshot(session)
             account = {
@@ -254,6 +272,42 @@ class TradingPipeline:
                         self.state.metrics.orders_rejected_total += 1
 
             self.ingestor.commit_cursor(session, batch)
+
+    def record_no_signal_batch(self, batch: SignalBatch) -> None:
+        self.state.last_ingest_signals_total = len(batch.signals)
+        self.state.last_ingest_window_start = batch.query_start
+        self.state.last_ingest_window_end = batch.query_end
+        self.state.last_ingest_reason = batch.no_signal_reason
+        reason = batch.no_signal_reason
+        if batch.signal_lag_seconds is not None:
+            self.state.metrics.signal_lag_seconds = int(batch.signal_lag_seconds)
+        else:
+            self.state.metrics.signal_lag_seconds = None
+        self.state.metrics.record_no_signal(reason)
+        streak = self.state.metrics.no_signal_reason_streak.get(reason or "unknown", 0)
+        if reason in {
+            "no_signals_in_window",
+            "cursor_tail_stable",
+            "cursor_ahead_of_stream",
+            "empty_batch_advanced",
+        } and streak >= settings.trading_signal_no_signal_streak_alert_threshold:
+            self.state.metrics.record_signal_staleness_alert(reason)
+            logger.warning(
+                "Signal continuity alert: reason=%s consecutive_no_signal=%s lag_seconds=%s",
+                reason,
+                streak,
+                batch.signal_lag_seconds,
+            )
+        elif (
+            batch.signal_lag_seconds is not None
+            and batch.signal_lag_seconds >= settings.trading_signal_stale_lag_alert_seconds
+        ):
+            self.state.metrics.record_signal_staleness_alert(reason)
+            logger.warning(
+                "Signal freshness alert: reason=%s lag_seconds=%s",
+                reason,
+                batch.signal_lag_seconds,
+            )
 
     def reconcile(self) -> int:
         with self.session_factory() as session:
@@ -1145,14 +1199,10 @@ class TradingScheduler:
         start = now - timedelta(minutes=lookback_minutes)
         autonomy_batch = self._pipeline.ingestor.fetch_signals_with_reason(start=start, end=now)
         signals = autonomy_batch.signals
-
-        self.state.autonomy_signals_total = len(signals)
-        self.state.last_ingest_window_start = autonomy_batch.query_start
-        self.state.last_ingest_window_end = autonomy_batch.query_end
-        self.state.last_ingest_reason = autonomy_batch.no_signal_reason
         self.state.last_autonomy_run_at = now
+        self.state.autonomy_signals_total = len(signals)
         if not signals:
-            self.state.metrics.record_no_signal(autonomy_batch.no_signal_reason)
+            self._pipeline.record_no_signal_batch(autonomy_batch)
             self.state.autonomy_no_signal_streak += 1
             self.state.metrics.no_signal_streak = self.state.autonomy_no_signal_streak
             run_output_dir = artifact_root / now.strftime("%Y%m%dT%H%M%S")
@@ -1212,6 +1262,9 @@ class TradingScheduler:
 
         self.state.autonomy_no_signal_streak = 0
         self.state.metrics.no_signal_streak = 0
+        self.state.metrics.no_signal_reason_streak = {}
+        self.state.metrics.signal_lag_seconds = None
+        self.state.autonomy_signals_total = len(signals)
 
         promotion_target: Literal["paper", "live"]
         approval_token: str | None

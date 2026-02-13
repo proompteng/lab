@@ -13,7 +13,7 @@ from unittest.mock import patch
 from app.config import settings
 from app.trading.ingest import SignalBatch
 from app.trading.models import SignalEnvelope
-from app.trading.scheduler import TradingScheduler
+from app.trading.scheduler import TradingScheduler, TradingState
 
 
 @dataclass
@@ -21,6 +21,8 @@ class _PipelineStub:
     signals: list[SignalEnvelope]
     session_factory: object
     no_signal_reason: str | None = None
+    no_signal_lag_seconds: float | None = None
+    state: TradingState | None = None
 
     def __post_init__(self) -> None:
         self.ingestor = self
@@ -42,8 +44,37 @@ class _PipelineStub:
             cursor_symbol=None,
             query_start=start,
             query_end=end,
+            signal_lag_seconds=self.no_signal_lag_seconds,
             no_signal_reason=self.no_signal_reason,
         )
+
+    def record_no_signal_batch(self, batch: SignalBatch) -> None:
+        if self.state is None:
+            return
+
+        self.state.last_ingest_signals_total = len(batch.signals)
+        self.state.last_ingest_window_start = batch.query_start
+        self.state.last_ingest_window_end = batch.query_end
+        self.state.last_ingest_reason = batch.no_signal_reason
+        reason = batch.no_signal_reason
+        if batch.signal_lag_seconds is not None:
+            self.state.metrics.signal_lag_seconds = int(batch.signal_lag_seconds)
+        else:
+            self.state.metrics.signal_lag_seconds = None
+        self.state.metrics.record_no_signal(reason)
+        streak = self.state.metrics.no_signal_reason_streak.get(reason or "unknown", 0)
+        if reason in {
+            "no_signals_in_window",
+            "cursor_tail_stable",
+            "cursor_ahead_of_stream",
+            "empty_batch_advanced",
+        } and streak >= settings.trading_signal_no_signal_streak_alert_threshold:
+            self.state.metrics.record_signal_staleness_alert(reason)
+        elif (
+            batch.signal_lag_seconds is not None
+            and batch.signal_lag_seconds >= settings.trading_signal_stale_lag_alert_seconds
+        ):
+            self.state.metrics.record_signal_staleness_alert(reason)
 
 
 class _SchedulerDependencies:
@@ -70,14 +101,24 @@ class TestTradingSchedulerAutonomy(TestCase):
             "trading_strategy_config_path": settings.trading_strategy_config_path,
             "trading_autonomy_gate_policy_path": settings.trading_autonomy_gate_policy_path,
             "trading_autonomy_artifact_dir": settings.trading_autonomy_artifact_dir,
+            "trading_signal_no_signal_streak_alert_threshold": settings.trading_signal_no_signal_streak_alert_threshold,
+            "trading_signal_stale_lag_alert_seconds": settings.trading_signal_stale_lag_alert_seconds,
         }
 
     def tearDown(self) -> None:
-        settings.trading_autonomy_allow_live_promotion = self._settings_snapshot["trading_autonomy_allow_live_promotion"]
+        settings.trading_autonomy_allow_live_promotion = self._settings_snapshot[
+            "trading_autonomy_allow_live_promotion"
+        ]
         settings.trading_autonomy_approval_token = self._settings_snapshot["trading_autonomy_approval_token"]
         settings.trading_strategy_config_path = self._settings_snapshot["trading_strategy_config_path"]
         settings.trading_autonomy_gate_policy_path = self._settings_snapshot["trading_autonomy_gate_policy_path"]
         settings.trading_autonomy_artifact_dir = self._settings_snapshot["trading_autonomy_artifact_dir"]
+        settings.trading_signal_no_signal_streak_alert_threshold = self._settings_snapshot[
+            "trading_signal_no_signal_streak_alert_threshold"
+        ]
+        settings.trading_signal_stale_lag_alert_seconds = self._settings_snapshot[
+            "trading_signal_stale_lag_alert_seconds"
+        ]
 
     def test_run_autonomous_cycle_uses_live_promotion_when_token_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -168,7 +209,10 @@ class TestTradingSchedulerAutonomy(TestCase):
                 no_signals=True,
                 no_signal_reason="cursor_ahead_of_stream",
             )
-            with patch("app.trading.scheduler.upsert_autonomy_no_signal_run", return_value="no-signal-run-id") as persist_no_signal:
+            with patch(
+                "app.trading.scheduler.upsert_autonomy_no_signal_run",
+                return_value="no-signal-run-id",
+            ) as persist_no_signal:
                 with patch("app.trading.scheduler.run_autonomous_lane", side_effect=RuntimeError("should_not_run")):
                     scheduler._run_autonomous_cycle()
 
@@ -182,6 +226,58 @@ class TestTradingSchedulerAutonomy(TestCase):
             self.assertEqual(scheduler.state.last_autonomy_reason, "cursor_ahead_of_stream")
             self.assertEqual(scheduler.state.last_autonomy_run_id, "no-signal-run-id")
             self.assertIn("no-signals.json", scheduler.state.last_autonomy_gates or "")
+
+    def test_run_autonomous_cycle_alerts_on_repeated_no_signal_reasons(self) -> None:
+        settings.trading_signal_no_signal_streak_alert_threshold = 2
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+                no_signals=True,
+                no_signal_reason="cursor_ahead_of_stream",
+            )
+            with patch("app.trading.scheduler.upsert_autonomy_no_signal_run", return_value="no-signal-run-id"):
+                scheduler._run_autonomous_cycle()
+
+            self.assertEqual(scheduler.state.metrics.no_signal_reason_streak, {"cursor_ahead_of_stream": 1})
+            self.assertIsNone(
+                scheduler.state.metrics.signal_staleness_alert_total.get("cursor_ahead_of_stream"),
+            )
+
+            with patch("app.trading.scheduler.upsert_autonomy_no_signal_run", return_value="no-signal-run-id"):
+                scheduler._run_autonomous_cycle()
+
+            self.assertEqual(scheduler.state.metrics.no_signal_reason_streak, {"cursor_ahead_of_stream": 2})
+            self.assertEqual(
+                scheduler.state.metrics.signal_staleness_alert_total.get("cursor_ahead_of_stream"),
+                1,
+            )
+
+    def test_run_autonomous_cycle_alerts_on_signal_lag(self) -> None:
+        settings.trading_signal_no_signal_streak_alert_threshold = 99
+        settings.trading_signal_stale_lag_alert_seconds = 30
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+                no_signals=True,
+                no_signal_reason="empty_batch_advanced",
+                no_signal_lag_seconds=61.2,
+            )
+            with patch("app.trading.scheduler.upsert_autonomy_no_signal_run", return_value="no-signal-run-id"):
+                scheduler._run_autonomous_cycle()
+
+            self.assertEqual(scheduler.state.metrics.signal_lag_seconds, 61)
+            self.assertEqual(
+                scheduler.state.metrics.signal_staleness_alert_total.get("empty_batch_advanced"),
+                1,
+            )
+            self.assertEqual(
+                scheduler.state.metrics.no_signal_reason_streak.get("empty_batch_advanced"),
+                1,
+            )
 
     def test_run_autonomous_cycle_records_error_on_lane_exception(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -205,6 +301,7 @@ class TestTradingSchedulerAutonomy(TestCase):
         approval_token: str | None,
         no_signals: bool = False,
         no_signal_reason: str | None = None,
+        no_signal_lag_seconds: float | None = None,
     ) -> tuple[TradingScheduler, _SchedulerDependencies]:
         strategy_config_path = Path(tmpdir) / "strategies.yaml"
         strategy_config_path.write_text(
@@ -258,13 +355,22 @@ class TestTradingSchedulerAutonomy(TestCase):
             signals=[] if no_signals else _signal_batch(),
             session_factory=lambda: None,
             no_signal_reason=no_signal_reason,
+            no_signal_lag_seconds=no_signal_lag_seconds,
+            state=scheduler.state,
         )
 
         return scheduler, _SchedulerDependencies()
 
     @staticmethod
     def _fake_run_autonomous_lane(deps: _SchedulerDependencies):
-        def _capture(*, signals_path: Path, strategy_config_path: Path, gate_policy_path: Path, output_dir: Path, **kwargs: Any) -> SimpleNamespace:
+        def _capture(
+            *,
+            signals_path: Path,
+            strategy_config_path: Path,
+            gate_policy_path: Path,
+            output_dir: Path,
+            **kwargs: Any,
+        ) -> SimpleNamespace:
             deps.call_kwargs = kwargs
             deps.call_kwargs["strategy_config_path"] = strategy_config_path
             deps.call_kwargs["gate_policy_path"] = gate_policy_path

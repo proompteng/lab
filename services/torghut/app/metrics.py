@@ -113,6 +113,52 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                             )
                         )
                     continue
+                if key == "no_signal_reason_streak":
+                    metric_name = "torghut_trading_no_signal_reason_streak"
+                    lines.append(f"# HELP {metric_name} Consecutive no-signal streak by reason.")
+                    lines.append(f"# TYPE {metric_name} gauge")
+                    sorted_items = sorted(
+                        [
+                            (str(reason), int(count))
+                            for reason, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for reason, count in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"reason": reason},
+                                value=count,
+                            )
+                        )
+                    continue
+                if key == "signal_staleness_alert_total":
+                    metric_name = "torghut_trading_signal_staleness_alert_total"
+                    lines.append(f"# HELP {metric_name} Count of source freshness alerts by reason.")
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(reason), int(count))
+                            for reason, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for reason, count in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"reason": reason},
+                                value=count,
+                            )
+                        )
+                    continue
+            continue
+        if key == "signal_lag_seconds":
+            metric_name = "torghut_trading_signal_lag_seconds"
+            lines.append(f"# HELP {metric_name} Latest signal ingestion lag in seconds.")
+            lines.append(f"# TYPE {metric_name} gauge")
+            lines.extend(_render_labeled_metric(metric_name=metric_name, labels={"service": "torghut"}, value=value))
             continue
         if key == "no_signal_streak":
             metric_name = "torghut_trading_no_signal_streak"

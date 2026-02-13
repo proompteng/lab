@@ -67,6 +67,9 @@
 - Prefer fast unit tests; add integration tests when needed.
 - For bug fixes, add a regression test that fails before the fix and passes after. If not feasible, document why and the exact manual validation performed.
 
+## CI Notes
+- On 2026-02-13, Torghut PR workflows now enforce linting in `.github/workflows/torghut-ci.yml` via `uv run ruff check app tests`; `ruff` is now included in `services/torghut/pyproject.toml` dev extras so CI installs it.
+
 ## Agent Execution Guidelines
 - Use precise code pointers (file paths, identifiers, stack traces) to narrow search.
 - Reproduce issues before changes; keep logs and failing commands.

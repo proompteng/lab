@@ -115,7 +115,7 @@ These instructions remain intentionally permissive for an isolated lab networkâ€
 | Apply infrastructure | `bun run tf:apply` (only after reviewing the plan)
 | Destroy Harvester VM | `bun run tf:destroy`
 | Apply Kubernetes base | `bun run harvester:apply` or `./kubernetes/install.sh`
-| Bootstrap Argo CD | `bun run k:bootstrap` (applies manifests in `argocd/`)
+| Bootstrap Argo CD | `bun run k:bootstrap` (server-side apply; avoids metadata annotation size limit issues on CRDs)
 | Run Ansible playbooks | `bun run ansible`
 | Manage Coder template | `kubernetes/coder` contains Terraform + template YAML used by the button above.
 

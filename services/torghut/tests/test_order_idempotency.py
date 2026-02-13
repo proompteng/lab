@@ -6,7 +6,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from app.models import Base, Execution, Strategy, TradeDecision
 from app.trading.execution import OrderExecutor

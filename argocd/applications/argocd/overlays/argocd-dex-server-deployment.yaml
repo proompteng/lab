@@ -13,11 +13,13 @@ spec:
                 secretKeyRef:
                   name: argo-workflows-sso
                   key: client-secret
+                  optional: true
             - name: ARGO_WORKFLOWS_SSO_PASSWORD_HASH
               valueFrom:
                 secretKeyRef:
                   name: argo-workflows-sso
                   key: hash
+                  optional: true
             - name: ARGOCD_DEX_SERVER_DISABLE_TLS
               value: "true"
               valueFrom: null

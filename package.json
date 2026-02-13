@@ -31,7 +31,7 @@
     "ansible": "ansible-playbook -vvvv -i ./ansible/inventory/hosts.ini ./ansible/playbooks/rancher2.yml",
     "harvester:apply": "kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates",
     "k:install": "./kubernetes/install.sh",
-    "k:bootstrap": "kubectl apply -k argocd/applications/argocd",
+    "k:bootstrap": "kubectl apply --server-side --force-conflicts -k argocd/applications/argocd",
     "prepare": "node scripts/run-husky-install.mjs",
     "postinstall": "bun run --filter @proompteng/otel build",
     "dev:convex": "bun run --filter @proompteng/backend dev",

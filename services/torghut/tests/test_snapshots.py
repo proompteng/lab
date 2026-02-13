@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, List
 from unittest import TestCase
@@ -9,7 +8,7 @@ from unittest import TestCase
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from app.models import Base, Execution
+from app.models import Base
 from app.snapshots import snapshot_account_and_positions, sync_order_to_db
 
 
