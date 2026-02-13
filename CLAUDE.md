@@ -104,7 +104,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 - **Backend**: Go 1.24, Node.js 22.20, Python 3.9-3.13
 - **Data**: Dagster, Temporal, PostgreSQL, Kafka, Milvus
 - **Infrastructure**: Kubernetes (K3s), ArgoCD, Harvester, Ansible
-- **Tooling**: Bun 1.3.5, Biome, Turbo, Docker, UV
+- **Tooling**: Bun 1.3.9, Biome, Turbo, Docker, UV
 
 ### Application Patterns
 

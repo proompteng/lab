@@ -19,7 +19,7 @@ jobs:
   test-and-build:
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      bun-version: 1.3.5
+      bun-version: 1.3.9
       node-version: 24.11.1
       install-command: bun install --frozen-lockfile --ignore-scripts
       lint-command: bunx biome check packages/codex

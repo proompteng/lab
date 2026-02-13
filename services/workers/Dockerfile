@@ -1,4 +1,4 @@
-FROM oven/bun:1.3.5
+FROM oven/bun:1.3.9
 
 ARG NODE_VERSION=24.11.1
 ARG NVM_VERSION=0.39.7

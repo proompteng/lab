@@ -23,7 +23,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 ENV CODEX_ENV_NODE_VERSION=24.11.1 \
     CODEX_ENV_GO_VERSION=1.25.4 \
     CODEX_ENV_JAVA_VERSION=21 \
-    BUN_VERSION=1.3.5
+    BUN_VERSION=1.3.9
 
 # Preinstall requested Node version to avoid nvm cache misses during setup.
 RUN bash -lc 'source /root/.nvm/nvm.sh && nvm install ${CODEX_ENV_NODE_VERSION}'

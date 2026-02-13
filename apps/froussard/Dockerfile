@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 ARG NODE_VERSION=24.11.1
-ARG BUN_VERSION=1.3.5
+ARG BUN_VERSION=1.3.9
 
 FROM node:${NODE_VERSION}-bookworm AS base
 ARG BUN_VERSION

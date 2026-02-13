@@ -2,7 +2,7 @@
 # Built from a Turbo-pruned context produced by:
 #   bunx turbo prune --scope=reestr --docker --out-dir <dir>
 
-FROM oven/bun:1.3.5 AS deps
+FROM oven/bun:1.3.9 AS deps
 WORKDIR /app
 COPY json/ ./
 COPY tsconfig.base.json ./tsconfig.base.json
@@ -17,7 +17,7 @@ COPY full/ ./
 WORKDIR /app/apps/reestr
 RUN bun run build
 
-FROM oven/bun:1.3.5 AS runner
+FROM oven/bun:1.3.9 AS runner
 WORKDIR /app/apps/reestr
 ENV NODE_ENV=production
 ENV PORT=4173
