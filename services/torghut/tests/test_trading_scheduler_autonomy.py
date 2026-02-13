@@ -227,6 +227,29 @@ class TestTradingSchedulerAutonomy(TestCase):
             self.assertEqual(scheduler.state.last_autonomy_run_id, "no-signal-run-id")
             self.assertIn("no-signals.json", scheduler.state.last_autonomy_gates or "")
 
+    def test_run_autonomous_cycle_updates_ingest_metadata_on_signal_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            stale_time = datetime(2020, 1, 1, tzinfo=timezone.utc)
+            scheduler.state.last_ingest_window_start = stale_time
+            scheduler.state.last_ingest_window_end = stale_time
+            scheduler.state.last_ingest_reason = "stale-no-signal"
+
+            with patch("app.trading.scheduler.run_autonomous_lane", side_effect=self._fake_run_autonomous_lane(deps)):
+                scheduler._run_autonomous_cycle()
+
+            self.assertIsNone(scheduler.state.last_ingest_reason)
+            assert scheduler.state.last_ingest_window_start is not None
+            assert scheduler.state.last_ingest_window_end is not None
+            self.assertGreater(scheduler.state.last_ingest_window_start, stale_time)
+            self.assertGreater(scheduler.state.last_ingest_window_end, stale_time)
+            self.assertEqual(scheduler.state.last_ingest_signals_total, 1)
+            self.assertEqual(scheduler.state.autonomy_signals_total, 1)
+
     def test_run_autonomous_cycle_alerts_on_repeated_no_signal_reasons(self) -> None:
         settings.trading_signal_no_signal_streak_alert_threshold = 2
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -1199,6 +1199,10 @@ class TradingScheduler:
         start = now - timedelta(minutes=lookback_minutes)
         autonomy_batch = self._pipeline.ingestor.fetch_signals_with_reason(start=start, end=now)
         signals = autonomy_batch.signals
+        self.state.last_ingest_signals_total = len(signals)
+        self.state.last_ingest_window_start = autonomy_batch.query_start
+        self.state.last_ingest_window_end = autonomy_batch.query_end
+        self.state.last_ingest_reason = autonomy_batch.no_signal_reason
         self.state.last_autonomy_run_at = now
         self.state.autonomy_signals_total = len(signals)
         if not signals:
