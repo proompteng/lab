@@ -1,21 +1,30 @@
-apiVersion: v1
-kind: Pod
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: workers-fc
   labels:
     app.kubernetes.io/name: workers-fc
 spec:
-  runtimeClassName: kata-fc
-  containers:
-    - name: workers-fc
-      image: registry.ide-newton.ts.net/lab/workers@sha256:3c13ee44cfe06fba406c3c11074f78f037676e17740f4aa944468c218ef9fee3
-      command:
-        - bash
-        - -lc
-        - |
-          echo kata-fc-ready
-          sleep infinity
-      resources:
-        requests:
-          cpu: 250m
-          memory: 512Mi
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: workers-fc
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: workers-fc
+    spec:
+      runtimeClassName: kata-fc
+      containers:
+        - name: workers-fc
+          image: registry.ide-newton.ts.net/lab/workers@sha256:3c13ee44cfe06fba406c3c11074f78f037676e17740f4aa944468c218ef9fee3
+          command:
+            - bash
+            - -lc
+            - |
+              echo kata-fc-ready
+              sleep infinity
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
