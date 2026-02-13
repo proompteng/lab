@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from decimal import ROUND_DOWN, Decimal
 from typing import Any, Iterable, Literal, Optional
 
@@ -40,15 +41,24 @@ class DecisionEngine:
         for strategy in strategies:
             if not strategy.enabled:
                 continue
-            if signal.timeframe is None:
+            signal_timeframe = _resolve_signal_timeframe(signal)
+            if signal_timeframe is None:
                 logger.debug(
-                    "Skipping strategy %s due to missing signal timeframe for symbol %s",
+                    "Skipping strategy %s because signal timeframe could not be resolved for symbol %s",
                     strategy.id,
                     signal.symbol,
                 )
                 continue
-            if signal.timeframe != strategy.base_timeframe:
+            if signal_timeframe != strategy.base_timeframe:
+                logger.debug(
+                    "Skipping strategy %s due to timeframe mismatch signal=%s strategy=%s",
+                    strategy.id,
+                    signal_timeframe,
+                    strategy.base_timeframe,
+                )
                 continue
+            if signal_timeframe is not None and signal.timeframe != signal_timeframe:
+                signal = signal.model_copy(update={"timeframe": signal_timeframe})
             decision = self._evaluate_strategy(signal, strategy, equity=equity)
             if decision:
                 decisions.append(decision)
@@ -228,6 +238,54 @@ def _resolve_qty(
         qty = Decimal("1")
 
     return qty, {"method": method, "notional_budget": str(notional_budget), "price": str(price)}
+
+
+def _resolve_signal_timeframe(signal: SignalEnvelope) -> Optional[str]:
+    if signal.timeframe is not None:
+        return signal.timeframe
+    payload = signal.payload
+    candidate: object
+    if isinstance(payload.get("timeframe"), str):
+        candidate = payload["timeframe"]
+    elif isinstance(payload.get("window"), dict):
+        candidate = payload["window"].get("size") if isinstance(payload["window"], dict) else None
+    elif isinstance(payload.get("window_size"), str):
+        candidate = payload["window_size"]
+    elif isinstance(payload.get("window_step"), str):
+        candidate = payload["window_step"]
+    else:
+        candidate = None
+    if not isinstance(candidate, str):
+        return None
+    return _coerce_timeframe(candidate)
+
+
+def _coerce_timeframe(value: str) -> Optional[str]:
+    legacy_match = re.fullmatch(
+        r"(?i)\s*(\d+)\s*(sec|secs|s|min|minute|minutes|m|hour|hours|h)\s*",
+        value,
+    )
+    if legacy_match is not None:
+        amount = int(legacy_match.group(1))
+        unit = legacy_match.group(2).lower()
+        if unit in {"sec", "secs", "s"}:
+            return f"{amount}Sec"
+        if unit in {"min", "minute", "minutes", "m"}:
+            return f"{amount}Min"
+        if unit in {"hour", "hours", "h"}:
+            return f"{amount}Hour"
+
+    iso_match = re.fullmatch(r"PT(\d+)([SMH])", value)
+    if iso_match is not None:
+        amount = int(iso_match.group(1))
+        unit = iso_match.group(2)
+        if unit == "S":
+            return f"{amount}Sec"
+        if unit == "M":
+            return f"{amount}Min"
+        if unit == "H":
+            return f"{amount}Hour"
+    return None
 
 
 __all__ = ["DecisionEngine", "SignalFeatures", "extract_signal_features"]

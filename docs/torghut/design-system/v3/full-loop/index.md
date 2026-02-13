@@ -48,6 +48,9 @@ execution controls remain final authority.
 | `16-autonomous-quant-readiness-execution-plan.md` | Large | phase-based readiness and evidence plan |
 | `17-autonomous-quant-completion-gap-and-rollout.md` | Critical | implementation + rollout checklist for remaining blockers |
 | `18-autonomous-quant-full-readiness-roadmap.md` | Critical | current missing subsystems, control checks, and execution sequence |
+| `19-autonomous-quant-live-readiness-snapshot-2026-02-13.md` | Critical | live-state evidence snapshot and immediate recovery order |
+| `20-autonomous-quant-llm-completion-roadmap-2026-02-13.md` | Critical | full-autonomy production completion plan (LEAN + LLM + evidence) |
+| `21-autonomous-no-signal-evidence-implementation-2026-02-13.md` | Critical | no-signal windows now persist as skipped research evidence for full-loop visibility |
 
 Definition of "significant scope" for this pack:
 - touches at least 2 code/config areas,
@@ -73,6 +76,9 @@ Definition of "significant scope" for this pack:
 16. `16-autonomous-quant-readiness-execution-plan.md`
 17. `17-autonomous-quant-completion-gap-and-rollout.md`
 18. `18-autonomous-quant-full-readiness-roadmap.md`
+19. `19-autonomous-quant-live-readiness-snapshot-2026-02-13.md`
+20. `20-autonomous-quant-llm-completion-roadmap-2026-02-13.md`
+21. `21-autonomous-no-signal-evidence-implementation-2026-02-13.md`
 
 ## Templates
 - `templates/implementationspecs.yaml`

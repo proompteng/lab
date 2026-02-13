@@ -34,10 +34,11 @@ from .portfolio import PortfolioSizingResult, sizer_from_settings
 from .prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
 from .reconcile import Reconciler
 from .risk import RiskEngine
-from .autonomy import run_autonomous_lane
+from .autonomy import run_autonomous_lane, upsert_autonomy_no_signal_run
 from .universe import UniverseResolver
 from .llm.schema import MarketSnapshot as LLMMarketSnapshot
 from .llm.schema import PortfolioSnapshot, RecentDecisionSummary
+from .route_metadata import coerce_route_text
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,41 @@ class TradingMetrics:
     llm_guardrail_shadow_total: int = 0
     llm_tokens_prompt_total: int = 0
     llm_tokens_completion_total: int = 0
+    execution_requests_total: dict[str, int] = field(default_factory=dict)
+    execution_fallback_total: dict[str, int] = field(default_factory=dict)
+    execution_fallback_reason_total: dict[str, int] = field(default_factory=dict)
+    no_signal_windows_total: int = 0
+    no_signal_reason_total: dict[str, int] = field(default_factory=dict)
+
+    def record_execution_request(self, adapter: str | None) -> None:
+        adapter_name = coerce_route_text(adapter)
+        if adapter_name is None:
+            return
+        current = self.execution_requests_total.get(adapter_name, 0)
+        self.execution_requests_total[adapter_name] = current + 1
+
+    def record_execution_fallback(
+        self,
+        expected_adapter: str | None,
+        actual_adapter: str | None,
+        fallback_reason: str | None,
+    ) -> None:
+        expected_name = coerce_route_text(expected_adapter) or "unknown"
+        actual_name = coerce_route_text(actual_adapter) or "unknown"
+        transition = f"{expected_name}->{actual_name}"
+        current = self.execution_fallback_total.get(transition, 0)
+        self.execution_fallback_total[transition] = current + 1
+        if fallback_reason:
+            current_reason = self.execution_fallback_reason_total.get(fallback_reason, 0)
+            self.execution_fallback_reason_total[fallback_reason] = current_reason + 1
+
+    def record_no_signal(self, reason: str | None) -> None:
+        normalized = reason.strip() if isinstance(reason, str) else ""
+        if not normalized:
+            normalized = "unknown"
+        self.no_signal_windows_total += 1
+        current = self.no_signal_reason_total.get(normalized, 0)
+        self.no_signal_reason_total[normalized] = current + 1
 
 
 @dataclass
@@ -113,6 +149,7 @@ class TradingState:
     last_ingest_window_start: Optional[datetime] = None
     last_ingest_window_end: Optional[datetime] = None
     last_ingest_reason: Optional[str] = None
+    autonomy_no_signal_streak: int = 0
     metrics: TradingMetrics = field(default_factory=TradingMetrics)
 
 
@@ -328,6 +365,7 @@ class TradingPipeline:
 
             execution_client = self._execution_client_for_symbol(decision.symbol)
             selected_adapter_name = self._execution_client_name(execution_client)
+            self.state.metrics.record_execution_request(selected_adapter_name)
             self.executor.update_decision_params(
                 session,
                 decision_row,
@@ -389,32 +427,37 @@ class TradingPipeline:
                 )
                 return
 
-            if execution:
-                actual_adapter_name = str(getattr(execution_client, "last_route", selected_adapter_name))
-                if actual_adapter_name == "alpaca_fallback":
-                    actual_adapter_name = "alpaca"
-                if actual_adapter_name != selected_adapter_name:
-                    self.executor.update_decision_params(
-                        session,
-                        decision_row,
-                        {
-                            "execution_adapter": {
-                                "selected": selected_adapter_name,
-                                "actual": actual_adapter_name,
-                                "policy": settings.trading_execution_adapter_policy,
-                                "symbol": decision.symbol,
-                            }
-                        },
-                    )
-                self.state.metrics.orders_submitted_total += 1
-                logger.info(
-                    "Order submitted strategy_id=%s decision_id=%s symbol=%s adapter=%s alpaca_order_id=%s",
-                    decision.strategy_id,
-                    decision_row.id,
-                    decision.symbol,
-                    actual_adapter_name,
-                    execution.alpaca_order_id,
+            actual_adapter_name = str(getattr(execution_client, "last_route", selected_adapter_name))
+            if actual_adapter_name == "alpaca_fallback":
+                actual_adapter_name = "alpaca"
+            if actual_adapter_name != selected_adapter_name:
+                fallback_reason = execution.execution_fallback_reason
+                self.state.metrics.record_execution_fallback(
+                    expected_adapter=selected_adapter_name,
+                    actual_adapter=actual_adapter_name,
+                    fallback_reason=fallback_reason or "adaptive_fallback",
                 )
+                self.executor.update_decision_params(
+                    session,
+                    decision_row,
+                    {
+                        "execution_adapter": {
+                            "selected": selected_adapter_name,
+                            "actual": actual_adapter_name,
+                            "policy": settings.trading_execution_adapter_policy,
+                            "symbol": decision.symbol,
+                        }
+                    },
+                )
+            self.state.metrics.orders_submitted_total += 1
+            logger.info(
+                "Order submitted strategy_id=%s decision_id=%s symbol=%s adapter=%s alpaca_order_id=%s",
+                decision.strategy_id,
+                decision_row.id,
+                decision.symbol,
+                actual_adapter_name,
+                execution.alpaca_order_id,
+            )
         except Exception as exc:
             logger.exception(
                 "Decision handling failed strategy_id=%s symbol=%s error=%s",
@@ -1095,17 +1138,62 @@ class TradingScheduler:
         now = datetime.now(timezone.utc)
         lookback_minutes = max(1, int(settings.trading_autonomy_signal_lookback_minutes))
         start = now - timedelta(minutes=lookback_minutes)
-        signals = self._pipeline.ingestor.fetch_signals_between(start=start, end=now)
+        autonomy_batch = self._pipeline.ingestor.fetch_signals_with_reason(start=start, end=now)
+        signals = autonomy_batch.signals
 
         self.state.autonomy_signals_total = len(signals)
+        self.state.last_ingest_window_start = autonomy_batch.query_start
+        self.state.last_ingest_window_end = autonomy_batch.query_end
+        self.state.last_ingest_reason = autonomy_batch.no_signal_reason
         self.state.last_autonomy_run_at = now
         if not signals:
-            self.state.last_autonomy_reason = "no_signals_in_window"
+            self.state.metrics.record_no_signal(autonomy_batch.no_signal_reason)
+            self.state.autonomy_no_signal_streak += 1
+            run_output_dir = artifact_root / now.strftime("%Y%m%dT%H%M%S")
+            run_output_dir.mkdir(parents=True, exist_ok=True)
+            no_signal_path = run_output_dir / "no-signals.json"
+            reason = autonomy_batch.no_signal_reason or "no_signal"
+            no_signal_reason_record = {
+                "status": "skipped",
+                "no_signal_reason": reason,
+                "query_start": autonomy_batch.query_start.isoformat() if autonomy_batch.query_start else None,
+                "query_end": autonomy_batch.query_end.isoformat() if autonomy_batch.query_end else None,
+            }
+            no_signal_path.write_text(json.dumps(no_signal_reason_record, indent=2), encoding="utf-8")
+
             self.state.last_autonomy_run_id = None
-            self.state.last_autonomy_gates = None
+            self.state.last_autonomy_gates = str(no_signal_path)
             self.state.last_autonomy_patch = None
             self.state.last_autonomy_recommendation = None
             self.state.last_autonomy_error = None
+            self.state.last_autonomy_reason = reason
+            try:
+                self.state.last_autonomy_run_id = upsert_autonomy_no_signal_run(
+                    session_factory=self._pipeline.session_factory,
+                    query_start=autonomy_batch.query_start,
+                    query_end=autonomy_batch.query_end,
+                    strategy_config_path=Path(strategy_config_path),
+                    gate_policy_path=Path(gate_policy_path),
+                    no_signal_reason=reason,
+                    now=now,
+                    code_version='live',
+                )
+            except Exception as exc:
+                self.state.last_autonomy_reason = "autonomy_no_signal_persistence_failed"
+                self.state.last_autonomy_error = str(exc)
+                logger.exception(
+                    "Autonomy no-signal persistence failed; ingest_reason=%s window_start=%s window_end=%s",
+                    reason,
+                    autonomy_batch.query_start,
+                    autonomy_batch.query_end,
+                )
+                return
+            logger.warning(
+                "Autonomy cycle skipped due to no signals; ingest_reason=%s window_start=%s window_end=%s",
+                autonomy_batch.no_signal_reason,
+                autonomy_batch.query_start,
+                autonomy_batch.query_end,
+            )
             return
 
         run_output_dir = artifact_root / now.strftime("%Y%m%dT%H%M%S")
@@ -1113,6 +1201,8 @@ class TradingScheduler:
         signals_path = run_output_dir / "signals.json"
         signal_payloads = [signal.model_dump(mode="json") for signal in signals]
         signals_path.write_text(json.dumps(signal_payloads, indent=2), encoding="utf-8")
+
+        self.state.autonomy_no_signal_streak = 0
 
         promotion_target: Literal["paper", "live"]
         approval_token: str | None
@@ -1127,18 +1217,24 @@ class TradingScheduler:
             promotion_target = "paper"
             approval_token = None
 
-        result = run_autonomous_lane(
-            signals_path=signals_path,
-            strategy_config_path=Path(strategy_config_path),
-            gate_policy_path=Path(gate_policy_path),
-            output_dir=run_output_dir,
-            promotion_target=promotion_target,
-            strategy_configmap_path=Path('/etc/torghut/strategies.yaml'),
-            code_version='live',
-            approval_token=approval_token,
-            persist_results=True,
-            session_factory=self._pipeline.session_factory,
-        )
+        try:
+            result = run_autonomous_lane(
+                signals_path=signals_path,
+                strategy_config_path=Path(strategy_config_path),
+                gate_policy_path=Path(gate_policy_path),
+                output_dir=run_output_dir,
+                promotion_target=promotion_target,
+                strategy_configmap_path=Path('/etc/torghut/strategies.yaml'),
+                code_version='live',
+                approval_token=approval_token,
+                persist_results=True,
+                session_factory=self._pipeline.session_factory,
+            )
+        except Exception as exc:
+            self.state.last_autonomy_error = str(exc)
+            self.state.last_autonomy_reason = "lane_execution_failed"
+            logger.exception("Autonomous lane execution failed: %s", exc)
+            return
 
         self.state.autonomy_runs_total += 1
         self.state.last_autonomy_run_id = result.run_id

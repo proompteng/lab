@@ -119,9 +119,12 @@ class ClickHouseSignalIngestor:
         if cursor_at.tzinfo is None:
             cursor_at = cursor_at.replace(tzinfo=timezone.utc)
         fast_forwarded = False
+        time_column = self._resolve_time_column()
+        latest_signal_at = self._latest_signal_timestamp(time_column)
+        cursor_at_tail = latest_signal_at is not None and cursor_at >= latest_signal_at
         if self.fast_forward_stale_cursor:
             min_cursor = datetime.now(timezone.utc) - timedelta(minutes=self.initial_lookback_minutes)
-            if cursor_at < min_cursor:
+            if cursor_at < min_cursor and not cursor_at_tail:
                 logger.warning(
                     "Trade cursor is stale; fast-forwarding cursor_at=%s -> %s",
                     cursor_at.isoformat(),
@@ -133,8 +136,6 @@ class ClickHouseSignalIngestor:
                 fast_forwarded = True
                 self._set_cursor(session, cursor_at, cursor_seq, cursor_symbol)
         query_window_start = cursor_at
-
-        time_column = self._resolve_time_column()
         supports_seq = self._supports_seq_for_time_column(time_column)
         overlap_cutoff = cursor_at if time_column == "ts" and not supports_seq else None
         query = self._build_query(cursor_at, cursor_seq, cursor_symbol)
@@ -170,7 +171,6 @@ class ClickHouseSignalIngestor:
 
         if not rows:
             no_signal_reason = "no_signals_in_window"
-            latest_signal_at = self._latest_signal_timestamp(time_column)
             if latest_signal_at is not None:
                 lookback_window = max(1, self.initial_lookback_minutes)
                 if cursor_at > latest_signal_at + timedelta(minutes=lookback_window):
@@ -186,10 +186,13 @@ class ClickHouseSignalIngestor:
                     cursor_seq = None
                     cursor_symbol = None
                     no_signal_reason = "cursor_ahead_of_stream"
+                elif cursor_at >= latest_signal_at:
+                    no_signal_reason = "cursor_tail_stable"
 
             if (
                 self.empty_batch_advance_seconds > 0
                 and no_signal_reason != "cursor_ahead_of_stream"
+                and no_signal_reason != "cursor_tail_stable"
             ):
                 cursor_advance = poll_started_at - timedelta(seconds=self.empty_batch_advance_seconds)
                 if cursor_at < cursor_advance:
@@ -221,6 +224,86 @@ class ClickHouseSignalIngestor:
             query_start=query_window_start,
             query_end=query_window_end,
             no_signal_reason=None,
+        )
+
+    def fetch_signals_with_reason(
+        self,
+        *,
+        start: datetime,
+        end: datetime,
+        symbol: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> "SignalBatch":
+        """Fetch signals in a bounded window and return no-signal telemetry."""
+        if not self.url:
+            logger.warning("ClickHouse URL missing; skipping signal replay")
+            return SignalBatch(
+                signals=[],
+                cursor_at=None,
+                cursor_seq=None,
+                cursor_symbol=None,
+                query_start=start,
+                query_end=end,
+                no_signal_reason="clickhouse_url_missing",
+            )
+
+        normalized_symbol: Optional[str] = None
+        if symbol:
+            normalized_symbol = normalize_symbol(symbol)
+            if normalized_symbol is None:
+                logger.warning("Invalid symbol for signal replay: %s", symbol)
+                return SignalBatch(
+                    signals=[],
+                    cursor_at=None,
+                    cursor_seq=None,
+                    cursor_symbol=None,
+                    query_start=start,
+                    query_end=end,
+                    no_signal_reason="invalid_symbol",
+                )
+
+        time_column = self._resolve_time_column()
+        select_expr = self._select_expression(time_column)
+        where_parts = [
+            f"{time_column} >= {to_datetime64(start)}",
+            f"{time_column} <= {to_datetime64(end)}",
+        ]
+        if normalized_symbol:
+            where_parts.append(f"symbol = '{normalized_symbol}'")
+        limit_clause = f"LIMIT {limit}" if limit else ""
+        order_clause = f"{time_column} ASC"
+        if self._supports_seq_for_time_column(time_column):
+            order_clause = f"{time_column} ASC, symbol ASC, seq ASC"
+
+        query = (
+            f"SELECT {select_expr} FROM {self.table} WHERE {' AND '.join(where_parts)} "
+            f"ORDER BY {order_clause} {limit_clause} FORMAT JSONEachRow"
+        )
+        rows = self._query_clickhouse(query)
+        signals: list[SignalEnvelope] = []
+        for row in rows:
+            signal = self.parse_row(row)
+            if signal is None:
+                continue
+            signals.append(signal)
+
+        no_signal_reason: str | None = None
+        if not signals:
+            no_signal_reason = "no_signals_in_window"
+            latest_signal_at = self._latest_signal_timestamp(time_column)
+            if latest_signal_at is not None and start > latest_signal_at:
+                no_signal_reason = "cursor_ahead_of_stream"
+            elif self.empty_batch_advance_seconds > 0:
+                no_signal_reason = "empty_batch_advanced"
+
+        return SignalBatch(
+            signals=signals,
+            cursor_at=None,
+            cursor_seq=None,
+            cursor_symbol=None,
+            query_start=start,
+            query_end=end,
+            no_signal_reason=no_signal_reason,
         )
 
     def _latest_signal_timestamp(self, time_column: str) -> Optional[datetime]:
@@ -548,15 +631,29 @@ def _timeframe_from_iso_duration(value: Optional[str]) -> Optional[str]:
     if not value:
         return None
     match = re.fullmatch(r"PT(\d+)([SMH])", value)
-    if not match:
+    if match is not None:
+        amount = int(match.group(1))
+        unit = match.group(2)
+        if unit == "S":
+            return f"{amount}Sec"
+        if unit == "M":
+            return f"{amount}Min"
+        if unit == "H":
+            return f"{amount}Hour"
+
+    legacy_match = re.fullmatch(
+        r"(?i)\s*(\d+)\s*(sec|secs|s|min|minute|minutes|m|hour|hours|h)\s*",
+        value,
+    )
+    if not legacy_match:
         return None
-    amount = int(match.group(1))
-    unit = match.group(2)
-    if unit == "S":
+    amount = int(legacy_match.group(1))
+    unit = legacy_match.group(2).lower()
+    if unit in {"sec", "secs", "s"}:
         return f"{amount}Sec"
-    if unit == "M":
+    if unit in {"min", "minute", "minutes", "m"}:
         return f"{amount}Min"
-    if unit == "H":
+    if unit in {"hour", "hours", "h"}:
         return f"{amount}Hour"
     return None
 

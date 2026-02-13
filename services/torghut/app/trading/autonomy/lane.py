@@ -50,6 +50,110 @@ class AutonomousLaneResult:
     paper_patch_path: Path | None
 
 
+def upsert_autonomy_no_signal_run(
+    *,
+    session_factory: Callable[[], Session],
+    query_start: datetime,
+    query_end: datetime,
+    strategy_config_path: Path,
+    gate_policy_path: Path,
+    no_signal_reason: str | None,
+    now: datetime,
+    code_version: str = 'live',
+) -> str:
+    """Persist a zero-signal window as a skipped research run."""
+
+    strategy: StrategyRuntimeConfig | None = None
+    try:
+        runtime_strategies = load_runtime_strategy_config(strategy_config_path)
+        strategy = runtime_strategies[0] if runtime_strategies else None
+    except Exception:
+        strategy = None
+
+    strategy_id = strategy.strategy_id if strategy else None
+    strategy_type = strategy.strategy_type if strategy else None
+    strategy_version = strategy.version if strategy else None
+
+    reason_label = (no_signal_reason or "no_signal").strip()
+    query_start_utc = _ensure_utc(query_start)
+    query_end_utc = _ensure_utc(query_end)
+
+    run_signature = {
+        "query_start": query_start_utc.isoformat() if query_start_utc else None,
+        "query_end": query_end_utc.isoformat() if query_end_utc else None,
+        "strategy_config_path": str(strategy_config_path),
+        "reason": reason_label,
+    }
+    run_signature_bytes = json.dumps(run_signature, sort_keys=True).encode("utf-8")
+    run_id = hashlib.sha256(run_signature_bytes).hexdigest()[:24]
+
+    feature_spec_hash = _compute_no_signal_feature_spec_hash(
+        strategy_config_path=strategy_config_path,
+        gate_policy_path=gate_policy_path,
+        reason=reason_label,
+        query_start=query_start_utc,
+        query_end=query_end_utc,
+    )
+    dataset_version = _compute_no_signal_dataset_version_hash(
+        query_start=query_start_utc,
+        query_end=query_end_utc,
+        no_signal_reason=reason_label,
+    )
+
+    with session_factory() as session:
+        existing_run = session.execute(
+            select(ResearchRun).where(ResearchRun.run_id == run_id)
+        ).scalar_one_or_none()
+
+        if existing_run is None:
+            run = ResearchRun(
+                run_id=run_id,
+                status='skipped',
+                strategy_id=strategy_id,
+                strategy_name=strategy_id,
+                strategy_type=strategy_type,
+                strategy_version=strategy_version,
+                code_commit=code_version,
+                feature_version=settings.trading_feature_normalization_version,
+                feature_schema_version=settings.trading_feature_schema_version,
+                feature_spec_hash=feature_spec_hash,
+                signal_source='autonomy-signals',
+                dataset_version=dataset_version,
+                dataset_from=query_start_utc,
+                dataset_to=query_end_utc,
+                dataset_snapshot_ref='no_signal_window',
+                runner_version='run_autonomous_lane_no_signals',
+                runner_binary_hash=hashlib.sha256(run_id.encode('utf-8')).hexdigest(),
+                updated_at=now,
+            )
+            session.add(run)
+        else:
+            existing_run.status = 'skipped'
+            existing_run.strategy_id = strategy_id
+            existing_run.strategy_name = strategy_id
+            existing_run.strategy_type = strategy_type
+            existing_run.strategy_version = strategy_version
+            existing_run.code_commit = code_version
+            existing_run.feature_version = settings.trading_feature_normalization_version
+            existing_run.feature_spec_hash = feature_spec_hash
+            existing_run.feature_schema_version = settings.trading_feature_schema_version
+            existing_run.signal_source = 'autonomy-signals'
+            existing_run.dataset_version = dataset_version
+            existing_run.dataset_from = query_start_utc
+            existing_run.dataset_to = query_end_utc
+            existing_run.dataset_snapshot_ref = 'no_signal_window'
+            existing_run.runner_version = 'run_autonomous_lane_no_signals'
+            existing_run.runner_binary_hash = hashlib.sha256(run_id.encode('utf-8')).hexdigest()
+            existing_run.updated_at = now
+            session.add(existing_run)
+        session.commit()
+        return run_id
+
+
+def _ensure_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 def run_autonomous_lane(
     *,
     signals_path: Path,
@@ -99,6 +203,7 @@ def run_autonomous_lane(
             session_factory=factory,
             run_id=run_id,
             strategy=runtime_strategies[0] if runtime_strategies else None,
+            signals=signals,
             strategy_config_path=strategy_config_path,
             signals_path=signals_path,
             gate_policy_path=gate_policy_path,
@@ -245,10 +350,10 @@ def run_autonomous_lane(
             gate_report_path=gate_report_path,
             paper_patch_path=patch_path,
         )
-    except Exception:
+    except Exception as exc:
         if persist_results:
             _mark_run_failed(session_factory=factory, run_id=run_id, run_row=run_row, now=now)
-        raise
+        raise RuntimeError(f"autonomous_lane_persistence_failed: {exc}") from exc
 
 
 def _upsert_research_run(
@@ -256,6 +361,7 @@ def _upsert_research_run(
     session_factory: Callable[[], Session],
     run_id: str,
     strategy: StrategyRuntimeConfig | None,
+    signals: list[SignalEnvelope],
     strategy_config_path: Path,
     signals_path: Path,
     gate_policy_path: Path,
@@ -266,6 +372,9 @@ def _upsert_research_run(
         existing_run = session.execute(
             select(ResearchRun).where(ResearchRun.run_id == run_id)
         ).scalar_one_or_none()
+
+        dataset_from = signals[0].event_ts if signals else None
+        dataset_to = signals[-1].event_ts if signals else None
 
         strategy_id = strategy.strategy_id if strategy else None
         strategy_type = strategy.strategy_type if strategy else None
@@ -289,6 +398,8 @@ def _upsert_research_run(
                 ),
                 signal_source='autonomy-signals',
                 dataset_version=_compute_dataset_version_hash(signals_path=signals_path),
+                dataset_from=dataset_from,
+                dataset_to=dataset_to,
                 dataset_snapshot_ref=str(strategy_config_path),
                 runner_version='run_autonomous_lane',
                 runner_binary_hash=hashlib.sha256(run_id.encode('utf-8')).hexdigest(),
@@ -313,6 +424,8 @@ def _upsert_research_run(
             signals_path=signals_path,
         )
         existing_run.signal_source = 'autonomy-signals'
+        existing_run.dataset_from = dataset_from
+        existing_run.dataset_to = dataset_to
         existing_run.dataset_version = _compute_dataset_version_hash(signals_path=signals_path)
         existing_run.dataset_snapshot_ref = str(strategy_config_path)
         existing_run.runner_version = 'run_autonomous_lane'
@@ -387,75 +500,74 @@ def _persist_run_outputs(
     robustness_by_fold = {fold.fold_name: fold for fold in report.robustness.folds}
 
     with session_factory() as session:
-        session.execute(delete(ResearchFoldMetrics).where(ResearchFoldMetrics.candidate_id == candidate_id))
-        session.execute(delete(ResearchStressMetrics).where(ResearchStressMetrics.candidate_id == candidate_id))
-        session.execute(delete(ResearchPromotion).where(ResearchPromotion.candidate_id == candidate_id))
-        session.execute(delete(ResearchCandidate).where(ResearchCandidate.candidate_id == candidate_id))
+        with session.begin():
+            session.execute(delete(ResearchFoldMetrics).where(ResearchFoldMetrics.candidate_id == candidate_id))
+            session.execute(delete(ResearchStressMetrics).where(ResearchStressMetrics.candidate_id == candidate_id))
+            session.execute(delete(ResearchPromotion).where(ResearchPromotion.candidate_id == candidate_id))
+            session.execute(delete(ResearchCandidate).where(ResearchCandidate.candidate_id == candidate_id))
 
-        candidate = ResearchCandidate(
-            run_id=run_id,
-            candidate_id=candidate_id,
-            candidate_hash=candidate_hash,
-            parameter_set=_strategy_parameter_set(runtime_strategies),
-            decision_count=report.metrics.decision_count,
-            trade_count=report.metrics.trade_count,
-            symbols_covered=sorted({signal.symbol for signal in signals}),
-            universe_definition=_strategy_universe_definition(runtime_strategies),
-            promotion_target=promotion_target,
-        )
-        session.add(candidate)
-
-        for fold_order, fold in enumerate(walk_results.folds, start=1):
-            fold_metrics = fold.fold_metrics()
-            robustness = robustness_by_fold.get(fold.fold.name)
-            regime_label = robustness.regime.label() if robustness is not None else str(fold_metrics.get('regime_label', 'unknown'))
-
-            session.add(
-                ResearchFoldMetrics(
-                    candidate_id=candidate_id,
-                    fold_name=fold.fold.name,
-                    fold_order=fold_order,
-                    train_start=fold.fold.train_start,
-                    train_end=fold.fold.train_end,
-                    test_start=fold.fold.test_start,
-                    test_end=fold.fold.test_end,
-                    decision_count=fold_metrics.get('decision_count', 0),
-                    trade_count=fold_metrics.get('buy_count', 0) + fold_metrics.get('sell_count', 0),
-                    gross_pnl=robustness.net_pnl if robustness is not None else None,
-                    net_pnl=robustness.net_pnl if robustness is not None else report.metrics.net_pnl,
-                    max_drawdown=robustness.max_drawdown if robustness is not None else report.metrics.max_drawdown,
-                    turnover_ratio=robustness.turnover_ratio if robustness is not None else report.metrics.turnover_ratio,
-                    cost_bps=robustness.cost_bps if robustness is not None else report.metrics.cost_bps,
-                    cost_assumptions=report.impact_assumptions.assumptions,
-                    regime_label=regime_label,
-                )
-            )
-
-        for stress_case in ('spread', 'volatility', 'liquidity', 'halt'):
-            session.add(
-                ResearchStressMetrics(
-                    candidate_id=candidate_id,
-                    stress_case=stress_case,
-                    metric_bundle=_build_stress_bundle(report, stress_case),
-                    pessimistic_pnl_delta=None,
-                )
-            )
-
-        session.add(
-            ResearchPromotion(
+            candidate = ResearchCandidate(
+                run_id=run_id,
                 candidate_id=candidate_id,
-                requested_mode=promotion_target,
-                approved_mode=gate_report.recommended_mode if gate_report.promotion_allowed else None,
-                approver='autonomous_scheduler',
-                approver_role='system',
-                approve_reason='promotion_allowed' if gate_report.promotion_allowed else None,
-                deny_reason=None if gate_report.promotion_allowed else ';'.join(gate_report.reasons),
-                paper_candidate_patch_ref=str(patch_path) if patch_path else None,
-                effective_time=now if gate_report.promotion_allowed else None,
+                candidate_hash=candidate_hash,
+                parameter_set=_strategy_parameter_set(runtime_strategies),
+                decision_count=report.metrics.decision_count,
+                trade_count=report.metrics.trade_count,
+                symbols_covered=sorted({signal.symbol for signal in signals}),
+                universe_definition=_strategy_universe_definition(runtime_strategies),
+                promotion_target=promotion_target,
             )
-        )
+            session.add(candidate)
 
-        session.commit()
+            for fold_order, fold in enumerate(walk_results.folds, start=1):
+                fold_metrics = fold.fold_metrics()
+                robustness = robustness_by_fold.get(fold.fold.name)
+                regime_label = robustness.regime.label() if robustness is not None else str(fold_metrics.get('regime_label', 'unknown'))
+
+                session.add(
+                    ResearchFoldMetrics(
+                        candidate_id=candidate_id,
+                        fold_name=fold.fold.name,
+                        fold_order=fold_order,
+                        train_start=fold.fold.train_start,
+                        train_end=fold.fold.train_end,
+                        test_start=fold.fold.test_start,
+                        test_end=fold.fold.test_end,
+                        decision_count=fold_metrics.get('decision_count', 0),
+                        trade_count=fold_metrics.get('buy_count', 0) + fold_metrics.get('sell_count', 0),
+                        gross_pnl=robustness.net_pnl if robustness is not None else None,
+                        net_pnl=robustness.net_pnl if robustness is not None else report.metrics.net_pnl,
+                        max_drawdown=robustness.max_drawdown if robustness is not None else report.metrics.max_drawdown,
+                        turnover_ratio=robustness.turnover_ratio if robustness is not None else report.metrics.turnover_ratio,
+                        cost_bps=robustness.cost_bps if robustness is not None else report.metrics.cost_bps,
+                        cost_assumptions=report.impact_assumptions.assumptions,
+                        regime_label=regime_label,
+                    )
+                )
+
+            for stress_case in ('spread', 'volatility', 'liquidity', 'halt'):
+                session.add(
+                    ResearchStressMetrics(
+                        candidate_id=candidate_id,
+                        stress_case=stress_case,
+                        metric_bundle=_build_stress_bundle(report, stress_case),
+                        pessimistic_pnl_delta=None,
+                    )
+                )
+
+            session.add(
+                ResearchPromotion(
+                    candidate_id=candidate_id,
+                    requested_mode=promotion_target,
+                    approved_mode=gate_report.recommended_mode if gate_report.promotion_allowed else None,
+                    approver='autonomous_scheduler',
+                    approver_role='system',
+                    approve_reason='promotion_allowed' if gate_report.promotion_allowed else None,
+                    deny_reason=None if gate_report.promotion_allowed else ';'.join(gate_report.reasons),
+                    paper_candidate_patch_ref=str(patch_path) if patch_path else None,
+                    effective_time=now if gate_report.promotion_allowed else None,
+                )
+            )
 
 
 def _compute_candidate_hash(
@@ -476,6 +588,36 @@ def _compute_candidate_hash(
     hasher.update(gate_report.recommended_mode.encode('utf-8'))
     hasher.update(str(sorted(gate_report.reasons)).encode('utf-8'))
     return hasher.hexdigest()[:32]
+
+
+def _compute_no_signal_feature_spec_hash(
+    *,
+    strategy_config_path: Path,
+    gate_policy_path: Path,
+    reason: str,
+    query_start: datetime,
+    query_end: datetime,
+) -> str:
+    hasher = hashlib.sha256()
+    hasher.update(reason.encode('utf-8'))
+    hasher.update(strategy_config_path.read_bytes())
+    hasher.update(gate_policy_path.read_bytes())
+    hasher.update(str(query_start).encode('utf-8'))
+    hasher.update(str(query_end).encode('utf-8'))
+    return hasher.hexdigest()[:128]
+
+
+def _compute_no_signal_dataset_version_hash(
+    *,
+    query_start: datetime,
+    query_end: datetime,
+    no_signal_reason: str,
+) -> str:
+    hasher = hashlib.sha256()
+    hasher.update(str(query_start).encode('utf-8'))
+    hasher.update(str(query_end).encode('utf-8'))
+    hasher.update(no_signal_reason.encode('utf-8'))
+    return hasher.hexdigest()[:64]
 
 
 def _compute_feature_spec_hash(
@@ -715,4 +857,9 @@ def _write_paper_candidate_patch(
     return output_path
 
 
-__all__ = ['AutonomousLaneResult', 'load_runtime_strategy_config', 'run_autonomous_lane']
+__all__ = [
+    'AutonomousLaneResult',
+    'load_runtime_strategy_config',
+    'run_autonomous_lane',
+    'upsert_autonomy_no_signal_run',
+]
