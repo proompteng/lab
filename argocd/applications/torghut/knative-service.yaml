@@ -14,18 +14,19 @@ metadata:
 spec:
   template:
     metadata:
-        annotations:
-        autoscaling.knative.dev/minScale: "1"
-        autoscaling.knative.dev/maxScale: "1"
-        autoscaling.knative.dev/target: "80"
-        client.knative.dev/updateTimestamp: 2026-02-13T03:15:00.000Z
+      annotations:
+        client.knative.dev/updateTimestamp: 2026-02-13T04:23:10.458Z
+      autoscaling.knative.dev/minScale: "1"
+      autoscaling.knative.dev/maxScale: "1"
+      autoscaling.knative.dev/target: "80"
+      client.knative.dev/updateTimestamp: 2026-02-13T03:15:00.000Z
     spec:
       containerConcurrency: 0
       timeoutSeconds: 60
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut:latest
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:b0c8f0ca9170248afbf9003f3cd3f7705c667e0dffadf4d6fa9f78845e3bbf08
           ports:
             - name: http1
               containerPort: 8181
@@ -127,7 +128,7 @@ spec:
             - name: LLM_EFFECTIVE_CHALLENGE_ID
               value: torghut-llm-mrm-review-2026-02-12
             - name: LLM_SHADOW_COMPLETED_AT
-              value: "2026-02-12T06:45:00Z"
+              value: 2026-02-12T06:45:00Z
             - name: LLM_FAIL_MODE
               value: pass_through
             - name: LLM_TIMEOUT_SECONDS
@@ -156,9 +157,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.548.0-5-g0b079fc3
+              value: v0.550.0
             - name: TORGHUT_COMMIT
-              value: 0b079fc304df7f7c59d39c87fc91bc43f16bde60
+              value: 9607c73b73f0b22f40e755758bfe80d945ecffc7
           envFrom:
             - configMapRef:
                 name: torghut-autonomy-config

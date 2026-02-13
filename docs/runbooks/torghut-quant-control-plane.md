@@ -12,6 +12,8 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
 `torghut-quant-control-plane.rules`.
 
 - **TorghutQuantDecisionsStalledDuringMarketHours**: No trading decisions for 15 minutes during market hours.
+- **TorghutAutonomyNoSignalStreakDuringMarketHours**: Autonomy has consecutive no-signal windows in market hours.
+- **TorghutAutonomyCursorAheadOfStreamDuringMarketHours**: Autonomy repeatedly reports cursor_ahead_of_stream in market hours.
 - **TorghutQuantOrderRejectionRateHigh**: Rejected orders >20% of submitted orders for 10 minutes.
 - **TorghutQuantLLMErrorRateHigh**: Trading LLM errors >10% of requests for 10 minutes.
 - **JangarQuantControlPlaneStreamErrors**: Control-plane SSE errors >0.05/sec for 10 minutes.
