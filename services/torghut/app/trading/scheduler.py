@@ -97,6 +97,7 @@ class TradingMetrics:
     execution_fallback_reason_total: dict[str, int] = field(default_factory=dict)
     no_signal_windows_total: int = 0
     no_signal_reason_total: dict[str, int] = field(default_factory=dict)
+    no_signal_streak: int = 0
 
     def record_execution_request(self, adapter: str | None) -> None:
         adapter_name = coerce_route_text(adapter)
@@ -1149,6 +1150,7 @@ class TradingScheduler:
         if not signals:
             self.state.metrics.record_no_signal(autonomy_batch.no_signal_reason)
             self.state.autonomy_no_signal_streak += 1
+            self.state.metrics.no_signal_streak = self.state.autonomy_no_signal_streak
             run_output_dir = artifact_root / now.strftime("%Y%m%dT%H%M%S")
             run_output_dir.mkdir(parents=True, exist_ok=True)
             no_signal_path = run_output_dir / "no-signals.json"
@@ -1203,6 +1205,7 @@ class TradingScheduler:
         signals_path.write_text(json.dumps(signal_payloads, indent=2), encoding="utf-8")
 
         self.state.autonomy_no_signal_streak = 0
+        self.state.metrics.no_signal_streak = 0
 
         promotion_target: Literal["paper", "live"]
         approval_token: str | None

@@ -657,6 +657,61 @@ data:
                 No Torghut trading decisions have been recorded for 15 minutes during market hours (UTC schedule).
                 This stalls quant control-plane snapshots and freshness.
               runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutAutonomyNoSignalStreakDuringMarketHours
+            expr: |
+              (
+                increase(
+                  torghut_trading_no_signal_windows_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut"
+                  }[10m]
+                ) >= 2
+              )
+              * on() group_left()
+              (
+                (day_of_week(vector(time())) >= bool 1)
+                * (day_of_week(vector(time())) <= bool 5)
+                * (hour(vector(time())) >= bool 14)
+                * (hour(vector(time())) < bool 21)
+              )
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut autonomy no-signal streak (market hours)
+              description: |
+                Autonomy ingest returned empty windows for consecutive cycles for 10 minutes in market hours.
+                Check TA signal chain health, Jangar symbol feed, and autonomy cursor state.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutAutonomyCursorAheadOfStreamDuringMarketHours
+            expr: |
+              (
+                increase(
+                  torghut_trading_no_signal_reason_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut",
+                    reason="cursor_ahead_of_stream"
+                  }[10m]
+                ) >= 2
+              )
+              * on() group_left()
+              (
+                (day_of_week(vector(time())) >= bool 1)
+                * (day_of_week(vector(time())) <= bool 5)
+                * (hour(vector(time())) >= bool 14)
+                * (hour(vector(time())) < bool 21)
+              )
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut autonomy cursor is ahead of stream (market hours)
+              description: |
+                Autonomy ingest reports repeated cursor_ahead_of_stream for 10 minutes during market hours.
+                This indicates the TA pipeline is not advancing or ingestion is behind.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
           - alert: TorghutQuantOrderRejectionRateHigh
             expr: |
               (
