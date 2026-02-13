@@ -72,6 +72,7 @@ class SignalBatch:
     cursor_symbol: Optional[str]
     query_start: Optional[datetime] = None
     query_end: Optional[datetime] = None
+    signal_lag_seconds: float | None = None
     no_signal_reason: Optional[str] = None
 
 
@@ -171,6 +172,7 @@ class ClickHouseSignalIngestor:
 
         if not rows:
             no_signal_reason = "no_signals_in_window"
+            signal_lag_seconds = None
             if latest_signal_at is not None:
                 lookback_window = max(1, self.initial_lookback_minutes)
                 if cursor_at > latest_signal_at + timedelta(minutes=lookback_window):
@@ -186,8 +188,13 @@ class ClickHouseSignalIngestor:
                     cursor_seq = None
                     cursor_symbol = None
                     no_signal_reason = "cursor_ahead_of_stream"
+                    signal_lag_seconds = max(
+                        0.0,
+                        (query_window_end - latest_signal_at).total_seconds(),
+                    )
                 elif cursor_at >= latest_signal_at:
                     no_signal_reason = "cursor_tail_stable"
+                    signal_lag_seconds = max(0.0, (query_window_end - latest_signal_at).total_seconds())
 
             if (
                 self.empty_batch_advance_seconds > 0
@@ -206,6 +213,11 @@ class ClickHouseSignalIngestor:
                     cursor_seq = None
                     cursor_symbol = None
                     no_signal_reason = "empty_batch_advanced"
+                    signal_lag_seconds = (
+                        max(0.0, (query_window_end - latest_signal_at).total_seconds())
+                        if latest_signal_at is not None
+                        else None
+                    )
             return SignalBatch(
                 signals=[],
                 cursor_at=cursor_at,
@@ -213,6 +225,7 @@ class ClickHouseSignalIngestor:
                 cursor_symbol=cursor_symbol if fast_forwarded else None,
                 query_start=query_window_start,
                 query_end=query_window_end,
+                signal_lag_seconds=signal_lag_seconds,
                 no_signal_reason=no_signal_reason,
             )
 
@@ -288,13 +301,20 @@ class ClickHouseSignalIngestor:
             signals.append(signal)
 
         no_signal_reason: str | None = None
+        signal_lag_seconds: float | None = None
         if not signals:
             no_signal_reason = "no_signals_in_window"
             latest_signal_at = self._latest_signal_timestamp(time_column)
             if latest_signal_at is not None and start > latest_signal_at:
                 no_signal_reason = "cursor_ahead_of_stream"
+                signal_lag_seconds = max(0.0, (end - latest_signal_at).total_seconds())
             elif self.empty_batch_advance_seconds > 0:
                 no_signal_reason = "empty_batch_advanced"
+                signal_lag_seconds = (
+                    max(0.0, (end - latest_signal_at).total_seconds())
+                    if latest_signal_at is not None
+                    else None
+                )
 
         return SignalBatch(
             signals=signals,
@@ -303,6 +323,7 @@ class ClickHouseSignalIngestor:
             cursor_symbol=None,
             query_start=start,
             query_end=end,
+            signal_lag_seconds=signal_lag_seconds,
             no_signal_reason=no_signal_reason,
         )
 

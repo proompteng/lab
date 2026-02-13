@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from unittest import TestCase
 
 import pandas as pd
@@ -63,4 +62,3 @@ class TestAlphaTSMOM(TestCase):
         )
 
         self.assertGreaterEqual(equity_free.iloc[-1], equity_costly.iloc[-1])
-

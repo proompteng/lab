@@ -39,6 +39,16 @@ class Settings(BaseSettings):
         alias="TRADING_SIGNAL_EMPTY_BATCH_ADVANCE_SECONDS",
         description="How far to move the cursor forward when a poll returns no new signals.",
     )
+    trading_signal_no_signal_streak_alert_threshold: int = Field(
+        default=2,
+        alias="TRADING_SIGNAL_NO_SIGNAL_STREAK_ALERT_THRESHOLD",
+        description="Consecutive no-signal batches before emitting a source continuity alert.",
+    )
+    trading_signal_stale_lag_alert_seconds: int = Field(
+        default=300,
+        alias="TRADING_SIGNAL_STALE_LAG_ALERT_SECONDS",
+        description="Signal lag threshold (seconds) that triggers a source continuity alert.",
+    )
     trading_price_table: str = Field(default="torghut.ta_microbars", alias="TRADING_PRICE_TABLE")
     trading_price_lookback_minutes: int = Field(default=5, alias="TRADING_PRICE_LOOKBACK_MINUTES")
     trading_poll_ms: int = Field(default=5000, alias="TRADING_POLL_MS")

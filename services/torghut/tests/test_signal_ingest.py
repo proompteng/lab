@@ -235,6 +235,8 @@ class TestSignalIngest(TestCase):
         )
         self.assertEqual(signals.signals, [])
         self.assertEqual(signals.no_signal_reason, "cursor_ahead_of_stream")
+        self.assertIsNotNone(signals.signal_lag_seconds)
+        self.assertGreater(signals.signal_lag_seconds, 0)
 
     def test_parse_window_size_timeframe(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="envelope", fast_forward_stale_cursor=False)
@@ -385,6 +387,8 @@ class TestSignalIngest(TestCase):
             self.assertEqual(batch.signals, [])
             self.assertEqual(batch.no_signal_reason, "cursor_ahead_of_stream")
             self.assertEqual(batch.cursor_at, latest_signal)
+            self.assertIsNotNone(batch.signal_lag_seconds)
+            self.assertGreater(batch.signal_lag_seconds, 0)
 
     def test_cursor_tail_held_when_no_progress_and_tail_reached(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
@@ -410,6 +414,8 @@ class TestSignalIngest(TestCase):
             self.assertEqual(batch.signals, [])
             self.assertEqual(batch.no_signal_reason, "cursor_tail_stable")
             self.assertEqual(batch.cursor_at, latest_signal)
+            self.assertIsNotNone(batch.signal_lag_seconds)
+            self.assertGreater(batch.signal_lag_seconds, 0)
 
     def test_flat_cursor_overlap_dedupes_older_rows(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
