@@ -197,6 +197,7 @@ spec:
                       - /metadata/labels
                       - /spec/traffic
                       - /spec/template/metadata/annotations
+                      - /spec/template/metadata
                       - /spec/template/metadata/creationTimestamp
                       - /spec/template/metadata/labels
                       - /spec/template/spec/containers/0/ports/0/protocol

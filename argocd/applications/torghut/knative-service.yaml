@@ -15,11 +15,10 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: 2026-02-13T04:23:10.458Z
-      autoscaling.knative.dev/minScale: "1"
-      autoscaling.knative.dev/maxScale: "1"
-      autoscaling.knative.dev/target: "80"
-      client.knative.dev/updateTimestamp: 2026-02-13T03:15:00.000Z
+        client.knative.dev/updateTimestamp: "2026-02-13T04:23:10.458Z"
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "1"
+        autoscaling.knative.dev/target: "80"
     spec:
       containerConcurrency: 0
       timeoutSeconds: 60
