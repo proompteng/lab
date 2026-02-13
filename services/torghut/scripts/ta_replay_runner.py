@@ -16,6 +16,11 @@ import yaml
 TA_CONFIGMAP = "torghut-ta-config"
 TA_DEPLOYMENT = "torghut-ta"
 CONFIRMATION_TOKEN = "REPLAY_TA_CANARY"
+FAILED_RUN_STATES = {
+    "FAILED",
+    "FAILED_FINISHED",
+    "FAILED_RESTARTING",
+}
 
 
 @dataclass(frozen=True)
@@ -61,7 +66,7 @@ def _parse_int(value: object, fallback: int = 0) -> int:
 
 def _load_state(namespace: str) -> ReplayState:
     cm = _run_kubectl_json(namespace, "get", "configmap", TA_CONFIGMAP)
-    cm_data = cm.get("data", {})
+    cm_data = cm.get("data")
     if not isinstance(cm_data, dict):
         raise SystemExit("configmap data is not parseable")
 
@@ -74,13 +79,13 @@ def _load_state(namespace: str) -> ReplayState:
     spec = flink.get("spec")
     if not isinstance(spec, dict):
         raise SystemExit("flinkdeployment spec is missing")
+
     job_spec = spec.get("job")
     job_state = None
-    restart_nonce = 0
     if isinstance(job_spec, dict):
-        job_state = job_spec.get("state")
-        if isinstance(job_state, str):
-            job_state = job_state.strip() or None
+        raw_job_state = job_spec.get("state")
+        if isinstance(raw_job_state, str):
+            job_state = raw_job_state.strip() or None
 
     restart_nonce = _parse_int(spec.get("restartNonce"), 0)
 
@@ -89,9 +94,9 @@ def _load_state(namespace: str) -> ReplayState:
     if isinstance(status, dict):
         job_status = status.get("jobStatus")
         if isinstance(job_status, dict):
-            flink_status_state = job_status.get("state")
-            if isinstance(flink_status_state, str):
-                flink_status_state = flink_status_state.strip() or None
+            raw_status = job_status.get("state")
+            if isinstance(raw_status, str):
+                flink_status_state = raw_status.strip() or None
 
     return ReplayState(
         namespace=namespace,
@@ -106,8 +111,8 @@ def _load_state(namespace: str) -> ReplayState:
 def _plan_command(replay_id: str, group_prefix: str, auto_offset_reset: str) -> dict[str, str]:
     if not replay_id:
         raise SystemExit("replay-id must be provided")
-    normalized_prefix = group_prefix.strip().replace("__", "-")
-    normalized_id = replay_id.strip().replace("__", "-")
+    normalized_prefix = group_prefix.strip().replace("__", "-").strip("-")
+    normalized_id = replay_id.strip().replace("__", "-").strip("-")
     replay_group_id = f"{normalized_prefix}-{normalized_id}"
     auto_offset_reset = auto_offset_reset.strip() or "earliest"
     return {
@@ -116,7 +121,68 @@ def _plan_command(replay_id: str, group_prefix: str, auto_offset_reset: str) -> 
     }
 
 
-def _emit_plan(state: ReplayState, plan: dict[str, str], namespace: str, dry_run: bool = True) -> None:
+def _validate_plan_args(replay_id: str, group_prefix: str) -> None:
+    if not replay_id.strip():
+        raise SystemExit("replay-id cannot be empty")
+    if not group_prefix.strip():
+        raise SystemExit("group-prefix cannot be empty")
+
+
+def _validate_apply_preconditions(
+    *,
+    state: ReplayState,
+    plan: dict[str, str],
+    allow_existing_group: bool,
+) -> list[str]:
+    warnings: list[str] = []
+    if state.ta_group_id == plan["replay_group_id"] and not allow_existing_group:
+        warnings.append(
+            "planned TA_GROUP_ID already equals current value; pass --allow-existing-group-id to continue"
+        )
+    if state.ta_auto_offset_reset == plan["ta_auto_offset_reset"]:
+        warnings.append("TA_AUTO_OFFSET_RESET already matches the replay target")
+    if state.namespace != "torghut":
+        warnings.append(
+            "namespace is not torghut; ensure this is an intended target environment"
+        )
+    return warnings
+
+
+def _build_plan_report(
+    *,
+    namespace: str,
+    mode: str,
+    state: ReplayState,
+    plan: dict[str, str],
+    warnings: list[str],
+    verify: bool,
+    verification: dict[str, bool] | None = None,
+) -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "mode": mode,
+        "namespace": namespace,
+        "current": {
+            "ta_group_id": state.ta_group_id,
+            "ta_auto_offset_reset": state.ta_auto_offset_reset,
+            "flink_job_state": state.flink_job_state,
+            "flink_restart_nonce": state.flink_restart_nonce,
+            "flink_status_state": state.flink_status_state,
+        },
+        "plan": plan,
+        "warnings": warnings,
+        "verify": verification,
+        "verify_requested": verify,
+    }
+
+
+def _print_plan_text(
+    state: ReplayState,
+    plan: dict[str, str],
+    namespace: str,
+    dry_run: bool,
+    warnings: list[str],
+) -> None:
     print("Current replay state:")
     print(f"  namespace: {namespace}")
     print(f"  TA_GROUP_ID: {state.ta_group_id}")
@@ -128,15 +194,18 @@ def _emit_plan(state: ReplayState, plan: dict[str, str], namespace: str, dry_run
     print("Planned action:")
     print(f"  replay-group: {plan['replay_group_id']}")
     print(f"  ta-auto-offset-reset: {plan['ta_auto_offset_reset']}")
-    if state.ta_group_id == plan["replay_group_id"]:
-        print("  note: replay-group is already set; this run is effectively idempotent.")
-    if state.ta_auto_offset_reset == plan["ta_auto_offset_reset"] and dry_run:
-        print("  note: TA_AUTO_OFFSET_RESET already matches requested target.")
-    print("")
     print("Execution sequence (non-destructive replay mode):")
     print("  1) Set TA_GROUP_ID and TA_AUTO_OFFSET_RESET in torghut-ta-config")
     print("  2) Suspend torghut-ta if currently running")
     print("  3) Resume torghut-ta with an incremented restartNonce")
+    if dry_run:
+        print("  4) Optional post-change verify")
+    if warnings:
+        print("Warnings:")
+        for warning in warnings:
+            print(f"  - {warning}")
+    if dry_run:
+        print("Use --mode=apply --confirm REPLAY_TA_CANARY to execute the plan.")
 
 
 def _apply_plan(state: ReplayState, plan: dict[str, str], namespace: str) -> ReplayState:
@@ -190,6 +259,26 @@ def _apply_plan(state: ReplayState, plan: dict[str, str], namespace: str) -> Rep
     return _load_state(namespace)
 
 
+def _verify_state(state: ReplayState, plan: dict[str, str], previous_nonce: int) -> dict[str, bool]:
+    checks: dict[str, bool] = {}
+    checks["ta_group_id_applied"] = state.ta_group_id == plan["replay_group_id"]
+    checks["ta_auto_offset_reset_applied"] = (
+        state.ta_auto_offset_reset == plan["ta_auto_offset_reset"]
+    )
+    checks["restart_nonce_advanced"] = state.flink_restart_nonce >= previous_nonce + 1
+    checks["job_state_not_failed"] = True
+    if state.flink_status_state:
+        checks["job_state_not_failed"] = state.flink_status_state not in FAILED_RUN_STATES
+    checks["spec_job_state_running_or_unknown"] = state.flink_job_state in {"running", None}
+    return checks
+
+
+def _final_status(checks: dict[str, bool]) -> int:
+    if all(checks.values()):
+        return 0
+    return 1
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Standardize TA replay rollout actions for torghut.")
     parser.add_argument("--namespace", default="torghut", help="Kubernetes namespace for torghut resources.")
@@ -207,14 +296,29 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=("plan", "apply"),
+        choices=("plan", "apply", "verify"),
         default="plan",
-        help="Plan only (default) or apply via kubectl patches.",
+        help="Plan only, apply via kubectl patches, or verify current state.",
     )
     parser.add_argument(
         "--confirm",
         default="",
         help="Required when --mode=apply. Must be REPLAY_TA_CANARY.",
+    )
+    parser.add_argument(
+        "--allow-existing-group-id",
+        action="store_true",
+        help="Allow apply when TA_GROUP_ID already equals planned replay group.",
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="After plan/apply, validate current state against plan assertions and exit non-zero on failure.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable output for automation.",
     )
     return parser.parse_args()
 
@@ -222,27 +326,91 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     _require_kubectl()
+    _validate_plan_args(args.replay_id, args.group_prefix)
 
     if args.mode == "apply" and args.confirm != CONFIRMATION_TOKEN:
-        raise SystemExit(
-            f"--mode=apply requires --confirm {CONFIRMATION_TOKEN}"
-        )
+        raise SystemExit(f"--mode=apply requires --confirm {CONFIRMATION_TOKEN}")
 
     state = _load_state(args.namespace)
     plan = _plan_command(args.replay_id, args.group_prefix, args.auto_offset_reset)
-    _emit_plan(state, plan, args.namespace, dry_run=args.mode == "plan")
 
+    warnings = _validate_apply_preconditions(
+        state=state,
+        plan=plan,
+        allow_existing_group=args.allow_existing_group_id,
+    )
+
+    verification: dict[str, bool] | None = None
     if args.mode == "plan":
-        print(
-            "Use --mode=apply --confirm REPLAY_TA_CANARY to execute the plan."
+        if args.verify:
+            verification = _verify_state(state, plan, state.flink_restart_nonce)
+        report = _build_plan_report(
+            namespace=args.namespace,
+            mode="plan",
+            state=state,
+            plan=plan,
+            warnings=warnings,
+            verify=args.verify,
+            verification=verification,
         )
+        if args.json:
+            print(json.dumps(report, sort_keys=True, indent=2))
+            return _final_status(verification) if verification else 0
+
+        _print_plan_text(state, plan, args.namespace, dry_run=True, warnings=warnings)
         return 0
 
+    if args.mode == "verify":
+        verification = _verify_state(state, plan, state.flink_restart_nonce)
+        report = _build_plan_report(
+            namespace=args.namespace,
+            mode="verify",
+            state=state,
+            plan=plan,
+            warnings=warnings,
+            verify=True,
+            verification=verification,
+        )
+        if args.json:
+            print(json.dumps(report, sort_keys=True, indent=2))
+            return _final_status(verification)
+
+        _print_plan_text(state, plan, args.namespace, dry_run=False, warnings=warnings)
+        print("")
+        print("Verify results:")
+        for check_name, ok in verification.items():
+            print(f"  {check_name}: {'ok' if ok else 'fail'}")
+        return _final_status(verification)
+
     print("Applying plan now...")
+    if warnings:
+        for warning in warnings:
+            print(f"  warning: {warning}")
+    previous_nonce = state.flink_restart_nonce
     state = _apply_plan(state, plan, args.namespace)
+    if args.verify:
+        verification = _verify_state(state, plan, previous_nonce)
+
+    report = _build_plan_report(
+        namespace=args.namespace,
+        mode="apply",
+        state=state,
+        plan=plan,
+        warnings=warnings,
+        verify=args.verify,
+        verification=verification,
+    )
+    if args.json:
+        print(json.dumps(report, sort_keys=True, indent=2))
+        return _final_status(verification) if verification else 0
+
     print("Patch complete.")
-    print("Updated state:")
-    _emit_plan(state, plan, args.namespace, dry_run=False)
+    _print_plan_text(state, plan, args.namespace, dry_run=False, warnings=warnings)
+    if args.verify and verification is not None:
+        print("Verify results:")
+        for check_name, ok in verification.items():
+            print(f"  {check_name}: {'ok' if ok else 'fail'}")
+        return _final_status(verification)
     return 0
 
 
