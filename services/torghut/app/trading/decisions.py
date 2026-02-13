@@ -1,11 +1,10 @@
 """Trading decision engine based on TA signals."""
 
 from __future__ import annotations
-
 import logging
 import re
 from decimal import ROUND_DOWN, Decimal
-from typing import Any, Iterable, Literal, Optional
+from typing import Any, Iterable, Literal, Optional, cast
 
 from ..config import settings
 from ..models import Strategy
@@ -57,7 +56,7 @@ class DecisionEngine:
                     strategy.base_timeframe,
                 )
                 continue
-            if signal_timeframe is not None and signal.timeframe != signal_timeframe:
+            if signal.timeframe != signal_timeframe:
                 signal = signal.model_copy(update={"timeframe": signal_timeframe})
             decision = self._evaluate_strategy(signal, strategy, equity=equity)
             if decision:
@@ -243,21 +242,28 @@ def _resolve_qty(
 def _resolve_signal_timeframe(signal: SignalEnvelope) -> Optional[str]:
     if signal.timeframe is not None:
         return signal.timeframe
-    payload = signal.payload
-    candidate: object
-    if isinstance(payload.get("timeframe"), str):
-        candidate = payload["timeframe"]
-    elif isinstance(payload.get("window"), dict):
-        candidate = payload["window"].get("size") if isinstance(payload["window"], dict) else None
-    elif isinstance(payload.get("window_size"), str):
-        candidate = payload["window_size"]
-    elif isinstance(payload.get("window_step"), str):
-        candidate = payload["window_step"]
-    else:
-        candidate = None
-    if not isinstance(candidate, str):
-        return None
-    return _coerce_timeframe(candidate)
+    payload_map: dict[str, Any] = signal.payload
+
+    timeframe = payload_map.get("timeframe")
+    if isinstance(timeframe, str):
+        return _coerce_timeframe(timeframe)
+
+    window = payload_map.get("window")
+    if isinstance(window, dict):
+        window_payload = cast(dict[str, Any], window)
+        window_size = window_payload.get("size")
+        if isinstance(window_size, str):
+            return _coerce_timeframe(window_size)
+
+    window_size_payload = payload_map.get("window_size")
+    if isinstance(window_size_payload, str):
+        return _coerce_timeframe(window_size_payload)
+
+    window_step = payload_map.get("window_step")
+    if isinstance(window_step, str):
+        return _coerce_timeframe(window_step)
+
+    return None
 
 
 def _coerce_timeframe(value: str) -> Optional[str]:

@@ -65,13 +65,15 @@ def extract_rsi(payload: dict[str, Any]) -> Optional[Decimal]:
 
 
 def extract_price(payload: dict[str, Any]) -> Optional[Decimal]:
+    payload_map = payload
     for key in ('price', 'close', 'c', 'last', 'vwap', 'vwap_session', 'vwap_w5m'):
-        if key in payload:
-            return optional_decimal(payload.get(key))
-    imbalance = payload.get('imbalance')
+        if key in payload_map:
+            return optional_decimal(payload_map.get(key))
+    imbalance = payload_map.get('imbalance')
     if isinstance(imbalance, dict):
-        bid_px = imbalance.get('bid_px')
-        ask_px = imbalance.get('ask_px')
+        imbalance_payload = cast(dict[str, Any], imbalance)
+        bid_px = imbalance_payload.get('bid_px')
+        ask_px = imbalance_payload.get('ask_px')
         if bid_px is not None and ask_px is not None:
             try:
                 bid = optional_decimal(bid_px)

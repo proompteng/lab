@@ -169,7 +169,12 @@ def _parse_catalog_payload(payload: Any) -> StrategyCatalogConfig:
         return StrategyCatalogConfig(strategies=[])
     if isinstance(payload, dict):
         payload_map = cast(dict[str, Any], payload)
-        payload = payload_map.get("strategies", payload_map)
+        strategies_payload = payload_map.get("strategies")
+        if strategies_payload is None:
+            raise ValueError("strategy catalog must define a 'strategies' list")
+        if not isinstance(strategies_payload, list):
+            raise ValueError("strategy catalog 'strategies' value must be a list")
+        return StrategyCatalogConfig.model_validate({"strategies": strategies_payload})
     if isinstance(payload, list):
         return StrategyCatalogConfig.model_validate({"strategies": payload})
     raise ValueError("strategy catalog must be a list or contain a 'strategies' key")
@@ -190,12 +195,16 @@ def _apply_catalog(session: Session, catalog: StrategyCatalogConfig, mode: Liter
     updated = 0
 
     for config in catalog.strategies:
-        if config.name in seen:
+        if config.name is None:
+            raise ValueError("strategy name is required")
+        strategy_name = config.name
+
+        if strategy_name in seen:
             raise ValueError(f"duplicate strategy name in catalog: {config.name}")
-        seen.add(config.name)
-        strategy = existing.get(config.name)
+        seen.add(strategy_name)
+        strategy = existing.get(strategy_name)
         if strategy is None:
-            strategy = Strategy(name=config.name)
+            strategy = Strategy(name=strategy_name)
             session.add(strategy)
         strategy.description = config.description
         strategy.enabled = config.enabled
