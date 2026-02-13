@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from .alpaca_client import TorghutAlpacaClient
 from .models import Execution, PositionSnapshot, coerce_json_payload
+from .trading.route_metadata import coerce_route_text, coerce_route_int
 
 logger = logging.getLogger(__name__)
 
@@ -57,26 +58,30 @@ def sync_order_to_db(
 
     resolved_expected_adapter = (
         execution_expected_adapter
-        or _coerce_route_text(order_response.get("_execution_route_expected"))
-        or _coerce_route_text(order_response.get("_execution_route_actual"))
-        or _coerce_route_text(order_response.get("_execution_adapter"))
-        or _coerce_route_text(order_response.get("execution_expected_adapter"))
-        or _coerce_route_text(order_response.get("execution_actual_adapter"))
+        or coerce_route_text(order_response.get("execution_expected_adapter"))
+        or coerce_route_text(order_response.get("execution_actual_adapter"))
+        or coerce_route_text(order_response.get("_execution_route_expected"))
+        or coerce_route_text(order_response.get("_execution_route_actual"))
+        or coerce_route_text(order_response.get("_execution_adapter"))
     )
     resolved_actual_adapter = (
         execution_actual_adapter
-        or _coerce_route_text(order_response.get("_execution_route_actual"))
-        or _coerce_route_text(order_response.get("_execution_adapter"))
-        or _coerce_route_text(order_response.get("execution_actual_adapter"))
+        or coerce_route_text(order_response.get("execution_actual_adapter"))
+        or coerce_route_text(order_response.get("_execution_route_actual"))
+        or coerce_route_text(order_response.get("execution_expected_adapter"))
+        or coerce_route_text(order_response.get("_execution_adapter"))
     )
     resolved_fallback_reason = (
         execution_fallback_reason
         or _coerce_text(order_response.get("_execution_fallback_reason"))
         or _coerce_text(order_response.get("_fallback_reason"))
     )
-    resolved_fallback_count = execution_fallback_count
-    if resolved_fallback_count is None:
-        resolved_fallback_count = _coerce_int(order_response.get("_execution_fallback_count"))
+    resolved_fallback_count = (
+        execution_fallback_count
+        if execution_fallback_count is not None
+        else coerce_route_int(order_response.get("_execution_fallback_count"))
+        or 0
+    )
 
     stmt = select(Execution).where(Execution.alpaca_order_id == alpaca_order_id)
     existing = session.execute(stmt).scalar_one_or_none()
@@ -141,39 +146,11 @@ def sync_order_to_db(
         return existing
 
 
-def _coerce_int(value: Any) -> int:
-    if value is None:
-        return 0
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return 0
-    return 0
-
-
 def _coerce_text(value: Any) -> Optional[str]:
     if value is None:
         return None
     if isinstance(value, str):
         return value.strip() or None
-    return None
-
-
-def _coerce_route_text(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        normalized = value.strip()
-        if not normalized:
-            return None
-        if normalized == 'alpaca_fallback':
-            return 'alpaca'
-        return normalized
     return None
 
 

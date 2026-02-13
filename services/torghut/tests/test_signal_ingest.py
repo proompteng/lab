@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 from unittest import TestCase
 
 from sqlalchemy import create_engine, select
@@ -29,6 +30,17 @@ class SchemaDiscoveringIngestor(CapturingIngestor):
         if query.strip().startswith("SELECT name FROM system.columns"):
             return [{"name": column} for column in self._columns]
         return super()._query_clickhouse(query)
+
+
+class StaticLatestIngestor(ClickHouseSignalIngestor):
+    def __init__(self, *args, latest_signal_ts: Optional[datetime] = None, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._latest_signal_ts = latest_signal_ts
+
+    def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+        if "SELECT max(" in query:
+            return [{"latest_signal_ts": self._latest_signal_ts.isoformat()}] if self._latest_signal_ts is not None else []
+        return []
 
 
 class TestSignalIngest(TestCase):
@@ -200,6 +212,30 @@ class TestSignalIngest(TestCase):
         self.assertIn("AND event_ts <= toDateTime64", envelope_ingestor.last_query)
         self.assertIn("ORDER BY event_ts ASC, seq ASC", envelope_ingestor.last_query)
 
+    def test_fetch_signals_with_reason_reports_missing_cursor_reason(self) -> None:
+        ingestor = CapturingIngestor(schema="envelope", table="torghut.ta_signals", url="http://example", batch_size=2)
+        signals = ingestor.fetch_signals_with_reason(
+            start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            end=datetime(2026, 1, 1, 1, tzinfo=timezone.utc),
+        )
+        self.assertEqual(signals.signals, [])
+        self.assertIsNotNone(signals.no_signal_reason)
+
+    def test_fetch_signals_with_reason_reports_cursor_ahead(self) -> None:
+        ingestor = StaticLatestIngestor(
+            schema="envelope",
+            table="torghut.ta_signals",
+            url="http://example",
+            batch_size=2,
+            latest_signal_ts=datetime(2025, 12, 31, tzinfo=timezone.utc),
+        )
+        signals = ingestor.fetch_signals_with_reason(
+            start=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            end=datetime(2026, 1, 2, 0, 5, tzinfo=timezone.utc),
+        )
+        self.assertEqual(signals.signals, [])
+        self.assertEqual(signals.no_signal_reason, "cursor_ahead_of_stream")
+
     def test_parse_window_size_timeframe(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="envelope", fast_forward_stale_cursor=False)
         row = {
@@ -348,6 +384,31 @@ class TestSignalIngest(TestCase):
 
             self.assertEqual(batch.signals, [])
             self.assertEqual(batch.no_signal_reason, "cursor_ahead_of_stream")
+            self.assertEqual(batch.cursor_at, latest_signal)
+
+    def test_cursor_tail_held_when_no_progress_and_tail_reached(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        latest_signal = datetime(2026, 1, 1, 0, 10, 0, tzinfo=timezone.utc)
+        cursor_time = latest_signal
+
+        class CursorIngestor(ClickHouseSignalIngestor):
+            def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+                if query.strip().startswith("SELECT max("):
+                    return [{"latest_signal_ts": latest_signal.isoformat()}]
+                return []
+
+        ingestor = CursorIngestor(schema="envelope", url="http://example", fast_forward_stale_cursor=False)
+        with session_local() as session:
+            session.add(TradeCursor(source="clickhouse", cursor_at=cursor_time, cursor_seq=None))
+            session.commit()
+
+            batch = ingestor.fetch_signals(session)
+
+            self.assertEqual(batch.signals, [])
+            self.assertEqual(batch.no_signal_reason, "cursor_tail_stable")
             self.assertEqual(batch.cursor_at, latest_signal)
 
     def test_flat_cursor_overlap_dedupes_older_rows(self) -> None:

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Execution, Strategy, TradeDecision, coerce_json_payload
 from ..snapshots import sync_order_to_db
+from .route_metadata import resolve_order_route_metadata
 from .execution_policy import should_retry_order_error
 from .models import ExecutionRequest, StrategyDecision, decision_hash
 
@@ -83,7 +84,7 @@ class OrderExecutor:
 
         existing_order = self._fetch_existing_order(execution_client, decision_row.decision_hash)
         if existing_order is not None:
-            route_expected, route_actual, fallback_reason, fallback_count = _route_metadata(
+            route_expected, route_actual, fallback_reason, fallback_count = resolve_order_route_metadata(
                 expected_adapter=execution_expected_adapter,
                 execution_client=execution_client,
                 order_response=existing_order,
@@ -145,7 +146,7 @@ class OrderExecutor:
                 )
                 time.sleep(delay)
 
-        route_expected, route_actual, fallback_reason, fallback_count = _route_metadata(
+        route_expected, route_actual, fallback_reason, fallback_count = resolve_order_route_metadata(
             expected_adapter=execution_expected_adapter,
             execution_client=execution_client,
             order_response=order_response,
@@ -227,76 +228,6 @@ def _coerce_json(value: Any) -> dict[str, Any]:
         raw = cast(Mapping[str, Any], value)
         return {str(key): val for key, val in raw.items()}
     return {}
-
-
-def _route_metadata(
-    *,
-    expected_adapter: Optional[str],
-    execution_client: Any,
-    order_response: Mapping[str, Any],
-) -> tuple[Optional[str], Optional[str], Optional[str], Optional[int]]:
-    expected = _coerce_route_text(expected_adapter)
-    if not expected:
-        expected = _coerce_route_text(getattr(execution_client, 'name', None))
-    if not expected and execution_client.__class__.__name__ == 'OrderFirewall':
-        expected = 'alpaca'
-
-    actual = _coerce_route_text(order_response.get('_execution_route_actual'))
-    if not actual:
-        actual = _coerce_route_text(order_response.get('_execution_adapter'))
-    if not actual:
-        actual = _coerce_route_text(order_response.get('execution_actual_adapter'))
-    if not actual:
-        raw_actual = _coerce_route_text(getattr(execution_client, 'last_route', None))
-        if raw_actual == 'alpaca_fallback':
-            actual = 'alpaca'
-        elif raw_actual:
-            actual = raw_actual
-    if not actual:
-        actual = expected
-
-    fallback_count = _coerce_route_int(order_response.get('_execution_fallback_count'))
-    fallback_reason = _coerce_route_text(order_response.get('_execution_fallback_reason')) or _coerce_route_text(
-        order_response.get('_fallback_reason')
-    )
-
-    if fallback_count is None and expected and actual and actual != expected:
-        fallback_count = 1
-        if fallback_reason is None:
-            fallback_reason = f'fallback_from_{expected}_to_{actual}'
-
-    if fallback_count is not None and fallback_count <= 0 and fallback_reason is not None:
-        fallback_count = 1
-
-    return expected, actual, fallback_reason, fallback_count
-
-
-def _coerce_route_text(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return None
-        if text == 'alpaca_fallback':
-            return 'alpaca'
-        return text
-    return None
-
-
-def _coerce_route_int(value: Any) -> Optional[int]:
-    if value is None:
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return None
-    return None
 
 
 def _apply_execution_status(

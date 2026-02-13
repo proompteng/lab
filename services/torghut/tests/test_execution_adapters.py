@@ -94,6 +94,10 @@ class TestExecutionAdapters(TestCase):
 
             config.settings.trading_execution_adapter_policy = 'all'
             self.assertTrue(adapter_enabled_for_symbol('AAPL'))
+
+            config.settings.trading_execution_adapter_policy = 'allowlist'
+            config.settings.trading_execution_adapter_symbols_raw = ''
+            self.assertTrue(adapter_enabled_for_symbol('AAPL'))
         finally:
             config.settings.trading_execution_adapter = original_adapter
             config.settings.trading_execution_adapter_policy = original_policy
