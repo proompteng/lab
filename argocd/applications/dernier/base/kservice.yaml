@@ -2,6 +2,8 @@ apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
   name: dernier
+  annotations:
+    networking.knative.dev/disable-external-domain-tls: "true"
 spec:
   template:
     metadata:
