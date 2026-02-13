@@ -290,6 +290,19 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
                   argocd.argoproj.io/compare-options: IgnoreExtraneous
+                ignoreDifferences:
+                  - group: serving.knative.dev
+                    kind: Service
+                    jsonPointers:
+                      - /metadata/annotations
+                      - /metadata/labels
+                      - /spec/traffic
+                      - /spec/template/metadata/annotations
+                      - /spec/template/metadata/creationTimestamp
+                      - /spec/template/metadata/labels
+                      - /spec/template/spec/containers/0/ports/0/protocol
+                      - /spec/template/spec/containers/0/readinessProbe
+                      - /spec/template/spec/enableServiceLinks
                 automation: manual
                 enabled: "true"
               - name: convex
