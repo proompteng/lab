@@ -11,7 +11,7 @@ spec:
       annotations:
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/target: "100"
-        deploy.knative.dev/rollout: "2026-01-09T03:16:14.363Z"
+        deploy.knative.dev/rollout: "2026-02-13T06:00:00.000Z"
     spec:
       serviceAccountName: facteur
       containers:
