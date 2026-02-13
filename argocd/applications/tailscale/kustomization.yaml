@@ -1,9 +1,15 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - https://raw.githubusercontent.com/tailscale/tailscale/refs/tags/v1.88.1/cmd/k8s-operator/deploy/manifests/operator.yaml
+  - https://raw.githubusercontent.com/tailscale/tailscale/refs/tags/v1.94.1/cmd/k8s-operator/deploy/manifests/operator.yaml
   - base/secrets.yaml
   - base/coredns-custom.yaml
+
+images:
+  - name: tailscale/k8s-operator
+    newTag: stable
+  - name: tailscale/tailscale
+    newTag: stable
 
 patches:
   - target:
@@ -47,3 +53,9 @@ patches:
       - op: replace
         path: /spec/template/spec/volumes/0/secret/secretName
         value: operator-oauth-token
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: tailscale/k8s-operator:stable
+      - op: replace
+        path: /spec/template/spec/containers/0/env/9/value
+        value: tailscale/tailscale:stable
