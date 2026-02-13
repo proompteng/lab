@@ -163,6 +163,47 @@ class TestTradingApi(TestCase):
         self.assertTrue(evaluation["ok"])
         self.assertGreaterEqual(evaluation["metrics"]["total_reviews"], 1)
 
+    def test_trading_status_includes_signal_ingest_metadata(self) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.last_ingest_reason = "cursor_ahead_of_stream"
+            scheduler.state.last_ingest_signals_total = 0
+            scheduler.state.autonomy_no_signal_streak = 4
+            app.state.trading_scheduler = scheduler
+
+            response = self.client.get("/trading/status")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            autonomy = payload["autonomy"]
+            self.assertEqual(autonomy["last_ingest_signal_count"], 0)
+            self.assertEqual(autonomy["last_ingest_reason"], "cursor_ahead_of_stream")
+            self.assertEqual(autonomy["no_signal_streak"], 4)
+        finally:
+            if original_scheduler is None:
+                del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
+    def test_trading_autonomy_includes_no_signal_streak(self) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.autonomy_no_signal_streak = 7
+            scheduler.state.last_autonomy_reason = "cursor_ahead_of_stream"
+            app.state.trading_scheduler = scheduler
+
+            response = self.client.get("/trading/autonomy")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["no_signal_streak"], 7)
+            self.assertEqual(payload["last_reason"], "cursor_ahead_of_stream")
+        finally:
+            if original_scheduler is None:
+                del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
     def test_trading_status_reports_effective_llm_guardrails(self) -> None:
         original = {
             "llm_shadow_mode": settings.llm_shadow_mode,

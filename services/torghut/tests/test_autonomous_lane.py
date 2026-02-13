@@ -5,12 +5,13 @@ import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 from unittest import TestCase
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from yaml import safe_load
 
-from app.trading.autonomy.lane import run_autonomous_lane
+from app.trading.autonomy.lane import run_autonomous_lane, upsert_autonomy_no_signal_run
 from app.models import Base, ResearchCandidate, ResearchFoldMetrics, ResearchPromotion, ResearchRun, ResearchStressMetrics
 
 
@@ -138,12 +139,90 @@ class TestAutonomousLane(TestCase):
                 ).scalar_one()
 
             self.assertEqual(run_row.status, 'passed')
+            self.assertIsNotNone(run_row.dataset_from)
+            self.assertIsNotNone(run_row.dataset_to)
             self.assertIsInstance(candidate.decision_count, int)
             self.assertGreaterEqual(candidate.decision_count, 0)
             self.assertTrue(fold_rows)
             self.assertEqual(len(stress_rows), 4)
             self.assertEqual(promotion_row.requested_mode, 'paper')
             self.assertIn(promotion_row.approved_mode, {'paper', None})
+
+    def test_upsert_no_signal_run_records_skipped_research_run(self) -> None:
+        strategy_config_path = Path(__file__).parent.parent / 'config' / 'autonomous-strategy-sample.yaml'
+        gate_policy_path = Path(__file__).parent.parent / 'config' / 'autonomous-gate-policy.json'
+
+        engine = create_engine(
+            'sqlite+pysqlite:///:memory:',
+            future=True,
+            connect_args={"check_same_thread": False},
+        )
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        query_start = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        query_end = datetime(2026, 1, 1, 0, 15, tzinfo=timezone.utc)
+
+        run_id = upsert_autonomy_no_signal_run(
+            session_factory=session_factory,
+            query_start=query_start,
+            query_end=query_end,
+            strategy_config_path=strategy_config_path,
+            gate_policy_path=gate_policy_path,
+            no_signal_reason='cursor_ahead_of_stream',
+            now=query_start,
+            code_version='test-sha',
+        )
+
+        with session_factory() as session:
+            run_row = session.execute(select(ResearchRun).where(ResearchRun.run_id == run_id)).scalar_one()
+
+        def _as_utc(value: datetime) -> datetime:
+            return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+        self.assertEqual(run_row.status, 'skipped')
+        self.assertEqual(_as_utc(run_row.dataset_from), query_start)
+        self.assertEqual(_as_utc(run_row.dataset_to), query_end)
+        self.assertEqual(run_row.runner_version, 'run_autonomous_lane_no_signals')
+        self.assertEqual(run_row.dataset_snapshot_ref, 'no_signal_window')
+
+    @patch("app.trading.autonomy.lane._persist_run_outputs")
+    def test_lane_persistence_failure_marks_run_failed(self, mock_persist: object) -> None:
+        fixture_path = Path(__file__).parent / 'fixtures' / 'walkforward_signals.json'
+        strategy_config_path = Path(__file__).parent.parent / 'config' / 'autonomous-strategy-sample.yaml'
+        gate_policy_path = Path(__file__).parent.parent / 'config' / 'autonomous-gate-policy.json'
+
+        engine = create_engine(
+            'sqlite+pysqlite:///:memory:',
+            future=True,
+            connect_args={"check_same_thread": False},
+        )
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        mock_persist.side_effect = RuntimeError("ledger_write_failed")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / 'lane-ledger-fail'
+            with self.assertRaises(RuntimeError) as ctx:
+                run_autonomous_lane(
+                    signals_path=fixture_path,
+                    strategy_config_path=strategy_config_path,
+                    gate_policy_path=gate_policy_path,
+                    output_dir=output_dir,
+                    promotion_target='paper',
+                    code_version='test-sha',
+                    persist_results=True,
+                    session_factory=session_factory,
+                )
+            self.assertIn("autonomous_lane_persistence_failed", str(ctx.exception))
+
+            with session_factory() as session:
+                run_rows = session.execute(select(ResearchRun)).scalars().all()
+                candidate_rows = session.execute(select(ResearchCandidate)).scalars().all()
+
+            self.assertEqual(len(run_rows), 1)
+            self.assertEqual(run_rows[0].status, "failed")
+            self.assertEqual(len(candidate_rows), 0)
 
     def test_lane_counts_rsi_alias_for_gate_null_rate(self) -> None:
         strategy_config_path = Path(__file__).parent.parent / 'config' / 'autonomous-strategy-sample.yaml'

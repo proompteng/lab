@@ -12,7 +12,15 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import yaml
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -27,9 +35,14 @@ class StrategyConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str
+    name: str | None = None
     description: str | None = None
     enabled: bool = True
+    strategy_id: str | None = None
+    strategy_type: str | None = None
+    version: str | None = None
+    params: dict[str, Any] | None = None
+    priority: int = 100
     base_timeframe: str = "1Min"
     universe_type: str = "static"
     universe_symbols: list[str] = Field(
@@ -47,6 +60,28 @@ class StrategyConfig(BaseModel):
         if isinstance(value, str):
             return [symbol.strip() for symbol in value.split(",") if symbol.strip()]
         return [str(symbol) for symbol in value]
+
+    @model_validator(mode="after")
+    def _normalize_strategy(self) -> "StrategyConfig":
+        strategy_id = (self.strategy_id or "").strip()
+        if not self.name and strategy_id:
+            self.name = strategy_id
+
+        if not self.name:
+            raise ValueError("strategy.name is required; provide name or strategy_id")
+
+        strategy_type = (self.strategy_type or "").strip()
+        if self.universe_type == "static" and strategy_type:
+            normalized_universe_type = _map_strategy_type_to_universe_type(strategy_type)
+            if normalized_universe_type:
+                self.universe_type = normalized_universe_type
+
+        if self.strategy_type and self.version:
+            if self.description is None:
+                self.description = f"{self.strategy_type} v{self.version}"
+            elif f"{self.strategy_type}@{self.version}" not in self.description:
+                self.description = f"{self.description} ({self.strategy_type}@{self.version})"
+        return self
 
 
 class StrategyCatalogConfig(BaseModel):
@@ -138,6 +173,15 @@ def _parse_catalog_payload(payload: Any) -> StrategyCatalogConfig:
     if isinstance(payload, list):
         return StrategyCatalogConfig.model_validate({"strategies": payload})
     raise ValueError("strategy catalog must be a list or contain a 'strategies' key")
+
+
+def _map_strategy_type_to_universe_type(strategy_type: str) -> str:
+    normalized = strategy_type.strip().lower()
+    if normalized in {"static", "legacy_macd_rsi"}:
+        return "static"
+    if normalized in {"intraday_tsmom", "intraday_tsmom_v1", "tsmom_intraday"}:
+        return "intraday_tsmom_v1"
+    return strategy_type
 
 
 def _apply_catalog(session: Session, catalog: StrategyCatalogConfig, mode: Literal["merge", "sync"]) -> int:

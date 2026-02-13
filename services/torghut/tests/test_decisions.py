@@ -32,6 +32,28 @@ class TestDecisionEngine(TestCase):
         decisions = engine.evaluate(signal, [strategy])
         self.assertEqual(decisions, [])
 
+    def test_timeframe_inferred_from_payload_window(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            name="test",
+            description=None,
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=None,
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe=None,
+            payload={"window_size": "1m", "macd": {"macd": Decimal("2.0"), "signal": Decimal("0.5")}, "rsi14": Decimal("20")},
+        )
+        decisions = engine.evaluate(signal, [strategy])
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].timeframe, "1Min")
+
     def test_price_snapshot_attached_when_fetched(self) -> None:
         class DummyFetcher(PriceFetcher):
             def fetch_price(self, signal: SignalEnvelope):  # type: ignore[override]

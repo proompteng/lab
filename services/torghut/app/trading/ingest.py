@@ -48,6 +48,8 @@ FLAT_SIGNAL_COLUMNS = [
     "price",
     "close",
     "spread",
+    "imbalance_bid_px",
+    "imbalance_ask_px",
 ]
 
 ENVELOPE_SIGNAL_COLUMNS = [
@@ -68,6 +70,9 @@ class SignalBatch:
     cursor_at: Optional[datetime]
     cursor_seq: Optional[int]
     cursor_symbol: Optional[str]
+    query_start: Optional[datetime] = None
+    query_end: Optional[datetime] = None
+    no_signal_reason: Optional[str] = None
 
 
 class ClickHouseSignalIngestor:
@@ -92,18 +97,34 @@ class ClickHouseSignalIngestor:
         self.initial_lookback_minutes = initial_lookback_minutes or settings.trading_signal_lookback_minutes
         self.schema = schema or settings.trading_signal_schema
         self.fast_forward_stale_cursor = fast_forward_stale_cursor
+        self.empty_batch_advance_seconds = max(0, settings.trading_signal_empty_batch_advance_seconds)
         self._columns: Optional[set[str]] = None
         self._time_column: Optional[str] = None
 
     def fetch_signals(self, session: Session) -> "SignalBatch":
         if not self.url:
             logger.warning("ClickHouse URL missing; skipping signal ingestion")
-            return SignalBatch(signals=[], cursor_at=None, cursor_seq=None, cursor_symbol=None)
+            return SignalBatch(
+                signals=[],
+                cursor_at=None,
+                cursor_seq=None,
+                cursor_symbol=None,
+                query_start=None,
+                query_end=None,
+                no_signal_reason="clickhouse_url_missing",
+            )
 
+        poll_started_at = datetime.now(timezone.utc)
         cursor_at, cursor_seq, cursor_symbol = self._get_cursor(session)
+        if cursor_at.tzinfo is None:
+            cursor_at = cursor_at.replace(tzinfo=timezone.utc)
+        fast_forwarded = False
+        time_column = self._resolve_time_column()
+        latest_signal_at = self._latest_signal_timestamp(time_column)
+        cursor_at_tail = latest_signal_at is not None and cursor_at >= latest_signal_at
         if self.fast_forward_stale_cursor:
             min_cursor = datetime.now(timezone.utc) - timedelta(minutes=self.initial_lookback_minutes)
-            if cursor_at < min_cursor:
+            if cursor_at < min_cursor and not cursor_at_tail:
                 logger.warning(
                     "Trade cursor is stale; fast-forwarding cursor_at=%s -> %s",
                     cursor_at.isoformat(),
@@ -112,12 +133,14 @@ class ClickHouseSignalIngestor:
                 cursor_at = min_cursor
                 cursor_seq = None
                 cursor_symbol = None
+                fast_forwarded = True
                 self._set_cursor(session, cursor_at, cursor_seq, cursor_symbol)
-        time_column = self._resolve_time_column()
+        query_window_start = cursor_at
         supports_seq = self._supports_seq_for_time_column(time_column)
         overlap_cutoff = cursor_at if time_column == "ts" and not supports_seq else None
         query = self._build_query(cursor_at, cursor_seq, cursor_symbol)
         rows = self._query_clickhouse(query)
+        query_window_end = poll_started_at
         signals: list[SignalEnvelope] = []
 
         max_event_ts: Optional[datetime] = None
@@ -146,12 +169,158 @@ class ClickHouseSignalIngestor:
                     if max_symbol is None or signal.symbol > max_symbol:
                         max_symbol = signal.symbol
 
+        if not rows:
+            no_signal_reason = "no_signals_in_window"
+            if latest_signal_at is not None:
+                lookback_window = max(1, self.initial_lookback_minutes)
+                if cursor_at > latest_signal_at + timedelta(minutes=lookback_window):
+                    rewind_at = latest_signal_at
+                    if time_column == "ts":
+                        rewind_at -= FLAT_CURSOR_OVERLAP
+                    logger.warning(
+                        "Cursor is ahead of stream latest timestamp; rewinding cursor from=%s to=%s",
+                        cursor_at.isoformat(),
+                        rewind_at.isoformat(),
+                    )
+                    cursor_at = rewind_at
+                    cursor_seq = None
+                    cursor_symbol = None
+                    no_signal_reason = "cursor_ahead_of_stream"
+                elif cursor_at >= latest_signal_at:
+                    no_signal_reason = "cursor_tail_stable"
+
+            if (
+                self.empty_batch_advance_seconds > 0
+                and no_signal_reason != "cursor_ahead_of_stream"
+                and no_signal_reason != "cursor_tail_stable"
+            ):
+                cursor_advance = poll_started_at - timedelta(seconds=self.empty_batch_advance_seconds)
+                if cursor_at < cursor_advance:
+                    logger.debug(
+                        "No signals fetched; advancing cursor forward from=%s to=%s (empty_batch_advance_seconds=%s)",
+                        cursor_at.isoformat(),
+                        cursor_advance.isoformat(),
+                        self.empty_batch_advance_seconds,
+                    )
+                    cursor_at = cursor_advance
+                    cursor_seq = None
+                    cursor_symbol = None
+                    no_signal_reason = "empty_batch_advanced"
+            return SignalBatch(
+                signals=[],
+                cursor_at=cursor_at,
+                cursor_seq=cursor_seq if fast_forwarded else None,
+                cursor_symbol=cursor_symbol if fast_forwarded else None,
+                query_start=query_window_start,
+                query_end=query_window_end,
+                no_signal_reason=no_signal_reason,
+            )
+
         return SignalBatch(
             signals=signals,
             cursor_at=max_event_ts,
             cursor_seq=max_seq,
             cursor_symbol=max_symbol,
+            query_start=query_window_start,
+            query_end=query_window_end,
+            no_signal_reason=None,
         )
+
+    def fetch_signals_with_reason(
+        self,
+        *,
+        start: datetime,
+        end: datetime,
+        symbol: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> "SignalBatch":
+        """Fetch signals in a bounded window and return no-signal telemetry."""
+        if not self.url:
+            logger.warning("ClickHouse URL missing; skipping signal replay")
+            return SignalBatch(
+                signals=[],
+                cursor_at=None,
+                cursor_seq=None,
+                cursor_symbol=None,
+                query_start=start,
+                query_end=end,
+                no_signal_reason="clickhouse_url_missing",
+            )
+
+        normalized_symbol: Optional[str] = None
+        if symbol:
+            normalized_symbol = normalize_symbol(symbol)
+            if normalized_symbol is None:
+                logger.warning("Invalid symbol for signal replay: %s", symbol)
+                return SignalBatch(
+                    signals=[],
+                    cursor_at=None,
+                    cursor_seq=None,
+                    cursor_symbol=None,
+                    query_start=start,
+                    query_end=end,
+                    no_signal_reason="invalid_symbol",
+                )
+
+        time_column = self._resolve_time_column()
+        select_expr = self._select_expression(time_column)
+        where_parts = [
+            f"{time_column} >= {to_datetime64(start)}",
+            f"{time_column} <= {to_datetime64(end)}",
+        ]
+        if normalized_symbol:
+            where_parts.append(f"symbol = '{normalized_symbol}'")
+        limit_clause = f"LIMIT {limit}" if limit else ""
+        order_clause = f"{time_column} ASC"
+        if self._supports_seq_for_time_column(time_column):
+            order_clause = f"{time_column} ASC, symbol ASC, seq ASC"
+
+        query = (
+            f"SELECT {select_expr} FROM {self.table} WHERE {' AND '.join(where_parts)} "
+            f"ORDER BY {order_clause} {limit_clause} FORMAT JSONEachRow"
+        )
+        rows = self._query_clickhouse(query)
+        signals: list[SignalEnvelope] = []
+        for row in rows:
+            signal = self.parse_row(row)
+            if signal is None:
+                continue
+            signals.append(signal)
+
+        no_signal_reason: str | None = None
+        if not signals:
+            no_signal_reason = "no_signals_in_window"
+            latest_signal_at = self._latest_signal_timestamp(time_column)
+            if latest_signal_at is not None and start > latest_signal_at:
+                no_signal_reason = "cursor_ahead_of_stream"
+            elif self.empty_batch_advance_seconds > 0:
+                no_signal_reason = "empty_batch_advanced"
+
+        return SignalBatch(
+            signals=signals,
+            cursor_at=None,
+            cursor_seq=None,
+            cursor_symbol=None,
+            query_start=start,
+            query_end=end,
+            no_signal_reason=no_signal_reason,
+        )
+
+    def _latest_signal_timestamp(self, time_column: str) -> Optional[datetime]:
+        query = (
+            "SELECT max({column}) AS latest_signal_ts "
+            f"FROM {self.table} "
+            "FORMAT JSONEachRow"
+        ).format(column=time_column)
+        try:
+            rows = self._query_clickhouse(query)
+        except Exception as exc:
+            logger.warning("Failed to query latest signal timestamp: %s", exc)
+            return None
+        if not rows:
+            return None
+        raw = rows[0].get("latest_signal_ts")
+        return _parse_ts(raw) if raw is not None else None
 
     def commit_cursor(self, session: Session, batch: "SignalBatch") -> None:
         if batch.cursor_at is None:
@@ -338,7 +507,13 @@ class ClickHouseSignalIngestor:
         if self._time_column:
             return self._time_column
         if self.schema == "flat":
-            self._time_column = "ts"
+            columns = self._resolve_columns(force=True)
+            if columns and "event_ts" in columns:
+                self._time_column = "event_ts"
+            elif columns and "ts" in columns:
+                self._time_column = "ts"
+            else:
+                self._time_column = "event_ts"
             return self._time_column
         if self.schema == "envelope":
             self._time_column = "event_ts"
@@ -456,15 +631,29 @@ def _timeframe_from_iso_duration(value: Optional[str]) -> Optional[str]:
     if not value:
         return None
     match = re.fullmatch(r"PT(\d+)([SMH])", value)
-    if not match:
+    if match is not None:
+        amount = int(match.group(1))
+        unit = match.group(2)
+        if unit == "S":
+            return f"{amount}Sec"
+        if unit == "M":
+            return f"{amount}Min"
+        if unit == "H":
+            return f"{amount}Hour"
+
+    legacy_match = re.fullmatch(
+        r"(?i)\s*(\d+)\s*(sec|secs|s|min|minute|minutes|m|hour|hours|h)\s*",
+        value,
+    )
+    if not legacy_match:
         return None
-    amount = int(match.group(1))
-    unit = match.group(2)
-    if unit == "S":
+    amount = int(legacy_match.group(1))
+    unit = legacy_match.group(2).lower()
+    if unit in {"sec", "secs", "s"}:
         return f"{amount}Sec"
-    if unit == "M":
+    if unit in {"min", "minute", "minutes", "m"}:
         return f"{amount}Min"
-    if unit == "H":
+    if unit in {"hour", "hours", "h"}:
         return f"{amount}Hour"
     return None
 
@@ -523,9 +712,35 @@ def _payload_from_flat_row(row: dict[str, Any]) -> dict[str, Any]:
         if row.get(key) is not None and key not in payload:
             payload[key] = row.get(key)
 
+    if "price" not in payload:
+        for key in ("vwap_session", "vwap_w5m", "vwap"):
+            if row.get(key) is not None:
+                payload["price"] = row.get(key)
+                break
+
+    if "price" not in payload:
+        bid_px = row.get("imbalance_bid_px")
+        ask_px = row.get("imbalance_ask_px")
+        if bid_px is not None and ask_px is not None:
+            try:
+                payload["price"] = (float(bid_px) + float(ask_px)) / 2
+            except (TypeError, ValueError):
+                pass
+
     imbalance_spread = row.get("spread")
     if imbalance_spread is not None and "imbalance" not in payload:
         payload["imbalance"] = {"spread": imbalance_spread}
+    elif isinstance(payload.get("imbalance"), dict):
+        payload.setdefault("imbalance", {})
+
+    imbalance = payload.get("imbalance")
+    if isinstance(imbalance, dict):
+        if row.get("imbalance_bid_px") is not None and "bid_px" not in imbalance:
+            imbalance["bid_px"] = row.get("imbalance_bid_px")
+        if row.get("imbalance_ask_px") is not None and "ask_px" not in imbalance:
+            imbalance["ask_px"] = row.get("imbalance_ask_px")
+        if row.get("spread") is not None and "spread" not in imbalance:
+            imbalance["spread"] = row.get("spread")
 
     # Preserve extended TA fields required by plugin_v3 strategy runtime.
     for key in (
@@ -603,6 +818,8 @@ def _select_columns(columns: set[str], time_column: str) -> list[str]:
         "close",
         "price",
         "spread",
+        "imbalance_bid_px",
+        "imbalance_ask_px",
     ]
     selected: list[str] = []
     seen: set[str] = set()

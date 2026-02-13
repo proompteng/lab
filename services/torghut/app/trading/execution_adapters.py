@@ -364,8 +364,11 @@ def adapter_enabled_for_symbol(symbol: str) -> bool:
     if settings.trading_execution_adapter_policy == 'all':
         return True
     allowlist = settings.trading_execution_adapter_symbols
+    # When the symbol allowlist is omitted, route all symbols through the primary adapter.
+    # This keeps WS/strategy-driven symbol onboarding as the canonical source of symbols
+    # and avoids an implicit LEAN-disable path from an empty env var.
     if not allowlist:
-        return False
+        return True
     return symbol in allowlist
 
 

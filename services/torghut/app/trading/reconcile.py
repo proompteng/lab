@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Execution, TradeDecision, coerce_json_payload
 from ..snapshots import sync_order_to_db
+from .route_metadata import coerce_route_text, resolve_order_route_metadata
 from .risk import FINAL_STATUSES
 
 logger = logging.getLogger(__name__)
@@ -42,13 +43,19 @@ class Reconciler:
                 logger.warning("Failed to reconcile order %s: %s", alpaca_order_id, exc)
                 continue
 
-            expected_adapter = _coerce_route_text(execution.execution_expected_adapter)
-            actual_adapter = _coerce_route_text(execution.execution_actual_adapter)
+            expected_adapter = coerce_route_text(execution.execution_expected_adapter)
+            route_expected, route_actual, fallback_reason, fallback_count = resolve_order_route_metadata(
+                expected_adapter=expected_adapter,
+                execution_client=client,
+                order_response=order,
+            )
             updated = _apply_order_update(
                 execution,
                 order,
-                execution_expected_adapter=expected_adapter,
-                execution_actual_adapter=actual_adapter,
+                execution_expected_adapter=route_expected,
+                execution_actual_adapter=route_actual,
+                execution_fallback_reason=fallback_reason,
+                execution_fallback_count=fallback_count,
             )
             if updated:
                 updates += 1
@@ -96,13 +103,27 @@ class Reconciler:
             if not order:
                 continue
 
+            expected_route = coerce_route_text(order.get("_execution_route_expected"))
+            if expected_route is None:
+                expected_route = coerce_route_text(order.get("_execution_route_actual"))
+            route_expected, route_actual, fallback_reason, fallback_count = resolve_order_route_metadata(
+                expected_adapter=expected_route,
+                execution_client=client,
+                order_response=order,
+            )
             execution = sync_order_to_db(
                 session,
                 order,
                 trade_decision_id=str(decision.id),
-                execution_expected_adapter=_coerce_route_text(order.get("_execution_route_expected")),
-                execution_actual_adapter=execution_route_actual(order, client),
+                execution_expected_adapter=route_expected,
+                execution_actual_adapter=route_actual,
             )
+            if fallback_reason is not None:
+                execution.execution_fallback_reason = fallback_reason
+            if fallback_count is not None:
+                execution.execution_fallback_count = fallback_count
+            execution.execution_actual_adapter = route_actual
+            execution.execution_expected_adapter = route_expected or execution.execution_expected_adapter
             _update_trade_decision(session, execution)
             updates += 1
         return updates
@@ -114,6 +135,8 @@ def _apply_order_update(
     *,
     execution_expected_adapter: str | None = None,
     execution_actual_adapter: str | None = None,
+    execution_fallback_reason: str | None = None,
+    execution_fallback_count: int | None = None,
 ) -> bool:
     status = order.get("status")
     if status is None:
@@ -128,33 +151,17 @@ def _apply_order_update(
         execution.execution_expected_adapter = execution_expected_adapter
     if execution_actual_adapter:
         execution.execution_actual_adapter = execution_actual_adapter
+    elif execution.execution_actual_adapter is None and execution.execution_expected_adapter is not None:
+        execution.execution_actual_adapter = execution.execution_expected_adapter
+    if execution.execution_expected_adapter is None and execution.execution_actual_adapter is not None:
+        execution.execution_expected_adapter = execution.execution_actual_adapter
+    if execution_fallback_count is not None:
+        execution.execution_fallback_count = execution_fallback_count
+    if execution_fallback_reason is not None:
+        execution.execution_fallback_reason = execution_fallback_reason
     execution.raw_order = coerce_json_payload(order)
     execution.last_update_at = datetime.now(timezone.utc)
     return True
-
-
-def execution_route_actual(order: dict[str, str], client: Any) -> str | None:
-    adapter = _coerce_route_text(order.get("_execution_route_actual")) if isinstance(order, dict) else None
-    if adapter:
-        return adapter
-    adapter = _coerce_route_text(order.get("_execution_adapter")) if isinstance(order, dict) else None
-    if adapter:
-        return adapter
-    raw = str(getattr(client, "last_route", "")) if client is not None else None
-    return _coerce_route_text(raw)
-
-
-def _coerce_route_text(value: object) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        normalized = value.strip()
-        if not normalized:
-            return None
-        if normalized == 'alpaca_fallback':
-            return 'alpaca'
-        return normalized
-    return None
 
 
 

@@ -11,6 +11,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from app.config import settings
+from app.trading.ingest import SignalBatch
 from app.trading.models import SignalEnvelope
 from app.trading.scheduler import TradingScheduler
 
@@ -19,12 +20,30 @@ from app.trading.scheduler import TradingScheduler
 class _PipelineStub:
     signals: list[SignalEnvelope]
     session_factory: object
+    no_signal_reason: str | None = None
 
     def __post_init__(self) -> None:
         self.ingestor = self
 
     def fetch_signals_between(self, start: datetime, end: datetime) -> list[SignalEnvelope]:
         return list(self.signals)
+
+    def fetch_signals_with_reason(
+        self,
+        start: datetime,
+        end: datetime,
+        symbol: str | None = None,
+        limit: int | None = None,
+    ) -> SignalBatch:
+        return SignalBatch(
+            signals=list(self.signals),
+            cursor_at=None,
+            cursor_seq=None,
+            cursor_symbol=None,
+            query_start=start,
+            query_end=end,
+            no_signal_reason=self.no_signal_reason,
+        )
 
 
 class _SchedulerDependencies:
@@ -140,12 +159,52 @@ class TestTradingSchedulerAutonomy(TestCase):
             self.assertEqual(scheduler.state.last_autonomy_run_id, "test-run-id")
             self.assertEqual(scheduler.state.last_autonomy_recommendation, "paper")
 
+    def test_run_autonomous_cycle_records_ingest_reason_when_no_signals(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+                no_signals=True,
+                no_signal_reason="cursor_ahead_of_stream",
+            )
+            with patch("app.trading.scheduler.upsert_autonomy_no_signal_run", return_value="no-signal-run-id") as persist_no_signal:
+                with patch("app.trading.scheduler.run_autonomous_lane", side_effect=RuntimeError("should_not_run")):
+                    scheduler._run_autonomous_cycle()
+
+            persist_no_signal.assert_called_once()
+            args = persist_no_signal.call_args.kwargs
+            self.assertEqual(args["no_signal_reason"], "cursor_ahead_of_stream")
+            self.assertIsNotNone(args["query_start"])
+            self.assertIsNotNone(args["query_end"])
+
+            self.assertEqual(scheduler.state.last_ingest_reason, "cursor_ahead_of_stream")
+            self.assertEqual(scheduler.state.last_autonomy_reason, "cursor_ahead_of_stream")
+            self.assertEqual(scheduler.state.last_autonomy_run_id, "no-signal-run-id")
+            self.assertIn("no-signals.json", scheduler.state.last_autonomy_gates or "")
+
+    def test_run_autonomous_cycle_records_error_on_lane_exception(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            with patch("app.trading.scheduler.run_autonomous_lane", side_effect=RuntimeError("lane_failed")):
+                scheduler._run_autonomous_cycle()
+
+            self.assertEqual(scheduler.state.last_autonomy_reason, "lane_execution_failed")
+            self.assertEqual(scheduler.state.last_autonomy_error, "lane_failed")
+            self.assertIsNone(scheduler.state.last_autonomy_run_id)
+
     def _build_scheduler_with_fixtures(
         self,
         tmpdir: str,
         *,
         allow_live: bool,
         approval_token: str | None,
+        no_signals: bool = False,
+        no_signal_reason: str | None = None,
     ) -> tuple[TradingScheduler, _SchedulerDependencies]:
         strategy_config_path = Path(tmpdir) / "strategies.yaml"
         strategy_config_path.write_text(
@@ -195,7 +254,11 @@ class TestTradingSchedulerAutonomy(TestCase):
         settings.trading_autonomy_artifact_dir = str(Path(tmpdir) / "autonomy-artifacts")
 
         scheduler = TradingScheduler()
-        scheduler._pipeline = _PipelineStub(signals=_signal_batch(), session_factory=lambda: None)
+        scheduler._pipeline = _PipelineStub(
+            signals=[] if no_signals else _signal_batch(),
+            session_factory=lambda: None,
+            no_signal_reason=no_signal_reason,
+        )
 
         return scheduler, _SchedulerDependencies()
 

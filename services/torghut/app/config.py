@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     )
     trading_signal_batch_size: int = Field(default=500, alias="TRADING_SIGNAL_BATCH_SIZE")
     trading_signal_lookback_minutes: int = Field(default=15, alias="TRADING_SIGNAL_LOOKBACK_MINUTES")
+    trading_signal_empty_batch_advance_seconds: int = Field(
+        default=60,
+        alias="TRADING_SIGNAL_EMPTY_BATCH_ADVANCE_SECONDS",
+        description="How far to move the cursor forward when a poll returns no new signals.",
+    )
     trading_price_table: str = Field(default="torghut.ta_microbars", alias="TRADING_PRICE_TABLE")
     trading_price_lookback_minutes: int = Field(default=5, alias="TRADING_PRICE_LOOKBACK_MINUTES")
     trading_poll_ms: int = Field(default=5000, alias="TRADING_POLL_MS")

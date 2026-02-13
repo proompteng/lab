@@ -234,3 +234,59 @@ class TestOrderIdempotency(TestCase):
             assert execution is not None
             self.assertEqual(execution.execution_expected_adapter, 'lean')
             self.assertEqual(execution.execution_actual_adapter, 'alpaca')
+
+    def test_reconciler_backfill_sets_expected_from_actual(self) -> None:
+        class AdapterOnlyAlpacaClient(FakeAlpacaClient):
+            last_route = 'alpaca'
+
+            def get_order_by_client_order_id(self, client_order_id: str) -> dict[str, str] | None:
+                return {
+                    'id': 'order-3',
+                    'client_order_id': client_order_id,
+                    'symbol': 'AAPL',
+                    'side': 'buy',
+                    'type': 'market',
+                    'time_in_force': 'day',
+                    'qty': '1',
+                    'filled_qty': '0',
+                    'status': 'accepted',
+                    '_execution_adapter': 'lean',
+                }
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name='demo',
+                description='demo',
+                enabled=True,
+                base_timeframe='1Min',
+                universe_type='static',
+                universe_symbols=['AAPL'],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision_row = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label='paper',
+                symbol='AAPL',
+                timeframe='1Min',
+                decision_json={'symbol': 'AAPL'},
+                rationale=None,
+                status='planned',
+                decision_hash='decision-hash-3',
+            )
+            session.add(decision_row)
+            session.commit()
+            session.refresh(decision_row)
+
+            reconciler = Reconciler()
+            updates = reconciler.reconcile(session, AdapterOnlyAlpacaClient())
+
+            self.assertEqual(updates, 1)
+            execution = session.execute(
+                select(Execution).where(Execution.trade_decision_id == decision_row.id)
+            ).scalar_one()
+            assert execution is not None
+            self.assertEqual(execution.execution_expected_adapter, 'lean')
+            self.assertEqual(execution.execution_actual_adapter, 'lean')
