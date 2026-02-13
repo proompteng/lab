@@ -518,61 +518,61 @@ def _persist_run_outputs(
             )
             session.add(candidate)
 
-    for fold_order, fold in enumerate(walk_results.folds, start=1):
-        fold_metrics = fold.fold_metrics()
-        robustness = robustness_by_fold.get(fold.fold.name)
-        decision_count = _metric_counter_int(fold_metrics.get("decision_count", 0))
-        trade_count = _metric_counter_int(fold_metrics.get("buy_count", 0)) + _metric_counter_int(
-            fold_metrics.get("sell_count", 0),
-        )
-        regime_label = robustness.regime.label() if robustness is not None else str(
-            fold_metrics.get("regime_label", "unknown"),
-        )
+            for fold_order, fold in enumerate(walk_results.folds, start=1):
+                fold_metrics = fold.fold_metrics()
+                robustness = robustness_by_fold.get(fold.fold.name)
+                decision_count = _metric_counter_int(fold_metrics.get("decision_count", 0))
+                trade_count = _metric_counter_int(fold_metrics.get("buy_count", 0)) + _metric_counter_int(
+                    fold_metrics.get("sell_count", 0),
+                )
+                regime_label = robustness.regime.label() if robustness is not None else str(
+                    fold_metrics.get("regime_label", "unknown"),
+                )
 
-        session.add(
-            ResearchFoldMetrics(
-                candidate_id=candidate_id,
-                fold_name=fold.fold.name,
-                fold_order=fold_order,
-                train_start=fold.fold.train_start,
-                train_end=fold.fold.train_end,
-                test_start=fold.fold.test_start,
-                test_end=fold.fold.test_end,
-                decision_count=decision_count,
-                trade_count=trade_count,
-                gross_pnl=robustness.net_pnl if robustness is not None else None,
-                net_pnl=robustness.net_pnl if robustness is not None else report.metrics.net_pnl,
-                max_drawdown=robustness.max_drawdown if robustness is not None else report.metrics.max_drawdown,
-                turnover_ratio=robustness.turnover_ratio if robustness is not None else report.metrics.turnover_ratio,
-                cost_bps=robustness.cost_bps if robustness is not None else report.metrics.cost_bps,
-                cost_assumptions=report.impact_assumptions.assumptions,
-                regime_label=regime_label,
-            ),
-        )
+                session.add(
+                    ResearchFoldMetrics(
+                        candidate_id=candidate_id,
+                        fold_name=fold.fold.name,
+                        fold_order=fold_order,
+                        train_start=fold.fold.train_start,
+                        train_end=fold.fold.train_end,
+                        test_start=fold.fold.test_start,
+                        test_end=fold.fold.test_end,
+                        decision_count=decision_count,
+                        trade_count=trade_count,
+                        gross_pnl=robustness.net_pnl if robustness is not None else None,
+                        net_pnl=robustness.net_pnl if robustness is not None else report.metrics.net_pnl,
+                        max_drawdown=robustness.max_drawdown if robustness is not None else report.metrics.max_drawdown,
+                        turnover_ratio=robustness.turnover_ratio if robustness is not None else report.metrics.turnover_ratio,
+                        cost_bps=robustness.cost_bps if robustness is not None else report.metrics.cost_bps,
+                        cost_assumptions=report.impact_assumptions.assumptions,
+                        regime_label=regime_label,
+                    ),
+                )
 
-    for stress_case in ("spread", "volatility", "liquidity", "halt"):
-        session.add(
-            ResearchStressMetrics(
-                candidate_id=candidate_id,
-                stress_case=stress_case,
-                metric_bundle=_build_stress_bundle(report, stress_case),
-                pessimistic_pnl_delta=None,
+            for stress_case in ("spread", "volatility", "liquidity", "halt"):
+                session.add(
+                    ResearchStressMetrics(
+                        candidate_id=candidate_id,
+                        stress_case=stress_case,
+                        metric_bundle=_build_stress_bundle(report, stress_case),
+                        pessimistic_pnl_delta=None,
+                    )
+                )
+
+            session.add(
+                ResearchPromotion(
+                    candidate_id=candidate_id,
+                    requested_mode=promotion_target,
+                    approved_mode=gate_report.recommended_mode if gate_report.promotion_allowed else None,
+                    approver="autonomous_scheduler",
+                    approver_role="system",
+                    approve_reason="promotion_allowed" if gate_report.promotion_allowed else None,
+                    deny_reason=None if gate_report.promotion_allowed else ";".join(gate_report.reasons),
+                    paper_candidate_patch_ref=str(patch_path) if patch_path else None,
+                    effective_time=now if gate_report.promotion_allowed else None,
+                )
             )
-        )
-
-    session.add(
-        ResearchPromotion(
-            candidate_id=candidate_id,
-            requested_mode=promotion_target,
-            approved_mode=gate_report.recommended_mode if gate_report.promotion_allowed else None,
-            approver="autonomous_scheduler",
-            approver_role="system",
-            approve_reason="promotion_allowed" if gate_report.promotion_allowed else None,
-            deny_reason=None if gate_report.promotion_allowed else ";".join(gate_report.reasons),
-            paper_candidate_patch_ref=str(patch_path) if patch_path else None,
-            effective_time=now if gate_report.promotion_allowed else None,
-        )
-    )
 
 
 def _compute_candidate_hash(
