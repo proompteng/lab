@@ -14,6 +14,9 @@ env:
 
 existingSecret: pgadmin-auth
 
+strategy:
+  type: Recreate
+
 envVarsExtra:
   - name: PGADMIN_SERVER_JSON_FILE
     value: /var/lib/pgadmin/servers/servers.json
