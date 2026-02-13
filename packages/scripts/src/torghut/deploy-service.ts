@@ -65,6 +65,45 @@ const runWithStatus = async (command: string, args: string[], options: RunOption
   return subprocess.exited
 }
 
+const runCapture = async (command: string, args: string[], options: RunOptions = {}) => {
+  console.log(`$ ${command} ${args.join(' ')}`.trim())
+  const subprocess = Bun.spawn([command, ...args], {
+    cwd: options.cwd,
+    env: buildEnv(options.env),
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+
+  const stdout = subprocess.stdout ? await new Response(subprocess.stdout).text() : ''
+  const stderr = subprocess.stderr ? await new Response(subprocess.stderr).text() : ''
+  const exitCode = await subprocess.exited
+
+  return { exitCode, stdout: stdout.trim(), stderr: stderr.trim() }
+}
+
+const applyKnativeService = async (force: boolean): Promise<{ exitCode: number; combinedOutput: string }> => {
+  const waitTimeout = process.env.TORGHUT_KN_WAIT_TIMEOUT ?? '300'
+  const args = [
+    'service',
+    'apply',
+    'torghut',
+    '--namespace',
+    'torghut',
+    '--filename',
+    manifestPath,
+    '--wait',
+    '--wait-timeout',
+    waitTimeout,
+  ]
+
+  if (force) {
+    args.push('--force')
+  }
+
+  const { exitCode, stdout, stderr } = await runCapture('kn', args)
+  return { exitCode, combinedOutput: `${stdout}\n${stderr}`.trim() }
+}
+
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const capture = async (command: string, args: string[]): Promise<string> => {
@@ -472,19 +511,26 @@ const deploymentReady = async (deploymentName: string, context: string) => {
 }
 
 const applyManifest = async () => {
-  const waitTimeout = process.env.TORGHUT_KN_WAIT_TIMEOUT ?? '300'
-  await run('kn', [
-    'service',
-    'apply',
-    'torghut',
-    '--namespace',
-    'torghut',
-    '--filename',
-    manifestPath,
-    '--wait',
-    '--wait-timeout',
-    waitTimeout,
-  ])
+  const initial = await applyKnativeService(false)
+  if (initial.exitCode === 0) {
+    return
+  }
+
+  if (
+    initial.combinedOutput.includes('annotation value is immutable: metadata.annotations.serving.knative.dev/creator')
+  ) {
+    console.warn('Detected immutable Knative creator annotation; retrying with --force')
+    const forced = await applyKnativeService(true)
+    if (forced.exitCode === 0) {
+      return
+    }
+    fatal('kn service apply --force failed; check knative service admission and permissions', {
+      initial,
+      forced,
+    })
+  }
+
+  fatal(`kn service apply failed: ${initial.combinedOutput || 'unknown error'}`)
 }
 
 const applyWebsocketResources = async () => {
