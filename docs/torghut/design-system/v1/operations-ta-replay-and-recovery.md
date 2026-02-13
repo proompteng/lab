@@ -140,6 +140,34 @@ AgentRuns should treat these procedures as two classes of automation:
 - If destructive Mode 2 was used (topics/state deleted), restore MinIO checkpoint/savepoint backups, then restart.
 - If ClickHouse data was deleted, rollback may require restoring from backups (see `v1/disaster-recovery-and-backups.md`).
 
+## Standardized helper (non-destructive mode)
+
+Before manual replay execution, run:
+
+```bash
+python3 services/torghut/scripts/ta_replay_runner.py --replay-id <REPLAY_ID> --mode plan
+```
+
+The helper prints:
+
+- current TA replay state read from running cluster config,
+- planned `TA_GROUP_ID` and `TA_AUTO_OFFSET_RESET`,
+- exact sequence for non-destructive replay mode.
+
+Execute the planned sequence with explicit human confirmation:
+
+```bash
+python3 services/torghut/scripts/ta_replay_runner.py \
+  --replay-id <REPLAY_ID> \
+  --mode apply \
+  --confirm REPLAY_TA_CANARY
+```
+
+`--mode apply` performs the non-destructive steps only:
+- set `TA_GROUP_ID` and `TA_AUTO_OFFSET_RESET`,
+- suspend `FlinkDeployment/torghut-ta` if running,
+- resume with `restartNonce + 1`.
+
 ## Verification checklist
 - `kubectl get flinkdeployment -n torghut torghut-ta` is `RUNNING/STABLE`
 - ClickHouse queries:
