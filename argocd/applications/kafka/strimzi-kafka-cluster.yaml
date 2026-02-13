@@ -22,11 +22,6 @@ spec:
       transaction.state.log.min.isr: 2
       default.replication.factor: 3
       min.insync.replicas: 2
-    storage:
-      type: persistent-claim
-      size: 8Gi
-      deleteClaim: false
-      class: longhorn
   entityOperator:
     topicOperator: {}
     userOperator: {}
