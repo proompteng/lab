@@ -31,6 +31,13 @@ helmCharts:
             requests:
               storage: 5Gi
           storageClassName: longhorn
+      schema:
+        createDatabase:
+          enabled: false
+        setup:
+          enabled: false
+        update:
+          enabled: false
       cassandra:
         config:
           cluster_size: 1
