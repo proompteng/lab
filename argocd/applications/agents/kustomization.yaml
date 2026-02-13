@@ -13,6 +13,7 @@ resources:
   - sample-approvalpolicy.yaml
   - sample-budget.yaml
   - sample-signal.yaml
+  - torghut-agentruns.yaml
   - tailscale-service.yaml
   - tailscale-networkpolicy.yaml
 helmGlobals:

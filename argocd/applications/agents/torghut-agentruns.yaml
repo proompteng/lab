@@ -1,0 +1,95 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-health-report-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - torghutNamespace
+      - torghutService
+      - wsService
+      - flinkRestService
+      - guardrailsService
+  text: |
+    Objective: Produce a single Torghut health report (read-only) using in-cluster HTTP endpoints only.
+
+    Constraints:
+    - Do not mutate cluster state.
+    - Do not open PRs.
+    - Assume kubectl is unavailable or unreliable.
+
+    Inputs (from AgentRun parameters):
+    - torghutNamespace
+    - torghutService
+    - wsService
+    - flinkRestService
+    - guardrailsService
+
+    Steps:
+    1) Build base URLs using service DNS names with `.svc.cluster.local`.
+       - TORGHUT_BASE = http://<torghutService>.<torghutNamespace>.svc.cluster.local
+       - WS_BASE = http://<wsService>.<torghutNamespace>.svc.cluster.local
+       - FLINK_BASE = http://<flinkRestService>.<torghutNamespace>.svc.cluster.local:8081
+       - GUARDRAILS_BASE = http://<guardrailsService>.<torghutNamespace>.svc.cluster.local:9108
+    2) Query each endpoint and capture status/body snippets.
+       - GET ${WS_BASE}/readyz and ${WS_BASE}/healthz
+       - GET ${FLINK_BASE}/overview and ${FLINK_BASE}/jobs/overview
+       - GET ${TORGHUT_BASE}/trading/status and ${TORGHUT_BASE}/trading/health
+       - GET ${GUARDRAILS_BASE}/metrics
+    3) From metrics, extract:
+       - torghut_clickhouse_guardrails_clickhouse_up
+       - torghut_clickhouse_guardrails_disk_free_ratio
+       - torghut_clickhouse_guardrails_any_replica_readonly
+       - torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds
+       - torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds
+       - torghut_clickhouse_guardrails_last_scrape_success
+    4) Compute ages for max TA timestamps and classify freshness.
+       - If market is open (US session, Mon-Fri 09:30-16:00 America/New_York) and age > 300s => degraded.
+       - During closed hours report stale signal age without triggering failure by staleness alone.
+
+    Output:
+    - Produce a concise Markdown report with sections: Summary, WS, Flink, Trading, Guardrails, Freshness.
+    - Conclude with a single health verdict: healthy | degraded | down.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-gated-actuation-runner-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - repository
+      - base
+      - head
+      - torghutNamespace
+      - gitopsPath
+      - change
+      - reason
+      - confirm
+  text: |
+    Objective: Perform a single Torghut recovery actuation step via GitOps PR.
+
+    Guardrails:
+    - Do not perform any direct kubectl mutation unless explicitly requested as an emergency.
+    - Only edit files under ${gitopsPath}.
+    - Require confirm == ACTUATE_TORGHUT.
+    - Supported changes only: pause-trading, restart-ws, suspend-ta, resume-ta.
+    - PRs are mandatory for all requested changes.
+
+    Inputs (from AgentRun parameters):
+    - repository, base, head
+    - torghutNamespace, gitopsPath
+    - change, reason, confirm
+
+    Steps:
+    1) Validate `change` is one of: pause-trading, restart-ws, suspend-ta, resume-ta.
+    2) Validate `confirm` is exactly `ACTUATE_TORGHUT`.
+    3) Apply the corresponding patch under `argocd/applications/torghut`:
+       - pause-trading: set TRADING_ENABLED="false" in knative-service.yaml.
+       - restart-ws: bump kubectl.kubernetes.io/restartedAt in ws/deployment.yaml.
+       - suspend-ta: set spec.job.state: suspended in ta/flinkdeployment.yaml.
+       - resume-ta: set spec.job.state: running and bump spec.restartNonce if needed.
+    4) Open a PR against ${repository} with base ${base} and head ${head}.
+    5) Output PR URL and clear rollback instructions.
