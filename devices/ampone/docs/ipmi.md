@@ -3,6 +3,9 @@
 Target BMC:
 - `192.168.1.224`
 
+Talos node IP (example):
+- `192.168.1.202`
+
 ## Authentication
 
 Avoid putting the password on the command line. `ipmitool` can read it from the
@@ -78,4 +81,3 @@ ipmitool -I lanplus -H 192.168.1.224 -U admin -E sel elist | tail -n 50
 Notes:
 - It is normal for DIMM temperature/presence sensors to show `No Reading` when the host
   is stuck early in memory training. In that state, SOL logs are more useful than SDR.
-
