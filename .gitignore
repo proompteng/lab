@@ -43,6 +43,12 @@ devices/ryzen/worker.yaml
 devices/ryzen/talosconfig
 devices/ryzen/node-machineconfig.yaml
 devices/ryzen/manifests/tailscale-extension-service.yaml
+
+devices/ampone/controlplane.yaml
+devices/ampone/worker.yaml
+devices/ampone/talosconfig
+devices/ampone/node-machineconfig.yaml
+devices/ampone/manifests/tailscale-extension-service.yaml
 **/charts/*.tgz
 **/generated/*
 **/_generated/
