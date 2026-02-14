@@ -11,3 +11,4 @@ Docs:
 
 Manifests:
 - `devices/ampone/manifests/hostname.patch.yaml` (Talos hostname patch)
+- `devices/ampone/manifests/allow-scheduling-controlplane.patch.yaml` (single-node: run workloads on the controlplane)

@@ -32,13 +32,16 @@ talosctl gen config ampone https://<endpoint_ip>:6443 \
 
 ## 3) Apply config (first install)
 
-Apply the hostname patch (and any future patches you add under `devices/ampone/manifests/`):
+This device is intended to be a single-node cluster (control plane + worker), so apply:
+- `devices/ampone/manifests/allow-scheduling-controlplane.patch.yaml`
+- `devices/ampone/manifests/hostname.patch.yaml`
 
 ```bash
 export TALOSCONFIG=$PWD/devices/ampone/talosconfig
 
 talosctl apply-config --insecure -n <node_ip> -e <node_ip> \
   -f devices/ampone/controlplane.yaml \
+  --config-patch @devices/ampone/manifests/allow-scheduling-controlplane.patch.yaml \
   --config-patch @devices/ampone/manifests/hostname.patch.yaml
 ```
 
@@ -50,4 +53,3 @@ export TALOSCONFIG=$PWD/devices/ampone/talosconfig
 talosctl bootstrap -n <node_ip> -e <node_ip>
 talosctl kubeconfig -n <node_ip> -e <node_ip> -f
 ```
-
