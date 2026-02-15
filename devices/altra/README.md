@@ -1,15 +1,16 @@
-# altra (3-node Talos cluster)
+# altra (Talos node)
 
-This directory contains reproducible runbooks and patches for the `altra` Talos/Kubernetes
-cluster.
+This directory contains a reproducible runbook and patches for the `altra` node.
 
-Defaults used by these docs:
-- Kubernetes API endpoint (behind the NUC LB): `https://192.168.1.130:6444`
-- Kubeconfig context name: `altra`
+Inventory:
+- Node: `altra` (`192.168.1.85`)
+- Joined cluster: `ryzen` (kubeconfig context: `galactic`)
+- Kubernetes API endpoint (behind the NUC LB): `https://192.168.1.130:6443`
+- Install disk: `/dev/nvme0n1`
 
 Docs:
-- `devices/altra/docs/cluster-bootstrap.md`
+- `devices/altra/docs/cluster-bootstrap.md` (install + join existing cluster)
 
 Related:
-- NUC load balancer template: `devices/nuc/k8s-api-lb-altra/README.md`
-
+- NUC load balancer config: `devices/nuc/k8s-api-lb/README.md`
+- Cluster inventory + canonical join procedure: `devices/galactic/README.md`

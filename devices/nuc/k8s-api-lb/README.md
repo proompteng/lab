@@ -21,13 +21,20 @@ control plane nodes. Example:
 
 - `ryzen`: `192.168.1.194:6443`
 - `ampone`: `192.168.1.202:6443`
-- (future) `cp3`: `192.168.1.xxx:6443`
+- `altra`: `192.168.1.85:6443`
 
 ## 2) Deploy on the NUC
 
 ```bash
+# The NUC does not need a full repo checkout. Keep a small runtime folder.
+ssh kalmyk@192.168.1.130 'mkdir -p ~/k8s-api-lb'
+
+# Copy the compose + haproxy config from this repo to the NUC.
+scp devices/nuc/k8s-api-lb/docker-compose.yaml kalmyk@192.168.1.130:~/k8s-api-lb/docker-compose.yaml
+scp devices/nuc/k8s-api-lb/haproxy.cfg kalmyk@192.168.1.130:~/k8s-api-lb/haproxy.cfg
+
 ssh kalmyk@192.168.1.130
-cd ~/github.com/lab/devices/nuc/k8s-api-lb
+cd ~/k8s-api-lb
 
 # optional sanity check: ensure nothing is already listening on 6443
 sudo ss -lntp | rg ':6443' || true
@@ -35,6 +42,15 @@ sudo ss -lntp | rg ':6443' || true
 docker compose up -d
 docker compose ps
 docker compose logs --tail=200 -f
+```
+
+## 2.1 Update backends (add/remove control planes)
+
+If you change `haproxy.cfg`, re-copy it then restart the container:
+
+```bash
+scp devices/nuc/k8s-api-lb/haproxy.cfg kalmyk@192.168.1.130:~/k8s-api-lb/haproxy.cfg
+ssh kalmyk@192.168.1.130 'cd ~/k8s-api-lb && docker compose up -d'
 ```
 
 ## 3) Use the NUC as the Talos cluster endpoint

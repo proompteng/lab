@@ -1,99 +1,96 @@
-# altra Talos bootstrap (3 nodes, endpoint behind NUC LB)
+# altra: install + join existing `galactic` cluster (control plane)
 
-This runbook bootstraps a 3-node Talos cluster named `altra`.
+This runbook installs Talos on the `altra` node and joins it to the existing cluster
+(`ryzen` cluster name, kubeconfig context `galactic`).
 
 Goals:
-- Kubernetes API is reachable via the NUC HAProxy endpoint: `https://192.168.1.130:6444`
-- `kubectl` works by default (merged into `~/.kube/config`) with context name `altra`
+- `altra` is installed to NVMe and joins the existing control plane/etcd.
+- Kubernetes API stays reachable via the NUC HAProxy endpoint: `https://192.168.1.130:6443`
+- `kubectl` continues to work by default with context name `galactic`
 
 Assumptions:
-- All 3 nodes boot Talos in maintenance mode first (ISO/USB/PXE) and get an IP.
-- You will install Talos to the correct disk for each node.
+- `ryzen` and `ampone` are already running Talos and form a working cluster.
+- `altra` boots Talos in maintenance mode (ISO/USB/PXE) and has an IP on the LAN.
 - The NUC (`kalmyk@192.168.1.130`) can run HAProxy (Docker).
 
-## 0) Configure the NUC load balancer for altra
+Current inventory:
+- `ryzen`: `192.168.1.194`
+- `ampone`: `192.168.1.202`
+- `altra`: `192.168.1.85`
+
+## 0) Ensure the NUC load balancer includes `altra`
 
 Follow:
-- `devices/nuc/k8s-api-lb-altra/README.md`
+- `devices/nuc/k8s-api-lb/README.md`
 
 This should create a stable endpoint on the LAN:
-- `192.168.1.130:6444` (TCP passthrough to control planes on `:6443`)
+- `192.168.1.130:6443` (TCP passthrough to control planes on `:6443`)
 
-## 1) Generate `altra` secrets + machine configs (gitignored)
+Reminder:
+- Adding a new control plane requires:
+  - adding it to the NUC HAProxy backends, and
+  - adding its IP to `cluster.apiServer.certSANs` on the existing control planes
+    (already reflected in `devices/*/manifests/controlplane-endpoint-nuc.patch.yaml`).
+
+## 1) Generate join configs for `altra` (gitignored)
 
 These files are intentionally gitignored:
-- `devices/altra/secrets.yaml`
 - `devices/altra/controlplane.yaml`
-- `devices/altra/worker.yaml`
 - `devices/altra/talosconfig`
 
 ```bash
-# 1) Generate a secrets bundle (keep it out of Git).
-talosctl gen secrets --output-file devices/altra/secrets.yaml
+export ALTRA_IP='192.168.1.85'
+export CP_SEED_IP='192.168.1.194'
+export K8S_LB_IP='192.168.1.130'
 
-# 2) Generate configs for the cluster behind the NUC LB endpoint.
-talosctl gen config altra https://192.168.1.130:6444 \
-  --with-secrets devices/altra/secrets.yaml \
+# Extract the active control plane machineconfig and derive the cluster secrets bundle from it.
+talosctl get machineconfig -n "$CP_SEED_IP" -e "$CP_SEED_IP" -o jsonpath='{.spec}' \
+  | awk '/^---$/{exit} {print}' \
+  > /tmp/galactic-base-controlplane.yaml
+
+talosctl gen secrets --from-controlplane-config /tmp/galactic-base-controlplane.yaml \
+  --output-file /tmp/galactic-secrets.yaml
+
+# Generate a control plane config for `altra` using the existing cluster secrets.
+talosctl gen config ryzen "https://$K8S_LB_IP:6443" \
+  --with-secrets /tmp/galactic-secrets.yaml \
   --output-dir devices/altra \
-  --output-types controlplane,worker,talosconfig \
+  --output-types controlplane,talosconfig \
   --with-docs=false \
   --with-examples=false \
-  --install-disk <install_disk>
+  --install-disk /dev/nvme0n1
 ```
 
-Notes:
-- If the 3 nodes are all control planes, you will apply `devices/altra/controlplane.yaml` to all of them.
-- If you have workers, apply `devices/altra/worker.yaml` to workers.
-
-## 2) Apply configs to the 3 nodes (first install)
-
-For each node while it's in maintenance mode:
+## 2) Apply config to `altra` (first install)
 
 ```bash
-# Control plane example (maintenance mode)
-talosctl apply-config --insecure -n <node_ip> -e <node_ip> \
+# `altra` should be in maintenance mode when you run this.
+talosctl apply-config --insecure -n "$ALTRA_IP" -e "$ALTRA_IP" \
   -f devices/altra/controlplane.yaml \
+  --config-patch @devices/altra/manifests/hostname.patch.yaml \
+  --config-patch @devices/altra/manifests/install-nvme0n1.patch.yaml \
+  --config-patch @devices/altra/manifests/allow-scheduling-controlplane.patch.yaml \
+  --config-patch @devices/altra/manifests/controlplane-endpoint-nuc.patch.yaml \
   --mode=reboot
 ```
 
-If you have a worker node:
+Note:
+- The IP can change after reboot/install (DHCP). Use console/KVM to confirm the
+  post-install IP if `talosctl` can’t connect.
+
+## 3) Update local Talos config to include all 3 nodes
 
 ```bash
-talosctl apply-config --insecure -n <worker_ip> -e <worker_ip> \
-  -f devices/altra/worker.yaml \
-  --mode=reboot
+talosctl config endpoint 192.168.1.194 192.168.1.202 192.168.1.85
+talosctl config node 192.168.1.194 192.168.1.202 192.168.1.85
 ```
 
-## 3) Bootstrap etcd (run once)
-
-Pick one control plane node IP (`<cp1_ip>`) and run bootstrap exactly once:
+## 4) Verify `altra` joined
 
 ```bash
-talosctl bootstrap -n <cp1_ip> -e <cp1_ip>
-```
-
-## 4) Write kubeconfig (context name `altra`, endpoint via NUC LB)
-
-```bash
-talosctl kubeconfig -n <cp1_ip> -e <cp1_ip> \
-  --force \
-  --force-context-name altra \
-  ~/.kube/config
-
-kubectl config use-context altra
-kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}{"\n"}'
-kubectl get nodes -o wide
-```
-
-The `server:` should be `https://192.168.1.130:6444`.
-
-## 5) Verify Talos health
-
-```bash
-talosctl config endpoint <cp1_ip> <cp2_ip> <cp3_ip>
-talosctl config node <cp1_ip> <cp2_ip> <cp3_ip>
-
 talosctl health
 talosctl etcd members
-```
 
+kubectl config use-context galactic
+kubectl get nodes -o wide
+```

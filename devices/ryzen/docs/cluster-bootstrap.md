@@ -4,6 +4,9 @@ This runbook is for the Ryzen Talos node booted from USB at `192.168.1.194`.
 It keeps the setup reproducible by using the patches in `devices/ryzen/manifests`
 plus the existing Talos/KubeVirt docs in this repo.
 
+Cluster inventory / current state:
+- `devices/galactic/README.md`
+
 ## Manifest inventory (ryzen)
 
 Node-level patches:

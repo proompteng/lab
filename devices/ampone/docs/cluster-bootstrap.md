@@ -3,6 +3,9 @@
 This runbook installs Talos on the AmpereOne device ("ampone") and joins it to the
 existing cluster.
 
+Cluster inventory / canonical join procedure:
+- `devices/galactic/README.md`
+
 Assumptions:
 - You can reach the BMC (example: `192.168.1.224`) for virtual media / boot control.
 - You have a Talos metal ISO available.
@@ -76,4 +79,3 @@ kubectl get nodes -o wide
 ```
 
 Do not run `talosctl bootstrap` again; it only happens once per cluster.
-
