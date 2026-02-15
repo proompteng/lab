@@ -118,7 +118,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 - **GitOps**: ArgoCD ApplicationSets with Kustomize overlays
 - **Multi-environment**: Dev/prod overlays in `/argocd/applications/*/overlays/`
 - **Service mesh**: Istio components for ingress and networking
-- **Storage**: Longhorn for persistent volumes, MinIO for object storage
+- **Storage**: Rook-Ceph for persistent volumes, MinIO for object storage
 - **Messaging**: Kafka with Strimzi operator, Knative Eventing
 - **Databases**: CloudNative-PG for PostgreSQL, Milvus for vector storage
 

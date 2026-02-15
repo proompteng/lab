@@ -76,7 +76,7 @@ Create a dedicated `KafkaUser` (the repo defines one named `facteur`) in the Str
 
 Facteur now owns a dedicated CloudNativePG cluster so Codex automation can persist the artefacts generated during `plan` → `implement` → `review` runs.
 
-- Cluster: `facteur-vector-cluster` (namespace `facteur`) running `registry.ide-newton.ts.net/lab/vecteur:18-trixie`, three instances, 20&nbsp;Gi Longhorn volumes with data checksums enabled.
+- Cluster: `facteur-vector-cluster` (namespace `facteur`) running `registry.ide-newton.ts.net/lab/vecteur:18-trixie`, three instances, 20&nbsp;Gi `rook-ceph-block` volumes with data checksums enabled.
 - Database: `facteur_kb`, owned by the `facteur` role. Facteur applies embedded goose migrations at startup, enabling the `pgcrypto` and `vector` extensions and seeding schema objects.
 - Connection secret: `facteur-vector-cluster-app` (namespace `facteur`). It follows the standard CloudNativePG app secret contract (`host`, `port`, `dbname`, `user`, `password`, `uri`). The Knative Service maps the `uri` key into `FACTEUR_POSTGRES_DSN` so the binary can run migrations on startup. Mount or template this secret into consuming workloads to hydrate Codex clients.
 - Schema: `codex_kb` with two tables.

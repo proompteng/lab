@@ -80,8 +80,8 @@ func TestReconcileCreatesResources(t *testing.T) {
 	if sts.Spec.VolumeClaimTemplates[0].Spec.StorageClassName == nil {
 		t.Fatalf("expected storage class default to be applied")
 	}
-	if sc := *sts.Spec.VolumeClaimTemplates[0].Spec.StorageClassName; sc != "longhorn" {
-		t.Fatalf("expected default storage class longhorn, got %s", sc)
+	if sc := *sts.Spec.VolumeClaimTemplates[0].Spec.StorageClassName; sc != "rook-ceph-block" {
+		t.Fatalf("expected default storage class rook-ceph-block, got %s", sc)
 	}
 
 	// Status update path
@@ -120,8 +120,8 @@ func TestApplyDefaults(t *testing.T) {
 		t.Fatalf("expected storage default to be applied")
 	}
 
-	if cluster.Spec.StorageClassName == nil || *cluster.Spec.StorageClassName != "longhorn" {
-		t.Fatalf("expected default storage class to be longhorn")
+	if cluster.Spec.StorageClassName == nil || *cluster.Spec.StorageClassName != "rook-ceph-block" {
+		t.Fatalf("expected default storage class to be rook-ceph-block")
 	}
 
 	if updated := cluster.ApplyDefaults(); updated {

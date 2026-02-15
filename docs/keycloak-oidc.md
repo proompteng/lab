@@ -7,7 +7,7 @@ This runbook covers the in-cluster Keycloak deployment used for OIDC, plus the i
 - Argo CD app path: `argocd/applications/keycloak`
 - Namespace: `keycloak`
 - Manifests: `argocd/applications/keycloak/keycloak.yaml`
-- Database: CloudNativePG cluster `keycloak-db` (Longhorn, 5Gi)
+- Database: CloudNativePG cluster `keycloak-db` (`rook-ceph-block`, 5Gi)
 - Public hostname: `auth.proompteng.ai`
 - Traefik route: `argocd/applications/keycloak/ingressroute.yaml`
 - Uses plain manifests (no Helm) under `argocd/applications/keycloak/`.

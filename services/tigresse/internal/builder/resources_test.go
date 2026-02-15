@@ -15,7 +15,7 @@ func testCluster() *v1alpha1.TigerBeetleCluster {
 	cluster := &v1alpha1.TigerBeetleCluster{}
 	cluster.Name = "tigerbeetle"
 	cluster.Namespace = "tigerbeetle"
-	sc := "longhorn"
+	sc := "rook-ceph-block"
 	cluster.Spec = v1alpha1.TigerBeetleClusterSpec{
 		ClusterID:        "0",
 		Image:            "ghcr.io/tigerbeetle/tigerbeetle:0.16.60",
@@ -109,8 +109,8 @@ func TestBuildStatefulSetAppliesDefaultStorageClass(t *testing.T) {
 	if sts.Spec.VolumeClaimTemplates[0].Spec.StorageClassName == nil {
 		t.Fatalf("expected storage class to be set by defaults")
 	}
-	if sc := *sts.Spec.VolumeClaimTemplates[0].Spec.StorageClassName; sc != "longhorn" {
-		t.Fatalf("expected default storage class longhorn, got %s", sc)
+	if sc := *sts.Spec.VolumeClaimTemplates[0].Spec.StorageClassName; sc != "rook-ceph-block" {
+		t.Fatalf("expected default storage class rook-ceph-block, got %s", sc)
 	}
 }
 

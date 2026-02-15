@@ -6,7 +6,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-const defaultStorageClass = "longhorn"
+const defaultStorageClass = "rook-ceph-block"
 
 // TigerBeetleClusterSpec defines the desired state of a TigerBeetle cluster.
 type TigerBeetleClusterSpec struct {
