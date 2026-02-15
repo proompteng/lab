@@ -22,35 +22,35 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: clickhouse-operator
                 path: argocd/applications/clickhouse-operator
                 namespace: clickhouse-operator
                 annotations:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
               - name: redis-operator
                 path: argocd/applications/redis-operator
                 namespace: redis-operator
                 annotations:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: rook-ceph
                 path: argocd/applications/rook-ceph
                 namespace: rook-ceph
                 annotations:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
               - name: kubevirt
                 path: argocd/applications/kubevirt
                 namespace: kubevirt
                 annotations:
                   argocd.argoproj.io/sync-wave: "1"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
                 clusters: ryzen
               - name: cdi
                 path: argocd/applications/cdi
@@ -58,7 +58,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "1"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
                 clusters: ryzen
               - name: workers
                 path: argocd/applications/workers
@@ -66,7 +66,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
                 clusters: ryzen
                 managedNamespaceMetadata:
                   labels:
@@ -79,7 +79,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "1"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
                 clusters: ryzen
               - name: external-dns
                 path: argocd/applications/external-dns
@@ -101,35 +101,35 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "0"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: istio-ingress
                 path: argocd/applications/istio-ingress
                 namespace: istio-ingress
                 annotations:
                   argocd.argoproj.io/sync-wave: "1"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: knative
                 path: argocd/applications/knative
                 namespace: knative
                 annotations:
                   argocd.argoproj.io/sync-wave: "1"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: knative-serving
                 path: argocd/applications/knative-serving
                 namespace: knative-serving
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: knative-eventing
                 path: argocd/applications/knative-eventing
                 namespace: knative-eventing
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: fission
                 path: argocd/applications/fission
                 namespace: fission
@@ -143,56 +143,56 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: nats
                 path: argocd/applications/nats
                 namespace: nats
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
               - name: nack
                 path: argocd/applications/nack
                 namespace: nack
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
               - name: kubernetes-reflector
                 path: argocd/applications/kubernetes-reflector
                 namespace: kubernetes-reflector
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: argo-workflows
                 path: argocd/applications/argo-workflows
                 namespace: argo-workflows
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
               - name: observability
                 path: argocd/applications/observability
                 namespace: observability
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: minio
                 path: argocd/applications/minio
                 namespace: minio
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
               - name: flink
                 path: argocd/applications/flink
                 namespace: flink
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
               - name: milvus
                 path: argocd/applications/milvus
                 namespace: milvus
@@ -213,7 +213,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
               - name: airbyte
                 path: argocd/applications/airbyte
                 namespace: airbyte
@@ -248,14 +248,14 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
               - name: arc
                 path: argocd/applications/arc
                 namespace: arc
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: backstage
                 path: argocd/applications/backstage
                 namespace: backstage
@@ -269,21 +269,21 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: headlamp
                 path: argocd/applications/headlamp
                 namespace: headlamp
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: pgadmin
                 path: argocd/applications/pgadmin
                 namespace: pgadmin
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
               - name: graf
                 path: argocd/applications/graf
                 namespace: graf
@@ -304,14 +304,14 @@ spec:
                       - /spec/template/spec/containers/0/readinessProbe
                       - /spec/template/spec/enableServiceLinks
                 automation: manual
-                enabled: "true"
+                enabled: "false"
               - name: convex
                 path: argocd/applications/convex
                 namespace: convex
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
             selector:
               matchExpressions:
                 - key: enabled

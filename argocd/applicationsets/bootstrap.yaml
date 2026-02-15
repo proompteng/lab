@@ -22,21 +22,21 @@ spec:
                   annotations:
                     argocd.argoproj.io/sync-wave: "-2"
                   automation: manual
-                  enabled: true
+                  enabled: "true"
                 - name: sealed-secrets
                   path: argocd/applications/sealed-secrets
                   namespace: sealed-secrets
                   annotations:
                     argocd.argoproj.io/sync-wave: "-2"
                   automation: auto
-                  enabled: true
+                  enabled: "false"
                 - name: cert-manager
                   path: argocd/applications/cert-manager
                   namespace: cert-manager
                   annotations:
                     argocd.argoproj.io/sync-wave: "-1"
                   automation: auto
-                  enabled: true
+                  enabled: "false"
                   ignoreDifferences:
                     - group: admissionregistration.k8s.io
                       kind: MutatingWebhookConfiguration
@@ -64,14 +64,14 @@ spec:
                   annotations:
                     argocd.argoproj.io/sync-wave: "-1"
                   automation: auto
-                  enabled: true
+                  enabled: "false"
                 - name: local-path
                   path: argocd/applications/local-path
                   namespace: local-path-storage
                   annotations:
                     argocd.argoproj.io/sync-wave: "-1"
                   automation: manual
-                  enabled: true
+                  enabled: "false"
                   clusters: ryzen
                   managedNamespaceMetadata:
                     labels:
@@ -84,21 +84,21 @@ spec:
                   annotations:
                     argocd.argoproj.io/sync-wave: "0"
                   automation: auto
-                  enabled: true
+                  enabled: "false"
                 - name: tailscale
                   path: argocd/applications/tailscale
                   namespace: tailscale
                   annotations:
                     argocd.argoproj.io/sync-wave: "0"
                   automation: auto
-                  enabled: true
+                  enabled: "false"
                 - name: registry
                   path: argocd/applications/registry
                   namespace: registry
                   annotations:
                     argocd.argoproj.io/sync-wave: "1"
                   automation: manual
-                  enabled: true
+                  enabled: "false"
             selector:
               matchExpressions:
                 - key: enabled

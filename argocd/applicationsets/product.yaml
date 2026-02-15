@@ -23,7 +23,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
-                enabled: true
+                enabled: "false"
               - name: app
                 path: argocd/applications/app
                 namespace: app
@@ -31,7 +31,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
-                enabled: true
+                enabled: "false"
               - name: cms
                 path: argocd/applications/cms
                 namespace: cms
@@ -39,7 +39,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
-                enabled: true
+                enabled: "false"
               - name: docs
                 path: argocd/applications/docs
                 namespace: docs
@@ -47,7 +47,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
-                enabled: true
+                enabled: "false"
               - name: homepage
                 path: argocd/applications/homepage
                 namespace: homepage
@@ -55,7 +55,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
-                enabled: true
+                enabled: "false"
               - name: discourse
                 path: argocd/applications/discourse
                 namespace: discourse
@@ -63,7 +63,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: manual
-                enabled: true
+                enabled: "false"
               - name: kitty-krew
                 path: argocd/applications/kitty-krew
                 namespace: kitty-krew
@@ -71,7 +71,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
-                enabled: false
+                enabled: "false"
               - name: reviseur
                 path: argocd/applications/reviseur
                 namespace: reviseur
@@ -79,7 +79,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
-                enabled: false
+                enabled: "false"
               - name: prt
                 path: argocd/applications/prt
                 namespace: prt
@@ -87,63 +87,63 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
-                enabled: false
+                enabled: "false"
               - name: ecran
                 path: argocd/applications/ecran
                 namespace: ecran
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
-                enabled: false
+                enabled: "false"
               - name: eclair
                 path: argocd/applications/eclair
                 namespace: eclair
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
-                enabled: false
+                enabled: "false"
               - name: jangar
                 path: argocd/applications/jangar
                 namespace: jangar
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: manual
-                enabled: true
+                enabled: "false"
               - name: agents
                 path: argocd/applications/agents
                 namespace: agents
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: manual
-                enabled: true
+                enabled: "false"
               - name: agents-ci
                 path: argocd/applications/agents-ci
                 namespace: agents-ci
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
-                enabled: false
+                enabled: "false"
               - name: bumba
                 path: argocd/applications/bumba
                 namespace: jangar
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: manual
-                enabled: true
+                enabled: "false"
               - name: oirat
                 path: argocd/applications/oirat
                 namespace: oirat
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: manual
-                enabled: true
+                enabled: "false"
               - name: galette
                 path: argocd/applications/galette
                 namespace: galette
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
-                enabled: false
+                enabled: "false"
               - name: facteur
                 path: argocd/applications/facteur
                 namespace: facteur
@@ -163,7 +163,7 @@ spec:
                       - /spec/template/spec/containers/0/readinessProbe
                       - /spec/template/spec/enableServiceLinks
                 automation: manual
-                enabled: true
+                enabled: "false"
               - name: golink
                 path: argocd/applications/golink
                 namespace: golink
@@ -183,7 +183,7 @@ spec:
                       - /spec/template/spec/containers/0/readinessProbe
                       - /spec/template/spec/enableServiceLinks
                 automation: manual
-                enabled: true
+                enabled: "false"
               - name: torghut
                 path: argocd/applications/torghut
                 namespace: torghut
@@ -204,14 +204,14 @@ spec:
                       - /spec/template/spec/containers/0/readinessProbe
                       - /spec/template/spec/enableServiceLinks
                 automation: manual
-                enabled: true
+                enabled: "false"
               - name: miel
                 path: argocd/applications/miel
                 namespace: miel
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
-                enabled: false
+                enabled: "false"
               - name: dernier
                 path: argocd/applications/dernier
                 namespace: dernier
@@ -219,7 +219,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: manual
-                enabled: true
+                enabled: "false"
               - name: froussard
                 path: argocd/applications/froussard
                 namespace: froussard
@@ -238,7 +238,7 @@ spec:
                       - /spec/template/spec/containers/0/ports/0/protocol
                       - /spec/template/spec/containers/0/resources
                 automation: manual
-                enabled: true
+                enabled: "false"
             selector:
               matchExpressions:
                 - key: enabled

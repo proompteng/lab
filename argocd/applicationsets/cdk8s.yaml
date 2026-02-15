@@ -23,7 +23,7 @@ spec:
                   image: registry.ide-newton.ts.net/lab/bonjour@sha256:8b1ebac20afc95edaf794f52648fb33eff4ef85e6b4e0250cde2ff98af1a298b
                   replicas: 1
                   automation: manual
-                  enabled: true
+                  enabled: "false"
                   annotations:
                     argocd.argoproj.io/sync-wave: "6"
             selector:

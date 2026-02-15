@@ -4,6 +4,9 @@ This runbook is for the Ryzen Talos node booted from USB at `192.168.1.194`.
 It keeps the setup reproducible by using the patches in `devices/ryzen/manifests`
 plus the existing Talos/KubeVirt docs in this repo.
 
+Cluster inventory / current state:
+- `devices/galactic/README.md`
+
 ## Manifest inventory (ryzen)
 
 Node-level patches:
@@ -37,16 +40,19 @@ These files are gitignored on purpose:
 - `devices/ryzen/worker.yaml`
 - `devices/ryzen/talosconfig`
 
-Generate configs with the node endpoint. Confirm the install disk (likely
-`/dev/nvme0n1` on the 2TB NVMe) before running.
+Generate configs with the cluster endpoint. For this lab, the endpoint is the
+NUC HAProxy load balancer on the LAN:
+
+- `devices/nuc/k8s-api-lb/README.md`
+
+Confirm the install disk (likely `/dev/nvme0n1` on the 2TB NVMe) before running.
 
 ```bash
-# Example for a single-node controlplane endpoint
-# (adjust the endpoint if you use a load balancer)
+# Example using the NUC load balancer endpoint.
 
 export TALOSCONFIG=$PWD/devices/ryzen/talosconfig
 
-talosctl gen config ryzen https://192.168.1.194:6443 \
+talosctl gen config ryzen https://192.168.1.130:6443 \
   --output-dir devices/ryzen \
   --install-disk /dev/nvme0n1
 ```
@@ -236,20 +242,23 @@ talosctl bootstrap -n 192.168.1.194
 Wait for Kubernetes API to become available, then merge kubeconfig.
 
 ```bash
-talosctl kubeconfig -n 192.168.1.194 -e 192.168.1.194 --force --context ryzen ~/.kube/config
+talosctl kubeconfig -n 192.168.1.194 -e 192.168.1.194 \
+  --force \
+  --force-context-name galactic \
+  ~/.kube/config
 ```
 
-### 3.1 Kubeconfig context name (ensure it is `ryzen`)
+### 3.1 Kubeconfig context name (ensure it is `galactic`)
 
 The Talos-generated kubeconfig can create the context as `admin@ryzen`.
-We want the context name to be exactly `ryzen`.
+We want the context name to be exactly `galactic`.
 
 ```bash
-# If Talos created admin@ryzen, rename it to ryzen
-kubectl config rename-context admin@ryzen ryzen || true
+# If Talos created admin@ryzen, rename it to galactic
+kubectl config rename-context admin@ryzen galactic || true
 
-# Ensure the active context is ryzen
-kubectl config use-context ryzen
+# Ensure the active context is galactic
+kubectl config use-context galactic
 kubectl config get-contexts
 ```
 
