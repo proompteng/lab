@@ -1,0 +1,6 @@
+machine:
+  network:
+    nameservers:
+      - 100.100.100.100
+      - 192.168.1.130
+

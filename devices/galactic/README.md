@@ -20,3 +20,12 @@ Related:
 - Ampone join: `devices/ampone/docs/cluster-bootstrap.md`
 - Altra join: `devices/altra/docs/cluster-bootstrap.md`
 
+## Tailscale
+
+We run Tailscale on the Talos nodes via `ExtensionServiceConfig` (one per node):
+- Templates live in `devices/*/manifests/tailscale-extension-service.template.yaml`.
+- Rendered files (containing the auth key) are gitignored:
+  - `devices/*/manifests/tailscale-extension-service.yaml`
+
+Runbook:
+- `devices/galactic/docs/tailscale.md`

@@ -26,6 +26,14 @@ kubectl --context ryzen apply -f devices/ryzen/manifests/k8s/amdgpu-device-plugi
 kubectl --context ryzen apply -f devices/ryzen/manifests/k8s/amdgpu-device-labeller.yaml
 ```
 
+These DaemonSets are gated behind an explicit node label so they don't
+CrashLoop on nodes without the `amdgpu` kernel driver loaded:
+
+```bash
+# Enable on the intended GPU node only.
+kubectl --context ryzen label node <node-name> lab.proompteng.ai/amdgpu=true
+```
+
 ## Verify
 
 ```bash
@@ -49,6 +57,100 @@ Expected:
   `talosctl get extensions -n 192.168.1.194 -e 192.168.1.194`.
 - Confirm kernel args are present:
   `talosctl read -n 192.168.1.194 -e 192.168.1.194 /proc/cmdline`.
+
+## Fix: GPU present but `amdgpu` driver not loaded (Talos)
+
+Symptom:
+- `amdgpu-labeller-daemonset` CrashLoopBackOff with `amdgpu driver unavailable`
+- `/sys/module/amdgpu` missing on the host
+- Node has no `amd.com/gpu` capacity
+
+Cause:
+- On Talos, GPU drivers come from **system extensions** which only take effect
+  on **install/upgrade**. Having a Kubernetes DaemonSet is not enough.
+
+Procedure (Talos v1.12.4, non-deprecated boot-assets workflow):
+
+1. Generate an Image Factory schematic that includes `siderolabs/amdgpu` and
+   `siderolabs/amd-ucode` (we keep the schematic source in-repo):
+
+   - `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml`
+
+   ```bash
+   curl -sS -X POST --data-binary @devices/ryzen/manifests/ryzen-tailscale-schematic.yaml \\
+     https://factory.talos.dev/schematics | jq -r .id
+   ```
+
+2. Patch the node to use the generated installer image.
+
+   Note: do **not** use the deprecated `.machine.install.extensions` API. The
+   Image Factory installer image embeds the required extensions.
+
+   ```bash
+   SCHEMATIC_ID=<id-from-step-1>
+
+   cat > /tmp/ryzen-installer-image.patch.yaml <<EOF
+   machine:
+     install:
+       image: factory.talos.dev/metal-installer/${SCHEMATIC_ID}:v1.12.4
+   EOF
+
+   talosctl patch machineconfig -n 192.168.1.194 -e 192.168.1.194 \\
+     --patch @/tmp/ryzen-installer-image.patch.yaml --mode=no-reboot
+   ```
+
+3. If the node has stale deprecated fields from older configs, remove them via
+   JSON patch (this does not require a reboot):
+
+   ```bash
+   cat > /tmp/ryzen-remove-install-extensions.jsonpatch.yaml <<'EOF'
+   - op: remove
+     path: /machine/install/extensions
+   EOF
+
+   cat > /tmp/ryzen-remove-install-extra-kernel-args.jsonpatch.yaml <<'EOF'
+   - op: remove
+     path: /machine/install/extraKernelArgs
+   EOF
+
+   talosctl patch machineconfig -n 192.168.1.194 -e 192.168.1.194 \\
+     --patch @/tmp/ryzen-remove-install-extensions.jsonpatch.yaml --mode=no-reboot
+
+   talosctl patch machineconfig -n 192.168.1.194 -e 192.168.1.194 \\
+     --patch @/tmp/ryzen-remove-install-extra-kernel-args.jsonpatch.yaml --mode=no-reboot
+   ```
+
+   We keep kernel args in the Image Factory schematic, not in machine config.
+
+4. Upgrade the node using the custom installer image (this reboots the node):
+
+   ```bash
+   talosctl upgrade -n 192.168.1.194 -e 192.168.1.194 \\
+     --image factory.talos.dev/metal-installer/${SCHEMATIC_ID}:v1.12.4
+   ```
+
+5. Verify the OS-level driver is active:
+
+   ```bash
+   talosctl get extensions -n 192.168.1.194 -e 192.168.1.194
+   talosctl read -n 192.168.1.194 -e 192.168.1.194 /proc/modules | rg '^amdgpu\\b'
+   ```
+
+6. Enable the Kubernetes DaemonSets on the intended GPU node:
+
+   These manifests are gated behind `lab.proompteng.ai/amdgpu=true` so they
+   don't CrashLoop on nodes without the driver.
+
+   ```bash
+   kubectl label node <node-name> lab.proompteng.ai/amdgpu=true
+   ```
+
+7. Verify Kubernetes sees the GPU:
+
+   ```bash
+   kubectl describe node <node-name> | rg -i 'amd.com/gpu'
+   kubectl get node <node-name> -o json | jq -r '.status.capacity[\"amd.com/gpu\"]'
+   ```
 
 ## Notes
 

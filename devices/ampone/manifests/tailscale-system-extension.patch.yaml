@@ -1,0 +1,7 @@
+machine:
+  install:
+    # System extensions are only activated during install/upgrade.
+    # See: https://www.talos.dev/latest/talos-guides/configuration/system-extensions/
+    extensions:
+      - image: ghcr.io/siderolabs/tailscale:1.94.1@sha256:cd53cd514a7686babdea47ba4784a8c97cecec535003f4aa3d3e526689333a09
+

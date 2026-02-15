@@ -54,6 +54,7 @@ devices/altra/controlplane.yaml
 devices/altra/worker.yaml
 devices/altra/talosconfig
 devices/altra/node-machineconfig.yaml
+devices/altra/manifests/tailscale-extension-service.yaml
 **/charts/*.tgz
 **/generated/*
 **/_generated/

@@ -15,6 +15,7 @@ spec:
       restartPolicy: Always
       nodeSelector:
         kubernetes.io/arch: amd64
+        lab.proompteng.ai/amdgpu: "true"
       priorityClassName: system-node-critical
       tolerations:
       - key: CriticalAddonsOnly
