@@ -101,3 +101,4 @@ argocd admin initial-password -n argocd
    - `argocd/applicationsets/README.md`
 1. Install stage-based ApplicationSets once the prerequisites (CRDs, MetalLB, etc.) are in place:
    - `argocd/applicationsets/bootstrap.yaml`
+1. If you reference Tailscale-only hostnames (for example `registry.ide-newton.ts.net`) in Kubernetes image references, install node-level Tailscale first: `devices/galactic/docs/tailscale.md`.
