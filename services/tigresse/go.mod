@@ -1,6 +1,6 @@
 module github.com/proompteng/lab/services/tigresse
 
-go 1.24.1
+go 1.25.5
 
 require (
 	k8s.io/api v0.30.3

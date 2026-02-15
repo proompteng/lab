@@ -1,6 +1,6 @@
 module github.com/proompteng/lab/services/miel
 
-go 1.24.1
+go 1.25.5
 
 require (
 	github.com/alpacahq/alpaca-trade-api-go/v3 v3.9.0

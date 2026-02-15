@@ -1,6 +1,6 @@
 module github.com/proompteng/lab/services/prt
 
-go 1.24.1
+go 1.25.5
 
 require github.com/gin-gonic/gin v1.10.0
 

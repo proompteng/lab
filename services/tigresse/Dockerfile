@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 
-ARG GO_VERSION=1.24.1
+ARG GO_VERSION=1.25.5
 
 FROM golang:${GO_VERSION} AS builder
 WORKDIR /workspace
