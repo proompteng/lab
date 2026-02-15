@@ -83,7 +83,7 @@ spec:
                   annotations:
                     argocd.argoproj.io/sync-wave: "0"
                   automation: auto
-                  enabled: "false"
+                  enabled: "true"
                 - name: traefik
                   path: argocd/applications/traefik
                   namespace: traefik
@@ -137,53 +137,53 @@ spec:
       annotations:
     {{- range $key, $value := .annotations }}
         {{ $key }}: {{ $value | quote }}
-      {{- end }}
-      {{- end }}
-        {{- $hasDestServer := hasKey . "destinationServer" -}}
-        {{- $hasDestName := hasKey . "destinationName" -}}
-        {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
-        {{- $auto := eq .automation "auto" -}}
-        {{- $hasManagedNS := hasKey . "managedNamespaceMetadata" -}}
-        {{- $deps := list -}}
-        {{- $crds := list -}}
-        {{- if hasKey . "dependsOnApps" -}}
-        {{- $deps = .dependsOnApps -}}
-        {{- end -}}
-        {{- if hasKey . "requiresCrds" -}}
-        {{- $crds = .requiresCrds -}}
-        {{- end -}}
+    {{- end }}
+    {{- end }}
+    {{- $hasDestServer := hasKey . "destinationServer" -}}
+    {{- $hasDestName := hasKey . "destinationName" -}}
+    {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
+    {{- $auto := eq .automation "auto" -}}
+    {{- $hasManagedNS := hasKey . "managedNamespaceMetadata" -}}
+    {{- $deps := list -}}
+    {{- $crds := list -}}
+    {{- if hasKey . "dependsOnApps" -}}
+    {{- $deps = .dependsOnApps -}}
+    {{- end -}}
+    {{- if hasKey . "requiresCrds" -}}
+    {{- $crds = .requiresCrds -}}
+    {{- end -}}
 
-        {{- $hasInfo := or (gt (len $deps) 0) (gt (len $crds) 0) -}}
-        {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasManagedNS $hasInfo (hasKey . "ignoreDifferences") -}}
-        {{- if $needsSpec }}
-      spec:
-        {{- if or $hasDestServer $hasDestName }}
-        destination:
-          {{- if $hasDestServer }}
-          server: '{{ .destinationServer }}'
-          {{- end }}
-          {{- if $hasDestName }}
-          name: '{{ .destinationName }}'
-          {{- end }}
+    {{- $hasInfo := or (gt (len $deps) 0) (gt (len $crds) 0) -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasManagedNS $hasInfo (hasKey . "ignoreDifferences") -}}
+    {{- if $needsSpec }}
+    spec:
+      {{- if or $hasDestServer $hasDestName }}
+      destination:
+        {{- if $hasDestServer }}
+        server: '{{ .destinationServer }}'
         {{- end }}
-        {{- if $hasInfo }}
-        info:
-          {{- if gt (len $deps) 0 }}
-          - name: Depends On (Argo apps)
-            value: '{{ join ", " $deps }}'
-          {{- end }}
-          {{- if gt (len $crds) 0 }}
-          - name: Requires CRDs
-            value: '{{ join ", " $crds }}'
-          {{- end }}
+        {{- if $hasDestName }}
+        name: '{{ .destinationName }}'
         {{- end }}
-        {{- if $useLovely }}
-        source:
-          plugin:
-            name: lovely
+      {{- end }}
+      {{- if $hasInfo }}
+      info:
+        {{- if gt (len $deps) 0 }}
+        - name: Depends On (Argo apps)
+          value: '{{ join ", " $deps }}'
         {{- end }}
-        {{- if or $auto $hasManagedNS }}
-        syncPolicy:
+        {{- if gt (len $crds) 0 }}
+        - name: Requires CRDs
+          value: '{{ join ", " $crds }}'
+        {{- end }}
+      {{- end }}
+      {{- if $useLovely }}
+      source:
+        plugin:
+          name: lovely
+      {{- end }}
+      {{- if or $auto $hasManagedNS }}
+      syncPolicy:
         {{- if $auto }}
         automated:
           prune: true
@@ -205,7 +205,7 @@ spec:
           {{- end }}
         {{- end }}
       {{- end }}
-        {{- if hasKey . "ignoreDifferences" }}
-        ignoreDifferences: {{ toJson .ignoreDifferences }}
-        {{- end }}
+      {{- if hasKey . "ignoreDifferences" }}
+      ignoreDifferences: {{ toJson .ignoreDifferences }}
       {{- end }}
+    {{- end }}
