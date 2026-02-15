@@ -24,6 +24,9 @@ cephClusterSpec:
 
   dataDirHostPath: /var/lib/rook
 
+  cleanupPolicy:
+    wipeDevicesFromOtherClusters: true
+
   mon:
     count: 3
     allowMultiplePerNode: false
@@ -74,10 +77,6 @@ cephClusterSpec:
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA12R7C
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LKW9
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0HS7E
-          # Use the full 4TB NVMe as its own (fast) OSD.
-          # Talos install disk on this node is /dev/nvme0n1 (CT4000P3PSSD8_2441...); do not touch it.
-          # Storage SSD is /dev/nvme1n1, exposed as by-id nvme-CT4000P3PSSD8_2402E88D0863.
-          - name: /dev/disk/by-id/nvme-CT4000P3PSSD8_2402E88D0863
       - name: talos-192-168-1-202
         devices:
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0NL5D
