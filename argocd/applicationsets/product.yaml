@@ -266,57 +266,57 @@ spec:
       annotations:
     {{- range $key, $value := .annotations }}
         {{ $key }}: {{ $value | quote }}
-      {{- end }}
-      {{- end }}
-        {{- $hasDestServer := hasKey . "destinationServer" -}}
-        {{- $hasDestName := hasKey . "destinationName" -}}
-        {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
-        {{- $auto := eq .automation "auto" -}}
-        {{- $deps := list -}}
-        {{- $crds := list -}}
-        {{- if hasKey . "dependsOnApps" -}}
-        {{- $deps = .dependsOnApps -}}
-        {{- end -}}
-        {{- if hasKey . "requiresCrds" -}}
-        {{- $crds = .requiresCrds -}}
-        {{- end -}}
+    {{- end }}
+    {{- end }}
+    {{- $hasDestServer := hasKey . "destinationServer" -}}
+    {{- $hasDestName := hasKey . "destinationName" -}}
+    {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
+    {{- $auto := eq .automation "auto" -}}
+    {{- $deps := list -}}
+    {{- $crds := list -}}
+    {{- if hasKey . "dependsOnApps" -}}
+    {{- $deps = .dependsOnApps -}}
+    {{- end -}}
+    {{- if hasKey . "requiresCrds" -}}
+    {{- $crds = .requiresCrds -}}
+    {{- end -}}
 
-      {{- $hasInfo := or (gt (len $deps) 0) (gt (len $crds) 0) -}}
-      {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasInfo (hasKey . "ignoreDifferences") -}}
-      {{- if $needsSpec }}
-      spec:
-        {{- if or $hasDestServer $hasDestName }}
-        destination:
-          {{- if $hasDestServer }}
-          server: '{{ .destinationServer }}'
-          {{- end }}
-          {{- if $hasDestName }}
-          name: '{{ .destinationName }}'
-          {{- end }}
+    {{- $hasInfo := or (gt (len $deps) 0) (gt (len $crds) 0) -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasInfo (hasKey . "ignoreDifferences") -}}
+    {{- if $needsSpec }}
+    spec:
+      {{- if or $hasDestServer $hasDestName }}
+      destination:
+        {{- if $hasDestServer }}
+        server: '{{ .destinationServer }}'
         {{- end }}
-        {{- if $hasInfo }}
-        info:
-          {{- if gt (len $deps) 0 }}
-          - name: Depends On (Argo apps)
-            value: '{{ join ", " $deps }}'
-          {{- end }}
-          {{- if gt (len $crds) 0 }}
-          - name: Requires CRDs
-            value: '{{ join ", " $crds }}'
-          {{- end }}
-        {{- end }}
-        {{- if $useLovely }}
-        source:
-          plugin:
-            name: lovely
-        {{- end }}
-          {{- if $auto }}
-          syncPolicy:
-            automated:
-              prune: true
-              selfHeal: true
-          {{- end }}
-        {{- if hasKey . "ignoreDifferences" }}
-        ignoreDifferences: {{ toJson .ignoreDifferences }}
+        {{- if $hasDestName }}
+        name: '{{ .destinationName }}'
         {{- end }}
       {{- end }}
+      {{- if $hasInfo }}
+      info:
+        {{- if gt (len $deps) 0 }}
+        - name: Depends On (Argo apps)
+          value: '{{ join ", " $deps }}'
+        {{- end }}
+        {{- if gt (len $crds) 0 }}
+        - name: Requires CRDs
+          value: '{{ join ", " $crds }}'
+        {{- end }}
+      {{- end }}
+      {{- if $useLovely }}
+      source:
+        plugin:
+          name: lovely
+      {{- end }}
+      {{- if $auto }}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+      {{- end }}
+      {{- if hasKey . "ignoreDifferences" }}
+      ignoreDifferences: {{ toJson .ignoreDifferences }}
+      {{- end }}
+    {{- end }}
