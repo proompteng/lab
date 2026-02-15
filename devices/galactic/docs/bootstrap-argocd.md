@@ -42,6 +42,25 @@ Verify:
 kubectl get crd applicationsets.argoproj.io
 ```
 
+## Install Traefik CRDs (required by this repo's Argo CD manifests)
+
+This repo's Argo CD install includes `IngressRoute` resources (Traefik CRDs):
+- `argocd/applications/argocd/base/ingressroute.yaml`
+
+On a fresh cluster, applying `argocd/applications/argocd` will fail until the Traefik CRDs exist.
+
+Install the CRDs (pinned to the chart version we deploy):
+
+```bash
+kubectl apply --server-side --force-conflicts -k https://github.com/traefik/traefik-helm-chart/traefik/crds/?ref=v39.0.1
+```
+
+Verify:
+
+```bash
+kubectl get crd ingressroutes.traefik.io
+```
+
 ## Deploy Argo CD
 
 Apply the repo-managed Argo CD manifests:
@@ -82,4 +101,3 @@ argocd admin initial-password -n argocd
    - `argocd/applicationsets/README.md`
 1. Install stage-based ApplicationSets once the prerequisites (CRDs, MetalLB, etc.) are in place:
    - `argocd/applicationsets/bootstrap.yaml`
-

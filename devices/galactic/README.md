@@ -22,6 +22,7 @@ Related:
 - Ryzen bootstrap: `devices/ryzen/docs/cluster-bootstrap.md`
 - Ampone join: `devices/ampone/docs/cluster-bootstrap.md`
 - Altra join: `devices/altra/docs/cluster-bootstrap.md`
+ - Ingress controller (Traefik): `argocd/applications/traefik`
 
 ## Tailscale
 

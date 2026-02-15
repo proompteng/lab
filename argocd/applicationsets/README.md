@@ -34,6 +34,22 @@ kubectl -n metallb-system rollout status deploy/controller --timeout=180s
 kubectl -n metallb-system rollout status ds/speaker --timeout=300s
 ```
 
+## Traefik (IngressRoute CRDs)
+
+This repo uses Traefik `IngressRoute` resources (`apiVersion: traefik.io/v1alpha1`) in multiple apps, including the Argo CD install:
+- `argocd/applications/argocd/base/ingressroute.yaml`
+
+On a brand new cluster, install Traefik's CRDs before applying `argocd/applications/argocd`:
+
+```bash
+kubectl apply --server-side --force-conflicts -k https://github.com/traefik/traefik-helm-chart/traefik/crds/?ref=v39.0.1
+kubectl get crd ingressroutes.traefik.io
+```
+
+Traefik itself is managed as an Argo CD Application:
+- `argocd/applications/traefik`
+- enabled by default in `argocd/applicationsets/bootstrap.yaml`
+
 ## Deploy Argo CD itself
 
 ## Install the ApplicationSet CRD (avoid `annotations too long`)
