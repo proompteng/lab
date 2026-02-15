@@ -85,6 +85,13 @@ spec:
                     argocd.argoproj.io/sync-wave: "0"
                   automation: auto
                   enabled: "false"
+                - name: traefik
+                  path: argocd/applications/traefik
+                  namespace: traefik
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "1"
+                  automation: auto
+                  enabled: "true"
                 - name: tailscale
                   path: argocd/applications/tailscale
                   namespace: tailscale
