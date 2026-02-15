@@ -87,10 +87,6 @@ spec:
                 - name: traefik
                   path: argocd/applications/traefik
                   namespace: traefik
-                  dependsOnApps:
-                    - metallb-system
-                  requiresCrds:
-                    - traefik.io
                   annotations:
                     argocd.argoproj.io/sync-wave: "1"
                   automation: auto
@@ -144,17 +140,7 @@ spec:
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
     {{- $auto := eq .automation "auto" -}}
     {{- $hasManagedNS := hasKey . "managedNamespaceMetadata" -}}
-    {{- $deps := list -}}
-    {{- $crds := list -}}
-    {{- if hasKey . "dependsOnApps" -}}
-    {{- $deps = .dependsOnApps -}}
-    {{- end -}}
-    {{- if hasKey . "requiresCrds" -}}
-    {{- $crds = .requiresCrds -}}
-    {{- end -}}
-
-    {{- $hasInfo := or (gt (len $deps) 0) (gt (len $crds) 0) -}}
-    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasManagedNS $hasInfo (hasKey . "ignoreDifferences") -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasManagedNS (hasKey . "ignoreDifferences") -}}
     {{- if $needsSpec }}
     spec:
     {{- if or $hasDestServer $hasDestName }}
@@ -165,17 +151,6 @@ spec:
       {{- end }}
       {{- if $hasDestName }}
         name: '{{ .destinationName }}'
-      {{- end }}
-    {{- end }}
-    {{- if $hasInfo }}
-      info:
-      {{- if gt (len $deps) 0 }}
-        - name: Depends On (Argo apps)
-          value: '{{ join ", " $deps }}'
-      {{- end }}
-      {{- if gt (len $crds) 0 }}
-        - name: Requires CRDs
-          value: '{{ join ", " $crds }}'
       {{- end }}
     {{- end }}
     {{- if $useLovely }}

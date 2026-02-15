@@ -94,8 +94,6 @@ spec:
               - name: istio-ingress
                 path: argocd/applications/istio-ingress
                 namespace: istio-ingress
-                dependsOnApps:
-                  - istio-system
                 annotations:
                   argocd.argoproj.io/sync-wave: "1"
                 automation: auto
@@ -110,8 +108,6 @@ spec:
               - name: knative-serving
                 path: argocd/applications/knative-serving
                 namespace: knative-serving
-                dependsOnApps:
-                  - knative
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: auto
@@ -119,8 +115,6 @@ spec:
               - name: knative-eventing
                 path: argocd/applications/knative-eventing
                 namespace: knative-eventing
-                dependsOnApps:
-                  - knative
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: auto
@@ -465,17 +459,7 @@ spec:
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
     {{- $auto := eq .automation "auto" -}}
     {{- $hasManagedNS := hasKey . "managedNamespaceMetadata" -}}
-    {{- $deps := list -}}
-    {{- $crds := list -}}
-    {{- if hasKey . "dependsOnApps" -}}
-    {{- $deps = .dependsOnApps -}}
-    {{- end -}}
-    {{- if hasKey . "requiresCrds" -}}
-    {{- $crds = .requiresCrds -}}
-    {{- end -}}
-
-    {{- $hasInfo := or (gt (len $deps) 0) (gt (len $crds) 0) -}}
-    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasManagedNS $hasInfo (hasKey . "ignoreDifferences") -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasManagedNS (hasKey . "ignoreDifferences") -}}
         {{- if $needsSpec }}
         spec:
           {{- if or $hasDestServer $hasDestName }}
@@ -486,17 +470,6 @@ spec:
             {{- end }}
             {{- if $hasDestName }}
             name: '{{ .destinationName }}'
-        {{- end }}
-      {{- end }}
-      {{- if $hasInfo }}
-      info:
-        {{- if gt (len $deps) 0 }}
-        - name: Depends On (Argo apps)
-          value: '{{ join ", " $deps }}'
-        {{- end }}
-        {{- if gt (len $crds) 0 }}
-        - name: Requires CRDs
-          value: '{{ join ", " $crds }}'
         {{- end }}
       {{- end }}
       {{- if $useLovely }}
