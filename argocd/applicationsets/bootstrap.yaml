@@ -29,7 +29,7 @@ spec:
                   annotations:
                     argocd.argoproj.io/sync-wave: "-2"
                   automation: auto
-                  enabled: "false"
+                  enabled: "true"
                 - name: cert-manager
                   path: argocd/applications/cert-manager
                   namespace: cert-manager
