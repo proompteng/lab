@@ -476,8 +476,8 @@ spec:
 
     {{- $hasInfo := or (gt (len $deps) 0) (gt (len $crds) 0) -}}
     {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasManagedNS $hasInfo (hasKey . "ignoreDifferences") -}}
-{{- if $needsSpec }}
-spec:
+    {{- if $needsSpec }}
+    spec:
   {{- if or $hasDestServer $hasDestName }}
   destination:
     namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
@@ -530,4 +530,4 @@ spec:
   {{- if hasKey . "ignoreDifferences" }}
   ignoreDifferences: {{ toJson .ignoreDifferences }}
   {{- end }}
-{{- end }}
+    {{- end }}

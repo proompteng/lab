@@ -77,8 +77,8 @@ spec:
 
     {{- $hasInfo := or (gt (len $deps) 0) (gt (len $crds) 0) -}}
     {{- $needsSpec := or $hasDestServer $hasDestName $auto $hasInfo -}}
-{{- if $needsSpec }}
-spec:
+    {{- if $needsSpec }}
+    spec:
   {{- if or $hasDestServer $hasDestName }}
   destination:
     namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
@@ -106,4 +106,4 @@ spec:
       prune: true
       selfHeal: true
   {{- end }}
-{{- end }}
+    {{- end }}

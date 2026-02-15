@@ -59,8 +59,8 @@ spec:
 
     {{- $hasInfo := or (gt (len $deps) 0) (gt (len $crds) 0) -}}
     {{- $needsSpec := or $hasDestServer $hasDestName $hasValuesObject $hasInfo -}}
-{{- if $needsSpec }}
-spec:
+    {{- if $needsSpec }}
+    spec:
   {{- if or $hasDestServer $hasDestName }}
   destination:
     namespace: "{{.namespace}}"
@@ -87,4 +87,4 @@ spec:
     helm:
       valuesObject: {{- .valuesObject | toYaml | nindent 12 }}
   {{- end }}
-{{- end }}
+    {{- end }}
