@@ -87,6 +87,10 @@ spec:
                 - name: traefik
                   path: argocd/applications/traefik
                   namespace: traefik
+                  dependsOnApps:
+                    - metallb-system
+                  requiresCrds:
+                    - traefik.io
                   annotations:
                     argocd.argoproj.io/sync-wave: "1"
                   automation: auto
@@ -135,58 +139,23 @@ spec:
         {{ $key }}: {{ $value | quote }}
       {{- end }}
       {{- end }}
-      {{- $hasDestServer := hasKey . "destinationServer" -}}
-      {{- $hasDestName := hasKey . "destinationName" -}}
-      {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
-      {{- $auto := eq .automation "auto" -}}
-      {{- $hasManagedNS := hasKey . "managedNamespaceMetadata" -}}
-      {{- $hasAppName := hasKey . "name" -}}
-      {{- $deps := list -}}
-      {{- $crds := list -}}
-      {{- $appsSealedSecret := list "app" "arc" "argo-workflows" "argocd" "cloudflare" "cms" "coder" "convex" "dagster" "dernier" "discourse" "ecran" "facteur" "froussard" "graf" "headlamp" "jangar" "keycloak" "miel" "milvus" "minio" "nats" "observability" "oirat" "pgadmin" "reviseur" "rook-ceph" "tailscale" "torghut" -}}
-      {{- $appsIngressRoute := list "app" "argo-workflows" "argocd" "backstage" "cms" "convex" "discourse" "docs" "ecran" "graf" "keycloak" "proompteng" "reviseur" "traefik" -}}
-      {{- $appsLoadBalancer := list "agents" "convex" "dagster" "facteur" "golink" "graf" "homepage" "jangar" "kafka" "milvus" "minio" "observability" "pgadmin" "registry" "temporal" "torghut" "traefik" -}}
-      {{- $appsCnpg := list "app" "cms" "coder" "convex" "dernier" "discourse" "ecran" "facteur" "golink" "jangar" "keycloak" "torghut" -}}
-      {{- $appsIstio := list "istio-ingress" "istio-system" -}}
-      {{- $appsKnative := list "dernier" "facteur" "froussard" "galette" "golink" "graf" "jangar" "prt" "registry" "torghut" "traefik" -}}
-      {{- $appsKubevirt := list "kubevirt" "workers" -}}
-      {{- $appsCdi := list -}}
+        {{- $hasDestServer := hasKey . "destinationServer" -}}
+        {{- $hasDestName := hasKey . "destinationName" -}}
+        {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
+        {{- $auto := eq .automation "auto" -}}
+        {{- $hasManagedNS := hasKey . "managedNamespaceMetadata" -}}
+        {{- $deps := list -}}
+        {{- $crds := list -}}
+        {{- if hasKey . "dependsOnApps" -}}
+        {{- $deps = .dependsOnApps -}}
+        {{- end -}}
+        {{- if hasKey . "requiresCrds" -}}
+        {{- $crds = .requiresCrds -}}
+        {{- end -}}
 
-      {{- if and $hasAppName (has .name $appsSealedSecret) -}}
-      {{- $deps = append $deps "sealed-secrets" -}}
-      {{- $crds = append $crds "sealedsecrets.bitnami.com" -}}
-      {{- end -}}
-      {{- if and $hasAppName (has .name $appsIngressRoute) -}}
-      {{- $deps = append $deps "traefik" -}}
-      {{- $crds = append $crds "traefik.io" -}}
-      {{- end -}}
-      {{- if and $hasAppName (has .name $appsLoadBalancer) -}}
-      {{- $deps = append $deps "metallb-system" -}}
-      {{- end -}}
-      {{- if and $hasAppName (has .name $appsCnpg) -}}
-      {{- $deps = append $deps "cloudnative-pg" -}}
-      {{- $crds = append $crds "postgresql.cnpg.io" -}}
-      {{- end -}}
-      {{- if and $hasAppName (has .name $appsIstio) -}}
-      {{- $crds = append $crds "networking.istio.io" -}}
-      {{- $crds = append $crds "security.istio.io" -}}
-      {{- end -}}
-      {{- if and $hasAppName (has .name $appsKnative) -}}
-      {{- $deps = append $deps "knative-serving" -}}
-      {{- $crds = append $crds "serving.knative.dev" -}}
-      {{- end -}}
-      {{- if and $hasAppName (has .name $appsKubevirt) -}}
-      {{- $deps = append $deps "kubevirt" -}}
-      {{- $crds = append $crds "kubevirt.io" -}}
-      {{- end -}}
-      {{- if and $hasAppName (has .name $appsCdi) -}}
-      {{- $deps = append $deps "cdi" -}}
-      {{- $crds = append $crds "cdi.kubevirt.io" -}}
-      {{- end -}}
-
-      {{- $hasInfo := or (gt (len $deps) 0) (gt (len $crds) 0) -}}
-      {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasManagedNS $hasInfo (hasKey . "ignoreDifferences") -}}
-      {{- if $needsSpec }}
+        {{- $hasInfo := or (gt (len $deps) 0) (gt (len $crds) 0) -}}
+        {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasManagedNS $hasInfo (hasKey . "ignoreDifferences") -}}
+        {{- if $needsSpec }}
       spec:
         {{- if or $hasDestServer $hasDestName }}
         destination:
