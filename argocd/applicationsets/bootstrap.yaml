@@ -103,8 +103,8 @@ spec:
                   namespace: registry
                   annotations:
                     argocd.argoproj.io/sync-wave: "1"
-                  automation: manual
-                  enabled: "false"
+                  automation: auto
+                  enabled: "true"
             selector:
               matchExpressions:
                 - key: enabled
