@@ -58,13 +58,13 @@ spec:
                       nameRegex: '.*cert-manager.io'
                       jqPathExpressions:
                         - .spec.caBundle
-                - name: longhorn
-                  path: argocd/applications/longhorn
-                  namespace: longhorn-system
+                - name: rook-ceph
+                  path: argocd/applications/rook-ceph
+                  namespace: rook-ceph
                   annotations:
                     argocd.argoproj.io/sync-wave: "-1"
-                  automation: auto
-                  enabled: "false"
+                  automation: manual
+                  enabled: "true"
                 - name: local-path
                   path: argocd/applications/local-path
                   namespace: local-path-storage
@@ -155,15 +155,16 @@ spec:
 
     {{- $hasInfo := or (gt (len $deps) 0) (gt (len $crds) 0) -}}
     {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasManagedNS $hasInfo (hasKey . "ignoreDifferences") -}}
-    {{- if $needsSpec }}
-    spec:
-      {{- if or $hasDestServer $hasDestName }}
-      destination:
-        {{- if $hasDestServer }}
-        server: '{{ .destinationServer }}'
-        {{- end }}
-        {{- if $hasDestName }}
-        name: '{{ .destinationName }}'
+        {{- if $needsSpec }}
+        spec:
+          {{- if or $hasDestServer $hasDestName }}
+          destination:
+            namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+            {{- if $hasDestServer }}
+            server: '{{ .destinationServer }}'
+            {{- end }}
+            {{- if $hasDestName }}
+            name: '{{ .destinationName }}'
         {{- end }}
       {{- end }}
       {{- if $hasInfo }}

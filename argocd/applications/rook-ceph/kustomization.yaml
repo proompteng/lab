@@ -4,6 +4,7 @@ namespace: rook-ceph
 
 resources:
   - object-users.yaml
+  - storageclasses.yaml
 
 helmCharts:
   - name: rook-ceph

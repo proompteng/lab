@@ -37,7 +37,7 @@ spec:
                 storageClassName:
                   type: string
                   nullable: true
-                  default: longhorn
+                  default: rook-ceph-block
                 storageSize:
                   type: string
             status:

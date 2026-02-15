@@ -5,7 +5,7 @@ persistentVolumeClaim:
   accessModes:
     - ReadWriteOnce
   size: 1Gi
-  storageClassName: longhorn
+  storageClassName: rook-ceph-block
 podSecurityContext:
   fsGroup: 101
 volumeMounts:

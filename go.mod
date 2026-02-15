@@ -1,6 +1,6 @@
 module github.com/proompteng/lab
 
-go 1.24.1
+go 1.25.5
 
 // Local development overrides
 replace github.com/proompteng/lab/services/prt => ./services/prt

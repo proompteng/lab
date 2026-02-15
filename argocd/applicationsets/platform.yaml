@@ -37,13 +37,6 @@ spec:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
                 enabled: "false"
-              - name: rook-ceph
-                path: argocd/applications/rook-ceph
-                namespace: rook-ceph
-                annotations:
-                  argocd.argoproj.io/sync-wave: "-1"
-                automation: manual
-                enabled: "false"
               - name: kubevirt
                 path: argocd/applications/kubevirt
                 namespace: kubevirt
@@ -483,15 +476,16 @@ spec:
 
     {{- $hasInfo := or (gt (len $deps) 0) (gt (len $crds) 0) -}}
     {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasManagedNS $hasInfo (hasKey . "ignoreDifferences") -}}
-    {{- if $needsSpec }}
-    spec:
-      {{- if or $hasDestServer $hasDestName }}
-      destination:
-        {{- if $hasDestServer }}
-        server: '{{ .destinationServer }}'
-        {{- end }}
-        {{- if $hasDestName }}
-        name: '{{ .destinationName }}'
+        {{- if $needsSpec }}
+        spec:
+          {{- if or $hasDestServer $hasDestName }}
+          destination:
+            namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+            {{- if $hasDestServer }}
+            server: '{{ .destinationServer }}'
+            {{- end }}
+            {{- if $hasDestName }}
+            name: '{{ .destinationName }}'
         {{- end }}
       {{- end }}
       {{- if $hasInfo }}

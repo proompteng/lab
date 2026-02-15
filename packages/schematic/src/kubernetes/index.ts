@@ -209,7 +209,7 @@ spec:
         resources:
           requests:
             storage: 5Gi
-        storageClassName: longhorn
+        storageClassName: rook-ceph-block
 `
 
 export {

@@ -6,7 +6,7 @@ spec:
   instances: 1
   primaryUpdateStrategy: unsupervised
   storage:
-    storageClass: longhorn
+    storageClass: rook-ceph-block
     size: 5Gi
   bootstrap:
     initdb:

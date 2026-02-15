@@ -77,15 +77,16 @@ spec:
 
     {{- $hasInfo := or (gt (len $deps) 0) (gt (len $crds) 0) -}}
     {{- $needsSpec := or $hasDestServer $hasDestName $auto $hasInfo -}}
-    {{- if $needsSpec }}
-    spec:
-      {{- if or $hasDestServer $hasDestName }}
-      destination:
-        {{- if $hasDestServer }}
-        server: '{{ .destinationServer }}'
-        {{- end }}
-        {{- if $hasDestName }}
-        name: '{{ .destinationName }}'
+        {{- if $needsSpec }}
+        spec:
+          {{- if or $hasDestServer $hasDestName }}
+          destination:
+            namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+            {{- if $hasDestServer }}
+            server: '{{ .destinationServer }}'
+            {{- end }}
+            {{- if $hasDestName }}
+            name: '{{ .destinationName }}'
         {{- end }}
       {{- end }}
       {{- if $hasInfo }}

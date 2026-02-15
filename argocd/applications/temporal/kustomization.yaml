@@ -30,7 +30,7 @@ helmCharts:
           resources:
             requests:
               storage: 5Gi
-          storageClassName: longhorn
+          storageClassName: rook-ceph-block
       schema:
         createDatabase:
           enabled: false

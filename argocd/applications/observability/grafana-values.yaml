@@ -13,7 +13,7 @@ service:
   loadBalancerClass: tailscale
 persistence:
   enabled: true
-  storageClassName: longhorn
+  storageClassName: rook-ceph-block
   size: 10Gi
 datasources:
   datasources.yaml:

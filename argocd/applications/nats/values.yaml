@@ -11,7 +11,7 @@ config:
       pvc:
         enabled: true
         size: 20Gi
-        storageClassName: longhorn
+        storageClassName: rook-ceph-block
       maxSize: 20Gi
   merge:
     http_port: 8222

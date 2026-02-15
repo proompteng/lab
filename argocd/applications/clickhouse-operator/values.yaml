@@ -106,7 +106,7 @@ configs:
                       resources:
                         requests:
                           storage: 200Gi
-                      storageClassName: longhorn
+                      storageClassName: rook-ceph-block
         defaults:
           templates:
             podTemplate: chi-default
@@ -157,7 +157,7 @@ configs:
                       resources:
                         requests:
                           storage: 20Gi
-                      storageClassName: longhorn
+                      storageClassName: rook-ceph-block
 additionalResources:
   - |
     apiVersion: policy/v1

@@ -38,7 +38,7 @@ compactor:
   persistence:
     enabled: true
     size: 20Gi
-    storageClass: longhorn
+    storageClass: rook-ceph-block
   extraArgs:
     - -config.expand-env=true
 
