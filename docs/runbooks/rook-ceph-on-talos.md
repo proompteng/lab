@@ -19,13 +19,17 @@ Storage OSD nodes in this configuration:
 1. `talos-192-168-1-85`
 1. `talos-192-168-1-202`
 
+Monitor placement:
+1. `talos-192-168-1-194` is included in MON placement and intentionally not assigned OSDs.
+
 ## Disks used for OSDs
 
 `talos-192-168-1-85`:
 1. `/dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA12R7C` (HDD)
 1. `/dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LKW9` (HDD)
 1. `/dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0HS7E` (HDD)
-1. `/dev/disk/by-id/nvme-CT4000P3PSSD8_2402E88D0863` (NVMe, 4TB, full data OSD)
+
+The 4TB NVMe (`nvme-CT4000P3PSSD8_2402E88D0863`, `/dev/nvme1n1`) is detected but intentionally excluded while preparing baseline OSDs due historical prepare hangs in this cluster.
 
 Talos install disk on `talos-192-168-1-85`:
 1. `/dev/nvme0n1` (do not use for Ceph)
@@ -75,4 +79,3 @@ kubectl -n rook-ceph get pods
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd tree
 ```
-
