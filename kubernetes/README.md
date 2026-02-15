@@ -1,5 +1,15 @@
 # Kubernetes installation
 
+## Talos-based cluster (galactic)
+
+The current home lab Kubernetes cluster is Talos-based and documented under `devices/galactic`.
+
+Start here:
+1. `devices/galactic/README.md`
+1. `devices/galactic/docs/bootstrap-argocd.md`
+1. `devices/galactic/docs/tailscale.md` (required if you reference `*.ts.net` registries in image references)
+1. `docs/runbooks/rook-ceph-on-talos.md`
+
 ## Install k3sup
 
 ```bash
