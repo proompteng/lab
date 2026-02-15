@@ -1,5 +1,10 @@
 # Harvester → K8s Ceph JBOD Wiring (Jan 12, 2026)
 
+This document is Harvester/KubeVirt-specific and is not the current Ceph wiring for the Talos-based `galactic` cluster.
+
+For the Talos/Rook-Ceph setup, see:
+1. `docs/runbooks/rook-ceph-on-talos.md`
+
 ## Goal
 Expose six 24 TB SAS JBOD disks on host `altra` to three KubeVirt worker VMs (kube-worker-10/11/12) for Rook-Ceph OSDs, without relying on PCI passthrough of the SAS3008 HBA.
 

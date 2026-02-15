@@ -7,7 +7,7 @@ volumes:
   data:
     mode: dynamic
     dynamic:
-      storageClassName: longhorn
+      storageClassName: rook-ceph-block
       accessModes:
         - ReadWriteOnce
       requests:

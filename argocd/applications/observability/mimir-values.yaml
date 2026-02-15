@@ -74,7 +74,7 @@ ingester:
   persistentVolume:
     enabled: true
     size: 20Gi
-    storageClass: longhorn
+    storageClass: rook-ceph-block
 
 querier:
   replicas: 1
@@ -126,14 +126,14 @@ store_gateway:
   persistentVolume:
     enabled: true
     size: 20Gi
-    storageClass: longhorn
+    storageClass: rook-ceph-block
 
 compactor:
   replicas: 1
   persistentVolume:
     enabled: true
     size: 20Gi
-    storageClass: longhorn
+    storageClass: rook-ceph-block
 
 alertmanager:
   replicas: 1
@@ -141,7 +141,7 @@ alertmanager:
     enabled: false
   persistence:
     enabled: true
-    storageClass: longhorn
+    storageClass: rook-ceph-block
     size: 5Gi
 
 minio:

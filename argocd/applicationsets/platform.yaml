@@ -37,13 +37,6 @@ spec:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
                 enabled: "false"
-              - name: rook-ceph
-                path: argocd/applications/rook-ceph
-                namespace: rook-ceph
-                annotations:
-                  argocd.argoproj.io/sync-wave: "-1"
-                automation: manual
-                enabled: "false"
               - name: kubevirt
                 path: argocd/applications/kubevirt
                 namespace: kubevirt

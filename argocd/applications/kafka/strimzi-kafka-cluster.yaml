@@ -42,7 +42,7 @@ spec:
     type: persistent-claim
     size: 8Gi
     deleteClaim: false
-    class: longhorn
+    class: rook-ceph-block
 ---
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaUser

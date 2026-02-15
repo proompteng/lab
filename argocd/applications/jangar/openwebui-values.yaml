@@ -85,5 +85,5 @@ logging:
     main: debug
 
 persistence:
-  storageClass: longhorn
+  storageClass: rook-ceph-block
   size: 5Gi

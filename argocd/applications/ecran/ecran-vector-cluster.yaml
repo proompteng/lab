@@ -15,7 +15,7 @@ spec:
       cpu: "2"
       memory: "1Gi"
   storage:
-    storageClass: longhorn
+    storageClass: rook-ceph-block
     size: 20Gi
   bootstrap:
     initdb:

@@ -58,12 +58,12 @@ spec:
                       nameRegex: '.*cert-manager.io'
                       jqPathExpressions:
                         - .spec.caBundle
-                - name: longhorn
-                  path: argocd/applications/longhorn
-                  namespace: longhorn-system
+                - name: rook-ceph
+                  path: argocd/applications/rook-ceph
+                  namespace: rook-ceph
                   annotations:
                     argocd.argoproj.io/sync-wave: "-1"
-                  automation: auto
+                  automation: manual
                   enabled: "false"
                 - name: local-path
                   path: argocd/applications/local-path

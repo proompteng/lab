@@ -8,5 +8,5 @@ spec:
   resources:
     requests:
       storage: 10Gi
-  storageClassName: longhorn
+  storageClassName: rook-ceph-block
 # TODO: switch to S3-backed uploads if desired (set DISCOURSE_S3_* envs and remove this PVC).

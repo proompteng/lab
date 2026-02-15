@@ -24,7 +24,7 @@ loki:
     persistence:
       enabled: true
       size: 20Gi
-      storageClass: longhorn
+      storageClass: rook-ceph-block
   ingester:
     replicas: 2
     persistence:
@@ -32,20 +32,20 @@ loki:
       claims:
         - name: data
           size: 20Gi
-          storageClass: longhorn
+          storageClass: rook-ceph-block
   querier:
     replicas: 1
     persistence:
       enabled: true
       size: 10Gi
-      storageClass: longhorn
+      storageClass: rook-ceph-block
   ruler:
     enabled: true
     kind: StatefulSet
     persistence:
       enabled: true
       size: 5Gi
-      storageClass: longhorn
+      storageClass: rook-ceph-block
 
 distributor:
   extraArgs:

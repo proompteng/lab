@@ -55,18 +55,19 @@ cephClusterSpec:
     useAllDevices: false
     deviceFilter: ""
     nodes:
-      - name: kube-worker-10
+      - name: talos-192-168-1-85
         devices:
-          - name: sda
-          - name: sdb
-      - name: kube-worker-11
+          - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA12R7C
+          - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LKW9
+          - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0HS7E
+          # Use the full 4TB NVMe as its own (fast) OSD.
+          # Talos install disk on this node is /dev/nvme0n1; do not touch it.
+          - name: /dev/disk/by-id/nvme-CT4000P3PSSD8_2402E88D0863
+      - name: talos-192-168-1-202
         devices:
-          - name: sdc
-          - name: sdd
-      - name: kube-worker-12
-        devices:
-          - name: sde
-          - name: sdf
+          - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0NL5D
+          - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0MZ1M
+          - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LVM9
     config:
       databaseSizeMB: "2048"
 
@@ -89,11 +90,11 @@ cephObjectStores:
       metadataPool:
         failureDomain: host
         replicated:
-          size: 3
+          size: 2
       dataPool:
         failureDomain: host
         replicated:
-          size: 3
+          size: 2
         parameters:
           bulk: "true"
       preservePoolsOnDelete: true

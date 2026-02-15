@@ -108,7 +108,7 @@ spec:
           resources:
             requests:
               storage: 50Gi
-          storageClassName: longhorn
+          storageClassName: rook-ceph-block
   defaults:
     templates:
       podTemplate: chi-default
