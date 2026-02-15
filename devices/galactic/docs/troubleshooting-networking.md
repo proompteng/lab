@@ -4,6 +4,31 @@ This cluster uses flannel in VXLAN mode. If VXLAN forwarding breaks, pods on one
 
 This often shows up during bootstrap because Argo CD depends on cross-node networking (repo-server <-> redis-ha-haproxy <-> redis/sentinel, dex <-> server, etc.).
 
+## Troubleshooting: MetalLB L2 VIP does not answer ARP
+
+If a `Service` is `type: LoadBalancer`, shows an `EXTERNAL-IP`, but nothing on your LAN can reach it (often `arp -a` shows `(incomplete)` or connections hang), the VIP may not be getting advertised at L2.
+
+### Symptom
+
+1. `kubectl get svc -A` shows `EXTERNAL-IP` (example: `192.168.1.100`).
+1. Clients on the same subnet fail to ARP for the VIP (no ARP reply), so `curl https://<vip>` / `nc -vz <vip> 443` fail.
+
+### Cause (Talos default node label)
+
+Talos commonly sets the node label `node.kubernetes.io/exclude-from-external-load-balancers` on control-plane nodes.
+
+MetalLB treats nodes with that label as ineligible for external load balancers, so speakers will not advertise VIPs from those nodes.
+
+### Fix
+
+1. Remove the label from the nodes which should participate in external LBs:
+
+```bash
+kubectl label node <node-name> node.kubernetes.io/exclude-from-external-load-balancers-
+```
+
+2. Make it permanent by removing the label from the Talos machine config (for example in `devices/*/controlplane.yaml`) so it doesn't return after a reboot.
+
 ## Symptoms
 
 1. `argocd-repo-server` CrashLoopBackOff due to liveness/readiness probe failures on `:8084/healthz`.
@@ -69,4 +94,3 @@ kubectl -n kube-system exec kube-flannel-XXXX -c kube-flannel -- nc -vz -w 2 <co
 ```
 
 Once cross-node networking is back, Argo CD redis HA init and repo-server probes should stabilize without further action.
-
