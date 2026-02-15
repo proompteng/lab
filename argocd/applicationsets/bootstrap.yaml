@@ -101,7 +101,7 @@ spec:
                   annotations:
                     argocd.argoproj.io/sync-wave: "0"
                   automation: auto
-                  enabled: "false"
+                  enabled: "true"
                 - name: registry
                   path: argocd/applications/registry
                   namespace: registry
