@@ -66,17 +66,7 @@ spec:
     {{- $hasDestServer := hasKey . "destinationServer" -}}
     {{- $hasDestName := hasKey . "destinationName" -}}
     {{- $auto := eq .automation "auto" -}}
-    {{- $deps := list -}}
-    {{- $crds := list -}}
-    {{- if hasKey . "dependsOnApps" -}}
-    {{- $deps = .dependsOnApps -}}
-    {{- end -}}
-    {{- if hasKey . "requiresCrds" -}}
-    {{- $crds = .requiresCrds -}}
-    {{- end -}}
-
-    {{- $hasInfo := or (gt (len $deps) 0) (gt (len $crds) 0) -}}
-    {{- $needsSpec := or $hasDestServer $hasDestName $auto $hasInfo -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $auto -}}
         {{- if $needsSpec }}
         spec:
           {{- if or $hasDestServer $hasDestName }}
@@ -87,17 +77,6 @@ spec:
             {{- end }}
             {{- if $hasDestName }}
             name: '{{ .destinationName }}'
-        {{- end }}
-      {{- end }}
-      {{- if $hasInfo }}
-      info:
-        {{- if gt (len $deps) 0 }}
-        - name: Depends On (Argo apps)
-          value: '{{ join ", " $deps }}'
-        {{- end }}
-        {{- if gt (len $crds) 0 }}
-        - name: Requires CRDs
-          value: '{{ join ", " $crds }}'
         {{- end }}
       {{- end }}
       {{- if $auto }}
