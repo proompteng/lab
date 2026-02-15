@@ -49,6 +49,11 @@ devices/ampone/worker.yaml
 devices/ampone/talosconfig
 devices/ampone/node-machineconfig.yaml
 devices/ampone/manifests/tailscale-extension-service.yaml
+devices/*/secrets.yaml
+devices/altra/controlplane.yaml
+devices/altra/worker.yaml
+devices/altra/talosconfig
+devices/altra/node-machineconfig.yaml
 **/charts/*.tgz
 **/generated/*
 **/_generated/
