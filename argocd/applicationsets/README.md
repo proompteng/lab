@@ -1,5 +1,9 @@
 # Bootstrap
 
+Prereqs:
+1. Kubernetes is up and reachable via `kubectl`.
+1. At least one node is `Ready`.
+
 Install the Argo CD CLI:
 
 ```bash
@@ -12,7 +16,17 @@ Prepare the cluster resources required by Harvester:
 k --kubeconfig ~/.kube/altra.yaml apply -f tofu/harvester/templates/
 ```
 
-Lay down MetalLB so LoadBalancer services (Traefik, registry, etc.) receive an address range:
+## MetalLB (when to install)
+
+Install MetalLB any time after the cluster is reachable, and before you sync
+any Applications that create `Service` resources of type `LoadBalancer`
+(Traefik, registry, etc.). Argo CD itself can be installed without MetalLB,
+but anything waiting on a `LoadBalancer` IP will stay pending until MetalLB is
+up.
+
+If you expose Argo CD via a `LoadBalancer` Service, install MetalLB first.
+
+Install:
 
 ```bash
 kubectl apply -k argocd/applications/metallb-system
