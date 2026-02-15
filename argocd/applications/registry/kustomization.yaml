@@ -9,9 +9,3 @@ resources:
   - registry-gc-rbac.yaml
   - registry-gc-cronjob.yaml
   - tailscale-ingress.yaml
-  - reestr-knative-service.yaml
-  - reestr-tailscale-service.yaml
-images:
-  - name: registry.ide-newton.ts.net/lab/reestr
-    newTag: "392a9c24"
-    digest: sha256:ab039b10b17fa515a96644f9f4ef79dc54249612fe4c245d92019cf7288e3521
