@@ -4,7 +4,7 @@ deployment:
 service:
   type: LoadBalancer
   annotations:
-    metallb.universe.tf/address-pool: metallb-ip-pool
+    metallb.io/address-pool: metallb-ip-pool
 
 ingressClass:
   enabled: true
@@ -14,4 +14,3 @@ ingressClass:
 providers:
   kubernetesGateway:
     enabled: false
-

@@ -4,7 +4,7 @@ metadata:
   name: graf-metallb
   namespace: graf
   annotations:
-    metallb.universe.tf/address-pool: metallb-ip-pool
+    metallb.io/address-pool: metallb-ip-pool
 spec:
   type: LoadBalancer
   selector:
