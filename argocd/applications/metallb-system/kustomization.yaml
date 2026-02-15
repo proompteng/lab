@@ -5,3 +5,8 @@ resources:
   - github.com/metallb/metallb//config/frr?ref=v0.15.2
   - ipaddresspool.yaml
   - l2advertisement.yaml
+patches:
+  - path: patches/speaker-frr-metrics-port.yaml
+    target:
+      kind: DaemonSet
+      name: speaker
