@@ -13,6 +13,9 @@ Inventory:
 
 Runbooks:
 - `devices/galactic/docs/add-control-plane-node.md`
+- `devices/galactic/docs/bootstrap-argocd.md`
+- `devices/galactic/docs/troubleshooting-networking.md`
+- `devices/galactic/docs/tailscale.md`
 
 Related:
 - NUC HAProxy config: `devices/nuc/k8s-api-lb/README.md`

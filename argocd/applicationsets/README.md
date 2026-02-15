@@ -36,6 +36,30 @@ kubectl -n metallb-system rollout status ds/speaker --timeout=300s
 
 ## Deploy Argo CD itself
 
+## Install the ApplicationSet CRD (avoid `annotations too long`)
+
+The upstream `applicationsets.argoproj.io` CRD can be large enough that `kubectl apply` fails with:
+
+`metadata.annotations: Too long: may not be more than 262144 bytes`
+
+Recommended (server-side apply):
+
+```bash
+kubectl apply --server-side -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.0/manifests/crds/applicationset-crd.yaml
+```
+
+Fallback (create-only):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.0/manifests/crds/applicationset-crd.yaml | kubectl create -f -
+```
+
+Verify:
+
+```bash
+kubectl get crd applicationsets.argoproj.io
+```
+
 Apply the Argo CD manifests with Kustomize to get the control plane and Lovely plugin online:
 
 ```bash
