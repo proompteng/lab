@@ -77,32 +77,33 @@ spec:
 
     {{- $hasInfo := or (gt (len $deps) 0) (gt (len $crds) 0) -}}
     {{- $needsSpec := or $hasDestServer $hasDestName $auto $hasInfo -}}
-    {{- if $needsSpec }}
-    spec:
-      {{- if or $hasDestServer $hasDestName }}
-      destination:
-        {{- if $hasDestServer }}
-        server: '{{ .destinationServer }}'
-        {{- end }}
-        {{- if $hasDestName }}
-        name: '{{ .destinationName }}'
-        {{- end }}
-      {{- end }}
-      {{- if $hasInfo }}
-      info:
-        {{- if gt (len $deps) 0 }}
-        - name: Depends On (Argo apps)
-          value: '{{ join ", " $deps }}'
-        {{- end }}
-        {{- if gt (len $crds) 0 }}
-        - name: Requires CRDs
-          value: '{{ join ", " $crds }}'
-        {{- end }}
-      {{- end }}
-      {{- if $auto }}
-      syncPolicy:
-        automated:
-          prune: true
-          selfHeal: true
-      {{- end }}
+{{- if $needsSpec }}
+spec:
+  {{- if or $hasDestServer $hasDestName }}
+  destination:
+    namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+    {{- if $hasDestServer }}
+    server: '{{ .destinationServer }}'
     {{- end }}
+    {{- if $hasDestName }}
+    name: '{{ .destinationName }}'
+    {{- end }}
+  {{- end }}
+  {{- if $hasInfo }}
+  info:
+    {{- if gt (len $deps) 0 }}
+    - name: Depends On (Argo apps)
+      value: '{{ join ", " $deps }}'
+    {{- end }}
+    {{- if gt (len $crds) 0 }}
+    - name: Requires CRDs
+      value: '{{ join ", " $crds }}'
+    {{- end }}
+  {{- end }}
+  {{- if $auto }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+  {{- end }}
+{{- end }}
