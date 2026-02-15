@@ -102,6 +102,11 @@ Output:
 
 ## Merge Guidelines
 - Use squash merges for pull requests.
+- Always create new work branches from a fresh `main`:
+  - `git fetch origin main`
+  - `git switch main`
+  - `git pull --ff-only`
+  - `git switch -c <branch>`
 - Use `gh pr merge 2202 --squash -R proompteng/lab` (no `--delete-branch`; avoids worktree checkout conflicts).
 
 ## CI/CD
