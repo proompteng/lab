@@ -4,7 +4,7 @@ metadata:
   name: milvus-external
   namespace: milvus
   annotations:
-    metallb.universe.tf/address-pool: default
+    metallb.io/address-pool: default
 spec:
   type: LoadBalancer
   ports:
@@ -23,7 +23,7 @@ metadata:
   name: attu-external
   namespace: milvus
   annotations:
-    metallb.universe.tf/address-pool: default
+    metallb.io/address-pool: default
 spec:
   type: LoadBalancer
   ports:

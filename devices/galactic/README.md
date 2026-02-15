@@ -13,12 +13,16 @@ Inventory:
 
 Runbooks:
 - `devices/galactic/docs/add-control-plane-node.md`
+- `devices/galactic/docs/bootstrap-argocd.md`
+- `devices/galactic/docs/troubleshooting-networking.md`
+- `devices/galactic/docs/tailscale.md`
 
 Related:
 - NUC HAProxy config: `devices/nuc/k8s-api-lb/README.md`
 - Ryzen bootstrap: `devices/ryzen/docs/cluster-bootstrap.md`
 - Ampone join: `devices/ampone/docs/cluster-bootstrap.md`
 - Altra join: `devices/altra/docs/cluster-bootstrap.md`
+ - Ingress controller (Traefik): `argocd/applications/traefik`
 
 ## Tailscale
 

@@ -72,7 +72,6 @@ spec:
                     argocd.argoproj.io/sync-wave: "-1"
                   automation: manual
                   enabled: "false"
-                  clusters: ryzen
                   managedNamespaceMetadata:
                     labels:
                       pod-security.kubernetes.io/enforce: privileged
@@ -85,6 +84,13 @@ spec:
                     argocd.argoproj.io/sync-wave: "0"
                   automation: auto
                   enabled: "false"
+                - name: traefik
+                  path: argocd/applications/traefik
+                  namespace: traefik
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "1"
+                  automation: auto
+                  enabled: "true"
                 - name: tailscale
                   path: argocd/applications/tailscale
                   namespace: tailscale
@@ -104,42 +110,6 @@ spec:
                 - key: enabled
                   operator: NotIn
                   values: ["false", "False", "0"]
-                - key: clusters
-                  operator: DoesNotExist
-    - matrix:
-        generators:
-          - list:
-              elements: &bootstrap_clusters_in
-                - cluster: in-cluster
-                  suffix: ""
-                  destinationServer: https://kubernetes.default.svc
-          - list:
-              elements: *bootstrap_elements
-            selector:
-              matchExpressions:
-                - key: enabled
-                  operator: NotIn
-                  values: ["false", "False", "0"]
-                - key: clusters
-                  operator: In
-                  values: ["in-cluster", "all"]
-    - matrix:
-        generators:
-          - list:
-              elements: &bootstrap_clusters_ryzen
-                - cluster: ryzen
-                  suffix: "-ryzen"
-                  destinationName: ryzen
-          - list:
-              elements: *bootstrap_elements
-            selector:
-              matchExpressions:
-                - key: enabled
-                  operator: NotIn
-                  values: ["false", "False", "0"]
-                - key: clusters
-                  operator: In
-                  values: ["ryzen", "all"]
   template:
     metadata:
       name: '{{ .name }}{{ .suffix }}'

@@ -10,8 +10,14 @@ spec:
           # Choose your image here - see https://github.com/crumbhole/argocd-lovely-plugin/blob/main/doc/variations.md
           image: ghcr.io/crumbhole/lovely:1.2.2
           securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
             runAsNonRoot: true
             runAsUser: 999
+            seccompProfile:
+              type: RuntimeDefault
           volumeMounts:
             # Import the repo-server's plugin binary
             - mountPath: /var/run/argocd

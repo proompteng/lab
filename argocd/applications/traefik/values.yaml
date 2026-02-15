@@ -1,0 +1,16 @@
+deployment:
+  replicas: 2
+
+service:
+  type: LoadBalancer
+  annotations:
+    metallb.io/address-pool: metallb-ip-pool
+
+ingressClass:
+  enabled: true
+  isDefaultClass: true
+  name: traefik
+
+providers:
+  kubernetesGateway:
+    enabled: false
