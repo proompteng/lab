@@ -37,13 +37,6 @@ spec:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
                 enabled: "false"
-              - name: rook-ceph
-                path: argocd/applications/rook-ceph
-                namespace: rook-ceph
-                annotations:
-                  argocd.argoproj.io/sync-wave: "-1"
-                automation: manual
-                enabled: "false"
               - name: kubevirt
                 path: argocd/applications/kubevirt
                 namespace: kubevirt
@@ -483,57 +476,58 @@ spec:
 
     {{- $hasInfo := or (gt (len $deps) 0) (gt (len $crds) 0) -}}
     {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasManagedNS $hasInfo (hasKey . "ignoreDifferences") -}}
-    {{- if $needsSpec }}
-    spec:
-      {{- if or $hasDestServer $hasDestName }}
-      destination:
-        {{- if $hasDestServer }}
-        server: '{{ .destinationServer }}'
-        {{- end }}
-        {{- if $hasDestName }}
-        name: '{{ .destinationName }}'
-        {{- end }}
-      {{- end }}
-      {{- if $hasInfo }}
-      info:
-        {{- if gt (len $deps) 0 }}
-        - name: Depends On (Argo apps)
-          value: '{{ join ", " $deps }}'
-        {{- end }}
-        {{- if gt (len $crds) 0 }}
-        - name: Requires CRDs
-          value: '{{ join ", " $crds }}'
-        {{- end }}
-      {{- end }}
-      {{- if $useLovely }}
-      source:
-        plugin:
-          name: lovely
-      {{- end }}
-      {{- if or $auto $hasManagedNS }}
-      syncPolicy:
-        {{- if $auto }}
-        automated:
-          prune: true
-          selfHeal: true
-        {{- end }}
-        {{- if $hasManagedNS }}
-        managedNamespaceMetadata:
-          {{- if hasKey .managedNamespaceMetadata "labels" }}
-          labels:
-            {{- range $key, $value := .managedNamespaceMetadata.labels }}
-            {{ $key }}: {{ $value | quote }}
-            {{- end }}
-          {{- end }}
-          {{- if hasKey .managedNamespaceMetadata "annotations" }}
-          annotations:
-            {{- range $key, $value := .managedNamespaceMetadata.annotations }}
-            {{ $key }}: {{ $value | quote }}
-            {{- end }}
-          {{- end }}
+{{- if $needsSpec }}
+spec:
+  {{- if or $hasDestServer $hasDestName }}
+  destination:
+    namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+    {{- if $hasDestServer }}
+    server: '{{ .destinationServer }}'
+    {{- end }}
+    {{- if $hasDestName }}
+    name: '{{ .destinationName }}'
+    {{- end }}
+  {{- end }}
+  {{- if $hasInfo }}
+  info:
+    {{- if gt (len $deps) 0 }}
+    - name: Depends On (Argo apps)
+      value: '{{ join ", " $deps }}'
+    {{- end }}
+    {{- if gt (len $crds) 0 }}
+    - name: Requires CRDs
+      value: '{{ join ", " $crds }}'
+    {{- end }}
+  {{- end }}
+  {{- if $useLovely }}
+  source:
+    plugin:
+      name: lovely
+  {{- end }}
+  {{- if or $auto $hasManagedNS }}
+  syncPolicy:
+    {{- if $auto }}
+    automated:
+      prune: true
+      selfHeal: true
+    {{- end }}
+    {{- if $hasManagedNS }}
+    managedNamespaceMetadata:
+      {{- if hasKey .managedNamespaceMetadata "labels" }}
+      labels:
+        {{- range $key, $value := .managedNamespaceMetadata.labels }}
+        {{ $key }}: {{ $value | quote }}
         {{- end }}
       {{- end }}
-      {{- if hasKey . "ignoreDifferences" }}
-      ignoreDifferences: {{ toJson .ignoreDifferences }}
+      {{- if hasKey .managedNamespaceMetadata "annotations" }}
+      annotations:
+        {{- range $key, $value := .managedNamespaceMetadata.annotations }}
+        {{ $key }}: {{ $value | quote }}
+        {{- end }}
       {{- end }}
     {{- end }}
+  {{- end }}
+  {{- if hasKey . "ignoreDifferences" }}
+  ignoreDifferences: {{ toJson .ignoreDifferences }}
+  {{- end }}
+{{- end }}
