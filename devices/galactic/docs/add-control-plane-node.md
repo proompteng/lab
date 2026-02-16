@@ -6,7 +6,7 @@ node to the existing cluster.
 Assumptions:
 - Existing control planes are healthy and reachable:
   - `ryzen` (`192.168.1.194`)
-  - `ampone` (`192.168.1.202`)
+  - `ampone` (`192.168.1.203`)
 - NUC HAProxy endpoint is up: `https://192.168.1.130:6443`
 - The new node is booted into Talos maintenance mode and you know its LAN IP.
 
@@ -40,7 +40,7 @@ talosctl patch machineconfig -n 192.168.1.194 -e 192.168.1.194 \
   --patch @devices/ryzen/manifests/controlplane-endpoint-nuc.patch.yaml \
   --mode=no-reboot
 
-talosctl patch machineconfig -n 192.168.1.202 -e 192.168.1.202 \
+talosctl patch machineconfig -n 192.168.1.203 -e 192.168.1.203 \
   --patch @devices/ampone/manifests/controlplane-endpoint-nuc.patch.yaml \
   --mode=no-reboot
 ```
@@ -99,8 +99,8 @@ Important:
 Keep Talos defaults pointing at all control planes:
 
 ```bash
-talosctl config endpoint 192.168.1.194 192.168.1.202 <new_ip_after_install>
-talosctl config node 192.168.1.194 192.168.1.202 <new_ip_after_install>
+talosctl config endpoint 192.168.1.194 192.168.1.203 <new_ip_after_install>
+talosctl config node 192.168.1.194 192.168.1.203 <new_ip_after_install>
 ```
 
 ## 5) Validate
@@ -113,4 +113,3 @@ kubectl get nodes -o wide
 talosctl health -n 192.168.1.194 -e 192.168.1.194
 talosctl etcd members -n 192.168.1.194 -e 192.168.1.194
 ```
-

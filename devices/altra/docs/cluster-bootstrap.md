@@ -15,7 +15,7 @@ Assumptions:
 
 Current inventory:
 - `ryzen`: `192.168.1.194`
-- `ampone`: `192.168.1.202`
+- `ampone`: `192.168.1.203`
 - `altra`: `192.168.1.85`
 
 ## 0) Ensure the NUC load balancer includes `altra`
@@ -83,8 +83,8 @@ Note:
 ## 3) Update local Talos config to include all 3 nodes
 
 ```bash
-talosctl config endpoint 192.168.1.194 192.168.1.202 192.168.1.85
-talosctl config node 192.168.1.194 192.168.1.202 192.168.1.85
+talosctl config endpoint 192.168.1.194 192.168.1.203 192.168.1.85
+talosctl config node 192.168.1.194 192.168.1.203 192.168.1.85
 ```
 
 ## 4) Verify `altra` joined

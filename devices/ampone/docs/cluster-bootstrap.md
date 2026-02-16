@@ -16,7 +16,7 @@ Assumptions:
 
 1. In the BMC Remote KVM, mount the Talos `.iso` via "CD Image" / "Start Media".
 2. Reboot and boot from the virtual CD/DVD device (UEFI boot menu or boot override).
-3. Wait for Talos maintenance mode to come up and note the node IP (`<node_ip>`, example: `192.168.1.202`).
+3. Wait for Talos maintenance mode to come up and note the node IP (`<node_ip>`, example: `192.168.1.203`).
 
 ## 2) Generate Talos configs for the existing cluster (gitignored)
 
@@ -74,8 +74,8 @@ talosctl apply-config --insecure -n <node_ip> -e <node_ip> \
 ## 4) Verify join
 
 ```bash
-talosctl version -n 192.168.1.202 -e 192.168.1.202
-talosctl health -n 192.168.1.202 -e 192.168.1.202
+talosctl version -n 192.168.1.203 -e 192.168.1.203
+talosctl health -n 192.168.1.203 -e 192.168.1.203
 
 talosctl etcd members -n 192.168.1.194 -e 192.168.1.194
 

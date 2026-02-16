@@ -3,7 +3,7 @@
 This directory is for the AmpereOne server ("ampone").
 
 Current BMC/IPMI: `192.168.1.224`.
-Current Talos node IP: `192.168.1.202`.
+Current Talos node IP: `192.168.1.203`.
 
 Docs:
 - `devices/ampone/docs/cluster-bootstrap.md` (Talos install/bootstrap template)
