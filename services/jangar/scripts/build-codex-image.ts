@@ -52,7 +52,7 @@ export const runBuildCodexImage = async () => {
   try {
     console.log(`Building ${imageTag} from ${dockerfile}`)
     process.chdir(repoDir)
-    await $`docker build -f ${dockerfile} --build-arg CODEX_AUTH_CHECKSUM=${checksum} --secret id=codexauth,src=${codexAuthPath} --secret id=codex_config,src=${codexConfigPath} -t ${imageTag} ${contextDir}`
+    await $`docker build -f ${dockerfile} --build-arg CODEX_AUTH_CHECKSUM=${checksum} --secret id=codex_auth,src=${codexAuthPath} --secret id=codex_config,src=${codexConfigPath} -t ${imageTag} ${contextDir}`
 
     console.log(`Pushing ${imageTag}`)
     await $`docker push ${imageTag}`
