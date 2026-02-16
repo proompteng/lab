@@ -11,7 +11,7 @@ spec:
     method: token
     token:
       secretRef:
-        name: codex-github-token
+        name: github-token
         key: token
   repositoryPolicy:
     allow:
