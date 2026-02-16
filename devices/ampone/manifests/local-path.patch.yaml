@@ -1,0 +1,11 @@
+apiVersion: v1alpha1
+kind: UserVolumeConfig
+name: local-path-provisioner
+provisioning:
+  # `ampone` installs to `/dev/nvme0n1` (see `devices/ampone/manifests/install-nvme0n1.patch.yaml`).
+  # Size is computed as: disk - EFI - META - STATE - EPHEMERAL(200GB) - ~5GB headroom.
+  diskSelector:
+    match: disk.dev_path == '/dev/nvme0n1'
+  minSize: 3889GB
+  maxSize: 3889GB
+  grow: false

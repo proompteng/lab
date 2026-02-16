@@ -69,6 +69,8 @@ talosctl apply-config --insecure -n "$ALTRA_IP" -e "$ALTRA_IP" \
   -f devices/altra/controlplane.yaml \
   --config-patch @devices/altra/manifests/hostname.patch.yaml \
   --config-patch @devices/altra/manifests/install-nvme0n1.patch.yaml \
+  --config-patch @devices/altra/manifests/ephemeral-volume.patch.yaml \
+  --config-patch @devices/altra/manifests/local-path.patch.yaml \
   --config-patch @devices/altra/manifests/allow-scheduling-controlplane.patch.yaml \
   --config-patch @devices/altra/manifests/controlplane-endpoint-nuc.patch.yaml \
   --mode=reboot

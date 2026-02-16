@@ -1,0 +1,9 @@
+apiVersion: v1alpha1
+kind: VolumeConfig
+name: EPHEMERAL
+provisioning:
+  diskSelector:
+    match: disk.dev_path == '/dev/nvme0n1'
+  minSize: 200GB
+  maxSize: 200GB
+  grow: false
