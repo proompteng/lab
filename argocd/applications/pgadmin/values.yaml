@@ -4,9 +4,21 @@ image:
   tag: "9.11"
 
 service:
-  type: LoadBalancer
+  type: ClusterIP
+
+ingress:
+  enabled: true
+  ingressClassName: tailscale
   annotations:
-    tailscale.com/hostname: pgadmin
+    tailscale.com/tags: tag:k8s
+  hosts:
+    - host: pgadmin.ide-newton.ts.net
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts:
+        - pgadmin.ide-newton.ts.net
 
 env:
   email: greg@proompteng.ai
@@ -16,6 +28,12 @@ existingSecret: pgadmin-auth
 
 strategy:
   type: Recreate
+
+startupProbe:
+  # pgAdmin can take a while to initialize (first run + PV perms + db migrations).
+  # The chart default (60s total) is too aggressive for this cluster.
+  failureThreshold: 90
+  periodSeconds: 2
 
 persistentVolume:
   enabled: true
@@ -35,6 +53,7 @@ extraVolumes:
       sources:
         - secret:
             name: keycloak-db-app
+            optional: true
             items:
               - key: uri
                 path: keycloak-db-app/uri
@@ -42,6 +61,7 @@ extraVolumes:
                 path: keycloak-db-app/password
         - secret:
             name: coder-cluster-app
+            optional: true
             items:
               - key: uri
                 path: coder-cluster-app/uri
@@ -49,6 +69,7 @@ extraVolumes:
                 path: coder-cluster-app/password
         - secret:
             name: convex-db-app
+            optional: true
             items:
               - key: uri
                 path: convex-db-app/uri
@@ -56,6 +77,7 @@ extraVolumes:
                 path: convex-db-app/password
         - secret:
             name: cms-db-app
+            optional: true
             items:
               - key: uri
                 path: cms-db-app/uri
@@ -63,6 +85,7 @@ extraVolumes:
                 path: cms-db-app/password
         - secret:
             name: jangar-db-app
+            optional: true
             items:
               - key: uri
                 path: jangar-db-app/uri
@@ -70,6 +93,7 @@ extraVolumes:
                 path: jangar-db-app/password
         - secret:
             name: golink-db-app
+            optional: true
             items:
               - key: uri
                 path: golink-db-app/uri
@@ -77,6 +101,7 @@ extraVolumes:
                 path: golink-db-app/password
         - secret:
             name: facteur-vector-cluster-app
+            optional: true
             items:
               - key: uri
                 path: facteur-vector-cluster-app/uri
@@ -84,6 +109,7 @@ extraVolumes:
                 path: facteur-vector-cluster-app/password
         - secret:
             name: dernier-db-app
+            optional: true
             items:
               - key: uri
                 path: dernier-db-app/uri
@@ -91,6 +117,7 @@ extraVolumes:
                 path: dernier-db-app/password
         - secret:
             name: torghut-db-app
+            optional: true
             items:
               - key: uri
                 path: torghut-db-app/uri
