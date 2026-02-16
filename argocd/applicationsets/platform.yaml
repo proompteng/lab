@@ -89,6 +89,11 @@ spec:
                 namespace: istio-system
                 annotations:
                   argocd.argoproj.io/sync-wave: "0"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
                 automation: auto
                 enabled: "true"
               - name: istio-ingress
@@ -258,7 +263,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: headlamp
                 path: argocd/applications/headlamp
                 namespace: headlamp
