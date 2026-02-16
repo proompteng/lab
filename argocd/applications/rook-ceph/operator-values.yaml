@@ -37,6 +37,8 @@ csi:
   enableRBDSnapshotter: true
   enableCephfsSnapshotter: true
   enableCSIHostNetwork: true
+  # Render `CSI_FORCE_CEPHFS_KERNEL_CLIENT: "false"` (Helm `with` blocks skip boolean false).
+  forceCephFSKernelClient: "false"
   provisionerReplicas: 2
   pluginPriorityClassName: system-node-critical
   provisionerPriorityClassName: system-cluster-critical
