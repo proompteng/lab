@@ -172,7 +172,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: minio
                 path: argocd/applications/minio
                 namespace: minio

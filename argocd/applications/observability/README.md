@@ -1,56 +1,31 @@
-# Observability Object Storage Reset
+# Observability object storage (Ceph RGW)
 
-This flow refreshes the MinIO tenant credentials that back Grafana Mimir, Loki, and Tempo, reseals the secrets, and restarts the workloads so they pick up the new keys.
+Observability uses Ceph RGW object storage, not MinIO.
+Loki, Mimir, and Tempo read S3 credentials and endpoint from the reflected secret `rook-ceph-rgw-loki` in the `observability` namespace.
 
-> **Sensitive output** – several steps print newly-generated credentials. Capture them securely and rotate any external systems that depend on them.
+## Sources of truth
 
-## 1. Generate fresh secrets
+1. `argocd/applications/observability/rook-ceph-rgw-loki.yaml`
+2. `argocd/applications/observability/loki-values.yaml`
+3. `argocd/applications/observability/mimir-values.yaml`
+4. `argocd/applications/observability/tempo-values.yaml`
 
-```
-./scripts/generate-observability-minio-secrets.ts --print-values
-kubectl apply -f argocd/applications/minio/observability-minio-secret.yaml
-kubectl apply -f argocd/applications/observability/minio-secret.yaml
-```
+## Rotate RGW credentials
 
-- The Bun script emits `export MINIO_ROOT_USER=…` statements so the MinIO operator accepts the `config.env`.
-- Commit the updated SealedSecret manifests after confirming the cluster changes.
+1. Re-seal `argocd/applications/observability/rook-ceph-rgw-loki.yaml` with the active sealed-secrets key.
+2. Commit and sync `observability`.
+3. Restart components if needed:
 
-## 2. Restart the MinIO tenant
-
-```
-kubectl -n minio rollout restart statefulset observability-pool-0
-kubectl -n minio rollout status statefulset observability-pool-0
-```
-
-Wait until `observability-pool-0-*` pods report `2/2 Running`.
-
-## 3. Recreate users and buckets
-
-```
-kubectl apply -f argocd/applications/observability/minio-buckets-job.yaml
-kubectl -n observability logs job/observability-minio-buckets -f
-kubectl -n observability delete job observability-minio-buckets
+```bash
+kubectl -n observability rollout restart deploy observability-loki-loki-distributed-distributor
+kubectl -n observability rollout restart deploy observability-tempo-distributor
+kubectl -n observability rollout restart deploy observability-mimir-distributor
 ```
 
-Ensure the log shows successful creation of MinIO users (Loki, Tempo, Mimir) and buckets (loki-data, tempo-traces, mimir-*).
+## Validate
 
-## 4. Bounce the Mimir components
-
+```bash
+kubectl -n observability get secret rook-ceph-rgw-loki
+kubectl -n observability get pods
+kubectl -n argocd get app observability
 ```
-kubectl -n observability rollout restart statefulset observability-mimir-ingester
-kubectl -n observability rollout restart statefulset observability-mimir-store-gateway
-kubectl -n observability rollout restart statefulset observability-mimir-compactor
-kubectl -n observability rollout restart statefulset observability-mimir-alertmanager
-kubectl -n observability rollout restart deployment observability-mimir-distributor
-```
-
-Tail the pods until they settle on `1/1 Running` with no “Access Key Id … does not exist” errors.
-
-## 5. Sync with Argo CD
-
-```
-argocd app sync minio
-argocd app sync observability
-```
-
-That completes the rotation. Update any downstream systems (dashboards, CI jobs) with the new MinIO credentials surfaced by the generator script.

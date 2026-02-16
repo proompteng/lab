@@ -1,15 +1,30 @@
 global:
   extraEnv:
-    - name: MIMIR_S3_ACCESS_KEY_ID
+    - name: OBS_S3_ACCESS_KEY
       valueFrom:
         secretKeyRef:
-          name: observability-minio-credentials
-          key: mimirAccessKey
-    - name: MIMIR_S3_SECRET_ACCESS_KEY
+          name: rook-ceph-rgw-loki
+          key: accessKey
+    - name: OBS_S3_SECRET_KEY
       valueFrom:
         secretKeyRef:
-          name: observability-minio-credentials
-          key: mimirSecretKey
+          name: rook-ceph-rgw-loki
+          key: secretKey
+    - name: OBS_S3_ENDPOINT
+      valueFrom:
+        secretKeyRef:
+          name: rook-ceph-rgw-loki
+          key: endpoint
+    - name: OBS_S3_BUCKET
+      valueFrom:
+        secretKeyRef:
+          name: rook-ceph-rgw-loki
+          key: bucket
+    - name: OBS_S3_REGION
+      valueFrom:
+        secretKeyRef:
+          name: rook-ceph-rgw-loki
+          key: region
 
 mimir:
   structuredConfig:
@@ -21,19 +36,21 @@ mimir:
       bucket_store:
         sync_dir: /data/tsdb-sync
       s3:
-        endpoint: observability-minio.minio.svc.cluster.local:9000
-        bucket_name: mimir-blocks
-        access_key_id: ${MIMIR_S3_ACCESS_KEY_ID}
-        secret_access_key: ${MIMIR_S3_SECRET_ACCESS_KEY}
+        endpoint: ${OBS_S3_ENDPOINT}
+        bucket_name: ${OBS_S3_BUCKET}
+        access_key_id: ${OBS_S3_ACCESS_KEY}
+        secret_access_key: ${OBS_S3_SECRET_KEY}
+        region: ${OBS_S3_REGION}
         insecure: true
         bucket_lookup_type: path
     alertmanager_storage:
       backend: s3
       s3:
-        endpoint: observability-minio.minio.svc.cluster.local:9000
-        bucket_name: mimir-alertmanager
-        access_key_id: ${MIMIR_S3_ACCESS_KEY_ID}
-        secret_access_key: ${MIMIR_S3_SECRET_ACCESS_KEY}
+        endpoint: ${OBS_S3_ENDPOINT}
+        bucket_name: ${OBS_S3_BUCKET}
+        access_key_id: ${OBS_S3_ACCESS_KEY}
+        secret_access_key: ${OBS_S3_SECRET_KEY}
+        region: ${OBS_S3_REGION}
         insecure: true
         bucket_lookup_type: path
     ruler_storage:
@@ -143,9 +160,6 @@ alertmanager:
     enabled: true
     storageClass: rook-ceph-block
     size: 5Gi
-
-minio:
-  enabled: false
 
 metaMonitoring:
   dashboards:
