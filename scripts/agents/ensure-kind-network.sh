@@ -26,6 +26,22 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
+# On ARC runners, Docker-in-Docker can take a few seconds to start and create the socket.
+# Fail fast with a clear message if Docker never comes up.
+docker_wait_seconds="${DOCKER_WAIT_SECONDS:-30}"
+for _ in $(seq 1 "${docker_wait_seconds}"); do
+  if docker info >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+if ! docker info >/dev/null 2>&1; then
+  echo "Docker daemon is not reachable (DOCKER_HOST=${DOCKER_HOST:-<unset>})." >&2
+  ls -la /var/run >&2 || true
+  exit 1
+fi
+
 if docker network inspect "${NETWORK_NAME}" >/dev/null 2>&1; then
   echo "Docker network '${NETWORK_NAME}' already exists."
   exit 0
