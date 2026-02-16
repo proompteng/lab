@@ -78,36 +78,39 @@ Balanced profile (recommended for Headlamp):
 Also ensure the client has the `offline_access` scope assigned (Clients → <client> → Client scopes).
 Log out/in to Headlamp after changes so it receives a new refresh token.
 
-## Apply OIDC to the control plane (k3s)
+## Apply OIDC to the control plane (Talos)
 
 Headlamp tokens are validated by the kube-apiserver, so OIDC settings must be applied on all control-plane nodes.
 
-Playbook:
-- `ansible/playbooks/k3s-oidc.yml`
-- Writes `/etc/rancher/k3s/config.yaml.d/oidc.yaml` and restarts k3s **serially**.
-- Defaults to `remote_user: kalmyk`.
-
-Run:
+Talos patch files (cluster inventory: `devices/galactic/docs/tailscale.md`):
+- `devices/ryzen/manifests/oidc-keycloak.patch.yaml`
+- `devices/ampone/manifests/oidc-keycloak.patch.yaml`
+- `devices/altra/manifests/oidc-keycloak.patch.yaml`
 
 ```bash
-ANSIBLE_HOST_KEY_CHECKING=False \
-  ansible-playbook -i ansible/inventory/hosts.ini \
-  ansible/playbooks/k3s-oidc.yml \
-  --ssh-extra-args='-o StrictHostKeyChecking=accept-new'
+talosctl patch machineconfig -n 192.168.1.194 -e 192.168.1.194 \
+  --patch @devices/ryzen/manifests/oidc-keycloak.patch.yaml \
+  --mode=no-reboot
+
+talosctl patch machineconfig -n 192.168.1.203 -e 192.168.1.203 \
+  --patch @devices/ampone/manifests/oidc-keycloak.patch.yaml \
+  --mode=no-reboot
+
+talosctl patch machineconfig -n 192.168.1.85 -e 192.168.1.85 \
+  --patch @devices/altra/manifests/oidc-keycloak.patch.yaml \
+  --mode=no-reboot
 ```
 
-Optional overrides:
+Validate:
 
 ```bash
-ansible-playbook -i ansible/inventory/hosts.ini ansible/playbooks/k3s-oidc.yml \
-  --extra-vars 'k3s_oidc_client_id=kubernetes k3s_oidc_issuer_url=https://auth.proompteng.ai/realms/master'
+kubectl -n kube-system get pods -l component=kube-apiserver -o wide
 ```
 
 If Keycloak uses a private CA, provide:
 
-```
---extra-vars 'k3s_oidc_ca_file=/etc/ssl/certs/your-ca.pem'
-```
+Talos: mount the CA bundle into kube-apiserver via `cluster.apiServer.extraVolumes`, then set `oidc-ca-file`
+to that path in `cluster.apiServer.extraArgs`.
 
 ## RBAC (GitOps)
 
