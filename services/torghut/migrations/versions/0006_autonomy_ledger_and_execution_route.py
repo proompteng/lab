@@ -16,6 +16,17 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Alembic defaults `alembic_version.version_num` to VARCHAR(32). This repo uses
+    # descriptive revision IDs which can exceed 32 chars (e.g. this revision),
+    # so widen the column before Alembic updates it at the end of the migration.
+    op.alter_column(
+        "alembic_version",
+        "version_num",
+        type_=sa.String(length=128),
+        existing_type=sa.String(length=32),
+        existing_nullable=False,
+    )
+
     bind = op.get_bind()
     inspector = inspect(bind)
 
@@ -213,4 +224,3 @@ def downgrade() -> None:
         op.drop_column("executions", "execution_actual_adapter")
     if "execution_expected_adapter" in execution_columns:
         op.drop_column("executions", "execution_expected_adapter")
-

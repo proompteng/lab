@@ -71,6 +71,7 @@
 - Use precise code pointers (file paths, identifiers, stack traces) to narrow search.
 - Reproduce issues before changes; keep logs and failing commands.
 - Split large tasks; surface ambiguities early; use the planning tool `functions.update_plan` when appropriate.
+- For deploying services, prefer the existing typed deploy tooling under `packages/scripts/` over ad-hoc shell scripts.
 
 ## Sub-agents
 - Use sub-agents only for parallelizable work (repo discovery, grepping, reading docs, drafting focused diffs, writing test plans). Keep a single source of truth for decisions and final changes in the main agent.

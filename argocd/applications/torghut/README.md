@@ -13,7 +13,7 @@ automate via PR + Argo sync). Other docs should link here instead of duplicating
 - TA config: `ConfigMap/torghut-ta-config` (`argocd/applications/torghut/ta/configmap.yaml`)
 - Trading service: Knative `Service/torghut` (`argocd/applications/torghut/knative-service.yaml`)
 - Kafka namespace/tools: `kafka` (Strimzi); bootstrap `kafka-kafka-bootstrap.kafka:9092`
-- MinIO namespace/tools: `minio` (for Flink checkpoint/savepoint storage)
+- Ceph RGW bucket: `ObjectBucketClaim/flink-checkpoints` (for Flink checkpoint/savepoint storage)
 
 Kafka topics (v1):
 - Inputs: `torghut.trades.v1`, `torghut.quotes.v1`, `torghut.bars.1m.v1`
@@ -133,20 +133,20 @@ Before starting, get explicit human confirmation that the following are acceptab
 1) Suspend the job (same as Mode 1)
 
 2) Back up Flink state directories (so rollback is possible)
-Precheck: identify a MinIO pod (namespace `minio`) that has `mc` configured.
+Precheck: identify a pod with S3 tooling available (`aws` CLI is simplest).
 ```
-kubectl -n minio get pods
+kubectl -n torghut get pods
 ```
 
 Backup (example; use a unique prefix per replay):
 ```
-kubectl -n minio exec <minio-pod> -- mc cp -r \
-  local/flink-checkpoints/torghut/technical-analysis/checkpoints \
-  local/flink-checkpoints/torghut/technical-analysis/backup/<replay-id>/checkpoints
+kubectl -n torghut exec <pod-with-aws-cli> -- aws --endpoint-url http://rook-ceph-rgw-objectstore.rook-ceph.svc:80 s3 cp --recursive \
+  s3://flink-checkpoints/torghut/technical-analysis/checkpoints \
+  s3://flink-checkpoints/torghut/technical-analysis/backup/<replay-id>/checkpoints
 
-kubectl -n minio exec <minio-pod> -- mc cp -r \
-  local/flink-checkpoints/torghut/technical-analysis/savepoints \
-  local/flink-checkpoints/torghut/technical-analysis/backup/<replay-id>/savepoints
+kubectl -n torghut exec <pod-with-aws-cli> -- aws --endpoint-url http://rook-ceph-rgw-objectstore.rook-ceph.svc:80 s3 cp --recursive \
+  s3://flink-checkpoints/torghut/technical-analysis/savepoints \
+  s3://flink-checkpoints/torghut/technical-analysis/backup/<replay-id>/savepoints
 ```
 
 3) Drop and recreate derived output topics (Kafka namespace `kafka`)
@@ -177,11 +177,11 @@ kubectl -n kafka exec <kafka-pod> -- /opt/kafka/bin/kafka-topics.sh \
 
 4) Remove checkpoint/savepoint state directories (destructive; after backup only)
 ```
-kubectl -n minio exec <minio-pod> -- mc rm -r --force \
-  local/flink-checkpoints/torghut/technical-analysis/checkpoints
+kubectl -n torghut exec <pod-with-aws-cli> -- aws --endpoint-url http://rook-ceph-rgw-objectstore.rook-ceph.svc:80 s3 rm --recursive \
+  s3://flink-checkpoints/torghut/technical-analysis/checkpoints
 
-kubectl -n minio exec <minio-pod> -- mc rm -r --force \
-  local/flink-checkpoints/torghut/technical-analysis/savepoints
+kubectl -n torghut exec <pod-with-aws-cli> -- aws --endpoint-url http://rook-ceph-rgw-objectstore.rook-ceph.svc:80 s3 rm --recursive \
+  s3://flink-checkpoints/torghut/technical-analysis/savepoints
 ```
 
 5) Set a fresh replay consumer group and replay from the beginning (same requirement as Mode 1)
@@ -207,8 +207,8 @@ Apply via GitOps (preferred), then restart via `spec.restartNonce` bump and set 
    - Bump `spec.restartNonce` in `argocd/applications/torghut/ta/flinkdeployment.yaml` to force restart.
    - Set `spec.job.state: running` and Argo sync.
 3) If you used Mode 2 (deleted state), restore MinIO state from your backup prefix, then restart:
-   - Copy `backup/<replay-id>/checkpoints` back to `.../checkpoints`
-   - Copy `backup/<replay-id>/savepoints` back to `.../savepoints`
+   - Copy `backup/<replay-id>/checkpoints` back to `.../checkpoints` in the `flink-checkpoints` bucket
+   - Copy `backup/<replay-id>/savepoints` back to `.../savepoints` in the `flink-checkpoints` bucket
 4) Verify with the checks above before unpausing trading.
 
 If you performed destructive actions (topic deletion or ClickHouse deletion), rollback may require re-running the replay
