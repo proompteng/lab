@@ -51,7 +51,7 @@ mimir:
     ruler_storage:
       backend: local
       local:
-        directory: /etc/mimir/rules
+        directory: /data/rules
     ruler:
       # Must not overlap ruler_storage.local.directory.
       # /etc/mimir/rules is used as the read-only rule store (local backend),
