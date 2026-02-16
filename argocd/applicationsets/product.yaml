@@ -115,7 +115,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: manual
-                enabled: "false"
+                enabled: "true"
               - name: agents-ci
                 path: argocd/applications/agents-ci
                 namespace: agents-ci
@@ -285,39 +285,39 @@ spec:
     {{- if .annotations }}
     metadata:
       annotations:
-    {{- range $key, $value := .annotations }}
+      {{- range $key, $value := .annotations }}
         {{ $key }}: {{ $value | quote }}
-    {{- end }}
+      {{- end }}
     {{- end }}
     {{- $hasDestServer := hasKey . "destinationServer" -}}
     {{- $hasDestName := hasKey . "destinationName" -}}
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
     {{- $auto := eq .automation "auto" -}}
     {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto (hasKey . "ignoreDifferences") -}}
-        {{- if $needsSpec }}
-        spec:
-          {{- if or $hasDestServer $hasDestName }}
-          destination:
-            namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
-            {{- if $hasDestServer }}
-            server: '{{ .destinationServer }}'
-            {{- end }}
-            {{- if $hasDestName }}
-            name: '{{ .destinationName }}'
-        {{- end }}
+    {{- if $needsSpec }}
+    spec:
+    {{- if or $hasDestServer $hasDestName }}
+      destination:
+        namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+      {{- if $hasDestServer }}
+        server: '{{ .destinationServer }}'
       {{- end }}
-      {{- if $useLovely }}
+      {{- if $hasDestName }}
+        name: '{{ .destinationName }}'
+      {{- end }}
+    {{- end }}
+    {{- if $useLovely }}
       source:
         plugin:
           name: lovely
-      {{- end }}
-      {{- if $auto }}
+    {{- end }}
+    {{- if $auto }}
       syncPolicy:
         automated:
           prune: true
           selfHeal: true
-      {{- end }}
-      {{- if hasKey . "ignoreDifferences" }}
+    {{- end }}
+    {{- if hasKey . "ignoreDifferences" }}
       ignoreDifferences: {{ toJson .ignoreDifferences }}
-      {{- end }}
+    {{- end }}
     {{- end }}
