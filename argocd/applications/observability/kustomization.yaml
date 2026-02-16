@@ -4,8 +4,6 @@ namespace: observability
 
 resources:
   - rook-ceph-rgw-loki.yaml
-  - minio-secret.yaml
-  - minio-buckets-job.yaml
   - loki-tailscale-service.yaml
   - tempo-tailscale-service.yaml
   - mimir-tailscale-service.yaml
