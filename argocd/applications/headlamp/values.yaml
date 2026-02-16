@@ -1,5 +1,7 @@
 service:
   type: ClusterIP
+deploymentAnnotations:
+  headlamp.proompteng.ai/oidc-sealedsecret-sha: '4f3e015931e2b98851f3f9b8ad28fad04177fba38bfcf5ff7b50605726ccf8fd'
 image:
   tag: v0.40.1
 persistentVolumeClaim:
