@@ -104,7 +104,7 @@ RUN bash -lc 'source /root/.nvm/nvm.sh && npm install -g "@openai/codex@${CODEX_
 RUN mkdir -p "$WORKSPACE" /root/.codex "$BUN_INSTALL_CACHE_DIR"
 
 # Copy Codex auth secret during build (requires BuildKit secret)
-RUN --mount=type=secret,id=codexauth,target=/tmp/codex_auth.json \
+RUN --mount=type=secret,id=codex_auth,target=/tmp/codex_auth.json \
     cp /tmp/codex_auth.json /root/.codex/auth.json \
     && printf '%s\n' "${CODEX_AUTH_CHECKSUM}" > /root/.codex/auth.checksum
 
