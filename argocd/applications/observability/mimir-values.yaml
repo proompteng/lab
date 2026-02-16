@@ -15,11 +15,6 @@ global:
         secretKeyRef:
           name: rook-ceph-rgw-loki
           key: endpoint
-    - name: OBS_S3_BUCKET
-      valueFrom:
-        secretKeyRef:
-          name: rook-ceph-rgw-loki
-          key: bucket
     - name: OBS_S3_REGION
       valueFrom:
         secretKeyRef:
@@ -37,7 +32,7 @@ mimir:
         sync_dir: /data/tsdb-sync
       s3:
         endpoint: ${OBS_S3_ENDPOINT}
-        bucket_name: ${OBS_S3_BUCKET}
+        bucket_name: mimir-blocks
         access_key_id: ${OBS_S3_ACCESS_KEY}
         secret_access_key: ${OBS_S3_SECRET_KEY}
         region: ${OBS_S3_REGION}
@@ -47,7 +42,7 @@ mimir:
       backend: s3
       s3:
         endpoint: ${OBS_S3_ENDPOINT}
-        bucket_name: ${OBS_S3_BUCKET}
+        bucket_name: mimir-alertmanager
         access_key_id: ${OBS_S3_ACCESS_KEY}
         secret_access_key: ${OBS_S3_SECRET_KEY}
         region: ${OBS_S3_REGION}
@@ -104,37 +99,6 @@ query_scheduler:
 
 ruler:
   replicas: 1
-  # mimir-distributed chart uses `initContainers` (not `extraInitContainers`).
-  initContainers:
-    - name: copy-graf-rules
-      image: docker.io/library/busybox:1.36
-      imagePullPolicy: IfNotPresent
-      command:
-        - /bin/sh
-        - -c
-        - |
-          set -eu
-          rm -rf /etc/mimir/rules/*
-          mkdir -p /etc/mimir/rules/anonymous
-          # ConfigMap mounts use symlinks + timestamped dirs (..data/..2026_...).
-          # Copy dereferenced files into the tenant directory without trying to preserve ownership.
-          for f in /etc/mimir/rules-src/*.yml /etc/mimir/rules-src/*.yaml; do
-            if [ -f "$f" ]; then
-              cp -Lf "$f" /etc/mimir/rules/anonymous/
-            fi
-          done
-  extraVolumes:
-    - name: graf-mimir-rules
-      configMap:
-        name: graf-mimir-rules
-    - name: graf-mimir-rules-writable
-      emptyDir: {}
-  extraVolumeMounts:
-    - name: graf-mimir-rules
-      mountPath: /etc/mimir/rules-src
-      readOnly: true
-    - name: graf-mimir-rules-writable
-      mountPath: /etc/mimir/rules
 
 store_gateway:
   replicas: 1
