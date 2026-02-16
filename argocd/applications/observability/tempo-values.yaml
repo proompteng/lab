@@ -18,11 +18,6 @@ global:
         secretKeyRef:
           name: rook-ceph-rgw-loki
           key: endpoint
-    - name: OBS_S3_BUCKET
-      valueFrom:
-        secretKeyRef:
-          name: rook-ceph-rgw-loki
-          key: bucket
 
 traces:
   otlp:
@@ -67,7 +62,7 @@ storage:
     backend: s3
     s3:
       endpoint: ${OBS_S3_ENDPOINT}
-      bucket: ${OBS_S3_BUCKET}
+      bucket: tempo-traces
       access_key: ${OBS_S3_ACCESS_KEY}
       secret_key: ${OBS_S3_SECRET_KEY}
       insecure: true
