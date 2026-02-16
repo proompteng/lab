@@ -54,5 +54,8 @@ env:
     JANGAR_GRPC_PORT: "50051"
     JANGAR_GITHUB_REPOS_ALLOWED: proompteng/lab
     JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES: "{}"
-envFromSecretRefs:
-  - agents-github-token-env
+  secrets:
+    - name: GITHUB_TOKEN
+      secretName: github-token
+      key: token
+envFromSecretRefs: []
