@@ -21,7 +21,6 @@ spec:
           resources:
             requests:
               storage: 50Gi
-          storageClassName: local-path
   template:
     metadata:
       labels:

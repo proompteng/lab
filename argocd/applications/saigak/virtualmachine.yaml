@@ -21,7 +21,6 @@ spec:
           resources:
             requests:
               storage: 80Gi
-          storageClassName: local-path
   template:
     metadata:
       labels:
@@ -71,4 +70,3 @@ spec:
           cloudInitNoCloud:
             secretRef:
               name: saigak-cloud-init
-
