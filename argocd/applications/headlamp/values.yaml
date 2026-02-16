@@ -3,20 +3,9 @@ service:
 image:
   tag: v0.40.1
 persistentVolumeClaim:
-  enabled: true
-  accessModes:
-    - ReadWriteOnce
-  size: 1Gi
-  storageClassName: rook-ceph-block
+  enabled: false
 podSecurityContext:
   fsGroup: 101
-volumeMounts:
-  - name: headlamp-data
-    mountPath: /home/headlamp
-volumes:
-  - name: headlamp-data
-    persistentVolumeClaim:
-      claimName: headlamp
 config:
   oidc:
     secret:
