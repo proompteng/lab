@@ -327,3 +327,4 @@ spec:
         - name: torghut-db-ca
           secret:
             secretName: torghut-db-ca
+            optional: true
