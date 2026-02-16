@@ -7,10 +7,7 @@ deploymentStrategy:
     maxSurge: 0
     maxUnavailable: 1
 service:
-  type: LoadBalancer
-  annotations:
-    tailscale.com/hostname: grafana
-  loadBalancerClass: tailscale
+  type: ClusterIP
 persistence:
   enabled: true
   storageClassName: rook-ceph-block

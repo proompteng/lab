@@ -3,9 +3,7 @@ kind: Kustomization
 
 resources:
   - rook-ceph-rgw-loki.yaml
-  - loki-tailscale-service.yaml
-  - tempo-tailscale-service.yaml
-  - mimir-tailscale-service.yaml
+  - tailscale-ingresses.yaml
   - graf-mimir-rules.yaml
   - graf-graf-dashboard-configmap.yaml
   - graf-bumba-dashboard-configmap.yaml
