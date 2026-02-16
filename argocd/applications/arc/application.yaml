@@ -45,13 +45,6 @@ spec:
             spec:
               hostNetwork: true
               dnsPolicy: ClusterFirstWithHostNet
-              nodeSelector:
-                github.com/arc-runner: 'true'
-              tolerations:
-                - key: dedicated
-                  operator: Equal
-                  value: arc-runner
-                  effect: NoSchedule
               securityContext:
                 runAsNonRoot: false
               initContainers:
