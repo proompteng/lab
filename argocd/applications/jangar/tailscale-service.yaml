@@ -5,6 +5,8 @@ metadata:
   namespace: jangar
   annotations:
     tailscale.com/hostname: openwebui
+    # Tailscale LB readiness is managed by the operator; don't hold the Argo app in Progressing.
+    argocd.argoproj.io/ignore-healthcheck: "true"
 spec:
   type: LoadBalancer
   loadBalancerClass: tailscale
