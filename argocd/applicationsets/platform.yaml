@@ -460,47 +460,47 @@ spec:
     {{- $auto := eq .automation "auto" -}}
     {{- $hasManagedNS := hasKey . "managedNamespaceMetadata" -}}
     {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasManagedNS (hasKey . "ignoreDifferences") -}}
-        {{- if $needsSpec }}
-        spec:
-          {{- if or $hasDestServer $hasDestName }}
-          destination:
-            namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
-            {{- if $hasDestServer }}
-            server: '{{ .destinationServer }}'
-            {{- end }}
-            {{- if $hasDestName }}
-            name: '{{ .destinationName }}'
-        {{- end }}
+    {{- if $needsSpec }}
+    spec:
+    {{- if or $hasDestServer $hasDestName }}
+      destination:
+        namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+      {{- if $hasDestServer }}
+        server: '{{ .destinationServer }}'
       {{- end }}
-      {{- if $useLovely }}
+      {{- if $hasDestName }}
+        name: '{{ .destinationName }}'
+      {{- end }}
+    {{- end }}
+    {{- if $useLovely }}
       source:
         plugin:
           name: lovely
-      {{- end }}
-      {{- if or $auto $hasManagedNS }}
+    {{- end }}
+    {{- if or $auto $hasManagedNS }}
       syncPolicy:
-        {{- if $auto }}
+      {{- if $auto }}
         automated:
           prune: true
           selfHeal: true
-        {{- end }}
-        {{- if $hasManagedNS }}
+      {{- end }}
+      {{- if $hasManagedNS }}
         managedNamespaceMetadata:
-          {{- if hasKey .managedNamespaceMetadata "labels" }}
+        {{- if hasKey .managedNamespaceMetadata "labels" }}
           labels:
-            {{- range $key, $value := .managedNamespaceMetadata.labels }}
+          {{- range $key, $value := .managedNamespaceMetadata.labels }}
             {{ $key }}: {{ $value | quote }}
-            {{- end }}
           {{- end }}
-          {{- if hasKey .managedNamespaceMetadata "annotations" }}
+        {{- end }}
+        {{- if hasKey .managedNamespaceMetadata "annotations" }}
           annotations:
-            {{- range $key, $value := .managedNamespaceMetadata.annotations }}
+          {{- range $key, $value := .managedNamespaceMetadata.annotations }}
             {{ $key }}: {{ $value | quote }}
-            {{- end }}
           {{- end }}
         {{- end }}
       {{- end }}
-      {{- if hasKey . "ignoreDifferences" }}
+    {{- end }}
+    {{- if hasKey . "ignoreDifferences" }}
       ignoreDifferences: {{ toJson .ignoreDifferences }}
-      {{- end }}
+    {{- end }}
     {{- end }}
