@@ -25,6 +25,3 @@ helmCharts:
     version: 1.28.0
     releaseName: istio-cni
     namespace: istio-system
-    valuesInline:
-      global:
-        platform: k3s
