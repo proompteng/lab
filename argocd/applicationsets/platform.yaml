@@ -151,7 +151,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: manual
-                enabled: "false"
+                enabled: "true"
               - name: kubernetes-reflector
                 path: argocd/applications/kubernetes-reflector
                 namespace: kubernetes-reflector
