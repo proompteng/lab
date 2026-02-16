@@ -10,5 +10,3 @@ helmCharts:
     releaseName: pgadmin
     namespace: pgadmin
     valuesFile: values.yaml
-patches:
-  - path: service-patch.yaml
