@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2026-02-12T18:25:38.824Z"
+    deploy.knative.dev/rollout: "2026-02-16T18:58:07.778Z"
 spec:
   replicas: 1
   strategy:
@@ -86,6 +86,7 @@ spec:
                 secretKeyRef:
                   name: github-token
                   key: token
+                  optional: true
             - name: JANGAR_CODEX_REVIEWERS
               value: codex,codex[bot],chatgpt-codex-connector,chatgpt-codex-connector[bot],gregkonush
             - name: JANGAR_CI_EVENT_STREAM_ENABLED
@@ -137,11 +138,13 @@ spec:
                 secretKeyRef:
                   name: observability-minio-creds
                   key: accesskey
+                  optional: true
             - name: MINIO_SECRET_KEY
               valueFrom:
                 secretKeyRef:
                   name: observability-minio-creds
                   key: secretkey
+                  optional: true
             - name: MINIO_SECURE
               value: "false"
             - name: JANGAR_PROMPT_TUNING_ENABLED
@@ -183,11 +186,13 @@ spec:
                 secretKeyRef:
                   name: nats-jangar-credentials
                   key: username
+                  optional: true
             - name: NATS_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: nats-jangar-credentials
                   key: password
+                  optional: true
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -230,11 +235,13 @@ spec:
                 secretKeyRef:
                   name: jangar-clickhouse-auth
                   key: username
+                  optional: true
             - name: CH_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: jangar-clickhouse-auth
                   key: password
+                  optional: true
             - name: VSCODE_DATA_DIR
               value: /workspace/.ovscode
             - name: VSCODE_DEFAULT_FOLDER
