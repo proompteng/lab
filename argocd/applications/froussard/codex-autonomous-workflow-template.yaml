@@ -368,17 +368,17 @@ spec:
                 key: creds
                 optional: true
           - name: MINIO_ENDPOINT
-            value: observability-minio.minio.svc.cluster.local:9000
+            value: rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
           - name: MINIO_ACCESS_KEY
             valueFrom:
               secretKeyRef:
-                name: observability-minio-creds
-                key: accesskey
+                name: rook-ceph-rgw-argo-workflows
+                key: accessKey
           - name: MINIO_SECRET_KEY
             valueFrom:
               secretKeyRef:
-                name: observability-minio-creds
-                key: secretkey
+                name: rook-ceph-rgw-argo-workflows
+                key: secretKey
           - name: MINIO_SECURE
             value: 'false'
           - name: WORKFLOW_NAME

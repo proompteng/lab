@@ -1,0 +1,47 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: argo-workflows-rgw-bootstrap
+  namespace: argo-workflows
+  labels:
+    app.kubernetes.io/name: argo-workflows-rgw-bootstrap
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: argo-workflows-rgw-bootstrap
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+          env:
+            - name: RGW_ENDPOINT_URL
+              value: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local
+            - name: RGW_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rook-ceph-rgw-argo-workflows
+                  key: accessKey
+            - name: RGW_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rook-ceph-rgw-argo-workflows
+                  key: secretKey
+            - name: ARGO_WORKFLOWS_BUCKET
+              value: argo-workflows
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              until mc alias set ceph "$RGW_ENDPOINT_URL" "$RGW_ACCESS_KEY" "$RGW_SECRET_KEY" --api S3v4; do
+                echo "waiting for Ceph RGW..."
+                sleep 5
+              done
+              mc mb -p ceph/"$ARGO_WORKFLOWS_BUCKET" || true
+              mc anonymous set none ceph/"$ARGO_WORKFLOWS_BUCKET" || true
