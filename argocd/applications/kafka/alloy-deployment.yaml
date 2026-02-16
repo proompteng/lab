@@ -18,11 +18,13 @@ spec:
         app.kubernetes.io/component: observability
     spec:
       serviceAccountName: kafka-alloy
+      securityContext:
+        fsGroup: 65532
       containers:
         - name: alloy
           image: grafana/alloy:v1.11.2
           imagePullPolicy: IfNotPresent
-          workingDir: /tmp
+          workingDir: /var/lib/alloy
           args:
             - run
             - /etc/alloy/config.river
@@ -36,6 +38,7 @@ spec:
                 - ALL
             runAsNonRoot: true
             runAsUser: 65532
+            runAsGroup: 65532
             seccompProfile:
               type: RuntimeDefault
           resources:
@@ -48,6 +51,8 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/alloy
+            - name: data
+              mountPath: /var/lib/alloy
       volumes:
         - name: config
           configMap:
@@ -55,3 +60,5 @@ spec:
             items:
               - key: config.river
                 path: config.river
+        - name: data
+          emptyDir: {}
