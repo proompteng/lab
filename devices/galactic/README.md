@@ -8,7 +8,7 @@ This directory documents the existing Talos/Kubernetes cluster:
 
 Inventory:
 - `ryzen`: `192.168.1.194` (control plane)
-- `ampone`: `192.168.1.202` (control plane)
+- `ampone`: `192.168.1.203` (control plane)
 - `altra`: `192.168.1.85` (control plane)
 
 Runbooks:
