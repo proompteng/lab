@@ -20,6 +20,26 @@ Loki, Mimir, and Tempo read S3 credentials and endpoint from secret `rook-ceph-r
 
 These buckets must exist in RGW before the workloads can start successfully.
 
+## Create buckets (Ceph RGW)
+
+List buckets:
+
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket list --rgw-zone objectstore
+```
+
+Create a missing bucket using `mc` + a temporary `port-forward`:
+
+```bash
+ACCESS_KEY="$(kubectl -n rook-ceph get secret rook-ceph-object-user-objectstore-loki -o jsonpath='{.data.AccessKey}' | base64 -d)"
+SECRET_KEY="$(kubectl -n rook-ceph get secret rook-ceph-object-user-objectstore-loki -o jsonpath='{.data.SecretKey}' | base64 -d)"
+
+kubectl -n rook-ceph port-forward svc/rook-ceph-rgw-objectstore 19000:80
+
+mc alias set ceph http://127.0.0.1:19000 "$ACCESS_KEY" "$SECRET_KEY" --api S3v4
+mc mb ceph/mimir-ruler
+```
+
 ## Tailscale access
 
 Observability is exposed over Tailscale using `Ingress` resources (not `Service` LoadBalancers) so it works under PodSecurity `baseline`.
