@@ -37,6 +37,8 @@ node_modules/
 .DS_Store
 kubernetes/kubeconfig
 kubeconfig
+token
+tok
 
 devices/ryzen/controlplane.yaml
 devices/ryzen/worker.yaml

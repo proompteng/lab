@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: cert-manager
 resources:
   - cluster-issuer.yaml
+  - cloudflare-api-token-sealedsecret.yaml
 helmCharts:
   - name: cert-manager
     repo: https://charts.jetstack.io
