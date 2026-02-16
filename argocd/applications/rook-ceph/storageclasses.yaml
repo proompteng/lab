@@ -61,6 +61,8 @@ volumeBindingMode: Immediate
 parameters:
   clusterID: rook-ceph
   fsName: cephfs
+  # Talos nodes do not ship the kernel ceph module; force userspace mounts.
+  mounter: fuse
   csi.storage.k8s.io/provisioner-secret-name: rook-csi-cephfs-provisioner
   csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
   csi.storage.k8s.io/controller-expand-secret-name: rook-csi-cephfs-provisioner
