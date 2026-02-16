@@ -294,30 +294,30 @@ spec:
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
     {{- $auto := eq .automation "auto" -}}
     {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto (hasKey . "ignoreDifferences") -}}
-        {{- if $needsSpec }}
-        spec:
-          {{- if or $hasDestServer $hasDestName }}
-          destination:
-            namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
-            {{- if $hasDestServer }}
-            server: '{{ .destinationServer }}'
-            {{- end }}
-            {{- if $hasDestName }}
-            name: '{{ .destinationName }}'
-        {{- end }}
+    {{- if $needsSpec }}
+    spec:
+    {{- if or $hasDestServer $hasDestName }}
+      destination:
+        namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+      {{- if $hasDestServer }}
+        server: '{{ .destinationServer }}'
       {{- end }}
-      {{- if $useLovely }}
+      {{- if $hasDestName }}
+        name: '{{ .destinationName }}'
+      {{- end }}
+    {{- end }}
+    {{- if $useLovely }}
       source:
         plugin:
           name: lovely
-      {{- end }}
-      {{- if $auto }}
+    {{- end }}
+    {{- if $auto }}
       syncPolicy:
         automated:
           prune: true
           selfHeal: true
-      {{- end }}
-      {{- if hasKey . "ignoreDifferences" }}
+    {{- end }}
+    {{- if hasKey . "ignoreDifferences" }}
       ignoreDifferences: {{ toJson .ignoreDifferences }}
-      {{- end }}
+    {{- end }}
     {{- end }}
