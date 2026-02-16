@@ -37,7 +37,8 @@ spec:
             capabilities:
               drop:
                 - ALL
-            runAsNonRoot: true
+            # alloy image runs as UID 0; Argo shows CreateContainerConfigError if we force non-root.
+            runAsNonRoot: false
             seccompProfile:
               type: RuntimeDefault
           resources:
