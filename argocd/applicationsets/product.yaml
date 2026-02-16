@@ -122,7 +122,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: bumba
                 path: argocd/applications/bumba
                 namespace: jangar
