@@ -19,6 +19,17 @@ export type BuildImageOptions = {
   commit?: string
   codexAuthPath?: string
   cacheRef?: string
+  platforms?: string[]
+}
+
+const parsePlatforms = (value: string | undefined): string[] | undefined => {
+  if (!value) return undefined
+  const platforms = value
+    .split(',')
+    .map((platform) => platform.trim())
+    .filter(Boolean)
+
+  return platforms.length > 0 ? platforms : undefined
 }
 
 const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void }> => {
@@ -79,6 +90,10 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   const codexAuthPath =
     options.codexAuthPath ?? process.env.CODEX_AUTH_PATH ?? resolve(process.env.HOME ?? '', '.codex/auth.json')
   const cacheRef = options.cacheRef ?? process.env.JANGAR_BUILD_CACHE_REF ?? `${registry}/${repository}:buildcache`
+  const platforms =
+    options.platforms ??
+    parsePlatforms(process.env.JANGAR_IMAGE_PLATFORMS) ??
+    parsePlatforms(process.env.DOCKER_IMAGE_PLATFORMS)
 
   let context: string
   let pruneCleanup: (() => void) | undefined
@@ -115,6 +130,7 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
       buildArgs,
       codexAuthPath: codexAuthPathForDocker,
       cacheRef,
+      platforms,
     })
 
     return { ...result, version, commit }
