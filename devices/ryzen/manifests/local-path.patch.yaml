@@ -4,6 +4,6 @@ name: local-path-provisioner
 provisioning:
   diskSelector:
     match: disk.transport == 'nvme'
-  minSize: 1435GB
-  maxSize: 1435GB
+  minSize: 1840GB
+  maxSize: 1840GB
   grow: false

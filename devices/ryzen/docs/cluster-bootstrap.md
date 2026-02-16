@@ -10,9 +10,8 @@ Cluster inventory / current state:
 ## Manifest inventory (ryzen)
 
 Node-level patches:
-- `devices/ryzen/manifests/ephemeral-volume.patch.yaml` (limit system disk to 100GiB)
-- `devices/ryzen/manifests/blockfile.patch.yaml` (user volume for blockfile scratch, 500GB)
-- `devices/ryzen/manifests/local-path.patch.yaml` (user volume for local-path, fixed 1435GB)
+- `devices/ryzen/manifests/ephemeral-volume.patch.yaml` (limit system disk to 200GB)
+- `devices/ryzen/manifests/local-path.patch.yaml` (user volume for local-path, fixed 1840GB)
 - `devices/ryzen/manifests/allow-scheduling-controlplane.patch.yaml` (allow workloads on single-node controlplane)
 - `devices/ryzen/manifests/hostname.patch.yaml` (set Talos hostname to `ryzen`, optional if the generated config already sets it)
 - `devices/ryzen/manifests/node-labels.patch.yaml` (labels for kata + kubevirt scheduling)
@@ -62,26 +61,29 @@ talosctl gen config ryzen https://192.168.1.130:6443 \
 Talos only applies volume sizing at install time. Make sure these patches are
 in place before the first `apply-config` / install.
 
-### 2.1 System disk size (100GiB)
+### 2.1 System disk size (200GB)
 
-The EPHEMERAL volume is capped at 100GiB with this patch:
+The EPHEMERAL volume is capped at 200GB with this patch:
 
 - `devices/ryzen/manifests/ephemeral-volume.patch.yaml`
 
 ### 2.2 User volume for local-path
 
-The local-path provisioner uses a fixed 1.435TB (1435GB) user volume on the NVMe disk,
-leaving space for the 500GB blockfile volume and the 100GiB system/EPHEMERAL partition
-plus GPT/boot overhead. This size is computed from the current disk size
+The local-path provisioner uses a fixed 1.840TB (1840GB) user volume on the NVMe disk,
+leaving space for the 200GB system/EPHEMERAL partition plus GPT/boot overhead.
+This size is computed from the current disk size
 (`2048408248320` bytes) and leaves ~5GB of headroom for GPT/EFI/META/STATE:
 
 - `devices/ryzen/manifests/local-path.patch.yaml`
 
-### 2.3 User volume for blockfile scratch
+### 2.3 Optional: blockfile scratch (Kata Firecracker)
 
-Firecracker blockfile scratch uses a dedicated 500GB user volume:
+If you want to run Kata Firecracker (`kata-fc`) with the `blockfile` snapshotter,
+reserve a dedicated user volume for the scratch file. Note that this reduces the
+space available for local-path.
 
-- `devices/ryzen/manifests/blockfile.patch.yaml`
+- `devices/ryzen/manifests/blockfile.patch.yaml` (500GB)
+- `devices/ryzen/manifests/kata-firecracker.patch.yaml`
 
 ### 2.4 Optional patches
 
@@ -124,7 +126,6 @@ export TALOSCONFIG=$PWD/devices/ryzen/talosconfig
 talosctl apply-config --insecure -n 192.168.1.194 -e 192.168.1.194 \
   -f devices/ryzen/controlplane.yaml \
   --config-patch @devices/ryzen/manifests/ephemeral-volume.patch.yaml \
-  --config-patch @devices/ryzen/manifests/blockfile.patch.yaml \
   --config-patch @devices/ryzen/manifests/local-path.patch.yaml
 
 # Optional patches you can add at install time:
@@ -153,7 +154,6 @@ in Argo CD so the `kata-containers` app can create the scratch file.
 talosctl apply-config -n 192.168.1.194 -e 192.168.1.194 \
   -f devices/ryzen/controlplane.yaml \
   --config-patch @devices/ryzen/manifests/ephemeral-volume.patch.yaml \
-  --config-patch @devices/ryzen/manifests/blockfile.patch.yaml \
   --config-patch @devices/ryzen/manifests/local-path.patch.yaml \
   --config-patch @devices/ryzen/manifests/allow-scheduling-controlplane.patch.yaml \
   --config-patch @devices/ryzen/manifests/hostname.patch.yaml \
