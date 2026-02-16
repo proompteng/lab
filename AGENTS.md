@@ -55,6 +55,15 @@
 - PR titles must follow the same semantic convention.
 - Create PRs by copying `.github/PULL_REQUEST_TEMPLATE.md` into a temp file, fill the description there, then run `gh pr create --title "<type>(<scope>): <summary>" --body-file <temp file>`.
 
+## Pull Requests
+- PR descriptions must reflect the actual changes in the PR. Do not include aspirational TODOs or unrelated work.
+- PR body MUST be created from `.github/PULL_REQUEST_TEMPLATE.md` and fully filled in before opening/updating the PR.
+- Do not leave template placeholders in the PR body (examples: `TODO`, `TBD`, `<...>`, `[...]`, unchecked checklist items with no explanation).
+- Do not duplicate template sections (example: multiple `## Summary` blocks). Keep exactly one copy of each template section you use.
+- If a template section is not applicable, write `N/A` for that section (don’t delete the header, and don’t leave it blank).
+- Before running `gh pr create` or `gh pr edit`, do a quick placeholder scan on the temp body file and remove anything that reads like template scaffolding.
+- If a PR body is wrong after creation, fix it immediately with `gh pr edit <num> --body-file <temp file>` rather than “patching” it in the GitHub UI.
+
 ## UI/UX
 - Tailwind CSS only; class order layout → spacing → sizing → typography → colors; use `cn()` for conditionals.
 - Zinc palette (primary zinc-900/100, secondary zinc-700/300), responsive utilities, no hardcoded widths/heights.
