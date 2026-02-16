@@ -1,7 +1,7 @@
 # Observability object storage (Ceph RGW)
 
 Observability uses Ceph RGW object storage, not MinIO.
-Loki, Mimir, and Tempo read S3 credentials and endpoint from the reflected secret `rook-ceph-rgw-loki` in the `observability` namespace.
+Loki, Mimir, and Tempo read S3 credentials and endpoint from secret `rook-ceph-rgw-loki` in the `observability` namespace.
 
 ## Sources of truth
 
