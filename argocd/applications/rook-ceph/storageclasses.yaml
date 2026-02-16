@@ -54,6 +54,8 @@ apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: rook-cephfs
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true
 provisioner: rook-ceph.cephfs.csi.ceph.com
 allowVolumeExpansion: true
 reclaimPolicy: Delete
