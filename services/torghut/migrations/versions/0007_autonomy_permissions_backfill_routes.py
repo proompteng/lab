@@ -61,7 +61,7 @@ def upgrade() -> None:
             execution_expected_adapter = COALESCE(
                 NULLIF(BTRIM(e.execution_expected_adapter), ''),
                 n.derived_expected,
-                COALESCE(NULLIF(BTRIM(e.execution_actual_adapter), ''), n.derived_actual),
+                COALESCE(NULLIF(BTRIM(e.execution_actual_adapter), ''), n.derived_actual)
             )
         FROM normalized n
         WHERE n.id = e.id

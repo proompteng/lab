@@ -27,7 +27,8 @@ data:
   TA_PARALLELISM: "8"
   TA_VWAP_WINDOW_SECONDS: "300"
   TA_REALIZED_VOL_WINDOW: "60"
-  TA_S3_ENDPOINT: "http://observability-minio.minio.svc.cluster.local:9000"
+  # Ceph RGW endpoint (MinIO is not deployed).
+  TA_S3_ENDPOINT: "http://rook-ceph-rgw-objectstore.rook-ceph.svc:80"
   TA_S3_PATH_STYLE: "true"
   TA_S3_SECURE: "false"
   TA_KAFKA_TRANSACTION_TIMEOUT_MS: "120000"

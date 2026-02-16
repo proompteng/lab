@@ -6,7 +6,7 @@ metadata:
   labels:
     app: torghut-ta
 spec:
-  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:90a35c6c9267835735b657065ef6e1b3797a5befd76eba5fd74876733230ad90
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:0a8ba5ac62d42feec61e9a027d2b27ed064e9f67e9f2d12e411d5a8ccabedb69
   imagePullPolicy: IfNotPresent
   restartNonce: 2
   flinkVersion: v2_0
@@ -93,7 +93,7 @@ spec:
     execution.checkpointing.tolerable-failed-checkpoints: "3"
     metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
     metrics.reporter.prom.port: "9249"
-    fs.s3a.endpoint: http://observability-minio.minio.svc.cluster.local:9000
+    fs.s3a.endpoint: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
     fs.s3a.connection.ssl.enabled: "false"
     fs.s3a.path.style.access: "true"
   podTemplate:
@@ -127,37 +127,37 @@ spec:
             - name: TA_S3_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: observability-minio-creds
-                  key: accesskey
+                  name: flink-checkpoints
+                  key: AWS_ACCESS_KEY_ID
             - name: TA_S3_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: observability-minio-creds
-                  key: secretkey
+                  name: flink-checkpoints
+                  key: AWS_SECRET_ACCESS_KEY
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: observability-minio-creds
-                  key: accesskey
+                  name: flink-checkpoints
+                  key: AWS_ACCESS_KEY_ID
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: observability-minio-creds
-                  key: secretkey
+                  name: flink-checkpoints
+                  key: AWS_SECRET_ACCESS_KEY
             - name: AWS_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: observability-minio-creds
-                  key: accesskey
+                  name: flink-checkpoints
+                  key: AWS_ACCESS_KEY_ID
             - name: AWS_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: observability-minio-creds
-                  key: secretkey
+                  name: flink-checkpoints
+                  key: AWS_SECRET_ACCESS_KEY
             - name: TORGHUT_TA_VERSION
-              value: v0.550.0
+              value: v0.551.0-93-g4c9a4b66
             - name: TORGHUT_TA_COMMIT
-              value: 9607c73b73f0b22f40e755758bfe80d945ecffc7
+              value: 4c9a4b66f6a613e8c3e0df784cc8aac055ba9027
           ports:
             - containerPort: 9249
               name: metrics

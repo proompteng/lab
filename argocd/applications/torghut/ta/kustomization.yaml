@@ -5,3 +5,4 @@ resources:
   - flinkdeployment.yaml
   - pdb.yaml
   - configmap.yaml
+  - objectbucketclaim.yaml

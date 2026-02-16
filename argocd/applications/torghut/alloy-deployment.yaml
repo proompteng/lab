@@ -33,7 +33,8 @@ spec:
             capabilities:
               drop:
                 - ALL
-            runAsNonRoot: true
+            # alloy image runs as UID 0; Kubernetes rejects runAsNonRoot=true.
+            runAsNonRoot: false
             seccompProfile:
               type: RuntimeDefault
           resources:
