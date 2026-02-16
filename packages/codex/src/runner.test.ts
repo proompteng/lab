@@ -130,7 +130,7 @@ describe('CodexRunner', () => {
 
     const args = spawnMock.mock.calls[0]?.[1] as string[] | undefined
     const expectedConfig = `developer_instructions=${JSON.stringify(systemPrompt)}`
-    const configIndex = args?.findIndex((arg) => arg === expectedConfig) ?? -1
+    const configIndex = args?.indexOf(expectedConfig) ?? -1
     expect(configIndex).toBeGreaterThan(-1)
     expect(args?.[configIndex - 1]).toBe('--config')
 
