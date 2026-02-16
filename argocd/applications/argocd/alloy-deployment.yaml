@@ -25,6 +25,7 @@ spec:
           args:
             - run
             - /etc/alloy/config.river
+          workingDir: /var/lib/alloy
           ports:
             - name: http-metrics
               containerPort: 12345
@@ -48,6 +49,8 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/alloy
+            - name: data
+              mountPath: /var/lib/alloy
       volumes:
         - name: config
           configMap:
@@ -55,3 +58,5 @@ spec:
             items:
               - key: config.river
                 path: config.river
+        - name: data
+          emptyDir: {}
