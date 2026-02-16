@@ -1,0 +1,45 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: gpu-operator
+
+helmCharts:
+  - name: gpu-operator
+    repo: https://nvidia.github.io/gpu-operator
+    version: v25.10.1
+    releaseName: gpu-operator
+    namespace: gpu-operator
+    includeCRDs: true
+    valuesFile: values.yaml
+
+patches:
+  - target:
+      kind: Job
+      name: gpu-operator-upgrade-crd
+    patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: gpu-operator-upgrade-crd
+        namespace: gpu-operator
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: Job
+      name: gpu-operator-node-feature-discovery-prune
+    patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: gpu-operator-node-feature-discovery-prune
+        namespace: gpu-operator
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: Deployment
+      name: gpu-operator
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: gpu-operator
+        namespace: gpu-operator

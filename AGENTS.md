@@ -113,6 +113,8 @@ Output:
 ## Generated Artifacts & Safety
 - Do not edit generated directories (`dist/`, `build/`, `_generated`) or lockfiles (`bun.lock`, `bun.lockb`); regenerate via the owning tool.
 - Default to GitOps (edit `argocd/` manifests and let Argo CD sync). Only apply directly to the cluster when explicitly asked or in an emergency, and document the deviation.
+- Argo CD apps under `argocd/applications/**` should not include `Namespace` manifests; namespaces are created via ApplicationSet `CreateNamespace=true` and `managedNamespaceMetadata` (Pod Security labels, etc).
+- Avoid introducing deprecated Kubernetes/KubeVirt features in new manifests; if a component warns a field/feature gate is deprecated, remove it unless there is a documented requirement.
 
 ## Kubernetes (kubectl)
 - Use explicit namespaces with kubectl (e.g., `kubectl get pods -n <ns>`).

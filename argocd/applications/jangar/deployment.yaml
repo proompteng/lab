@@ -253,7 +253,7 @@ spec:
             - name: DOCKER_ENABLED
               value: "1"
             - name: OPENAI_API_BASE_URL
-              value: http://192.168.1.190:11434/v1
+              value: http://saigak.saigak.svc.cluster.local:11434/v1
             - name: OPENAI_EMBEDDING_MODEL
               value: qwen3-embedding-saigak:0.6b
             - name: OPENAI_EMBEDDING_DIMENSION

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: saigak
+  labels:
+    app.kubernetes.io/name: saigak
+spec:
+  type: ClusterIP
+  selector:
+    kubevirt.io/domain: saigak
+  ports:
+    - name: http
+      port: 11434
+      protocol: TCP
+      targetPort: 11434
+

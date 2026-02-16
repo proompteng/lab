@@ -4,3 +4,14 @@ namespace: cdi
 resources:
   - https://github.com/kubevirt/containerized-data-importer/releases/download/v1.64.0/cdi-operator.yaml
   - https://github.com/kubevirt/containerized-data-importer/releases/download/v1.64.0/cdi-cr.yaml
+
+patches:
+  - target:
+      kind: Namespace
+      name: cdi
+    patch: |-
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: cdi
+      $patch: delete

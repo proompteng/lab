@@ -6,6 +6,15 @@ resources:
   - https://github.com/kubevirt/kubevirt/releases/download/v1.7.0/kubevirt-cr.yaml
 patches:
   - target:
+      kind: Namespace
+      name: kubevirt
+    patch: |-
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: kubevirt
+      $patch: delete
+  - target:
       kind: KubeVirt
       name: kubevirt
     patch: |-
@@ -16,3 +25,10 @@ patches:
         annotations:
           argocd.argoproj.io/sync-wave: "1"
           argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+      spec:
+        configuration:
+          permittedHostDevices:
+            pciHostDevices:
+              - pciVendorSelector: "10DE:2204"
+                resourceName: "nvidia.com/GA102_GEFORCE_RTX_3090"
+                externalResourceProvider: true

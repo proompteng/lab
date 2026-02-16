@@ -1,0 +1,5 @@
+# KubeVirt VM passthrough mode: installs VFIO manager + sandbox device plugin.
+# Node selection happens via `nvidia.com/gpu.workload.config=vm-passthrough` label.
+sandboxWorkloads:
+  enabled: true
+
