@@ -10,6 +10,25 @@ Loki, Mimir, and Tempo read S3 credentials and endpoint from secret `rook-ceph-r
 3. `argocd/applications/observability/mimir-values.yaml`
 4. `argocd/applications/observability/tempo-values.yaml`
 
+## Required buckets
+
+- `loki-data`
+- `tempo-traces`
+- `mimir-blocks`
+- `mimir-alertmanager`
+- `mimir-ruler`
+
+These buckets must exist in RGW before the workloads can start successfully.
+
+## Tailscale access
+
+Observability is exposed over Tailscale using `Ingress` resources (not `Service` LoadBalancers) so it works under PodSecurity `baseline`.
+
+- Grafana: `grafana.ide-newton.ts.net`
+- Loki gateway: `loki.ide-newton.ts.net`
+- Mimir nginx: `mimir.ide-newton.ts.net`
+- Tempo gateway: `tempo.ide-newton.ts.net`
+
 ## Rotate RGW credentials
 
 1. Re-seal `argocd/applications/observability/rook-ceph-rgw-loki.yaml` with the active sealed-secrets key.

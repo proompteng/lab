@@ -49,13 +49,18 @@ mimir:
         insecure: true
         bucket_lookup_type: path
     ruler_storage:
-      backend: local
-      local:
-        directory: /tmp
+      backend: s3
+      s3:
+        endpoint: ${OBS_S3_ENDPOINT}
+        bucket_name: mimir-ruler
+        access_key_id: ${OBS_S3_ACCESS_KEY}
+        secret_access_key: ${OBS_S3_SECRET_KEY}
+        region: ${OBS_S3_REGION}
+        insecure: true
+        bucket_lookup_type: path
     ruler:
-      # Must not overlap ruler_storage.local.directory.
-      # /etc/mimir/rules is used as the read-only rule store (local backend),
-      # while /data/ruler is the writable working directory used by the ruler.
+      # /data/ruler is the writable working directory used by the ruler.
+      # Rule groups are stored in object storage via ruler_storage (S3 backend).
       rule_path: /data/ruler
     usage_stats:
       enabled: false
