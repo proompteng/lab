@@ -1,0 +1,12 @@
+apiVersion: ceph.rook.io/v1
+kind: CephObjectStoreUser
+metadata:
+  name: argo-workflows
+  namespace: rook-ceph
+spec:
+  store: objectstore
+  displayName: argo-workflows
+  capabilities:
+    bucket: "*"
+    metadata: "read, write"
+    usage: "read"
