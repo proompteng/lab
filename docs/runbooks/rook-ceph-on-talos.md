@@ -117,3 +117,56 @@ kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd tree
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
 ```
+
+## Recovery: HEALTH_ERR due to stale CephFS (`ceph-filesystem`) and `size=3` pools
+
+This incident happened when a stale `CephFilesystem` (`ceph-filesystem`) existed in-cluster but was no longer managed in Git.
+It left a CephFS filesystem with a failed MDS, which keeps Ceph in `HEALTH_ERR`.
+
+Typical symptoms:
+1. `kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail` reports `FS_DEGRADED`, `FS_WITH_FAILED_MDS`, and/or `MDS_ALL_DOWN` for `ceph-filesystem`.
+1. `kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph fs ls` shows both `cephfs` and `ceph-filesystem`.
+1. `ceph health detail` shows `active+undersized+degraded` PGs because some pools are still `size 3` (common: `.mgr` and `default.rgw.*`) while this cluster only has 2 OSD hosts.
+
+Recovery flow:
+1. Prune any stale Rook resources that are no longer in Git:
+```bash
+argocd app sync rook-ceph --prune
+```
+1. If `ceph fs ls` still shows `ceph-filesystem`, confirm there are no clients and the filesystem is unhealthy:
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph fs status ceph-filesystem
+```
+1. Remove the stale filesystem from Ceph (destructive):
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph fs rm ceph-filesystem --yes-i-really-mean-it
+```
+1. If the Kubernetes CRs get stuck terminating, clear finalizers (emergency only):
+```bash
+kubectl -n rook-ceph patch cephfilesystemsubvolumegroup ceph-filesystem-csi --type=merge -p '{"metadata":{"finalizers":[]}}'
+kubectl -n rook-ceph patch cephfilesystem ceph-filesystem --type=merge -p '{"metadata":{"finalizers":[]}}'
+```
+1. If `ceph health detail` still shows `PG_DEGRADED`, check for pools that are still `size 3`:
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool ls detail | rg "size 3"
+```
+1. For a 2-host OSD cluster, shrink the affected pools to size 2 (emergency fix):
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set .mgr size 2
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set .mgr min_size 1
+
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set default.rgw.log size 2
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set default.rgw.log min_size 1
+
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set default.rgw.control size 2
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set default.rgw.control min_size 1
+
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set default.rgw.meta size 2
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set default.rgw.meta min_size 1
+```
+1. Make the fix reproducible (prevention): in `argocd/applications/rook-ceph/cluster-values.yaml`, set `cephClusterSpec.cephConfig.global.osd_pool_default_size: "2"` and `cephClusterSpec.cephConfig.global.osd_pool_default_min_size: "1"` for this 2-host OSD cluster.
+1. Validate end state:
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
+```
