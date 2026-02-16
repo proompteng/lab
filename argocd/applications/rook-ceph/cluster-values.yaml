@@ -95,6 +95,13 @@ cephClusterSpec:
       status:
         interval: 60s
 
+# Disable chart-managed default block/filesystem classes to avoid duplicates.
+# Canonical classes are managed in storageclasses.yaml as:
+# - rook-ceph-block (RWO)
+# - rook-cephfs (RWX)
+cephBlockPools: []
+cephFileSystems: []
+
 cephObjectStores:
   - name: objectstore
     spec:

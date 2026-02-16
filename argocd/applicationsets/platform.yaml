@@ -22,21 +22,21 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: clickhouse-operator
                 path: argocd/applications/clickhouse-operator
                 namespace: clickhouse-operator
                 annotations:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: manual
-                enabled: "false"
+                enabled: "true"
               - name: redis-operator
                 path: argocd/applications/redis-operator
                 namespace: redis-operator
                 annotations:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: kubevirt
                 path: argocd/applications/kubevirt
                 namespace: kubevirt
@@ -90,35 +90,35 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "0"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: istio-ingress
                 path: argocd/applications/istio-ingress
                 namespace: istio-ingress
                 annotations:
                   argocd.argoproj.io/sync-wave: "1"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: knative
                 path: argocd/applications/knative
                 namespace: knative
                 annotations:
                   argocd.argoproj.io/sync-wave: "1"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: knative-serving
                 path: argocd/applications/knative-serving
                 namespace: knative-serving
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: knative-eventing
                 path: argocd/applications/knative-eventing
                 namespace: knative-eventing
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: fission
                 path: argocd/applications/fission
                 namespace: fission
@@ -153,7 +153,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: argo-workflows
                 path: argocd/applications/argo-workflows
                 namespace: argo-workflows
@@ -181,7 +181,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
                 automation: manual
-                enabled: "false"
+                enabled: "true"
               - name: milvus
                 path: argocd/applications/milvus
                 namespace: milvus
@@ -265,14 +265,14 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: pgadmin
                 path: argocd/applications/pgadmin
                 namespace: pgadmin
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: manual
-                enabled: "false"
+                enabled: "true"
               - name: graf
                 path: argocd/applications/graf
                 namespace: graf
