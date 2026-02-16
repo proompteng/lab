@@ -7,7 +7,6 @@ resources:
   - codex-docker-policy.yaml
   - codex-implementation-semaphore.yaml
   - ingressroute.yaml
-  - argo-workflows-sso-sealedsecret.yaml
   - minio-bucket-job.yaml
   - minio-root-secret.yaml
   - alloy-rbac.yaml
@@ -30,7 +29,7 @@ images:
 helmCharts:
   - name: argo-workflows
     repo: https://argoproj.github.io/argo-helm
-    version: 0.46.1
+    version: 0.47.3
     releaseName: argo-workflows
     namespace: argo-workflows
     valuesInline:
@@ -86,7 +85,7 @@ helmCharts:
           useSDKCreds: false
   - name: argo-events
     repo: https://argoproj.github.io/argo-helm
-    version: 2.4.18
+    version: 2.4.20
     releaseName: argo-events
     namespace: argo-workflows
     valuesInline:
