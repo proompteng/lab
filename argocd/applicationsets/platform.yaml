@@ -249,7 +249,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: backstage
                 path: argocd/applications/backstage
                 namespace: backstage

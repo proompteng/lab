@@ -108,7 +108,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: manual
-                enabled: "false"
+                enabled: "true"
               - name: agents
                 path: argocd/applications/agents
                 namespace: agents
@@ -238,7 +238,7 @@ spec:
                       - /spec/template/spec/containers/0/ports/0/protocol
                       - /spec/template/spec/containers/0/resources
                 automation: manual
-                enabled: "false"
+                enabled: "true"
               - name: reestr
                 path: argocd/applications/reestr
                 namespace: registry
