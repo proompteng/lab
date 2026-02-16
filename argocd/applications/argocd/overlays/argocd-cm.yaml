@@ -9,6 +9,11 @@ data:
   kustomize.buildOptions: --enable-helm
   application.resourceTrackingMethod: annotation
   timeout.reconciliation: 180s
+  resource.customizations.health.bitnami.com_SealedSecret: |
+    hs = {}
+    hs.status = "Healthy"
+    hs.message = "SealedSecret health is ignored; decryption is handled by the sealed-secrets controller."
+    return hs
   users.session.duration: "168h"
   dex.config: |
     issuer: https://argocd.proompteng.ai/api/dex
