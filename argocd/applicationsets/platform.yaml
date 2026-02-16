@@ -165,7 +165,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
                 automation: manual
-                enabled: "false"
+                enabled: "true"
               - name: observability
                 path: argocd/applications/observability
                 namespace: observability
