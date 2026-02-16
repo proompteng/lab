@@ -114,8 +114,8 @@ spec:
                 namespace: agents
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
-                automation: manual
-                enabled: "false"
+                automation: auto
+                enabled: "true"
               - name: agents-ci
                 path: argocd/applications/agents-ci
                 namespace: agents-ci
