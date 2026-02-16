@@ -16,6 +16,7 @@ import type {
   McpToolCallProgressNotification,
   RateLimitSnapshot,
   SandboxMode,
+  SandboxPolicy,
   TerminalInteractionNotification,
   ThreadItem,
   ThreadStartParams,
@@ -124,18 +125,19 @@ const newId = (() => {
   return () => id++
 })()
 
-const toSandboxPolicy = (mode: SandboxMode) => {
+const toSandboxPolicy = (mode: SandboxMode): SandboxPolicy => {
   if (mode === 'workspace-write') {
     return {
       type: 'workspaceWrite' as const,
       writableRoots: [],
+      readOnlyAccess: { type: 'fullAccess' as const },
       networkAccess: true,
       excludeTmpdirEnvVar: false,
       excludeSlashTmp: false,
     }
   }
   if (mode === 'read-only') {
-    return { type: 'readOnly' as const }
+    return { type: 'readOnly' as const, access: { type: 'fullAccess' as const } }
   }
   return { type: 'dangerFullAccess' as const }
 }

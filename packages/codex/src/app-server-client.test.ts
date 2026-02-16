@@ -31,6 +31,7 @@ describe('toSandboxPolicy', () => {
     expect(toSandboxPolicy('workspace-write')).toEqual({
       type: 'workspaceWrite',
       writableRoots: [],
+      readOnlyAccess: { type: 'fullAccess' },
       networkAccess: true,
       excludeTmpdirEnvVar: false,
       excludeSlashTmp: false,
@@ -38,7 +39,7 @@ describe('toSandboxPolicy', () => {
   })
 
   it('builds read-only policy settings', () => {
-    expect(toSandboxPolicy('read-only')).toEqual({ type: 'readOnly' })
+    expect(toSandboxPolicy('read-only')).toEqual({ type: 'readOnly', access: { type: 'fullAccess' } })
   })
 
   it('builds danger-full-access policy settings', () => {
