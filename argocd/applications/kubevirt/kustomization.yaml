@@ -8,12 +8,7 @@ patches:
   - target:
       kind: Namespace
       name: kubevirt
-    patch: |-
-      apiVersion: v1
-      kind: Namespace
-      metadata:
-        name: kubevirt
-      $patch: delete
+    path: delete-namespace.patch.yaml
   - target:
       kind: KubeVirt
       name: kubevirt

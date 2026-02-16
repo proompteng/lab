@@ -9,9 +9,4 @@ patches:
   - target:
       kind: Namespace
       name: cdi
-    patch: |-
-      apiVersion: v1
-      kind: Namespace
-      metadata:
-        name: cdi
-      $patch: delete
+    path: delete-namespace.patch.yaml
