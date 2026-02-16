@@ -36,7 +36,7 @@ spec:
                   annotations:
                     argocd.argoproj.io/sync-wave: "-1"
                   automation: auto
-                  enabled: "false"
+                  enabled: "true"
                   ignoreDifferences:
                     - group: admissionregistration.k8s.io
                       kind: MutatingWebhookConfiguration
