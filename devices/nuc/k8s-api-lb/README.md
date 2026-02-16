@@ -20,7 +20,7 @@ Edit `devices/nuc/k8s-api-lb/haproxy.cfg` and set the backend servers to your
 control plane nodes. Example:
 
 - `ryzen`: `192.168.1.194:6443`
-- `ampone`: `192.168.1.202:6443`
+- `ampone`: `192.168.1.203:6443`
 - `altra`: `192.168.1.85:6443`
 
 ## 2) Deploy on the NUC
@@ -37,7 +37,7 @@ ssh kalmyk@192.168.1.130
 cd ~/k8s-api-lb
 
 # optional sanity check: ensure nothing is already listening on 6443
-sudo ss -lntp | rg ':6443' || true
+sudo ss -lntp | grep -F ':6443' || true
 
 docker compose up -d
 docker compose ps
