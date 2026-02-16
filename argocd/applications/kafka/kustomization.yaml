@@ -2,34 +2,34 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: kafka
 resources:
-  # Strimzi operator install (pinned to 0.47.0) – remote raw files
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/010-ServiceAccount-strimzi-cluster-operator.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/020-ClusterRole-strimzi-cluster-operator-role.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/020-RoleBinding-strimzi-cluster-operator.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/021-ClusterRole-strimzi-cluster-operator-role.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/021-ClusterRoleBinding-strimzi-cluster-operator.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/022-ClusterRole-strimzi-cluster-operator-role.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/022-RoleBinding-strimzi-cluster-operator.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/023-ClusterRole-strimzi-cluster-operator-role.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/023-RoleBinding-strimzi-cluster-operator.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/030-ClusterRole-strimzi-kafka-broker.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/030-ClusterRoleBinding-strimzi-cluster-operator-kafka-broker-delegation.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/031-ClusterRole-strimzi-entity-operator.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/031-RoleBinding-strimzi-cluster-operator-entity-operator-delegation.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/033-ClusterRole-strimzi-kafka-client.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/033-ClusterRoleBinding-strimzi-cluster-operator-kafka-client-delegation.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/040-Crd-kafka.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/041-Crd-kafkaconnect.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/042-Crd-strimzipodset.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/043-Crd-kafkatopic.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/044-Crd-kafkauser.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/045-Crd-kafkanodepool.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/046-Crd-kafkabridge.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/047-Crd-kafkaconnector.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/048-Crd-kafkamirrormaker2.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/049-Crd-kafkarebalance.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/050-ConfigMap-strimzi-cluster-operator.yaml
-  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/060-Deployment-strimzi-cluster-operator.yaml
+  # Strimzi operator install (pinned to 0.50.0) – remote raw files
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/010-ServiceAccount-strimzi-cluster-operator.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/020-ClusterRole-strimzi-cluster-operator-role.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/020-RoleBinding-strimzi-cluster-operator.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/021-ClusterRole-strimzi-cluster-operator-role.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/021-ClusterRoleBinding-strimzi-cluster-operator.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/022-ClusterRole-strimzi-cluster-operator-role.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/022-RoleBinding-strimzi-cluster-operator.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/023-ClusterRole-strimzi-cluster-operator-role.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/023-RoleBinding-strimzi-cluster-operator.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/030-ClusterRole-strimzi-kafka-broker.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/030-ClusterRoleBinding-strimzi-cluster-operator-kafka-broker-delegation.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/031-ClusterRole-strimzi-entity-operator.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/031-RoleBinding-strimzi-cluster-operator-entity-operator-delegation.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/033-ClusterRole-strimzi-kafka-client.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/033-ClusterRoleBinding-strimzi-cluster-operator-kafka-client-delegation.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/040-Crd-kafka.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/041-Crd-kafkaconnect.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/042-Crd-strimzipodset.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/043-Crd-kafkatopic.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/044-Crd-kafkauser.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/045-Crd-kafkanodepool.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/046-Crd-kafkabridge.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/047-Crd-kafkaconnector.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/048-Crd-kafkamirrormaker2.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/049-Crd-kafkarebalance.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/050-ConfigMap-strimzi-cluster-operator.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/060-Deployment-strimzi-cluster-operator.yaml
   - strimzi-operator-watched-crb.yaml
   - load-balancer.yaml
   - strimzi-kafka-cluster.yaml

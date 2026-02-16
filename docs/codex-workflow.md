@@ -88,7 +88,7 @@ Codex now mirrors implementation output into a per-run Discord channel when the 
   ```
 - Peek at Kafka traffic:
   ```bash
-  kubectl -n kafka run kafka-cli --rm -it --image=strimzi/kafka:0.47.0-kafka-3.7.0 -- /bin/bash
+  kubectl -n kafka run kafka-cli --rm -it --image=strimzi/kafka:0.50.0-kafka-4.1.1 -- /bin/bash
   bin/kafka-console-consumer.sh --bootstrap-server kafka-kafka-bootstrap:9092 \
     --topic github.issues.codex.tasks --from-beginning
   ```
