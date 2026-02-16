@@ -1,5 +1,7 @@
 service:
   type: ClusterIP
+image:
+  tag: v0.40.1
 persistentVolumeClaim:
   enabled: true
   accessModes:
