@@ -9,14 +9,14 @@ spec:
     privateKeySecretRef:
       name: letsencrypt-prod-account-key
     solvers:
-      - http01:
-          ingress:
-            ingressClassName: istio
-            podTemplate:
-              metadata:
-                annotations:
-                  sidecar.istio.io/inject: "false"
-              spec: {}
+      - selector:
+          dnsZones:
+            - proompteng.ai
+        dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token
+              key: api-token
 
 ---
 apiVersion: cert-manager.io/v1
