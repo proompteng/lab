@@ -4,6 +4,12 @@ metadata:
   name: app
   namespace: app
 spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Single-replica rollout in a resource-constrained cluster: avoid needing a surge pod.
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app: app
