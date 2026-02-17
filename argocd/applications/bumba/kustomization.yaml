@@ -2,7 +2,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: jangar
 resources:
+  - pvc-rwo.yaml
   - deployment.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/bumba
-    newTag: "sha-d26e1f9"
+    newTag: "b8bd514c"

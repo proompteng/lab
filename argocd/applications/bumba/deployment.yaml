@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: bumba
     app.kubernetes.io/part-of: lab
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: bumba
@@ -19,6 +19,22 @@ spec:
       annotations:
         kubectl.kubernetes.io/restartedAt: "2026-02-09T03:09:48.289Z"
     spec:
+      initContainers:
+        - name: bootstrap-workspace
+          image: registry.ide-newton.ts.net/lab/bumba
+          imagePullPolicy: IfNotPresent
+          command: ['sh', '-c']
+          args:
+            - |
+              set -eu
+              if [ ! -d /workspace/lab/.git ]; then
+                rm -rf /workspace/lab
+                git clone --depth 1 https://github.com/proompteng/lab.git /workspace/lab
+              fi
+              mkdir -p /workspace/lab/.worktrees /workspace/.bun-install-cache
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
       containers:
         - name: bumba
           image: registry.ide-newton.ts.net/lab/bumba
@@ -172,4 +188,4 @@ spec:
       volumes:
         - name: workspace
           persistentVolumeClaim:
-            claimName: jangar-workspace-rwx
+            claimName: bumba-workspace
