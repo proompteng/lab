@@ -9,6 +9,7 @@ Docs:
 - `devices/ampone/docs/cluster-bootstrap.md` (Talos install/bootstrap template)
 - `devices/ampone/docs/ipmi.md` (IPMI/BMC command cookbook)
 - `devices/ampone/docs/memory-troubleshooting.md` (DDR training + DIMM isolation notes)
+- `devices/ampone/docs/relayout-volumes.md` (EPHEMERAL=300GB, local-path=rest)
 
 Manifests:
 - `devices/ampone/manifests/hostname.patch.yaml` (Talos hostname patch)
