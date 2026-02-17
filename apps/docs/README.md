@@ -3,6 +3,8 @@
 This is a Next.js application generated with
 [Create Fumadocs](https://github.com/fuma-nama/fumadocs).
 
+Deployment: changes under `apps/docs/**` (or `packages/design/**`) merged to `main` trigger a Docker build and an Argo CD Image Updater PR that bumps `argocd/applications/docs/kustomization.yaml`.
+
 Run development server:
 
 ```bash
