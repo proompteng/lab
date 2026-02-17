@@ -9,8 +9,9 @@ const MIN_VISIBLE_PX = 64
 const MINIMIZE_SCALE = 0.13
 const MAX_WINDOW_WIDTH_PX = 74 * 16
 const MAX_WINDOW_HEIGHT_PX = 760
-const FALLBACK_VIEWPORT = { width: 1280, height: 720 }
+const FALLBACK_VIEWPORT = { width: 1280, height: 720, left: 0, top: 0 }
 const TOP_MENU_BAR_HEIGHT_PX = 44
+const DOCK_SAFE_AREA_PX = 96
 const MACOS_MINIMIZE_DURATION = 0.78
 const MACOS_RESTORE_DURATION = 0.62
 const MACOS_FULLSCREEN_DURATION = 0.38
@@ -160,12 +161,17 @@ function pad(text: string, width: number) {
   return text.length >= width ? `${text.slice(0, Math.max(0, width - 1))}\u2026` : text.padEnd(width)
 }
 
-function getViewport() {
+function getViewport(bounds?: HTMLElement | null) {
   if (typeof window === 'undefined') {
     return FALLBACK_VIEWPORT
   }
 
-  return { width: window.innerWidth, height: window.innerHeight }
+  if (bounds) {
+    const rect = bounds.getBoundingClientRect()
+    return { width: rect.width, height: rect.height, left: rect.left, top: rect.top }
+  }
+
+  return { width: window.innerWidth, height: window.innerHeight, left: 0, top: 0 }
 }
 
 function formatKubectlHeader() {
@@ -216,13 +222,14 @@ export type TerminalWindowHandle = {
 
 type TerminalWindowProps = {
   className?: string
+  desktopBoundsRef?: React.RefObject<HTMLElement | null>
   menuBarButtonRef?: React.RefObject<HTMLElement | null>
   onMinimizedStateChange?: (isMinimized: boolean) => void
   onClosedStateChange?: (isClosed: boolean) => void
 }
 
 const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
-  ({ className, menuBarButtonRef, onMinimizedStateChange, onClosedStateChange }, ref) => {
+  ({ className, desktopBoundsRef, menuBarButtonRef, onMinimizedStateChange, onClosedStateChange }, ref) => {
     const reducedMotion = usePrefersReducedMotion()
     const scrollAnchorRef = useRef<HTMLDivElement | null>(null)
     const windowRef = useRef<HTMLDivElement | null>(null)
@@ -250,13 +257,13 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
       fullscreenModeRef.current = fullscreenMode
     }, [fullscreenMode])
     useEffect(() => {
-      const handleResize = () => setViewport(getViewport())
+      const handleResize = () => setViewport(getViewport(desktopBoundsRef?.current))
       handleResize()
       window.addEventListener('resize', handleResize)
       return () => {
         window.removeEventListener('resize', handleResize)
       }
-    }, [])
+    }, [desktopBoundsRef])
 
     const beginDrag = useCallback(
       (pointerId: number, startX: number, startY: number) => {
@@ -281,29 +288,50 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
     const getMinimizeTarget = useCallback(() => {
       if (!menuBarButtonRef?.current) return null
       const menuBarRect = menuBarButtonRef.current.getBoundingClientRect()
+      const topInsetPx = desktopBoundsRef ? 0 : TOP_MENU_BAR_HEIGHT_PX
       const isFullscreenLike = fullscreenMode === 'fullscreen'
-      const windowCenterX = viewport.width / 2 + (isFullscreenLike ? 0 : offset.x)
-      const windowCenterY = viewport.height / 2 + (isFullscreenLike ? TOP_MENU_BAR_HEIGHT_PX / 2 : offset.y)
+      const windowCenterX = viewport.left + viewport.width / 2 + (isFullscreenLike ? 0 : offset.x)
+      const windowCenterY = viewport.top + viewport.height / 2 + (isFullscreenLike ? topInsetPx / 2 : offset.y)
       return {
         x: menuBarRect.left + menuBarRect.width / 2 - windowCenterX,
         y: menuBarRect.top + menuBarRect.height / 2 - windowCenterY,
       }
-    }, [fullscreenMode, menuBarButtonRef, offset.x, offset.y, viewport.height, viewport.width])
+    }, [
+      desktopBoundsRef,
+      fullscreenMode,
+      menuBarButtonRef,
+      offset.x,
+      offset.y,
+      viewport.height,
+      viewport.left,
+      viewport.top,
+      viewport.width,
+    ])
 
     const getMinimizeTargetFallback = useCallback(() => {
       // If we can't measure the dock icon, still minimize to the dock area (bottom-center).
       // This avoids "minimize does nothing" when refs aren't available yet (SSR/fast interactions).
+      const topInsetPx = desktopBoundsRef ? 0 : TOP_MENU_BAR_HEIGHT_PX
       const isFullscreenLike = fullscreenMode === 'fullscreen'
-      const windowCenterX = viewport.width / 2 + (isFullscreenLike ? 0 : offset.x)
-      const windowCenterY = viewport.height / 2 + (isFullscreenLike ? TOP_MENU_BAR_HEIGHT_PX / 2 : offset.y)
+      const windowCenterX = viewport.left + viewport.width / 2 + (isFullscreenLike ? 0 : offset.x)
+      const windowCenterY = viewport.top + viewport.height / 2 + (isFullscreenLike ? topInsetPx / 2 : offset.y)
 
-      const dockCenterX = viewport.width / 2
-      const dockCenterY = viewport.height - 38
+      const dockCenterX = viewport.left + viewport.width / 2
+      const dockCenterY = viewport.top + viewport.height - 38
       return {
         x: dockCenterX - windowCenterX,
         y: dockCenterY - windowCenterY,
       }
-    }, [fullscreenMode, offset.x, offset.y, viewport.height, viewport.width])
+    }, [
+      desktopBoundsRef,
+      fullscreenMode,
+      offset.x,
+      offset.y,
+      viewport.height,
+      viewport.left,
+      viewport.top,
+      viewport.width,
+    ])
 
     const minimizeWindow = useCallback(() => {
       if (windowMode !== 'normal') return
@@ -427,11 +455,14 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
 
         const maxX = containerRect.width / 2 + windowRect.width / 2 - MIN_VISIBLE_PX
         const minX = MIN_VISIBLE_PX - containerRect.width / 2 - windowRect.width / 2
-        const maxY = containerRect.height / 2 + windowRect.height / 2 - MIN_VISIBLE_PX
-        const minY = MIN_VISIBLE_PX - containerRect.height / 2 - windowRect.height / 2
-        const topBoundY = TOP_MENU_BAR_HEIGHT_PX + 12 + windowRect.height / 2 - containerRect.height / 2
+        // Keep the window fully within the desktop: flush under the menu bar, and above the dock.
+        const topInsetPx = desktopBoundsRef ? 0 : TOP_MENU_BAR_HEIGHT_PX
+        const topBoundY = topInsetPx + windowRect.height / 2 - containerRect.height / 2
+        const bottomBoundY = containerRect.height / 2 - DOCK_SAFE_AREA_PX - windowRect.height / 2
+        const minY = Math.min(topBoundY, bottomBoundY)
+        const maxY = Math.max(topBoundY, bottomBoundY)
 
-        setOffset({ x: clamp(nextX, minX, maxX), y: clamp(nextY, Math.max(minY, topBoundY), maxY) })
+        setOffset({ x: clamp(nextX, minX, maxX), y: clamp(nextY, minY, maxY) })
       }
 
       const onPointerMove = (event: PointerEvent) => {
@@ -494,7 +525,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
         window.removeEventListener('touchend', onTouchEnd)
         window.removeEventListener('touchcancel', onTouchEnd)
       }
-    }, [endDrag])
+    }, [desktopBoundsRef, endDrag])
 
     useEffect(() => {
       if (reducedMotion) {
@@ -650,11 +681,12 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
     const isHidden = windowMode === 'minimized' || windowMode === 'closed'
     const isControlLocked =
       windowMode !== 'normal' || fullscreenMode === 'fullscreen-entering' || fullscreenMode === 'fullscreen-exiting'
+    const topInsetPx = desktopBoundsRef ? 0 : TOP_MENU_BAR_HEIGHT_PX
     const normalWidth = clamp(viewport.width * 0.95, MAX_WINDOW_WIDTH_PX / 4, MAX_WINDOW_WIDTH_PX)
     const normalHeight = clamp(viewport.height * 0.72, 280, MAX_WINDOW_HEIGHT_PX)
     const isFullscreenTarget = fullscreenMode === 'fullscreen' || fullscreenMode === 'fullscreen-entering'
-    const fullscreenHeight = Math.max(260, viewport.height - TOP_MENU_BAR_HEIGHT_PX)
-    const fullscreenY = isFullscreenTarget ? TOP_MENU_BAR_HEIGHT_PX / 2 : 0
+    const fullscreenHeight = Math.max(260, viewport.height - topInsetPx)
+    const fullscreenY = isFullscreenTarget ? topInsetPx / 2 : 0
     const currentBaseX = isFullscreenTarget ? 0 : offset.x
     const currentBaseY = isFullscreenTarget ? fullscreenY : offset.y
     const targetWindowX = isFullscreenTarget ? 0 : offset.x
@@ -1029,7 +1061,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
         ref={windowRef}
         aria-hidden={isHidden}
         className={cn(
-          'pointer-events-none fixed z-50 terminal-squircle-shell select-none overflow-hidden left-1/2 top-1/2',
+          'pointer-events-none fixed z-50 terminal-squircle-shell overflow-hidden left-1/2 top-1/2',
           '-translate-x-1/2 -translate-y-1/2',
           'font-terminal',
           'touch-none origin-bottom transform-gpu will-change-transform',
@@ -1047,7 +1079,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
           className={cn(
             'absolute inset-x-0 top-0 z-20 flex h-10 cursor-default items-center justify-between gap-3.5 px-3 py-1',
             'touch-none bg-[rgb(var(--terminal-titlebar-bg))] border-[color:rgb(var(--terminal-shell-border)/0.45)]',
-            'text-left outline-none',
+            'select-none text-left outline-none',
           )}
           onPointerDown={(event) => {
             beginDrag(event.pointerId, event.clientX, event.clientY)
@@ -1080,21 +1112,42 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
                 event.stopPropagation()
                 closeWindow()
               }}
-              className={cn(
-                // macOS-like inactive stoplight (neutral gray), color+glyph only on hover.
-                'relative grid size-[14px] place-items-center rounded-full bg-[#d0d0d2] ring-1 ring-inset ring-[#bdbdc0]',
-                'shadow-[0_0.5px_0_rgba(255,255,255,0.55)_inset] transition-colors duration-150',
-                'group-hover/stoplights:bg-[#ed6a5f] group-hover/stoplights:ring-[#e24b41]',
-              )}
+              className="relative size-[14px] shrink-0"
             >
+              <svg
+                viewBox="0 0 85.4 85.4"
+                className="absolute inset-0 size-[14px] opacity-100 transition-opacity duration-150 group-hover/stoplights:opacity-0"
+                aria-hidden="true"
+              >
+                <g clipRule="evenodd" fillRule="evenodd">
+                  <path
+                    d="m42.7 85.4c23.6 0 42.7-19.1 42.7-42.7s-19.1-42.7-42.7-42.7-42.7 19.1-42.7 42.7 19.1 42.7 42.7 42.7z"
+                    fill="#d1d0d2"
+                  />
+                  <path
+                    d="m42.7 81.7c21.6 0 39.1-17.5 39.1-39.1s-17.5-39.1-39.1-39.1-39.1 17.5-39.1 39.1 17.5 39.1 39.1 39.1z"
+                    fill="#c7c7c7"
+                  />
+                </g>
+              </svg>
               <svg
                 viewBox="0 0 85.4 85.4"
                 className="absolute inset-0 size-[14px] opacity-0 transition-opacity duration-150 group-hover/stoplights:opacity-100"
                 aria-hidden="true"
               >
-                <g clipRule="evenodd" fill="#460804" fillRule="evenodd">
-                  <path d="m22.5 57.8 35.3-35.3c1.4-1.4 3.6-1.4 5 0l.1.1c1.4 1.4 1.4 3.6 0 5l-35.3 35.3c-1.4 1.4-3.6 1.4-5 0l-.1-.1c-1.3-1.4-1.3-3.6 0-5z" />
-                  <path d="m27.6 22.5 35.3 35.3c1.4 1.4 1.4 3.6 0 5l-.1.1c-1.4 1.4-3.6 1.4-5 0l-35.3-35.3c-1.4-1.4-1.4-3.6 0-5l.1-.1c1.4-1.3 3.6-1.3 5 0z" />
+                <g clipRule="evenodd" fillRule="evenodd">
+                  <path
+                    d="m42.7 85.4c23.6 0 42.7-19.1 42.7-42.7s-19.1-42.7-42.7-42.7-42.7 19.1-42.7 42.7 19.1 42.7 42.7 42.7z"
+                    fill="#e24b41"
+                  />
+                  <path
+                    d="m42.7 81.8c21.6 0 39.1-17.5 39.1-39.1s-17.5-39.1-39.1-39.1-39.1 17.5-39.1 39.1 17.5 39.1 39.1 39.1z"
+                    fill="#ed6a5f"
+                  />
+                  <g fill="#460804">
+                    <path d="m22.5 57.8 35.3-35.3c1.4-1.4 3.6-1.4 5 0l.1.1c1.4 1.4 1.4 3.6 0 5l-35.3 35.3c-1.4 1.4-3.6 1.4-5 0l-.1-.1c-1.3-1.4-1.3-3.6 0-5z" />
+                    <path d="m27.6 22.5 35.3 35.3c1.4 1.4 1.4 3.6 0 5l-.1.1c-1.4 1.4-3.6 1.4-5 0l-35.3-35.3c-1.4-1.4-1.4-3.6 0-5l.1-.1c1.4-1.3 3.6-1.3 5 0z" />
+                  </g>
                 </g>
               </svg>
             </button>
@@ -1121,20 +1174,43 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
                 if (fullscreenMode === 'fullscreen-entering' || fullscreenMode === 'fullscreen-exiting') return
                 minimizeWindow()
               }}
-              className={cn(
-                'relative grid size-[14px] place-items-center rounded-full bg-[#d0d0d2] ring-1 ring-inset ring-[#bdbdc0]',
-                'shadow-[0_0.5px_0_rgba(255,255,255,0.55)_inset] transition-colors duration-150',
-                'group-hover/stoplights:bg-[#f6be50] group-hover/stoplights:ring-[#e1a73e]',
-                isControlLocked ? 'pointer-events-none' : '',
-              )}
+              className={cn('relative size-[14px] shrink-0', isControlLocked ? 'pointer-events-none' : '')}
             >
               <svg
                 viewBox="0 0 85.4 85.4"
-                className="absolute inset-0 size-[14px] origin-center scale-[1.14] opacity-0 transition-opacity duration-150 group-hover/stoplights:opacity-100"
-                fill="#90591d"
+                className="absolute inset-0 size-[14px] opacity-100 transition-opacity duration-150 group-hover/stoplights:opacity-0"
                 aria-hidden="true"
               >
-                <path d="m17.8 39.1h49.9c1.9 0 3.5 1.6 3.5 3.5v.1c0 1.9-1.6 3.5-3.5 3.5h-49.9c-1.9 0-3.5-1.6-3.5-3.5v-.1c0-1.9 1.5-3.5 3.5-3.5z" />
+                <g clipRule="evenodd" fillRule="evenodd">
+                  <path
+                    d="m42.7 85.4c23.6 0 42.7-19.1 42.7-42.7s-19.1-42.7-42.7-42.7-42.7 19.1-42.7 42.7 19.1 42.7 42.7 42.7z"
+                    fill="#d1d0d2"
+                  />
+                  <path
+                    d="m42.7 81.7c21.6 0 39.1-17.5 39.1-39.1s-17.5-39.1-39.1-39.1-39.1 17.5-39.1 39.1 17.5 39.1 39.1 39.1z"
+                    fill="#c7c7c7"
+                  />
+                </g>
+              </svg>
+              <svg
+                viewBox="0 0 85.4 85.4"
+                className="absolute inset-0 size-[14px] opacity-0 transition-opacity duration-150 group-hover/stoplights:opacity-100"
+                aria-hidden="true"
+              >
+                <g clipRule="evenodd" fillRule="evenodd">
+                  <path
+                    d="m42.7 85.4c23.6 0 42.7-19.1 42.7-42.7s-19.1-42.7-42.7-42.7-42.7 19.1-42.7 42.7 19.1 42.7 42.7 42.7z"
+                    fill="#e1a73e"
+                  />
+                  <path
+                    d="m42.7 81.8c21.6 0 39.1-17.5 39.1-39.1s-17.5-39.1-39.1-39.1-39.1 17.5-39.1 39.1 17.5 39.1 39.1 39.1z"
+                    fill="#f6be50"
+                  />
+                  <path
+                    d="m17.8 39.1h49.9c1.9 0 3.5 1.6 3.5 3.5v.1c0 1.9-1.6 3.5-3.5 3.5h-49.9c-1.9 0-3.5-1.6-3.5-3.5v-.1c0-1.9 1.5-3.5 3.5-3.5z"
+                    fill="#90591d"
+                  />
+                </g>
               </svg>
             </button>
             <button
@@ -1158,20 +1234,43 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
                 if (isControlLocked) return
                 toggleFullscreen()
               }}
-              className={cn(
-                'relative grid size-[14px] place-items-center rounded-full bg-[#d0d0d2] ring-1 ring-inset ring-[#bdbdc0]',
-                'shadow-[0_0.5px_0_rgba(255,255,255,0.55)_inset] transition-colors duration-150',
-                'group-hover/stoplights:bg-[#61c555] group-hover/stoplights:ring-[#2dac2f]',
-                isControlLocked ? 'pointer-events-none' : '',
-              )}
+              className={cn('relative size-[14px] shrink-0', isControlLocked ? 'pointer-events-none' : '')}
             >
               <svg
                 viewBox="0 0 85.4 85.4"
-                className="absolute inset-0 size-[14px] origin-center -rotate-[135deg] opacity-0 transition-opacity duration-150 group-hover/stoplights:opacity-100"
-                fill="#2a6218"
+                className="absolute inset-0 size-[14px] opacity-100 transition-opacity duration-150 group-hover/stoplights:opacity-0"
                 aria-hidden="true"
               >
-                <path d="m31.2 20.8h26.7c3.6 0 6.5 2.9 6.5 6.5v26.7zm23.2 43.7h-26.8c-3.6 0-6.5-2.9-6.5-6.5v-26.8z" />
+                <g clipRule="evenodd" fillRule="evenodd">
+                  <path
+                    d="m42.7 85.4c23.6 0 42.7-19.1 42.7-42.7s-19.1-42.7-42.7-42.7-42.7 19.1-42.7 42.7 19.1 42.7 42.7 42.7z"
+                    fill="#d1d0d2"
+                  />
+                  <path
+                    d="m42.7 81.7c21.6 0 39.1-17.5 39.1-39.1s-17.5-39.1-39.1-39.1-39.1 17.5-39.1 39.1 17.5 39.1 39.1 39.1z"
+                    fill="#c7c7c7"
+                  />
+                </g>
+              </svg>
+              <svg
+                viewBox="0 0 85.4 85.4"
+                className="absolute inset-0 size-[14px] opacity-0 transition-opacity duration-150 group-hover/stoplights:opacity-100"
+                aria-hidden="true"
+              >
+                <g clipRule="evenodd" fillRule="evenodd">
+                  <path
+                    d="m42.7 85.4c23.6 0 42.7-19.1 42.7-42.7s-19.1-42.7-42.7-42.7-42.7 19.1-42.7 42.7 19.1 42.7 42.7 42.7z"
+                    fill="#2dac2f"
+                  />
+                  <path
+                    d="m42.7 81.8c21.6 0 39.1-17.5 39.1-39.1s-17.5-39.1-39.1-39.1-39.1 17.5-39.1 39.1c0 21.5 17.5 39.1 39.1 39.1z"
+                    fill="#61c555"
+                  />
+                  <path
+                    d="m31.2 20.8h26.7c3.6 0 6.5 2.9 6.5 6.5v26.7zm23.2 43.7h-26.8c-3.6 0-6.5-2.9-6.5-6.5v-26.8z"
+                    fill="#2a6218"
+                  />
+                </g>
               </svg>
             </button>
           </div>
@@ -1187,6 +1286,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
           <div
             className={cn(
               'relative h-full overflow-auto px-5 py-4 text-[12.5px] leading-relaxed sm:text-[13.5px]',
+              'cursor-text select-text',
               'bg-[linear-gradient(180deg,rgb(var(--terminal-window-bg-top)),rgb(var(--terminal-window-bg-bottom)))]',
             )}
           >
