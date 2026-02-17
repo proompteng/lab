@@ -37,6 +37,9 @@ spec:
                 git clone --depth 1 https://github.com/proompteng/lab.git /workspace/lab
               fi
               mkdir -p /workspace/lab/.worktrees /workspace/.bun-install-cache /workspace/.ovscode
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
       containers:
         - name: app
           image: registry.ide-newton.ts.net/lab/jangar:latest
