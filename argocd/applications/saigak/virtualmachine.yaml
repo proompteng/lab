@@ -11,6 +11,7 @@ spec:
   dataVolumeTemplates:
     - metadata:
         name: saigak-rootdisk
+        creationTimestamp: null
       spec:
         source:
           http:
@@ -27,7 +28,9 @@ spec:
       labels:
         kubevirt.io/domain: saigak
         app.kubernetes.io/name: saigak
+      creationTimestamp: null
     spec:
+      architecture: arm64
       nodeSelector:
         kubernetes.io/hostname: talos-192-168-1-85
       domain:
@@ -37,6 +40,10 @@ spec:
           # Keep these stable so cloud-init doesn't pin config to a transient MAC/instance-id.
           # Changing uuid forces cloud-init to treat this as a new instance.
           uuid: 2d3cf6e5-888f-4c35-8a3f-353f50e30f85
+          # Keep stable to prevent KubeVirt defaulting from causing Argo drift.
+          serial: 68d13222-7a24-4965-ac22-4cda597a0c03
+        machine:
+          type: virt
         resources:
           requests:
             memory: 32Gi
