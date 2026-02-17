@@ -57,7 +57,7 @@ For AMD Ryzen AI Max+ 395 (Strix Halo), the guide also lists extra kernel args:
 - ttm.pages_limit=33554432
 
 These are embedded in boot assets via `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml`
-and the custom installer image referenced by `devices/ryzen/manifests/installer-image.patch.yaml`.
+and applied by using an Image Factory installer image generated from that schematic.
 https://docs.siderolabs.com/talos/v1.11/configure-your-talos-cluster/hardware-and-drivers/amd-gpu
 
 ## Action checklist (Talos)
@@ -71,57 +71,53 @@ https://docs.siderolabs.com/talos/v1.11/configure-your-talos-cluster/hardware-an
 
 See `devices/ryzen/docs/amdgpu-device-plugin.md` for the pinned device plugin manifests and verification steps.
 
-## Reproducible install (Talos v1.12.1, Ryzen node)
+## Reproducible install (Talos v1.12.4, Ryzen node)
 
 Talos boot assets must include the AMD GPU extensions and Strix Halo kernel args. The
 installer will reject configs that set `install.extraKernelArgs` alongside
 `install.grubUseUKICmdline`. Embed the kernel args in the installer image instead.
 
-### 1) Build the installer image (imager)
+### 1) Create an Image Factory schematic + installer image
+
+This repo tracks the schematic source-of-truth (extensions + kernel args):
+
+- `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml`
+
+Generate a schematic ID:
 
 ```bash
-mkdir -p /tmp/imager-out
-docker run --rm --entrypoint imager \
-  -v /tmp/imager-out:/out \
-  ghcr.io/siderolabs/imager:v1.12.1 \
-  metal \
-  --platform metal \
-  --arch amd64 \
-  --base-installer-image factory.talos.dev/metal-installer/34373fc18f4c01525d9421119e41b72fc83885c640f798c0ee723a38decd6e9b:v1.12.1 \
-  --system-extension-image ghcr.io/siderolabs/kata-containers:3.24.0 \
-  --system-extension-image ghcr.io/siderolabs/glibc:2.41 \
-  --system-extension-image ghcr.io/siderolabs/tailscale:1.92.3 \
-  --system-extension-image registry.ide-newton.ts.net/lab/firecracker:v1.12.1 \
-  --system-extension-image ghcr.io/siderolabs/amdgpu:20251125-v1.12.1@sha256:b73aba10ac51cd0d74a6c45210ccee3f6b7d2d97f9b3151d0563b11aa0727599 \
-  --system-extension-image ghcr.io/siderolabs/amd-ucode:20251125@sha256:aa2c684933d28cf10ef785f0d94f91d6d098e164374114648867cf81c2b585fe \
-  --extra-kernel-arg amd_iommu=off \
-  --extra-kernel-arg amdgpu.gttsize=131072 \
-  --extra-kernel-arg ttm.pages_limit=33554432 \
-  --output /out \
-  --output-kind installer
-
-zstd -d /tmp/imager-out/installer-amd64.tar.zst -o /tmp/imager-out/installer-amd64.tar
-crane push /tmp/imager-out/installer-amd64.tar registry.ide-newton.ts.net/lab/metal-installer-firecracker:v1.12.1
-crane digest registry.ide-newton.ts.net/lab/metal-installer-firecracker:v1.12.1
+SCHEMATIC_ID="$(
+  curl -sS -X POST --data-binary @devices/ryzen/manifests/ryzen-tailscale-schematic.yaml \
+    https://factory.talos.dev/schematics | jq -r .id
+)"
 ```
 
-Resulting digest (2026-01-24):
-`registry.ide-newton.ts.net/lab/metal-installer-firecracker@sha256:9dd4342c5996367e35bd7748b5712ff02a5b942c0781b7e32f5d8fb35b6a6239`
+The corresponding installer image is:
 
-### 2) Update the machine config + upgrade
+```text
+factory.talos.dev/metal-installer/<schematic-id>:v1.12.4
+```
+
+### 2) Patch the node + upgrade (activates extensions)
 
 ```bash
 export TALOSCONFIG=$PWD/devices/ryzen/talosconfig
 
+cat > /tmp/ryzen-installer-image.patch.yaml <<EOF
+machine:
+  install:
+    image: factory.talos.dev/metal-installer/${SCHEMATIC_ID}:v1.12.4
+EOF
+
 talosctl patch mc -n 192.168.1.194 -e 192.168.1.194 \
-  --patch @devices/ryzen/manifests/installer-image.patch.yaml \
+  --patch @/tmp/ryzen-installer-image.patch.yaml \
   --mode=no-reboot
 
 # If drain is blocked by kubevirt PDBs:
-kubectl --context ryzen -n kubevirt delete pdb virt-controller-pdb
+kubectl --context galactic -n kubevirt delete pdb virt-controller-pdb
 
 talosctl upgrade -n 192.168.1.194 -e 192.168.1.194 \
-  --image registry.ide-newton.ts.net/lab/metal-installer-firecracker@sha256:9dd4342c5996367e35bd7748b5712ff02a5b942c0781b7e32f5d8fb35b6a6239
+  --image factory.talos.dev/metal-installer/${SCHEMATIC_ID}:v1.12.4
 ```
 
 ### 3) Verify
@@ -129,7 +125,7 @@ talosctl upgrade -n 192.168.1.194 -e 192.168.1.194 \
 ```bash
 talosctl get extensions -n 192.168.1.194 -e 192.168.1.194
 talosctl read -n 192.168.1.194 -e 192.168.1.194 /proc/cmdline
-kubectl --context ryzen get nodes -o wide
+kubectl --context galactic get nodes -o wide
 ```
 
 ## Open questions (verify on this unit)

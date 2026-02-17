@@ -16,7 +16,7 @@ Assumptions:
 
 1. In the BMC Remote KVM, mount the Talos `.iso` via "CD Image" / "Start Media".
 2. Reboot and boot from the virtual CD/DVD device (UEFI boot menu or boot override).
-3. Wait for Talos maintenance mode to come up and note the node IP (`<node_ip>`, example: `192.168.1.202`).
+3. Wait for Talos maintenance mode to come up and note the node IP (`<node_ip>`, example: `192.168.1.203`).
 
 ## 2) Generate Talos configs for the existing cluster (gitignored)
 
@@ -56,6 +56,8 @@ Apply these patches:
 - `devices/ampone/manifests/allow-scheduling-controlplane.patch.yaml`
 - `devices/ampone/manifests/controlplane-endpoint-nuc.patch.yaml` (endpoint + apiserver cert SANs)
 - `devices/ampone/manifests/hostname.patch.yaml`
+- `devices/ampone/manifests/ephemeral-volume.patch.yaml` (cap system `/var` to 200GB)
+- `devices/ampone/manifests/local-path.patch.yaml` (allocate remainder to local-path user volume)
 
 ```bash
 talosctl apply-config --insecure -n <node_ip> -e <node_ip> \
@@ -64,14 +66,16 @@ talosctl apply-config --insecure -n <node_ip> -e <node_ip> \
   --config-patch @devices/ampone/manifests/allow-scheduling-controlplane.patch.yaml \
   --config-patch @devices/ampone/manifests/controlplane-endpoint-nuc.patch.yaml \
   --config-patch @devices/ampone/manifests/hostname.patch.yaml \
+  --config-patch @devices/ampone/manifests/ephemeral-volume.patch.yaml \
+  --config-patch @devices/ampone/manifests/local-path.patch.yaml \
   --mode=reboot
 ```
 
 ## 4) Verify join
 
 ```bash
-talosctl version -n 192.168.1.202 -e 192.168.1.202
-talosctl health -n 192.168.1.202 -e 192.168.1.202
+talosctl version -n 192.168.1.203 -e 192.168.1.203
+talosctl health -n 192.168.1.203 -e 192.168.1.203
 
 talosctl etcd members -n 192.168.1.194 -e 192.168.1.194
 

@@ -43,14 +43,48 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "1"
                 automation: manual
-                enabled: "false"
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
               - name: cdi
                 path: argocd/applications/cdi
                 namespace: cdi
                 annotations:
                   argocd.argoproj.io/sync-wave: "1"
                 automation: manual
-                enabled: "false"
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+              - name: nvidia-gpu-operator
+                path: argocd/applications/nvidia-gpu-operator
+                namespace: gpu-operator
+                annotations:
+                  argocd.argoproj.io/sync-wave: "1"
+                automation: manual
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+              - name: saigak
+                path: argocd/applications/saigak
+                namespace: saigak
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: manual
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
               - name: workers
                 path: argocd/applications/workers
                 namespace: workers
@@ -63,13 +97,6 @@ spec:
                     pod-security.kubernetes.io/enforce: privileged
                     pod-security.kubernetes.io/audit: privileged
                     pod-security.kubernetes.io/warn: privileged
-              - name: kata-containers
-                path: argocd/applications/kata-containers
-                namespace: kube-system
-                annotations:
-                  argocd.argoproj.io/sync-wave: "1"
-                automation: manual
-                enabled: "false"
               - name: external-dns
                 path: argocd/applications/external-dns
                 namespace: external-dns

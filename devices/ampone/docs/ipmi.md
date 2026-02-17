@@ -4,7 +4,7 @@ Target BMC:
 - `192.168.1.224`
 
 Talos node IP (example):
-- `192.168.1.202`
+- `192.168.1.203`
 
 ## Authentication
 

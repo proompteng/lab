@@ -1,0 +1,73 @@
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: saigak
+  labels:
+    app.kubernetes.io/name: saigak
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  running: true
+  dataVolumeTemplates:
+    - metadata:
+        name: saigak-rootdisk
+      spec:
+        source:
+          http:
+            url: https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img
+        pvc:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 80Gi
+          storageClassName: local-path
+  template:
+    metadata:
+      labels:
+        kubevirt.io/domain: saigak
+        app.kubernetes.io/name: saigak
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: talos-192-168-1-85
+      domain:
+        cpu:
+          cores: 8
+        resources:
+          requests:
+            memory: 32Gi
+        devices:
+          gpus:
+            - name: gpu0
+              deviceName: nvidia.com/GA102_GEFORCE_RTX_3090
+          disks:
+            - name: rootdisk
+              disk:
+                bus: virtio
+              bootOrder: 1
+            - name: datadisk
+              disk:
+                bus: virtio
+            - name: cloudinitdisk
+              disk:
+                bus: virtio
+          interfaces:
+            - name: default
+              masquerade: {}
+              ports:
+                - port: 22
+                - port: 11434
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: rootdisk
+          dataVolume:
+            name: saigak-rootdisk
+        - name: datadisk
+          persistentVolumeClaim:
+            claimName: saigak-data
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            secretRef:
+              name: saigak-cloud-init

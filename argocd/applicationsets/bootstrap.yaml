@@ -71,7 +71,7 @@ spec:
                   annotations:
                     argocd.argoproj.io/sync-wave: "-1"
                   automation: manual
-                  enabled: "false"
+                  enabled: "true"
                   managedNamespaceMetadata:
                     labels:
                       pod-security.kubernetes.io/enforce: privileged

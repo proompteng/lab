@@ -7,3 +7,5 @@ Files:
 - `devices/altra/manifests/install-nvme0n1.patch.yaml`
 - `devices/altra/manifests/allow-scheduling-controlplane.patch.yaml`
 - `devices/altra/manifests/controlplane-endpoint-nuc.patch.yaml`
+- `devices/altra/manifests/ephemeral-volume.patch.yaml`
+- `devices/altra/manifests/local-path.patch.yaml`

@@ -15,7 +15,7 @@ Assumptions:
 
 Current inventory:
 - `ryzen`: `192.168.1.194`
-- `ampone`: `192.168.1.202`
+- `ampone`: `192.168.1.203`
 - `altra`: `192.168.1.85`
 
 ## 0) Ensure the NUC load balancer includes `altra`
@@ -69,6 +69,8 @@ talosctl apply-config --insecure -n "$ALTRA_IP" -e "$ALTRA_IP" \
   -f devices/altra/controlplane.yaml \
   --config-patch @devices/altra/manifests/hostname.patch.yaml \
   --config-patch @devices/altra/manifests/install-nvme0n1.patch.yaml \
+  --config-patch @devices/altra/manifests/ephemeral-volume.patch.yaml \
+  --config-patch @devices/altra/manifests/local-path.patch.yaml \
   --config-patch @devices/altra/manifests/allow-scheduling-controlplane.patch.yaml \
   --config-patch @devices/altra/manifests/controlplane-endpoint-nuc.patch.yaml \
   --mode=reboot
@@ -81,8 +83,8 @@ Note:
 ## 3) Update local Talos config to include all 3 nodes
 
 ```bash
-talosctl config endpoint 192.168.1.194 192.168.1.202 192.168.1.85
-talosctl config node 192.168.1.194 192.168.1.202 192.168.1.85
+talosctl config endpoint 192.168.1.194 192.168.1.203 192.168.1.85
+talosctl config node 192.168.1.194 192.168.1.203 192.168.1.85
 ```
 
 ## 4) Verify `altra` joined
