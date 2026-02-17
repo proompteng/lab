@@ -10,6 +10,7 @@ Inventory:
 
 Docs:
 - `devices/altra/docs/cluster-bootstrap.md` (install + join existing cluster)
+- `devices/altra/docs/relayout-volumes.md` (EPHEMERAL=300GB, local-path=rest)
 
 Related:
 - NUC load balancer config: `devices/nuc/k8s-api-lb/README.md`

@@ -3,10 +3,8 @@ kind: UserVolumeConfig
 name: local-path-provisioner
 provisioning:
   # `altra` installs to `/dev/nvme0n1` (see `devices/altra/manifests/install-nvme0n1.patch.yaml`).
-  # Talos local storage guide: user volumes are carved from the system disk and mounted under `/var/mnt/<name>`.
-  # Size is computed as: disk - EFI - META - STATE - EPHEMERAL(200GB) - ~5GB headroom.
   diskSelector:
     match: disk.dev_path == '/dev/nvme0n1'
-  minSize: 3793GB
-  maxSize: 3793GB
-  grow: false
+  minSize: 100GB
+  # Omit maxSize to consume the remaining free space on the selected disk.
+  grow: true
