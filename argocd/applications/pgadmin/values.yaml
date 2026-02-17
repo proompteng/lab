@@ -1,7 +1,7 @@
 fullnameOverride: pgadmin
 
 image:
-  tag: "9.11"
+  tag: "9.12"
 
 service:
   type: ClusterIP
@@ -84,6 +84,14 @@ extraVolumes:
               - key: password
                 path: cms-db-app/password
         - secret:
+            name: app-db-app
+            optional: true
+            items:
+              - key: uri
+                path: app-db-app/uri
+              - key: password
+                path: app-db-app/password
+        - secret:
             name: jangar-db-app
             optional: true
             items:
@@ -160,6 +168,7 @@ extraInitContainers: |
             {'secret': 'coder-cluster-app', 'name': 'coder-cluster'},
             {'secret': 'convex-db-app', 'name': 'convex-db'},
             {'secret': 'cms-db-app', 'name': 'cms-db'},
+            {'secret': 'app-db-app', 'name': 'app-db'},
             {'secret': 'jangar-db-app', 'name': 'jangar-db'},
             {'secret': 'golink-db-app', 'name': 'golink-db'},
             {'secret': 'facteur-vector-cluster-app', 'name': 'facteur-vector-cluster'},
