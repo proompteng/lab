@@ -5,6 +5,15 @@ resources:
   - github.com/rancher/local-path-provisioner/deploy?ref=v0.0.34
 patches:
   - target:
+      kind: Namespace
+      name: local-path-storage
+    patch: |-
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: local-path-storage
+      $patch: delete
+  - target:
       kind: ConfigMap
       name: local-path-config
       namespace: local-path-storage

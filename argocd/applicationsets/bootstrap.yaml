@@ -77,6 +77,9 @@ spec:
                       pod-security.kubernetes.io/enforce: privileged
                       pod-security.kubernetes.io/audit: privileged
                       pod-security.kubernetes.io/warn: privileged
+                    annotations:
+                      # Prevent accidental namespace deletion when an app stops managing the Namespace object.
+                      argocd.argoproj.io/sync-options: Prune=false
                 - name: metallb-system
                   path: argocd/applications/metallb-system
                   namespace: metallb-system
