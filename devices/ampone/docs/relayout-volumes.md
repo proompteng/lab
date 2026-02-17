@@ -75,16 +75,30 @@ talosctl etcd members -n 192.168.1.85 -e 192.168.1.85
 
 Confirm only `192.168.1.85` + `192.168.1.194` remain in etcd before wiping `/var`.
 
-## Step 5: Wipe EPHEMERAL and reboot (reprovision `/var` to 300GB)
+## Step 5: Reprovision the partition layout (required to resize EPHEMERAL)
+
+If `EPHEMERAL` already occupies the whole disk, `talosctl reset --system-labels-to-wipe EPHEMERAL` will wipe data but will not
+shrink the partition. To actually resize `EPHEMERAL` to 300GB and create `u-local-path-provisioner`, reprovision the system disk
+partition layout from Talos maintenance mode.
+
+Recommended: follow the reinstall path in `devices/ampone/docs/cluster-bootstrap.md` (it applies the volume patches at install time).
+
+1. Reset the system disk so the node boots into Talos maintenance mode (no config):
 
 ```bash
 talosctl reset -n 192.168.1.203 -e 192.168.1.85 \
   --wipe-mode system-disk \
-  --system-labels-to-wipe EPHEMERAL \
   --reboot --graceful=false
 ```
 
-Wait for Talos API to come back:
+2. Apply config from maintenance mode, including these patches:
+- `devices/ampone/manifests/ephemeral-volume.patch.yaml` (`EPHEMERAL` fixed at 300GB)
+- `devices/ampone/manifests/local-path.patch.yaml` (`local-path-provisioner` consumes remaining space)
+
+See `devices/ampone/docs/cluster-bootstrap.md` for the exact `talosctl apply-config --insecure` command (it also covers generating
+the controlplane config from existing secrets).
+
+Wait for Talos API to come back after install:
 
 ```bash
 talosctl version -n 192.168.1.203 -e 192.168.1.85
@@ -101,10 +115,6 @@ Expected:
 - `EPHEMERAL` is ~300GB.
 - `u-local-path-provisioner` exists and consumes the remaining free space.
 - `/var/mnt/local-path-provisioner` is mounted.
-
-If `EPHEMERAL` stays full-disk sized after the reboot, the partition table did not get reprovisioned. At that point:
-1. put the node into Talos maintenance mode, and
-2. `talosctl wipe disk --insecure --drop-partition nvme0n1p4` to drop the EPHEMERAL partition, then reboot.
 
 ## Step 7: Ensure 203 re-joins etcd, then uncordon
 
