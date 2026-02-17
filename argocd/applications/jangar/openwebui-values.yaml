@@ -2,7 +2,7 @@ ollama:
   enabled: false
 
 ollamaUrls:
-  - http://192.168.1.190:11434
+  - http://saigak.saigak.svc.cluster.local:11434
 
 pipelines:
   enabled: false
@@ -47,7 +47,7 @@ extraEnvVars:
   - name: AIOHTTP_CLIENT_SESSION_SSL
     value: "false"
   - name: DEFAULT_MODELS
-    value: meta-orchestrator
+    value: gpt-5.3-codex
   - name: WEBUI_AUTH
     value: "false"
   - name: ENABLE_SIGNUP
