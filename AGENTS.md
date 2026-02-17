@@ -115,6 +115,7 @@ Output:
 - Default to GitOps (edit `argocd/` manifests and let Argo CD sync). Only apply directly to the cluster when explicitly asked or in an emergency, and document the deviation.
 - Argo CD apps under `argocd/applications/**` should not include `Namespace` manifests; namespaces are created via ApplicationSet `CreateNamespace=true` and `managedNamespaceMetadata` (Pod Security labels, etc).
 - Avoid introducing deprecated Kubernetes/KubeVirt features in new manifests; if a component warns a field/feature gate is deprecated, remove it unless there is a documented requirement.
+- Talos machine configs: do not define multiple `machine.files` entries with the same `path`. Talos will fail `writeUserFiles` with `resource ... already exists`, which prevents CRI/Kubelet from coming up (often surfacing as `/etc/kubernetes/bootstrap-kubeconfig: read-only file system`). Multi-document machine configs are hard to surgically edit via patches; prefer generating/applying a corrected full config via `talosctl apply-config` if you need to remove a duplicate entry.
 
 ## Kubernetes (kubectl)
 - Use explicit namespaces with kubectl (e.g., `kubectl get pods -n <ns>`).

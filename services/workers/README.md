@@ -1,7 +1,6 @@
 # Workers image (codex tools)
 
-This image is intended for the Firecracker/Kata pod in `argocd/applications/workers`.
-It bundles nvm + Node, Bun, and the Codex CLI.
+This image bundles nvm + Node, Bun, and the Codex CLI.
 
 Build/push via:
 

@@ -5,8 +5,6 @@ customization:
     - ttm.pages_limit=33554432
   systemExtensions:
     officialExtensions:
-      - siderolabs/kata-containers
-      - siderolabs/glibc
       - siderolabs/tailscale
       - siderolabs/amdgpu
       - siderolabs/amd-ucode

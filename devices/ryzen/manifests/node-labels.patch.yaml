@@ -1,4 +1,3 @@
 machine:
   nodeLabels:
-    kata-deploy: "enabled"
     kubevirt.io/schedulable: "true"

@@ -13,18 +13,11 @@ The ryzen Talos cluster runs a KubeVirt VM named `workers` via Argo CD. The VM u
 - Chrome remote debugging on `127.0.0.1:9222`
 - Node LTS via nvm, Bun, and Codex CLI
 
-The same `workers` app also deploys a Firecracker-backed Kata pod:
-
-- Pod: `workers-fc`
-- RuntimeClass: `kata-fc`
-- Confirms the Firecracker runtime works independently from KubeVirt
-
 Argo CD apps involved:
 
 - `argocd/local-path-ryzen`
 - `argocd/cdi-ryzen`
 - `argocd/workers-ryzen`
- - `argocd/kata-containers-ryzen`
 
 ## Apply / Re-run cloud-init
 
@@ -41,13 +34,6 @@ Wait for the DataVolume to import and the VM to be running:
 
 ```bash
 kubectl --kubeconfig /home/coder/.kube/ryzen.yaml -n workers get dv,vm,vmi
-```
-
-Verify the Firecracker Kata pod:
-
-```bash
-kubectl --kubeconfig /home/coder/.kube/ryzen.yaml -n workers get pod workers-fc -o wide
-kubectl --kubeconfig /home/coder/.kube/ryzen.yaml -n workers logs workers-fc
 ```
 
 ## Access (SSH via virtctl port-forward)

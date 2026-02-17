@@ -97,13 +97,6 @@ spec:
                     pod-security.kubernetes.io/enforce: privileged
                     pod-security.kubernetes.io/audit: privileged
                     pod-security.kubernetes.io/warn: privileged
-              - name: kata-containers
-                path: argocd/applications/kata-containers
-                namespace: kube-system
-                annotations:
-                  argocd.argoproj.io/sync-wave: "1"
-                automation: manual
-                enabled: "false"
               - name: external-dns
                 path: argocd/applications/external-dns
                 namespace: external-dns
