@@ -22,7 +22,7 @@ export default function Providers({ children }: { children: ReactNode }) {
   const content = convexClient ? <ConvexProvider client={convexClient}>{children}</ConvexProvider> : children
 
   return (
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+    <ThemeProvider attribute="class" forcedTheme="dark" disableTransitionOnChange>
       {content}
       <Toaster richColors closeButton />
     </ThemeProvider>

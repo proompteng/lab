@@ -21,10 +21,7 @@ export default function Hero({ content }: HeroProps) {
     >
       <div aria-hidden className="pointer-events-none absolute inset-0 -z-[1] overflow-hidden">
         <div className="absolute left-1/2 top-[-65%] h-[560px] w-[900px] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,_rgba(129,140,248,0.07),_transparent_85%)] blur-[140px] opacity-55 animate-hero-glow" />
-        <div
-          className="absolute bottom-[-52%] right-[-26%] h-[520px] w-[640px] rounded-full bg-[radial-gradient(circle,_rgba(70,88,242,0.05),_transparent_84%)] blur-[160px] opacity-45 animate-hero-glow"
-          style={{ animationDelay: '4s' }}
-        />
+        <div className="absolute bottom-[-52%] right-[-26%] h-[520px] w-[640px] rounded-full bg-[radial-gradient(circle,_rgba(70,88,242,0.05),_transparent_84%)] blur-[160px] opacity-45 animate-hero-glow [animation-delay:4s]" />
       </div>
 
       <div className="mx-auto max-w-4xl">

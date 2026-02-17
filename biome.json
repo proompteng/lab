@@ -26,6 +26,7 @@
       "!**/coverage",
       "!**/bun.lockb",
       "!**/bun.lock",
+      "!**/next-env.d.ts",
       "!**/routeTree.gen.ts",
       "!**/src/app/routeTree.gen.ts",
       "!apps/landing/src/components/ui",

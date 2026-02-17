@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from 'next'
-import { JetBrains_Mono, Space_Grotesk } from 'next/font/google'
 import Script from 'next/script'
 import Providers from '@/components/providers'
 import './globals.css'
@@ -9,25 +8,14 @@ const PRODUCT_JSON_LD_ID = 'ld+json-product'
 const FAQ_JSON_LD_ID = 'ld+json-faq'
 const BREADCRUMB_JSON_LD_ID = 'ld+json-breadcrumb'
 
-const spaceGrotesk = Space_Grotesk({
-  variable: '--font-space-grotesk',
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-})
-
-const jetbrainsMono = JetBrains_Mono({
-  variable: '--font-jetbrains-mono',
-  subsets: ['latin'],
-})
-
 export const metadata: Metadata = {
   metadataBase: new URL('https://proompteng.ai'),
   title: {
-    default: 'proompteng - A practical control plane for AI agents',
-    template: '%s - proompteng',
+    default: 'proompteng — AI Agent Control Plane for Teams',
+    template: '%s | proompteng',
   },
   description:
-    'proompteng is a practical control plane for AI agents with clear policies, observability, and model routing.',
+    'proompteng is a practical AI agent control plane for teams, offering policy governance, run observability, and model routing from a single interface.',
   applicationName: 'proompteng',
   category: 'AI Agent Platform',
   keywords: [
@@ -40,12 +28,18 @@ export const metadata: Metadata = {
     'self hosted ai agents',
     'ai agent ops',
   ],
-  alternates: { canonical: '/' },
+  alternates: {
+    canonical: '/',
+    languages: {
+      'en-US': '/',
+    },
+  },
   openGraph: {
     type: 'website',
     url: '/',
+    locale: 'en_US',
     siteName: 'proompteng',
-    title: 'proompteng - A practical control plane for AI agents',
+    title: 'proompteng — AI Agent Control Plane',
     description: 'Clear policy checks, observability, and model routing for AI agents.',
     images: [
       {
@@ -58,11 +52,20 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'proompteng - A practical control plane for AI agents',
+    title: 'proompteng — AI Agent Control Plane',
     description: 'Clear policy checks, observability, and model routing for AI agents.',
     images: ['/opengraph-image'],
   },
-  robots: { index: true, follow: true },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      noimageindex: false,
+      'max-image-preview': 'large',
+    },
+  },
   icons: {
     icon: [{ url: '/favicon.ico' }, { url: '/favicon.svg', type: 'image/svg+xml' }],
     shortcut: '/favicon.ico',
@@ -150,14 +153,8 @@ export default function RootLayout({
       {
         '@type': 'ListItem',
         position: 2,
-        name: 'AI Agent Control Plane',
-        item: 'https://proompteng.ai/#control-plane',
-      },
-      {
-        '@type': 'ListItem',
-        position: 3,
-        name: 'Enterprise Use Cases',
-        item: 'https://proompteng.ai/#use-cases',
+        name: 'Documentation',
+        item: 'https://docs.proompteng.ai',
       },
     ],
   }
@@ -184,8 +181,16 @@ export default function RootLayout({
     ],
   }
   return (
-    <html lang="en" className="dark scroll-smooth">
-      <body className={`${spaceGrotesk.variable} ${jetbrainsMono.variable} antialiased`}>
+    <html lang="en" suppressHydrationWarning className="dark scroll-smooth">
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@100..800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+        />
+      </head>
+      <body className="dark antialiased">
         <Providers>
           <Script id={WEBSITE_JSON_LD_ID} type="application/ld+json" strategy="afterInteractive">
             {JSON.stringify(jsonLd)}

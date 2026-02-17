@@ -9,20 +9,14 @@ export const size = {
 export const contentType = 'image/png'
 
 export default function OgImage() {
+  const shellClasses =
+    'flex h-full w-full items-center justify-center bg-[#0e0e10] text-white [font-size:64px] [letter-spacing:-0.02em] font-semibold'
+
   return new ImageResponse(
     <div
-      style={{
-        fontSize: 64,
-        background: '#0e0e10',
-        color: '#ffffff',
-        width: '100%',
-        height: '100%',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        letterSpacing: '-0.02em',
-        fontWeight: 600,
-      }}
+      {...({
+        tw: shellClasses,
+      } as React.HTMLAttributes<HTMLDivElement> & { tw: string })}
     >
       proompteng — ai infrastructure for agents
     </div>,
