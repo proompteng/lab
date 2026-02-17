@@ -3,8 +3,6 @@ kind: Kustomization
 namespace: traefik
 
 resources:
-  - namespace.yaml
-
 helmCharts:
   - name: traefik
     repo: https://traefik.github.io/charts
@@ -13,4 +11,3 @@ helmCharts:
     namespace: traefik
     includeCRDs: true
     valuesFile: values.yaml
-

@@ -10,7 +10,6 @@ configMapGenerator:
       disableNameSuffixHash: true
 resources:
   - https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.0/manifests/ha/install.yaml
-  - base/namespace.yaml
   - base/ingressroute.yaml
   - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/v1.1.0/config/install.yaml
   - base/secrets.yaml

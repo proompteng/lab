@@ -234,6 +234,14 @@ spec:
                   argocd.argoproj.io/sync-wave: "3"
                 automation: auto
                 enabled: "false"
+                managedNamespaceMetadata:
+                  labels:
+                    app.kubernetes.io/name: tigresse
+                    app.kubernetes.io/component: operator
+                    app.kubernetes.io/managed-by: argocd
+                  annotations:
+                    # Prevent accidental namespace deletion when an app stops managing the Namespace object.
+                    argocd.argoproj.io/sync-options: Prune=false
               - name: temporal
                 path: argocd/applications/temporal
                 namespace: temporal

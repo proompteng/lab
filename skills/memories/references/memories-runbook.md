@@ -7,7 +7,7 @@ Memories are stored in Postgres using the schema in `schemas/embeddings/memories
 ## Default self-hosted settings
 
 ```bash
-export OPENAI_API_BASE_URL='http://192.168.1.190:11434/v1'
+export OPENAI_API_BASE_URL='http://saigak.saigak.svc.cluster.local:11434/v1'
 export OPENAI_EMBEDDING_MODEL='qwen3-embedding-saigak:0.6b'
 export OPENAI_EMBEDDING_DIMENSION='1024'
 ```

@@ -23,6 +23,10 @@ spec:
                     argocd.argoproj.io/sync-wave: "-2"
                   automation: manual
                   enabled: "true"
+                  managedNamespaceMetadata:
+                    annotations:
+                      # Prevent accidental namespace deletion when an app stops managing the Namespace object.
+                      argocd.argoproj.io/sync-options: Prune=false
                 - name: sealed-secrets
                   path: argocd/applications/sealed-secrets
                   namespace: sealed-secrets
@@ -94,6 +98,10 @@ spec:
                     argocd.argoproj.io/sync-wave: "1"
                   automation: auto
                   enabled: "true"
+                  managedNamespaceMetadata:
+                    annotations:
+                      # Prevent accidental namespace deletion when an app stops managing the Namespace object.
+                      argocd.argoproj.io/sync-options: Prune=false
                 - name: tailscale
                   path: argocd/applications/tailscale
                   namespace: tailscale
@@ -104,6 +112,9 @@ spec:
                       pod-security.kubernetes.io/enforce: privileged
                       pod-security.kubernetes.io/audit: privileged
                       pod-security.kubernetes.io/warn: privileged
+                    annotations:
+                      # Prevent accidental namespace deletion when an app stops managing the Namespace object.
+                      argocd.argoproj.io/sync-options: Prune=false
                   automation: auto
                   enabled: "true"
                 - name: registry

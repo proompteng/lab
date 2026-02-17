@@ -3,12 +3,11 @@ kind: Kustomization
 
 resources:
   - ../../base
-  - namespace.yaml
   - serviceaccount.yaml
   - clusterrole.yaml
   - clusterrolebinding.yaml
 
-namespace: kitty-krew-dev
+namespace: kitty-krew
 
 patches:
   - path: configmap.yaml
