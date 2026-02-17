@@ -3,9 +3,9 @@ kind: UserVolumeConfig
 name: local-path-provisioner
 provisioning:
   # `ampone` installs to `/dev/nvme0n1` (see `devices/ampone/manifests/install-nvme0n1.patch.yaml`).
-  # Size is computed as: disk - EFI - META - STATE - EPHEMERAL(200GB) - ~5GB headroom.
+  # Allocate the remainder of the disk after Talos system partitions and EPHEMERAL.
+  # Keep `grow: false` so the partition size remains stable (no auto-resize if the disk size changes).
   diskSelector:
     match: disk.dev_path == '/dev/nvme0n1'
-  minSize: 3889GB
-  maxSize: 3889GB
+  minSize: 100GB
   grow: false
