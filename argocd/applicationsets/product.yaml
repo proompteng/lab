@@ -23,7 +23,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: app
                 path: argocd/applications/app
                 namespace: app
@@ -31,7 +31,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: cms
                 path: argocd/applications/cms
                 namespace: cms
@@ -47,7 +47,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: homepage
                 path: argocd/applications/homepage
                 namespace: homepage

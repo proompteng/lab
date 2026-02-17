@@ -2,6 +2,8 @@
 
 This app now expects the shared Convex backend in `packages/backend`.
 
+Deployment: changes under `apps/landing/**` (or `packages/design/**`) merged to `main` trigger a Docker build and an Argo CD Image Updater PR that bumps `argocd/applications/proompteng/kustomization.yaml`.
+
 ## Local setup
 
 1. Configure Convex once:
