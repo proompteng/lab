@@ -33,6 +33,10 @@ spec:
       domain:
         cpu:
           cores: 8
+        firmware:
+          # Keep these stable so cloud-init doesn't pin config to a transient MAC/instance-id.
+          # Changing uuid forces cloud-init to treat this as a new instance.
+          uuid: 2d3cf6e5-888f-4c35-8a3f-353f50e30f85
         resources:
           requests:
             memory: 32Gi
@@ -54,6 +58,7 @@ spec:
           interfaces:
             - name: default
               masquerade: {}
+              macAddress: "02:00:00:00:00:85"
               ports:
                 - port: 22
                 - port: 11434
