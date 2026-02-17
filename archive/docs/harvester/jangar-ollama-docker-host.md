@@ -4,7 +4,7 @@ This runbook installs NVIDIA drivers + Ollama on `docker-host` (`kalmyk@192.168.
 
 ## Prerequisites
 - GPU is passed through to `docker-host` from Harvester.
-  - See `docs/harvester-gpu-pci-passthrough.md`.
+  - See `archive/docs/harvester/harvester-gpu-pci-passthrough.md`.
 
 ## Install NVIDIA driver + CUDA (inside the VM)
 SSH to the VM:
