@@ -71,6 +71,7 @@ talosctl apply-config --insecure -n "$ALTRA_IP" -e "$ALTRA_IP" \
   --config-patch @devices/altra/manifests/install-nvme0n1.patch.yaml \
   --config-patch @devices/altra/manifests/ephemeral-volume.patch.yaml \
   --config-patch @devices/altra/manifests/local-path.patch.yaml \
+  --config-patch @devices/altra/manifests/vfio-modules.patch.yaml \
   --config-patch @devices/altra/manifests/allow-scheduling-controlplane.patch.yaml \
   --config-patch @devices/altra/manifests/controlplane-endpoint-nuc.patch.yaml \
   --mode=reboot
@@ -79,6 +80,9 @@ talosctl apply-config --insecure -n "$ALTRA_IP" -e "$ALTRA_IP" \
 Note:
 - The IP can change after reboot/install (DHCP). Use console/KVM to confirm the
   post-install IP if `talosctl` can’t connect.
+ - `devices/altra/manifests/vfio-modules.patch.yaml` is required for KubeVirt GPU
+   passthrough on Talos (it preloads `vfio_pci` so the GPU Operator VFIO manager
+   can bind the GPU without `modprobe` privileges).
 
 ## 3) Update local Talos config to include all 3 nodes
 
