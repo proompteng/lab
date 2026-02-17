@@ -11,6 +11,7 @@ const MAX_WINDOW_WIDTH_PX = 74 * 16
 const MAX_WINDOW_HEIGHT_PX = 760
 const FALLBACK_VIEWPORT = { width: 1280, height: 720 }
 const TOP_MENU_BAR_HEIGHT_PX = 44
+const DOCK_SAFE_AREA_PX = 96
 const MACOS_MINIMIZE_DURATION = 0.78
 const MACOS_RESTORE_DURATION = 0.62
 const MACOS_FULLSCREEN_DURATION = 0.38
@@ -427,11 +428,13 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
 
         const maxX = containerRect.width / 2 + windowRect.width / 2 - MIN_VISIBLE_PX
         const minX = MIN_VISIBLE_PX - containerRect.width / 2 - windowRect.width / 2
-        const maxY = containerRect.height / 2 + windowRect.height / 2 - MIN_VISIBLE_PX
-        const minY = MIN_VISIBLE_PX - containerRect.height / 2 - windowRect.height / 2
-        const topBoundY = TOP_MENU_BAR_HEIGHT_PX + 12 + windowRect.height / 2 - containerRect.height / 2
+        // Keep the window fully within the desktop: flush under the menu bar, and above the dock.
+        const topBoundY = TOP_MENU_BAR_HEIGHT_PX + windowRect.height / 2 - containerRect.height / 2
+        const bottomBoundY = containerRect.height / 2 - DOCK_SAFE_AREA_PX - windowRect.height / 2
+        const minY = Math.min(topBoundY, bottomBoundY)
+        const maxY = Math.max(topBoundY, bottomBoundY)
 
-        setOffset({ x: clamp(nextX, minX, maxX), y: clamp(nextY, Math.max(minY, topBoundY), maxY) })
+        setOffset({ x: clamp(nextX, minX, maxX), y: clamp(nextY, minY, maxY) })
       }
 
       const onPointerMove = (event: PointerEvent) => {

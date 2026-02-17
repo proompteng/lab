@@ -328,7 +328,8 @@ const Dock = memo(function Dock({
   const hoverIntentRef = useRef<number | null>(null)
   const dockPointerXRef = useRef<number | null>(null)
   const dockPointerXSmoothedRef = useRef<number | null>(null)
-  const dockControlsRef = useRef<Array<ReturnType<typeof useAnimationControls> | null>>([])
+  const dockPosControlsRef = useRef<Array<ReturnType<typeof useAnimationControls> | null>>([])
+  const dockScaleControlsRef = useRef<Array<ReturnType<typeof useAnimationControls> | null>>([])
   const dockCurrentRef = useRef<DockIconTransform[]>([])
   const shouldAnimateRef = useRef(false)
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
@@ -374,7 +375,8 @@ const Dock = memo(function Dock({
 
     const pointerX = dockPointerXSmoothedRef.current
     const centers = dockCentersRef.current
-    const controls = dockControlsRef.current
+    const posControls = dockPosControlsRef.current
+    const scaleControls = dockScaleControlsRef.current
     const dockRect = dockRefs.current[0]?.parentElement?.getBoundingClientRect() ?? null
 
     const baseSize = 48
@@ -434,8 +436,9 @@ const Dock = memo(function Dock({
 
     let stillAnimating = false
     for (let i = 0; i < items.length; i += 1) {
-      const control = controls[i]
-      if (!control) continue
+      const posControl = posControls[i]
+      const scaleControl = scaleControls[i]
+      if (!posControl || !scaleControl) continue
 
       const targetScale = targetScales[i] ?? 1
       const targetY = targetLift[i] ?? 0
@@ -447,8 +450,9 @@ const Dock = memo(function Dock({
       const x = cur.x + (targetTranslateX - cur.x) * 0.22
       dockCurrentRef.current[i] = { scale, y, x }
 
-      // Single transform string keeps this on the compositor and avoids layout thrash.
-      control.set({ transform: `translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, 0px) scale(${scale.toFixed(4)})` })
+      // Keep tooltip unaffected by magnification: translate the button, scale only the icon.
+      posControl.set({ x, y })
+      scaleControl.set({ scale })
 
       if (
         Math.abs(targetScale - scale) > settleEpsilonScale ||
@@ -483,7 +487,8 @@ const Dock = memo(function Dock({
             menuBarButtonRef={menuBarButtonRef}
             onTerminalClick={onTerminalClick}
             dockRefs={dockRefs}
-            dockControlsRef={dockControlsRef}
+            dockPosControlsRef={dockPosControlsRef}
+            dockScaleControlsRef={dockScaleControlsRef}
             showTooltip={hoveredIndex === index}
             showRunningDot={dockItem.terminal && isTerminalClosed}
             onHoverStart={() => {
@@ -511,11 +516,15 @@ function DockTooltip({ label }: { label: string }) {
       transition={{ duration: 0.14, ease: 'easeOut' }}
       className={[
         'pointer-events-none absolute left-1/2 bottom-full z-50 -translate-x-1/2',
-        'mb-3 whitespace-nowrap rounded-full',
-        'bg-zinc-900/70 px-4 py-1.5 text-[14px] font-medium text-white/90',
-        'shadow-[0_20px_50px_-32px_rgba(0,0,0,0.95)] backdrop-blur-md ring-1 ring-white/10',
-        'after:absolute after:left-1/2 after:top-full after:-translate-x-1/2 after:-translate-y-2 after:size-3 after:rotate-45',
-        "after:rounded-[0.4rem] after:bg-zinc-900/70 after:ring-1 after:ring-white/10 after:content-['']",
+        'mb-2.5 whitespace-nowrap rounded-[18px]',
+        // macOS-style: slightly translucent, blurred, subtle border, tight padding.
+        'bg-[rgba(14,16,24,0.58)] px-5 py-1.5 text-[15px] font-medium leading-none text-white/90',
+        'shadow-[0_18px_44px_-28px_rgba(0,0,0,0.85)] backdrop-blur-xl ring-1 ring-white/14',
+        // Tail: render a small triangle (not a rotated square) with a subtle border behind it.
+        'before:absolute before:left-1/2 before:top-full before:-translate-x-1/2 before:-translate-y-[1px]',
+        "before:h-3 before:w-4 before:bg-white/14 before:[clip-path:polygon(50%_100%,0_0,100%_0)] before:content-['']",
+        'after:absolute after:left-1/2 after:top-full after:-translate-x-1/2 after:-translate-y-[2px]',
+        "after:h-3 after:w-4 after:bg-[rgba(14,16,24,0.58)] after:[clip-path:polygon(50%_100%,0_0,100%_0)] after:content-['']",
       ].join(' ')}
       aria-hidden="true"
     >
@@ -530,7 +539,8 @@ function DockButton({
   menuBarButtonRef,
   onTerminalClick,
   dockRefs,
-  dockControlsRef,
+  dockPosControlsRef,
+  dockScaleControlsRef,
   showTooltip,
   showRunningDot,
   onHoverStart,
@@ -541,20 +551,24 @@ function DockButton({
   menuBarButtonRef: RefObject<HTMLButtonElement | null>
   onTerminalClick: () => void
   dockRefs: MutableRefObject<Array<HTMLButtonElement | null>>
-  dockControlsRef: MutableRefObject<Array<ReturnType<typeof useAnimationControls> | null>>
+  dockPosControlsRef: MutableRefObject<Array<ReturnType<typeof useAnimationControls> | null>>
+  dockScaleControlsRef: MutableRefObject<Array<ReturnType<typeof useAnimationControls> | null>>
   showTooltip: boolean
   showRunningDot: boolean
   onHoverStart: () => void
   onHoverEnd: () => void
 }) {
-  const controls = useAnimationControls()
+  const posControls = useAnimationControls()
+  const scaleControls = useAnimationControls()
 
   useEffect(() => {
-    dockControlsRef.current[index] = controls
+    dockPosControlsRef.current[index] = posControls
+    dockScaleControlsRef.current[index] = scaleControls
     return () => {
-      if (dockControlsRef.current[index] === controls) dockControlsRef.current[index] = null
+      if (dockPosControlsRef.current[index] === posControls) dockPosControlsRef.current[index] = null
+      if (dockScaleControlsRef.current[index] === scaleControls) dockScaleControlsRef.current[index] = null
     }
-  }, [controls, dockControlsRef, index])
+  }, [dockPosControlsRef, dockScaleControlsRef, index, posControls, scaleControls])
 
   if (dockItem.terminal) {
     return (
@@ -572,7 +586,7 @@ function DockButton({
         }}
         onPointerEnter={onHoverStart}
         onPointerLeave={onHoverEnd}
-        animate={controls}
+        animate={posControls}
         className={cn(
           'relative isolate inline-flex h-12 w-12 items-center justify-center overflow-visible p-0 leading-none text-zinc-100',
           'transform-gpu will-change-transform',
@@ -580,14 +594,16 @@ function DockButton({
         )}
         aria-label={dockItem.label}
       >
-        <Image
-          src="/macos-terminal-icon.png"
-          alt="proompteng"
-          width={48}
-          height={48}
-          className="relative z-10 size-12 object-contain"
-          priority
-        />
+        <motion.div animate={scaleControls} className="relative z-10 transform-gpu will-change-transform">
+          <Image
+            src="/macos-terminal-icon.png"
+            alt="proompteng"
+            width={48}
+            height={48}
+            className="size-12 object-contain"
+            priority
+          />
+        </motion.div>
         {showRunningDot ? (
           <span
             aria-hidden="true"
@@ -607,7 +623,7 @@ function DockButton({
       }}
       onPointerEnter={onHoverStart}
       onPointerLeave={onHoverEnd}
-      animate={controls}
+      animate={posControls}
       className={cn(
         'relative isolate inline-flex h-12 w-12 items-center justify-center overflow-visible p-0 leading-none text-zinc-100',
         'transform-gpu will-change-transform',
@@ -615,7 +631,12 @@ function DockButton({
       )}
       aria-label={dockItem.label}
     >
-      <span className="relative z-10 text-[34px] leading-none">{dockItem.emoji}</span>
+      <motion.span
+        animate={scaleControls}
+        className="relative z-10 transform-gpu will-change-transform text-[34px] leading-none"
+      >
+        {dockItem.emoji}
+      </motion.span>
       <AnimatePresence>{showTooltip ? <DockTooltip label={dockItem.label} /> : null}</AnimatePresence>
     </motion.button>
   )
