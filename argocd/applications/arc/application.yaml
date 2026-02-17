@@ -37,14 +37,10 @@ spec:
                   storage: 60Gi
           listenerTemplate:
             spec:
-              hostNetwork: true
-              dnsPolicy: ClusterFirstWithHostNet
               containers:
                 - name: listener
           template:
             spec:
-              hostNetwork: true
-              dnsPolicy: ClusterFirstWithHostNet
               securityContext:
                 runAsNonRoot: false
                 # ARC runners need a writable tool cache under /home/runner/_work/_tool.
