@@ -13,13 +13,13 @@ This procedure preserves cluster state by having the node leave etcd before wipi
 
 - Maintenance window: wiping `/var` restarts workloads on the node. Single-replica workloads will have downtime.
 - Keep quorum: do **not** reboot the other control planes (`192.168.1.194`, `192.168.1.203`) during the window.
-- Ensure nothing important is stored on local-path before re-laying out volumes:
+- Ensure there are no `Bound` local-path PVs pinned to this node before re-laying out volumes:
 
 ```bash
-kubectl get pv | rg local-path
+kubectl get pv -o json | jq -r '.items[] | select(.spec.storageClassName=="local-path") | [.metadata.name, (.spec.nodeAffinity.required.nodeSelectorTerms[0].matchExpressions[0].values[0] // ""), .status.phase, (.spec.claimRef.namespace+"/"+.spec.claimRef.name)] | @tsv' | column -t
 ```
 
-No `Bound` PVs is the safe starting point.
+No `Bound` PVs where the node is `talos-192-168-1-85` is the safe starting point.
 
 ## Step 0: Snapshot and health checks
 
@@ -63,18 +63,23 @@ talosctl patch machineconfig -n 192.168.1.85 -e 192.168.1.85 --mode=no-reboot \
   --patch @devices/altra/manifests/local-path.patch.yaml
 ```
 
-## Step 4: Wipe EPHEMERAL and reboot (reprovision `/var` to 300GB)
+## Step 4: Reprovision the partition layout (required to resize EPHEMERAL)
 
-Because this is the etcd endpoint node, rely on `talosctl reset --graceful` to cordon/drain and leave etcd.
+If `EPHEMERAL` already occupies the whole disk, `talosctl reset --system-labels-to-wipe EPHEMERAL` will wipe data but will not
+shrink the partition. To actually resize `EPHEMERAL` to 300GB and create `u-local-path-provisioner`, reprovision the system disk
+partition layout from Talos maintenance mode.
+
+Recommended: reinstall from maintenance mode using `devices/altra/docs/cluster-bootstrap.md` (it applies the volume patches at install time).
 
 ```bash
 talosctl reset -n 192.168.1.85 -e 192.168.1.85 \
   --wipe-mode system-disk \
-  --system-labels-to-wipe EPHEMERAL \
-  --reboot
+  --reboot --graceful=false
 ```
 
-Wait for Talos API to come back:
+Then follow `devices/altra/docs/cluster-bootstrap.md` to apply config from maintenance mode (including the volume patches).
+
+Wait for Talos API to come back after install:
 
 ```bash
 talosctl version -n 192.168.1.85 -e 192.168.1.85
@@ -92,10 +97,6 @@ Expected:
 - `EPHEMERAL` is ~300GB.
 - `u-local-path-provisioner` exists and consumes the remaining free space.
 - `/var/mnt/local-path-provisioner` is mounted.
-
-If `EPHEMERAL` stays full-disk sized after the reboot, the partition table did not get reprovisioned. At that point:
-1. put the node into Talos maintenance mode, and
-2. `talosctl wipe disk --insecure --drop-partition nvme0n1p4` to drop the EPHEMERAL partition, then reboot.
 
 ## Acceptance Criteria
 
