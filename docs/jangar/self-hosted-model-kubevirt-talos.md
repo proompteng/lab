@@ -27,8 +27,8 @@ Goal: run the embeddings model in a KubeVirt VM scheduled onto the Talos node `a
 
 1. Talos node `altra` provides the physical GPU.
 2. KubeVirt runs a VM (“model VM”) on Kubernetes.
-3. NVIDIA GPU Operator provisions the node for VM passthrough (VFIO manager binds GPUs to `vfio-pci`; sandbox device plugin advertises passthrough devices to kubelet; node label `nvidia.com/gpu.workload.config=vm-passthrough` selects the mode).
-4. KubeVirt is configured to permit the passthrough resource via `KubeVirt.spec.configuration.permittedHostDevices.pciHostDevices` with `externalResourceProvider: true`.
+3. NVIDIA GPU Operator provisions the node for VM passthrough (VFIO manager binds GPUs to `vfio-pci`; node label `nvidia.com/gpu.workload.config=vm-passthrough` selects the mode).
+4. KubeVirt advertises and permits the passthrough resource via `KubeVirt.spec.configuration.permittedHostDevices.pciHostDevices` (KubeVirt's built-in device-plugin; `externalResourceProvider: false`).
 5. The VM runs Ubuntu and exposes the Saigak proxy (`:11434`) on the pod network.
 6. A Kubernetes `Service` targets the VM launcher pod so cluster workloads can reach `http://<svc>:11434/v1`.
 7. Jangar uses that service as `OPENAI_API_BASE_URL`, with the embeddings model `qwen3-embedding-saigak:0.6b` (1024d).
@@ -64,8 +64,8 @@ Goal: run the embeddings model in a KubeVirt VM scheduled onto the Talos node `a
 
 1. Ensure Talos config enables IOMMU and required modules for VFIO (exact kernel args depend on platform).
 2. Label the node `altra` for GPU Operator mode: `nvidia.com/gpu.workload.config=vm-passthrough`.
-3. Deploy NVIDIA GPU Operator configured for KubeVirt passthrough (VFIO manager and sandbox device plugin enabled).
-4. Verify kubelet advertises the passthrough resource on `altra`.
+3. Deploy NVIDIA GPU Operator configured for KubeVirt passthrough (VFIO manager enabled).
+4. Verify kubelet advertises the passthrough resource on `altra` (via KubeVirt's built-in device-plugin).
 
 Notes:
 1. For VM passthrough, the host typically uses `vfio-pci`, not the NVIDIA datacenter driver.
