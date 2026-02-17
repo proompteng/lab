@@ -22,6 +22,7 @@ patches:
           developerConfiguration:
             featureGates:
               - GPU
+              - MultiArchitecture
           permittedHostDevices:
             pciHostDevices:
               - pciVendorSelector: "10DE:2204"

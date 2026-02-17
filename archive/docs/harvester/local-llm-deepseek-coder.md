@@ -14,7 +14,7 @@ Run a coding-tuned LLM locally on the `docker-host` VM (Ubuntu 24.04, RTX 3090 2
 ## GPU passthrough & driver notes
 1. **Enable passthrough in Harvester**: Select the GA102 device (`altra-000c01000`) and turn passthrough on.
 2. **Bind both GPU + audio functions to `vfio-pci`** (PCIs `000c:01:00.0` & `000c:01:00.1`). If the audio function stays on `snd_hda_intel`, the passthrough toggle hangs in “In Progress”.
-   - If you want this managed as manifests (instead of clicking in the UI), see `docs/harvester-gpu-pci-passthrough.md`.
+   - If you want this managed as manifests (instead of clicking in the UI), see `archive/docs/harvester/harvester-gpu-pci-passthrough.md`.
 3. **Install NVIDIA driver + CUDA toolkit inside the VM**:
    ```bash
    sudo apt-get update

@@ -1,13 +1,13 @@
 # Self-Hosted Embeddings On Talos (Altra RTX 3090) via KubeVirt + Saigak
 
-Date: 2026-02-16
-Status: Design
+Date: 2026-02-17
+Status: Implemented
 
 ## Context
 
 Jangar memories (`/api/memories`) depend on an OpenAI-compatible embeddings backend (`OPENAI_API_BASE_URL`).
 
-The previous “self-hosted model” setup in this repo references a Harvester-based VM (`docker-host`) and Harvester PCI passthrough runbooks. We are now running on Talos, so that documentation is not directly executable.
+The previous “self-hosted model” setup in this repo referenced a Harvester-based VM (`docker-host`) and Harvester PCI passthrough runbooks. We are now running on Talos; Harvester-specific docs have been moved under `archive/` and should not be used for the Talos/KubeVirt path.
 
 Goal: run the embeddings model in a KubeVirt VM scheduled onto the Talos node `altra` (with the RTX 3090), with GPU passthrough to the VM, and install Saigak in the VM to expose an OpenAI-compatible endpoint for Jangar.
 
@@ -35,7 +35,7 @@ Goal: run the embeddings model in a KubeVirt VM scheduled onto the Talos node `a
 
 ## Repository Inputs (Existing)
 
-1. KubeVirt + CDI apps: `argocd/applications/kubevirt/kustomization.yaml`, `argocd/applications/cdi/kustomization.yaml`, and entries (currently disabled) in `argocd/applicationsets/platform.yaml`.
+1. KubeVirt + CDI apps: `argocd/applications/kubevirt/kustomization.yaml`, `argocd/applications/cdi/kustomization.yaml`, and the enabled entries in `argocd/applicationsets/platform.yaml`.
 2. Saigak (installed inside the VM): `services/saigak/`.
 3. Jangar config expects a self-hosted embeddings base URL: `argocd/applications/jangar/deployment.yaml` contains `OPENAI_API_BASE_URL`, `OPENAI_EMBEDDING_MODEL`, and `OPENAI_EMBEDDING_DIMENSION`.
 4. Talos node-level Tailscale extension tooling (if needed for private pulls / Tailscale-only services): `devices/altra/manifests/tailscale-system-extension.patch.yaml`, `devices/altra/manifests/tailscale-extension-service.template.yaml`, `packages/scripts/src/tailscale/generate-altra-extension-service.ts`, and `devices/galactic/docs/tailscale.md`.
@@ -46,7 +46,7 @@ Goal: run the embeddings model in a KubeVirt VM scheduled onto the Talos node `a
 2. NVIDIA GPU Operator with KubeVirt (vm-passthrough, vfio manager, sandbox device plugin): https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-kubevirt.html
 3. Talos NVIDIA GPU docs (for OSS driver support; may or may not be needed for VM passthrough): https://docs.siderolabs.com/talos/v1.12/configure-your-talos-cluster/hardware-and-drivers/nvidia-gpu/
 
-## Execution Plan (GitOps-First)
+## Runbook (GitOps-First)
 
 ### Phase 0: Reality Check
 
@@ -56,9 +56,16 @@ Goal: run the embeddings model in a KubeVirt VM scheduled onto the Talos node `a
 
 ### Phase 1: Enable KubeVirt + CDI
 
-1. In `argocd/applicationsets/platform.yaml`, set `kubevirt.enabled: "true"` and `cdi.enabled: "true"`.
-2. Ensure the `kubevirt` and `cdi` namespaces are PodSecurity compatible (KubeVirt components often require privileges).
+1. In `argocd/applicationsets/platform.yaml`, ensure these apps are enabled:
+   - `kubevirt`
+   - `cdi`
+   - `nvidia-gpu-operator`
+   - `saigak`
+2. Ensure the `kubevirt` and `cdi` namespaces are PodSecurity compatible (KubeVirt components require privileges). We enforce this via `managedNamespaceMetadata` in `argocd/applicationsets/platform.yaml`.
 3. Sync Argo apps and verify KubeVirt CRDs exist, `virt-operator`/`virt-api`/`virt-controller` are running, and CDI DataVolume imports succeed.
+4. In mixed-arch clusters (arm64 + amd64), enable KubeVirt `MultiArchitecture` feature gate. If you see admission failures like:
+   - `MultiArchitecture feature gate is not enabled in kubevirt-config, invalid entry spec.template.spec.architecture`
+   add `MultiArchitecture` under `KubeVirt.spec.configuration.developerConfiguration.featureGates` (see `argocd/applications/kubevirt/kustomization.yaml`).
 
 ### Phase 2: Prepare `altra` For VM GPU Passthrough
 
@@ -74,7 +81,8 @@ Notes:
 ### Phase 3: Configure KubeVirt Permitted Devices
 
 1. Patch the `KubeVirt` CR to include the GPU passthrough resource in `spec.configuration.permittedHostDevices.pciHostDevices`.
-2. Set `externalResourceProvider: true` for the device resource so allocation is controlled by the device plugin.
+2. Set `externalResourceProvider: false` to use KubeVirt's built-in device-plugin for passthrough resources.
+   - NVIDIA's KubeVirt sandbox device plugin image is amd64-only; our GPU node (`altra`) is arm64, so we intentionally do not rely on it.
 
 ### Phase 4: Create The Saigak VM
 
@@ -113,8 +121,13 @@ Guest drivers missing or mismatched, or GPU not actually attached (wrong `device
 `ollama list` doesn’t contain `qwen3-embedding-saigak:0.6b`.
 4. Jangar still returns `/api/memories` 500:
 Base URL wrong, or Saigak proxy not exposing a `/v1/embeddings` compatible endpoint.
+5. Argo sync fails with KubeVirt admission errors about `spec.template.spec.architecture`:
+`MultiArchitecture` feature gate is not enabled on the KubeVirt CR (see Phase 1).
 
 ## Migration Notes (Docs)
 
-1. `docs/harvester-gpu-pci-passthrough.md` is Harvester-specific and should be marked deprecated once the Talos-based path is implemented.
-2. `docs/jangar/ollama-docker-host.md` assumes a Harvester VM; it should be replaced by a Talos/KubeVirt VM runbook once this design is implemented.
+Harvester-based docs are archived under:
+- `archive/docs/harvester/harvester-gpu-pci-passthrough.md`
+- `archive/docs/harvester/harvester-ceph-jbod.md`
+- `archive/docs/harvester/local-llm-deepseek-coder.md`
+- `archive/docs/harvester/jangar-ollama-docker-host.md`
