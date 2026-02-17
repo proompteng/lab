@@ -175,10 +175,11 @@ RUN set -eux; \
   install /tmp/gh_${GH_VERSION}_linux_${GH_ARCH}/bin/gh /usr/local/bin/gh; \
   rm -rf /tmp/gh.tar.gz /tmp/gh_${GH_VERSION}_linux_${GH_ARCH}
 
-# Install zoxide (official installer script)
+# Install zoxide (Debian package, avoids GitHub API rate limits during build)
 RUN set -eux; \
-  curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | \
-    sh -s -- --bin-dir /usr/local/bin --man-dir /usr/local/share/man; \
+  apt-get update; \
+  apt-get install -y --no-install-recommends zoxide; \
+  rm -rf /var/lib/apt/lists/*; \
   zoxide --version; \
   cat <<'PROFILE' > /etc/profile.d/zoxide.sh
 if command -v zoxide >/dev/null 2>&1; then
@@ -203,7 +204,7 @@ RUN set -eux; \
 RUN set -eux; \
   ARCH="${TARGETARCH:-$(uname -m)}"; \
   case "$ARCH" in \
-  amd64|x86_64) NVIM_ARCH=linux64 ;; \
+  amd64|x86_64) NVIM_ARCH=linux-x86_64 ;; \
   arm64|aarch64) NVIM_ARCH=linux-arm64 ;; \
   *) echo "Unsupported arch for neovim: $ARCH" >&2; exit 1 ;; \
   esac; \

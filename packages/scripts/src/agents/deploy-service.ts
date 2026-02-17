@@ -16,7 +16,9 @@ type Options = {
   valuesPath: string
   registry: string
   repository: string
+  controlPlaneRepository: string
   tag: string
+  platforms: string[]
   apply: boolean
 }
 
@@ -26,6 +28,15 @@ const parseBoolean = (value: string | undefined, fallback: boolean): boolean => 
   if (['1', 'true', 'yes', 'y'].includes(normalized)) return true
   if (['0', 'false', 'no', 'n'].includes(normalized)) return false
   return fallback
+}
+
+const parsePlatforms = (value: string | undefined): string[] | undefined => {
+  if (!value) return undefined
+  const platforms = value
+    .split(',')
+    .map((platform) => platform.trim())
+    .filter(Boolean)
+  return platforms.length > 0 ? platforms : undefined
 }
 
 const parseArgs = (argv: string[]): Partial<Options> => {
@@ -68,6 +79,15 @@ const parseArgs = (argv: string[]): Partial<Options> => {
       options.repository = arg.slice('--repository='.length)
       continue
     }
+    if (arg === '--control-plane-repository') {
+      options.controlPlaneRepository = argv[i + 1]
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--control-plane-repository=')) {
+      options.controlPlaneRepository = arg.slice('--control-plane-repository='.length)
+      continue
+    }
     if (arg === '--tag') {
       options.tag = argv[i + 1]
       i += 1
@@ -88,7 +108,14 @@ const resolveOptions = (): Options => {
   const args = parseArgs(process.argv.slice(2))
   const registry = args.registry ?? process.env.JANGAR_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = args.repository ?? process.env.JANGAR_IMAGE_REPOSITORY ?? 'lab/jangar'
+  const controlPlaneRepository =
+    args.controlPlaneRepository ??
+    process.env.AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY ??
+    process.env.JANGAR_CONTROL_PLANE_IMAGE_REPOSITORY ??
+    'lab/jangar-control-plane'
   const tag = args.tag ?? process.env.JANGAR_IMAGE_TAG ?? execGit(['rev-parse', '--short', 'HEAD'])
+  const platforms = parsePlatforms(process.env.AGENTS_IMAGE_PLATFORMS) ??
+    parsePlatforms(process.env.JANGAR_IMAGE_PLATFORMS) ?? ['linux/amd64', 'linux/arm64']
 
   return {
     kustomizePath: resolve(
@@ -101,7 +128,9 @@ const resolveOptions = (): Options => {
     ),
     registry,
     repository,
+    controlPlaneRepository,
     tag,
+    platforms,
     apply: args.apply ?? parseBoolean(process.env.AGENTS_APPLY, true),
   }
 }
@@ -216,7 +245,15 @@ exec ${helmBinary} "${'${'}args[@]}"
   return { helmDir, helmBinary: shimPath, cleanup }
 }
 
-const updateValuesFile = (valuesPath: string, imageRepository: string, tag: string, digest: string) => {
+const updateValuesFile = (
+  valuesPath: string,
+  imageRepository: string,
+  tag: string,
+  digest: string,
+  controlPlaneImageRepository: string,
+  controlPlaneTag: string,
+  controlPlaneDigest: string,
+) => {
   const raw = readFileSync(valuesPath, 'utf8')
   const doc = YAML.parse(raw) ?? {}
 
@@ -225,8 +262,16 @@ const updateValuesFile = (valuesPath: string, imageRepository: string, tag: stri
   doc.image.tag = tag
   doc.image.digest = digest
 
+  doc.controlPlane ??= {}
+  doc.controlPlane.image ??= {}
+  doc.controlPlane.image.repository = controlPlaneImageRepository
+  doc.controlPlane.image.tag = controlPlaneTag
+  doc.controlPlane.image.digest = controlPlaneDigest
+
   writeFileSync(valuesPath, YAML.stringify(doc, { lineWidth: 120 }))
-  console.log(`Updated ${valuesPath} with ${imageRepository}:${tag}@${digest}`)
+  console.log(
+    `Updated ${valuesPath} with ${imageRepository}:${tag}@${digest} and ${controlPlaneImageRepository}:${controlPlaneTag}@${controlPlaneDigest}`,
+  )
 }
 
 const renderAndApply = async (kustomizePath: string) => {
@@ -262,13 +307,40 @@ const main = async () => {
 
   const imageName = `${options.registry}/${options.repository}`
   const image = `${imageName}:${options.tag}`
+  const controlPlaneImageName = `${options.registry}/${options.controlPlaneRepository}`
+  const controlPlaneImage = `${controlPlaneImageName}:${options.tag}`
 
-  await buildImage({ registry: options.registry, repository: options.repository, tag: options.tag })
+  await buildImage({
+    registry: options.registry,
+    repository: options.repository,
+    tag: options.tag,
+    platforms: options.platforms,
+  })
+  await buildImage({
+    registry: options.registry,
+    repository: options.controlPlaneRepository,
+    tag: options.tag,
+    target: 'control-plane',
+    platforms: options.platforms,
+  })
 
   const repoDigest = inspectImageDigest(image)
   const digest = repoDigest.includes('@') ? repoDigest.split('@')[1] : repoDigest
 
-  updateValuesFile(options.valuesPath, imageName, options.tag, digest)
+  const controlPlaneRepoDigest = inspectImageDigest(controlPlaneImage)
+  const controlPlaneDigest = controlPlaneRepoDigest.includes('@')
+    ? controlPlaneRepoDigest.split('@')[1]
+    : controlPlaneRepoDigest
+
+  updateValuesFile(
+    options.valuesPath,
+    imageName,
+    options.tag,
+    digest,
+    controlPlaneImageName,
+    options.tag,
+    controlPlaneDigest,
+  )
 
   if (options.apply) {
     await renderAndApply(options.kustomizePath)
