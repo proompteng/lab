@@ -71,3 +71,5 @@ spec:
           cloudInitNoCloud:
             secretRef:
               name: saigak-cloud-init
+            networkDataSecretRef:
+              name: saigak-cloud-init-network

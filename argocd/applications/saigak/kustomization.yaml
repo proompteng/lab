@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: saigak
 resources:
   - cloud-init-secret.yaml
+  - cloud-init-network-secret.yaml
   - pvc.yaml
   - virtualmachine.yaml
   - service.yaml
