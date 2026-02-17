@@ -141,7 +141,7 @@ spec:
             - name: LLM_ADJUSTMENT_APPROVED
               value: "false"
             - name: LLM_SELF_HOSTED_BASE_URL
-              value: http://192.168.1.190:11434/v1
+              value: http://saigak.saigak.svc.cluster.local:11434/v1
             - name: LLM_SELF_HOSTED_MODEL
               value: qwen3-coder-saigak:30b-a3b-q4_K_M
             - name: TA_CLICKHOUSE_URL
