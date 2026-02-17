@@ -112,9 +112,9 @@ export default function DesktopHero() {
   const terminalWindowRef = useRef<TerminalWindowHandle>(null)
   const menuBarButtonRef = useRef<HTMLButtonElement>(null)
   const topMenuRef = useRef<HTMLDivElement>(null)
+  const desktopStageRef = useRef<HTMLDivElement>(null)
   const [currentTime, setCurrentTime] = useState('--:--')
   const [activeMenu, setActiveMenu] = useState<string | null>(null)
-  const [isTerminalClosed, setIsTerminalClosed] = useState(false)
 
   const restoreWindow = useCallback(() => {
     terminalWindowRef.current?.restore()
@@ -264,36 +264,33 @@ export default function DesktopHero() {
           </div>
         </header>
 
-        <div className="relative z-10 flex-1 px-4 pb-32 pt-8 sm:px-8">
-          <div className="mx-auto grid h-full max-w-[1200px] grid-cols-2 gap-5 px-2 sm:grid-cols-3 md:grid-cols-4">
-            {DESKTOP_ITEMS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className="flex w-full flex-col items-center justify-end gap-1 text-3xl text-zinc-100/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/40"
-                aria-label={item.label}
-              >
-                {item.emoji}
-                <span className="text-[11px] leading-none">{item.label}</span>
-              </button>
-            ))}
+        <div ref={desktopStageRef} className="relative z-10 flex-1 overflow-hidden">
+          <div className="relative z-10 px-4 pb-32 pt-8 sm:px-8">
+            <div className="mx-auto grid h-full max-w-[1200px] grid-cols-2 gap-5 px-2 sm:grid-cols-3 md:grid-cols-4">
+              {DESKTOP_ITEMS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="flex w-full flex-col items-center justify-end gap-1 text-3xl text-zinc-100/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/40"
+                  aria-label={item.label}
+                >
+                  {item.emoji}
+                  <span className="text-[11px] leading-none">{item.label}</span>
+                </button>
+              ))}
+            </div>
           </div>
 
           <TerminalWindow
             ref={terminalWindowRef}
+            desktopBoundsRef={desktopStageRef}
             menuBarButtonRef={menuBarButtonRef}
-            onClosedStateChange={setIsTerminalClosed}
           />
-        </div>
 
-        <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center px-3 pb-4">
-          <Dock
-            items={DOCK_ITEMS}
-            menuBarButtonRef={menuBarButtonRef}
-            onTerminalClick={handleDockClick}
-            isTerminalClosed={isTerminalClosed}
-          />
-        </footer>
+          <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center px-3 pb-4">
+            <Dock items={DOCK_ITEMS} menuBarButtonRef={menuBarButtonRef} onTerminalClick={handleDockClick} />
+          </footer>
+        </div>
       </div>
     </main>
   )
@@ -316,15 +313,14 @@ const Dock = memo(function Dock({
   items,
   menuBarButtonRef,
   onTerminalClick,
-  isTerminalClosed,
 }: {
   items: readonly DockItem[]
   menuBarButtonRef: RefObject<HTMLButtonElement | null>
   onTerminalClick: () => void
-  isTerminalClosed: boolean
 }) {
   const dockRefs = useRef<Array<HTMLButtonElement | null>>([])
   const dockCentersRef = useRef<number[]>([])
+  const dockLeftRef = useRef(0)
   const hoverIntentRef = useRef<number | null>(null)
   const dockPointerXRef = useRef<number | null>(null)
   const dockPointerXSmoothedRef = useRef<number | null>(null)
@@ -335,6 +331,12 @@ const Dock = memo(function Dock({
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
 
   const measureDockCenters = useCallback(() => {
+    const dockNode = dockRefs.current[0]?.parentElement
+    if (dockNode instanceof HTMLElement) {
+      // Avoid layout reads inside animation frames: capture dock left edge during measurement.
+      dockLeftRef.current = dockNode.getBoundingClientRect().left
+    }
+
     dockCentersRef.current = dockRefs.current.map((node) => {
       if (!node) return 0
       const rect = node.getBoundingClientRect()
@@ -377,13 +379,7 @@ const Dock = memo(function Dock({
     const centers = dockCentersRef.current
     const posControls = dockPosControlsRef.current
     const scaleControls = dockScaleControlsRef.current
-    const dockRect = dockRefs.current[0]?.parentElement?.getBoundingClientRect() ?? null
 
-    const baseSize = 48
-    const baseGap = 8
-    const maxScaleBoost = 0.72
-    const maxLift = 18
-    const sigma = 70
     const settleEpsilonScale = 0.0025
     const settleEpsilonY = 0.14
     const settleEpsilonX = 0.35
@@ -392,47 +388,41 @@ const Dock = memo(function Dock({
       dockCurrentRef.current = Array.from({ length: items.length }, () => ({ scale: 1, y: 0, x: 0 }))
     }
 
-    const targetScales: number[] = Array.from({ length: items.length }, () => 1)
-    const targetLift: number[] = Array.from({ length: items.length }, () => 0)
+    const dockLeft = dockLeftRef.current
+    const baseCentersLocal = centers.map((c) => c - dockLeft)
+    const groupCenterLocal =
+      (baseCentersLocal[0] ?? 0) + ((baseCentersLocal.at(-1) ?? 0) - (baseCentersLocal[0] ?? 0)) / 2
+
+    const targetScales = Array.from({ length: items.length }, () => 1)
+    const targetLift = Array.from({ length: items.length }, () => 0)
 
     if (pointerX !== null) {
+      const pointerLocal = pointerX - dockLeft
+      const range = 140
+      const magnification = 0.8
       for (let i = 0; i < items.length; i += 1) {
-        const center = centers[i] ?? 0
-        const distance = Math.abs(pointerX - center)
-        const influence = Math.exp(-(distance * distance) / (2 * sigma * sigma))
-        targetScales[i] = 1 + influence * maxScaleBoost
-        targetLift[i] = -influence * maxLift
+        const center = baseCentersLocal[i] ?? 0
+        const dist = Math.abs(pointerLocal - center)
+        if (dist >= range) continue
+        const t = dist / range
+        const falloff = Math.cos((t * Math.PI) / 2)
+        const scale = 1 + magnification * falloff * falloff
+        targetScales[i] = scale
+        targetLift[i] = -(scale - 1) * 18
       }
     }
 
-    // Variable-width reflow model: compute desired icon centers using scaled widths, then translate
-    // icons so they "make space" like the macOS dock (prevents overlap/clutter).
-    const baseCentersLocal =
-      dockRect && centers.length === items.length ? centers.map((c) => c - dockRect.left) : centers.map((c) => c)
-    const widths = targetScales.map((s) => baseSize * s)
-    const desiredCentersLocal: number[] = []
-    let cursor = 0
+    // Re-layout by scaled widths, centered around the original dock center.
+    const widths = targetScales.map((s) => 48 * s)
+    const totalWidth = widths.reduce((sum, w) => sum + w, 0) + 18 * Math.max(0, widths.length - 1)
+    let cursor = groupCenterLocal - totalWidth / 2
+    const targetX: number[] = []
     for (let i = 0; i < widths.length; i += 1) {
-      const w = widths[i] ?? baseSize
-      cursor += w / 2
-      desiredCentersLocal[i] = cursor
-      cursor += w / 2 + baseGap
+      const w = widths[i] ?? 48
+      const center = cursor + w / 2
+      cursor += w + 18
+      targetX[i] = center - (baseCentersLocal[i] ?? 0)
     }
-
-    let anchorIndex = 0
-    if (pointerX !== null) {
-      let best = Number.POSITIVE_INFINITY
-      for (let i = 0; i < baseCentersLocal.length; i += 1) {
-        const d = Math.abs((centers[i] ?? 0) - pointerX)
-        if (d < best) {
-          best = d
-          anchorIndex = i
-        }
-      }
-    }
-
-    const anchorDelta = (baseCentersLocal[anchorIndex] ?? 0) - (desiredCentersLocal[anchorIndex] ?? 0)
-    const targetX = desiredCentersLocal.map((c, i) => c + anchorDelta - (baseCentersLocal[i] ?? 0))
 
     let stillAnimating = false
     for (let i = 0; i < items.length; i += 1) {
@@ -470,7 +460,11 @@ const Dock = memo(function Dock({
 
   return (
     <motion.nav
-      className="pointer-events-auto relative flex items-end gap-2 rounded-[1.3rem] bg-zinc-950/18 px-3 py-2 shadow-[0_26px_70px_-38px_rgba(0,0,0,0.9)] backdrop-blur-2xl backdrop-saturate-150"
+      className={cn(
+        'pointer-events-auto relative flex items-end gap-[18px] overflow-visible rounded-[22px] px-6 py-3',
+        'bg-[rgba(18,20,33,0.44)] shadow-[0_26px_70px_-44px_rgba(0,0,0,0.95)] backdrop-blur-2xl backdrop-saturate-150',
+        'ring-1 ring-white/10',
+      )}
       onPointerEnter={() => {
         measureDockCenters()
         shouldAnimateRef.current = true
@@ -490,7 +484,7 @@ const Dock = memo(function Dock({
             dockPosControlsRef={dockPosControlsRef}
             dockScaleControlsRef={dockScaleControlsRef}
             showTooltip={hoveredIndex === index}
-            showRunningDot={dockItem.terminal && isTerminalClosed}
+            showRunningDot={dockItem.terminal}
             onHoverStart={() => {
               if (hoverIntentRef.current !== null) window.clearTimeout(hoverIntentRef.current)
               hoverIntentRef.current = window.setTimeout(() => setHoveredIndex(index), 180)
@@ -514,18 +508,15 @@ function DockTooltip({ label }: { label: string }) {
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 10, scale: 0.98 }}
       transition={{ duration: 0.14, ease: 'easeOut' }}
-      className={[
-        'pointer-events-none absolute left-1/2 bottom-full z-50 -translate-x-1/2',
-        'mb-2.5 whitespace-nowrap rounded-[18px]',
-        // macOS-style: slightly translucent, blurred, subtle border, tight padding.
-        'bg-[rgba(14,16,24,0.58)] px-5 py-1.5 text-[15px] font-medium leading-none text-white/90',
-        'shadow-[0_18px_44px_-28px_rgba(0,0,0,0.85)] backdrop-blur-xl ring-1 ring-white/14',
-        // Tail: render a small triangle (not a rotated square) with a subtle border behind it.
-        'before:absolute before:left-1/2 before:top-full before:-translate-x-1/2 before:-translate-y-[1px]',
-        "before:h-3 before:w-4 before:bg-white/14 before:[clip-path:polygon(50%_100%,0_0,100%_0)] before:content-['']",
-        'after:absolute after:left-1/2 after:top-full after:-translate-x-1/2 after:-translate-y-[2px]',
-        "after:h-3 after:w-4 after:bg-[rgba(14,16,24,0.58)] after:[clip-path:polygon(50%_100%,0_0,100%_0)] after:content-['']",
-      ].join(' ')}
+      className={cn(
+        'pointer-events-none absolute left-1/2 bottom-full z-[70] -translate-x-1/2',
+        'mb-3 whitespace-nowrap rounded-full px-4 py-1.5',
+        'bg-[rgba(20,22,31,0.66)] text-[13px] font-medium leading-none text-white/92',
+        'shadow-[0_12px_32px_-24px_rgba(0,0,0,0.95)] backdrop-blur-xl ring-1 ring-white/12',
+        // Tail: a rounded rotated square, overlapped into the pill to avoid jagged seams.
+        'after:absolute after:left-1/2 after:top-full after:-translate-x-1/2 after:-translate-y-[7px] after:size-2.5 after:rotate-45 after:rounded-[3px]',
+        'after:bg-[rgba(20,22,31,0.66)] after:ring-1 after:ring-white/12 after:content-[""]',
+      )}
       aria-hidden="true"
     >
       {label}
@@ -590,7 +581,7 @@ function DockButton({
         className={cn(
           'relative isolate inline-flex h-12 w-12 items-center justify-center overflow-visible p-0 leading-none text-zinc-100',
           'transform-gpu will-change-transform',
-          showTooltip ? 'z-40' : 'z-10',
+          showTooltip ? 'z-50' : 'z-10',
         )}
         aria-label={dockItem.label}
       >
@@ -627,7 +618,7 @@ function DockButton({
       className={cn(
         'relative isolate inline-flex h-12 w-12 items-center justify-center overflow-visible p-0 leading-none text-zinc-100',
         'transform-gpu will-change-transform',
-        showTooltip ? 'z-40' : 'z-10',
+        showTooltip ? 'z-50' : 'z-10',
       )}
       aria-label={dockItem.label}
     >
