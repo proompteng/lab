@@ -9,7 +9,7 @@ Jangar memories (`/api/memories`) depend on an OpenAI-compatible embeddings back
 
 The previous “self-hosted model” setup in this repo referenced a Harvester-based VM (`docker-host`) and Harvester PCI passthrough runbooks. We are now running on Talos; Harvester-specific docs have been moved under `archive/` and should not be used for the Talos/KubeVirt path.
 
-Goal: run the embeddings model in a KubeVirt VM scheduled onto the Talos node `altra` (with the RTX 3090), with GPU passthrough to the VM, and install Saigak in the VM to expose an OpenAI-compatible endpoint for Jangar.
+Goal: run the embeddings model in a KubeVirt VM scheduled onto the Talos node `altra` (with the RTX 3090), with GPU passthrough to the VM, and expose an OpenAI-compatible endpoint for Jangar at a stable in-cluster address.
 
 ## Goals
 
@@ -29,14 +29,15 @@ Goal: run the embeddings model in a KubeVirt VM scheduled onto the Talos node `a
 2. KubeVirt runs a VM (“model VM”) on Kubernetes.
 3. NVIDIA GPU Operator provisions the node for VM passthrough (VFIO manager binds GPUs to `vfio-pci`; node label `nvidia.com/gpu.workload.config=vm-passthrough` selects the mode).
 4. KubeVirt advertises and permits the passthrough resource via `KubeVirt.spec.configuration.permittedHostDevices.pciHostDevices` (KubeVirt's built-in device-plugin; `externalResourceProvider: false`).
-5. The VM runs Ubuntu and exposes the Saigak proxy (`:11434`) on the pod network.
+5. The VM runs Ubuntu and exposes the model endpoint on the pod network (`:11434`).
 6. A Kubernetes `Service` targets the VM launcher pod so cluster workloads can reach `http://<svc>:11434/v1`.
 7. Jangar uses that service as `OPENAI_API_BASE_URL`, with the embeddings model `qwen3-embedding-saigak:0.6b` (1024d).
 
 ## Repository Inputs (Existing)
 
 1. KubeVirt + CDI apps: `argocd/applications/kubevirt/kustomization.yaml`, `argocd/applications/cdi/kustomization.yaml`, and the enabled entries in `argocd/applicationsets/platform.yaml`.
-2. Saigak (installed inside the VM): `services/saigak/`.
+2. Saigak (the GitOps application + VM name): `argocd/applications/saigak/`.
+   - Optional: the repo also contains a richer “Saigak” package with an OTEL proxy + Alloy (`services/saigak/`), but the current KubeVirt VM uses a simpler cloud-init that runs Ollama directly.
 3. Jangar config expects a self-hosted embeddings base URL: `argocd/applications/jangar/deployment.yaml` contains `OPENAI_API_BASE_URL`, `OPENAI_EMBEDDING_MODEL`, and `OPENAI_EMBEDDING_DIMENSION`.
 4. Talos node-level Tailscale extension tooling (if needed for private pulls / Tailscale-only services): `devices/altra/manifests/tailscale-system-extension.patch.yaml`, `devices/altra/manifests/tailscale-extension-service.template.yaml`, `packages/scripts/src/tailscale/generate-altra-extension-service.ts`, and `devices/galactic/docs/tailscale.md`.
 
@@ -91,8 +92,14 @@ Create a dedicated namespace via ApplicationSet-managed metadata (preferred), or
 
 VM resources (GitOps):
 1. `DataVolume` root disk (Ubuntu cloud image) via CDI.
-2. A persistent data disk (PVC) used for the Ollama model cache and Saigak config.
-3. `VirtualMachine` with node affinity to `altra`, a GPU device under `spec.template.spec.domain.devices.gpus` (with `deviceName` matching the advertised resource), and cloud-init that installs NVIDIA drivers inside the VM, installs Docker plus the compose plugin, and installs Saigak and starts the compose stack.
+2. A persistent data disk (PVC) mounted at `/var/lib/ollama` for the Ollama model cache.
+3. `VirtualMachine` with node affinity to `altra`, a GPU device under `spec.template.spec.domain.devices.gpus` (with `deviceName` matching the advertised resource), and cloud-init that:
+   - installs guest NVIDIA drivers (`cuda-drivers`) and validates `nvidia-smi`
+   - installs Ollama and configures `OLLAMA_HOST=0.0.0.0:11434` and `OLLAMA_MODELS=/var/lib/ollama`
+   - pre-pulls `qwen3-embedding:0.6b` and creates `qwen3-embedding-saigak:0.6b`
+
+VM access (debug):
+- `virtctl -n saigak ssh ubuntu@vmi/saigak --identity-file ~/.ssh/id_ed25519 --command 'nvidia-smi && ollama list'`
 
 Exposure:
 1. `Service` pointing to the VM launcher pod port `11434`.
@@ -108,7 +115,7 @@ Set `OPENAI_API_BASE_URL=http://<saigak-service>.<ns>.svc.cluster.local:11434/v1
 
 1. KubeVirt: `kubectl -n kubevirt get pods`, and `kubectl get crd | rg kubevirt`.
 2. GPU Operator: `kubectl -n <gpu-operator-ns> get pods`, and `kubectl describe node altra | rg -n "nvidia\\.com|gpu"`.
-3. Saigak VM: `kubectl -n <ns> get dv,pvc,vm,vmi -o wide`, `kubectl -n <ns> get pods -o wide`, and from inside cluster `curl -fsS http://<saigak-svc>:11434/api/version`.
+3. Saigak VM: `kubectl -n <ns> get dv,pvc,vm,vmi -o wide`, `kubectl -n <ns> get pods -o wide`, `kubectl -n <ns> get endpointslice -l kubernetes.io/service-name=saigak -o wide`, and from inside cluster `curl -fsS http://<saigak-svc>:11434/api/version`.
 4. Jangar: `kubectl -n jangar logs deploy/jangar -c app --tail=200 | rg -i "embed|embedding|ollama|openai|error"`, and `curl -H 'accept: application/json' "http://jangar.../api/memories?query=test&limit=1"`.
 
 ## Failure Modes (Expected)
@@ -117,11 +124,14 @@ Set `OPENAI_API_BASE_URL=http://<saigak-service>.<ns>.svc.cluster.local:11434/v1
 GPU resource not advertised, or KubeVirt permitted device list missing.
 2. GPU present but unusable inside VM:
 Guest drivers missing or mismatched, or GPU not actually attached (wrong `deviceName`).
-3. Saigak up but embeddings model missing:
+3. Ollama crashloops on first boot:
+The `/var/lib/ollama` mountpoint is owned by `root:root`, so the `ollama` systemd unit (runs as user `ollama`) can’t create `blobs/`. Fix:
+`sudo chown -R ollama:ollama /var/lib/ollama && sudo systemctl restart ollama`.
+4. Saigak up but embeddings model missing:
 `ollama list` doesn’t contain `qwen3-embedding-saigak:0.6b`.
-4. Jangar still returns `/api/memories` 500:
+5. Jangar still returns `/api/memories` 500:
 Base URL wrong, or Saigak proxy not exposing a `/v1/embeddings` compatible endpoint.
-5. Argo sync fails with KubeVirt admission errors about `spec.template.spec.architecture`:
+6. Argo sync fails with KubeVirt admission errors about `spec.template.spec.architecture`:
 `MultiArchitecture` feature gate is not enabled on the KubeVirt CR (see Phase 1).
 
 ## Migration Notes (Docs)
