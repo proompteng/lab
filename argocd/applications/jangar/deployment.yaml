@@ -24,6 +24,19 @@ spec:
         app.kubernetes.io/part-of: lab
     spec:
       serviceAccountName: jangar-inspector
+      initContainers:
+        - name: bootstrap-workspace
+          image: registry.ide-newton.ts.net/lab/jangar
+          imagePullPolicy: IfNotPresent
+          command: ['sh', '-c']
+          args:
+            - |
+              set -eu
+              if [ ! -d /workspace/lab/.git ]; then
+                rm -rf /workspace/lab
+                git clone --depth 1 https://github.com/proompteng/lab.git /workspace/lab
+              fi
+              mkdir -p /workspace/lab/.worktrees /workspace/.bun-install-cache /workspace/.ovscode
       containers:
         - name: app
           image: registry.ide-newton.ts.net/lab/jangar:latest
@@ -323,7 +336,7 @@ spec:
       volumes:
         - name: workspace
           persistentVolumeClaim:
-            claimName: jangar-workspace-rwx
+            claimName: jangar-workspace
         - name: docker-lib
           emptyDir: {}
         - name: docker-sock
