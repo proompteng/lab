@@ -7,6 +7,7 @@ Current Talos node IP: `192.168.1.203`.
 
 Docs:
 - `devices/ampone/docs/cluster-bootstrap.md` (Talos install/bootstrap template)
+- `devices/ampone/docs/volume-relayout.md` (repartition EPHEMERAL + local-path volumes)
 - `devices/ampone/docs/ipmi.md` (IPMI/BMC command cookbook)
 - `devices/ampone/docs/memory-troubleshooting.md` (DDR training + DIMM isolation notes)
 
