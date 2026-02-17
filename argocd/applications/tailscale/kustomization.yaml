@@ -13,16 +13,14 @@ images:
 
 patches:
   - target:
-      version: v1
       kind: Namespace
       name: tailscale
     patch: |-
-      - op: add
-        path: /metadata/labels
-        value:
-          pod-security.kubernetes.io/enforce: privileged
-          pod-security.kubernetes.io/audit: privileged
-          pod-security.kubernetes.io/warn: privileged
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: tailscale
+      $patch: delete
   - target:
       group: rbac.authorization.k8s.io
       version: v1

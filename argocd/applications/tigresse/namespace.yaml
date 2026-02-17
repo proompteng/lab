@@ -1,8 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: tigresse-system
-  labels:
-    app.kubernetes.io/name: tigresse
-    app.kubernetes.io/component: operator
-    app.kubernetes.io/managed-by: argocd

@@ -72,6 +72,10 @@ spec:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
                 enabled: "false"
+                managedNamespaceMetadata:
+                  annotations:
+                    # Prevent accidental namespace deletion when an app stops managing the Namespace object.
+                    argocd.argoproj.io/sync-options: Prune=false
               - name: reviseur
                 path: argocd/applications/reviseur
                 namespace: reviseur

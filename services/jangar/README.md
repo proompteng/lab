@@ -203,12 +203,12 @@ Jangar also exposes JSON endpoints that mirror the MCP memory inputs:
 - `OPENAI_EMBEDDING_TIMEOUT_MS` (optional; defaults to `15000`)
 - `OPENAI_EMBEDDING_MAX_INPUT_CHARS` (optional; defaults to `60000`)
 
-### Ollama embeddings (docker-host)
+### Ollama embeddings (saigak)
 
-To use the self-hosted embeddings model on `docker-host`:
+To use the self-hosted embeddings model on `saigak`:
 
 ```bash
-export OPENAI_API_BASE_URL='http://192.168.1.190:11434/v1'
+export OPENAI_API_BASE_URL='http://saigak.saigak.svc.cluster.local:11434/v1'
 export OPENAI_EMBEDDING_MODEL='qwen3-embedding-saigak:0.6b'
 export OPENAI_EMBEDDING_DIMENSION='1024'
 # OPENAI_API_KEY is optional for Ollama
