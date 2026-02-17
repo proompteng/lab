@@ -4,6 +4,6 @@ name: EPHEMERAL
 provisioning:
   diskSelector:
     match: disk.dev_path == '/dev/nvme0n1'
-  minSize: 200GB
-  maxSize: 200GB
+  minSize: 300GB
+  maxSize: 300GB
   grow: false
