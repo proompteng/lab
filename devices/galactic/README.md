@@ -4,7 +4,7 @@ This directory documents the existing Talos/Kubernetes cluster:
 
 - **Talos cluster name**: `ryzen`
 - **kubectl context name**: `galactic`
-- **Kubernetes API endpoint** (behind NUC HAProxy): `https://192.168.1.130:6443`
+- **Kubernetes API endpoint** (behind NUC HAProxy): `https://nuc:6443` (also `https://192.168.1.130:6443`)
 
 Inventory:
 - `ryzen`: `192.168.1.194` (control plane)

@@ -9,7 +9,7 @@ Cluster inventory / canonical join procedure:
 Assumptions:
 - You can reach the BMC (example: `192.168.1.224`) for virtual media / boot control.
 - You have a Talos metal ISO available.
-- The cluster control plane endpoint is fronted by the NUC load balancer at `https://192.168.1.130:6443`:
+- The cluster control plane endpoint is fronted by the NUC load balancer at `https://nuc:6443` (also `https://192.168.1.130:6443`):
   - `devices/nuc/k8s-api-lb/README.md`
 
 ## 1) Boot Talos installer (maintenance mode)
@@ -40,7 +40,9 @@ talosctl gen secrets \
   --output-file /tmp/galactic-secrets.yaml
 
 # Generate machine configs for the existing cluster (cluster name is "ryzen").
-talosctl gen config ryzen https://192.168.1.130:6443 \
+export K8S_LB_ENDPOINT='nuc' # or '192.168.1.130'
+
+talosctl gen config ryzen "https://$K8S_LB_ENDPOINT:6443" \
   --with-secrets /tmp/galactic-secrets.yaml \
   --install-disk /dev/nvme0n1 \
   --output-dir devices/ampone \

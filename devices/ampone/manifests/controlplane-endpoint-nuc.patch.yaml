@@ -3,6 +3,7 @@ cluster:
     endpoint: https://192.168.1.130:6443
   apiServer:
     certSANs:
+      - nuc
       - 192.168.1.130
       - 192.168.1.194
       - 192.168.1.203
