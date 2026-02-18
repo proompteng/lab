@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'bun:test'
-import { parseCliFlags, parseCommaList, parseJson, vectorToPgArray } from '../cli'
+import {
+  DEFAULT_JANGAR_BASE_URL,
+  DEFAULT_K8S_JANGAR_BASE_URL,
+  DEFAULT_K8S_SAME_NAMESPACE_JANGAR_BASE_URL,
+  parseCliFlags,
+  parseCommaList,
+  parseJson,
+  resolveJangarBaseUrl,
+} from '../cli'
 
 describe('parseCliFlags', () => {
   it('parses flags with equals and space separators', () => {
@@ -30,8 +38,49 @@ describe('parseJson', () => {
   })
 })
 
-describe('vectorToPgArray', () => {
-  it('formats numbers as pg vector literal', () => {
-    expect(vectorToPgArray([1, 2.5, -3])).toBe('[1,2.5,-3]')
+describe('resolveJangarBaseUrl', () => {
+  it('uses explicit override env vars and trims trailing slash', () => {
+    expect(
+      resolveJangarBaseUrl({
+        env: { MEMORIES_JANGAR_URL: 'http://custom.example/' },
+        kubernetesNamespace: null,
+      }),
+    ).toBe('http://custom.example')
+  })
+
+  it('uses in-namespace service when running inside jangar namespace', () => {
+    expect(
+      resolveJangarBaseUrl({
+        env: {},
+        kubernetesNamespace: 'jangar',
+      }),
+    ).toBe(DEFAULT_K8S_SAME_NAMESPACE_JANGAR_BASE_URL)
+  })
+
+  it('uses cross-namespace service DNS when running in another namespace', () => {
+    expect(
+      resolveJangarBaseUrl({
+        env: {},
+        kubernetesNamespace: 'coder',
+      }),
+    ).toBe(DEFAULT_K8S_JANGAR_BASE_URL)
+  })
+
+  it('uses in-cluster DNS when Kubernetes service env is present', () => {
+    expect(
+      resolveJangarBaseUrl({
+        env: { KUBERNETES_SERVICE_HOST: '10.96.0.1' },
+        kubernetesNamespace: null,
+      }),
+    ).toBe(DEFAULT_K8S_JANGAR_BASE_URL)
+  })
+
+  it('uses tailscale hostname default outside Kubernetes', () => {
+    expect(
+      resolveJangarBaseUrl({
+        env: {},
+        kubernetesNamespace: null,
+      }),
+    ).toBe(DEFAULT_JANGAR_BASE_URL)
   })
 })

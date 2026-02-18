@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs'
+
 // Lightweight helpers shared between the save and retrieve scripts.
 export type FlagMap = Record<string, string | true>
+type EnvMap = Record<string, string | undefined>
 
 export function parseCliFlags(argv: string[] = []) {
   const flags: FlagMap = {}
@@ -40,15 +43,64 @@ export function parseCliFlags(argv: string[] = []) {
   return flags
 }
 
-export const DEFAULT_JANGAR_BASE_URL = 'http://jangar'
+export const DEFAULT_JANGAR_BASE_URL = 'http://jangar.ide-newton.ts.net'
+export const DEFAULT_K8S_JANGAR_BASE_URL = 'http://jangar.jangar.svc.cluster.local'
+export const DEFAULT_K8S_SAME_NAMESPACE_JANGAR_BASE_URL = 'http://jangar'
 
-export const resolveJangarBaseUrl = () => {
-  const raw =
-    process.env.MEMORIES_JANGAR_URL ??
-    process.env.JANGAR_BASE_URL ??
-    process.env.MEMORIES_BASE_URL ??
-    DEFAULT_JANGAR_BASE_URL
+const SERVICEACCOUNT_NAMESPACE_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/namespace'
+
+function trimTrailingSlash(raw: string) {
   return raw.endsWith('/') ? raw.slice(0, -1) : raw
+}
+
+function normalizeNamespace(raw?: string | null) {
+  const value = raw?.trim()
+  if (!value) {
+    return undefined
+  }
+  return value
+}
+
+function readServiceAccountNamespace() {
+  try {
+    return normalizeNamespace(readFileSync(SERVICEACCOUNT_NAMESPACE_PATH, 'utf8'))
+  } catch {
+    return undefined
+  }
+}
+
+function resolveKubernetesNamespace(env: EnvMap, explicitNamespace?: string | null) {
+  if (explicitNamespace !== undefined) {
+    return normalizeNamespace(explicitNamespace)
+  }
+
+  return (
+    normalizeNamespace(env.MEMORIES_K8S_NAMESPACE) ??
+    normalizeNamespace(env.POD_NAMESPACE) ??
+    normalizeNamespace(env.KUBERNETES_NAMESPACE) ??
+    readServiceAccountNamespace()
+  )
+}
+
+export function resolveJangarBaseUrl(options?: { env?: EnvMap; kubernetesNamespace?: string | null }) {
+  const env = options?.env ?? process.env
+  const configured = env.MEMORIES_JANGAR_URL ?? env.JANGAR_BASE_URL ?? env.MEMORIES_BASE_URL
+  if (configured) {
+    return trimTrailingSlash(configured)
+  }
+
+  const kubernetesNamespace = resolveKubernetesNamespace(env, options?.kubernetesNamespace)
+  if (kubernetesNamespace) {
+    return kubernetesNamespace.toLowerCase() === 'jangar'
+      ? DEFAULT_K8S_SAME_NAMESPACE_JANGAR_BASE_URL
+      : DEFAULT_K8S_JANGAR_BASE_URL
+  }
+
+  if (env.KUBERNETES_SERVICE_HOST || env.KUBERNETES_SERVICE_PORT) {
+    return DEFAULT_K8S_JANGAR_BASE_URL
+  }
+
+  return DEFAULT_JANGAR_BASE_URL
 }
 
 export function getFlagValue(flags: FlagMap, key: string): string | undefined {

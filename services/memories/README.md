@@ -12,12 +12,19 @@ bun install
 
 ### Jangar endpoint
 
-By default the helpers call the Jangar Tailscale service at `http://jangar` and use the REST endpoints:
+By default the helpers auto-detect runtime and use the REST endpoints:
 
 - `POST /api/memories`
 - `GET /api/memories`
 
-Override the base URL by setting `MEMORIES_JANGAR_URL` (or `JANGAR_BASE_URL`).
+Default base URL selection:
+
+- In Kubernetes namespace `jangar`: `http://jangar`
+- In any other Kubernetes namespace: `http://jangar.jangar.svc.cluster.local`
+- Outside Kubernetes: `http://jangar.ide-newton.ts.net`
+
+Override the base URL by setting `MEMORIES_JANGAR_URL` (or `JANGAR_BASE_URL` / `MEMORIES_BASE_URL`).
+For debugging Kubernetes auto-detection, you can set `MEMORIES_K8S_NAMESPACE`.
 
 ## Scripts
 
