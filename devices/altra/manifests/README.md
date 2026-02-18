@@ -9,4 +9,5 @@ Files:
 - `devices/altra/manifests/controlplane-endpoint-nuc.patch.yaml`
 - `devices/altra/manifests/ephemeral-volume.patch.yaml`
 - `devices/altra/manifests/local-path.patch.yaml`
+- `devices/altra/manifests/local-path-extra.patch.yaml`
 - `devices/altra/manifests/vfio-modules.patch.yaml`
