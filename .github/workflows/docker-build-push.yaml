@@ -11,6 +11,13 @@ on:
       - "apps/**"
       - "packages/**"
       - "services/**"
+  workflow_dispatch:
+    inputs:
+      build_proompteng:
+        description: "Build and publish apps/landing image"
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   changes:
@@ -18,7 +25,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      proompteng: ${{ steps.filter.outputs.proompteng }}
+      proompteng: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.proompteng || steps.filter.outputs.proompteng }}
       app: ${{ steps.filter.outputs.app }}
       cms: ${{ steps.filter.outputs.cms }}
       docs: ${{ steps.filter.outputs.docs }}
@@ -32,6 +39,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Check for file changes
+        if: github.event_name == 'push'
         uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -56,11 +64,22 @@ jobs:
             bonjour:
               - 'services/bonjour/**'
 
+      - name: Manual build selection
+        id: manual
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [ "${{ github.event.inputs.build_proompteng }}" = "true" ]; then
+            echo "proompteng=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "proompteng=false" >> "$GITHUB_OUTPUT"
+          fi
+
   version:
     runs-on: arc-arm64
     permissions:
       contents: write
     needs: changes
+    if: ${{ needs.changes.outputs.proompteng == 'true' || needs.changes.outputs.app == 'true' || needs.changes.outputs.cms == 'true' || needs.changes.outputs.docs == 'true' || needs.changes.outputs.kitty-krew == 'true' || needs.changes.outputs.reviseur == 'true' || needs.changes.outputs.alchimie == 'true' || needs.changes.outputs.bonjour == 'true' }}
     outputs:
       new_tag: ${{ steps.tag_version.outputs.new_tag }}
       changelog: ${{ steps.tag_version.outputs.changelog }}
