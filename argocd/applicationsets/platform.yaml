@@ -502,6 +502,11 @@ spec:
             - .spec.template.spec.architecture
             - .spec.template.spec.domain.firmware
             - .spec.template.spec.domain.machine
+        - kind: ClusterPolicy
+          group: nvidia.com
+          name: cluster-policy
+          jqPathExpressions:
+            - .spec.migManager.config.name
   templatePatch: |
     {{- if .annotations }}
     metadata:
