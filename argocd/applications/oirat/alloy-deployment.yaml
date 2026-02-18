@@ -18,6 +18,8 @@ spec:
         app.kubernetes.io/component: logging
     spec:
       serviceAccountName: oirat-alloy
+      securityContext:
+        fsGroup: 65534
       containers:
         - name: alloy
           image: grafana/alloy:v1.11.2
@@ -25,6 +27,7 @@ spec:
           args:
             - run
             - /etc/alloy/config.river
+          workingDir: /var/lib/alloy
           ports:
             - name: http-metrics
               containerPort: 12345
@@ -34,6 +37,8 @@ spec:
               drop:
                 - ALL
             runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
             seccompProfile:
               type: RuntimeDefault
           resources:
@@ -46,6 +51,8 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/alloy
+            - name: data
+              mountPath: /var/lib/alloy
       volumes:
         - name: config
           configMap:
@@ -53,3 +60,5 @@ spec:
             items:
               - key: config.river
                 path: config.river
+        - name: data
+          emptyDir: {}
