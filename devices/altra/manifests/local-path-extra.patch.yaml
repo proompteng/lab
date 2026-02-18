@@ -2,9 +2,9 @@ apiVersion: v1alpha1
 kind: UserVolumeConfig
 name: local-path-provisioner-extra
 provisioning:
-  # Extra 4TB NVMe on `altra` (CT4000P3PSSD8).
+  # Extra 4TB NVMe dedicated to local-path storage.
   diskSelector:
-    match: disk.wwid == 'eui.6479a7899000003d'
+    match: disk.dev_path == '/dev/nvme1n1'
   minSize: 100GB
   # Omit maxSize to consume the remaining free space on the selected disk.
   grow: true

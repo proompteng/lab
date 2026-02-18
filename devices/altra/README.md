@@ -10,7 +10,8 @@ Inventory:
 
 Docs:
 - `devices/altra/docs/cluster-bootstrap.md` (install + join existing cluster)
-- `devices/altra/docs/relayout-volumes.md` (EPHEMERAL=300GB, local-path=rest)
+- `devices/altra/docs/relayout-volumes.md` (EPHEMERAL=300GB, local-path on OS disk + extra local-path on second NVMe)
+- `docs/incidents/2026-02-18-altra-volume-relayout-etcd-rejoin.md` (failure modes, root causes, and recovery sequence from this session)
 
 Related:
 - NUC load balancer config: `devices/nuc/k8s-api-lb/README.md`

@@ -1,108 +1,200 @@
-# Cordon Altra (192.168.1.85) and Re-layout Volumes (EPHEMERAL=300GB, local-path=rest)
+# Re-layout Altra (192.168.1.85) Volumes: EPHEMERAL 300GB + Two local-path Volumes
 
-Goal: on Talos control-plane node `talos-192-168-1-85` (LAN `192.168.1.85`) change the
-storage layout to:
+Goal: enforce this exact storage layout on Talos control-plane node `talos-192-168-1-85` (`192.168.1.85`):
 
-- `EPHEMERAL` (system `/var`) = **300GB**
-- `local-path-provisioner` user volume = **all remaining available space** (mounted at `/var/mnt/local-path-provisioner`)
-- no additional scratch/runtime user volumes on this node
+- `EPHEMERAL` (`/var`) = `300GB` on `/dev/nvme0n1p4`
+- `u-local-path-provisioner` = rest of OS disk on `/dev/nvme0n1p5` mounted at `/var/mnt/local-path-provisioner`
+- `u-local-path-provisioner-extra` = extra NVMe (`/dev/nvme1n1p1`) mounted at `/var/mnt/local-path-provisioner-extra`
 
-This procedure preserves cluster state by having the node leave etcd before wiping `/var`.
+## Hard Rules
 
-## Preconditions / Safety
+- Keep install disk pinned to `/dev/nvme0n1`.
+- Use `disk.dev_path` selectors for this node (`/dev/nvme0n1`, `/dev/nvme1n1`), not WWID selectors.
+- Do not run disk wipe jobs in parallel with Talos volume provisioning.
+- Keep etcd quorum on the other control-plane nodes (`192.168.1.194`, `192.168.1.203`) throughout the operation.
 
-- Maintenance window: wiping `/var` restarts workloads on the node. Single-replica workloads will have downtime.
-- Keep quorum: do **not** reboot the other control planes (`192.168.1.194`, `192.168.1.203`) during the window.
-- Ensure there are no `Bound` local-path PVs pinned to this node before re-laying out volumes:
+## Source Manifests
 
-```bash
-kubectl get pv -o json | jq -r '.items[] | select(.spec.storageClassName=="local-path") | [.metadata.name, (.spec.nodeAffinity.required.nodeSelectorTerms[0].matchExpressions[0].values[0] // ""), .status.phase, (.spec.claimRef.namespace+"/"+.spec.claimRef.name)] | @tsv' | column -t
+- `devices/altra/manifests/ephemeral-volume.patch.yaml`
+- `devices/altra/manifests/local-path.patch.yaml`
+- `devices/altra/manifests/local-path-extra.patch.yaml`
+
+`local-path-extra.patch.yaml` must be:
+
+```yaml
+apiVersion: v1alpha1
+kind: UserVolumeConfig
+name: local-path-provisioner-extra
+provisioning:
+  diskSelector:
+    match: disk.dev_path == '/dev/nvme1n1'
+  minSize: 100GB
+  grow: true
 ```
 
-No `Bound` PVs where the node is `talos-192-168-1-85` is the safe starting point.
-
-## Step 0: Snapshot and health checks
+## Preflight
 
 ```bash
-# etcd snapshot (store it somewhere safe)
-talosctl etcd snapshot -n 192.168.1.85 -e 192.168.1.85 /tmp/altra-etcd-snap.db
+# Disk identity and mapping
+ talosctl -n 192.168.1.85 get disks -o yaml
 
-talosctl etcd status -n 192.168.1.85 -e 192.168.1.85
-talosctl etcd members -n 192.168.1.85 -e 192.168.1.85
-kubectl get nodes -o wide
+# Confirm etcd on healthy peers before touching 85
+ talosctl -n 192.168.1.194 etcd members
+ talosctl -n 192.168.1.203 etcd members
+
+# Cordon before disruptive work
+ kubectl cordon talos-192-168-1-85
 ```
 
-## Step 1: Confirm the current layout (baseline)
+Expected disk mapping on this host:
 
-On `altra`, `EPHEMERAL` is currently consuming essentially the whole install NVMe (no space left for `u-local-path-provisioner`):
+- `/dev/nvme0n1` = OS/install disk
+- `/dev/nvme1n1` = extra local-path disk
+
+## Apply Procedure (Maintenance Mode or Normal API)
+
+If node is in maintenance mode:
 
 ```bash
-talosctl get discoveredvolumes -n 192.168.1.85 -e 192.168.1.85 -o yaml | rg -n 'nvme0n1p4|EPHEMERAL|u-local-path'
-talosctl -n 192.168.1.85 -e 192.168.1.85 get mounts -o yaml
+talosctl -n 192.168.1.85 apply-config --insecure --mode reboot --file <machineconfig.yaml>
 ```
 
-## Step 2: Cordon the node
+If node is already up with Talos API:
 
 ```bash
-kubectl cordon talos-192-168-1-85
-kubectl get pods -A -o wide --field-selector spec.nodeName=talos-192-168-1-85
+talosctl -n 192.168.1.85 apply-config --mode no-reboot --file <machineconfig.yaml>
 ```
 
-## Step 3: Stage the new Talos volume config (no reboot)
+Where `<machineconfig.yaml>` includes:
 
-Repo patches (apply before wiping so the next boot reprovisions correctly):
+- install disk `/dev/nvme0n1`
+- `EPHEMERAL` selector `disk.dev_path == '/dev/nvme0n1'` with `minSize=maxSize=300GB`
+- `local-path-provisioner` selector `disk.dev_path == '/dev/nvme0n1'`
+- `local-path-provisioner-extra` selector `disk.dev_path == '/dev/nvme1n1'`
 
-- `devices/altra/manifests/ephemeral-volume.patch.yaml` (`EPHEMERAL` fixed at 300GB)
-- `devices/altra/manifests/local-path.patch.yaml` (user volume grows to consume remaining space)
-
-```bash
-talosctl patch machineconfig -n 192.168.1.85 -e 192.168.1.85 --mode=no-reboot \
-  --patch @devices/altra/manifests/ephemeral-volume.patch.yaml
-
-talosctl patch machineconfig -n 192.168.1.85 -e 192.168.1.85 --mode=no-reboot \
-  --patch @devices/altra/manifests/local-path.patch.yaml
-```
-
-## Step 4: Reprovision the partition layout (required to resize EPHEMERAL)
-
-If `EPHEMERAL` already occupies the whole disk, `talosctl reset --system-labels-to-wipe EPHEMERAL` will wipe data but will not
-shrink the partition. To actually resize `EPHEMERAL` to 300GB and create `u-local-path-provisioner`, reprovision the system disk
-partition layout from Talos maintenance mode.
-
-Recommended: reinstall from maintenance mode using `devices/altra/docs/cluster-bootstrap.md` (it applies the volume patches at install time).
+## Validate Layout
 
 ```bash
-talosctl reset -n 192.168.1.85 -e 192.168.1.85 \
-  --wipe-mode system-disk \
-  --reboot --graceful=false
-```
-
-Then follow `devices/altra/docs/cluster-bootstrap.md` to apply config from maintenance mode (including the volume patches).
-
-Wait for Talos API to come back after install:
-
-```bash
-talosctl version -n 192.168.1.85 -e 192.168.1.85
-```
-
-## Step 5: Verify volumes and mounts
-
-```bash
-talosctl get discoveredvolumes -n 192.168.1.85 -e 192.168.1.85 | rg -n 'EPHEMERAL|u-local-path'
-talosctl mounts -n 192.168.1.85 -e 192.168.1.85 | rg -n ' /var$|/var/mnt/local-path-provisioner'
-kubectl get nodes -o wide
+talosctl -n 192.168.1.85 get volumestatus -o yaml | rg -n 'EPHEMERAL|u-local-path-provisioner|u-local-path-provisioner-extra|phase:|location:|prettySize:'
 ```
 
 Expected:
-- `EPHEMERAL` is ~300GB.
-- `u-local-path-provisioner` exists and consumes the remaining free space.
-- `/var/mnt/local-path-provisioner` is mounted.
+
+- `EPHEMERAL` `ready` at `/dev/nvme0n1p4`, `prettySize: 300 GB`
+- `u-local-path-provisioner` `ready` at `/dev/nvme0n1p5`
+- `u-local-path-provisioner-extra` `ready` at `/dev/nvme1n1p1`
+
+## Failure Modes and Fixes
+
+### 1) `no disks matched ... have not enough space`
+
+Symptom:
+
+- `u-local-path-provisioner-extra` fails with `1 have not enough space`
+
+Cause:
+
+- Extra volume selector points to OS disk (wrong WWID/disk mapping).
+
+Fix:
+
+```bash
+talosctl -n 192.168.1.85 get volumeconfig u-local-path-provisioner-extra -o yaml
+# ensure match: disk.dev_path == '/dev/nvme1n1'
+```
+
+Reapply machine config with correct selector.
+
+### 2) `no disks matched ... 1 have other issues` + `failed to acquire shared lock`
+
+Symptom:
+
+- `u-local-path-provisioner-extra` fails with `other issues`
+- machined logs show `failed to acquire shared lock while probing blockdevice`
+
+Cause:
+
+- A prior wipe job is still writing to `/dev/nvme1n1`.
+
+Detect:
+
+```bash
+talosctl -n 192.168.1.85 logs machined | rg 'failed to acquire shared lock|u-local-path-provisioner-extra'
+talosctl -n 192.168.1.85 read /proc/diskstats | rg nvme1n1
+```
+
+Fix:
+
+- Reboot `85` once to clear stale wipe lock:
+
+```bash
+talosctl -n 192.168.1.85 reboot
+```
+
+### 3) `error adding member: etcdserver: Peer URLs already exists`
+
+Symptom:
+
+- Node stays `booting`, etcd waits to join repeatedly.
+
+Cause:
+
+- Stale etcd learner/member for `85` already exists.
+
+Fix:
+
+```bash
+talosctl -n 192.168.1.194 etcd members
+# remove stale member ID for 85 peer URL
+talosctl -n 192.168.1.194 etcd remove-member <stale-member-id>
+```
+
+Then watch `85` join and promote automatically.
+
+### 4) `apply-config` with `missing kind`
+
+Symptom:
+
+- `error decoding document ... missing kind`
+
+Cause:
+
+- Attempted to reapply raw output of `talosctl get machineconfig -o yaml`.
+
+Fix:
+
+- Apply a proper machine config document (`version: v1alpha1`, `machine`, `cluster`, etc.), not the runtime resource dump.
+
+## Rejoin and Final Health Checks
+
+```bash
+# etcd membership should show 3 non-learners
+ talosctl -n 192.168.1.194 etcd members
+
+# talos machine ready
+ talosctl -n 192.168.1.85 get machinestatus -o yaml | rg -n 'stage:|ready:'
+
+# kubernetes node ready
+ kubectl get nodes -o wide
+
+# uncordon when healthy
+ kubectl uncordon talos-192-168-1-85
+```
+
+## Bootloader Checks (Post-Recovery)
+
+If bootloader instability is suspected, verify active loader metadata (do not blindly delete firmware entries):
+
+```bash
+talosctl -n 192.168.1.85 read /sys/firmware/efi/efivars/LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f | xxd -g 1
+talosctl -n 192.168.1.85 read /sys/firmware/efi/efivars/LoaderEntrySelected-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f | xxd -g 1
+talosctl -n 192.168.1.85 read /sys/firmware/efi/efivars/LoaderImageIdentifier-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f | xxd -g 1
+```
+
+On 2026-02-18, active loader fields pointed to Talos `v1.12.4` and `\\EFI\\BOOT\\BOOTAA64.EFI`.
 
 ## Acceptance Criteria
 
-- `kubectl get nodes` shows `talos-192-168-1-85` is `Ready`.
-- `talosctl etcd members` shows 3 healthy members.
-- `talosctl mounts` shows:
-  - `/var` on a ~300GB EPHEMERAL partition
-  - `/var/mnt/local-path-provisioner` mounted
-- No extra user volumes are present on the node besides `local-path-provisioner`.
+- Volume layout exactly matches target (300GB EPHEMERAL + two local-path volumes on separate devices).
+- etcd has 3 healthy voting members.
+- `talos-192-168-1-85` is `Ready` and uncordoned.
