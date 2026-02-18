@@ -248,7 +248,10 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
       schemaReady = (async () => {
         await ensureMigrations(db)
         await ensureEmbeddingDimensionMatches()
-      })()
+      })().catch((error) => {
+        schemaReady = null
+        throw error
+      })
     }
     await schemaReady
   }
