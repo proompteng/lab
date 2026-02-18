@@ -4,7 +4,9 @@ import { motion } from 'motion/react'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 
-const COMMAND = 'kubectl -n agents get agentrun -w'
+const AGENTRUN_FILE = 'charts/agents/examples/agentrun-workflow-smoke.yaml'
+const AGENTRUN_NAME = 'agents-workflow-smoke'
+const COMMAND = `kubectl -n agents logs -f agentrun/${AGENTRUN_NAME}`
 const MIN_VISIBLE_PX = 64
 const MINIMIZE_SCALE = 0.16
 const MAX_WINDOW_WIDTH_PX = 74 * 16
@@ -46,23 +48,32 @@ const INITIAL_TRANSCRIPT: readonly TranscriptRow[] = [
   {
     time: '01:18:22',
     event: 'response_item.function_call',
-    message: 'exec_command(cmd="kubectl -n agents apply -f charts/agents/examples/agentrun-workflow-smoke.yaml")',
+    message: `exec_command(cmd="kubectl -n agents apply -f ${AGENTRUN_FILE}")`,
   },
   {
     time: '01:18:23',
     event: 'response_item.function_call_output',
-    message: 'agentrun.agents.proompteng.ai/agents-workflow-smoke configured',
+    message: `agentrun.agents.proompteng.ai/${AGENTRUN_NAME} configured`,
   },
   {
     time: '01:18:23',
     event: 'response_item.function_call',
-    message:
-      'exec_command(cmd="kubectl -n agents get agentrun agents-workflow-smoke -o jsonpath=\'{.status.phase} {.status.conditions[?(@.type=="Accepted")].reason}\'")',
+    message: `exec_command(cmd="kubectl -n agents get agentrun ${AGENTRUN_NAME} -o jsonpath='{.status.phase} {.status.conditions[?(@.type=="Accepted")].reason}'")`,
   },
   {
     time: '01:18:24',
     event: 'response_item.function_call_output',
     message: 'Running Submitted',
+  },
+  {
+    time: '01:18:24',
+    event: 'response_item.function_call',
+    message: `exec_command(cmd="kubectl -n agents logs -f agentrun/${AGENTRUN_NAME} -c codex-agent")`,
+  },
+  {
+    time: '01:18:25',
+    event: 'response_item.function_call_output',
+    message: `attached stream source=agentrun/${AGENTRUN_NAME} container=codex-agent`,
   },
 ]
 
@@ -113,64 +124,69 @@ function generateAgentRunName() {
 }
 
 function generateLogRow(index: number) {
-  const run = `${generateAgentRunName()}-${String(index).padStart(2, '0')}`
+  const traceId = `${generateAgentRunName()}-${String(index).padStart(2, '0')}`
   const namespace = randomFrom(OBFUSCATED_NAMESPACES)
   const agentName = randomFrom(OBFUSCATED_AGENT_NAMES)
   const implementation = randomFrom(OBFUSCATED_IMPLEMENTATIONS)
+  const runStem = randomFrom(OBFUSCATED_RUN_STEMS)
   const repository = randomFrom(OBFUSCATED_REPOSITORIES)
   const headBranch = randomFrom(OBFUSCATED_HEAD_BRANCHES)
   const ttlSeconds = randomFrom(OBFUSCATED_TTLS)
   const nowIso = formatIso(new Date())
+  const runtimeRef = `${AGENTRUN_NAME}-plan-a1`
   const sessionEvents: readonly SessionEvent[] = [
     {
       event: 'event_msg.agent_message',
-      message: `Reconciling AgentRun/${run} (apiVersion=agents.proompteng.ai/v1alpha1, kind=AgentRun).`,
+      message: `source=agentrun/${AGENTRUN_NAME} codex: connected log stream (runtimeRef=${runtimeRef})`,
     },
     {
       event: 'response_item.function_call',
-      message: `exec_command(cmd="kubectl -n ${namespace} get agentrun ${run} -o jsonpath='{.spec.agentRef.name} {.spec.runtime.type} {.spec.implementationSpecRef.name}'")`,
+      message: `source=agentrun/${AGENTRUN_NAME} exec_command(cmd="kubectl -n ${namespace} get agentrun ${AGENTRUN_NAME} -o jsonpath='{.spec.agentRef.name} {.spec.runtime.type} {.spec.implementationSpecRef.name}'")`,
     },
     {
       event: 'response_item.function_call_output',
-      message: `spec.agentRef.name=${agentName} spec.runtime.type=workflow spec.implementationSpecRef.name=${implementation}`,
+      message: `source=agentrun/${AGENTRUN_NAME} spec.agentRef.name=${agentName} spec.runtime.type=workflow spec.implementationSpecRef.name=${implementation}`,
     },
     {
       event: 'response_item.function_call',
-      message: `exec_command(cmd="kubectl -n ${namespace} get agentrun ${run} -o jsonpath='{.status.phase} {.status.conditions[?(@.type=="Accepted")].reason}'")`,
+      message: `source=agentrun/${AGENTRUN_NAME} exec_command(cmd="kubectl -n ${namespace} get pods -l agents.proompteng.ai/agent-run=${AGENTRUN_NAME} -o name")`,
     },
     {
       event: 'response_item.function_call_output',
-      message: 'status.phase=Running status.conditions[Accepted]=True(Submitted)',
-    },
-    {
-      event: 'response_item.function_call_output',
-      message: `status.runtimeRef={type:workflow,name:${run}-plan-a1,namespace:${namespace}}`,
-    },
-    {
-      event: 'response_item.function_call_output',
-      message:
-        'status.workflow.steps[0]={name:plan,attempt:1,phase:Succeeded} status.workflow.steps[1]={name:implement,attempt:1,phase:Running}',
-    },
-    {
-      event: 'response_item.function_call_output',
-      message: `status.contract.requiredKeys=[repository,base,head] status.contract.missingKeys=[] spec.ttlSecondsAfterFinished=${ttlSeconds}`,
-    },
-    {
-      event: 'response_item.function_call_output',
-      message: `status.vcs={provider:github,mode:read-write,repository:${repository},headBranch:${headBranch}}`,
+      message: `source=agentrun/${AGENTRUN_NAME} pod/job=${traceId} status=Running`,
     },
     {
       event: 'event_msg.agent_message',
-      message: `status.phase=Succeeded status.conditions[Succeeded]=True(Completed) status.finishedAt=${nowIso}`,
+      message: `source=agentrun/${AGENTRUN_NAME} codex: triaging deployment drift and preparing patch`,
+    },
+    {
+      event: 'response_item.function_call',
+      message: `source=agentrun/${AGENTRUN_NAME} exec_command(cmd="kubectl -n ${namespace} get deploy svc-${runStem} -o jsonpath='{.spec.template.spec.containers[0].image}'")`,
+    },
+    {
+      event: 'response_item.function_call_output',
+      message: `source=agentrun/${AGENTRUN_NAME} image=registry.redacted.invalid/platform/app:0.${index % 10}xx.${index % 7}`,
     },
     {
       event: 'response_item.message.assistant',
-      message: `tracked label agents.proompteng.ai/agent-run=${run}; workflow.phase=Succeeded`,
+      message: `source=agentrun/${AGENTRUN_NAME} codex: patch staged, waiting for controller reconcile`,
+    },
+    {
+      event: 'response_item.function_call_output',
+      message: `source=agentrun/${AGENTRUN_NAME} status.runtimeRef={type:workflow,name:${runtimeRef},namespace:${namespace}}`,
+    },
+    {
+      event: 'response_item.function_call_output',
+      message: `source=agentrun/${AGENTRUN_NAME} status.vcs={provider:github,mode:read-write,repository:${repository},headBranch:${headBranch}}`,
     },
     {
       event: 'event_msg.agent_reasoning',
-      message: `retention: applying ttlSecondsAfterFinished=${ttlSeconds} to completed workflow jobs`,
+      message: `source=agentrun/${AGENTRUN_NAME} retention: applying ttlSecondsAfterFinished=${ttlSeconds} to completed workflow jobs`,
       level: 'WARN',
+    },
+    {
+      event: 'event_msg.agent_message',
+      message: `source=agentrun/${AGENTRUN_NAME} status.phase=Succeeded status.conditions[Succeeded]=True(Completed) status.finishedAt=${nowIso}`,
     },
   ]
   const item = sessionEvents[index % sessionEvents.length] ?? sessionEvents[0]
@@ -434,7 +450,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
       () => [
         mkRow('boot-0', [
           { text: 'proompteng ', className: 'text-[rgb(var(--terminal-text-green))]' },
-          { text: 'AgentRun status stream', className: 'text-[rgb(var(--terminal-text-primary)/0.82)]' },
+          { text: 'AgentRun execute + log tail', className: 'text-[rgb(var(--terminal-text-primary)/0.82)]' },
         ]),
         mkRow('boot-1', [
           { text: 'loading ', className: 'text-[rgb(var(--terminal-text-secondary)/0.72)]' },
@@ -455,7 +471,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
         mkRow('boot-3', [
           { text: 'streaming ', className: 'text-[rgb(var(--terminal-text-secondary)/0.72)]' },
           {
-            text: 'workflow steps + runtimeRef + contract/vcs status',
+            text: 'codex events from agentrun log stream',
             className: 'text-[rgb(var(--terminal-text-primary)/0.82)]',
           },
           { text: ' (live)', className: 'text-[rgb(var(--terminal-text-faint)/0.45)]' },
