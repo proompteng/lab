@@ -301,7 +301,7 @@ export default function DesktopHero() {
             onClosedStateChange={setIsTerminalClosed}
           />
 
-          <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center px-3 pb-4">
+          <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-[90] flex justify-center px-3 pb-4">
             <Dock
               items={DOCK_ITEMS}
               menuBarButtonRef={menuBarButtonRef}
@@ -403,7 +403,7 @@ const Dock = memo(function Dock({
   return (
     <motion.nav
       className={cn(
-        'pointer-events-auto relative flex items-end gap-[18px] overflow-visible rounded-[22px] px-6 py-3',
+        'pointer-events-auto relative z-[95] flex items-end gap-[18px] overflow-visible rounded-[22px] px-6 py-3',
         'bg-[rgba(31,35,53,0.56)] shadow-[0_26px_70px_-44px_rgba(0,0,0,0.95)] backdrop-blur-2xl backdrop-saturate-150',
         'ring-1 ring-[rgb(84_92_126/0.5)]',
       )}
@@ -487,7 +487,7 @@ function DockTooltip({ label }: { label: string }) {
       exit={{ opacity: 0, y: 10, scale: 0.98 }}
       transition={{ duration: 0.14, ease: 'easeOut' }}
       className={cn(
-        'pointer-events-none absolute left-1/2 bottom-full z-[70] -translate-x-1/2',
+        'pointer-events-none absolute left-1/2 bottom-full z-[120] -translate-x-1/2',
         'mb-3 whitespace-nowrap',
         'text-[13px] font-medium leading-none text-[rgb(192_202_245/0.96)]',
       )}
