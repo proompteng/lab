@@ -61,7 +61,7 @@ spec:
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaTopic
 metadata:
-  name: torghut.trade_updates.v1
+  name: torghut.trade-updates.v1
   namespace: kafka
   labels:
     strimzi.io/cluster: kafka
