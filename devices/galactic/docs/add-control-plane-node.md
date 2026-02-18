@@ -7,7 +7,7 @@ Assumptions:
 - Existing control planes are healthy and reachable:
   - `ryzen` (`192.168.1.194`)
   - `ampone` (`192.168.1.203`)
-- NUC HAProxy endpoint is up: `https://192.168.1.130:6443`
+- NUC HAProxy endpoint is up: `https://nuc:6443` and `https://192.168.1.130:6443`
 - The new node is booted into Talos maintenance mode and you know its LAN IP.
 
 ## 0) Update NUC HAProxy backends
@@ -27,7 +27,7 @@ ssh kalmyk@192.168.1.130 'cd ~/k8s-api-lb && docker compose up -d'
 
 ## 1) Ensure API server cert SANs include the new node IP
 
-The cluster API endpoint is the LB (`192.168.1.130`), but kube-apiserver certs
+The cluster API endpoint is the LB (`nuc` / `192.168.1.130`), but kube-apiserver certs
 also need SANs for each control plane IP.
 
 1. Add the new IP to `cluster.apiServer.certSANs` patch used by the cluster:
@@ -65,9 +65,9 @@ talosctl gen secrets --from-controlplane-config /tmp/galactic-base-controlplane.
 Then generate a `controlplane.yaml` for the existing cluster endpoint:
 
 ```bash
-export K8S_LB_IP='192.168.1.130'
+export K8S_LB_ENDPOINT='nuc' # or '192.168.1.130'
 
-talosctl gen config ryzen "https://$K8S_LB_IP:6443" \
+talosctl gen config ryzen "https://$K8S_LB_ENDPOINT:6443" \
   --with-secrets /tmp/galactic-secrets.yaml \
   --output-dir <device_dir> \
   --output-types controlplane,talosconfig \

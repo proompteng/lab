@@ -45,8 +45,9 @@ Confirm the install disk (likely `/dev/nvme0n1` on the 2TB NVMe) before running.
 # Example using the NUC load balancer endpoint.
 
 export TALOSCONFIG=$PWD/devices/ryzen/talosconfig
+export K8S_LB_ENDPOINT='nuc' # or '192.168.1.130'
 
-talosctl gen config ryzen https://192.168.1.130:6443 \
+talosctl gen config ryzen "https://$K8S_LB_ENDPOINT:6443" \
   --output-dir devices/ryzen \
   --install-disk /dev/nvme0n1
 ```

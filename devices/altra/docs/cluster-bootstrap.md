@@ -5,7 +5,7 @@ This runbook installs Talos on the `altra` node and joins it to the existing clu
 
 Goals:
 - `altra` is installed to NVMe and joins the existing control plane/etcd.
-- Kubernetes API stays reachable via the NUC HAProxy endpoint: `https://192.168.1.130:6443`
+- Kubernetes API stays reachable via the NUC HAProxy endpoint: `https://nuc:6443` (also `https://192.168.1.130:6443`)
 - `kubectl` continues to work by default with context name `galactic`
 
 Assumptions:
@@ -24,7 +24,7 @@ Follow:
 - `devices/nuc/k8s-api-lb/README.md`
 
 This should create a stable endpoint on the LAN:
-- `192.168.1.130:6443` (TCP passthrough to control planes on `:6443`)
+- `nuc:6443` (also `192.168.1.130:6443`, TCP passthrough to control planes on `:6443`)
 
 Reminder:
 - Adding a new control plane requires:
@@ -41,7 +41,7 @@ These files are intentionally gitignored:
 ```bash
 export ALTRA_IP='192.168.1.85'
 export CP_SEED_IP='192.168.1.194'
-export K8S_LB_IP='192.168.1.130'
+export K8S_LB_ENDPOINT='nuc' # or '192.168.1.130'
 
 # Extract the active control plane machineconfig and derive the cluster secrets bundle from it.
 talosctl get machineconfig -n "$CP_SEED_IP" -e "$CP_SEED_IP" -o jsonpath='{.spec}' \
@@ -52,7 +52,7 @@ talosctl gen secrets --from-controlplane-config /tmp/galactic-base-controlplane.
   --output-file /tmp/galactic-secrets.yaml
 
 # Generate a control plane config for `altra` using the existing cluster secrets.
-talosctl gen config ryzen "https://$K8S_LB_IP:6443" \
+talosctl gen config ryzen "https://$K8S_LB_ENDPOINT:6443" \
   --with-secrets /tmp/galactic-secrets.yaml \
   --output-dir devices/altra \
   --output-types controlplane,talosconfig \
