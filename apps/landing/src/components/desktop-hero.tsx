@@ -1,15 +1,15 @@
 'use client'
 
 import { Wifi } from 'lucide-react'
-import { AnimatePresence, motion, useAnimationControls, useAnimationFrame } from 'motion/react'
+import { AnimatePresence, motion, useMotionValue, useReducedMotion, useSpring, useTransform } from 'motion/react'
 import Image from 'next/image'
 import {
-  type MutableRefObject,
   memo,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from 'react'
@@ -21,6 +21,9 @@ type TopMenuItem = {
   id: string
   label: string
   action?: 'minimize' | 'restore' | 'toggle-fullscreen'
+  shortcut?: string
+  separatorBefore?: boolean
+  destructive?: boolean
 }
 
 type TopMenuSection = {
@@ -38,10 +41,12 @@ const topMenus: TopMenuSection[] = [
       { id: 'about-window', label: 'About This Mac' },
       { id: 'preferences', label: 'Preferences…' },
       { id: 'services', label: 'Services' },
+      { id: 'sep-hide', label: '', separatorBefore: true },
       { id: 'hide', label: 'Hide proompteng' },
       { id: 'hide-others', label: 'Hide Others' },
       { id: 'show-all', label: 'Show All' },
-      { id: 'quit', label: 'Quit proompteng', action: 'minimize' },
+      { id: 'sep-quit', label: '', separatorBefore: true },
+      { id: 'quit', label: 'Quit proompteng', action: 'minimize', shortcut: '⌘Q', destructive: true },
     ],
   },
   {
@@ -50,7 +55,7 @@ const topMenus: TopMenuSection[] = [
     items: [
       { id: 'new', label: 'New Window' },
       { id: 'open', label: 'Open' },
-      { id: 'close', label: 'Close Window', action: 'minimize' },
+      { id: 'close', label: 'Close Window', action: 'minimize', shortcut: '⌘W' },
       { id: 'save', label: 'Save As…' },
     ],
   },
@@ -69,7 +74,7 @@ const topMenus: TopMenuSection[] = [
     id: 'view',
     label: 'View',
     items: [
-      { id: 'as', label: 'Enter Full Screen', action: 'toggle-fullscreen' },
+      { id: 'as', label: 'Enter Full Screen', action: 'toggle-fullscreen', shortcut: '⌃⌘F' },
       { id: 'zoom-in', label: 'Zoom In' },
       { id: 'zoom-out', label: 'Zoom Out' },
       { id: 'toggle', label: 'Toggle Toolbar' },
@@ -79,7 +84,7 @@ const topMenus: TopMenuSection[] = [
     id: 'window',
     label: 'Window',
     items: [
-      { id: 'minimize', label: 'Minimize', action: 'minimize' },
+      { id: 'minimize', label: 'Minimize', action: 'minimize', shortcut: '⌘M' },
       { id: 'zoom', label: 'Zoom', action: 'toggle-fullscreen' },
       { id: 'arrange', label: 'Bring All to Front' },
     ],
@@ -95,12 +100,6 @@ const topMenus: TopMenuSection[] = [
   },
 ]
 
-const DESKTOP_ITEMS = [
-  { id: 'docs', label: 'Docs', emoji: '📘' },
-  { id: 'app', label: 'Apps', emoji: '⚙️' },
-  { id: 'root', label: 'System', emoji: '💻' },
-] as const
-
 const DOCK_ITEMS = [
   { id: 'docs', label: 'Docs', emoji: '📘', terminal: false },
   { id: 'terminal', label: 'proompteng', terminal: true },
@@ -115,6 +114,7 @@ export default function DesktopHero() {
   const desktopStageRef = useRef<HTMLDivElement>(null)
   const [currentTime, setCurrentTime] = useState('--:--')
   const [activeMenu, setActiveMenu] = useState<string | null>(null)
+  const [isTerminalClosed, setIsTerminalClosed] = useState(false)
 
   const restoreWindow = useCallback(() => {
     terminalWindowRef.current?.restore()
@@ -164,7 +164,10 @@ export default function DesktopHero() {
   useEffect(() => {
     const updateTime = () => {
       const formatter = new Intl.DateTimeFormat(undefined, {
-        hour: '2-digit',
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
         minute: '2-digit',
       })
       setCurrentTime(formatter.format(new Date()))
@@ -202,12 +205,19 @@ export default function DesktopHero() {
   }, [closeTopMenu])
 
   return (
-    <main className="relative min-h-[100svh] overflow-hidden bg-[radial-gradient(circle_at_18%_0%,rgba(122,162,247,0.24)_0%,rgba(26,27,38,0)_42%),radial-gradient(circle_at_84%_72%,rgba(187,154,247,0.18)_0%,rgba(26,27,38,0)_58%),radial-gradient(circle_at_45%_30%,rgba(125,207,255,0.12)_0%,rgba(26,27,38,0)_56%),linear-gradient(180deg,#2b2f46_0%,#23263a_54%,#1b2342_100%)]">
+    <main className="relative min-h-[100svh] overflow-hidden bg-[radial-gradient(circle_at_18%_0%,rgba(122,162,247,0.26)_0%,rgba(36,40,59,0)_42%),radial-gradient(circle_at_82%_74%,rgba(187,154,247,0.18)_0%,rgba(36,40,59,0)_58%),radial-gradient(circle_at_48%_34%,rgba(125,207,255,0.13)_0%,rgba(36,40,59,0)_56%),linear-gradient(180deg,#24283b_0%,#1f2335_56%,#1b1e2d_100%)]">
       <div className="relative flex min-h-[100svh] flex-col">
-        <header className="font-inter sticky top-0 z-20 h-11 border-b border-zinc-700/35 bg-black/35 px-3 py-1.5 text-[15px] font-normal text-zinc-100/90 backdrop-blur">
+        <header className="font-inter sticky top-0 z-20 h-11 border-b border-[rgb(84_92_126/0.45)] bg-[linear-gradient(180deg,rgba(61,89,161,0.64)_0%,rgba(41,46,66,0.86)_100%)] px-3 py-1 text-[13px] font-medium text-[rgb(192_202_245/0.95)] backdrop-blur-xl">
           <div className="mx-auto flex h-full max-w-[1200px] items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div ref={topMenuRef} className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="rounded-full px-2 py-1 text-[13px] leading-none text-[rgb(192_202_245/0.95)] transition-colors hover:bg-[rgb(122_162_247/0.24)]"
+                aria-label="Apple menu"
+              >
+                
+              </button>
+              <div ref={topMenuRef} className="flex items-center gap-1">
                 {topMenus.map((menu) => {
                   const isMenuActive = activeMenu === menu.id
                   return (
@@ -217,9 +227,13 @@ export default function DesktopHero() {
                         onClick={() => {
                           toggleTopMenuAtButton(menu.id)
                         }}
-                        className={`relative z-30 rounded-full px-3 py-1.5 text-[15px] font-normal transition-colors ${
+                        className={`relative z-30 rounded-full px-2.5 py-1.5 text-[13px] leading-none font-medium transition-colors ${
                           menu.id === 'terminal' ? 'font-bold' : ''
-                        } ${isMenuActive ? 'bg-white/15 text-zinc-50' : 'opacity-80'} hover:bg-white/10 hover:text-zinc-50`}
+                        } ${
+                          isMenuActive
+                            ? 'bg-[linear-gradient(180deg,rgba(122,162,247,0.52)_0%,rgba(61,89,161,0.66)_100%)] text-[rgb(192_202_245)] shadow-[inset_0_1px_0_rgba(192,202,245,0.24)]'
+                            : 'text-[rgb(192_202_245/0.92)]'
+                        } hover:bg-[linear-gradient(180deg,rgba(122,162,247,0.36)_0%,rgba(61,89,161,0.44)_100%)] hover:text-[rgb(192_202_245)]`}
                         onMouseEnter={() => {
                           openTopMenuAtButton(menu.id)
                         }}
@@ -235,20 +249,35 @@ export default function DesktopHero() {
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: -4 }}
                             transition={{ duration: 0.13, ease: 'easeOut' }}
-                            className="absolute top-full left-0 z-30 mt-0.5 w-52 rounded-lg border border-zinc-600/35 bg-zinc-900/85 p-1.5 shadow-[0_16px_42px_-20px_rgba(0,0,0,0.75)] backdrop-blur-md"
+                            className="absolute top-full left-0 z-30 mt-1.5 w-60 rounded-xl border border-[rgb(84_92_126/0.45)] bg-[rgba(31,35,53,0.9)] p-1.5 shadow-[0_22px_44px_-20px_rgba(0,0,0,0.9)] backdrop-blur-xl"
                           >
-                            {(topMenus.find((menu) => menu.id === activeMenu)?.items ?? []).map((item) => (
-                              <button
-                                key={item.id}
-                                type="button"
-                                className="flex w-full rounded-md px-2.5 py-2 text-left text-[13px] text-zinc-100 hover:bg-white/10"
-                                onClick={() => {
-                                  runTopMenuAction(item)
-                                }}
-                              >
-                                {item.label}
-                              </button>
-                            ))}
+                            {(topMenus.find((menu) => menu.id === activeMenu)?.items ?? []).map((item) => {
+                              if (item.separatorBefore) {
+                                return (
+                                  <div key={item.id} className="my-1 h-px bg-[rgb(84_92_126/0.38)]" role="separator" />
+                                )
+                              }
+
+                              return (
+                                <button
+                                  key={item.id}
+                                  type="button"
+                                  className={cn(
+                                    'flex w-full items-center justify-between rounded-md px-2.5 py-2 text-left text-[13px] text-[rgb(192_202_245)]',
+                                    'hover:bg-[rgb(61_89_161/0.52)]',
+                                    item.destructive ? 'text-red-200' : '',
+                                  )}
+                                  onClick={() => {
+                                    runTopMenuAction(item)
+                                  }}
+                                >
+                                  <span>{item.label}</span>
+                                  <span className="font-medium text-[11px] tracking-wide text-[rgb(115_122_162/0.9)]">
+                                    {item.shortcut ?? ''}
+                                  </span>
+                                </button>
+                              )
+                            })}
                           </motion.div>
                         ) : null}
                       </AnimatePresence>
@@ -257,38 +286,28 @@ export default function DesktopHero() {
                 })}
               </div>
             </div>
-            <div className="flex cursor-default select-none items-center gap-3 opacity-80">
-              <Wifi className="h-5 w-5 shrink-0" aria-hidden="true" />
-              <span className="cursor-default font-semibold">{currentTime}</span>
+            <div className="flex cursor-default select-none items-center gap-2 text-[12px] text-[rgb(169_177_214/0.95)]">
+              <Wifi className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span className="cursor-default font-medium tracking-[0.01em]">{currentTime}</span>
             </div>
           </div>
         </header>
 
         <div ref={desktopStageRef} className="relative z-10 flex-1 overflow-hidden">
-          <div className="relative z-10 px-4 pb-32 pt-8 sm:px-8">
-            <div className="mx-auto grid h-full max-w-[1200px] grid-cols-2 gap-5 px-2 sm:grid-cols-3 md:grid-cols-4">
-              {DESKTOP_ITEMS.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className="flex w-full flex-col items-center justify-end gap-1 text-3xl text-zinc-100/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/40"
-                  aria-label={item.label}
-                >
-                  {item.emoji}
-                  <span className="text-[11px] leading-none">{item.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
           <TerminalWindow
             ref={terminalWindowRef}
             desktopBoundsRef={desktopStageRef}
             menuBarButtonRef={menuBarButtonRef}
+            onClosedStateChange={setIsTerminalClosed}
           />
 
-          <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center px-3 pb-4">
-            <Dock items={DOCK_ITEMS} menuBarButtonRef={menuBarButtonRef} onTerminalClick={handleDockClick} />
+          <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-[90] flex justify-center px-3 pb-4">
+            <Dock
+              items={DOCK_ITEMS}
+              menuBarButtonRef={menuBarButtonRef}
+              onTerminalClick={handleDockClick}
+              isTerminalClosed={isTerminalClosed}
+            />
           </footer>
         </div>
       </div>
@@ -303,195 +322,118 @@ type DockItem = {
   terminal: boolean
 }
 
-type DockIconTransform = {
-  scale: number
-  y: number
-  x: number
+const DOCK_BASE_SIZE_PX = 48
+const DOCK_MAX_SCALE = 1.82
+const DOCK_EFFECT_RADIUS_PX = 152
+const DOCK_MAX_NUDGE_PX = 6
+const DOCK_LIFT_MULTIPLIER = 8
+const DOCK_HOVER_DELAY_MS = 140
+const DOCK_TOOLTIP_TEXT_SIZE_PX = 13
+const DOCK_TOOLTIP_LINE_HEIGHT_PX = 18
+const DOCK_TOOLTIP_PADDING_X_PX = 16
+const DOCK_TOOLTIP_PADDING_Y_PX = 6
+const DOCK_TOOLTIP_MIN_WIDTH_PX = 88
+const DOCK_TOOLTIP_MIN_BODY_HEIGHT_PX = 30
+const DOCK_TOOLTIP_TAIL_HEIGHT_PX = 8
+const DOCK_TOOLTIP_RADIUS_PX = 15
+
+function clampValue(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max)
+}
+
+function createDockTooltipPath(
+  width: number,
+  bodyHeight: number,
+  radius: number,
+  tailWidth: number,
+  tailHeight: number,
+) {
+  const safeRadius = clampValue(radius, 4, Math.min(width / 2 - 1, bodyHeight / 2 - 1))
+  const centerX = width / 2
+  const halfTail = tailWidth / 2
+  const tailLeft = clampValue(centerX - halfTail, safeRadius + 6, width - safeRadius - 6)
+  const tailRight = clampValue(centerX + halfTail, safeRadius + 6, width - safeRadius - 6)
+  const tailCurvePull = Math.max(3, halfTail * 0.72)
+  const tipY = bodyHeight + tailHeight
+
+  return [
+    `M ${safeRadius} 0`,
+    `H ${width - safeRadius}`,
+    `Q ${width} 0 ${width} ${safeRadius}`,
+    `V ${bodyHeight - safeRadius}`,
+    `Q ${width} ${bodyHeight} ${width - safeRadius} ${bodyHeight}`,
+    `H ${tailRight}`,
+    `Q ${centerX + tailCurvePull} ${bodyHeight} ${centerX} ${tipY}`,
+    `Q ${centerX - tailCurvePull} ${bodyHeight} ${tailLeft} ${bodyHeight}`,
+    `H ${safeRadius}`,
+    `Q 0 ${bodyHeight} 0 ${bodyHeight - safeRadius}`,
+    `V ${safeRadius}`,
+    `Q 0 0 ${safeRadius} 0`,
+    'Z',
+  ].join(' ')
 }
 
 const Dock = memo(function Dock({
   items,
   menuBarButtonRef,
   onTerminalClick,
+  isTerminalClosed,
 }: {
   items: readonly DockItem[]
   menuBarButtonRef: RefObject<HTMLButtonElement | null>
   onTerminalClick: () => void
+  isTerminalClosed: boolean
 }) {
-  const dockRefs = useRef<Array<HTMLButtonElement | null>>([])
-  const dockCentersRef = useRef<number[]>([])
-  const dockLeftRef = useRef(0)
   const hoverIntentRef = useRef<number | null>(null)
-  const dockPointerXRef = useRef<number | null>(null)
-  const dockPointerXSmoothedRef = useRef<number | null>(null)
-  const dockPosControlsRef = useRef<Array<ReturnType<typeof useAnimationControls> | null>>([])
-  const dockScaleControlsRef = useRef<Array<ReturnType<typeof useAnimationControls> | null>>([])
-  const dockCurrentRef = useRef<DockIconTransform[]>([])
-  const shouldAnimateRef = useRef(false)
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
+  const pointerX = useMotionValue(Number.POSITIVE_INFINITY)
 
-  const measureDockCenters = useCallback(() => {
-    const dockNode = dockRefs.current[0]?.parentElement
-    if (dockNode instanceof HTMLElement) {
-      // Avoid layout reads inside animation frames: capture dock left edge during measurement.
-      dockLeftRef.current = dockNode.getBoundingClientRect().left
+  const clearHoverIntent = useCallback(() => {
+    if (hoverIntentRef.current !== null) {
+      window.clearTimeout(hoverIntentRef.current)
+      hoverIntentRef.current = null
     }
-
-    dockCentersRef.current = dockRefs.current.map((node) => {
-      if (!node) return 0
-      const rect = node.getBoundingClientRect()
-      return rect.left + rect.width / 2
-    })
   }, [])
 
-  useEffect(() => {
-    measureDockCenters()
-    const onResize = () => measureDockCenters()
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [measureDockCenters])
-
-  const handleDockPointerMove = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    dockPointerXRef.current = event.clientX
-    shouldAnimateRef.current = true
-  }, [])
-
-  const handleDockPointerLeave = useCallback(() => {
-    dockPointerXRef.current = null
-    if (hoverIntentRef.current !== null) window.clearTimeout(hoverIntentRef.current)
-    hoverIntentRef.current = null
-    setHoveredIndex(null)
-    shouldAnimateRef.current = true
-  }, [])
-
-  useAnimationFrame(() => {
-    if (!shouldAnimateRef.current) return
-
-    const pointerXTarget = dockPointerXRef.current
-    if (pointerXTarget === null) {
-      dockPointerXSmoothedRef.current = null
-    } else {
-      const current = dockPointerXSmoothedRef.current ?? pointerXTarget
-      dockPointerXSmoothedRef.current = current + (pointerXTarget - current) * 0.28
-    }
-
-    const pointerX = dockPointerXSmoothedRef.current
-    const centers = dockCentersRef.current
-    const posControls = dockPosControlsRef.current
-    const scaleControls = dockScaleControlsRef.current
-
-    const settleEpsilonScale = 0.0025
-    const settleEpsilonY = 0.14
-    const settleEpsilonX = 0.35
-
-    if (!dockCurrentRef.current.length) {
-      dockCurrentRef.current = Array.from({ length: items.length }, () => ({ scale: 1, y: 0, x: 0 }))
-    }
-
-    const dockLeft = dockLeftRef.current
-    const baseCentersLocal = centers.map((c) => c - dockLeft)
-    const groupCenterLocal =
-      (baseCentersLocal[0] ?? 0) + ((baseCentersLocal.at(-1) ?? 0) - (baseCentersLocal[0] ?? 0)) / 2
-
-    const targetScales = Array.from({ length: items.length }, () => 1)
-    const targetLift = Array.from({ length: items.length }, () => 0)
-
-    if (pointerX !== null) {
-      const pointerLocal = pointerX - dockLeft
-      const range = 140
-      const magnification = 0.8
-      for (let i = 0; i < items.length; i += 1) {
-        const center = baseCentersLocal[i] ?? 0
-        const dist = Math.abs(pointerLocal - center)
-        if (dist >= range) continue
-        const t = dist / range
-        const falloff = Math.cos((t * Math.PI) / 2)
-        const scale = 1 + magnification * falloff * falloff
-        targetScales[i] = scale
-        targetLift[i] = -(scale - 1) * 18
-      }
-    }
-
-    // Re-layout by scaled widths, centered around the original dock center.
-    const widths = targetScales.map((s) => 48 * s)
-    const totalWidth = widths.reduce((sum, w) => sum + w, 0) + 18 * Math.max(0, widths.length - 1)
-    let cursor = groupCenterLocal - totalWidth / 2
-    const targetX: number[] = []
-    for (let i = 0; i < widths.length; i += 1) {
-      const w = widths[i] ?? 48
-      const center = cursor + w / 2
-      cursor += w + 18
-      targetX[i] = center - (baseCentersLocal[i] ?? 0)
-    }
-
-    let stillAnimating = false
-    for (let i = 0; i < items.length; i += 1) {
-      const posControl = posControls[i]
-      const scaleControl = scaleControls[i]
-      if (!posControl || !scaleControl) continue
-
-      const targetScale = targetScales[i] ?? 1
-      const targetY = targetLift[i] ?? 0
-      const targetTranslateX = pointerX === null ? 0 : (targetX[i] ?? 0)
-
-      const cur = dockCurrentRef.current[i] ?? { scale: 1, y: 0, x: 0 }
-      const scale = cur.scale + (targetScale - cur.scale) * 0.2
-      const y = cur.y + (targetY - cur.y) * 0.26
-      const x = cur.x + (targetTranslateX - cur.x) * 0.22
-      dockCurrentRef.current[i] = { scale, y, x }
-
-      // Keep tooltip unaffected by magnification: translate the button, scale only the icon.
-      posControl.set({ x, y })
-      scaleControl.set({ scale })
-
-      if (
-        Math.abs(targetScale - scale) > settleEpsilonScale ||
-        Math.abs(targetY - y) > settleEpsilonY ||
-        Math.abs(targetTranslateX - x) > settleEpsilonX
-      ) {
-        stillAnimating = true
-      }
-    }
-
-    if (pointerXTarget === null && !stillAnimating) {
-      shouldAnimateRef.current = false
-    }
-  })
+  useEffect(
+    () => () => {
+      clearHoverIntent()
+    },
+    [clearHoverIntent],
+  )
 
   return (
     <motion.nav
       className={cn(
-        'pointer-events-auto relative flex items-end gap-[18px] overflow-visible rounded-[22px] px-6 py-3',
-        'bg-[rgba(18,20,33,0.44)] shadow-[0_26px_70px_-44px_rgba(0,0,0,0.95)] backdrop-blur-2xl backdrop-saturate-150',
-        'ring-1 ring-white/10',
+        'pointer-events-auto relative z-[95] flex items-end gap-[18px] overflow-visible rounded-[22px] px-6 py-3',
+        'bg-[rgba(31,35,53,0.56)] shadow-[0_26px_70px_-44px_rgba(0,0,0,0.95)] backdrop-blur-2xl backdrop-saturate-150',
+        'ring-1 ring-[rgb(84_92_126/0.5)]',
       )}
-      onPointerEnter={() => {
-        measureDockCenters()
-        shouldAnimateRef.current = true
+      onPointerMove={(event: ReactPointerEvent<HTMLElement>) => {
+        pointerX.set(event.clientX)
       }}
-      onPointerMove={handleDockPointerMove}
-      onPointerLeave={handleDockPointerLeave}
+      onPointerLeave={() => {
+        pointerX.set(Number.POSITIVE_INFINITY)
+        clearHoverIntent()
+        setHoveredIndex(null)
+      }}
     >
       {items.map((dockItem, index) => {
         return (
           <DockButton
             key={dockItem.id}
             dockItem={dockItem}
-            index={index}
             menuBarButtonRef={menuBarButtonRef}
+            pointerX={pointerX}
             onTerminalClick={onTerminalClick}
-            dockRefs={dockRefs}
-            dockPosControlsRef={dockPosControlsRef}
-            dockScaleControlsRef={dockScaleControlsRef}
             showTooltip={hoveredIndex === index}
-            showRunningDot={dockItem.terminal}
+            showRunningDot={dockItem.terminal && isTerminalClosed}
             onHoverStart={() => {
-              if (hoverIntentRef.current !== null) window.clearTimeout(hoverIntentRef.current)
-              hoverIntentRef.current = window.setTimeout(() => setHoveredIndex(index), 180)
+              clearHoverIntent()
+              hoverIntentRef.current = window.setTimeout(() => setHoveredIndex(index), DOCK_HOVER_DELAY_MS)
             }}
             onHoverEnd={() => {
-              if (hoverIntentRef.current !== null) window.clearTimeout(hoverIntentRef.current)
-              hoverIntentRef.current = null
+              clearHoverIntent()
               setHoveredIndex((prev) => (prev === index ? null : prev))
             }}
           />
@@ -502,6 +444,44 @@ const Dock = memo(function Dock({
 })
 
 function DockTooltip({ label }: { label: string }) {
+  const labelRef = useRef<HTMLSpanElement | null>(null)
+  const [labelWidth, setLabelWidth] = useState(0)
+
+  useLayoutEffect(() => {
+    const node = labelRef.current
+    if (!node) return
+
+    const measure = () => {
+      const nextWidth = Math.ceil(node.getBoundingClientRect().width)
+      setLabelWidth((prev) => (prev === nextWidth ? prev : nextWidth))
+    }
+
+    measure()
+
+    const resizeObserver = new ResizeObserver(() => {
+      measure()
+    })
+    resizeObserver.observe(node)
+    return () => {
+      resizeObserver.disconnect()
+    }
+  }, [label])
+
+  const bodyWidth = Math.max(DOCK_TOOLTIP_MIN_WIDTH_PX, labelWidth + DOCK_TOOLTIP_PADDING_X_PX * 2)
+  const bodyHeight = Math.max(
+    DOCK_TOOLTIP_MIN_BODY_HEIGHT_PX,
+    DOCK_TOOLTIP_LINE_HEIGHT_PX + DOCK_TOOLTIP_PADDING_Y_PX * 2,
+  )
+  const totalHeight = bodyHeight + DOCK_TOOLTIP_TAIL_HEIGHT_PX
+  const tailWidth = clampValue(bodyWidth * 0.22, 12, 24)
+  const tooltipPath = createDockTooltipPath(
+    bodyWidth,
+    bodyHeight,
+    DOCK_TOOLTIP_RADIUS_PX,
+    tailWidth,
+    DOCK_TOOLTIP_TAIL_HEIGHT_PX,
+  )
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10, scale: 0.98 }}
@@ -509,66 +489,122 @@ function DockTooltip({ label }: { label: string }) {
       exit={{ opacity: 0, y: 10, scale: 0.98 }}
       transition={{ duration: 0.14, ease: 'easeOut' }}
       className={cn(
-        'pointer-events-none absolute left-1/2 bottom-full z-[70] -translate-x-1/2',
-        'mb-3 whitespace-nowrap rounded-full px-4 py-1.5',
-        'bg-[rgba(20,22,31,0.66)] text-[13px] font-medium leading-none text-white/92',
-        'shadow-[0_12px_32px_-24px_rgba(0,0,0,0.95)] backdrop-blur-xl ring-1 ring-white/12',
-        // Tail: a rounded rotated square, overlapped into the pill to avoid jagged seams.
-        'after:absolute after:left-1/2 after:top-full after:-translate-x-1/2 after:-translate-y-[7px] after:size-2.5 after:rotate-45 after:rounded-[3px]',
-        'after:bg-[rgba(20,22,31,0.66)] after:ring-1 after:ring-white/12 after:content-[""]',
+        'pointer-events-none absolute left-1/2 bottom-full z-[120] -translate-x-1/2',
+        'mb-3 whitespace-nowrap',
+        'text-[13px] font-medium leading-none text-[rgb(192_202_245/0.96)]',
       )}
+      style={{ width: bodyWidth, height: totalHeight }}
       aria-hidden="true"
     >
-      {label}
+      <svg
+        className="absolute inset-0"
+        width={bodyWidth}
+        height={totalHeight}
+        viewBox={`0 0 ${bodyWidth} ${totalHeight}`}
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <path
+          d={tooltipPath}
+          fill="rgb(31 35 53 / 0.88)"
+          stroke="rgb(84 92 126 / 0.62)"
+          strokeWidth="1"
+          vectorEffect="non-scaling-stroke"
+          style={{
+            filter: 'drop-shadow(0 12px 20px rgba(0,0,0,0.42))',
+          }}
+        />
+      </svg>
+      <span
+        className="absolute inset-x-0 top-0 flex items-center justify-center font-semibold tracking-[0.01em]"
+        style={{
+          height: bodyHeight,
+          fontSize: DOCK_TOOLTIP_TEXT_SIZE_PX,
+          lineHeight: `${DOCK_TOOLTIP_LINE_HEIGHT_PX}px`,
+          paddingLeft: DOCK_TOOLTIP_PADDING_X_PX,
+          paddingRight: DOCK_TOOLTIP_PADDING_X_PX,
+          paddingTop: DOCK_TOOLTIP_PADDING_Y_PX,
+          paddingBottom: DOCK_TOOLTIP_PADDING_Y_PX,
+        }}
+      >
+        <span ref={labelRef} className="inline-block">
+          {label}
+        </span>
+      </span>
     </motion.div>
   )
 }
 
 function DockButton({
   dockItem,
-  index,
   menuBarButtonRef,
+  pointerX,
   onTerminalClick,
-  dockRefs,
-  dockPosControlsRef,
-  dockScaleControlsRef,
   showTooltip,
   showRunningDot,
   onHoverStart,
   onHoverEnd,
 }: {
   dockItem: DockItem
-  index: number
   menuBarButtonRef: RefObject<HTMLButtonElement | null>
+  pointerX: ReturnType<typeof useMotionValue<number>>
   onTerminalClick: () => void
-  dockRefs: MutableRefObject<Array<HTMLButtonElement | null>>
-  dockPosControlsRef: MutableRefObject<Array<ReturnType<typeof useAnimationControls> | null>>
-  dockScaleControlsRef: MutableRefObject<Array<ReturnType<typeof useAnimationControls> | null>>
   showTooltip: boolean
   showRunningDot: boolean
   onHoverStart: () => void
   onHoverEnd: () => void
 }) {
-  const posControls = useAnimationControls()
-  const scaleControls = useAnimationControls()
+  const buttonRef = useRef<HTMLButtonElement | null>(null)
+  const reducedMotion = useReducedMotion()
+  const distance = useTransform(() => {
+    if (reducedMotion) return Number.POSITIVE_INFINITY
+    const pointer = pointerX.get()
+    const button = buttonRef.current
+    if (!Number.isFinite(pointer) || !button) return Number.POSITIVE_INFINITY
 
-  useEffect(() => {
-    dockPosControlsRef.current[index] = posControls
-    dockScaleControlsRef.current[index] = scaleControls
-    return () => {
-      if (dockPosControlsRef.current[index] === posControls) dockPosControlsRef.current[index] = null
-      if (dockScaleControlsRef.current[index] === scaleControls) dockScaleControlsRef.current[index] = null
-    }
-  }, [dockPosControlsRef, dockScaleControlsRef, index, posControls, scaleControls])
+    const offsetParent = button.offsetParent
+    if (!(offsetParent instanceof HTMLElement)) return Number.POSITIVE_INFINITY
+
+    const parentRect = offsetParent.getBoundingClientRect()
+    const center = parentRect.left + button.offsetLeft + button.offsetWidth / 2
+    return pointer - center
+  })
+
+  const scaleTarget = useTransform(distance, [-DOCK_EFFECT_RADIUS_PX, 0, DOCK_EFFECT_RADIUS_PX], [1, DOCK_MAX_SCALE, 1])
+  const nudgeTarget = useTransform(() => {
+    const d = distance.get()
+    if (!Number.isFinite(d) || Math.abs(d) > DOCK_EFFECT_RADIUS_PX) return 0
+    const rawNudge = (-d / DOCK_EFFECT_RADIUS_PX) * DOCK_MAX_NUDGE_PX * scaleTarget.get()
+    return clampValue(rawNudge, -DOCK_MAX_NUDGE_PX, DOCK_MAX_NUDGE_PX)
+  })
+
+  const scale = useSpring(scaleTarget, {
+    stiffness: 430,
+    damping: 34,
+    mass: 0.24,
+  })
+  const nudgeX = useSpring(nudgeTarget, {
+    stiffness: 380,
+    damping: 40,
+    mass: 0.26,
+  })
+  const iconSize = useTransform(scale, (value) => value * DOCK_BASE_SIZE_PX)
+  const lift = useTransform(scale, (value) => -(value - 1) * DOCK_LIFT_MULTIPLIER)
+  const emojiFontSize = useTransform(iconSize, (value) => Math.max(30, value * 0.66))
+
+  const assignButtonRef = useCallback(
+    (node: HTMLButtonElement | null) => {
+      buttonRef.current = node
+      if (dockItem.terminal) menuBarButtonRef.current = node
+    },
+    [dockItem.terminal, menuBarButtonRef],
+  )
 
   if (dockItem.terminal) {
     return (
       <motion.button
         type="button"
-        ref={(node) => {
-          dockRefs.current[index] = node
-          menuBarButtonRef.current = node
-        }}
+        ref={assignButtonRef}
         onClick={onTerminalClick}
         onKeyDown={(event) => {
           if (event.key !== ' ' && event.key !== 'Enter') return
@@ -577,28 +613,32 @@ function DockButton({
         }}
         onPointerEnter={onHoverStart}
         onPointerLeave={onHoverEnd}
-        animate={posControls}
         className={cn(
-          'relative isolate inline-flex h-12 w-12 items-center justify-center overflow-visible p-0 leading-none text-zinc-100',
+          'relative isolate inline-flex shrink-0 items-center justify-center overflow-visible p-0 leading-none text-zinc-100',
           'transform-gpu will-change-transform',
           showTooltip ? 'z-50' : 'z-10',
         )}
+        style={{ width: DOCK_BASE_SIZE_PX, height: DOCK_BASE_SIZE_PX, x: nudgeX, y: lift }}
         aria-label={dockItem.label}
       >
-        <motion.div animate={scaleControls} className="relative z-10 transform-gpu will-change-transform">
+        <motion.span
+          className="relative z-10 block shrink-0 transform-gpu will-change-transform"
+          style={{ width: iconSize, height: iconSize }}
+        >
           <Image
             src="/macos-terminal-icon.png"
             alt="proompteng"
             width={48}
             height={48}
-            className="size-12 object-contain"
+            className="block h-full w-full object-contain"
+            draggable={false}
             priority
           />
-        </motion.div>
+        </motion.span>
         {showRunningDot ? (
           <span
             aria-hidden="true"
-            className="absolute left-1/2 top-full mt-1 size-[6px] -translate-x-1/2 rounded-full bg-white/85 shadow-[0_0_0_1px_rgba(0,0,0,0.35)]"
+            className="absolute left-1/2 top-full mt-1 size-[6px] -translate-x-1/2 rounded-full bg-[rgb(192_202_245/0.9)] shadow-[0_0_0_1px_rgba(31,35,53,0.85)]"
           />
         ) : null}
         <AnimatePresence>{showTooltip ? <DockTooltip label={dockItem.label} /> : null}</AnimatePresence>
@@ -609,22 +649,20 @@ function DockButton({
   return (
     <motion.button
       type="button"
-      ref={(node) => {
-        dockRefs.current[index] = node
-      }}
+      ref={assignButtonRef}
       onPointerEnter={onHoverStart}
       onPointerLeave={onHoverEnd}
-      animate={posControls}
       className={cn(
-        'relative isolate inline-flex h-12 w-12 items-center justify-center overflow-visible p-0 leading-none text-zinc-100',
+        'relative isolate inline-flex shrink-0 items-center justify-center overflow-visible p-0 leading-none text-zinc-100',
         'transform-gpu will-change-transform',
         showTooltip ? 'z-50' : 'z-10',
       )}
+      style={{ width: DOCK_BASE_SIZE_PX, height: DOCK_BASE_SIZE_PX, x: nudgeX, y: lift }}
       aria-label={dockItem.label}
     >
       <motion.span
-        animate={scaleControls}
-        className="relative z-10 transform-gpu will-change-transform text-[34px] leading-none"
+        className="relative z-10 transform-gpu leading-none will-change-transform"
+        style={{ fontSize: emojiFontSize }}
       >
         {dockItem.emoji}
       </motion.span>

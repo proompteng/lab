@@ -4,44 +4,20 @@ import { motion } from 'motion/react'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 
-const COMMAND = 'kubectl get agentruns'
+const AGENTRUN_FILE = 'charts/agents/examples/agentrun-workflow-smoke.yaml'
+const AGENTRUN_NAME = 'agents-workflow-smoke'
+const COMMAND = `kubectl -n agents logs -f agentrun/${AGENTRUN_NAME}`
 const MIN_VISIBLE_PX = 64
-const MINIMIZE_SCALE = 0.13
+const MINIMIZE_SCALE = 0.16
 const MAX_WINDOW_WIDTH_PX = 74 * 16
-const MAX_WINDOW_HEIGHT_PX = 760
+const MAX_WINDOW_HEIGHT_PX = 900
 const FALLBACK_VIEWPORT = { width: 1280, height: 720, left: 0, top: 0 }
 const TOP_MENU_BAR_HEIGHT_PX = 44
 const DOCK_SAFE_AREA_PX = 96
-const MACOS_MINIMIZE_DURATION = 0.78
-const MACOS_RESTORE_DURATION = 0.62
-const MACOS_FULLSCREEN_DURATION = 0.38
-const MACOS_FULLSCREEN_EASE = [0.21, 1, 0.35, 1] as const
-const MACOS_RESTORE_EASE = [0.16, 1, 0.3, 1] as const
-const MACOS_MINIMIZE_PATH = [0, 0.12, 0.28, 0.4, 0.52, 0.68, 0.86, 1] as const
-const MACOS_RESTORE_PATH = [0, 0.16, 0.33, 0.5, 0.66, 0.82, 0.92, 1] as const
-const MACOS_MINIMIZE_CURVE_EASE = [0.15, 0.98, 0.34, 0.98] as const
-const MACOS_MINIMIZE_SLIDE_EASE = [0.22, 1, 0.34, 1] as const
-const MACOS_MINIMIZE_CLIP_PATH = [
-  'inset(0% 0% 0% 0%)',
-  'inset(0% 0% 0% 0%)',
-  'inset(0% 2% 0% 2%)',
-  'inset(0% 8% 4% 8%)',
-  'inset(2% 16% 24% 16%)',
-  'inset(6% 22% 42% 22%)',
-  'inset(12% 28% 70% 28%)',
-  'inset(28% 36% 92% 36%)',
-] as const
-const MACOS_RESTORE_CLIP_PATH = [
-  'inset(28% 36% 92% 36%)',
-  'inset(12% 28% 70% 28%)',
-  'inset(6% 22% 42% 22%)',
-  'inset(2% 16% 24% 16%)',
-  'inset(0% 8% 4% 8%)',
-  'inset(0% 2% 0% 2%)',
-  'inset(0% 0% 0% 0%)',
-  'inset(0% 0% 0% 0%)',
-] as const
-const MINIMIZED_CLIP_PATH = MACOS_MINIMIZE_CLIP_PATH[MACOS_MINIMIZE_CLIP_PATH.length - 1]
+const MINIMIZE_DURATION = 0.3
+const MINIMIZE_EASE = [0.32, 0, 0.67, 0] as const
+const RESTORE_SPRING = { type: 'spring', stiffness: 380, damping: 32, mass: 0.75 } as const
+const FULLSCREEN_SPRING = { type: 'spring', stiffness: 320, damping: 34, mass: 0.88 } as const
 
 type WindowMode = 'normal' | 'minimizing' | 'minimized' | 'restoring' | 'closed'
 type FullscreenMode = 'normal' | 'fullscreen' | 'fullscreen-entering' | 'fullscreen-exiting'
@@ -55,6 +31,59 @@ type Row = {
   id: string
   segments: Segment[]
 }
+
+type SessionEvent = {
+  event: string
+  message: string
+  level?: 'INFO' | 'WARN' | 'ERROR'
+}
+
+type TranscriptRow = {
+  time: string
+  event: string
+  message: string
+}
+
+const INITIAL_TRANSCRIPT: readonly TranscriptRow[] = [
+  {
+    time: '01:18:22',
+    event: 'response_item.function_call',
+    message: `exec_command(cmd="kubectl -n agents apply -f ${AGENTRUN_FILE}")`,
+  },
+  {
+    time: '01:18:23',
+    event: 'response_item.function_call_output',
+    message: `agentrun.agents.proompteng.ai/${AGENTRUN_NAME} configured`,
+  },
+  {
+    time: '01:18:23',
+    event: 'response_item.function_call',
+    message: `exec_command(cmd="kubectl -n agents get agentrun ${AGENTRUN_NAME} -o jsonpath='{.status.phase} {.status.conditions[?(@.type=="Accepted")].reason}'")`,
+  },
+  {
+    time: '01:18:24',
+    event: 'response_item.function_call_output',
+    message: 'Running Submitted',
+  },
+  {
+    time: '01:18:24',
+    event: 'response_item.function_call',
+    message: `exec_command(cmd="kubectl -n agents logs -f agentrun/${AGENTRUN_NAME} -c codex-agent")`,
+  },
+  {
+    time: '01:18:25',
+    event: 'response_item.function_call_output',
+    message: `attached stream source=agentrun/${AGENTRUN_NAME} container=codex-agent`,
+  },
+]
+
+const OBFUSCATED_NAMESPACES = ['agents', 'agents-stg', 'agents-dev', 'agents-canary'] as const
+const OBFUSCATED_RUN_STEMS = ['policy', 'replay', 'audit', 'ledger', 'router', 'dispatch'] as const
+const OBFUSCATED_AGENT_NAMES = ['codex-agent', 'smoke-agent', 'native-workflow-agent', 'ops-agent'] as const
+const OBFUSCATED_IMPLEMENTATIONS = ['smoke-impl', 'codex-impl-sample', 'codex-native-workflow-impl'] as const
+const OBFUSCATED_REPOSITORIES = ['proompteng/lab', 'proompteng/platform', 'proompteng/ops'] as const
+const OBFUSCATED_HEAD_BRANCHES = ['codex/agents/2614', 'codex/agents/3241', 'codex/workflow/1182'] as const
+const OBFUSCATED_TTLS = [600, 900, 1800] as const
 
 function usePrefersReducedMotion() {
   const [reduced, setReduced] = useState(false)
@@ -74,6 +103,10 @@ function formatTime(now: Date) {
   return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
+function formatIso(now: Date) {
+  return now.toISOString().replace(/\.\d{3}Z$/, 'Z')
+}
+
 function mkRow(id: string, segments: Segment[]): Row {
   return { id, segments }
 }
@@ -83,18 +116,7 @@ function randomFrom<T>(items: readonly T[]) {
 }
 
 function generateAgentRunName() {
-  const nouns = [
-    'jangar',
-    'torghut',
-    'codex',
-    'policy',
-    'replay',
-    'audit',
-    'ledger',
-    'router',
-    'queue',
-    'deploy',
-  ] as const
+  const nouns = OBFUSCATED_RUN_STEMS
   const tails = ['a3f2', '9c1b', '77de', '0b42', 'c8aa', '3f1d', 'e204', '6a9e'] as const
   const noun = randomFrom(nouns)
   const tail = randomFrom(tails)
@@ -102,45 +124,79 @@ function generateAgentRunName() {
 }
 
 function generateLogRow(index: number) {
-  const level = index % 19 === 0 ? 'ERROR' : index % 7 === 0 ? 'WARN' : 'INFO'
-  const run = `${generateAgentRunName()}-${String(index).padStart(2, '0')}`
-  const phase = randomFrom(['Pending', 'Running', 'Succeeded', 'Failed', 'Cancelled'] as const)
-  const runtime = randomFrom(['workflow', 'direct'] as const)
-  const reasons = [
-    'Completed',
-    'InvalidSpec',
-    'AdmissionDenied',
-    'QueueLimit',
-    'CancelledByUser',
-    'RuntimeError',
-  ] as const
-  const reason = phase === 'Succeeded' ? 'Completed' : phase === 'Pending' ? 'QueueLimit' : randomFrom(reasons)
-
-  const messages = {
-    INFO: [
-      `reconciled AgentRun ${run} status.phase=${phase} runtime=${runtime}`,
-      `wrote controller ConfigMap label agents.proompteng.ai/agent-run=${run}`,
-      `computed additionalPrinterColumns: Phase Agent Succeeded Reason StartTime CompletionTime Runtime`,
-      `policy checks completed AgentRun=${run} result=allow`,
-      `streaming status events AgentRun=${run} phase=${phase}`,
-    ],
-    WARN: [
-      `backpressure: AgentRun=${run} phase=Pending reason=QueueLimit`,
-      `admission policy latency elevated (p95=412ms) AgentRun=${run}`,
-      `retrying provider update AgentRun=${run} conditions.Succeeded.reason=${reason}`,
-    ],
-    ERROR: [
-      `admission denied AgentRun=${run} reason=InvalidSpec`,
-      `controller error AgentRun=${run} phase=Failed reason=RuntimeError`,
-      `actuation blocked AgentRun=${run} phase=Failed reason=AdmissionDenied`,
-    ],
-  } as const
+  const traceId = `${generateAgentRunName()}-${String(index).padStart(2, '0')}`
+  const namespace = randomFrom(OBFUSCATED_NAMESPACES)
+  const agentName = randomFrom(OBFUSCATED_AGENT_NAMES)
+  const implementation = randomFrom(OBFUSCATED_IMPLEMENTATIONS)
+  const runStem = randomFrom(OBFUSCATED_RUN_STEMS)
+  const repository = randomFrom(OBFUSCATED_REPOSITORIES)
+  const headBranch = randomFrom(OBFUSCATED_HEAD_BRANCHES)
+  const ttlSeconds = randomFrom(OBFUSCATED_TTLS)
+  const nowIso = formatIso(new Date())
+  const runtimeRef = `${AGENTRUN_NAME}-plan-a1`
+  const sessionEvents: readonly SessionEvent[] = [
+    {
+      event: 'event_msg.agent_message',
+      message: `source=agentrun/${AGENTRUN_NAME} codex: connected log stream (runtimeRef=${runtimeRef})`,
+    },
+    {
+      event: 'response_item.function_call',
+      message: `source=agentrun/${AGENTRUN_NAME} exec_command(cmd="kubectl -n ${namespace} get agentrun ${AGENTRUN_NAME} -o jsonpath='{.spec.agentRef.name} {.spec.runtime.type} {.spec.implementationSpecRef.name}'")`,
+    },
+    {
+      event: 'response_item.function_call_output',
+      message: `source=agentrun/${AGENTRUN_NAME} spec.agentRef.name=${agentName} spec.runtime.type=workflow spec.implementationSpecRef.name=${implementation}`,
+    },
+    {
+      event: 'response_item.function_call',
+      message: `source=agentrun/${AGENTRUN_NAME} exec_command(cmd="kubectl -n ${namespace} get pods -l agents.proompteng.ai/agent-run=${AGENTRUN_NAME} -o name")`,
+    },
+    {
+      event: 'response_item.function_call_output',
+      message: `source=agentrun/${AGENTRUN_NAME} pod/job=${traceId} status=Running`,
+    },
+    {
+      event: 'event_msg.agent_message',
+      message: `source=agentrun/${AGENTRUN_NAME} codex: triaging deployment drift and preparing patch`,
+    },
+    {
+      event: 'response_item.function_call',
+      message: `source=agentrun/${AGENTRUN_NAME} exec_command(cmd="kubectl -n ${namespace} get deploy svc-${runStem} -o jsonpath='{.spec.template.spec.containers[0].image}'")`,
+    },
+    {
+      event: 'response_item.function_call_output',
+      message: `source=agentrun/${AGENTRUN_NAME} image=registry.redacted.invalid/platform/app:0.${index % 10}xx.${index % 7}`,
+    },
+    {
+      event: 'response_item.message.assistant',
+      message: `source=agentrun/${AGENTRUN_NAME} codex: patch staged, waiting for controller reconcile`,
+    },
+    {
+      event: 'response_item.function_call_output',
+      message: `source=agentrun/${AGENTRUN_NAME} status.runtimeRef={type:workflow,name:${runtimeRef},namespace:${namespace}}`,
+    },
+    {
+      event: 'response_item.function_call_output',
+      message: `source=agentrun/${AGENTRUN_NAME} status.vcs={provider:github,mode:read-write,repository:${repository},headBranch:${headBranch}}`,
+    },
+    {
+      event: 'event_msg.agent_reasoning',
+      message: `source=agentrun/${AGENTRUN_NAME} retention: applying ttlSecondsAfterFinished=${ttlSeconds} to completed workflow jobs`,
+      level: 'WARN',
+    },
+    {
+      event: 'event_msg.agent_message',
+      message: `source=agentrun/${AGENTRUN_NAME} status.phase=Succeeded status.conditions[Succeeded]=True(Completed) status.finishedAt=${nowIso}`,
+    },
+  ]
+  const item = sessionEvents[index % sessionEvents.length] ?? sessionEvents[0]
+  const level = item?.level ?? 'INFO'
 
   return mkRow(`log-${Date.now()}-${index}`, [
     { text: formatTime(new Date()), className: 'text-[rgb(var(--terminal-text-faint)/0.45)]' },
     { text: '  ' },
     {
-      text: level.padEnd(5),
+      text: pad(level, 5),
       className:
         level === 'ERROR'
           ? 'text-[rgb(var(--terminal-text-red))]'
@@ -149,7 +205,9 @@ function generateLogRow(index: number) {
             : 'text-[rgb(var(--terminal-text-green))]',
     },
     { text: '  ' },
-    { text: randomFrom(messages[level]), className: 'text-[rgb(var(--terminal-text-primary)/0.82)]' },
+    { text: pad(item.event, 36), className: 'text-[rgb(var(--terminal-text-blue))]' },
+    { text: '  ' },
+    { text: item.message, className: 'text-[rgb(var(--terminal-text-primary)/0.82)]' },
   ])
 }
 
@@ -174,42 +232,30 @@ function getViewport(bounds?: HTMLElement | null) {
   return { width: window.innerWidth, height: window.innerHeight, left: 0, top: 0 }
 }
 
-function formatKubectlHeader() {
-  // Mirrors charts/agents/crds/agents.proompteng.ai_agentruns.yaml additionalPrinterColumns
-  const cols = [
-    pad('NAME', 38),
-    pad('PHASE', 10),
-    pad('AGENT', 16),
-    pad('SUCCEEDED', 10),
-    pad('REASON', 16),
-    pad('STARTTIME', 20),
-    pad('COMPLETIONTIME', 20),
-    pad('RUNTIME', 10),
-  ]
-  return cols.join(' ')
+function formatSessionHeader() {
+  const cols = [pad('TIME', 10), pad('EVENT', 36), 'MESSAGE']
+  return cols.join('  ')
 }
 
-function formatKubectlRow(input: {
-  name: string
-  phase: string
-  agent: string
-  succeeded: string
-  reason: string
-  startTime: string
-  completionTime: string
-  runtime: string
-}) {
-  const cols = [
-    pad(input.name, 38),
-    pad(input.phase, 10),
-    pad(input.agent, 16),
-    pad(input.succeeded, 10),
-    pad(input.reason, 16),
-    pad(input.startTime, 20),
-    pad(input.completionTime, 20),
-    pad(input.runtime, 10),
+function formatSessionRow(input: { time: string; event: string; message: string }) {
+  const cols = [pad(input.time, 10), pad(input.event, 36), input.message]
+  return cols.join('  ')
+}
+
+function createInitialOutputRows(prefix: string): Row[] {
+  return [
+    mkRow(`${prefix}-header`, [
+      { text: formatSessionHeader(), className: 'text-[rgb(var(--terminal-text-faint)/0.65)]' },
+    ]),
+    ...INITIAL_TRANSCRIPT.map((item, index) =>
+      mkRow(`${prefix}-${index}`, [
+        {
+          text: formatSessionRow(item),
+          className: 'text-[rgb(var(--terminal-text-primary)/0.82)]',
+        },
+      ]),
+    ),
   ]
-  return cols.join(' ')
 }
 
 export type TerminalWindowHandle = {
@@ -288,7 +334,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
     const getMinimizeTarget = useCallback(() => {
       if (!menuBarButtonRef?.current) return null
       const menuBarRect = menuBarButtonRef.current.getBoundingClientRect()
-      const topInsetPx = desktopBoundsRef ? 0 : TOP_MENU_BAR_HEIGHT_PX
+      const topInsetPx = desktopBoundsRef?.current ? viewport.top : TOP_MENU_BAR_HEIGHT_PX
       const isFullscreenLike = fullscreenMode === 'fullscreen'
       const windowCenterX = viewport.left + viewport.width / 2 + (isFullscreenLike ? 0 : offset.x)
       const windowCenterY = viewport.top + viewport.height / 2 + (isFullscreenLike ? topInsetPx / 2 : offset.y)
@@ -311,7 +357,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
     const getMinimizeTargetFallback = useCallback(() => {
       // If we can't measure the dock icon, still minimize to the dock area (bottom-center).
       // This avoids "minimize does nothing" when refs aren't available yet (SSR/fast interactions).
-      const topInsetPx = desktopBoundsRef ? 0 : TOP_MENU_BAR_HEIGHT_PX
+      const topInsetPx = desktopBoundsRef?.current ? viewport.top : TOP_MENU_BAR_HEIGHT_PX
       const isFullscreenLike = fullscreenMode === 'fullscreen'
       const windowCenterX = viewport.left + viewport.width / 2 + (isFullscreenLike ? 0 : offset.x)
       const windowCenterY = viewport.top + viewport.height / 2 + (isFullscreenLike ? topInsetPx / 2 : offset.y)
@@ -404,21 +450,30 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
       () => [
         mkRow('boot-0', [
           { text: 'proompteng ', className: 'text-[rgb(var(--terminal-text-green))]' },
-          { text: 'agent control plane', className: 'text-[rgb(var(--terminal-text-primary)/0.82)]' },
+          { text: 'AgentRun execute + log tail', className: 'text-[rgb(var(--terminal-text-primary)/0.82)]' },
         ]),
         mkRow('boot-1', [
-          { text: 'connecting ', className: 'text-[rgb(var(--terminal-text-secondary)/0.72)]' },
-          { text: 'cluster=agents-prod ', className: 'text-[rgb(var(--terminal-text-blue))]' },
+          { text: 'loading ', className: 'text-[rgb(var(--terminal-text-secondary)/0.72)]' },
+          {
+            text: 'charts/agents/crds/agents.proompteng.ai_agentruns.yaml ',
+            className: 'text-[rgb(var(--terminal-text-blue))]',
+          },
           { text: '... ok', className: 'text-[rgb(var(--terminal-text-green))]' },
         ]),
         mkRow('boot-2', [
-          { text: 'auth ', className: 'text-[rgb(var(--terminal-text-secondary)/0.72)]' },
-          { text: 'serviceaccount=landing-ro ', className: 'text-[rgb(var(--terminal-text-primary)/0.82)]' },
+          { text: 'schema ', className: 'text-[rgb(var(--terminal-text-secondary)/0.72)]' },
+          {
+            text: 'spec.agentRef + spec.runtime + status.phase/conditions ',
+            className: 'text-[rgb(var(--terminal-text-primary)/0.82)]',
+          },
           { text: '... ok', className: 'text-[rgb(var(--terminal-text-green))]' },
         ]),
         mkRow('boot-3', [
-          { text: 'tailing ', className: 'text-[rgb(var(--terminal-text-secondary)/0.72)]' },
-          { text: 'agents-controller logs', className: 'text-[rgb(var(--terminal-text-primary)/0.82)]' },
+          { text: 'streaming ', className: 'text-[rgb(var(--terminal-text-secondary)/0.72)]' },
+          {
+            text: 'codex events from agentrun log stream',
+            className: 'text-[rgb(var(--terminal-text-primary)/0.82)]',
+          },
           { text: ' (live)', className: 'text-[rgb(var(--terminal-text-faint)/0.45)]' },
         ]),
       ],
@@ -441,11 +496,15 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
         if (!dragRef.current) return
         if (!windowRef.current) return
 
-        const container = windowRef.current.offsetParent
-        const containerRect =
-          container instanceof HTMLElement
-            ? container.getBoundingClientRect()
-            : { width: window.innerWidth, height: window.innerHeight }
+        const viewportRect = {
+          left: 0,
+          top: 0,
+          right: window.innerWidth,
+          bottom: window.innerHeight,
+          width: window.innerWidth,
+          height: window.innerHeight,
+        }
+        const dragAreaRect = desktopBoundsRef?.current?.getBoundingClientRect() ?? viewportRect
         const windowRect = windowRef.current.getBoundingClientRect()
 
         const deltaX = clientX - dragRef.current.startX
@@ -453,16 +512,20 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
         const nextX = dragRef.current.startOffsetX + deltaX
         const nextY = dragRef.current.startOffsetY + deltaY
 
-        const maxX = containerRect.width / 2 + windowRect.width / 2 - MIN_VISIBLE_PX
-        const minX = MIN_VISIBLE_PX - containerRect.width / 2 - windowRect.width / 2
-        // Keep the window fully within the desktop: flush under the menu bar, and above the dock.
-        const topInsetPx = desktopBoundsRef ? 0 : TOP_MENU_BAR_HEIGHT_PX
-        const topBoundY = topInsetPx + windowRect.height / 2 - containerRect.height / 2
-        const bottomBoundY = containerRect.height / 2 - DOCK_SAFE_AREA_PX - windowRect.height / 2
-        const minY = Math.min(topBoundY, bottomBoundY)
-        const maxY = Math.max(topBoundY, bottomBoundY)
+        const minX = dragAreaRect.left + MIN_VISIBLE_PX - viewportRect.width / 2 - windowRect.width / 2
+        const maxX = dragAreaRect.right - MIN_VISIBLE_PX - viewportRect.width / 2 + windowRect.width / 2
 
-        setOffset({ x: clamp(nextX, minX, maxX), y: clamp(nextY, minY, maxY) })
+        // Keep the window below the menu bar and above the dock region.
+        const topBoundAbsY = desktopBoundsRef
+          ? Math.max(dragAreaRect.top, TOP_MENU_BAR_HEIGHT_PX)
+          : TOP_MENU_BAR_HEIGHT_PX
+        const bottomBoundAbsY = dragAreaRect.bottom - DOCK_SAFE_AREA_PX
+        const minY = topBoundAbsY + windowRect.height / 2 - viewportRect.height / 2
+        const maxY = bottomBoundAbsY - windowRect.height / 2 - viewportRect.height / 2
+        const clampedMinY = Math.min(minY, maxY)
+        const clampedMaxY = Math.max(minY, maxY)
+
+        setOffset({ x: clamp(nextX, minX, maxX), y: clamp(nextY, clampedMinY, clampedMaxY) })
       }
 
       const onPointerMove = (event: PointerEvent) => {
@@ -531,44 +594,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
       if (reducedMotion) {
         setPhase('output')
         setCommandText(COMMAND)
-        setRows((prev) => {
-          const initial = [
-            mkRow('out-header', [
-              { text: formatKubectlHeader(), className: 'text-[rgb(var(--terminal-text-faint)/0.65)]' },
-            ]),
-            mkRow('out-0', [
-              {
-                text: formatKubectlRow({
-                  name: 'leader-election-implementation-20260207-run',
-                  phase: 'Running',
-                  agent: 'codex-agent',
-                  succeeded: 'False',
-                  reason: 'Running',
-                  startTime: '2026-02-17T01:18:22Z',
-                  completionTime: '-',
-                  runtime: 'workflow',
-                }),
-                className: 'text-[rgb(var(--terminal-text-primary)/0.82)]',
-              },
-            ]),
-            mkRow('out-1', [
-              {
-                text: formatKubectlRow({
-                  name: 'torghut-audit-evidence-20260217-run',
-                  phase: 'Succeeded',
-                  agent: 'codex-agent',
-                  succeeded: 'True',
-                  reason: 'Completed',
-                  startTime: '2026-02-17T01:06:02Z',
-                  completionTime: '2026-02-17T01:10:44Z',
-                  runtime: 'workflow',
-                }),
-                className: 'text-[rgb(var(--terminal-text-primary)/0.82)]',
-              },
-            ]),
-          ]
-          return [...initial, ...prev]
-        })
+        setRows((prev) => [...createInitialOutputRows('out'), ...prev])
         return
       }
 
@@ -592,56 +618,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
             timeouts.push(
               window.setTimeout(() => {
                 setPhase('output')
-                setRows([
-                  mkRow('out-header', [
-                    { text: formatKubectlHeader(), className: 'text-[rgb(var(--terminal-text-faint)/0.65)]' },
-                  ]),
-                  mkRow('out-0', [
-                    {
-                      text: formatKubectlRow({
-                        name: 'leader-election-implementation-20260207-run',
-                        phase: 'Running',
-                        agent: 'codex-agent',
-                        succeeded: 'False',
-                        reason: 'Running',
-                        startTime: '2026-02-17T01:18:22Z',
-                        completionTime: '-',
-                        runtime: 'workflow',
-                      }),
-                      className: 'text-[rgb(var(--terminal-text-primary)/0.82)]',
-                    },
-                  ]),
-                  mkRow('out-1', [
-                    {
-                      text: formatKubectlRow({
-                        name: 'control-plane-filters-20260130-run',
-                        phase: 'Pending',
-                        agent: 'codex-agent',
-                        succeeded: 'False',
-                        reason: 'QueueLimit',
-                        startTime: '2026-02-17T01:19:07Z',
-                        completionTime: '-',
-                        runtime: 'workflow',
-                      }),
-                      className: 'text-[rgb(var(--terminal-text-primary)/0.82)]',
-                    },
-                  ]),
-                  mkRow('out-2', [
-                    {
-                      text: formatKubectlRow({
-                        name: 'torghut-audit-evidence-20260217-run',
-                        phase: 'Succeeded',
-                        agent: 'codex-agent',
-                        succeeded: 'True',
-                        reason: 'Completed',
-                        startTime: '2026-02-17T01:06:02Z',
-                        completionTime: '2026-02-17T01:10:44Z',
-                        runtime: 'workflow',
-                      }),
-                      className: 'text-[rgb(var(--terminal-text-primary)/0.82)]',
-                    },
-                  ]),
-                ])
+                setRows(createInitialOutputRows('out'))
               }, 260),
             )
           }, 48)
@@ -681,12 +658,19 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
     const isHidden = windowMode === 'minimized' || windowMode === 'closed'
     const isControlLocked =
       windowMode !== 'normal' || fullscreenMode === 'fullscreen-entering' || fullscreenMode === 'fullscreen-exiting'
-    const topInsetPx = desktopBoundsRef ? 0 : TOP_MENU_BAR_HEIGHT_PX
+    const hasDesktopBounds = Boolean(desktopBoundsRef?.current)
+    const topInsetPx = hasDesktopBounds ? viewport.top : TOP_MENU_BAR_HEIGHT_PX
     const normalWidth = clamp(viewport.width * 0.95, MAX_WINDOW_WIDTH_PX / 4, MAX_WINDOW_WIDTH_PX)
-    const normalHeight = clamp(viewport.height * 0.72, 280, MAX_WINDOW_HEIGHT_PX)
+    const normalHeight = clamp(viewport.height * 0.82, 320, MAX_WINDOW_HEIGHT_PX)
     const isFullscreenTarget = fullscreenMode === 'fullscreen' || fullscreenMode === 'fullscreen-entering'
-    const fullscreenHeight = Math.max(260, viewport.height - topInsetPx)
-    const fullscreenY = isFullscreenTarget ? topInsetPx / 2 : 0
+    const fullscreenBottomInsetPx = DOCK_SAFE_AREA_PX
+    const fullscreenHeight = Math.max(
+      260,
+      hasDesktopBounds
+        ? viewport.height - fullscreenBottomInsetPx
+        : viewport.height - TOP_MENU_BAR_HEIGHT_PX - fullscreenBottomInsetPx,
+    )
+    const fullscreenY = isFullscreenTarget ? topInsetPx / 2 - fullscreenBottomInsetPx / 2 : 0
     const currentBaseX = isFullscreenTarget ? 0 : offset.x
     const currentBaseY = isFullscreenTarget ? fullscreenY : offset.y
     const targetWindowX = isFullscreenTarget ? 0 : offset.x
@@ -695,145 +679,41 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
     const targetWindowHeight = isFullscreenTarget ? fullscreenHeight : normalHeight
     const targetBaseX = isMenuTargeting ? currentBaseX + minimizeOffset.x : currentBaseX
     const targetBaseY = isMenuTargeting ? currentBaseY + minimizeOffset.y : currentBaseY
-    const minimizedX = isMenuTargeting ? minimizeOffset.x : 0
-    const minimizedY = isMenuTargeting ? minimizeOffset.y : 0
 
     const windowAnimate = useMemo(() => {
       if (windowMode === 'minimizing') {
         return {
-          x: [
-            currentBaseX,
-            currentBaseX,
-            currentBaseX + minimizedX * 0.04,
-            currentBaseX + minimizedX * 0.18,
-            currentBaseX + minimizedX * 0.42,
-            currentBaseX + minimizedX * 0.68,
-            currentBaseX + minimizedX * 0.86,
-            targetBaseX,
-          ],
-          y: [
-            currentBaseY,
-            currentBaseY,
-            currentBaseY + minimizedY * 0.08,
-            currentBaseY + minimizedY * 0.22,
-            currentBaseY + minimizedY * 0.5,
-            currentBaseY + minimizedY * 0.72,
-            currentBaseY + minimizedY * 0.86,
-            targetBaseY,
-          ],
-          width: [
-            targetWindowWidth,
-            targetWindowWidth,
-            targetWindowWidth,
-            targetWindowWidth,
-            targetWindowWidth,
-            targetWindowWidth,
-            targetWindowWidth,
-            targetWindowWidth,
-          ],
-          height: [
-            targetWindowHeight,
-            targetWindowHeight,
-            targetWindowHeight,
-            targetWindowHeight,
-            targetWindowHeight,
-            targetWindowHeight,
-            targetWindowHeight,
-            targetWindowHeight,
-          ],
-          scaleX: [1, 1, 0.95, 0.68, 0.42, 0.24, 0.16, MINIMIZE_SCALE],
-          scaleY: [1, 1, 1, 0.88, 0.64, 0.36, 0.2, MINIMIZE_SCALE],
-          opacity: [1, 1, 0.97, 0.82, 0.5, 0.26, 0.12, 0],
-          skewX: ['0deg', '-4deg', '-12deg', '-24deg', '-30deg', '-24deg', '-14deg', '-8deg'],
-          rotateZ: ['0deg', '0.2deg', '0.6deg', '-0.6deg', '-0.45deg', '-0.25deg', '0deg', '0deg'],
-          clipPath: [...MACOS_MINIMIZE_CLIP_PATH],
-          filter: [
-            'blur(0px)',
-            'blur(0px)',
-            'blur(0.12px)',
-            'blur(0.24px)',
-            'blur(0.16px)',
-            'blur(0.08px)',
-            'blur(0.04px)',
-            'blur(0px)',
-          ],
+          x: targetBaseX,
+          y: targetBaseY + 4,
+          width: targetWindowWidth,
+          height: targetWindowHeight,
+          scaleX: MINIMIZE_SCALE,
+          scaleY: MINIMIZE_SCALE * 0.96,
+          opacity: 0,
         }
       }
 
       if (windowMode === 'minimized') {
         return {
           x: targetBaseX,
-          y: targetBaseY,
+          y: targetBaseY + 4,
           width: targetWindowWidth,
           height: targetWindowHeight,
           scaleX: MINIMIZE_SCALE,
-          scaleY: MINIMIZE_SCALE,
+          scaleY: MINIMIZE_SCALE * 0.96,
           opacity: 0,
-          skewX: '-8deg',
-          rotateZ: '0deg',
-          clipPath: MINIMIZED_CLIP_PATH,
-          filter: 'blur(0px)',
         }
       }
 
       if (windowMode === 'restoring') {
         return {
-          x: [
-            targetBaseX,
-            targetBaseX - minimizedX * 0.08,
-            targetBaseX - minimizedX * 0.32,
-            targetBaseX - minimizedX * 0.58,
-            targetBaseX - minimizedX * 0.32,
-            targetBaseX - minimizedX * 0.08,
-            targetBaseX - minimizedX * 0.02,
-            currentBaseX,
-          ],
-          y: [
-            targetBaseY,
-            targetBaseY - minimizedY * 0.06,
-            targetBaseY - minimizedY * 0.2,
-            targetBaseY - minimizedY * 0.48,
-            targetBaseY - minimizedY * 0.22,
-            targetBaseY - minimizedY * 0.06,
-            targetBaseY - minimizedY * 0.02,
-            currentBaseY,
-          ],
-          width: [
-            targetWindowWidth,
-            targetWindowWidth,
-            targetWindowWidth,
-            targetWindowWidth,
-            targetWindowWidth,
-            targetWindowWidth,
-            targetWindowWidth,
-            targetWindowWidth,
-          ],
-          height: [
-            targetWindowHeight,
-            targetWindowHeight,
-            targetWindowHeight,
-            targetWindowHeight,
-            targetWindowHeight,
-            targetWindowHeight,
-            targetWindowHeight,
-            targetWindowHeight,
-          ],
-          scaleX: [MINIMIZE_SCALE, 0.18, 0.35, 0.6, 0.84, 0.96, 0.99, 1],
-          scaleY: [MINIMIZE_SCALE, 0.22, 0.48, 0.72, 0.84, 0.97, 0.99, 1],
-          opacity: [0, 0.2, 0.56, 0.84, 0.94, 0.98, 1, 1],
-          skewX: ['-8deg', '-6deg', '-3deg', '-2deg', '-1deg', '-0.5deg', '-0.2deg', '0deg'],
-          rotateZ: ['0deg', '0.1deg', '-0.2deg', '-0.08deg', '-0.05deg', '0deg', '0deg', '0deg'],
-          clipPath: [...MACOS_RESTORE_CLIP_PATH],
-          filter: [
-            'blur(0px)',
-            'blur(0.06px)',
-            'blur(0.06px)',
-            'blur(0.04px)',
-            'blur(0.02px)',
-            'blur(0.01px)',
-            'blur(0px)',
-            'blur(0px)',
-          ],
+          x: currentBaseX,
+          y: currentBaseY,
+          width: targetWindowWidth,
+          height: targetWindowHeight,
+          scaleX: 1,
+          scaleY: 1,
+          opacity: 1,
         }
       }
 
@@ -846,7 +726,6 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
           scaleX: 1,
           scaleY: 1,
           opacity: 0,
-          filter: 'blur(0px)',
         }
       }
 
@@ -858,11 +737,8 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
         scaleX: 1,
         scaleY: 1,
         opacity: 1,
-        filter: 'blur(0px)',
       }
     }, [
-      minimizedX,
-      minimizedY,
       currentBaseX,
       currentBaseY,
       targetWindowHeight,
@@ -883,146 +759,37 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
 
       if (windowMode === 'minimizing') {
         return {
-          x: {
-            type: 'tween',
-            duration: MACOS_MINIMIZE_DURATION,
-            times: MACOS_MINIMIZE_PATH,
-            ease: [0.15, 0.98, 0.34, 0.98] as const,
-          },
-          y: {
-            type: 'tween',
-            duration: MACOS_MINIMIZE_DURATION,
-            times: MACOS_MINIMIZE_PATH,
-            ease: MACOS_MINIMIZE_SLIDE_EASE,
-          },
-          width: {
-            type: 'tween',
-            duration: MACOS_MINIMIZE_DURATION,
-            times: MACOS_MINIMIZE_PATH,
-            ease: [0.22, 1, 0.35, 1] as const,
-          },
-          height: {
-            type: 'tween',
-            duration: MACOS_MINIMIZE_DURATION,
-            times: MACOS_MINIMIZE_PATH,
-            ease: [0.22, 1, 0.35, 1] as const,
-          },
-          scaleX: {
-            type: 'tween',
-            duration: MACOS_MINIMIZE_DURATION,
-            times: MACOS_MINIMIZE_PATH,
-            ease: MACOS_MINIMIZE_CURVE_EASE,
-          },
-          scaleY: {
-            type: 'tween',
-            duration: MACOS_MINIMIZE_DURATION,
-            times: MACOS_MINIMIZE_PATH,
-            ease: [0.1, 0.95, 0.25, 1] as const,
-          },
-          skewX: {
-            type: 'tween',
-            duration: MACOS_MINIMIZE_DURATION,
-            times: MACOS_MINIMIZE_PATH,
-            ease: [0.25, 1, 0.35, 1] as const,
-          },
-          rotateZ: {
-            type: 'tween',
-            duration: MACOS_MINIMIZE_DURATION,
-            times: MACOS_MINIMIZE_PATH,
-            ease: [0.14, 0.98, 0.32, 1] as const,
-          },
-          opacity: {
-            type: 'tween',
-            duration: MACOS_MINIMIZE_DURATION,
-            times: MACOS_MINIMIZE_PATH,
-            ease: [0.26, 1, 0.35, 1] as const,
-          },
-          clipPath: {
-            type: 'tween',
-            duration: MACOS_MINIMIZE_DURATION,
-            times: MACOS_MINIMIZE_PATH,
-            ease: [0.18, 1, 0.28, 1] as const,
-          },
-          filter: {
-            type: 'tween',
-            duration: MACOS_MINIMIZE_DURATION,
-            times: MACOS_MINIMIZE_PATH,
-            ease: [0.2, 1, 0.28, 1] as const,
-          },
+          x: { type: 'tween', duration: MINIMIZE_DURATION, ease: MINIMIZE_EASE },
+          y: { type: 'tween', duration: MINIMIZE_DURATION, ease: MINIMIZE_EASE },
+          scaleX: { type: 'tween', duration: MINIMIZE_DURATION, ease: MINIMIZE_EASE },
+          scaleY: { type: 'tween', duration: MINIMIZE_DURATION, ease: MINIMIZE_EASE },
+          opacity: { type: 'tween', duration: MINIMIZE_DURATION * 0.82, ease: MINIMIZE_EASE },
+          width: { type: 'tween', duration: 0.0001 },
+          height: { type: 'tween', duration: 0.0001 },
         }
       }
 
       if (windowMode === 'restoring') {
         return {
-          x: { type: 'tween', duration: MACOS_RESTORE_DURATION, times: MACOS_RESTORE_PATH, ease: MACOS_RESTORE_EASE },
-          y: { type: 'tween', duration: MACOS_RESTORE_DURATION, times: MACOS_RESTORE_PATH, ease: MACOS_RESTORE_EASE },
-          width: {
-            type: 'tween',
-            duration: MACOS_RESTORE_DURATION,
-            times: MACOS_RESTORE_PATH,
-            ease: MACOS_RESTORE_EASE,
-          },
-          height: {
-            type: 'tween',
-            duration: MACOS_RESTORE_DURATION,
-            times: MACOS_RESTORE_PATH,
-            ease: MACOS_RESTORE_EASE,
-          },
-          scaleX: {
-            type: 'tween',
-            duration: MACOS_RESTORE_DURATION,
-            times: MACOS_RESTORE_PATH,
-            ease: [0.2, 0.98, 0.36, 1] as const,
-          },
-          scaleY: {
-            type: 'tween',
-            duration: MACOS_RESTORE_DURATION,
-            times: MACOS_RESTORE_PATH,
-            ease: [0.22, 0.98, 0.42, 1] as const,
-          },
-          skewX: {
-            type: 'tween',
-            duration: MACOS_RESTORE_DURATION,
-            times: MACOS_RESTORE_PATH,
-            ease: MACOS_RESTORE_EASE,
-          },
-          rotateZ: {
-            type: 'tween',
-            duration: MACOS_RESTORE_DURATION,
-            times: MACOS_RESTORE_PATH,
-            ease: MACOS_RESTORE_EASE,
-          },
-          opacity: {
-            type: 'tween',
-            duration: MACOS_RESTORE_DURATION,
-            times: MACOS_RESTORE_PATH,
-            ease: MACOS_RESTORE_EASE,
-          },
-          clipPath: {
-            type: 'tween',
-            duration: MACOS_RESTORE_DURATION,
-            times: MACOS_RESTORE_PATH,
-            ease: [0.25, 1, 0.4, 1] as const,
-          },
-          filter: {
-            type: 'tween',
-            duration: MACOS_RESTORE_DURATION,
-            times: MACOS_RESTORE_PATH,
-            ease: MACOS_RESTORE_EASE,
-          },
+          x: RESTORE_SPRING,
+          y: RESTORE_SPRING,
+          width: RESTORE_SPRING,
+          height: RESTORE_SPRING,
+          scaleX: RESTORE_SPRING,
+          scaleY: RESTORE_SPRING,
+          opacity: { type: 'tween', duration: 0.18, ease: [0.12, 0.88, 0.2, 1] as const },
         }
       }
 
       if (fullscreenMode === 'fullscreen-entering' || fullscreenMode === 'fullscreen-exiting') {
         return {
-          x: { duration: MACOS_FULLSCREEN_DURATION, ease: MACOS_FULLSCREEN_EASE },
-          y: { duration: MACOS_FULLSCREEN_DURATION, ease: MACOS_FULLSCREEN_EASE },
-          width: { duration: MACOS_FULLSCREEN_DURATION, ease: MACOS_FULLSCREEN_EASE },
-          height: { duration: MACOS_FULLSCREEN_DURATION, ease: MACOS_FULLSCREEN_EASE },
-          scaleX: { duration: MACOS_FULLSCREEN_DURATION },
-          scaleY: { duration: MACOS_FULLSCREEN_DURATION },
-          opacity: { duration: MACOS_FULLSCREEN_DURATION },
-          filter: { duration: MACOS_FULLSCREEN_DURATION },
+          x: FULLSCREEN_SPRING,
+          y: FULLSCREEN_SPRING,
+          width: FULLSCREEN_SPRING,
+          height: FULLSCREEN_SPRING,
+          scaleX: FULLSCREEN_SPRING,
+          scaleY: FULLSCREEN_SPRING,
+          opacity: { type: 'tween', duration: 0.16, ease: [0.2, 0.8, 0.2, 1] as const },
         }
       }
 
@@ -1078,7 +845,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
         <div
           className={cn(
             'absolute inset-x-0 top-0 z-20 flex h-10 cursor-default items-center justify-between gap-3.5 px-3 py-1',
-            'touch-none bg-[rgb(var(--terminal-titlebar-bg))] border-[color:rgb(var(--terminal-shell-border)/0.45)]',
+            'touch-none bg-[rgb(var(--terminal-titlebar-bg)/0.72)] border-[color:rgb(var(--terminal-shell-border)/0.38)]',
             'select-none text-left outline-none',
           )}
           onPointerDown={(event) => {
@@ -1100,6 +867,11 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
             if (!touch) return
             beginDrag(-2, touch.clientX, touch.clientY)
             event.preventDefault()
+          }}
+          onDoubleClick={(event) => {
+            event.preventDefault()
+            if (isControlLocked) return
+            toggleFullscreen()
           }}
         >
           <div className="group/stoplights flex items-center gap-[7px] px-0.5 py-0.5">
@@ -1269,13 +1041,14 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
                   <path
                     d="m31.2 20.8h26.7c3.6 0 6.5 2.9 6.5 6.5v26.7zm23.2 43.7h-26.8c-3.6 0-6.5-2.9-6.5-6.5v-26.8z"
                     fill="#2a6218"
+                    transform="translate(85.4 0) scale(-1 1)"
                   />
                 </g>
               </svg>
             </button>
           </div>
           <div className="min-w-0">
-            <p className="font-display truncate text-center text-base font-medium text-[rgb(var(--terminal-titlebar-text))]">
+            <p className="font-display truncate text-center text-sm font-medium tracking-[0.01em] text-[rgb(var(--terminal-titlebar-text))]">
               control plane
             </p>
           </div>
@@ -1287,7 +1060,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
             className={cn(
               'relative h-full overflow-auto px-5 py-4 text-[12.5px] leading-relaxed sm:text-[13.5px]',
               'cursor-text select-text',
-              'bg-[linear-gradient(180deg,rgb(var(--terminal-window-bg-top)),rgb(var(--terminal-window-bg-bottom)))]',
+              'bg-[linear-gradient(180deg,rgb(var(--terminal-window-bg-top)/0.72),rgb(var(--terminal-window-bg-bottom)/0.54))]',
             )}
           >
             <div className="space-y-1 whitespace-pre">
@@ -1304,7 +1077,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
               <div>
                 <span className="text-[rgb(var(--terminal-text-green))]">➜</span>
                 <span className="text-[rgb(var(--terminal-text-faint)/0.45)]"> </span>
-                <span className="text-[rgb(var(--terminal-text-blue))]">agents</span>
+                <span className="text-[rgb(var(--terminal-text-blue))]">agents-controller</span>
                 <span className="text-[rgb(var(--terminal-text-faint)/0.45)]"> </span>
                 <span className="text-[rgb(var(--terminal-text-primary)/0.82)]">
                   {phase === 'boot' ? '' : commandText}
