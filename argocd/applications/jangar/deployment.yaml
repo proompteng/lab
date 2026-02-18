@@ -195,6 +195,8 @@ spec:
               value: "1"
             - name: JANGAR_REDIS_URL
               value: redis://jangar-openwebui-redis:6379/1
+            - name: JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED
+              value: "true"
             - name: NATS_URL
               value: nats://nats.nats.svc.cluster.local:4222
             - name: NATS_USER

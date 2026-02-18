@@ -720,6 +720,82 @@ describe('chat completions handler', () => {
     expect(prompt).toContain('user: second message')
   })
 
+  it('keeps thread state for discord clients even when transcript differs', async () => {
+    process.env.JANGAR_STATEFUL_CHAT_MODE = '1'
+
+    const threadState: ThreadStateService = {
+      getThreadId: vi.fn(() => Effect.succeed('thread-1')),
+      setThreadId: vi.fn(() => Effect.succeed(undefined)),
+      nextTurn: vi.fn(() => Effect.succeed(1)),
+      clearChat: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const worktreeState: WorktreeStateService = {
+      getWorktreeName: vi.fn(() => Effect.succeed('austin')),
+      setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
+      clearWorktree: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const storedMessages = [
+      { role: 'system', content: 'You are helpful.' },
+      { role: 'user', content: 'hello' },
+    ]
+    const transcriptState: TranscriptStateService = {
+      getTranscript: vi.fn(() => Effect.succeed(buildTranscriptSignature(storedMessages))),
+      setTranscript: vi.fn(() => Effect.succeed(undefined)),
+      clearTranscript: vi.fn(() => Effect.succeed(undefined)),
+    }
+
+    const mockClient = {
+      runTurnStream: vi.fn(async (_prompt: string, _opts?: { threadId?: string }) => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'ok' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-openwebui-chat-id': 'chat-1',
+        'x-jangar-client-kind': 'discord',
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        messages: [
+          { role: 'system', content: 'You are *very* helpful.' },
+          { role: 'user', content: 'hello' },
+          { role: 'user', content: 'follow up' },
+        ],
+        stream: true,
+      }),
+    })
+
+    const response = await Effect.runPromise(
+      pipe(
+        handleChatCompletionEffect(request),
+        Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
+        Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
+        Effect.provideService(ThreadState, threadState),
+        Effect.provideService(WorktreeState, worktreeState),
+        Effect.provideService(TranscriptState, transcriptState),
+      ),
+    )
+    await response.text()
+
+    expect(threadState.clearChat).not.toHaveBeenCalled()
+    expect(transcriptState.getTranscript).not.toHaveBeenCalled()
+    expect(transcriptState.setTranscript).not.toHaveBeenCalled()
+    const opts = mockClient.runTurnStream.mock.calls[0]?.[1] as { threadId?: string } | undefined
+    expect(opts?.threadId).toBe('thread-1')
+  })
+
   it('falls back to stateless behavior when Redis state is unavailable', async () => {
     process.env.JANGAR_STATEFUL_CHAT_MODE = '1'
 

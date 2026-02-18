@@ -77,6 +77,8 @@ export type TranscriptComparison = {
   prefixMatch: boolean
   prefixLength: number
   resetRequired: boolean
+  resetReason: 'none' | 'stored_longer_than_incoming' | 'prefix_mismatch'
+  resetMismatchIndex: number | null
   deltaMessages: ChatMessage[]
   signature: TranscriptEntry[]
 }
@@ -94,6 +96,8 @@ export const compareTranscript = (
       prefixMatch: true,
       prefixLength: 0,
       resetRequired: false,
+      resetReason: 'none',
+      resetMismatchIndex: null,
       deltaMessages: [...messages],
       signature,
     }
@@ -104,6 +108,8 @@ export const compareTranscript = (
       prefixMatch: false,
       prefixLength: 0,
       resetRequired: true,
+      resetReason: 'stored_longer_than_incoming',
+      resetMismatchIndex: null,
       deltaMessages: [...messages],
       signature,
     }
@@ -115,6 +121,8 @@ export const compareTranscript = (
         prefixMatch: false,
         prefixLength: 0,
         resetRequired: true,
+        resetReason: 'prefix_mismatch',
+        resetMismatchIndex: i,
         deltaMessages: [...messages],
         signature,
       }
@@ -125,6 +133,8 @@ export const compareTranscript = (
     prefixMatch: true,
     prefixLength: stored.length,
     resetRequired: false,
+    resetReason: 'none',
+    resetMismatchIndex: null,
     deltaMessages: messages.slice(stored.length),
     signature,
   }
