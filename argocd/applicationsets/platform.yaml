@@ -91,6 +91,18 @@ spec:
                     pod-security.kubernetes.io/enforce: privileged
                     pod-security.kubernetes.io/audit: privileged
                     pod-security.kubernetes.io/warn: privileged
+              - name: openclaw
+                path: argocd/applications/openclaw
+                namespace: openclaw
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: manual
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
               - name: workers
                 path: argocd/applications/workers
                 namespace: workers
@@ -494,6 +506,18 @@ spec:
           group: kubevirt.io
           namespace: workers
           name: workers
+          jqPathExpressions:
+            - .metadata.annotations
+            - .metadata.finalizers
+            - .spec.dataVolumeTemplates[].metadata.creationTimestamp
+            - .spec.template.metadata.creationTimestamp
+            - .spec.template.spec.architecture
+            - .spec.template.spec.domain.firmware
+            - .spec.template.spec.domain.machine
+        - kind: VirtualMachine
+          group: kubevirt.io
+          namespace: openclaw
+          name: openclaw
           jqPathExpressions:
             - .metadata.annotations
             - .metadata.finalizers

@@ -1,0 +1,72 @@
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: openclaw
+  labels:
+    app.kubernetes.io/name: openclaw
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  running: true
+  dataVolumeTemplates:
+    - metadata:
+        name: openclaw-rootdisk
+        creationTimestamp: null
+      spec:
+        source:
+          http:
+            url: https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img
+        pvc:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 80Gi
+          storageClassName: local-path
+  template:
+    metadata:
+      labels:
+        kubevirt.io/domain: openclaw
+        app.kubernetes.io/name: openclaw
+      creationTimestamp: null
+    spec:
+      architecture: amd64
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      domain:
+        cpu:
+          cores: 4
+        firmware:
+          uuid: 09d47915-c293-4bf4-b5f1-c6f1cd8f22d2
+          serial: d9f74e8c-09f4-4e7d-a31d-26bf243d5fd5
+        machine:
+          type: q35
+        resources:
+          requests:
+            memory: 12Gi
+        devices:
+          disks:
+            - name: rootdisk
+              disk:
+                bus: virtio
+              bootOrder: 1
+            - name: cloudinitdisk
+              disk:
+                bus: virtio
+          interfaces:
+            - name: default
+              masquerade: {}
+              ports:
+                - port: 22
+                - port: 3389
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: rootdisk
+          dataVolume:
+            name: openclaw-rootdisk
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            secretRef:
+              name: openclaw-cloud-init
