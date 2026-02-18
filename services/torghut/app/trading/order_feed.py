@@ -437,7 +437,8 @@ def _flatten_poll_records(polled: Any) -> list[Any]:
         return []
     if isinstance(polled, Mapping):
         rows: list[Any] = []
-        for raw_records in cast(list[Any], list(polled.values())):
+        mapping = cast(Mapping[Any, Any], polled)
+        for raw_records in mapping.values():
             if isinstance(raw_records, list):
                 rows.extend(cast(list[Any], raw_records))
         return rows
