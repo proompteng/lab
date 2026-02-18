@@ -15,8 +15,8 @@ controlPlane:
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/codex-universal
-    tag: 5436c9d2
-    digest: sha256:ff8e864d9ad6319fd46629f340c046370fd10cc9b2f31e7ddc100124a080e3f8
+    tag: latest
+    digest: sha256:5b8ea0386b7377ef9e910ca3a32fa392e5439a92f314aeac8885d4d2e35a1ea4
 controllers:
   enabled: true
   replicaCount: 2
