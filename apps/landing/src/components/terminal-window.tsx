@@ -1049,7 +1049,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
           </div>
           <div className="min-w-0">
             <p className="font-display truncate text-center text-sm font-medium tracking-[0.01em] text-[rgb(var(--terminal-titlebar-text))]">
-              landing
+              control plane
             </p>
           </div>
           <div className="w-10" />
