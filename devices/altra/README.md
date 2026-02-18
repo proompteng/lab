@@ -5,7 +5,7 @@ This directory contains a reproducible runbook and patches for the `altra` node.
 Inventory:
 - Node: `altra` (`192.168.1.85`)
 - Joined cluster: `ryzen` (kubeconfig context: `galactic`)
-- Kubernetes API endpoint (behind the NUC LB): `https://192.168.1.130:6443`
+- Kubernetes API endpoint (behind the NUC LB): `https://nuc:6443` (also `https://192.168.1.130:6443`)
 - Install disk: `/dev/nvme0n1`
 
 Docs:
