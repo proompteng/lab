@@ -8,11 +8,12 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Callable, Mapping, Optional, Sequence, cast
+from typing import Any, Callable, Mapping, cast
 
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from ..config import settings
 from ..models import Execution, ExecutionOrderEvent, TradeDecision, coerce_json_payload
@@ -166,9 +167,10 @@ class OrderFeedIngestor:
         except Exception as exc:  # pragma: no cover - import guarded at runtime
             raise RuntimeError('kafka-python dependency is required for order-feed ingestion') from exc
 
+        bootstrap_servers_raw = settings.trading_order_feed_bootstrap_servers or ''
         return KafkaConsumer(
             settings.trading_order_feed_topic,
-            bootstrap_servers=[item.strip() for item in settings.trading_order_feed_bootstrap_servers.split(',') if item.strip()],
+            bootstrap_servers=[item.strip() for item in bootstrap_servers_raw.split(',') if item.strip()],
             group_id=settings.trading_order_feed_group_id,
             client_id=settings.trading_order_feed_client_id,
             enable_auto_commit=False,
@@ -187,7 +189,7 @@ def normalize_order_feed_record(record: Any, *, default_topic: str) -> Normaliza
     if payload is None:
         return NormalizationResult(event=None, drop_reason='invalid_json')
 
-    envelope = payload if isinstance(payload, Mapping) else None
+    envelope = _as_mapping(payload)
     data_payload = _extract_trade_update_payload(payload)
     if data_payload is None:
         return NormalizationResult(event=None, drop_reason='missing_trade_update_payload')
@@ -349,7 +351,7 @@ def apply_order_event_to_execution(execution: Execution, event: ExecutionOrderEv
 def latest_order_event_for_execution(session: Session, execution: Execution) -> ExecutionOrderEvent | None:
     """Fetch newest persisted order event linked to an execution."""
 
-    filters = [ExecutionOrderEvent.execution_id == execution.id]
+    filters: list[ColumnElement[bool]] = [ExecutionOrderEvent.execution_id == execution.id]
     if execution.alpaca_order_id:
         filters.append(ExecutionOrderEvent.alpaca_order_id == execution.alpaca_order_id)
     if execution.client_order_id:
@@ -369,7 +371,7 @@ def latest_order_event_for_execution(session: Session, execution: Execution) -> 
 
 
 def _resolve_execution(session: Session, event: NormalizedOrderEvent) -> Execution | None:
-    clauses = []
+    clauses: list[ColumnElement[bool]] = []
     if event.alpaca_order_id:
         clauses.append(Execution.alpaca_order_id == event.alpaca_order_id)
     if event.client_order_id:
@@ -400,19 +402,31 @@ def _extract_trade_update_payload(payload: Any) -> Mapping[str, Any] | None:
     return None
 
 
-def _decode_json_payload(raw: Any) -> Any:
+def _decode_json_payload(raw: Any) -> dict[str, Any] | list[Any] | None:
     if raw is None:
         return None
     if isinstance(raw, (dict, list)):
-        return raw
+        if isinstance(raw, dict):
+            return cast(dict[str, Any], raw)
+        return cast(list[Any], raw)
     if isinstance(raw, bytes):
         try:
-            return json.loads(raw.decode('utf-8'))
+            decoded = json.loads(raw.decode('utf-8'))
+            if isinstance(decoded, dict):
+                return cast(dict[str, Any], decoded)
+            if isinstance(decoded, list):
+                return cast(list[Any], decoded)
+            return None
         except (UnicodeDecodeError, json.JSONDecodeError):
             return None
     if isinstance(raw, str):
         try:
-            return json.loads(raw)
+            decoded = json.loads(raw)
+            if isinstance(decoded, dict):
+                return cast(dict[str, Any], decoded)
+            if isinstance(decoded, list):
+                return cast(list[Any], decoded)
+            return None
         except json.JSONDecodeError:
             return None
     return None
@@ -424,11 +438,11 @@ def _flatten_poll_records(polled: Any) -> list[Any]:
     if isinstance(polled, Mapping):
         rows: list[Any] = []
         for records in polled.values():
-            if isinstance(records, Sequence):
-                rows.extend(list(records))
+            if isinstance(records, list):
+                rows.extend(records)
         return rows
-    if isinstance(polled, Sequence):
-        return list(polled)
+    if isinstance(polled, list):
+        return polled
     return []
 
 
