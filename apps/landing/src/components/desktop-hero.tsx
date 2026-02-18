@@ -325,7 +325,8 @@ type DockItem = {
 const DOCK_BASE_SIZE_PX = 48
 const DOCK_MAX_SCALE = 1.82
 const DOCK_EFFECT_RADIUS_PX = 152
-const DOCK_MAX_NUDGE_PX = 16
+const DOCK_MAX_NUDGE_PX = 8
+const DOCK_NUDGE_EXPONENT = 3
 const DOCK_LIFT_MULTIPLIER = 12
 const DOCK_HOVER_DELAY_MS = 140
 const DOCK_TOOLTIP_TEXT_SIZE_PX = 13
@@ -588,7 +589,7 @@ function DockButton({
     if (!Number.isFinite(pointer)) return 0
     const { influence, direction } = getDockInfluence(pointer, buttonRef.current)
     if (influence <= 0 || direction === 0) return 0
-    return direction * influence * influence * DOCK_MAX_NUDGE_PX
+    return direction * influence ** DOCK_NUDGE_EXPONENT * DOCK_MAX_NUDGE_PX
   })
 
   const scale = useSpring(scaleTarget, {
@@ -597,8 +598,8 @@ function DockButton({
     mass: 0.24,
   })
   const nudgeX = useSpring(nudgeTarget, {
-    stiffness: 430,
-    damping: 36,
+    stiffness: 380,
+    damping: 40,
     mass: 0.26,
   })
   const iconSize = useTransform(scale, (value) => value * DOCK_BASE_SIZE_PX)
