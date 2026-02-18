@@ -17,7 +17,7 @@
     --terminal-window-bg-top: 36 40 59;
     --terminal-window-bg-bottom: 31 35 53;
     --terminal-shell-border: 84 92 126;
-    --terminal-shell-border-alpha: 0.5;
+    --terminal-shell-border-alpha: 0.42;
     --terminal-text-primary: 192 202 245;
     --terminal-text-secondary: 169 177 214;
     --terminal-text-faint: 115 122 162;
@@ -46,16 +46,16 @@
     border: 1px solid rgb(var(--terminal-shell-border) / var(--terminal-shell-border-alpha));
     background: linear-gradient(
       180deg,
-      rgb(var(--terminal-window-bg-top) / 0.86) 0%,
-      rgb(var(--terminal-window-bg-bottom) / 0.76) 100%
+      rgb(var(--terminal-window-bg-top) / 0.72) 0%,
+      rgb(var(--terminal-window-bg-bottom) / 0.58) 100%
     );
     color: rgb(var(--terminal-titlebar-text));
     box-shadow:
       inset 0 1px 0 rgb(169 177 214 / 0.22),
       inset 0 -1px 0 rgb(27 30 45 / 0.5),
-      0 0 0 1px rgb(59 66 97 / 0.4),
-      0 38px 90px -46px rgb(0 0 0 / 0.88);
-    backdrop-filter: blur(16px) saturate(1.08);
+      0 0 0 1px rgb(59 66 97 / 0.35),
+      0 38px 90px -46px rgb(0 0 0 / 0.78);
+    backdrop-filter: blur(20px) saturate(1.12);
   }
 
   .font-display {

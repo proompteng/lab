@@ -278,6 +278,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
     const [windowMode, setWindowMode] = useState<WindowMode>('normal')
     const [fullscreenMode, setFullscreenMode] = useState<FullscreenMode>('normal')
     const [minimizeOffset, setMinimizeOffset] = useState({ x: 0, y: 0 })
+    const [isWindowActive, setIsWindowActive] = useState(true)
     const isClosedRef = useRef(false)
 
     useEffect(() => {
@@ -294,6 +295,19 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
         window.removeEventListener('resize', handleResize)
       }
     }, [desktopBoundsRef])
+
+    useEffect(() => {
+      const handlePointerDown = (event: PointerEvent) => {
+        const target = event.target
+        if (!(target instanceof Node)) return
+        setIsWindowActive(Boolean(windowRef.current?.contains(target)))
+      }
+
+      window.addEventListener('pointerdown', handlePointerDown, true)
+      return () => {
+        window.removeEventListener('pointerdown', handlePointerDown, true)
+      }
+    }, [])
 
     const beginDrag = useCallback(
       (pointerId: number, startX: number, startY: number) => {
@@ -379,6 +393,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
       if (windowMode === 'closed') {
         isClosedRef.current = false
         onClosedStateChange?.(false)
+        setIsWindowActive(true)
         setWindowMode('normal')
         setMinimizeOffset({ x: 0, y: 0 })
         onMinimizedStateChange?.(false)
@@ -401,6 +416,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
       // and keep the dock "running" indicator handled by the parent.
       isClosedRef.current = true
       onClosedStateChange?.(true)
+      setIsWindowActive(false)
       restoreToFullscreenRef.current = false
       setFullscreenMode('normal')
       setWindowMode('closed')
@@ -829,10 +845,11 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
         <div
           className={cn(
             'absolute inset-x-0 top-0 z-20 flex h-10 cursor-default items-center justify-between gap-3.5 px-3 py-1',
-            'touch-none bg-[rgb(var(--terminal-titlebar-bg)/0.88)] border-[color:rgb(var(--terminal-shell-border)/0.45)]',
+            'touch-none bg-[rgb(var(--terminal-titlebar-bg)/0.72)] border-[color:rgb(var(--terminal-shell-border)/0.38)]',
             'select-none text-left outline-none',
           )}
           onPointerDown={(event) => {
+            setIsWindowActive(true)
             beginDrag(event.pointerId, event.clientX, event.clientY)
             try {
               ;(event.currentTarget as HTMLDivElement).setPointerCapture(event.pointerId)
@@ -843,12 +860,14 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
           }}
           onMouseDown={(event) => {
             if (event.button !== 0) return
+            setIsWindowActive(true)
             beginDrag(-1, event.clientX, event.clientY)
             event.preventDefault()
           }}
           onTouchStart={(event) => {
             const touch = event.touches[0]
             if (!touch) return
+            setIsWindowActive(true)
             beginDrag(-2, touch.clientX, touch.clientY)
             event.preventDefault()
           }}
@@ -872,7 +891,10 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
             >
               <svg
                 viewBox="0 0 85.4 85.4"
-                className="absolute inset-0 size-[14px] opacity-100 transition-opacity duration-150 group-hover/stoplights:opacity-0"
+                className={cn(
+                  'absolute inset-0 size-[14px] transition-opacity duration-150',
+                  isWindowActive ? 'opacity-100 group-hover/stoplights:opacity-0' : 'opacity-100',
+                )}
                 aria-hidden="true"
               >
                 <g clipRule="evenodd" fillRule="evenodd">
@@ -888,7 +910,10 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
               </svg>
               <svg
                 viewBox="0 0 85.4 85.4"
-                className="absolute inset-0 size-[14px] opacity-0 transition-opacity duration-150 group-hover/stoplights:opacity-100"
+                className={cn(
+                  'absolute inset-0 size-[14px] transition-opacity duration-150',
+                  isWindowActive ? 'opacity-0 group-hover/stoplights:opacity-100' : 'opacity-0',
+                )}
                 aria-hidden="true"
               >
                 <g clipRule="evenodd" fillRule="evenodd">
@@ -934,7 +959,10 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
             >
               <svg
                 viewBox="0 0 85.4 85.4"
-                className="absolute inset-0 size-[14px] opacity-100 transition-opacity duration-150 group-hover/stoplights:opacity-0"
+                className={cn(
+                  'absolute inset-0 size-[14px] transition-opacity duration-150',
+                  isWindowActive ? 'opacity-100 group-hover/stoplights:opacity-0' : 'opacity-100',
+                )}
                 aria-hidden="true"
               >
                 <g clipRule="evenodd" fillRule="evenodd">
@@ -950,7 +978,10 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
               </svg>
               <svg
                 viewBox="0 0 85.4 85.4"
-                className="absolute inset-0 size-[14px] opacity-0 transition-opacity duration-150 group-hover/stoplights:opacity-100"
+                className={cn(
+                  'absolute inset-0 size-[14px] transition-opacity duration-150',
+                  isWindowActive ? 'opacity-0 group-hover/stoplights:opacity-100' : 'opacity-0',
+                )}
                 aria-hidden="true"
               >
                 <g clipRule="evenodd" fillRule="evenodd">
@@ -994,7 +1025,10 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
             >
               <svg
                 viewBox="0 0 85.4 85.4"
-                className="absolute inset-0 size-[14px] opacity-100 transition-opacity duration-150 group-hover/stoplights:opacity-0"
+                className={cn(
+                  'absolute inset-0 size-[14px] transition-opacity duration-150',
+                  isWindowActive ? 'opacity-100 group-hover/stoplights:opacity-0' : 'opacity-100',
+                )}
                 aria-hidden="true"
               >
                 <g clipRule="evenodd" fillRule="evenodd">
@@ -1010,7 +1044,10 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
               </svg>
               <svg
                 viewBox="0 0 85.4 85.4"
-                className="absolute inset-0 size-[14px] opacity-0 transition-opacity duration-150 group-hover/stoplights:opacity-100"
+                className={cn(
+                  'absolute inset-0 size-[14px] transition-opacity duration-150',
+                  isWindowActive ? 'opacity-0 group-hover/stoplights:opacity-100' : 'opacity-0',
+                )}
                 aria-hidden="true"
               >
                 <g clipRule="evenodd" fillRule="evenodd">
@@ -1043,7 +1080,7 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
             className={cn(
               'relative h-full overflow-auto px-5 py-4 text-[12.5px] leading-relaxed sm:text-[13.5px]',
               'cursor-text select-text',
-              'bg-[linear-gradient(180deg,rgb(var(--terminal-window-bg-top)/0.82),rgb(var(--terminal-window-bg-bottom)/0.68))]',
+              'bg-[linear-gradient(180deg,rgb(var(--terminal-window-bg-top)/0.72),rgb(var(--terminal-window-bg-bottom)/0.54))]',
             )}
           >
             <div className="space-y-1 whitespace-pre">
