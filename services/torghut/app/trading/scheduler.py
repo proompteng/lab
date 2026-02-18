@@ -32,6 +32,7 @@ from .llm.guardrails import evaluate_llm_guardrails
 from .models import SignalEnvelope, StrategyDecision
 from .portfolio import PortfolioSizingResult, sizer_from_settings
 from .prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
+from .order_feed import OrderFeedIngestor
 from .reconcile import Reconciler
 from .risk import RiskEngine
 from .autonomy import run_autonomous_lane, upsert_autonomy_no_signal_run
@@ -101,6 +102,13 @@ class TradingMetrics:
     no_signal_streak: int = 0
     signal_lag_seconds: int | None = None
     signal_staleness_alert_total: dict[str, int] = field(default_factory=lambda: cast(dict[str, int], {}))
+    order_feed_messages_total: int = 0
+    order_feed_events_persisted_total: int = 0
+    order_feed_duplicates_total: int = 0
+    order_feed_out_of_order_total: int = 0
+    order_feed_missing_fields_total: int = 0
+    order_feed_apply_updates_total: int = 0
+    order_feed_consumer_errors_total: int = 0
 
     def record_execution_request(self, adapter: str | None) -> None:
         adapter_name = coerce_route_text(adapter)
@@ -189,6 +197,7 @@ class TradingPipeline:
         price_fetcher: Optional[PriceFetcher] = None,
         strategy_catalog: StrategyCatalog | None = None,
         execution_policy: Optional[ExecutionPolicy] = None,
+        order_feed_ingestor: OrderFeedIngestor | None = None,
     ) -> None:
         self.alpaca_client = alpaca_client
         self.order_firewall = order_firewall
@@ -207,6 +216,7 @@ class TradingPipeline:
         self._snapshot_cached_at: Optional[datetime] = None
         self.strategy_catalog = strategy_catalog
         self.execution_policy = execution_policy or ExecutionPolicy()
+        self.order_feed_ingestor = order_feed_ingestor or OrderFeedIngestor()
         if llm_review_engine is not None:
             self.llm_review_engine = llm_review_engine
         elif settings.llm_enabled:
@@ -216,6 +226,7 @@ class TradingPipeline:
 
     def run_once(self) -> None:
         with self.session_factory() as session:
+            self._ingest_order_feed(session)
             self.order_firewall.cancel_open_orders_if_kill_switch()
             if self.strategy_catalog is not None:
                 self.strategy_catalog.refresh(session)
@@ -272,6 +283,16 @@ class TradingPipeline:
                         self.state.metrics.orders_rejected_total += 1
 
             self.ingestor.commit_cursor(session, batch)
+
+    def _ingest_order_feed(self, session: Session) -> None:
+        counters = self.order_feed_ingestor.ingest_once(session)
+        self.state.metrics.order_feed_messages_total += counters.get('messages_total', 0)
+        self.state.metrics.order_feed_events_persisted_total += counters.get('events_persisted_total', 0)
+        self.state.metrics.order_feed_duplicates_total += counters.get('duplicates_total', 0)
+        self.state.metrics.order_feed_out_of_order_total += counters.get('out_of_order_total', 0)
+        self.state.metrics.order_feed_missing_fields_total += counters.get('missing_fields_total', 0)
+        self.state.metrics.order_feed_apply_updates_total += counters.get('apply_updates_total', 0)
+        self.state.metrics.order_feed_consumer_errors_total += counters.get('consumer_errors_total', 0)
 
     def record_no_signal_batch(self, batch: SignalBatch) -> None:
         self.state.last_ingest_signals_total = len(batch.signals)
@@ -1110,6 +1131,7 @@ class TradingScheduler:
             account_label=settings.trading_account_label,
             price_fetcher=price_fetcher,
             strategy_catalog=strategy_catalog,
+            order_feed_ingestor=OrderFeedIngestor(),
         )
 
     async def start(self) -> None:
@@ -1132,6 +1154,8 @@ class TradingScheduler:
             pass
         self._task = None
         self.state.running = False
+        if self._pipeline is not None:
+            self._pipeline.order_feed_ingestor.close()
 
     async def _run_loop(self) -> None:
         poll_interval = settings.trading_poll_ms / 1000

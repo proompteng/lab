@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Execution, TradeDecision, coerce_json_payload
 from ..snapshots import sync_order_to_db
+from .order_feed import apply_order_event_to_execution, latest_order_event_for_execution
 from .route_metadata import coerce_route_text, resolve_order_route_metadata
 from .risk import FINAL_STATUSES
 
@@ -36,6 +37,15 @@ class Reconciler:
         executions = session.execute(stmt).scalars().all()
         updates = 0
         for execution in executions:
+            event = latest_order_event_for_execution(session, execution)
+            if event is not None:
+                updated_from_feed, _ = apply_order_event_to_execution(execution, event)
+                if updated_from_feed:
+                    updates += 1
+                    _update_trade_decision(session, execution)
+                if execution.status in FINAL_STATUSES:
+                    continue
+
             alpaca_order_id = execution.alpaca_order_id
             try:
                 order = client.get_order(alpaca_order_id)

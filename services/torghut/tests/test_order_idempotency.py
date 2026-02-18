@@ -8,7 +8,7 @@ from unittest.mock import patch
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from app.models import Base, Execution, Strategy, TradeDecision
+from app.models import Base, Execution, ExecutionOrderEvent, Strategy, TradeDecision
 from app.trading.execution import OrderExecutor
 from app.trading.models import StrategyDecision, decision_hash
 from app.trading.reconcile import Reconciler
@@ -45,6 +45,19 @@ class FakeAlpacaClient:
 
     def get_order_by_client_order_id(self, client_order_id: str) -> dict[str, str] | None:
         return next((order for order in self.submitted if order.get('client_order_id') == client_order_id), None)
+
+    def get_order(self, alpaca_order_id: str) -> dict[str, str]:
+        return {
+            'id': alpaca_order_id,
+            'client_order_id': None,
+            'symbol': 'AAPL',
+            'side': 'buy',
+            'type': 'market',
+            'time_in_force': 'day',
+            'qty': '1',
+            'filled_qty': '0',
+            'status': 'accepted',
+        }
 
 
 class TestOrderIdempotency(TestCase):
@@ -290,3 +303,83 @@ class TestOrderIdempotency(TestCase):
             assert execution is not None
             self.assertEqual(execution.execution_expected_adapter, 'lean')
             self.assertEqual(execution.execution_actual_adapter, 'lean')
+
+    def test_reconciler_uses_persisted_order_feed_evidence(self) -> None:
+        class FailingOrderFetchClient(FakeAlpacaClient):
+            def get_order(self, alpaca_order_id: str) -> dict[str, str]:
+                raise AssertionError(f'should_not_fetch_order:{alpaca_order_id}')
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name='demo',
+                description='demo',
+                enabled=True,
+                base_timeframe='1Min',
+                universe_type='static',
+                universe_symbols=['AAPL'],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision_row = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label='paper',
+                symbol='AAPL',
+                timeframe='1Min',
+                decision_json={'symbol': 'AAPL'},
+                rationale=None,
+                status='submitted',
+                decision_hash='decision-hash-4',
+            )
+            session.add(decision_row)
+            session.commit()
+            session.refresh(decision_row)
+
+            execution = Execution(
+                trade_decision_id=decision_row.id,
+                alpaca_order_id='order-4',
+                client_order_id='decision-hash-4',
+                symbol='AAPL',
+                side='buy',
+                order_type='market',
+                time_in_force='day',
+                submitted_qty=Decimal('1'),
+                filled_qty=Decimal('0'),
+                status='accepted',
+                raw_order={'id': 'order-4'},
+            )
+            session.add(execution)
+            session.commit()
+            session.refresh(execution)
+
+            event = ExecutionOrderEvent(
+                event_fingerprint='feed-event-4',
+                source_topic='torghut.trade-updates.v1',
+                source_partition=0,
+                source_offset=4,
+                event_ts=datetime.now(timezone.utc),
+                feed_seq=100,
+                symbol='AAPL',
+                alpaca_order_id='order-4',
+                client_order_id='decision-hash-4',
+                event_type='fill',
+                status='filled',
+                qty=Decimal('1'),
+                filled_qty=Decimal('1'),
+                avg_fill_price=Decimal('189.55'),
+                raw_event={'event': 'fill'},
+                execution_id=execution.id,
+                trade_decision_id=decision_row.id,
+            )
+            session.add(event)
+            session.commit()
+
+            reconciler = Reconciler()
+            updates = reconciler.reconcile(session, FailingOrderFetchClient())
+
+            self.assertEqual(updates, 1)
+            refreshed_execution = session.get(Execution, execution.id)
+            assert refreshed_execution is not None
+            self.assertEqual(refreshed_execution.status, 'filled')
+            self.assertEqual(refreshed_execution.filled_qty, Decimal('1'))

@@ -126,14 +126,65 @@ class Execution(Base, TimestampMixin):
     )
     raw_order: Mapped[Any] = mapped_column(JSONType, nullable=True)
     last_update_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    order_feed_last_event_ts: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    order_feed_last_seq: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
 
     trade_decision: Mapped[Optional[TradeDecision]] = relationship(back_populates="executions")
+    order_events: Mapped[List["ExecutionOrderEvent"]] = relationship(back_populates="execution")
 
     __table_args__ = (
         Index("ix_executions_alpaca_order_id", "alpaca_order_id"),
         Index("ix_executions_symbol_status", "symbol", "status"),
         Index("ix_executions_expected_adapter", "execution_expected_adapter"),
         Index("ix_executions_actual_adapter", "execution_actual_adapter"),
+        Index("ix_executions_order_feed_last_event_ts", "order_feed_last_event_ts"),
+    )
+
+
+class ExecutionOrderEvent(Base, CreatedAtMixin):
+    """Normalized order-feed events persisted for execution-state reconciliation."""
+
+    __tablename__ = "execution_order_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    event_fingerprint: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
+    source_topic: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    source_partition: Mapped[Optional[int]] = mapped_column(nullable=True)
+    source_offset: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    feed_seq: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    event_ts: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    symbol: Mapped[Optional[str]] = mapped_column(String(length=16), nullable=True)
+    alpaca_order_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    client_order_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    event_type: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
+    qty: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    filled_qty: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    avg_fill_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    raw_event: Mapped[Any] = mapped_column(JSONType, nullable=False)
+    execution_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("executions.id", ondelete="SET NULL"), nullable=True
+    )
+    trade_decision_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("trade_decisions.id", ondelete="SET NULL"), nullable=True
+    )
+
+    execution: Mapped[Optional[Execution]] = relationship(back_populates="order_events")
+    trade_decision: Mapped[Optional[TradeDecision]] = relationship()
+
+    __table_args__ = (
+        Index("ix_execution_order_events_event_ts", "event_ts"),
+        Index("ix_execution_order_events_execution_id", "execution_id"),
+        Index("ix_execution_order_events_trade_decision_id", "trade_decision_id"),
+        Index("ix_execution_order_events_order_id", "alpaca_order_id"),
+        Index("ix_execution_order_events_client_order_id", "client_order_id"),
+        Index(
+            "uq_execution_order_events_source_offset",
+            "source_topic",
+            "source_partition",
+            "source_offset",
+            unique=True,
+        ),
     )
 
 
@@ -343,6 +394,7 @@ __all__ = [
     "Strategy",
     "TradeDecision",
     "Execution",
+    "ExecutionOrderEvent",
     "PositionSnapshot",
     "ToolRunLog",
     "TradeCursor",

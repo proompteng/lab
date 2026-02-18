@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from unittest import TestCase
 
-from app.models import Base, Execution, PositionSnapshot, Strategy, TradeDecision
+from app.models import Base, Execution, ExecutionOrderEvent, PositionSnapshot, Strategy, TradeDecision
 
 
 class TestModels(TestCase):
@@ -57,6 +57,27 @@ class TestModels(TestCase):
             session.add(execution)
             session.commit()
 
+            order_event = ExecutionOrderEvent(
+                event_fingerprint="fingerprint-1",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=1,
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id="order-1",
+                client_order_id="client-1",
+                event_type="fill",
+                status="filled",
+                qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("190.25"),
+                raw_event={"event": "fill"},
+                execution_id=execution.id,
+                trade_decision_id=decision.id,
+            )
+            session.add(order_event)
+            session.commit()
+
             snapshot = PositionSnapshot(
                 alpaca_account_label="paper",
                 as_of=datetime.now(timezone.utc),
@@ -71,9 +92,11 @@ class TestModels(TestCase):
             found_strategy = session.execute(select(Strategy)).scalar_one()
             found_decision = session.execute(select(TradeDecision)).scalar_one()
             found_execution = session.execute(select(Execution)).scalar_one()
+            found_order_event = session.execute(select(ExecutionOrderEvent)).scalar_one()
             found_snapshot = session.execute(select(PositionSnapshot)).scalar_one()
 
             self.assertTrue(found_strategy.enabled)
             self.assertEqual(found_decision.status, "planned")
             self.assertEqual(found_execution.filled_qty, Decimal("0"))
+            self.assertEqual(found_order_event.event_type, "fill")
             self.assertEqual(found_snapshot.equity, Decimal("10000"))
