@@ -153,6 +153,25 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                             )
                         )
                     continue
+                if key == "tca_summary":
+                    summary = cast(dict[str, object], value)
+                    scalar_metrics: list[tuple[str, str]] = [
+                        ("order_count", "torghut_trading_tca_order_count"),
+                        ("avg_slippage_bps", "torghut_trading_tca_avg_slippage_bps"),
+                        ("avg_shortfall_notional", "torghut_trading_tca_avg_shortfall_notional"),
+                        ("avg_churn_ratio", "torghut_trading_tca_avg_churn_ratio"),
+                    ]
+                    for summary_key, metric_name in scalar_metrics:
+                        metric_value = summary.get(summary_key)
+                        try:
+                            numeric_value = float(metric_value)
+                        except (TypeError, ValueError):
+                            continue
+                        metric_type = "counter" if summary_key == "order_count" else "gauge"
+                        lines.append(f"# HELP {metric_name} Torghut TCA summary metric {summary_key}.")
+                        lines.append(f"# TYPE {metric_name} {metric_type}")
+                        lines.append(f"{metric_name} {numeric_value}")
+                    continue
             continue
         if key == "signal_lag_seconds":
             metric_name = "torghut_trading_signal_lag_seconds"

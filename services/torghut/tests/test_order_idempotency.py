@@ -8,7 +8,7 @@ from unittest.mock import patch
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from app.models import Base, Execution, ExecutionOrderEvent, Strategy, TradeDecision
+from app.models import Base, Execution, ExecutionOrderEvent, ExecutionTCAMetric, Strategy, TradeDecision
 from app.trading.execution import OrderExecutor
 from app.trading.models import StrategyDecision, decision_hash
 from app.trading.reconcile import Reconciler
@@ -136,6 +136,41 @@ class TestOrderIdempotency(TestCase):
             executions = session.execute(select(Execution)).scalars().all()
             self.assertEqual(len(executions), 1)
             self.assertEqual(len(alpaca_client.submitted), 1)
+
+    def test_submit_order_records_tca_row_with_null_safe_defaults(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1.0"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            execution = executor.submit_order(session, FakeAlpacaClient(), decision, decision_row, "paper")
+            assert execution is not None
+
+            tca = session.execute(select(ExecutionTCAMetric).where(ExecutionTCAMetric.execution_id == execution.id)).scalar_one()
+            self.assertEqual(tca.arrival_price, Decimal("100"))
+            self.assertIsNone(tca.avg_fill_price)
+            self.assertIsNone(tca.slippage_bps)
+            self.assertIsNone(tca.shortfall_notional)
 
     def test_reconciler_backfills_missing_execution_by_client_order_id(self) -> None:
         with self.session_local() as session:
@@ -383,3 +418,62 @@ class TestOrderIdempotency(TestCase):
             assert refreshed_execution is not None
             self.assertEqual(refreshed_execution.status, 'filled')
             self.assertEqual(refreshed_execution.filled_qty, Decimal('1'))
+
+    def test_reconciler_backfill_records_tca_metrics(self) -> None:
+        class FilledOrderAlpacaClient(FakeAlpacaClient):
+            last_route = 'alpaca'
+
+            def get_order_by_client_order_id(self, client_order_id: str) -> dict[str, str] | None:
+                return {
+                    'id': 'order-4',
+                    'client_order_id': client_order_id,
+                    'symbol': 'AAPL',
+                    'side': 'buy',
+                    'type': 'market',
+                    'time_in_force': 'day',
+                    'qty': '2',
+                    'filled_qty': '2',
+                    'filled_avg_price': '101',
+                    'status': 'filled',
+                }
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name='demo',
+                description='demo',
+                enabled=True,
+                base_timeframe='1Min',
+                universe_type='static',
+                universe_symbols=['AAPL'],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision_row = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label='paper',
+                symbol='AAPL',
+                timeframe='1Min',
+                decision_json={'symbol': 'AAPL', 'params': {'price': '100'}},
+                rationale=None,
+                status='planned',
+                decision_hash='decision-hash-4',
+            )
+            session.add(decision_row)
+            session.commit()
+            session.refresh(decision_row)
+
+            reconciler = Reconciler()
+            updates = reconciler.reconcile(session, FilledOrderAlpacaClient())
+            self.assertEqual(updates, 1)
+
+            tca_rows = session.execute(select(ExecutionTCAMetric)).scalars().all()
+            self.assertEqual(len(tca_rows), 1)
+            tca = tca_rows[0]
+            self.assertEqual(tca.symbol, 'AAPL')
+            self.assertEqual(tca.arrival_price, Decimal('100'))
+            self.assertEqual(tca.avg_fill_price, Decimal('101'))
+            self.assertEqual(tca.filled_qty, Decimal('2'))
+            self.assertEqual(tca.slippage_bps, Decimal('100'))
+            self.assertEqual(tca.shortfall_notional, Decimal('2'))

@@ -14,7 +14,7 @@ from app.db import get_session
 from app.main import app
 from app.trading.scheduler import TradingScheduler
 from app.config import settings
-from app.models import Base, Execution, LLMDecisionReview, Strategy, TradeDecision
+from app.models import Base, Execution, ExecutionTCAMetric, LLMDecisionReview, Strategy, TradeDecision
 
 
 class TestTradingApi(TestCase):
@@ -79,6 +79,26 @@ class TestTradingApi(TestCase):
             )
             session.add(execution)
             session.commit()
+            session.refresh(execution)
+
+            tca = ExecutionTCAMetric(
+                execution_id=execution.id,
+                trade_decision_id=decision.id,
+                strategy_id=strategy.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                side="buy",
+                arrival_price=Decimal("100"),
+                avg_fill_price=Decimal("101"),
+                filled_qty=Decimal("1"),
+                signed_qty=Decimal("1"),
+                slippage_bps=Decimal("100"),
+                shortfall_notional=Decimal("1"),
+                churn_qty=Decimal("0"),
+                churn_ratio=Decimal("0"),
+            )
+            session.add(tca)
+            session.commit()
 
             review = LLMDecisionReview(
                 trade_decision_id=decision.id,
@@ -115,6 +135,16 @@ class TestTradingApi(TestCase):
         payload = response.json()
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["symbol"], "AAPL")
+        self.assertIsNotNone(payload[0]["tca"])
+        self.assertEqual(payload[0]["tca"]["slippage_bps"], 100.0)
+
+    def test_trading_tca_endpoint(self) -> None:
+        response = self.client.get("/trading/tca?symbol=AAPL")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["summary"]["order_count"], 1)
+        self.assertEqual(len(payload["rows"]), 1)
+        self.assertEqual(payload["rows"][0]["symbol"], "AAPL")
 
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})

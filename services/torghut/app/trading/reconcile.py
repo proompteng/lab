@@ -14,6 +14,7 @@ from ..snapshots import sync_order_to_db
 from .order_feed import apply_order_event_to_execution, latest_order_event_for_execution
 from .route_metadata import coerce_route_text, resolve_order_route_metadata
 from .risk import FINAL_STATUSES
+from .tca import upsert_execution_tca_metric
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ class Reconciler:
                 execution_fallback_count=fallback_count,
             )
             if updated:
+                upsert_execution_tca_metric(session, execution)
                 updates += 1
                 _update_trade_decision(session, execution)
         return updates
@@ -134,6 +136,7 @@ class Reconciler:
                 execution.execution_fallback_count = fallback_count
             execution.execution_actual_adapter = route_actual
             execution.execution_expected_adapter = route_expected or execution.execution_expected_adapter
+            upsert_execution_tca_metric(session, execution)
             _update_trade_decision(session, execution)
             updates += 1
         return updates

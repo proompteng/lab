@@ -58,3 +58,21 @@ class TestTradingMetrics(TestCase):
         self.assertIn('torghut_trading_order_feed_messages_total 3', payload)
         self.assertIn('torghut_trading_order_feed_events_persisted_total 2', payload)
         self.assertIn('torghut_trading_order_feed_duplicates_total 1', payload)
+
+    def test_tca_summary_metrics_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        payload = render_trading_metrics(
+            {
+                **metrics.__dict__,
+                'tca_summary': {
+                    'order_count': 3,
+                    'avg_slippage_bps': 12.5,
+                    'avg_shortfall_notional': 1.25,
+                    'avg_churn_ratio': 0.4,
+                },
+            }
+        )
+        self.assertIn('torghut_trading_tca_order_count 3.0', payload)
+        self.assertIn('torghut_trading_tca_avg_slippage_bps 12.5', payload)
+        self.assertIn('torghut_trading_tca_avg_shortfall_notional 1.25', payload)
+        self.assertIn('torghut_trading_tca_avg_churn_ratio 0.4', payload)
