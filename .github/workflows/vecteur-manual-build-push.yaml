@@ -22,8 +22,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Validate platform targets on arc-arm64
+        run: |
+          set -euo pipefail
+          platforms='${{ inputs.platforms }}'
+          IFS=',' read -r -a targets <<< "$platforms"
+          for target in "${targets[@]}"; do
+            target="$(echo "$target" | xargs)"
+            if [ "$target" != 'linux/arm64' ]; then
+              echo "Unsupported platform on arc-arm64 runner: $target"
+              echo "This workflow supports linux/arm64 only."
+              exit 1
+            fi
+          done
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
