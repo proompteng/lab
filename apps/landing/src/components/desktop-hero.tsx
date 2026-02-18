@@ -325,9 +325,8 @@ type DockItem = {
 const DOCK_BASE_SIZE_PX = 48
 const DOCK_MAX_SCALE = 1.82
 const DOCK_EFFECT_RADIUS_PX = 152
-const DOCK_MAX_NUDGE_PX = 8
-const DOCK_NUDGE_EXPONENT = 3
-const DOCK_LIFT_MULTIPLIER = 12
+const DOCK_MAX_NUDGE_PX = 6
+const DOCK_LIFT_MULTIPLIER = 8
 const DOCK_HOVER_DELAY_MS = 140
 const DOCK_TOOLTIP_TEXT_SIZE_PX = 13
 const DOCK_TOOLTIP_LINE_HEIGHT_PX = 18
@@ -340,23 +339,6 @@ const DOCK_TOOLTIP_RADIUS_PX = 15
 
 function clampValue(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
-}
-
-function getDockInfluence(pointer: number, button: HTMLButtonElement | null) {
-  if (!button) return { influence: 0, direction: 0 }
-  const offsetParent = button.offsetParent
-  if (!(offsetParent instanceof HTMLElement)) return { influence: 0, direction: 0 }
-
-  const parentRect = offsetParent.getBoundingClientRect()
-  const center = parentRect.left + button.offsetLeft + button.offsetWidth / 2
-  const delta = center - pointer
-  const distance = Math.abs(delta)
-  if (distance >= DOCK_EFFECT_RADIUS_PX) return { influence: 0, direction: 0 }
-
-  const t = distance / DOCK_EFFECT_RADIUS_PX
-  const influence = Math.cos((t * Math.PI) / 2)
-  const direction = distance < 0.75 ? 0 : Math.sign(delta)
-  return { influence, direction }
 }
 
 function createDockTooltipPath(
@@ -574,22 +556,26 @@ function DockButton({
 }) {
   const buttonRef = useRef<HTMLButtonElement | null>(null)
   const reducedMotion = useReducedMotion()
+  const distance = useTransform(() => {
+    if (reducedMotion) return Number.POSITIVE_INFINITY
+    const pointer = pointerX.get()
+    const button = buttonRef.current
+    if (!Number.isFinite(pointer) || !button) return Number.POSITIVE_INFINITY
 
-  const scaleTarget = useTransform(() => {
-    if (reducedMotion) return 1
-    const pointer = pointerX.get()
-    if (!Number.isFinite(pointer)) return 1
-    const { influence } = getDockInfluence(pointer, buttonRef.current)
-    if (influence <= 0) return 1
-    return 1 + influence * influence * (DOCK_MAX_SCALE - 1)
+    const offsetParent = button.offsetParent
+    if (!(offsetParent instanceof HTMLElement)) return Number.POSITIVE_INFINITY
+
+    const parentRect = offsetParent.getBoundingClientRect()
+    const center = parentRect.left + button.offsetLeft + button.offsetWidth / 2
+    return pointer - center
   })
+
+  const scaleTarget = useTransform(distance, [-DOCK_EFFECT_RADIUS_PX, 0, DOCK_EFFECT_RADIUS_PX], [1, DOCK_MAX_SCALE, 1])
   const nudgeTarget = useTransform(() => {
-    if (reducedMotion) return 0
-    const pointer = pointerX.get()
-    if (!Number.isFinite(pointer)) return 0
-    const { influence, direction } = getDockInfluence(pointer, buttonRef.current)
-    if (influence <= 0 || direction === 0) return 0
-    return direction * influence ** DOCK_NUDGE_EXPONENT * DOCK_MAX_NUDGE_PX
+    const d = distance.get()
+    if (!Number.isFinite(d) || Math.abs(d) > DOCK_EFFECT_RADIUS_PX) return 0
+    const rawNudge = (-d / DOCK_EFFECT_RADIUS_PX) * DOCK_MAX_NUDGE_PX * scaleTarget.get()
+    return clampValue(rawNudge, -DOCK_MAX_NUDGE_PX, DOCK_MAX_NUDGE_PX)
   })
 
   const scale = useSpring(scaleTarget, {
