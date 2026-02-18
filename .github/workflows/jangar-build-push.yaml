@@ -42,11 +42,17 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Prebuild jangar output
+        env:
+          JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
+        run: bun run --cwd services/jangar start:build
+
       - name: Build and push jangar image
         env:
           JANGAR_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           JANGAR_IMAGE_PLATFORMS: linux/arm64
           JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
+          JANGAR_USE_PREBUILT_OUTPUT: 'true'
         run: bun run packages/scripts/src/jangar/build-image.ts
 
       - name: Update latest tag
