@@ -86,7 +86,26 @@ jobs:
             type=semver,pattern={{version}},value=${{ inputs.new_tag }}
             type=sha
 
+      - name: Detect QEMU requirement
+        id: qemu
+        run: |
+          set -euo pipefail
+          platforms='${{ inputs.platforms }}'
+          needs_qemu='false'
+
+          IFS=',' read -r -a targets <<< "$platforms"
+          for target in "${targets[@]}"; do
+            target="$(echo "$target" | xargs)"
+            if [ "$target" != 'linux/arm64' ]; then
+              needs_qemu='true'
+              break
+            fi
+          done
+
+          echo "needs_qemu=$needs_qemu" >> "$GITHUB_OUTPUT"
+
       - name: Set up QEMU
+        if: steps.qemu.outputs.needs_qemu == 'true'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
