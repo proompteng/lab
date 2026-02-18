@@ -504,7 +504,9 @@ def _is_stale_by_ts(execution: Execution, event: ExecutionOrderEvent) -> bool:
     candidate_ts = event.event_ts
     if candidate_ts is None:
         return False
-    baseline = execution.order_feed_last_event_ts or execution.last_update_at
+    if candidate_ts.tzinfo is None:
+        candidate_ts = candidate_ts.replace(tzinfo=timezone.utc)
+    baseline = execution.order_feed_last_event_ts
     if baseline is None:
         return False
     if baseline.tzinfo is None:
