@@ -282,8 +282,13 @@ spec:
                 namespace: coder
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
-                automation: manual
-                enabled: "false"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+                automation: auto
+                enabled: "true"
               - name: arc
                 path: argocd/applications/arc
                 namespace: arc
