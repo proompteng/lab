@@ -1,5 +1,6 @@
 apiVersion: v1alpha1
 kind: HostnameConfig
 auto: off
-hostname: altra
-
+# Keep node hostname stable: multiple components (e.g. Rook-Ceph) pin workloads to
+# `kubernetes.io/hostname`.
+hostname: talos-192-168-1-85

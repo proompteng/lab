@@ -1,4 +1,6 @@
 apiVersion: v1alpha1
 kind: HostnameConfig
 auto: off
-hostname: ampone
+# NOTE: Rook Ceph OSD deployments are pinned to `kubernetes.io/hostname`.
+# Changing this after OSDs are created strands them in Pending.
+hostname: talos-192-168-1-203
