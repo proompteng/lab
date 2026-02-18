@@ -4,11 +4,10 @@ on:
   pull_request:
     paths:
       - 'services/jangar/**'
+      - '!services/jangar/agentctl/**'
       - 'packages/scripts/src/jangar/**'
       - 'argocd/applications/jangar/**'
       - '.github/workflows/jangar-ci.yml'
-    paths-ignore:
-      - 'services/jangar/agentctl/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
