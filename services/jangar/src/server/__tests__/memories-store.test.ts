@@ -15,10 +15,11 @@ import { createPostgresMemoriesStore } from '../memories-store'
 
 type SqlCall = { sql: string; params: readonly unknown[] }
 
-type FakeDbOptions = { extensions?: string[]; selectRows?: unknown[] }
+type FakeDbOptions = { extensions?: string[]; selectRows?: unknown[]; failOnceOnExtensionsQuery?: boolean }
 
 const makeFakeDb = (options: FakeDbOptions = {}) => {
   const calls: SqlCall[] = []
+  let extensionQueryFailed = false
 
   class TestConnection implements DatabaseConnection {
     async executeQuery<R>(compiledQuery: CompiledQuery): Promise<QueryResult<R>> {
@@ -28,6 +29,10 @@ const makeFakeDb = (options: FakeDbOptions = {}) => {
       const normalized = compiledQuery.sql.toLowerCase()
 
       if (normalized.includes('select extname from pg_extension')) {
+        if (options.failOnceOnExtensionsQuery && !extensionQueryFailed) {
+          extensionQueryFailed = true
+          throw new Error('transient extension lookup failure')
+        }
         const extensions = options.extensions ?? ['vector', 'pgcrypto']
         return { rows: extensions.map((ext) => ({ extname: ext })) as R[] }
       }
@@ -205,5 +210,26 @@ describe('memories store', () => {
 
     const records = await store.retrieve({ query: 'hello', limit: 1 })
     expect(records[0]?.metadata).toEqual({ foo: 'bar' })
+  })
+
+  it('retries schema bootstrap after transient failure', async () => {
+    const { db, calls } = makeFakeDb({ failOnceOnExtensionsQuery: true })
+    const store = createPostgresMemoriesStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+      embedText: async () => [0, 0, 0],
+    })
+
+    await expect(store.retrieve({ query: 'hello', limit: 1 })).rejects.toThrow(/transient extension lookup failure/i)
+    const firstAttemptCalls = calls.length
+
+    const records = await store.retrieve({ query: 'hello', limit: 1 })
+    expect(records).toHaveLength(1)
+    expect(calls.length).toBeGreaterThan(firstAttemptCalls)
+
+    const extensionLookupCount = calls.filter((call) =>
+      call.sql.toLowerCase().includes('select extname from pg_extension'),
+    ).length
+    expect(extensionLookupCount).toBeGreaterThanOrEqual(2)
   })
 })
