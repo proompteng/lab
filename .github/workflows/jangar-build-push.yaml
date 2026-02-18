@@ -45,7 +45,10 @@ jobs:
       - name: Prebuild jangar output
         env:
           JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
-        run: bun run --cwd services/jangar start:build
+        run: |
+          bun run --filter @proompteng/otel build
+          bun run --filter @proompteng/temporal-bun-sdk build
+          bun run --cwd services/jangar start:build
 
       - name: Build and push jangar image
         env:
