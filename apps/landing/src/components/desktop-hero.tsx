@@ -606,7 +606,7 @@ function DockButton({
           'transform-gpu will-change-transform',
           showTooltip ? 'z-50' : 'z-10',
         )}
-        style={{ width: iconSize, height: iconSize, y: lift }}
+        style={{ width: DOCK_BASE_SIZE_PX, height: DOCK_BASE_SIZE_PX, y: lift }}
         aria-label={dockItem.label}
       >
         <motion.span
@@ -645,7 +645,7 @@ function DockButton({
         'transform-gpu will-change-transform',
         showTooltip ? 'z-50' : 'z-10',
       )}
-      style={{ width: iconSize, height: iconSize, y: lift }}
+      style={{ width: DOCK_BASE_SIZE_PX, height: DOCK_BASE_SIZE_PX, y: lift }}
       aria-label={dockItem.label}
     >
       <motion.span
