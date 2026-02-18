@@ -34,6 +34,10 @@ resources:
 controller:
   namespaces:
     - agents
+  authSecret:
+    name: codex-auth
+    key: auth.json
+    mountPath: /root/.codex
 rbac:
   clusterScoped: false
 database:
