@@ -6,6 +6,7 @@ metadata:
 data:
   ALPACA_FEED: "iex"
   ALPACA_STREAM_URL: "wss://stream.data.alpaca.markets"
+  ALPACA_TRADE_STREAM_URL: "wss://paper-api.alpaca.markets/stream"
   ALPACA_BASE_URL: "https://data.alpaca.markets"
   JANGAR_SYMBOLS_URL: "http://jangar.jangar.svc.cluster.local/api/torghut/symbols"
   # Fallback so the ws forwarder can become ready if Jangar has no ready endpoints.
@@ -14,7 +15,7 @@ data:
   SUBSCRIBE_BATCH_SIZE: "200"
   SHARD_COUNT: "1"
   SHARD_INDEX: "0"
-  ENABLE_TRADE_UPDATES: "false"
+  ENABLE_TRADE_UPDATES: "true"
   RECONNECT_BASE_MS: "500"
   RECONNECT_MAX_MS: "30000"
   DEDUP_TTL_SEC: "5"
@@ -28,4 +29,5 @@ data:
   TOPIC_TRADES: "torghut.trades.v1"
   TOPIC_QUOTES: "torghut.quotes.v1"
   TOPIC_BARS_1M: "torghut.bars.1m.v1"
+  TOPIC_TRADE_UPDATES: "torghut.trade_updates.v1"
   TOPIC_STATUS: "torghut.status.v1"
