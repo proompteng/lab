@@ -17,6 +17,22 @@ export IPMI_PASSWORD='...'
 ipmitool -I lanplus -H 192.168.1.224 -U admin -E chassis power status
 ```
 
+### Local password file (reproducible, gitignored)
+
+For repeatable runs without leaking credentials into shell history, store the BMC
+password in a local file (do not commit it):
+
+```bash
+mkdir -p ~/.secrets
+chmod 700 ~/.secrets
+cat > ~/.secrets/ampone-ipmi-password <<'EOF'
+<ampone BMC password>
+EOF
+chmod 600 ~/.secrets/ampone-ipmi-password
+
+export IPMI_PASSWORD="$(cat ~/.secrets/ampone-ipmi-password)"
+```
+
 ## Power control
 
 ```bash
