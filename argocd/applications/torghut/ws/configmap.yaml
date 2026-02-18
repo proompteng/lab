@@ -29,5 +29,5 @@ data:
   TOPIC_TRADES: "torghut.trades.v1"
   TOPIC_QUOTES: "torghut.quotes.v1"
   TOPIC_BARS_1M: "torghut.bars.1m.v1"
-  TOPIC_TRADE_UPDATES: "torghut.trade_updates.v1"
+  TOPIC_TRADE_UPDATES: "torghut.trade-updates.v1"
   TOPIC_STATUS: "torghut.status.v1"
