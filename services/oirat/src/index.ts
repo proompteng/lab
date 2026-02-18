@@ -45,6 +45,7 @@ type BotState = {
 
 const STOP_COMMANDS = new Set(['stop', '!stop'])
 const STOP_CUSTOM_ID_PREFIX = 'oirat-stop'
+const JANGAR_CLIENT_KIND_HEADER = 'x-jangar-client-kind'
 
 const logContext = (message: GuildMessage) => ({
   messageId: message.id,
@@ -198,6 +199,7 @@ const fetchJangarCompletion = async (
   }
   if (options.chatId) {
     headers['x-openwebui-chat-id'] = options.chatId
+    headers[JANGAR_CLIENT_KIND_HEADER] = 'discord'
   }
 
   const response = await fetch(`${state.config.jangarBaseUrl}/openai/v1/chat/completions`, {

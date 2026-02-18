@@ -116,6 +116,14 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
       JANGAR_VERSION: version,
       JANGAR_COMMIT: commit,
     }
+    const buildNodeOptions = process.env.JANGAR_BUILD_NODE_OPTIONS?.trim()
+    if (buildNodeOptions) {
+      buildArgs.JANGAR_BUILD_NODE_OPTIONS = buildNodeOptions
+    }
+    const buildMinify = process.env.JANGAR_BUILD_MINIFY?.trim()
+    if (buildMinify) {
+      buildArgs.JANGAR_BUILD_MINIFY = buildMinify
+    }
     if (process.env.BUILDX_VERSION) {
       buildArgs.BUILDX_VERSION = process.env.BUILDX_VERSION
     }

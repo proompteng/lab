@@ -54,6 +54,7 @@ const ChatRequestSchema = S.Struct({
 })
 
 type ChatRequest = S.Schema.Type<typeof ChatRequestSchema>
+type ChatClientKind = 'openwebui' | 'discord' | 'unknown'
 
 class RequestError extends Error {
   readonly status: number
@@ -125,6 +126,15 @@ const parseRequest = async (request: Request): Promise<ChatRequest> => {
     throw new RequestError(400, 'stream_required', '`stream` must be true for streaming responses')
   }
   return parsed
+}
+
+const resolveChatClientKind = (request: Request): ChatClientKind => {
+  const raw = request.headers.get('x-jangar-client-kind')
+  const normalized = typeof raw === 'string' ? raw.trim().toLowerCase() : ''
+  if (normalized === 'discord') return 'discord'
+  if (normalized === 'openwebui') return 'openwebui'
+  if (normalized.length > 0) return 'unknown'
+  return 'openwebui'
 }
 
 const WORKTREE_DIR_NAME = '.worktrees'
@@ -672,7 +682,9 @@ export const handleChatCompletionEffect = (request: Request) =>
         const includePlan = parsed.stream_options?.include_plan !== false
         const chatIdHeader = request.headers.get('x-openwebui-chat-id')
         const chatId = typeof chatIdHeader === 'string' && chatIdHeader.trim().length > 0 ? chatIdHeader.trim() : null
-        const statefulChatEnabled = process.env.JANGAR_STATEFUL_CHAT_MODE === '1'
+        const chatClientKind = resolveChatClientKind(request)
+        const statefulTranscriptEnabled =
+          process.env.JANGAR_STATEFUL_CHAT_MODE === '1' && chatClientKind === 'openwebui'
 
         const { config, client, toolRenderer, encoder } = yield* Effect.all({
           config: loadConfig,
@@ -691,7 +703,7 @@ export const handleChatCompletionEffect = (request: Request) =>
             Effect.gen(function* () {
               const threadState = yield* ThreadState
               const worktreeState = yield* WorktreeState
-              const transcriptService = statefulChatEnabled ? yield* TranscriptState : null
+              const transcriptService = statefulTranscriptEnabled ? yield* TranscriptState : null
 
               const threadId = yield* pipe(
                 threadState.getThreadId(chatId),
@@ -812,7 +824,12 @@ export const handleChatCompletionEffect = (request: Request) =>
           storedTranscript = resolved.transcriptSignature
 
           if (threadContext) {
-            console.info('[chat] chat id received', { chatId, threadId: threadContext.threadId })
+            console.info('[chat] chat id received', {
+              chatId,
+              threadId: threadContext.threadId,
+              clientKind: chatClientKind,
+              transcriptMode: statefulTranscriptEnabled ? 'stateful' : 'stateless',
+            })
           }
           if (resolved.worktreeName && resolved.worktreePath) {
             console.info('[chat] worktree resolved', {
@@ -833,7 +850,7 @@ export const handleChatCompletionEffect = (request: Request) =>
         let promptMessages = parsed.messages
         let nextTranscriptSignature: TranscriptEntry[] | null = null
 
-        if (threadContext && transcriptState && statefulChatEnabled) {
+        if (threadContext && transcriptState && statefulTranscriptEnabled) {
           const comparison = compareTranscript(storedTranscript, parsed.messages)
           promptMessages = comparison.deltaMessages.length > 0 ? comparison.deltaMessages : parsed.messages
           nextTranscriptSignature = comparison.signature
@@ -843,6 +860,9 @@ export const handleChatCompletionEffect = (request: Request) =>
               chatId: threadContext.chatId,
               storedLength: storedTranscript?.length ?? 0,
               incomingLength: parsed.messages.length,
+              resetReason: comparison.resetReason,
+              resetMismatchIndex: comparison.resetMismatchIndex,
+              clientKind: chatClientKind,
             })
             yield* pipe(
               threadContext.threadState.clearChat(threadContext.chatId),
@@ -859,7 +879,7 @@ export const handleChatCompletionEffect = (request: Request) =>
           }
         }
 
-        if (threadContext && transcriptState && statefulChatEnabled && nextTranscriptSignature) {
+        if (threadContext && transcriptState && statefulTranscriptEnabled && nextTranscriptSignature) {
           yield* pipe(
             transcriptState.setTranscript(threadContext.chatId, nextTranscriptSignature),
             Effect.catchAll((error) => {
