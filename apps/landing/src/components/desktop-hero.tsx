@@ -325,6 +325,8 @@ type DockItem = {
 const DOCK_BASE_SIZE_PX = 48
 const DOCK_MAX_SCALE = 1.82
 const DOCK_EFFECT_RADIUS_PX = 152
+const DOCK_MAX_NUDGE_PX = 16
+const DOCK_LIFT_MULTIPLIER = 12
 const DOCK_HOVER_DELAY_MS = 140
 const DOCK_TOOLTIP_TEXT_SIZE_PX = 13
 const DOCK_TOOLTIP_LINE_HEIGHT_PX = 18
@@ -337,6 +339,23 @@ const DOCK_TOOLTIP_RADIUS_PX = 15
 
 function clampValue(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
+}
+
+function getDockInfluence(pointer: number, button: HTMLButtonElement | null) {
+  if (!button) return { influence: 0, direction: 0 }
+  const offsetParent = button.offsetParent
+  if (!(offsetParent instanceof HTMLElement)) return { influence: 0, direction: 0 }
+
+  const parentRect = offsetParent.getBoundingClientRect()
+  const center = parentRect.left + button.offsetLeft + button.offsetWidth / 2
+  const delta = center - pointer
+  const distance = Math.abs(delta)
+  if (distance >= DOCK_EFFECT_RADIUS_PX) return { influence: 0, direction: 0 }
+
+  const t = distance / DOCK_EFFECT_RADIUS_PX
+  const influence = Math.cos((t * Math.PI) / 2)
+  const direction = distance < 0.75 ? 0 : Math.sign(delta)
+  return { influence, direction }
 }
 
 function createDockTooltipPath(
@@ -559,16 +578,17 @@ function DockButton({
     if (reducedMotion) return 1
     const pointer = pointerX.get()
     if (!Number.isFinite(pointer)) return 1
-    const rect = buttonRef.current?.getBoundingClientRect()
-    if (!rect) return 1
-
-    const center = rect.left + rect.width / 2
-    const distance = Math.abs(pointer - center)
-    if (distance >= DOCK_EFFECT_RADIUS_PX) return 1
-
-    const t = distance / DOCK_EFFECT_RADIUS_PX
-    const influence = Math.cos((t * Math.PI) / 2)
+    const { influence } = getDockInfluence(pointer, buttonRef.current)
+    if (influence <= 0) return 1
     return 1 + influence * influence * (DOCK_MAX_SCALE - 1)
+  })
+  const nudgeTarget = useTransform(() => {
+    if (reducedMotion) return 0
+    const pointer = pointerX.get()
+    if (!Number.isFinite(pointer)) return 0
+    const { influence, direction } = getDockInfluence(pointer, buttonRef.current)
+    if (influence <= 0 || direction === 0) return 0
+    return direction * influence * influence * DOCK_MAX_NUDGE_PX
   })
 
   const scale = useSpring(scaleTarget, {
@@ -576,8 +596,13 @@ function DockButton({
     damping: 34,
     mass: 0.24,
   })
+  const nudgeX = useSpring(nudgeTarget, {
+    stiffness: 430,
+    damping: 36,
+    mass: 0.26,
+  })
   const iconSize = useTransform(scale, (value) => value * DOCK_BASE_SIZE_PX)
-  const lift = useTransform(scale, (value) => -(value - 1) * 18)
+  const lift = useTransform(scale, (value) => -(value - 1) * DOCK_LIFT_MULTIPLIER)
   const emojiFontSize = useTransform(iconSize, (value) => Math.max(30, value * 0.66))
 
   const assignButtonRef = useCallback(
@@ -606,7 +631,7 @@ function DockButton({
           'transform-gpu will-change-transform',
           showTooltip ? 'z-50' : 'z-10',
         )}
-        style={{ width: DOCK_BASE_SIZE_PX, height: DOCK_BASE_SIZE_PX, y: lift }}
+        style={{ width: DOCK_BASE_SIZE_PX, height: DOCK_BASE_SIZE_PX, x: nudgeX, y: lift }}
         aria-label={dockItem.label}
       >
         <motion.span
@@ -645,7 +670,7 @@ function DockButton({
         'transform-gpu will-change-transform',
         showTooltip ? 'z-50' : 'z-10',
       )}
-      style={{ width: DOCK_BASE_SIZE_PX, height: DOCK_BASE_SIZE_PX, y: lift }}
+      style={{ width: DOCK_BASE_SIZE_PX, height: DOCK_BASE_SIZE_PX, x: nudgeX, y: lift }}
       aria-label={dockItem.label}
     >
       <motion.span
