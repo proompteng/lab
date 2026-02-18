@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: openclaw-rdp
+  labels:
+    app.kubernetes.io/name: openclaw
+spec:
+  type: ClusterIP
+  selector:
+    kubevirt.io/domain: openclaw
+  ports:
+    - name: rdp
+      port: 3389
+      protocol: TCP
+      targetPort: 3389
