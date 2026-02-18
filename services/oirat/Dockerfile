@@ -11,7 +11,7 @@ COPY tsconfig.base.json ./
 # Turbo prune keeps the root workspace list; drop entries that don't exist in the pruned context.
 RUN bun -e "const fs = require('fs'); const p = 'package.json'; const pkg = JSON.parse(fs.readFileSync(p, 'utf8')); if (Array.isArray(pkg.workspaces)) { pkg.workspaces = pkg.workspaces.filter((entry) => entry !== 'services/jangar/*' && entry !== 'services/jangar/agentctl'); fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\\n'); }"
 RUN --mount=type=cache,target=/root/.cache/bun \
-  bun install --no-save --frozen-lockfile --ignore-scripts --filter @proompteng/oirat
+  bun install --no-save --frozen-lockfile --ignore-scripts --filter @proompteng/discord --filter @proompteng/oirat
 
 FROM deps AS build
 COPY full/ .
@@ -24,12 +24,14 @@ COPY json/ .
 COPY tsconfig.base.json ./
 RUN bun -e "const fs = require('fs'); const p = 'package.json'; const pkg = JSON.parse(fs.readFileSync(p, 'utf8')); if (Array.isArray(pkg.workspaces)) { pkg.workspaces = pkg.workspaces.filter((entry) => entry !== 'services/jangar/*' && entry !== 'services/jangar/agentctl'); fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\\n'); }"
 RUN --mount=type=cache,target=/root/.cache/bun \
-  bun install --no-save --production --frozen-lockfile --ignore-scripts --filter @proompteng/oirat
+  bun install --no-save --production --frozen-lockfile --ignore-scripts --filter @proompteng/discord --filter @proompteng/oirat
 
 FROM oven/bun:${BUN_VERSION} AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=deps-prod /app/node_modules ./node_modules
+COPY --from=deps-prod /app/services/oirat/node_modules ./services/oirat/node_modules
+COPY --from=deps-prod /app/packages/discord/node_modules ./packages/discord/node_modules
 COPY --from=build /app/services/oirat ./services/oirat
 COPY --from=build /app/packages/discord/package.json ./packages/discord/package.json
 COPY --from=build /app/packages/discord/dist ./packages/discord/dist
