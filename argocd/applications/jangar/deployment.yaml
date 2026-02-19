@@ -246,6 +246,14 @@ spec:
               value: "60"
             - name: JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS
               value: "300"
+            - name: JANGAR_TORGHUT_DECISION_ENGINE_ENABLED
+              value: "true"
+            - name: JANGAR_TORGHUT_DECISION_RUN_TIMEOUT_MS
+              value: "120000"
+            - name: JANGAR_TORGHUT_DECISION_STREAM_HEARTBEAT_MS
+              value: "10000"
+            - name: JANGAR_TORGHUT_DECISION_RUN_RETENTION_MS
+              value: "900000"
             - name: CH_HOST
               value: torghut-clickhouse.torghut.svc
             - name: CH_PORT
