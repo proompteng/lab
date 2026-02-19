@@ -120,6 +120,8 @@ import { Route as ApiTorghutTaLatestRouteImport } from './routes/api/torghut/ta/
 import { Route as ApiTorghutTaBarsRouteImport } from './routes/api/torghut/ta/bars'
 import { Route as ApiTorghutSymbolsSymbolRouteImport } from './routes/api/torghut/symbols/$symbol'
 import { Route as ApiTorghutMarketContextHealthRouteImport } from './routes/api/torghut/market-context/health'
+import { Route as ApiTorghutDecisionEngineStreamRouteImport } from './routes/api/torghut/decision-engine/stream'
+import { Route as ApiTorghutDecisionEngineRunsRouteImport } from './routes/api/torghut/decision-engine/runs'
 import { Route as ApiTerminalsSessionIdWsRouteImport } from './routes/api/terminals/$sessionId/ws'
 import { Route as ApiTerminalsSessionIdTerminateRouteImport } from './routes/api/terminals/$sessionId/terminate'
 import { Route as ApiTerminalsSessionIdStreamRouteImport } from './routes/api/terminals/$sessionId/stream'
@@ -136,6 +138,7 @@ import { Route as ApiAgentsControlPlaneResourceRouteImport } from './routes/api/
 import { Route as ApiAgentsControlPlaneLogsRouteImport } from './routes/api/agents/control-plane/logs'
 import { Route as ApiAgentsControlPlaneEventsRouteImport } from './routes/api/agents/control-plane/events'
 import { Route as GithubPullsOwnerRepoNumberRouteImport } from './routes/github/pulls/$owner/$repo/$number'
+import { Route as ApiTorghutDecisionEngineRunsIdRouteImport } from './routes/api/torghut/decision-engine/runs/$id'
 import { Route as ApiAgentsImplementationSourcesWebhooksProviderRouteImport } from './routes/api/agents/implementation-sources/webhooks/$provider'
 import { Route as ApiTorghutTradingControlPlaneQuantStreamRouteImport } from './routes/api/torghut/trading/control-plane/quant/stream'
 import { Route as ApiTorghutTradingControlPlaneQuantSnapshotRouteImport } from './routes/api/torghut/trading/control-plane/quant/snapshot'
@@ -746,6 +749,18 @@ const ApiTorghutMarketContextHealthRoute =
     path: '/api/torghut/market-context/health',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiTorghutDecisionEngineStreamRoute =
+  ApiTorghutDecisionEngineStreamRouteImport.update({
+    id: '/api/torghut/decision-engine/stream',
+    path: '/api/torghut/decision-engine/stream',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiTorghutDecisionEngineRunsRoute =
+  ApiTorghutDecisionEngineRunsRouteImport.update({
+    id: '/api/torghut/decision-engine/runs',
+    path: '/api/torghut/decision-engine/runs',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiTerminalsSessionIdWsRoute = ApiTerminalsSessionIdWsRouteImport.update({
   id: '/ws',
   path: '/ws',
@@ -838,6 +853,12 @@ const GithubPullsOwnerRepoNumberRoute =
     id: '/$owner/$repo/$number',
     path: '/$owner/$repo/$number',
     getParentRoute: () => GithubPullsRoute,
+  } as any)
+const ApiTorghutDecisionEngineRunsIdRoute =
+  ApiTorghutDecisionEngineRunsIdRouteImport.update({
+    id: '/$id',
+    path: '/$id',
+    getParentRoute: () => ApiTorghutDecisionEngineRunsRoute,
   } as any)
 const ApiAgentsImplementationSourcesWebhooksProviderRoute =
   ApiAgentsImplementationSourcesWebhooksProviderRouteImport.update({
@@ -1045,6 +1066,8 @@ export interface FileRoutesByFullPath {
   '/api/terminals/$sessionId/stream': typeof ApiTerminalsSessionIdStreamRoute
   '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
   '/api/terminals/$sessionId/ws': typeof ApiTerminalsSessionIdWsRoute
+  '/api/torghut/decision-engine/runs': typeof ApiTorghutDecisionEngineRunsRouteWithChildren
+  '/api/torghut/decision-engine/stream': typeof ApiTorghutDecisionEngineStreamRoute
   '/api/torghut/market-context/health': typeof ApiTorghutMarketContextHealthRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
@@ -1058,6 +1081,7 @@ export interface FileRoutesByFullPath {
   '/api/torghut/market-context/': typeof ApiTorghutMarketContextIndexRoute
   '/control-plane/torghut/quant/': typeof ControlPlaneTorghutQuantIndexRoute
   '/api/agents/implementation-sources/webhooks/$provider': typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
+  '/api/torghut/decision-engine/runs/$id': typeof ApiTorghutDecisionEngineRunsIdRoute
   '/github/pulls/$owner/$repo/$number': typeof GithubPullsOwnerRepoNumberRoute
   '/api/github/pulls/$owner/$repo/$number': typeof ApiGithubPullsOwnerRepoNumberRouteWithChildren
   '/api/torghut/trading/control-plane/quant/alerts': typeof ApiTorghutTradingControlPlaneQuantAlertsRoute
@@ -1187,6 +1211,8 @@ export interface FileRoutesByTo {
   '/api/terminals/$sessionId/stream': typeof ApiTerminalsSessionIdStreamRoute
   '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
   '/api/terminals/$sessionId/ws': typeof ApiTerminalsSessionIdWsRoute
+  '/api/torghut/decision-engine/runs': typeof ApiTorghutDecisionEngineRunsRouteWithChildren
+  '/api/torghut/decision-engine/stream': typeof ApiTorghutDecisionEngineStreamRoute
   '/api/torghut/market-context/health': typeof ApiTorghutMarketContextHealthRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
@@ -1200,6 +1226,7 @@ export interface FileRoutesByTo {
   '/api/torghut/market-context': typeof ApiTorghutMarketContextIndexRoute
   '/control-plane/torghut/quant': typeof ControlPlaneTorghutQuantIndexRoute
   '/api/agents/implementation-sources/webhooks/$provider': typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
+  '/api/torghut/decision-engine/runs/$id': typeof ApiTorghutDecisionEngineRunsIdRoute
   '/github/pulls/$owner/$repo/$number': typeof GithubPullsOwnerRepoNumberRoute
   '/api/github/pulls/$owner/$repo/$number': typeof ApiGithubPullsOwnerRepoNumberRouteWithChildren
   '/api/torghut/trading/control-plane/quant/alerts': typeof ApiTorghutTradingControlPlaneQuantAlertsRoute
@@ -1332,6 +1359,8 @@ export interface FileRoutesById {
   '/api/terminals/$sessionId/stream': typeof ApiTerminalsSessionIdStreamRoute
   '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
   '/api/terminals/$sessionId/ws': typeof ApiTerminalsSessionIdWsRoute
+  '/api/torghut/decision-engine/runs': typeof ApiTorghutDecisionEngineRunsRouteWithChildren
+  '/api/torghut/decision-engine/stream': typeof ApiTorghutDecisionEngineStreamRoute
   '/api/torghut/market-context/health': typeof ApiTorghutMarketContextHealthRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
@@ -1345,6 +1374,7 @@ export interface FileRoutesById {
   '/api/torghut/market-context/': typeof ApiTorghutMarketContextIndexRoute
   '/control-plane/torghut/quant/': typeof ControlPlaneTorghutQuantIndexRoute
   '/api/agents/implementation-sources/webhooks/$provider': typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
+  '/api/torghut/decision-engine/runs/$id': typeof ApiTorghutDecisionEngineRunsIdRoute
   '/github/pulls/$owner/$repo/$number': typeof GithubPullsOwnerRepoNumberRoute
   '/api/github/pulls/$owner/$repo/$number': typeof ApiGithubPullsOwnerRepoNumberRouteWithChildren
   '/api/torghut/trading/control-plane/quant/alerts': typeof ApiTorghutTradingControlPlaneQuantAlertsRoute
@@ -1478,6 +1508,8 @@ export interface FileRouteTypes {
     | '/api/terminals/$sessionId/stream'
     | '/api/terminals/$sessionId/terminate'
     | '/api/terminals/$sessionId/ws'
+    | '/api/torghut/decision-engine/runs'
+    | '/api/torghut/decision-engine/stream'
     | '/api/torghut/market-context/health'
     | '/api/torghut/symbols/$symbol'
     | '/api/torghut/ta/bars'
@@ -1491,6 +1523,7 @@ export interface FileRouteTypes {
     | '/api/torghut/market-context/'
     | '/control-plane/torghut/quant/'
     | '/api/agents/implementation-sources/webhooks/$provider'
+    | '/api/torghut/decision-engine/runs/$id'
     | '/github/pulls/$owner/$repo/$number'
     | '/api/github/pulls/$owner/$repo/$number'
     | '/api/torghut/trading/control-plane/quant/alerts'
@@ -1620,6 +1653,8 @@ export interface FileRouteTypes {
     | '/api/terminals/$sessionId/stream'
     | '/api/terminals/$sessionId/terminate'
     | '/api/terminals/$sessionId/ws'
+    | '/api/torghut/decision-engine/runs'
+    | '/api/torghut/decision-engine/stream'
     | '/api/torghut/market-context/health'
     | '/api/torghut/symbols/$symbol'
     | '/api/torghut/ta/bars'
@@ -1633,6 +1668,7 @@ export interface FileRouteTypes {
     | '/api/torghut/market-context'
     | '/control-plane/torghut/quant'
     | '/api/agents/implementation-sources/webhooks/$provider'
+    | '/api/torghut/decision-engine/runs/$id'
     | '/github/pulls/$owner/$repo/$number'
     | '/api/github/pulls/$owner/$repo/$number'
     | '/api/torghut/trading/control-plane/quant/alerts'
@@ -1764,6 +1800,8 @@ export interface FileRouteTypes {
     | '/api/terminals/$sessionId/stream'
     | '/api/terminals/$sessionId/terminate'
     | '/api/terminals/$sessionId/ws'
+    | '/api/torghut/decision-engine/runs'
+    | '/api/torghut/decision-engine/stream'
     | '/api/torghut/market-context/health'
     | '/api/torghut/symbols/$symbol'
     | '/api/torghut/ta/bars'
@@ -1777,6 +1815,7 @@ export interface FileRouteTypes {
     | '/api/torghut/market-context/'
     | '/control-plane/torghut/quant/'
     | '/api/agents/implementation-sources/webhooks/$provider'
+    | '/api/torghut/decision-engine/runs/$id'
     | '/github/pulls/$owner/$repo/$number'
     | '/api/github/pulls/$owner/$repo/$number'
     | '/api/torghut/trading/control-plane/quant/alerts'
@@ -1890,6 +1929,8 @@ export interface RootRouteChildren {
   ApiAgentsControlPlaneStatusRoute: typeof ApiAgentsControlPlaneStatusRoute
   ApiAgentsControlPlaneStreamRoute: typeof ApiAgentsControlPlaneStreamRoute
   ApiAgentsControlPlaneSummaryRoute: typeof ApiAgentsControlPlaneSummaryRoute
+  ApiTorghutDecisionEngineRunsRoute: typeof ApiTorghutDecisionEngineRunsRouteWithChildren
+  ApiTorghutDecisionEngineStreamRoute: typeof ApiTorghutDecisionEngineStreamRoute
   ApiTorghutMarketContextHealthRoute: typeof ApiTorghutMarketContextHealthRoute
   ApiTorghutTaBarsRoute: typeof ApiTorghutTaBarsRoute
   ApiTorghutTaLatestRoute: typeof ApiTorghutTaLatestRoute
@@ -2688,6 +2729,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTorghutMarketContextHealthRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/torghut/decision-engine/stream': {
+      id: '/api/torghut/decision-engine/stream'
+      path: '/api/torghut/decision-engine/stream'
+      fullPath: '/api/torghut/decision-engine/stream'
+      preLoaderRoute: typeof ApiTorghutDecisionEngineStreamRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/torghut/decision-engine/runs': {
+      id: '/api/torghut/decision-engine/runs'
+      path: '/api/torghut/decision-engine/runs'
+      fullPath: '/api/torghut/decision-engine/runs'
+      preLoaderRoute: typeof ApiTorghutDecisionEngineRunsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/terminals/$sessionId/ws': {
       id: '/api/terminals/$sessionId/ws'
       path: '/ws'
@@ -2799,6 +2854,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/github/pulls/$owner/$repo/$number'
       preLoaderRoute: typeof GithubPullsOwnerRepoNumberRouteImport
       parentRoute: typeof GithubPullsRoute
+    }
+    '/api/torghut/decision-engine/runs/$id': {
+      id: '/api/torghut/decision-engine/runs/$id'
+      path: '/$id'
+      fullPath: '/api/torghut/decision-engine/runs/$id'
+      preLoaderRoute: typeof ApiTorghutDecisionEngineRunsIdRouteImport
+      parentRoute: typeof ApiTorghutDecisionEngineRunsRoute
     }
     '/api/agents/implementation-sources/webhooks/$provider': {
       id: '/api/agents/implementation-sources/webhooks/$provider'
@@ -3128,6 +3190,20 @@ const ApiTorghutSymbolsRouteChildren: ApiTorghutSymbolsRouteChildren = {
 const ApiTorghutSymbolsRouteWithChildren =
   ApiTorghutSymbolsRoute._addFileChildren(ApiTorghutSymbolsRouteChildren)
 
+interface ApiTorghutDecisionEngineRunsRouteChildren {
+  ApiTorghutDecisionEngineRunsIdRoute: typeof ApiTorghutDecisionEngineRunsIdRoute
+}
+
+const ApiTorghutDecisionEngineRunsRouteChildren: ApiTorghutDecisionEngineRunsRouteChildren =
+  {
+    ApiTorghutDecisionEngineRunsIdRoute: ApiTorghutDecisionEngineRunsIdRoute,
+  }
+
+const ApiTorghutDecisionEngineRunsRouteWithChildren =
+  ApiTorghutDecisionEngineRunsRoute._addFileChildren(
+    ApiTorghutDecisionEngineRunsRouteChildren,
+  )
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HealthRoute: HealthRoute,
@@ -3232,6 +3308,9 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAgentsControlPlaneStatusRoute: ApiAgentsControlPlaneStatusRoute,
   ApiAgentsControlPlaneStreamRoute: ApiAgentsControlPlaneStreamRoute,
   ApiAgentsControlPlaneSummaryRoute: ApiAgentsControlPlaneSummaryRoute,
+  ApiTorghutDecisionEngineRunsRoute:
+    ApiTorghutDecisionEngineRunsRouteWithChildren,
+  ApiTorghutDecisionEngineStreamRoute: ApiTorghutDecisionEngineStreamRoute,
   ApiTorghutMarketContextHealthRoute: ApiTorghutMarketContextHealthRoute,
   ApiTorghutTaBarsRoute: ApiTorghutTaBarsRoute,
   ApiTorghutTaLatestRoute: ApiTorghutTaLatestRoute,
