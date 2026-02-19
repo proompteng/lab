@@ -116,6 +116,52 @@ data:
         lines.append("# TYPE torghut_llm_shadow_mode gauge")
         lines.append(f"torghut_llm_shadow_mode {1.0 if llm.get('shadow_mode') else 0.0}")
 
+        lines.append("# HELP torghut_llm_effective_shadow_mode 1 if guardrails force shadow behavior.")
+        lines.append("# TYPE torghut_llm_effective_shadow_mode gauge")
+        lines.append(f"torghut_llm_effective_shadow_mode {1.0 if llm.get('effective_shadow_mode') else 0.0}")
+
+        rollout_stage = str(llm.get("rollout_stage") or "unknown")
+        lines.append("# HELP torghut_llm_rollout_stage_info LLM rollout stage info metric.")
+        lines.append("# TYPE torghut_llm_rollout_stage_info gauge")
+        lines.append(f'torghut_llm_rollout_stage_info{{stage="{rollout_stage}"}} 1')
+
+        configured_fail_mode = str(llm.get("configured_fail_mode") or "unknown")
+        effective_fail_mode = str(llm.get("fail_mode") or "unknown")
+        lines.append("# HELP torghut_llm_fail_mode_configured Configured LLM fail mode.")
+        lines.append("# TYPE torghut_llm_fail_mode_configured gauge")
+        lines.append(f'torghut_llm_fail_mode_configured{{mode="{configured_fail_mode}"}} 1')
+        lines.append("# HELP torghut_llm_fail_mode_effective Effective LLM fail mode after guardrails/stage controls.")
+        lines.append("# TYPE torghut_llm_fail_mode_effective gauge")
+        lines.append(f'torghut_llm_fail_mode_effective{{mode="{effective_fail_mode}"}} 1')
+
+        circuit = llm.get("circuit", {})
+        if not isinstance(circuit, dict):
+            circuit = {}
+        lines.append("# HELP torghut_llm_circuit_open_now 1 when the LLM circuit breaker is currently open.")
+        lines.append("# TYPE torghut_llm_circuit_open_now gauge")
+        lines.append(f"torghut_llm_circuit_open_now {1.0 if circuit.get('open') else 0.0}")
+        lines.append("# HELP torghut_llm_circuit_open_seconds Duration in seconds that the circuit has been open.")
+        lines.append("# TYPE torghut_llm_circuit_open_seconds gauge")
+        lines.append(f"torghut_llm_circuit_open_seconds {float_or_nan(circuit.get('open_seconds', 0))}")
+        lines.append("# HELP torghut_llm_circuit_cooldown_remaining_seconds Remaining cooldown before the circuit can close.")
+        lines.append("# TYPE torghut_llm_circuit_cooldown_remaining_seconds gauge")
+        lines.append(
+            f"torghut_llm_circuit_cooldown_remaining_seconds {float_or_nan(circuit.get('cooldown_remaining_seconds', 0))}"
+        )
+
+        guardrails = llm.get("guardrails", {})
+        if not isinstance(guardrails, dict):
+            guardrails = {}
+        reasons = guardrails.get("reasons", [])
+        if isinstance(reasons, list):
+            lines.append("# HELP torghut_llm_guardrail_reason_active 1 when a specific guardrail reason is active.")
+            lines.append("# TYPE torghut_llm_guardrail_reason_active gauge")
+            for reason in reasons:
+                if not isinstance(reason, str):
+                    continue
+                escaped_reason = reason.replace("\\", "\\\\").replace('"', '\\"')
+                lines.append(f'torghut_llm_guardrail_reason_active{{reason="{escaped_reason}"}} 1')
+
         lines.append("# HELP torghut_llm_veto_rate_baseline Baseline veto rate configured for guardrails alerts.")
         lines.append("# TYPE torghut_llm_veto_rate_baseline gauge")
         lines.append(f"torghut_llm_veto_rate_baseline {LLM_VETO_RATE_BASELINE}")
@@ -133,6 +179,8 @@ data:
             "llm_parse_error_total",
             "llm_validation_error_total",
             "llm_circuit_open_total",
+            "llm_stage_policy_violation_total",
+            "llm_fail_mode_override_total",
             "llm_shadow_total",
             "llm_guardrail_block_total",
             "llm_guardrail_shadow_total",

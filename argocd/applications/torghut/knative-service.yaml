@@ -146,18 +146,22 @@ spec:
               value: gpt-5.3-codex
             - name: LLM_ALLOWED_MODELS
               value: gpt-5.3-codex
+            - name: LLM_ROLLOUT_STAGE
+              value: stage1_shadow_pilot
             - name: LLM_ENABLED
-              value: "false"
+              value: "true"
             - name: LLM_SHADOW_MODE
-              value: "false"
+              value: "true"
             - name: LLM_EVALUATION_REPORT
               value: torghut-llm-shadow-eval-2026-02-12
             - name: LLM_EFFECTIVE_CHALLENGE_ID
               value: torghut-llm-mrm-review-2026-02-12
             - name: LLM_SHADOW_COMPLETED_AT
               value: 2026-02-12T06:45:00Z
+            - name: LLM_MODEL_VERSION_LOCK
+              value: gpt-5.3-codex
             - name: LLM_FAIL_MODE
-              value: pass_through
+              value: veto
             - name: LLM_TIMEOUT_SECONDS
               value: "20"
             - name: LLM_JANGAR_BESPOKE_DECISION_ENABLED
