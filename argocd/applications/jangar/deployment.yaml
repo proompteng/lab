@@ -246,6 +246,28 @@ spec:
               value: "60"
             - name: JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS
               value: "300"
+            - name: JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS
+              value: "2000"
+            - name: JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS
+              value: "60"
+            - name: JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS
+              value: "300"
+            - name: JANGAR_MARKET_CONTEXT_FUNDAMENTALS_MAX_FRESHNESS_SECONDS
+              value: "86400"
+            - name: JANGAR_MARKET_CONTEXT_REGIME_MAX_FRESHNESS_SECONDS
+              value: "120"
+            - name: JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: jangar-market-context-providers
+                  key: fundamentals_url
+                  optional: true
+            - name: JANGAR_MARKET_CONTEXT_NEWS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: jangar-market-context-providers
+                  key: news_url
+                  optional: true
             - name: JANGAR_TORGHUT_DECISION_ENGINE_ENABLED
               value: "true"
             - name: JANGAR_TORGHUT_DECISION_RUN_TIMEOUT_MS
