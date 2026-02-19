@@ -10,7 +10,7 @@ def resolve_order_route_metadata(
     expected_adapter: Optional[str],
     execution_client: Any,
     order_response: Mapping[str, Any] | None,
-) -> tuple[Optional[str], Optional[str], Optional[str], Optional[int]]:
+) -> tuple[str, str, str | None, int]:
     """Resolve execution route provenance from expected adapter, client state, and order payload."""
 
     expected = coerce_route_text(expected_adapter)

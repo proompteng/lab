@@ -341,9 +341,6 @@ def apply_order_event_to_execution(execution: Execution, event: ExecutionOrderEv
     if event.feed_seq is not None:
         execution.order_feed_last_seq = event.feed_seq
 
-    if execution.execution_actual_adapter is None and execution.execution_expected_adapter is not None:
-        execution.execution_actual_adapter = execution.execution_expected_adapter
-
     execution.raw_order = coerce_json_payload(event.raw_event)
     return updated, False
 

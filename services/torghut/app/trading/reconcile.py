@@ -130,10 +130,8 @@ class Reconciler:
                 execution_expected_adapter=route_expected,
                 execution_actual_adapter=route_actual,
             )
-            if fallback_reason is not None:
-                execution.execution_fallback_reason = fallback_reason
-            if fallback_count is not None:
-                execution.execution_fallback_count = fallback_count
+            execution.execution_fallback_reason = fallback_reason
+            execution.execution_fallback_count = fallback_count
             execution.execution_actual_adapter = route_actual
             execution.execution_expected_adapter = route_expected or execution.execution_expected_adapter
             upsert_execution_tca_metric(session, execution)
@@ -164,14 +162,9 @@ def _apply_order_update(
         execution.execution_expected_adapter = execution_expected_adapter
     if execution_actual_adapter:
         execution.execution_actual_adapter = execution_actual_adapter
-    elif execution.execution_actual_adapter is None and execution.execution_expected_adapter is not None:
-        execution.execution_actual_adapter = execution.execution_expected_adapter
-    if execution.execution_expected_adapter is None and execution.execution_actual_adapter is not None:
-        execution.execution_expected_adapter = execution.execution_actual_adapter
     if execution_fallback_count is not None:
         execution.execution_fallback_count = execution_fallback_count
-    if execution_fallback_reason is not None:
-        execution.execution_fallback_reason = execution_fallback_reason
+    execution.execution_fallback_reason = execution_fallback_reason
     execution.raw_order = coerce_json_payload(order)
     execution.last_update_at = datetime.now(timezone.utc)
     return True
