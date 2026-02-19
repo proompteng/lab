@@ -204,6 +204,26 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                             )
                         )
                     continue
+                if key == "feature_null_rate":
+                    metric_name = "torghut_trading_feature_null_rate"
+                    lines.append(f"# HELP {metric_name} Required feature null-rate by field.")
+                    lines.append(f"# TYPE {metric_name} gauge")
+                    sorted_items = sorted(
+                        [
+                            (str(field), float(null_rate))
+                            for field, null_rate in cast(dict[str, object], value).items()
+                            if isinstance(null_rate, (int, float, Decimal))
+                        ]
+                    )
+                    for field, null_rate in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"field": field},
+                                value=null_rate,
+                            )
+                        )
+                    continue
                 if key == "tca_summary":
                     summary = cast(dict[str, object], value)
                     scalar_metrics: list[tuple[str, str]] = [
@@ -251,6 +271,18 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                     metric_name=metric_name, labels={"service": "torghut"}, value=value
                 )
             )
+            continue
+        if key == "feature_staleness_ms_p95":
+            metric_name = "torghut_trading_feature_staleness_ms_p95"
+            lines.append(f"# HELP {metric_name} Feature staleness p95 for the latest ingest batch.")
+            lines.append(f"# TYPE {metric_name} gauge")
+            lines.append(f"{metric_name} {value}")
+            continue
+        if key == "feature_duplicate_ratio":
+            metric_name = "torghut_trading_feature_duplicate_ratio"
+            lines.append(f"# HELP {metric_name} Duplicate event ratio in the latest ingest batch.")
+            lines.append(f"# TYPE {metric_name} gauge")
+            lines.append(f"{metric_name} {value}")
             continue
         metric_name = f"torghut_trading_{key}"
         help_text = f"Torghut trading metric {key.replace('_', ' ')}."

@@ -7,7 +7,12 @@ from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Protocol
 
-from ..features import FeatureNormalizationError, FeatureVectorV3, normalize_feature_vector_v3
+from ..features import (
+    FeatureNormalizationError,
+    FeatureVectorV3,
+    normalize_feature_vector_v3,
+    validate_declared_features,
+)
 from ..models import SignalEnvelope, StrategyDecision
 
 logger = logging.getLogger(__name__)
@@ -305,7 +310,14 @@ class StrategyRuntime:
 
             try:
                 plugin.validate_params(context.params)
-                missing = [feature for feature in plugin.required_features() if fv.values.get(feature) is None]
+                declared = plugin.required_features()
+                declared_valid, unknown_declared = validate_declared_features(declared)
+                if not declared_valid:
+                    errors.append(
+                        f'declared_features_not_in_schema:{strategy.strategy_id}:{"|".join(unknown_declared)}'
+                    )
+                    continue
+                missing = [feature for feature in declared if fv.values.get(feature) is None]
                 if missing:
                     errors.append(f'missing_features:{strategy.strategy_id}:{"|".join(sorted(missing))}')
                     continue

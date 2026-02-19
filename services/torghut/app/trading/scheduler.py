@@ -29,6 +29,7 @@ from .execution_adapters import (
     build_execution_adapter,
 )
 from .execution_policy import ExecutionPolicy
+from .feature_quality import FeatureQualityThresholds, evaluate_feature_batch_quality
 from .firewall import OrderFirewall, OrderFirewallBlocked
 from .ingest import ClickHouseSignalIngestor, SignalBatch
 from .llm import LLMReviewEngine, apply_policy
@@ -145,6 +146,15 @@ class TradingMetrics:
     strategy_runtime_isolated_failures_total: int = 0
     strategy_runtime_fallback_total: int = 0
     strategy_runtime_legacy_path_total: int = 0
+    feature_batch_rows_total: int = 0
+    feature_null_rate: dict[str, float] = field(
+        default_factory=lambda: cast(dict[str, float], {})
+    )
+    feature_staleness_ms_p95: int = 0
+    feature_duplicate_ratio: float = 0
+    feature_schema_mismatch_total: int = 0
+    feature_quality_rejections_total: int = 0
+    feature_parity_drift_total: int = 0
 
     def record_execution_request(self, adapter: str | None) -> None:
         adapter_name = coerce_route_text(adapter)
@@ -313,6 +323,29 @@ class TradingPipeline:
                 self.record_no_signal_batch(batch)
                 self.ingestor.commit_cursor(session, batch)
                 return
+            if settings.trading_feature_quality_enabled:
+                quality_thresholds = FeatureQualityThresholds(
+                    max_required_null_rate=settings.trading_feature_max_required_null_rate,
+                    max_staleness_ms=settings.trading_feature_max_staleness_ms,
+                    max_duplicate_ratio=settings.trading_feature_max_duplicate_ratio,
+                )
+                quality_report = evaluate_feature_batch_quality(batch.signals, thresholds=quality_thresholds)
+                self.state.metrics.feature_batch_rows_total += quality_report.rows_total
+                self.state.metrics.feature_null_rate = quality_report.null_rate_by_field
+                self.state.metrics.feature_staleness_ms_p95 = quality_report.staleness_ms_p95
+                self.state.metrics.feature_duplicate_ratio = quality_report.duplicate_ratio
+                self.state.metrics.feature_schema_mismatch_total += quality_report.schema_mismatch_total
+                if not quality_report.accepted:
+                    self.state.metrics.feature_quality_rejections_total += 1
+                    logger.error(
+                        "Feature quality gate failed rows=%s reasons=%s staleness_ms_p95=%s duplicate_ratio=%s",
+                        quality_report.rows_total,
+                        quality_report.reasons,
+                        quality_report.staleness_ms_p95,
+                        quality_report.duplicate_ratio,
+                    )
+                    self.ingestor.commit_cursor(session, batch)
+                    return
             self.state.metrics.no_signal_reason_streak = {}
             self.state.metrics.no_signal_streak = 0
             self.state.metrics.signal_lag_seconds = None

@@ -12,7 +12,7 @@ from decimal import Decimal
 from typing import Any, Literal, Protocol
 
 from ..models import Strategy
-from .features import FeatureVectorV3
+from .features import FeatureVectorV3, validate_declared_features
 
 
 @dataclass(frozen=True)
@@ -445,6 +445,9 @@ class StrategyRuntime:
         definition = self.definition_from_strategy(strategy)
         plugin = self.registry.resolve(definition)
         if plugin is None:
+            return None
+        declared_valid, _ = validate_declared_features(plugin.required_features)
+        if not declared_valid:
             return None
         context = StrategyContext(
             strategy_id=definition.strategy_id,
