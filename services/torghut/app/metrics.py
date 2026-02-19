@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from decimal import Decimal
 from typing import cast
 
 
@@ -163,10 +164,9 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                     ]
                     for summary_key, metric_name in scalar_metrics:
                         metric_value = summary.get(summary_key)
-                        try:
-                            numeric_value = float(metric_value)
-                        except (TypeError, ValueError):
+                        if not isinstance(metric_value, (int, float, Decimal)):
                             continue
+                        numeric_value = float(metric_value)
                         metric_type = "counter" if summary_key == "order_count" else "gauge"
                         lines.append(f"# HELP {metric_name} Torghut TCA summary metric {summary_key}.")
                         lines.append(f"# TYPE {metric_name} {metric_type}")

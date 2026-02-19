@@ -2,9 +2,11 @@
 
 import logging
 import os
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
 from datetime import datetime
+from decimal import Decimal
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
@@ -443,8 +445,10 @@ def _load_tca_summary(session: Session) -> dict[str, object]:
             func.max(ExecutionTCAMetric.computed_at),
         )
     ).one()
+    order_count_raw = row[0]
+    order_count = int(order_count_raw) if isinstance(order_count_raw, (int, float, Decimal)) else 0
     return {
-        "order_count": int(row[0] or 0),
+        "order_count": order_count,
         "avg_slippage_bps": row[1],
         "avg_shortfall_notional": row[2],
         "avg_churn_ratio": row[3],
@@ -452,7 +456,23 @@ def _load_tca_summary(session: Session) -> dict[str, object]:
     }
 
 
-def _aggregate_tca_rows(rows: list[ExecutionTCAMetric]) -> dict[str, list[dict[str, object]]]:
+def _aggregate_tca_rows(rows: Sequence[ExecutionTCAMetric]) -> dict[str, list[dict[str, object]]]:
+    def _as_int(value: object) -> int:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        return 0
+
+    def _as_float(value: object) -> float:
+        if isinstance(value, bool):
+            return float(value)
+        if isinstance(value, (int, float)):
+            return float(value)
+        return 0.0
+
     by_strategy: dict[tuple[str, str], dict[str, object]] = {}
     by_symbol: dict[tuple[str, str, str], dict[str, object]] = {}
     for row in rows:
@@ -490,26 +510,26 @@ def _aggregate_tca_rows(rows: list[ExecutionTCAMetric]) -> dict[str, list[dict[s
             },
         )
         for agg in (strategy_agg, symbol_agg):
-            agg["order_count"] = int(agg["order_count"]) + 1
+            agg["order_count"] = _as_int(agg["order_count"]) + 1
             if row.slippage_bps is not None:
-                agg["_slippage_sum"] = float(agg["_slippage_sum"]) + float(row.slippage_bps)
-                agg["_slippage_count"] = int(agg["_slippage_count"]) + 1
+                agg["_slippage_sum"] = _as_float(agg["_slippage_sum"]) + float(row.slippage_bps)
+                agg["_slippage_count"] = _as_int(agg["_slippage_count"]) + 1
             if row.shortfall_notional is not None:
-                agg["_shortfall_sum"] = float(agg["_shortfall_sum"]) + float(row.shortfall_notional)
-                agg["_shortfall_count"] = int(agg["_shortfall_count"]) + 1
+                agg["_shortfall_sum"] = _as_float(agg["_shortfall_sum"]) + float(row.shortfall_notional)
+                agg["_shortfall_count"] = _as_int(agg["_shortfall_count"]) + 1
             if row.churn_ratio is not None:
-                agg["_churn_sum"] = float(agg["_churn_sum"]) + float(row.churn_ratio)
-                agg["_churn_count"] = int(agg["_churn_count"]) + 1
+                agg["_churn_sum"] = _as_float(agg["_churn_sum"]) + float(row.churn_ratio)
+                agg["_churn_count"] = _as_int(agg["_churn_count"]) + 1
 
     def _finalize(aggregates: list[dict[str, object]]) -> list[dict[str, object]]:
         payload: list[dict[str, object]] = []
         for aggregate in aggregates:
-            slippage_count = int(aggregate.pop("_slippage_count"))
-            slippage_sum = float(aggregate.pop("_slippage_sum"))
-            shortfall_count = int(aggregate.pop("_shortfall_count"))
-            shortfall_sum = float(aggregate.pop("_shortfall_sum"))
-            churn_count = int(aggregate.pop("_churn_count"))
-            churn_sum = float(aggregate.pop("_churn_sum"))
+            slippage_count = _as_int(aggregate.pop("_slippage_count"))
+            slippage_sum = _as_float(aggregate.pop("_slippage_sum"))
+            shortfall_count = _as_int(aggregate.pop("_shortfall_count"))
+            shortfall_sum = _as_float(aggregate.pop("_shortfall_sum"))
+            churn_count = _as_int(aggregate.pop("_churn_count"))
+            churn_sum = _as_float(aggregate.pop("_churn_sum"))
             aggregate["avg_slippage_bps"] = (slippage_sum / slippage_count) if slippage_count else None
             aggregate["avg_shortfall_notional"] = (shortfall_sum / shortfall_count) if shortfall_count else None
             aggregate["avg_churn_ratio"] = (churn_sum / churn_count) if churn_count else None

@@ -9,8 +9,8 @@ from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
-revision = "0008_execution_tca_metrics"
-down_revision = "0007_autonomy_permissions_backfill_routes"
+revision = "0009_execution_tca_metrics"
+down_revision = "0008_order_feed_execution_events"
 branch_labels = None
 depends_on = None
 

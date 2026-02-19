@@ -148,16 +148,22 @@ def _derive_churn(
 
 def _resolve_arrival_price(*, decision: TradeDecision | None, execution: Execution) -> Decimal | None:
     decision_payload: dict[str, Any] = {}
-    if decision is not None and isinstance(decision.decision_json, Mapping):
-        decision_payload = {str(key): value for key, value in cast(Mapping[str, Any], decision.decision_json).items()}
+    decision_json = decision.decision_json if decision is not None else None
+    if isinstance(decision_json, Mapping):
+        decision_payload = {
+            str(key): value for key, value in cast(Mapping[object, object], decision_json).items()
+        }
     params = decision_payload.get("params")
     params_payload: dict[str, Any] = {}
     if isinstance(params, Mapping):
-        params_payload = {str(key): value for key, value in cast(Mapping[str, Any], params).items()}
+        params_payload = {str(key): value for key, value in cast(Mapping[object, object], params).items()}
 
     raw_order_payload: dict[str, Any] = {}
-    if isinstance(execution.raw_order, Mapping):
-        raw_order_payload = {str(key): value for key, value in cast(Mapping[str, Any], execution.raw_order).items()}
+    raw_order = execution.raw_order
+    if isinstance(raw_order, Mapping):
+        raw_order_payload = {
+            str(key): value for key, value in cast(Mapping[object, object], raw_order).items()
+        }
 
     for candidate in (
         params_payload.get("arrival_price"),
