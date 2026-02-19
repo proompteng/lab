@@ -334,6 +334,14 @@ class Settings(BaseSettings):
     llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=300, alias="LLM_MAX_TOKENS")
     llm_timeout_seconds: int = Field(default=20, alias="LLM_TIMEOUT_SECONDS")
+    llm_jangar_bespoke_decision_enabled: bool = Field(
+        default=False, alias="LLM_JANGAR_BESPOKE_DECISION_ENABLED"
+    )
+    llm_jangar_bespoke_timeout_seconds: int = Field(default=75, alias="LLM_JANGAR_BESPOKE_TIMEOUT_SECONDS")
+    llm_jangar_bespoke_max_retries: int = Field(default=1, alias="LLM_JANGAR_BESPOKE_MAX_RETRIES")
+    llm_jangar_bespoke_retry_backoff_seconds: float = Field(
+        default=0.5, alias="LLM_JANGAR_BESPOKE_RETRY_BACKOFF_SECONDS"
+    )
     llm_fail_mode: Literal["veto", "pass_through"] = Field(default="veto", alias="LLM_FAIL_MODE")
     llm_min_confidence: float = Field(default=0.5, alias="LLM_MIN_CONFIDENCE")
     llm_adjustment_allowed: bool = Field(default=False, alias="LLM_ADJUSTMENT_ALLOWED")
