@@ -46,3 +46,15 @@ class TestTradingMetrics(TestCase):
         )
         self.assertIn('# TYPE torghut_trading_signal_staleness_alert_total counter', payload)
         self.assertIn('# TYPE torghut_trading_signal_lag_seconds gauge', payload)
+
+    def test_order_feed_counters_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        metrics.order_feed_messages_total = 3
+        metrics.order_feed_events_persisted_total = 2
+        metrics.order_feed_duplicates_total = 1
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn('torghut_trading_order_feed_messages_total 3', payload)
+        self.assertIn('torghut_trading_order_feed_events_persisted_total 2', payload)
+        self.assertIn('torghut_trading_order_feed_duplicates_total 1', payload)

@@ -32,6 +32,25 @@ Health checks:
 - `GET /healthz` – liveness (default port 8181)
 - `GET /db-check` – requires reachable Postgres at `DB_DSN` (default port 8181)
 
+## Order-feed ingestion (v3 execution accuracy)
+- `TRADING_ORDER_FEED_ENABLED=true` enables Kafka order-update ingestion in the main trading runtime.
+- `TRADING_ORDER_FEED_BOOTSTRAP_SERVERS=<host:port,...>` must be set when enabled.
+- `TRADING_ORDER_FEED_TOPIC` defaults to `torghut.trade-updates.v1`.
+- `TRADING_ORDER_FEED_GROUP_ID` defaults to `torghut-order-feed-v1`.
+- `TRADING_ORDER_FEED_CLIENT_ID` defaults to `torghut-order-feed`.
+- `TRADING_ORDER_FEED_AUTO_OFFSET_RESET` supports `latest` (default) or `earliest`.
+- `TRADING_ORDER_FEED_POLL_MS` (default `250`) controls poll latency.
+- `TRADING_ORDER_FEED_BATCH_SIZE` (default `200`) controls max records per poll.
+
+Metrics emitted on `/metrics`:
+- `torghut_trading_order_feed_messages_total`
+- `torghut_trading_order_feed_events_persisted_total`
+- `torghut_trading_order_feed_duplicates_total`
+- `torghut_trading_order_feed_out_of_order_total`
+- `torghut_trading_order_feed_missing_fields_total`
+- `torghut_trading_order_feed_apply_updates_total`
+- `torghut_trading_order_feed_consumer_errors_total`
+
 ## v3 autonomous lane (phase 1/2 foundation)
 Deterministic research -> gate evaluation -> paper candidate patch pipeline:
 

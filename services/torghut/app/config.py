@@ -53,6 +53,42 @@ class Settings(BaseSettings):
     trading_price_lookback_minutes: int = Field(default=5, alias="TRADING_PRICE_LOOKBACK_MINUTES")
     trading_poll_ms: int = Field(default=5000, alias="TRADING_POLL_MS")
     trading_reconcile_ms: int = Field(default=15000, alias="TRADING_RECONCILE_MS")
+    trading_order_feed_enabled: bool = Field(default=False, alias="TRADING_ORDER_FEED_ENABLED")
+    trading_order_feed_bootstrap_servers: Optional[str] = Field(
+        default=None,
+        alias="TRADING_ORDER_FEED_BOOTSTRAP_SERVERS",
+        description="Comma-separated Kafka bootstrap servers for trade update ingestion.",
+    )
+    trading_order_feed_topic: str = Field(
+        default="torghut.trade-updates.v1",
+        alias="TRADING_ORDER_FEED_TOPIC",
+        description="Canonical order update topic.",
+    )
+    trading_order_feed_group_id: str = Field(
+        default="torghut-order-feed-v1",
+        alias="TRADING_ORDER_FEED_GROUP_ID",
+        description="Consumer group id for order-feed ingestion.",
+    )
+    trading_order_feed_client_id: str = Field(
+        default="torghut-order-feed",
+        alias="TRADING_ORDER_FEED_CLIENT_ID",
+        description="Kafka client id for order-feed ingestion.",
+    )
+    trading_order_feed_auto_offset_reset: Literal["latest", "earliest"] = Field(
+        default="latest",
+        alias="TRADING_ORDER_FEED_AUTO_OFFSET_RESET",
+        description="Offset reset behavior when consumer group has no committed offsets.",
+    )
+    trading_order_feed_poll_ms: int = Field(
+        default=250,
+        alias="TRADING_ORDER_FEED_POLL_MS",
+        description="Kafka poll timeout in milliseconds for order-feed ingestion.",
+    )
+    trading_order_feed_batch_size: int = Field(
+        default=200,
+        alias="TRADING_ORDER_FEED_BATCH_SIZE",
+        description="Max messages processed per order-feed poll.",
+    )
     trading_strategy_config_path: Optional[str] = Field(
         default=None,
         alias="TRADING_STRATEGY_CONFIG_PATH",
