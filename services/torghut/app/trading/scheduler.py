@@ -34,7 +34,11 @@ from .firewall import OrderFirewall, OrderFirewallBlocked
 from .ingest import ClickHouseSignalIngestor, SignalBatch
 from .llm import LLMReviewEngine, apply_policy
 from .llm.guardrails import evaluate_llm_guardrails
-from .market_context import MarketContextClient, MarketContextStatus, evaluate_market_context
+from .market_context import (
+    MarketContextClient,
+    MarketContextStatus,
+    evaluate_market_context,
+)
 from .models import SignalEnvelope, StrategyDecision
 from .portfolio import PortfolioSizingResult, sizer_from_settings
 from .prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
@@ -95,6 +99,8 @@ class TradingMetrics:
     llm_parse_error_total: int = 0
     llm_validation_error_total: int = 0
     llm_circuit_open_total: int = 0
+    llm_stage_policy_violation_total: int = 0
+    llm_fail_mode_override_total: int = 0
     llm_shadow_total: int = 0
     llm_guardrail_block_total: int = 0
     llm_guardrail_shadow_total: int = 0
@@ -361,12 +367,20 @@ class TradingPipeline:
                     max_staleness_ms=settings.trading_feature_max_staleness_ms,
                     max_duplicate_ratio=settings.trading_feature_max_duplicate_ratio,
                 )
-                quality_report = evaluate_feature_batch_quality(batch.signals, thresholds=quality_thresholds)
+                quality_report = evaluate_feature_batch_quality(
+                    batch.signals, thresholds=quality_thresholds
+                )
                 self.state.metrics.feature_batch_rows_total += quality_report.rows_total
                 self.state.metrics.feature_null_rate = quality_report.null_rate_by_field
-                self.state.metrics.feature_staleness_ms_p95 = quality_report.staleness_ms_p95
-                self.state.metrics.feature_duplicate_ratio = quality_report.duplicate_ratio
-                self.state.metrics.feature_schema_mismatch_total += quality_report.schema_mismatch_total
+                self.state.metrics.feature_staleness_ms_p95 = (
+                    quality_report.staleness_ms_p95
+                )
+                self.state.metrics.feature_duplicate_ratio = (
+                    quality_report.duplicate_ratio
+                )
+                self.state.metrics.feature_schema_mismatch_total += (
+                    quality_report.schema_mismatch_total
+                )
                 if not quality_report.accepted:
                     self.state.metrics.feature_quality_rejections_total += 1
                     logger.error(
@@ -821,10 +835,11 @@ class TradingPipeline:
         account: dict[str, str],
         positions: list[dict[str, Any]],
     ) -> tuple[StrategyDecision, Optional[str]]:
-        if not settings.llm_enabled:
-            return decision, None
-
         guardrails = evaluate_llm_guardrails()
+        if _has_stage_policy_violation(guardrails):
+            self.state.metrics.llm_stage_policy_violation_total += 1
+        if not guardrails.enabled:
+            return decision, None
         if not guardrails.allow_requests:
             self.state.metrics.llm_guardrail_block_total += 1
             return self._handle_llm_unavailable(
@@ -837,6 +852,7 @@ class TradingPipeline:
                 shadow_mode=True,
                 risk_flags=list(guardrails.reasons),
                 market_context=None,
+                fail_mode=guardrails.fail_mode,
             )
 
         engine = self.llm_review_engine or LLMReviewEngine()
@@ -851,12 +867,15 @@ class TradingPipeline:
                 reason="llm_circuit_open",
                 shadow_mode=guardrails.shadow_mode,
                 market_context=None,
+                fail_mode=guardrails.fail_mode,
             )
         request_json: dict[str, Any] = {}
         market_context: Optional[MarketContextBundle] = None
         try:
             self.state.metrics.llm_requests_total += 1
-            market_context, market_context_error = self._fetch_market_context(decision.symbol)
+            market_context, market_context_error = self._fetch_market_context(
+                decision.symbol
+            )
             if market_context_error is not None:
                 self.state.metrics.llm_market_context_error_total += 1
             portfolio_snapshot = _build_portfolio_snapshot(account, positions)
@@ -890,6 +909,7 @@ class TradingPipeline:
                     shadow_mode=fail_mode_shadow,
                     risk_flags=market_context_status.risk_flags,
                     market_context=market_context,
+                    fail_mode=guardrails.fail_mode,
                 )
             request = engine.build_request(
                 decision,
@@ -988,7 +1008,7 @@ class TradingPipeline:
                 self.state.metrics.llm_parse_error_total += 1
             elif error_label == "llm_response_invalid":
                 self.state.metrics.llm_validation_error_total += 1
-            fallback = self._resolve_llm_fallback()
+            fallback = self._resolve_llm_fallback(guardrails.fail_mode)
             effective_verdict = "veto" if fallback == "veto" else "approve"
             response_json = {
                 "error": str(exc),
@@ -1045,8 +1065,9 @@ class TradingPipeline:
         shadow_mode: bool,
         risk_flags: Optional[list[str]] = None,
         market_context: Optional[MarketContextBundle] = None,
+        fail_mode: Optional[str] = None,
     ) -> tuple[StrategyDecision, Optional[str]]:
-        fallback = self._resolve_llm_fallback()
+        fallback = self._resolve_llm_fallback(fail_mode)
         effective_verdict = "veto" if fallback == "veto" else "approve"
         portfolio_snapshot = _build_portfolio_snapshot(account, positions)
         market_snapshot = self._build_market_snapshot(decision)
@@ -1165,17 +1186,25 @@ class TradingPipeline:
             updated_params["spread"] = snapshot.spread
         return decision.model_copy(update={"params": updated_params}), snapshot
 
-    @staticmethod
-    def _resolve_llm_fallback() -> str:
-        if settings.trading_mode == "live":
-            return "veto"
-        return settings.llm_fail_mode
+    def _resolve_llm_fallback(self, fail_mode: Optional[str] = None) -> str:
+        fallback = fail_mode
+        if fallback is None:
+            fallback = (
+                "veto" if settings.trading_mode == "live" else settings.llm_fail_mode
+            )
+        if fallback != settings.llm_fail_mode:
+            self.state.metrics.llm_fail_mode_override_total += 1
+        return fallback
 
-    def _fetch_market_context(self, symbol: str) -> tuple[Optional[MarketContextBundle], Optional[str]]:
+    def _fetch_market_context(
+        self, symbol: str
+    ) -> tuple[Optional[MarketContextBundle], Optional[str]]:
         try:
             return self.market_context_client.fetch(symbol), None
         except Exception as exc:
-            logger.warning("market context fetch failed symbol=%s error=%s", symbol, exc)
+            logger.warning(
+                "market context fetch failed symbol=%s error=%s", symbol, exc
+            )
             return None, str(exc)
 
     def _get_account_snapshot(self, session: Session):
@@ -1259,6 +1288,16 @@ def _classify_llm_error(error: Exception) -> Optional[str]:
     if message == "llm_response_invalid":
         return "llm_response_invalid"
     return None
+
+
+def _has_stage_policy_violation(guardrails: object) -> bool:
+    reasons = getattr(guardrails, "reasons", ())
+    if not isinstance(reasons, tuple):
+        return False
+    for item in cast(tuple[object, ...], reasons):
+        if isinstance(item, str) and item.startswith("llm_stage"):
+            return True
+    return False
 
 
 def _price_snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:
@@ -1410,17 +1449,25 @@ class TradingScheduler:
             )
         guardrails = evaluate_llm_guardrails()
         return {
-            "enabled": settings.llm_enabled,
+            "enabled": guardrails.enabled,
+            "rollout_stage": guardrails.rollout_stage,
             # Keep configured shadow_mode for backward compatibility.
             "shadow_mode": settings.llm_shadow_mode,
             # Effective runtime posture after model-risk guardrails.
             "effective_shadow_mode": guardrails.shadow_mode,
-            "fail_mode": settings.llm_fail_mode,
+            "fail_mode": guardrails.fail_mode,
+            "configured_fail_mode": settings.llm_fail_mode,
             "circuit": circuit_snapshot,
             "guardrails": {
                 "allow_requests": guardrails.allow_requests,
                 "effective_adjustment_allowed": guardrails.adjustment_allowed,
                 "reasons": list(guardrails.reasons),
+            },
+            "governance": {
+                "evaluation_report": settings.llm_evaluation_report,
+                "effective_challenge_id": settings.llm_effective_challenge_id,
+                "shadow_completed_at": settings.llm_shadow_completed_at,
+                "model_version_lock": settings.llm_model_version_lock,
             },
         }
 

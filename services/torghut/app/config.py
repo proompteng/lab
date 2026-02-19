@@ -20,20 +20,34 @@ class Settings(BaseSettings):
         description="PostgreSQL connection string.",
     )
     apca_api_key_id: Optional[str] = Field(default=None, alias="APCA_API_KEY_ID")
-    apca_api_secret_key: Optional[str] = Field(default=None, alias="APCA_API_SECRET_KEY")
+    apca_api_secret_key: Optional[str] = Field(
+        default=None, alias="APCA_API_SECRET_KEY"
+    )
     apca_api_base_url: Optional[str] = Field(default=None, alias="APCA_API_BASE_URL")
-    apca_data_api_base_url: Optional[str] = Field(default=None, alias="APCA_DATA_API_BASE_URL")
+    apca_data_api_base_url: Optional[str] = Field(
+        default=None, alias="APCA_DATA_API_BASE_URL"
+    )
 
     trading_enabled: bool = Field(default=False, alias="TRADING_ENABLED")
-    trading_mode: Literal["paper", "live"] = Field(default="paper", alias="TRADING_MODE")
+    trading_mode: Literal["paper", "live"] = Field(
+        default="paper", alias="TRADING_MODE"
+    )
     trading_live_enabled: bool = Field(default=False, alias="TRADING_LIVE_ENABLED")
-    trading_signal_source: Literal["clickhouse"] = Field(default="clickhouse", alias="TRADING_SIGNAL_SOURCE")
-    trading_signal_table: str = Field(default="torghut.ta_signals", alias="TRADING_SIGNAL_TABLE")
+    trading_signal_source: Literal["clickhouse"] = Field(
+        default="clickhouse", alias="TRADING_SIGNAL_SOURCE"
+    )
+    trading_signal_table: str = Field(
+        default="torghut.ta_signals", alias="TRADING_SIGNAL_TABLE"
+    )
     trading_signal_schema: Literal["auto", "envelope", "flat"] = Field(
         default="auto", alias="TRADING_SIGNAL_SCHEMA"
     )
-    trading_signal_batch_size: int = Field(default=500, alias="TRADING_SIGNAL_BATCH_SIZE")
-    trading_signal_lookback_minutes: int = Field(default=15, alias="TRADING_SIGNAL_LOOKBACK_MINUTES")
+    trading_signal_batch_size: int = Field(
+        default=500, alias="TRADING_SIGNAL_BATCH_SIZE"
+    )
+    trading_signal_lookback_minutes: int = Field(
+        default=15, alias="TRADING_SIGNAL_LOOKBACK_MINUTES"
+    )
     trading_signal_empty_batch_advance_seconds: int = Field(
         default=60,
         alias="TRADING_SIGNAL_EMPTY_BATCH_ADVANCE_SECONDS",
@@ -49,11 +63,17 @@ class Settings(BaseSettings):
         alias="TRADING_SIGNAL_STALE_LAG_ALERT_SECONDS",
         description="Signal lag threshold (seconds) that triggers a source continuity alert.",
     )
-    trading_price_table: str = Field(default="torghut.ta_microbars", alias="TRADING_PRICE_TABLE")
-    trading_price_lookback_minutes: int = Field(default=5, alias="TRADING_PRICE_LOOKBACK_MINUTES")
+    trading_price_table: str = Field(
+        default="torghut.ta_microbars", alias="TRADING_PRICE_TABLE"
+    )
+    trading_price_lookback_minutes: int = Field(
+        default=5, alias="TRADING_PRICE_LOOKBACK_MINUTES"
+    )
     trading_poll_ms: int = Field(default=5000, alias="TRADING_POLL_MS")
     trading_reconcile_ms: int = Field(default=15000, alias="TRADING_RECONCILE_MS")
-    trading_order_feed_enabled: bool = Field(default=False, alias="TRADING_ORDER_FEED_ENABLED")
+    trading_order_feed_enabled: bool = Field(
+        default=False, alias="TRADING_ORDER_FEED_ENABLED"
+    )
     trading_order_feed_bootstrap_servers: Optional[str] = Field(
         default=None,
         alias="TRADING_ORDER_FEED_BOOTSTRAP_SERVERS",
@@ -104,13 +124,15 @@ class Settings(BaseSettings):
         alias="TRADING_STRATEGY_RELOAD_SECONDS",
         description="Seconds between strategy catalog reload checks.",
     )
-    trading_strategy_runtime_mode: Literal["legacy", "plugin_v3", "scheduler_v3"] = Field(
-        default="legacy",
-        alias="TRADING_STRATEGY_RUNTIME_MODE",
-        description=(
-            "Strategy runtime mode. legacy keeps current behavior; plugin_v3 enables plugin scaffolding; "
-            "scheduler_v3 enables scheduler integration behind migration flag."
-        ),
+    trading_strategy_runtime_mode: Literal["legacy", "plugin_v3", "scheduler_v3"] = (
+        Field(
+            default="legacy",
+            alias="TRADING_STRATEGY_RUNTIME_MODE",
+            description=(
+                "Strategy runtime mode. legacy keeps current behavior; plugin_v3 enables plugin scaffolding; "
+                "scheduler_v3 enables scheduler integration behind migration flag."
+            ),
+        )
     )
     trading_strategy_scheduler_enabled: bool = Field(
         default=False,
@@ -162,7 +184,9 @@ class Settings(BaseSettings):
         alias="TRADING_FEATURE_MAX_DUPLICATE_RATIO",
         description="Maximum duplicate event ratio per ingest batch.",
     )
-    trading_autonomy_enabled: bool = Field(default=False, alias="TRADING_AUTONOMY_ENABLED")
+    trading_autonomy_enabled: bool = Field(
+        default=False, alias="TRADING_AUTONOMY_ENABLED"
+    )
     trading_autonomy_allow_live_promotion: bool = Field(
         default=False,
         alias="TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION",
@@ -178,7 +202,9 @@ class Settings(BaseSettings):
         alias="TRADING_AUTONOMY_GATE_POLICY_PATH",
         description="Optional path to v3 autonomous gate policy config JSON.",
     )
-    trading_autonomy_interval_seconds: int = Field(default=300, alias="TRADING_AUTONOMY_INTERVAL_SECONDS")
+    trading_autonomy_interval_seconds: int = Field(
+        default=300, alias="TRADING_AUTONOMY_INTERVAL_SECONDS"
+    )
     trading_autonomy_signal_lookback_minutes: int = Field(
         default=15,
         alias="TRADING_AUTONOMY_SIGNAL_LOOKBACK_MINUTES",
@@ -217,9 +243,15 @@ class Settings(BaseSettings):
         alias="TRADING_UNIVERSE_MAX_STALE_SECONDS",
         description="Maximum age for cached Jangar symbol universe before it is treated as stale.",
     )
-    trading_static_symbols_raw: Optional[str] = Field(default=None, alias="TRADING_STATIC_SYMBOLS")
-    trading_universe_cache_seconds: int = Field(default=300, alias="TRADING_UNIVERSE_CACHE_SECONDS")
-    trading_universe_timeout_seconds: int = Field(default=5, alias="TRADING_UNIVERSE_TIMEOUT_SECONDS")
+    trading_static_symbols_raw: Optional[str] = Field(
+        default=None, alias="TRADING_STATIC_SYMBOLS"
+    )
+    trading_universe_cache_seconds: int = Field(
+        default=300, alias="TRADING_UNIVERSE_CACHE_SECONDS"
+    )
+    trading_universe_timeout_seconds: int = Field(
+        default=5, alias="TRADING_UNIVERSE_TIMEOUT_SECONDS"
+    )
     trading_default_qty: int = Field(default=1, alias="TRADING_DEFAULT_QTY")
     trading_max_notional_per_trade: Optional[float] = Field(
         default=None, alias="TRADING_MAX_NOTIONAL_PER_TRADE"
@@ -230,8 +262,12 @@ class Settings(BaseSettings):
     trading_max_participation_rate: Optional[float] = Field(
         default=None, alias="TRADING_MAX_PARTICIPATION_RATE"
     )
-    trading_execution_prefer_limit: bool = Field(default=True, alias="TRADING_EXECUTION_PREFER_LIMIT")
-    trading_execution_max_retries: int = Field(default=0, alias="TRADING_EXECUTION_MAX_RETRIES")
+    trading_execution_prefer_limit: bool = Field(
+        default=True, alias="TRADING_EXECUTION_PREFER_LIMIT"
+    )
+    trading_execution_max_retries: int = Field(
+        default=0, alias="TRADING_EXECUTION_MAX_RETRIES"
+    )
     trading_execution_backoff_base_seconds: float = Field(
         default=0.25, alias="TRADING_EXECUTION_BACKOFF_BASE_SECONDS"
     )
@@ -322,7 +358,9 @@ class Settings(BaseSettings):
     trading_cooldown_seconds: int = Field(default=0, alias="TRADING_COOLDOWN_SECONDS")
     trading_allow_shorts: bool = Field(default=False, alias="TRADING_ALLOW_SHORTS")
     trading_account_label: str = Field(default="paper", alias="TRADING_ACCOUNT_LABEL")
-    trading_kill_switch_enabled: bool = Field(default=True, alias="TRADING_KILL_SWITCH_ENABLED")
+    trading_kill_switch_enabled: bool = Field(
+        default=True, alias="TRADING_KILL_SWITCH_ENABLED"
+    )
     trading_emergency_stop_enabled: bool = Field(
         default=True,
         alias="TRADING_EMERGENCY_STOP_ENABLED",
@@ -348,7 +386,9 @@ class Settings(BaseSettings):
         alias="TRADING_ROLLBACK_MAX_DRAWDOWN_LIMIT",
         description="Absolute drawdown threshold from autonomous gate artifacts that triggers emergency stop.",
     )
-    trading_jangar_symbols_url: Optional[str] = Field(default=None, alias="JANGAR_SYMBOLS_URL")
+    trading_jangar_symbols_url: Optional[str] = Field(
+        default=None, alias="JANGAR_SYMBOLS_URL"
+    )
     trading_market_context_url: Optional[str] = Field(
         default=None,
         alias="TRADING_MARKET_CONTEXT_URL",
@@ -379,13 +419,21 @@ class Settings(BaseSettings):
         alias="TRADING_MARKET_CONTEXT_MAX_STALENESS_SECONDS",
         description="Maximum accepted market-context staleness.",
     )
-    trading_clickhouse_url: Optional[str] = Field(default=None, alias="TA_CLICKHOUSE_URL")
-    trading_clickhouse_username: Optional[str] = Field(default=None, alias="TA_CLICKHOUSE_USERNAME")
-    trading_clickhouse_password: Optional[str] = Field(default=None, alias="TA_CLICKHOUSE_PASSWORD")
+    trading_clickhouse_url: Optional[str] = Field(
+        default=None, alias="TA_CLICKHOUSE_URL"
+    )
+    trading_clickhouse_username: Optional[str] = Field(
+        default=None, alias="TA_CLICKHOUSE_USERNAME"
+    )
+    trading_clickhouse_password: Optional[str] = Field(
+        default=None, alias="TA_CLICKHOUSE_PASSWORD"
+    )
     trading_clickhouse_timeout_seconds: int = Field(
         default=5,
         alias="TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS",
-        validation_alias=AliasChoices("TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS", "CLICKHOUSE_TIMEOUT_SECONDS"),
+        validation_alias=AliasChoices(
+            "TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS", "CLICKHOUSE_TIMEOUT_SECONDS"
+        ),
     )
 
     # Jangar gateway (recommended for LLM calls in-cluster).
@@ -393,13 +441,27 @@ class Settings(BaseSettings):
     jangar_api_key: Optional[str] = Field(default=None, alias="JANGAR_API_KEY")
 
     llm_enabled: bool = Field(default=False, alias="LLM_ENABLED")
-    llm_provider: Literal["jangar", "openai"] = Field(default="openai", alias="LLM_PROVIDER")
+    llm_rollout_stage: Literal[
+        "stage0_baseline",
+        "stage1_shadow_pilot",
+        "stage2_paper_advisory",
+        "stage3_controlled_live",
+    ] = Field(default="stage3_controlled_live", alias="LLM_ROLLOUT_STAGE")
+    llm_provider: Literal["jangar", "openai"] = Field(
+        default="openai", alias="LLM_PROVIDER"
+    )
     llm_model: str = Field(default="gpt-5.3-codex", alias="LLM_MODEL")
     # Used only when `LLM_PROVIDER=jangar` and the Jangar request fails.
     # This should point at an OpenAI-compatible endpoint (e.g. vLLM, Ollama, llama.cpp server).
-    llm_self_hosted_base_url: Optional[str] = Field(default=None, alias="LLM_SELF_HOSTED_BASE_URL")
-    llm_self_hosted_api_key: Optional[str] = Field(default=None, alias="LLM_SELF_HOSTED_API_KEY")
-    llm_self_hosted_model: Optional[str] = Field(default=None, alias="LLM_SELF_HOSTED_MODEL")
+    llm_self_hosted_base_url: Optional[str] = Field(
+        default=None, alias="LLM_SELF_HOSTED_BASE_URL"
+    )
+    llm_self_hosted_api_key: Optional[str] = Field(
+        default=None, alias="LLM_SELF_HOSTED_API_KEY"
+    )
+    llm_self_hosted_model: Optional[str] = Field(
+        default=None, alias="LLM_SELF_HOSTED_MODEL"
+    )
     llm_prompt_version: str = Field(default="v1", alias="LLM_PROMPT_VERSION")
     llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=300, alias="LLM_MAX_TOKENS")
@@ -407,12 +469,18 @@ class Settings(BaseSettings):
     llm_jangar_bespoke_decision_enabled: bool = Field(
         default=False, alias="LLM_JANGAR_BESPOKE_DECISION_ENABLED"
     )
-    llm_jangar_bespoke_timeout_seconds: int = Field(default=75, alias="LLM_JANGAR_BESPOKE_TIMEOUT_SECONDS")
-    llm_jangar_bespoke_max_retries: int = Field(default=1, alias="LLM_JANGAR_BESPOKE_MAX_RETRIES")
+    llm_jangar_bespoke_timeout_seconds: int = Field(
+        default=75, alias="LLM_JANGAR_BESPOKE_TIMEOUT_SECONDS"
+    )
+    llm_jangar_bespoke_max_retries: int = Field(
+        default=1, alias="LLM_JANGAR_BESPOKE_MAX_RETRIES"
+    )
     llm_jangar_bespoke_retry_backoff_seconds: float = Field(
         default=0.5, alias="LLM_JANGAR_BESPOKE_RETRY_BACKOFF_SECONDS"
     )
-    llm_fail_mode: Literal["veto", "pass_through"] = Field(default="veto", alias="LLM_FAIL_MODE")
+    llm_fail_mode: Literal["veto", "pass_through"] = Field(
+        default="veto", alias="LLM_FAIL_MODE"
+    )
     llm_min_confidence: float = Field(default=0.5, alias="LLM_MIN_CONFIDENCE")
     llm_adjustment_allowed: bool = Field(default=False, alias="LLM_ADJUSTMENT_ALLOWED")
     llm_max_qty_multiplier: float = Field(default=1.25, alias="LLM_MAX_QTY_MULTIPLIER")
@@ -420,13 +488,30 @@ class Settings(BaseSettings):
     llm_shadow_mode: bool = Field(default=False, alias="LLM_SHADOW_MODE")
     llm_recent_decisions: int = Field(default=5, alias="LLM_RECENT_DECISIONS")
     llm_circuit_max_errors: int = Field(default=3, alias="LLM_CIRCUIT_MAX_ERRORS")
-    llm_circuit_window_seconds: int = Field(default=300, alias="LLM_CIRCUIT_WINDOW_SECONDS")
-    llm_circuit_cooldown_seconds: int = Field(default=600, alias="LLM_CIRCUIT_COOLDOWN_SECONDS")
-    llm_allowed_models_raw: Optional[str] = Field(default=None, alias="LLM_ALLOWED_MODELS")
-    llm_evaluation_report: Optional[str] = Field(default=None, alias="LLM_EVALUATION_REPORT")
-    llm_effective_challenge_id: Optional[str] = Field(default=None, alias="LLM_EFFECTIVE_CHALLENGE_ID")
-    llm_shadow_completed_at: Optional[str] = Field(default=None, alias="LLM_SHADOW_COMPLETED_AT")
-    llm_adjustment_approved: bool = Field(default=False, alias="LLM_ADJUSTMENT_APPROVED")
+    llm_circuit_window_seconds: int = Field(
+        default=300, alias="LLM_CIRCUIT_WINDOW_SECONDS"
+    )
+    llm_circuit_cooldown_seconds: int = Field(
+        default=600, alias="LLM_CIRCUIT_COOLDOWN_SECONDS"
+    )
+    llm_allowed_models_raw: Optional[str] = Field(
+        default=None, alias="LLM_ALLOWED_MODELS"
+    )
+    llm_evaluation_report: Optional[str] = Field(
+        default=None, alias="LLM_EVALUATION_REPORT"
+    )
+    llm_effective_challenge_id: Optional[str] = Field(
+        default=None, alias="LLM_EFFECTIVE_CHALLENGE_ID"
+    )
+    llm_shadow_completed_at: Optional[str] = Field(
+        default=None, alias="LLM_SHADOW_COMPLETED_AT"
+    )
+    llm_model_version_lock: Optional[str] = Field(
+        default=None, alias="LLM_MODEL_VERSION_LOCK"
+    )
+    llm_adjustment_approved: bool = Field(
+        default=False, alias="LLM_ADJUSTMENT_APPROVED"
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -441,27 +526,49 @@ class Settings(BaseSettings):
         if self.jangar_base_url:
             self.jangar_base_url = self.jangar_base_url.strip().rstrip("/")
         if self.trading_market_context_url:
-            self.trading_market_context_url = self.trading_market_context_url.strip().rstrip("/")
+            self.trading_market_context_url = (
+                self.trading_market_context_url.strip().rstrip("/")
+            )
         if self.llm_self_hosted_base_url:
-            self.llm_self_hosted_base_url = self.llm_self_hosted_base_url.strip().rstrip("/")
+            self.llm_self_hosted_base_url = (
+                self.llm_self_hosted_base_url.strip().rstrip("/")
+            )
         if self.trading_lean_runner_url:
-            self.trading_lean_runner_url = self.trading_lean_runner_url.strip().rstrip("/")
+            self.trading_lean_runner_url = self.trading_lean_runner_url.strip().rstrip(
+                "/"
+            )
         if self.trading_execution_adapter_symbols_raw:
             self.trading_execution_adapter_symbols_raw = ",".join(
-                [item.strip() for item in self.trading_execution_adapter_symbols_raw.split(",") if item.strip()]
+                [
+                    item.strip()
+                    for item in self.trading_execution_adapter_symbols_raw.split(",")
+                    if item.strip()
+                ]
             )
         if self.trading_autonomy_approval_token:
-            self.trading_autonomy_approval_token = self.trading_autonomy_approval_token.strip() or None
+            self.trading_autonomy_approval_token = (
+                self.trading_autonomy_approval_token.strip() or None
+            )
         if (
-            (self.trading_enabled or self.trading_autonomy_enabled or self.trading_live_enabled)
+            (
+                self.trading_enabled
+                or self.trading_autonomy_enabled
+                or self.trading_live_enabled
+            )
             and self.trading_universe_source != "jangar"
         ):
-            raise ValueError("TRADING_UNIVERSE_SOURCE must be 'jangar' when trading or autonomy is enabled")
+            raise ValueError(
+                "TRADING_UNIVERSE_SOURCE must be 'jangar' when trading or autonomy is enabled"
+            )
         if "llm_provider" not in self.model_fields_set and self.jangar_base_url:
             self.llm_provider = "jangar"
         if self.llm_allowed_models_raw:
             self.llm_allowed_models_raw = ",".join(
-                [item.strip() for item in self.llm_allowed_models_raw.split(",") if item.strip()]
+                [
+                    item.strip()
+                    for item in self.llm_allowed_models_raw.split(",")
+                    if item.strip()
+                ]
             )
         if self.llm_evaluation_report:
             self.llm_evaluation_report = self.llm_evaluation_report.strip()
@@ -469,6 +576,10 @@ class Settings(BaseSettings):
             self.llm_effective_challenge_id = self.llm_effective_challenge_id.strip()
         if self.llm_shadow_completed_at:
             self.llm_shadow_completed_at = self.llm_shadow_completed_at.strip()
+        if self.llm_model_version_lock:
+            self.llm_model_version_lock = self.llm_model_version_lock.strip()
+        if not self.llm_model_version_lock:
+            self.llm_model_version_lock = self.llm_model
 
     @property
     def sqlalchemy_dsn(self) -> str:
@@ -489,7 +600,11 @@ class Settings(BaseSettings):
     def trading_static_symbols(self) -> List[str]:
         if not self.trading_static_symbols_raw:
             return []
-        return [symbol.strip() for symbol in self.trading_static_symbols_raw.split(",") if symbol.strip()]
+        return [
+            symbol.strip()
+            for symbol in self.trading_static_symbols_raw.split(",")
+            if symbol.strip()
+        ]
 
     @property
     def trading_execution_adapter_symbols(self) -> set[str]:
@@ -505,7 +620,11 @@ class Settings(BaseSettings):
     def llm_allowed_models(self) -> set[str]:
         if not self.llm_allowed_models_raw:
             return set()
-        return {model.strip() for model in self.llm_allowed_models_raw.split(",") if model.strip()}
+        return {
+            model.strip()
+            for model in self.llm_allowed_models_raw.split(",")
+            if model.strip()
+        }
 
 
 @lru_cache(maxsize=1)
