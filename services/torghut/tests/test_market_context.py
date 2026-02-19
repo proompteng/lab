@@ -112,3 +112,75 @@ class TestMarketContextClient(TestCase):
         self.assertFalse(status.allow_llm)
         self.assertIn('market_context_stale', status.risk_flags)
         self.assertIn('market_context_quality_low', status.risk_flags)
+
+    def test_evaluate_allows_informational_risk_flags(self) -> None:
+        config.settings.trading_market_context_required = True
+        config.settings.trading_market_context_min_quality = 0.7
+        config.settings.trading_market_context_max_staleness_seconds = 30
+
+        bundle = MarketContextBundle.model_validate(
+            {
+                'contextVersion': 'torghut.market-context.v1',
+                'symbol': 'AAPL',
+                'asOfUtc': '2026-02-19T12:00:00Z',
+                'freshnessSeconds': 10,
+                'qualityScore': 0.9,
+                'sourceCount': 1,
+                'riskFlags': ['fundamentals_missing', 'news_missing'],
+                'domains': {
+                    'technicals': {
+                        'domain': 'technicals',
+                        'state': 'ok',
+                        'asOf': '2026-02-19T12:00:00Z',
+                        'freshnessSeconds': 10,
+                        'maxFreshnessSeconds': 60,
+                        'sourceCount': 1,
+                        'qualityScore': 1,
+                        'payload': {},
+                        'citations': [],
+                        'riskFlags': [],
+                    },
+                    'fundamentals': {
+                        'domain': 'fundamentals',
+                        'state': 'missing',
+                        'asOf': None,
+                        'freshnessSeconds': None,
+                        'maxFreshnessSeconds': 86400,
+                        'sourceCount': 0,
+                        'qualityScore': 0,
+                        'payload': {},
+                        'citations': [],
+                        'riskFlags': ['fundamentals_missing'],
+                    },
+                    'news': {
+                        'domain': 'news',
+                        'state': 'missing',
+                        'asOf': None,
+                        'freshnessSeconds': None,
+                        'maxFreshnessSeconds': 300,
+                        'sourceCount': 0,
+                        'qualityScore': 0,
+                        'payload': {},
+                        'citations': [],
+                        'riskFlags': ['news_missing'],
+                    },
+                    'regime': {
+                        'domain': 'regime',
+                        'state': 'ok',
+                        'asOf': '2026-02-19T12:00:00Z',
+                        'freshnessSeconds': 10,
+                        'maxFreshnessSeconds': 120,
+                        'sourceCount': 1,
+                        'qualityScore': 1,
+                        'payload': {},
+                        'citations': [],
+                        'riskFlags': [],
+                    },
+                },
+            }
+        )
+        status = evaluate_market_context(bundle)
+        self.assertTrue(status.allow_llm)
+        self.assertIsNone(status.reason)
+        self.assertIn('fundamentals_missing', status.risk_flags)
+        self.assertIn('news_missing', status.risk_flags)

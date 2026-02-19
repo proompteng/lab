@@ -14,6 +14,8 @@ from .llm.schema import MarketContextBundle
 
 logger = logging.getLogger(__name__)
 
+_BLOCKING_RISK_FLAGS = {"market_context_stale", "market_context_quality_low"}
+
 
 @dataclass(frozen=True)
 class MarketContextStatus:
@@ -60,19 +62,23 @@ def evaluate_market_context(bundle: Optional[MarketContextBundle]) -> MarketCont
             return MarketContextStatus(allow_llm=False, reason="market_context_required_missing", risk_flags=[])
         return MarketContextStatus(allow_llm=True, reason=None, risk_flags=[])
 
-    risk_flags = list(bundle.risk_flags)
+    risk_flags = sorted(set(bundle.risk_flags))
+    blocking_flags = [flag for flag in risk_flags if flag in _BLOCKING_RISK_FLAGS]
     if bundle.freshness_seconds > settings.trading_market_context_max_staleness_seconds:
         risk_flags.append("market_context_stale")
+        blocking_flags.append("market_context_stale")
     if bundle.quality_score < settings.trading_market_context_min_quality:
         risk_flags.append("market_context_quality_low")
+        blocking_flags.append("market_context_quality_low")
 
-    if risk_flags:
+    if blocking_flags:
+        unique_blocking_flags = sorted(set(blocking_flags))
         return MarketContextStatus(
             allow_llm=False,
-            reason=risk_flags[0],
+            reason=unique_blocking_flags[0],
             risk_flags=sorted(set(risk_flags)),
         )
-    return MarketContextStatus(allow_llm=True, reason=None, risk_flags=[])
+    return MarketContextStatus(allow_llm=True, reason=None, risk_flags=sorted(set(risk_flags)))
 
 
 __all__ = ["MarketContextClient", "MarketContextStatus", "evaluate_market_context"]

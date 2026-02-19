@@ -295,7 +295,10 @@ const buildBundleFromDomains = (params: {
   }
 }
 
-const bundleCacheKey = (symbol: string) => symbol.toUpperCase()
+const bundleCacheKey = (params: { symbol: string; asOf: Date | undefined; maxStalenessSeconds: number }) => {
+  const asOfKey = params.asOf ? params.asOf.toISOString() : 'latest'
+  return `${params.symbol.toUpperCase()}|${asOfKey}|${params.maxStalenessSeconds}`
+}
 
 export const clearMarketContextCache = () => {
   cache.clear()
@@ -320,7 +323,11 @@ export const getTorghutMarketContext = async (
     return { ...disabledBundle, riskFlags: [...disabledBundle.riskFlags, 'market_context_disabled'] }
   }
 
-  const cacheKey = bundleCacheKey(symbol)
+  const cacheKey = bundleCacheKey({
+    symbol,
+    asOf: options.asOf,
+    maxStalenessSeconds,
+  })
   const cached = cache.get(cacheKey)
   if (cached) {
     const ageMs = Date.now() - cached.createdAtMs

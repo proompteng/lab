@@ -79,4 +79,43 @@ describe('torghut market context', () => {
     expect(health.enabled).toBe(false)
     expect(health.overallState).toBe('down')
   })
+
+  it('scopes cache entries by asOf and staleness options', async () => {
+    process.env.JANGAR_MARKET_CONTEXT_CACHE_SECONDS = '600'
+
+    let queryCount = 0
+    const client = {
+      queryJson: async <T>() => {
+        queryCount += 1
+        return [
+          {
+            event_ts: '2026-02-19 11:59:30.000',
+            c: '210.02',
+          },
+        ] as T[]
+      },
+    }
+
+    const contextA = await getTorghutMarketContext('AAPL', {
+      asOf: new Date('2026-02-19T12:00:00.000Z'),
+      maxStalenessSeconds: 120,
+      client,
+    })
+    const contextB = await getTorghutMarketContext('AAPL', {
+      asOf: new Date('2026-02-19T12:01:00.000Z'),
+      maxStalenessSeconds: 120,
+      client,
+    })
+    const contextC = await getTorghutMarketContext('AAPL', {
+      asOf: new Date('2026-02-19T12:01:00.000Z'),
+      maxStalenessSeconds: 10,
+      client,
+    })
+
+    expect(queryCount).toBe(3)
+    expect(contextA.freshnessSeconds).toBe(30)
+    expect(contextB.freshnessSeconds).toBe(90)
+    expect(contextB.riskFlags).not.toContain('market_context_stale')
+    expect(contextC.riskFlags).toContain('market_context_stale')
+  })
 })
