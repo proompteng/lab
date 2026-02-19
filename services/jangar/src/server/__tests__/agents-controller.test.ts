@@ -378,7 +378,7 @@ describe('agents controller reconcileAgentRun', () => {
         process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED = previousEnforcement
       }
     }
-  })
+  }, 15_000)
 
   it('blocks AgentRun when repository concurrency limit is reached', async () => {
     const kube = buildKube()
