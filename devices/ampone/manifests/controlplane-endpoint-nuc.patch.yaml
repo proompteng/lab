@@ -1,9 +1,10 @@
 cluster:
   controlPlane:
-    endpoint: https://192.168.1.130:6443
+    endpoint: https://nuc.ide-newton.ts.net:6443
   apiServer:
     certSANs:
       - nuc
+      - nuc.ide-newton.ts.net
       - 192.168.1.130
       - 192.168.1.194
       - 192.168.1.203
