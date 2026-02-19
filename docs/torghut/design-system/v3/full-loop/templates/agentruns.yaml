@@ -144,6 +144,110 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
+  name: torghut-v3-lane-e-promotion-prereq-template
+  namespace: agents
+  labels:
+    torghut.proompteng.ai/lane: lane-e
+    torghut.proompteng.ai/stage: promotion-prerequisites
+spec:
+  agentRef:
+    name: codex-research-agent
+  implementationSpecRef:
+    name: torghut-v3-promotion-prerequisites-v1
+  runtime:
+    type: workflow
+  ttlSecondsAfterFinished: 3600
+  vcsPolicy:
+    required: false
+    mode: none
+  parameters:
+    candidateId: ${candidateId}
+    runId: ${runId}
+    stage: promotion-prerequisites
+    artifactPath: ${artifactPath}
+    promotionTarget: ${promotionTarget}
+    gateReportPath: ${gateReportPath}
+    candidateStatePath: ${candidateStatePath}
+    policyPath: ${policyPath}
+    artifactRoot: ${artifactRoot}
+  workflow:
+    steps:
+      - name: implement
+        retries: 1
+        retryBackoffSeconds: 10
+        timeoutSeconds: 3600
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: torghut-v3-lane-f-rollback-readiness-template
+  namespace: agents
+  labels:
+    torghut.proompteng.ai/lane: lane-f
+    torghut.proompteng.ai/stage: rollback-readiness
+spec:
+  agentRef:
+    name: codex-research-agent
+  implementationSpecRef:
+    name: torghut-v3-rollback-readiness-v1
+  runtime:
+    type: workflow
+  ttlSecondsAfterFinished: 3600
+  vcsPolicy:
+    required: false
+    mode: none
+  parameters:
+    candidateId: ${candidateId}
+    runId: ${runId}
+    stage: rollback-readiness
+    artifactPath: ${artifactPath}
+    candidateStatePath: ${candidateStatePath}
+    policyPath: ${policyPath}
+  workflow:
+    steps:
+      - name: implement
+        retries: 1
+        retryBackoffSeconds: 10
+        timeoutSeconds: 3600
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: torghut-v3-lane-f-policy-dry-run-template
+  namespace: agents
+  labels:
+    torghut.proompteng.ai/lane: lane-f
+    torghut.proompteng.ai/stage: policy-dry-run
+spec:
+  agentRef:
+    name: codex-research-agent
+  implementationSpecRef:
+    name: torghut-v3-policy-dry-run-v1
+  runtime:
+    type: workflow
+  ttlSecondsAfterFinished: 1800
+  vcsPolicy:
+    required: false
+    mode: none
+  parameters:
+    candidateId: ${candidateId}
+    runId: ${runId}
+    stage: policy-dry-run
+    artifactPath: ${artifactPath}
+    promotionTarget: ${promotionTarget}
+    policyPath: ${policyPath}
+    gateReportPath: ${gateReportPath}
+    simulateMissingArtifact: ${simulateMissingArtifact}
+    simulateStaleRollback: ${simulateStaleRollback}
+  workflow:
+    steps:
+      - name: implement
+        retries: 0
+        timeoutSeconds: 1800
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
   name: torghut-v3-lane-e-shadow-template
   namespace: agents
   labels:

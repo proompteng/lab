@@ -25,5 +25,21 @@ data:
       "gate2_max_cost_bps": "35",
       "gate3_max_llm_error_ratio": "0.10",
       "gate5_live_enabled": false,
-      "gate5_require_approval_token": true
+      "gate5_require_approval_token": true,
+      "promotion_required_artifacts": [
+        "research/candidate-spec.json",
+        "backtest/evaluation-report.json",
+        "gates/gate-evaluation.json"
+      ],
+      "promotion_require_patch_targets": [
+        "paper",
+        "live"
+      ],
+      "rollback_required_checks": [
+        "killSwitchDryRunPassed",
+        "gitopsRevertDryRunPassed",
+        "strategyDisableDryRunPassed"
+      ],
+      "rollback_dry_run_max_age_hours": 72,
+      "rollback_require_human_approval": true
     }

@@ -7,6 +7,12 @@ from .lane import (
     run_autonomous_lane,
     upsert_autonomy_no_signal_run,
 )
+from .policy_checks import (
+    PromotionPrerequisiteResult,
+    RollbackReadinessResult,
+    evaluate_promotion_prerequisites,
+    evaluate_rollback_readiness,
+)
 from .runtime import (
     LegacyMacdRsiPlugin,
     RuntimeEvaluationResult,
@@ -26,7 +32,9 @@ __all__ = [
     'GatePolicyMatrix',
     'LegacyMacdRsiPlugin',
     'PromotionTarget',
+    'PromotionPrerequisiteResult',
     'RuntimeEvaluationResult',
+    'RollbackReadinessResult',
     'StrategyContext',
     'StrategyIntent',
     'StrategyPlugin',
@@ -36,6 +44,8 @@ __all__ = [
     'default_runtime_registry',
     'evaluate_gate_matrix',
     'load_runtime_strategy_config',
+    'evaluate_promotion_prerequisites',
+    'evaluate_rollback_readiness',
     'upsert_autonomy_no_signal_run',
     'run_autonomous_lane',
 ]

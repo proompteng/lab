@@ -29,7 +29,7 @@ class TestOrchestrationGuard(TestCase):
                 candidate_id='cand-abc123',
                 run_id='run-abc123',
                 from_stage='gate-evaluation',
-                to_stage='shadow-paper',
+                to_stage='promotion-prerequisites',
                 previous_artifact=artifact,
                 previous_gate_passed=True,
                 risk_controls_passed=True,
@@ -41,15 +41,22 @@ class TestOrchestrationGuard(TestCase):
         self.assertEqual(result['nextAction'], 'proceed')
 
     def test_blocks_mutable_stage_without_gitops_or_ticket(self) -> None:
+        state: dict[str, Any] = {
+            'candidateId': 'cand-abc123',
+            'runId': 'run-abc123',
+            'activeStage': 'rollback-readiness',
+            'paused': False,
+            'failureCounts': {},
+        }
         with tempfile.TemporaryDirectory() as tmpdir:
             artifact = Path(tmpdir) / 'report.json'
             artifact.write_text('{"ok":true}', encoding='utf-8')
             result = evaluate_transition(
                 policy=self.policy,
-                state=self.state,
+                state=state,
                 candidate_id='cand-abc123',
                 run_id='run-abc123',
-                from_stage='gate-evaluation',
+                from_stage='rollback-readiness',
                 to_stage='shadow-paper',
                 previous_artifact=artifact,
                 previous_gate_passed=True,
@@ -127,7 +134,7 @@ class TestOrchestrationGuard(TestCase):
                 candidate_id='cand-abc123',
                 run_id='run-abc123',
                 from_stage='gate-evaluation',
-                to_stage='shadow-paper',
+                to_stage='promotion-prerequisites',
                 previous_artifact=artifact,
                 previous_gate_passed=True,
                 risk_controls_passed=True,
@@ -156,7 +163,7 @@ class TestOrchestrationGuard(TestCase):
                 candidate_id='cand-abc123',
                 run_id='run-abc123',
                 from_stage='gate-evaluation',
-                to_stage='shadow-paper',
+                to_stage='promotion-prerequisites',
                 previous_artifact=artifact,
                 previous_gate_passed=True,
                 risk_controls_passed=True,
