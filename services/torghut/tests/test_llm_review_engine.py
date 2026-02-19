@@ -6,7 +6,7 @@ from unittest import TestCase
 
 from app.trading.llm.client import LLMClientResponse
 from app.trading.llm.review_engine import LLMReviewEngine
-from app.trading.llm.schema import PortfolioSnapshot
+from app.trading.llm.schema import MarketContextBundle, PortfolioSnapshot
 from app.trading.models import StrategyDecision
 
 
@@ -49,7 +49,7 @@ class TestLLMReviewEngine(TestCase):
             decision=decision,
             account=account,
             positions=positions,
-            request=engine.build_request(decision, account, positions, portfolio, None, []),
+            request=engine.build_request(decision, account, positions, portfolio, None, None, []),
             portfolio=portfolio,
             market=None,
             recent_decisions=[],
@@ -101,7 +101,69 @@ class TestLLMReviewEngine(TestCase):
             },
         )
 
-        request = engine.build_request(decision, account, positions, portfolio, None, [])
+        market_context = MarketContextBundle.model_validate(
+            {
+                "contextVersion": "torghut.market-context.v1",
+                "symbol": "AAPL",
+                "asOfUtc": "2026-02-19T12:00:00Z",
+                "freshnessSeconds": 20,
+                "qualityScore": 0.8,
+                "sourceCount": 1,
+                "riskFlags": [],
+                "domains": {
+                    "technicals": {
+                        "domain": "technicals",
+                        "state": "ok",
+                        "asOf": "2026-02-19T12:00:00Z",
+                        "freshnessSeconds": 20,
+                        "maxFreshnessSeconds": 60,
+                        "sourceCount": 1,
+                        "qualityScore": 1,
+                        "payload": {"price": 100},
+                        "citations": [],
+                        "riskFlags": [],
+                    },
+                    "fundamentals": {
+                        "domain": "fundamentals",
+                        "state": "missing",
+                        "asOf": None,
+                        "freshnessSeconds": None,
+                        "maxFreshnessSeconds": 86400,
+                        "sourceCount": 0,
+                        "qualityScore": 0,
+                        "payload": {},
+                        "citations": [],
+                        "riskFlags": ["fundamentals_missing"],
+                    },
+                    "news": {
+                        "domain": "news",
+                        "state": "missing",
+                        "asOf": None,
+                        "freshnessSeconds": None,
+                        "maxFreshnessSeconds": 300,
+                        "sourceCount": 0,
+                        "qualityScore": 0,
+                        "payload": {},
+                        "citations": [],
+                        "riskFlags": ["news_missing"],
+                    },
+                    "regime": {
+                        "domain": "regime",
+                        "state": "ok",
+                        "asOf": "2026-02-19T12:00:00Z",
+                        "freshnessSeconds": 20,
+                        "maxFreshnessSeconds": 120,
+                        "sourceCount": 1,
+                        "qualityScore": 1,
+                        "payload": {},
+                        "citations": [],
+                        "riskFlags": [],
+                    },
+                },
+            }
+        )
+
+        request = engine.build_request(decision, account, positions, portfolio, None, market_context, [])
 
         self.assertNotIn("account_id", request.account)
         self.assertEqual(request.account, {"equity": "10000", "cash": "5000", "buying_power": "15000"})
@@ -111,3 +173,5 @@ class TestLLMReviewEngine(TestCase):
         self.assertNotIn("news", request.decision.params)
         self.assertIn("sizing", request.decision.params)
         self.assertEqual(request.decision.params["sizing"], {"method": "default_qty", "notional_budget": "100"})
+        self.assertIsNotNone(request.market_context)
+        self.assertEqual(request.market_context.symbol, "AAPL")

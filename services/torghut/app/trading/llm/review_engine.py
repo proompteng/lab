@@ -21,6 +21,7 @@ from .schema import (
     LLMDecisionContext,
     LLMPolicyContext,
     LLMReviewRequest,
+    MarketContextBundle,
     MarketSnapshot,
     PortfolioSnapshot,
     RecentDecisionSummary,
@@ -104,6 +105,7 @@ class LLMReviewEngine:
         request: Optional[LLMReviewRequest] = None,
         portfolio: Optional[PortfolioSnapshot] = None,
         market: Optional[MarketSnapshot] = None,
+        market_context: Optional[MarketContextBundle] = None,
         recent_decisions: Optional[list[RecentDecisionSummary]] = None,
     ) -> LLMReviewOutcome:
         if request is None:
@@ -117,6 +119,7 @@ class LLMReviewEngine:
                 positions,
                 portfolio,
                 market,
+                market_context,
                 recent_decisions,
             )
         request_json = request.model_dump(mode="json")
@@ -169,6 +172,7 @@ class LLMReviewEngine:
         positions: list[dict[str, Any]],
         portfolio: PortfolioSnapshot,
         market: Optional[MarketSnapshot],
+        market_context: Optional[MarketContextBundle],
         recent_decisions: list[RecentDecisionSummary],
         adjustment_allowed: Optional[bool] = None,
     ) -> LLMReviewRequest:
@@ -193,6 +197,7 @@ class LLMReviewEngine:
             ),
             portfolio=portfolio,
             market=market,
+            market_context=market_context,
             recent_decisions=recent_decisions,
             account=sanitized_account,
             positions=sanitized_positions,

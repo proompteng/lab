@@ -240,6 +240,12 @@ spec:
               value: "15000"
             - name: JANGAR_TORGHUT_QUANT_MAX_STALENESS_SECONDS
               value: "15"
+            - name: JANGAR_MARKET_CONTEXT_ENABLED
+              value: "true"
+            - name: JANGAR_MARKET_CONTEXT_CACHE_SECONDS
+              value: "60"
+            - name: JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS
+              value: "300"
             - name: CH_HOST
               value: torghut-clickhouse.torghut.svc
             - name: CH_PORT

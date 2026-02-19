@@ -33,6 +33,7 @@ from .firewall import OrderFirewall, OrderFirewallBlocked
 from .ingest import ClickHouseSignalIngestor, SignalBatch
 from .llm import LLMReviewEngine, apply_policy
 from .llm.guardrails import evaluate_llm_guardrails
+from .market_context import MarketContextClient, MarketContextStatus, evaluate_market_context
 from .models import SignalEnvelope, StrategyDecision
 from .portfolio import PortfolioSizingResult, sizer_from_settings
 from .prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
@@ -42,6 +43,7 @@ from .risk import RiskEngine
 from .autonomy import run_autonomous_lane, upsert_autonomy_no_signal_run
 from .universe import UniverseResolver
 from .llm.schema import MarketSnapshot as LLMMarketSnapshot
+from .llm.schema import MarketContextBundle
 from .llm.schema import PortfolioSnapshot, RecentDecisionSummary
 from .route_metadata import coerce_route_text
 
@@ -95,6 +97,8 @@ class TradingMetrics:
     llm_shadow_total: int = 0
     llm_guardrail_block_total: int = 0
     llm_guardrail_shadow_total: int = 0
+    llm_market_context_block_total: int = 0
+    llm_market_context_error_total: int = 0
     llm_tokens_prompt_total: int = 0
     llm_tokens_completion_total: int = 0
     execution_requests_total: dict[str, int] = field(
@@ -281,6 +285,7 @@ class TradingPipeline:
         self.strategy_catalog = strategy_catalog
         self.execution_policy = execution_policy or ExecutionPolicy()
         self.order_feed_ingestor = order_feed_ingestor or OrderFeedIngestor()
+        self.market_context_client = MarketContextClient()
         if llm_review_engine is not None:
             self.llm_review_engine = llm_review_engine
         elif settings.llm_enabled:
@@ -733,6 +738,7 @@ class TradingPipeline:
                 reason="llm_guardrail_blocked",
                 shadow_mode=True,
                 risk_flags=list(guardrails.reasons),
+                market_context=None,
             )
 
         engine = self.llm_review_engine or LLMReviewEngine()
@@ -746,10 +752,15 @@ class TradingPipeline:
                 positions,
                 reason="llm_circuit_open",
                 shadow_mode=guardrails.shadow_mode,
+                market_context=None,
             )
         request_json: dict[str, Any] = {}
+        market_context: Optional[MarketContextBundle] = None
         try:
             self.state.metrics.llm_requests_total += 1
+            market_context, market_context_error = self._fetch_market_context(decision.symbol)
+            if market_context_error is not None:
+                self.state.metrics.llm_market_context_error_total += 1
             portfolio_snapshot = _build_portfolio_snapshot(account, positions)
             market_snapshot = self._build_market_snapshot(decision)
             recent_decisions = _load_recent_decisions(
@@ -757,12 +768,33 @@ class TradingPipeline:
                 decision.strategy_id,
                 decision.symbol,
             )
+            market_context_status = evaluate_market_context(market_context)
+            if market_context_error is not None:
+                market_context_status = MarketContextStatus(
+                    allow_llm=False,
+                    reason="market_context_fetch_error",
+                    risk_flags=["market_context_fetch_error"],
+                )
+            if not market_context_status.allow_llm:
+                self.state.metrics.llm_market_context_block_total += 1
+                return self._handle_llm_unavailable(
+                    session,
+                    decision,
+                    decision_row,
+                    account,
+                    positions,
+                    reason=market_context_status.reason or "market_context_unavailable",
+                    shadow_mode=settings.trading_market_context_fail_mode == "shadow_only",
+                    risk_flags=market_context_status.risk_flags,
+                    market_context=market_context,
+                )
             request = engine.build_request(
                 decision,
                 account,
                 positions,
                 portfolio_snapshot,
                 market_snapshot,
+                market_context,
                 recent_decisions,
                 adjustment_allowed=guardrails.adjustment_allowed,
             )
@@ -774,6 +806,7 @@ class TradingPipeline:
                 request=request,
                 portfolio=portfolio_snapshot,
                 market=market_snapshot,
+                market_context=market_context,
                 recent_decisions=recent_decisions,
             )
             policy_outcome = apply_policy(
@@ -908,6 +941,7 @@ class TradingPipeline:
         reason: str,
         shadow_mode: bool,
         risk_flags: Optional[list[str]] = None,
+        market_context: Optional[MarketContextBundle] = None,
     ) -> tuple[StrategyDecision, Optional[str]]:
         fallback = self._resolve_llm_fallback()
         effective_verdict = "veto" if fallback == "veto" else "approve"
@@ -925,6 +959,7 @@ class TradingPipeline:
             positions=positions,
             portfolio=portfolio_snapshot,
             market=market_snapshot,
+            market_context=market_context,
             recent_decisions=recent_decisions,
         ).model_dump(mode="json")
         self._persist_llm_review(
@@ -1032,6 +1067,13 @@ class TradingPipeline:
         if settings.trading_mode == "live":
             return "veto"
         return settings.llm_fail_mode
+
+    def _fetch_market_context(self, symbol: str) -> tuple[Optional[MarketContextBundle], Optional[str]]:
+        try:
+            return self.market_context_client.fetch(symbol), None
+        except Exception as exc:
+            logger.warning("market context fetch failed symbol=%s error=%s", symbol, exc)
+            return None, str(exc)
 
     def _get_account_snapshot(self, session: Session):
         now = datetime.now(timezone.utc)

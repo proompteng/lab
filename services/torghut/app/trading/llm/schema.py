@@ -21,6 +21,10 @@ def _recent_decisions_default() -> list["RecentDecisionSummary"]:
     return []
 
 
+def _market_context_citations_default() -> list["MarketContextCitation"]:
+    return []
+
+
 class LLMDecisionContext(BaseModel):
     """Minimal decision context passed to the LLM reviewer."""
 
@@ -63,6 +67,59 @@ class MarketSnapshot(BaseModel):
     source: Optional[str] = None
 
 
+class MarketContextCitation(BaseModel):
+    """Citation metadata for market-context sources."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str
+    published_at: datetime = Field(alias="publishedAt")
+    url: Optional[str] = None
+
+
+class MarketContextDomain(BaseModel):
+    """Normalized market-context domain block."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    domain: Literal["technicals", "fundamentals", "news", "regime"]
+    state: Literal["ok", "stale", "missing", "error"]
+    as_of: Optional[datetime] = Field(default=None, alias="asOf")
+    freshness_seconds: Optional[int] = Field(default=None, alias="freshnessSeconds")
+    max_freshness_seconds: int = Field(alias="maxFreshnessSeconds")
+    source_count: int = Field(alias="sourceCount")
+    quality_score: float = Field(ge=0.0, le=1.0, alias="qualityScore")
+    payload: dict[str, Any] = Field(default_factory=dict)
+    citations: list[MarketContextCitation] = Field(default_factory=_market_context_citations_default)
+    risk_flags: list[str] = Field(default_factory=list, alias="riskFlags")
+
+
+class MarketContextDomains(BaseModel):
+    """Grouped domain blocks in the market-context bundle."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    technicals: MarketContextDomain
+    fundamentals: MarketContextDomain
+    news: MarketContextDomain
+    regime: MarketContextDomain
+
+
+class MarketContextBundle(BaseModel):
+    """Versioned decision-time market context bundle."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    context_version: str = Field(alias="contextVersion")
+    symbol: str
+    as_of_utc: datetime = Field(alias="asOfUtc")
+    freshness_seconds: int = Field(alias="freshnessSeconds")
+    quality_score: float = Field(ge=0.0, le=1.0, alias="qualityScore")
+    source_count: int = Field(alias="sourceCount")
+    risk_flags: list[str] = Field(default_factory=list, alias="riskFlags")
+    domains: MarketContextDomains
+
+
 class RecentDecisionSummary(BaseModel):
     """Recent decisions for the same symbol/strategy."""
 
@@ -98,6 +155,7 @@ class LLMReviewRequest(BaseModel):
     decision: LLMDecisionContext
     portfolio: PortfolioSnapshot
     market: Optional[MarketSnapshot] = None
+    market_context: Optional[MarketContextBundle] = None
     recent_decisions: list[RecentDecisionSummary] = Field(default_factory=_recent_decisions_default)
     account: dict[str, str] = Field(default_factory=_account_default)
     positions: list[dict[str, Any]] = Field(default_factory=_positions_default)
@@ -136,6 +194,10 @@ __all__ = [
     "LLMDecisionContext",
     "PortfolioSnapshot",
     "MarketSnapshot",
+    "MarketContextCitation",
+    "MarketContextDomain",
+    "MarketContextDomains",
+    "MarketContextBundle",
     "RecentDecisionSummary",
     "LLMPolicyContext",
     "LLMReviewRequest",
