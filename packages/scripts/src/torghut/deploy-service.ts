@@ -41,11 +41,22 @@ type DeploymentStatus = {
   available: number
 }
 
+const skipMigrations = () => process.env.TORGHUT_SKIP_MIGRATIONS === 'true'
+const skipApply = () => process.env.TORGHUT_SKIP_APPLY === 'true'
+
 const ensureTools = () => {
-  ensureCli('docker')
-  ensureCli('kn')
-  ensureCli('kubectl')
-  ensureCli('uv')
+  const required = new Set<string>(['docker'])
+  if (!skipMigrations()) {
+    required.add('kubectl')
+    required.add('uv')
+  }
+  if (!skipApply()) {
+    required.add('kn')
+    required.add('kubectl')
+  }
+  for (const cli of required) {
+    ensureCli(cli)
+  }
 }
 
 const buildEnv = (env?: Record<string, string | undefined>) => {
@@ -253,7 +264,7 @@ const rewriteDatabaseUrl = (databaseUrl: string, localPort: number): string => {
 }
 
 const runMigrations = async () => {
-  if (process.env.TORGHUT_SKIP_MIGRATIONS === 'true') {
+  if (skipMigrations()) {
     console.log('Skipping torghut DB migrations (TORGHUT_SKIP_MIGRATIONS=true)')
     return
   }
@@ -608,9 +619,13 @@ const main = async () => {
   updateWebsocketDeployment(websocketDigestRef, version, commit)
   updateTechnicalAnalysisDeployment(taDigestRef, version, commit)
   await runMigrations()
-  await applyManifest()
-  await applyWebsocketResources()
-  await applyTechnicalAnalysisResources()
+  if (skipApply()) {
+    console.log('Skipping Kubernetes apply/sync steps (TORGHUT_SKIP_APPLY=true)')
+  } else {
+    await applyManifest()
+    await applyWebsocketResources()
+    await applyTechnicalAnalysisResources()
+  }
 
   console.log(
     'torghut deployment updated (app + websocket forwarder + technical analysis); commit manifest changes for Argo CD reconciliation.',
