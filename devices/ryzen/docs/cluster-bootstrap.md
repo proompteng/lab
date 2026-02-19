@@ -15,6 +15,7 @@ Node-level patches:
 - `devices/ryzen/manifests/allow-scheduling-controlplane.patch.yaml` (allow workloads on single-node controlplane)
 - `devices/ryzen/manifests/hostname.patch.yaml` (set Talos hostname to `ryzen`, optional if the generated config already sets it)
 - `devices/ryzen/manifests/node-labels.patch.yaml` (labels for KubeVirt scheduling)
+- `devices/ryzen/manifests/kubelet-maxpods.patch.yaml` (set kubelet `maxPods` to 200)
 - `devices/ryzen/manifests/tailscale-extension-service.template.yaml` (Tailscale extension service template)
 - `devices/ryzen/manifests/tailscale-extension-service.yaml` (generated from template; gitignored)
 - `devices/ryzen/manifests/tailscale-dns.patch.yaml` (prefer MagicDNS for tailnet hostnames)
@@ -83,6 +84,7 @@ If you need to re-layout these volumes on an already-installed node, follow:
 - `devices/ryzen/manifests/allow-scheduling-controlplane.patch.yaml` (single-node)
 - `devices/ryzen/manifests/hostname.patch.yaml`
 - `devices/ryzen/manifests/node-labels.patch.yaml`
+- `devices/ryzen/manifests/kubelet-maxpods.patch.yaml`
 - `devices/ryzen/manifests/tailscale-extension-service.yaml` (generate via `bun run packages/scripts/src/tailscale/generate-ryzen-extension-service.ts`)
 - `devices/ryzen/manifests/tailscale-dns.patch.yaml`
 
@@ -122,6 +124,7 @@ talosctl apply-config --insecure -n 192.168.1.194 -e 192.168.1.194 \
 #   --config-patch @devices/ryzen/manifests/allow-scheduling-controlplane.patch.yaml
 #   --config-patch @devices/ryzen/manifests/hostname.patch.yaml
 #   --config-patch @devices/ryzen/manifests/node-labels.patch.yaml
+#   --config-patch @devices/ryzen/manifests/kubelet-maxpods.patch.yaml
 #   --config-patch @devices/ryzen/manifests/tailscale-extension-service.yaml
 #   --config-patch @devices/ryzen/manifests/tailscale-dns.patch.yaml
 ```

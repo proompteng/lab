@@ -18,3 +18,4 @@ Manifests:
 - `devices/ampone/manifests/allow-scheduling-controlplane.patch.yaml` (single-node: run workloads on the controlplane)
 - `devices/ampone/manifests/ephemeral-volume.patch.yaml` (cap system `/var` to 300GB)
 - `devices/ampone/manifests/local-path.patch.yaml` (allocate remainder to local-path user volume)
+- `devices/ampone/manifests/kubelet-maxpods.patch.yaml` (set kubelet `maxPods` to 200)

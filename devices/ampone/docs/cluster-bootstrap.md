@@ -60,6 +60,7 @@ Apply these patches:
 - `devices/ampone/manifests/hostname.patch.yaml`
 - `devices/ampone/manifests/ephemeral-volume.patch.yaml` (cap system `/var` to 300GB)
 - `devices/ampone/manifests/local-path.patch.yaml` (allocate remainder to local-path user volume)
+- `devices/ampone/manifests/kubelet-maxpods.patch.yaml` (set kubelet `maxPods` to 200)
 
 ```bash
 talosctl apply-config --insecure -n <node_ip> -e <node_ip> \
@@ -70,6 +71,7 @@ talosctl apply-config --insecure -n <node_ip> -e <node_ip> \
   --config-patch @devices/ampone/manifests/hostname.patch.yaml \
   --config-patch @devices/ampone/manifests/ephemeral-volume.patch.yaml \
   --config-patch @devices/ampone/manifests/local-path.patch.yaml \
+  --config-patch @devices/ampone/manifests/kubelet-maxpods.patch.yaml \
   --mode=reboot
 ```
 
