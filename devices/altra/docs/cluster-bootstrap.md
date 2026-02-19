@@ -74,6 +74,7 @@ talosctl apply-config --insecure -n "$ALTRA_IP" -e "$ALTRA_IP" \
   --config-patch @devices/altra/manifests/vfio-modules.patch.yaml \
   --config-patch @devices/altra/manifests/allow-scheduling-controlplane.patch.yaml \
   --config-patch @devices/altra/manifests/controlplane-endpoint-nuc.patch.yaml \
+  --config-patch @devices/altra/manifests/kubelet-maxpods.patch.yaml \
   --mode=reboot
 ```
 

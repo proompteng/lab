@@ -11,3 +11,4 @@ Files:
 - `devices/altra/manifests/local-path.patch.yaml`
 - `devices/altra/manifests/local-path-extra.patch.yaml`
 - `devices/altra/manifests/vfio-modules.patch.yaml`
+- `devices/altra/manifests/kubelet-maxpods.patch.yaml`
