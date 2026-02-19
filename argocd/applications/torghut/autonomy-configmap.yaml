@@ -8,7 +8,12 @@ metadata:
     app.kubernetes.io/component: autonomy-runtime
     app.kubernetes.io/part-of: lab
 data:
-  TRADING_STRATEGY_RUNTIME_MODE: plugin_v3
+  # Migration defaults: keep scheduler-integrated runtime disabled until explicitly enabled.
+  TRADING_STRATEGY_RUNTIME_MODE: scheduler_v3
+  TRADING_STRATEGY_SCHEDULER_ENABLED: "false"
+  TRADING_STRATEGY_RUNTIME_FALLBACK_LEGACY: "true"
+  TRADING_STRATEGY_RUNTIME_CIRCUIT_ERRORS: "3"
+  TRADING_STRATEGY_RUNTIME_CIRCUIT_COOLDOWN_SECONDS: "300"
   TRADING_FEATURE_SCHEMA_VERSION: v3
   TRADING_FEATURE_NORMALIZATION_VERSION: v1
   TRADING_AUTONOMY_ENABLED: "true"
