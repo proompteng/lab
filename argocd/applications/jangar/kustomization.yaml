@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: jangar
 resources:
   - torghut-db-ca-sealedsecret.yaml
+  - rook-ceph-rgw-jangar-sealedsecret.yaml
   - deployment.yaml
   - service.yaml
   - github-token.yaml
