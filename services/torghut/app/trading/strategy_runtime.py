@@ -271,6 +271,10 @@ class IntentAggregator:
             resolved_notional = (
                 selected_notional if selected_notional > 0 else total_notional
             )
+            source_intents = selected if selected else ranked
+            source_strategy_ids = tuple(
+                dict.fromkeys(intent.strategy_id for intent in source_intents)
+            )
 
             aggregated.append(
                 AggregatedIntent(
@@ -280,9 +284,7 @@ class IntentAggregator:
                     target_notional=resolved_notional.quantize(Decimal("0.0001")),
                     horizon=horizon,
                     explain=top_reasons,
-                    source_strategy_ids=tuple(
-                        sorted([item.strategy_id for item in ranked])
-                    ),
+                    source_strategy_ids=source_strategy_ids,
                     feature_snapshot_hashes=tuple(
                         sorted({item.feature_snapshot_hash for item in ranked})
                     ),

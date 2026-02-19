@@ -11,6 +11,7 @@ from app.trading.models import SignalEnvelope
 from app.trading.strategy_runtime import (
     LegacyMacdRsiPlugin,
     StrategyContext,
+    StrategyIntent,
     StrategyRegistry,
     StrategyRuntime,
 )
@@ -25,6 +26,48 @@ class _FailingPlugin:
         _ = context
         _ = features
         raise RuntimeError("boom")
+
+
+class _BuyPlugin:
+    plugin_id = "buy_plugin"
+    version = "1.0.0"
+    required_features = ("price",)
+
+    def evaluate(  # type: ignore[no-untyped-def]
+        self, context: StrategyContext, features
+    ) -> StrategyIntent:
+        return StrategyIntent(
+            strategy_id=context.strategy_id,
+            symbol=context.symbol,
+            direction="buy",
+            confidence=Decimal("0.90"),
+            target_notional=Decimal("100"),
+            horizon=context.timeframe,
+            explain=("buy_signal",),
+            feature_snapshot_hash=features.normalization_hash,
+            required_features=self.required_features,
+        )
+
+
+class _SellPlugin:
+    plugin_id = "sell_plugin"
+    version = "1.0.0"
+    required_features = ("price",)
+
+    def evaluate(  # type: ignore[no-untyped-def]
+        self, context: StrategyContext, features
+    ) -> StrategyIntent:
+        return StrategyIntent(
+            strategy_id=context.strategy_id,
+            symbol=context.symbol,
+            direction="sell",
+            confidence=Decimal("0.40"),
+            target_notional=Decimal("200"),
+            horizon=context.timeframe,
+            explain=("sell_signal",),
+            feature_snapshot_hash=features.normalization_hash,
+            required_features=self.required_features,
+        )
 
 
 class TestStrategyRuntime(TestCase):
@@ -266,4 +309,55 @@ class TestStrategyRuntime(TestCase):
         self.assertEqual(
             evaluation_a.intents[0].source_strategy_ids,
             evaluation_b.intents[0].source_strategy_ids,
+        )
+
+    def test_runtime_aggregates_source_ids_only_from_winning_direction(self) -> None:
+        buy_strategy = Strategy(
+            id=uuid.UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+            name="buy",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="buy_plugin",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("0.02"),
+            max_notional_per_trade=Decimal("100"),
+        )
+        sell_strategy = Strategy(
+            id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+            name="sell",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="sell_plugin",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("0.02"),
+            max_notional_per_trade=Decimal("900"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Min",
+            seq=99,
+            payload={"macd": {"macd": 1.2, "signal": 0.3}, "rsi14": 24, "price": 101.5},
+        )
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime(
+            registry=StrategyRegistry(
+                plugins={
+                    "buy_plugin": _BuyPlugin(),
+                    "sell_plugin": _SellPlugin(),
+                }
+            )
+        )
+
+        evaluation = runtime.evaluate_all(
+            [buy_strategy, sell_strategy], feature_contract, timeframe="1Min"
+        )
+
+        self.assertEqual(len(evaluation.intents), 1)
+        self.assertEqual(evaluation.intents[0].direction, "buy")
+        self.assertEqual(
+            evaluation.intents[0].source_strategy_ids,
+            (str(buy_strategy.id),),
         )

@@ -80,6 +80,7 @@ class DecisionEngine:
             if decisions:
                 return decisions
             if settings.trading_strategy_runtime_fallback_legacy:
+                runtime_telemetry = self._last_runtime_telemetry
                 legacy_decisions = self._evaluate_legacy(
                     signal, filtered, equity=equity
                 )
@@ -87,8 +88,8 @@ class DecisionEngine:
                     mode=settings.trading_strategy_runtime_mode,
                     runtime_enabled=True,
                     fallback_to_legacy=True,
-                    errors=self._last_runtime_telemetry.errors,
-                    observation=self._last_runtime_telemetry.observation,
+                    errors=runtime_telemetry.errors,
+                    observation=runtime_telemetry.observation,
                 )
                 return legacy_decisions
             return []
@@ -153,13 +154,28 @@ class DecisionEngine:
         if not runtime_eval.intents:
             return decisions
 
-        qty, sizing_meta = _resolve_qty_for_aggregated(
-            strategies, price=price, equity=equity
-        )
+        strategies_by_id = {str(strategy.id): strategy for strategy in strategies}
         for intent in runtime_eval.intents:
+            source_strategy_ids = list(intent.source_strategy_ids)
+            primary_strategy_id = source_strategy_ids[0] if source_strategy_ids else None
+            if primary_strategy_id is None:
+                logger.warning(
+                    "Skipping aggregated intent without source strategy symbol=%s horizon=%s",
+                    intent.symbol,
+                    intent.horizon,
+                )
+                continue
+            source_strategies = [
+                strategies_by_id[strategy_id]
+                for strategy_id in source_strategy_ids
+                if strategy_id in strategies_by_id
+            ]
+            qty, sizing_meta = _resolve_qty_for_aggregated(
+                source_strategies, price=price, equity=equity
+            )
             decisions.append(
                 StrategyDecision(
-                    strategy_id=intent.source_strategy_ids[0],
+                    strategy_id=primary_strategy_id,
                     symbol=intent.symbol,
                     event_ts=signal.event_ts,
                     timeframe=timeframe,
@@ -178,7 +194,7 @@ class DecisionEngine:
                         runtime_metadata={
                             "mode": settings.trading_strategy_runtime_mode,
                             "aggregated": True,
-                            "source_strategy_ids": list(intent.source_strategy_ids),
+                            "source_strategy_ids": source_strategy_ids,
                             "feature_snapshot_hashes": list(
                                 intent.feature_snapshot_hashes
                             ),
