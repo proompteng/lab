@@ -68,6 +68,11 @@ def evaluate_llm_guardrails() -> LLMRiskGuardrails:
         if settings.trading_mode == "live":
             stage_reasons.append("llm_stage2_live_requires_shadow")
             shadow_mode = True
+    elif rollout_stage == "stage3_controlled_live" and settings.trading_mode == "live":
+        expected_fail_mode = "veto"
+        if settings.llm_fail_mode != expected_fail_mode:
+            stage_reasons.append("llm_stage3_fail_mode_mismatch")
+        fail_mode = expected_fail_mode
 
     reasons.extend(stage_reasons)
 
