@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as chatServer from '~/server/chat'
 import {
   getTorghutDecisionRun,
   parseDecisionEngineRequest,
@@ -47,6 +47,7 @@ describe('torghut decision engine', () => {
 
   afterEach(() => {
     process.env.JANGAR_TORGHUT_DECISION_RUN_TIMEOUT_MS = originalTimeout
+    vi.restoreAllMocks()
     resetTorghutDecisionEngineForTests()
   })
 
@@ -148,5 +149,43 @@ describe('torghut decision engine', () => {
     expect(second.run.runId).toBe(first.run.runId)
     expect(executorCalls).toBe(1)
     expect(terminal.state).toBe('completed')
+  })
+
+  it('forwards llm review temperature and max_tokens to chat completion payload', async () => {
+    let seenBody: unknown = null
+    vi.spyOn(chatServer, 'handleChatCompletion').mockImplementation(async (request: Request) => {
+      seenBody = await request.json()
+      const payload = [
+        'data: {"choices":[{"delta":{"content":"{\\"verdict\\":\\"approve\\"}"}}]}',
+        '',
+        'data: [DONE]',
+        '',
+      ].join('\n')
+      return new Response(payload, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })
+    })
+
+    const parsed = parseDecisionEngineRequest({
+      ...requestPayload,
+      request_id: 'req-controls',
+      llm_review: {
+        ...requestPayload.llm_review,
+        temperature: 0.2,
+        max_tokens: 321,
+      },
+    })
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) throw new Error('unexpected parse failure')
+
+    const submit = submitTorghutDecisionRun(parsed.value)
+    const terminal = await waitForTerminalState(submit.run.runId)
+
+    expect(terminal.state).toBe('completed')
+    expect(seenBody).toMatchObject({
+      temperature: 0.2,
+      max_tokens: 321,
+    })
   })
 })

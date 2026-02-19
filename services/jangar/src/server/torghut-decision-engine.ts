@@ -519,6 +519,12 @@ const runDefaultDecisionExecutor = async (input: DecisionExecutorInput): Promise
       include_plan: false,
     },
   }
+  if (input.request.llmReview.temperature !== undefined) {
+    payload.temperature = input.request.llmReview.temperature
+  }
+  if (input.request.llmReview.max_tokens !== undefined) {
+    payload.max_tokens = input.request.llmReview.max_tokens
+  }
 
   const request = new Request('http://localhost/openai/v1/chat/completions', {
     method: 'POST',
