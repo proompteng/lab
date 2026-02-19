@@ -51,6 +51,21 @@ class TestTradingMetrics(TestCase):
         )
         self.assertIn("# TYPE torghut_trading_signal_lag_seconds gauge", payload)
 
+    def test_market_context_reason_metrics_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        metrics.record_market_context_result("market_context_domain_error", shadow_mode=True)
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn(
+            'torghut_trading_llm_market_context_reason_total{reason="market_context_domain_error"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_llm_market_context_shadow_total{reason="market_context_domain_error"} 1',
+            payload,
+        )
+
     def test_order_feed_counters_are_exported(self) -> None:
         metrics = TradingMetrics()
         metrics.order_feed_messages_total = 3

@@ -170,6 +170,30 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                             )
                         )
                     continue
+                if key in {"llm_market_context_reason_total", "llm_market_context_shadow_total"}:
+                    metric_name = (
+                        "torghut_trading_llm_market_context_reason_total"
+                        if key == "llm_market_context_reason_total"
+                        else "torghut_trading_llm_market_context_shadow_total"
+                    )
+                    lines.append(f"# HELP {metric_name} Count of LLM market-context fallbacks by reason.")
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(reason), int(count))
+                            for reason, count in cast(dict[str, object], value).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for reason, count in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"reason": reason},
+                                value=count,
+                            )
+                        )
+                    continue
                 if key in {
                     "strategy_events_total",
                     "strategy_intents_total",
