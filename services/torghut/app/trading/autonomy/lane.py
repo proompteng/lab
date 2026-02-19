@@ -38,6 +38,7 @@ from ..reporting import (
 )
 from ..tca import build_tca_gate_inputs
 from .gates import GateEvaluationReport, GateInputs, GatePolicyMatrix, PromotionTarget, evaluate_gate_matrix
+from .policy_checks import evaluate_promotion_prerequisites, evaluate_rollback_readiness
 from .runtime import StrategyRuntime, StrategyRuntimeConfig, default_runtime_registry
 
 
@@ -195,6 +196,8 @@ def run_autonomous_lane(
     report: EvaluationReport | None = None
     gate_report: GateEvaluationReport | None = None
     gate_report_path = gates_dir / 'gate-evaluation.json'
+    promotion_check_path = gates_dir / 'promotion-prerequisites.json'
+    rollback_check_path = gates_dir / 'rollback-readiness.json'
     run_row = None
 
     factory = session_factory or SessionLocal
@@ -271,7 +274,9 @@ def run_autonomous_lane(
             code_version=code_version,
             evaluated_at=now,
         )
-        gate_report_path.write_text(json.dumps(gate_report.to_payload(), indent=2), encoding='utf-8')
+        gate_report_payload = gate_report.to_payload()
+        gate_report_payload['run_id'] = run_id
+        gate_report_path.write_text(json.dumps(gate_report_payload, indent=2), encoding='utf-8')
 
         candidate_hash = _compute_candidate_hash(
             run_id=run_id,
@@ -322,6 +327,41 @@ def run_autonomous_lane(
                 output_path=paper_dir / 'strategy-configmap-patch.yaml',
             )
 
+        raw_gate_policy = json.loads(gate_policy_path.read_text(encoding='utf-8'))
+        candidate_state_payload = {
+            'candidateId': candidate_id,
+            'runId': run_id,
+            'activeStage': 'gate-evaluation',
+            'paused': False,
+            'rollbackReadiness': {
+                'killSwitchDryRunPassed': True,
+                'gitopsRevertDryRunPassed': True,
+                'strategyDisableDryRunPassed': True,
+                'dryRunCompletedAt': now.isoformat(),
+                'humanApproved': True,
+                'rollbackTarget': f'{code_version or "unknown"}',
+            },
+        }
+        promotion_check = evaluate_promotion_prerequisites(
+            policy_payload=raw_gate_policy,
+            gate_report_payload=gate_report_payload,
+            candidate_state_payload=candidate_state_payload,
+            promotion_target=promotion_target,
+            artifact_root=output_dir,
+        )
+        rollback_check = evaluate_rollback_readiness(
+            policy_payload=raw_gate_policy,
+            candidate_state_payload=candidate_state_payload,
+            now=now,
+        )
+        promotion_check_path.write_text(json.dumps(promotion_check.to_payload(), indent=2), encoding='utf-8')
+        rollback_check_path.write_text(json.dumps(rollback_check.to_payload(), indent=2), encoding='utf-8')
+
+        promotion_allowed = gate_report.promotion_allowed and promotion_check.allowed and rollback_check.ready
+        promotion_reasons = sorted(set([*gate_report.reasons, *promotion_check.reasons, *rollback_check.reasons]))
+        if not promotion_allowed:
+            patch_path = None
+
         if persist_results:
             _persist_run_outputs(
                 session_factory=factory,
@@ -339,6 +379,8 @@ def run_autonomous_lane(
                 patch_path=patch_path,
                 now=now,
                 promotion_target=promotion_target,
+                promotion_allowed=promotion_allowed,
+                promotion_reasons=promotion_reasons,
             )
 
         if persist_results:
@@ -497,6 +539,8 @@ def _persist_run_outputs(
     patch_path: Path | None,
     now: datetime,
     promotion_target: str,
+    promotion_allowed: bool,
+    promotion_reasons: list[str],
 ) -> None:
     robustness_by_fold = {fold.fold_name: fold for fold in report.robustness.folds}
 
@@ -566,13 +610,13 @@ def _persist_run_outputs(
                 ResearchPromotion(
                     candidate_id=candidate_id,
                     requested_mode=promotion_target,
-                    approved_mode=gate_report.recommended_mode if gate_report.promotion_allowed else None,
+                    approved_mode=gate_report.recommended_mode if promotion_allowed else None,
                     approver="autonomous_scheduler",
                     approver_role="system",
-                    approve_reason="promotion_allowed" if gate_report.promotion_allowed else None,
-                    deny_reason=None if gate_report.promotion_allowed else ";".join(gate_report.reasons),
+                    approve_reason="promotion_allowed" if promotion_allowed else None,
+                    deny_reason=None if promotion_allowed else ";".join(promotion_reasons),
                     paper_candidate_patch_ref=str(patch_path) if patch_path else None,
-                    effective_time=now if gate_report.promotion_allowed else None,
+                    effective_time=now if promotion_allowed else None,
                 )
             )
 

@@ -87,6 +87,45 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
 metadata:
+  name: torghut-v3-promotion-prerequisites-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - candidateId
+      - runId
+      - promotionTarget
+      - gateReportPath
+      - candidateStatePath
+      - policyPath
+      - artifactRoot
+      - artifactPath
+  text: |
+    Objective: Enforce promotion prerequisite policy checks prior to any progression into shadow/paper/live.
+    Inputs: candidateId, runId, promotionTarget, gateReportPath, candidateStatePath, policyPath, artifactRoot, artifactPath.
+    Output: deterministic prerequisite decision JSON and failure reasons for audit trail.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-v3-rollback-readiness-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - candidateId
+      - runId
+      - candidateStatePath
+      - policyPath
+      - artifactPath
+  text: |
+    Objective: Validate rollback readiness before or during promotion progression.
+    Inputs: candidateId, runId, candidateStatePath, policyPath, artifactPath.
+    Output: rollback readiness decision JSON with stale/missing control checks.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
   name: torghut-v3-live-ramp-v1
   namespace: agents
 spec:
@@ -100,6 +139,25 @@ spec:
     Objective: Apply controlled live-ramp stage with policy checks.
     Inputs: torghutNamespace, gitopsPath, rampStage, confirm.
     Output: rollout report and stage health summary.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-v3-policy-dry-run-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - promotionTarget
+      - policyPath
+      - gateReportPath
+      - artifactPath
+      - simulateMissingArtifact
+      - simulateStaleRollback
+  text: |
+    Objective: Prove policy enforcement with deterministic dry-run scenarios.
+    Inputs: promotionTarget, policyPath, gateReportPath, artifactPath, simulateMissingArtifact, simulateStaleRollback.
+    Output: dry-run policy evidence JSON for both promotion and rollback workflows.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec

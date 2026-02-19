@@ -24,6 +24,21 @@ stages:
     mutableAction: false
     requirePreviousArtifact: true
     requirePreviousGatePass: true
+  - stage: promotion-prerequisites
+    lane: lane-e
+    mutableAction: false
+    requirePreviousArtifact: true
+    requirePreviousGatePass: true
+  - stage: rollback-readiness
+    lane: lane-f
+    mutableAction: false
+    requirePreviousArtifact: true
+    requirePreviousGatePass: true
+  - stage: policy-dry-run
+    lane: lane-f
+    mutableAction: false
+    requirePreviousArtifact: true
+    requirePreviousGatePass: true
   - stage: shadow-paper
     lane: lane-e
     mutableAction: true
@@ -59,7 +74,16 @@ transitions:
     - gate-evaluation
   gate-evaluation:
     - research-intake
+    - promotion-prerequisites
+  promotion-prerequisites:
+    - rollback-readiness
+    - research-intake
+  rollback-readiness:
+    - policy-dry-run
+    - incident-recovery
+  policy-dry-run:
     - shadow-paper
+    - incident-recovery
   shadow-paper:
     - live-ramp
     - incident-recovery

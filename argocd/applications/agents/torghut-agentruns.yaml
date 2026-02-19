@@ -55,6 +55,85 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
 metadata:
+  name: torghut-v3-promotion-policy-check-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - candidateId
+      - runId
+      - promotionTarget
+      - policyPath
+      - candidateStatePath
+      - gateReportPath
+      - artifactRoot
+      - artifactPath
+  text: |
+    Objective: Enforce promotion prerequisite and rollback-readiness checks before stage promotion.
+
+    Guardrails:
+    - Read-only policy evaluation; no cluster mutation.
+    - Promotion progression is denied when either prerequisite or rollback checks fail.
+
+    Inputs:
+    - candidateId, runId, promotionTarget
+    - policyPath, candidateStatePath, gateReportPath
+    - artifactRoot, artifactPath
+
+    Steps:
+    1) Run:
+       - python services/torghut/scripts/validate_promotion_policy.py \
+         --policy ${policyPath} \
+         --state ${candidateStatePath} \
+         --gate-report ${gateReportPath} \
+         --artifact-root ${artifactRoot} \
+         --promotion-target ${promotionTarget} \
+         --output ${artifactPath}/promotion-policy-check.json
+    2) Fail fast if `promotion_progression_allowed` is false.
+    3) Publish the decision artifact path and reasons.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-v3-promotion-policy-dry-run-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - promotionTarget
+      - policyPath
+      - gateReportPath
+      - artifactPath
+      - simulateMissingArtifact
+      - simulateStaleRollback
+  text: |
+    Objective: Execute dry-run harness proving policy enforcement behavior for promotion and rollback workflows.
+
+    Constraints:
+    - Must remain dry-run only.
+    - Must emit structured JSON artifact to `${artifactPath}`.
+
+    Inputs:
+    - promotionTarget, policyPath, gateReportPath, artifactPath
+    - simulateMissingArtifact, simulateStaleRollback
+
+    Steps:
+    1) Build optional simulation flags:
+       - SIM_MISSING = `--simulate-missing-artifact` when simulateMissingArtifact is true.
+       - SIM_STALE = `--simulate-stale-rollback` when simulateStaleRollback is true.
+    2) Run:
+       - python services/torghut/scripts/run_governance_policy_dry_run.py \
+         --policy ${policyPath} \
+         --gate-report ${gateReportPath} \
+         --promotion-target ${promotionTarget} \
+         ${SIM_MISSING} \
+         ${SIM_STALE} \
+         --output ${artifactPath}/governance-policy-dry-run.json
+    3) Include `promotion_progression_allowed` and failure reasons in output summary.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
   name: torghut-gated-actuation-runner-v1
   namespace: agents
 spec:
