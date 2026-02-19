@@ -80,6 +80,31 @@ class TestExecutionAdapters(TestCase):
         self.assertEqual(payload.get('_execution_adapter'), 'alpaca_fallback')
         self.assertEqual(adapter.last_route, 'alpaca_fallback')
         self.assertEqual(len(fallback.submitted), 1)
+        self.assertEqual(payload.get('_execution_route_expected'), 'lean')
+        self.assertEqual(payload.get('_execution_fallback_count'), 1)
+
+    def test_lean_submit_contract_violation_triggers_fallback(self) -> None:
+        class InvalidLeanAdapter(LeanExecutionAdapter):
+            def _request_json(self, method: str, path: str, payload: dict[str, str] | None = None):  # type: ignore[override]
+                _ = (method, path, payload)
+                return {'status': 'accepted'}  # missing id/symbol/qty contract keys
+
+        fallback = FakeFallbackAdapter()
+        adapter = InvalidLeanAdapter(base_url='http://lean.invalid', timeout_seconds=1, fallback=fallback)
+
+        payload = adapter.submit_order(
+            symbol='MSFT',
+            side='buy',
+            qty=2.0,
+            order_type='market',
+            time_in_force='day',
+            extra_params={'client_order_id': 'cid-2'},
+        )
+
+        self.assertEqual(adapter.last_route, 'alpaca_fallback')
+        self.assertEqual(payload.get('_execution_adapter'), 'alpaca_fallback')
+        self.assertEqual(payload.get('symbol'), 'MSFT')
+        self.assertEqual(payload.get('client_order_id'), 'cid-2')
 
     def test_symbol_allowlist_policy(self) -> None:
         original_adapter = config.settings.trading_execution_adapter

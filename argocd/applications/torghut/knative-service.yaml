@@ -112,6 +112,18 @@ spec:
               value: http://jangar.jangar.svc.cluster.local/api/torghut/symbols
             - name: JANGAR_BASE_URL
               value: http://jangar.jangar.svc.cluster.local
+            - name: TRADING_MARKET_CONTEXT_URL
+              value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/
+            - name: TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS
+              value: "3"
+            - name: TRADING_MARKET_CONTEXT_REQUIRED
+              value: "false"
+            - name: TRADING_MARKET_CONTEXT_FAIL_MODE
+              value: shadow_only
+            - name: TRADING_MARKET_CONTEXT_MIN_QUALITY
+              value: "0.4"
+            - name: TRADING_MARKET_CONTEXT_MAX_STALENESS_SECONDS
+              value: "300"
             - name: LLM_PROVIDER
               value: jangar
             - name: LLM_MODEL

@@ -112,6 +112,7 @@ class LeanExecutionAdapter:
     """HTTP adapter to a LEAN runner service with optional Alpaca fallback."""
 
     name = 'lean'
+    _required_order_keys = {'id', 'status', 'symbol', 'qty'}
 
     def __init__(
         self,
@@ -146,9 +147,13 @@ class LeanExecutionAdapter:
             'stop_price': stop_price,
             'extra_params': extra_params or {},
         }
-        return self._with_fallback(
+        payload = self._with_fallback(
             op='submit_order',
-            request=lambda: self._request_json('POST', '/v1/orders/submit', body),
+            request=lambda: self._validate_submit_payload(
+                self._request_json('POST', '/v1/orders/submit', body),
+                adapter='lean',
+                expected_client_order_id=(extra_params or {}).get('client_order_id'),
+            ),
             fallback=lambda: self._fallback_submit(
                 symbol=symbol,
                 side=side,
@@ -160,6 +165,8 @@ class LeanExecutionAdapter:
                 extra_params=extra_params,
             ),
         )
+        payload['_execution_route_expected'] = 'lean'
+        return payload
 
     def cancel_order(self, order_id: str) -> bool:
         payload = self._with_fallback(
@@ -289,7 +296,14 @@ class LeanExecutionAdapter:
             extra_params=extra_params,
         )
         payload = self._coerce_order_dict(payload)
+        payload = self._validate_submit_payload(
+            payload,
+            adapter='alpaca_fallback',
+            expected_client_order_id=(extra_params or {}).get('client_order_id'),
+        )
         payload['_execution_adapter'] = 'alpaca_fallback'
+        payload['_execution_fallback_reason'] = payload.get('_execution_fallback_reason') or 'lean_submit_failed'
+        payload['_execution_fallback_count'] = int(payload.get('_execution_fallback_count') or 1)
         return payload
 
     def _fallback_cancel(self, order_id: str) -> dict[str, Any]:
@@ -329,6 +343,25 @@ class LeanExecutionAdapter:
             return {str(key): value for key, value in mapped.items()}
         raise RuntimeError(f'invalid_order_payload:{type(payload)}')
 
+    def _validate_submit_payload(
+        self,
+        payload: Any,
+        *,
+        adapter: str,
+        expected_client_order_id: Any,
+    ) -> dict[str, Any]:
+        order = self._coerce_order_dict(payload)
+        missing_keys = [key for key in sorted(self._required_order_keys) if order.get(key) in (None, '')]
+        if missing_keys:
+            raise RuntimeError(f'lean_order_payload_missing_keys:{",".join(missing_keys)}')
+        if expected_client_order_id not in (None, ''):
+            observed = order.get('client_order_id')
+            if observed not in (None, '') and str(observed) != str(expected_client_order_id):
+                raise RuntimeError('lean_order_payload_client_order_id_mismatch')
+        order['_execution_adapter'] = adapter
+        order['_execution_parity_check'] = 'contract_v1'
+        return order
+
 
 def build_execution_adapter(
     *,
@@ -348,6 +381,9 @@ def build_execution_adapter(
     fallback: ExecutionAdapter | None = None
     if settings.trading_execution_fallback_adapter == 'alpaca':
         fallback = alpaca_adapter
+    if settings.trading_mode == 'live' and fallback is None:
+        logger.warning('LEAN adapter disabled in live mode because fallback adapter is not configured')
+        return alpaca_adapter
 
     return LeanExecutionAdapter(
         base_url=settings.trading_lean_runner_url,
