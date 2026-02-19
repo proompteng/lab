@@ -1,12 +1,7 @@
 import serverEntry from 'virtual:tanstack-start-server-entry'
 import { defineEventHandler } from 'h3'
 
-import {
-  getPrometheusMetricsPath,
-  handlePrometheusMetricsRequest,
-  isPrometheusMetricsEnabled,
-  renderPrometheusMetrics,
-} from './src/server/metrics'
+import { getPrometheusMetricsPath, isPrometheusMetricsEnabled, renderPrometheusMetrics } from './src/server/metrics'
 
 type UnknownRecord = Record<string, unknown>
 
@@ -78,10 +73,6 @@ export default defineEventHandler(async (event) => {
     const metricsPath = getPrometheusMetricsPath()
     const url = new URL(request.url)
     if (url.pathname === metricsPath) {
-      if (event?.node?.req && event?.node?.res) {
-        handlePrometheusMetricsRequest(event.node.req, event.node.res)
-        return
-      }
       const rendered = await renderPrometheusMetrics()
       if (!rendered.ok) {
         return new Response(JSON.stringify({ ok: false, message: rendered.message }), {

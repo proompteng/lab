@@ -1,4 +1,3 @@
-import { PrometheusExporter } from '@opentelemetry/exporter-prometheus'
 import {
   type Counter,
   DiagConsoleLogger,
@@ -9,14 +8,12 @@ import {
 } from '@proompteng/otel/api'
 import { OTLPMetricExporter } from '@proompteng/otel/exporter-metrics-otlp-http'
 import { Resource } from '@proompteng/otel/resources'
-import { MeterProvider, PeriodicExportingMetricReader } from '@proompteng/otel/sdk-metrics'
+import { MeterProvider, PeriodicExportingMetricReader, type ResourceMetrics } from '@proompteng/otel/sdk-metrics'
 import {
   SEMRESATTRS_SERVICE_INSTANCE_ID,
   SEMRESATTRS_SERVICE_NAME,
   SEMRESATTRS_SERVICE_NAMESPACE,
 } from '@proompteng/otel/semantic-conventions'
-
-type MeterReader = Parameters<MeterProvider['addMetricReader']>[0]
 
 type JangarMetrics = {
   sseConnections: Counter
@@ -45,7 +42,7 @@ type MetricsState = {
   shutdown?: () => void
   prometheusEnabled?: boolean
   prometheusPath?: string
-  prometheusExporter?: PrometheusExporter
+  meterProvider?: MeterProvider
 }
 
 type SseStream = 'chat' | 'agent-events' | 'control-plane' | 'torghut-quant' | 'torghut-decision'
@@ -262,6 +259,110 @@ const normalizePrometheusPath = (value: string) => {
   return trimmed.startsWith('/') ? trimmed : `/${trimmed}`
 }
 
+const sanitizePrometheusName = (name: string) => name.replace(/[^A-Za-z0-9_:]/g, '_')
+
+const sanitizePrometheusLabelKey = (key: string) => key.replace(/[^A-Za-z0-9_]/g, '_')
+
+const escapePrometheusValue = (value: string) => value.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/"/g, '\\"')
+
+const formatPrometheusNumber = (value: unknown) => {
+  const numeric = typeof value === 'string' ? Number(value) : typeof value === 'number' ? value : 0
+  return Number.isFinite(numeric) ? `${numeric}` : '0'
+}
+
+type OtlpAttributeValue = {
+  stringValue?: string
+  intValue?: string
+  doubleValue?: number
+  boolValue?: boolean
+  arrayValue?: { values?: OtlpAttributeValue[] }
+}
+
+type OtlpAttribute = {
+  key?: string
+  value?: OtlpAttributeValue
+}
+
+const otlpAttributeValueToString = (value: OtlpAttributeValue | undefined): string => {
+  if (!value) return ''
+  if (typeof value.stringValue === 'string') return value.stringValue
+  if (typeof value.intValue === 'string') return value.intValue
+  if (typeof value.doubleValue === 'number') return `${value.doubleValue}`
+  if (typeof value.boolValue === 'boolean') return value.boolValue ? 'true' : 'false'
+  if (value.arrayValue?.values && value.arrayValue.values.length > 0) {
+    return `[${value.arrayValue.values.map((entry) => otlpAttributeValueToString(entry)).join(',')}]`
+  }
+  return ''
+}
+
+const toPrometheusLabelPairs = (attributes: unknown): Array<[string, string]> => {
+  if (!Array.isArray(attributes)) return []
+  const pairs: Array<[string, string]> = []
+  for (const raw of attributes) {
+    const attribute = raw as OtlpAttribute
+    if (!attribute?.key) continue
+    const key = sanitizePrometheusLabelKey(attribute.key)
+    if (!key) continue
+    const value = otlpAttributeValueToString(attribute.value)
+    pairs.push([key, value])
+  }
+  return pairs
+}
+
+const formatPrometheusLabels = (pairs: Array<[string, string]>) => {
+  if (pairs.length === 0) return ''
+  const encoded = [...pairs]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}="${escapePrometheusValue(value)}"`)
+  return `{${encoded.join(',')}}`
+}
+
+const serializeResourceMetricsToPrometheus = (resourceMetrics: ResourceMetrics | null): string => {
+  if (!resourceMetrics) return '# no metrics collected\n'
+
+  const lines: string[] = []
+  const metadataSeen = new Set<string>()
+
+  const appendMetadata = (metricName: string, type: 'counter' | 'histogram', description?: string) => {
+    const key = `${metricName}:${type}`
+    if (metadataSeen.has(key)) return
+    metadataSeen.add(key)
+    if (description) {
+      lines.push(`# HELP ${metricName} ${escapePrometheusValue(description)}`)
+    }
+    lines.push(`# TYPE ${metricName} ${type}`)
+  }
+
+  for (const scope of resourceMetrics.scopeMetrics) {
+    for (const metric of scope.metrics) {
+      const metricName = sanitizePrometheusName(metric.name)
+      if (metric.sum) {
+        appendMetadata(metricName, 'counter', metric.description)
+        for (const dataPoint of metric.sum.dataPoints) {
+          const labels = formatPrometheusLabels(toPrometheusLabelPairs(dataPoint.attributes))
+          lines.push(`${metricName}${labels} ${formatPrometheusNumber(dataPoint.asDouble)}`)
+        }
+        continue
+      }
+
+      if (!metric.histogram) continue
+      appendMetadata(metricName, 'histogram', metric.description)
+      for (const dataPoint of metric.histogram.dataPoints) {
+        const labels = toPrometheusLabelPairs(dataPoint.attributes)
+        const bucketLabels = formatPrometheusLabels([...labels, ['le', '+Inf']])
+        const sharedLabels = formatPrometheusLabels(labels)
+        const count = formatPrometheusNumber(dataPoint.count)
+        lines.push(`${metricName}_bucket${bucketLabels} ${count}`)
+        lines.push(`${metricName}_sum${sharedLabels} ${formatPrometheusNumber(dataPoint.sum)}`)
+        lines.push(`${metricName}_count${sharedLabels} ${count}`)
+      }
+    }
+  }
+
+  if (lines.length === 0) return '# no metrics collected\n'
+  return `${lines.join('\n')}\n`
+}
+
 const createMetricsState = (): MetricsState => {
   if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
     return { enabled: false }
@@ -285,7 +386,7 @@ const createMetricsState = (): MetricsState => {
   }
 
   if (!otlpEnabled && !prometheusEnabled) {
-    return { enabled: false }
+    return { enabled: false, prometheusEnabled, prometheusPath }
   }
 
   try {
@@ -331,17 +432,6 @@ const createMetricsState = (): MetricsState => {
       meterProvider.addMetricReader(reader)
     }
 
-    const prometheusExporter = prometheusEnabled
-      ? new PrometheusExporter({
-          preventServerStart: true,
-          endpoint: prometheusPath,
-        })
-      : null
-    if (prometheusExporter) {
-      // @opentelemetry/exporter-prometheus depends on upstream SDK metric types.
-      // We cast to the @proompteng/otel SDK MetricReader to keep runtime behavior while satisfying TS.
-      meterProvider.addMetricReader(prometheusExporter as unknown as MeterReader)
-    }
     otelMetrics.setGlobalMeterProvider(meterProvider)
 
     const meter = otelMetrics.getMeter('jangar')
@@ -424,7 +514,7 @@ const createMetricsState = (): MetricsState => {
       shutdown,
       prometheusEnabled,
       prometheusPath,
-      prometheusExporter: prometheusExporter ?? undefined,
+      meterProvider,
     }
   } catch (error) {
     diag.error('failed to initialize metrics', error)
@@ -437,41 +527,26 @@ if (!globalState.__jangarMetrics) {
   globalState.__jangarMetrics = metricsState
 }
 
-export const isPrometheusMetricsEnabled = () => Boolean(metricsState.prometheusExporter)
+export const isPrometheusMetricsEnabled = () => Boolean(metricsState.prometheusEnabled)
 
 export const getPrometheusMetricsPath = () => metricsState.prometheusPath ?? '/metrics'
-
-export const handlePrometheusMetricsRequest = (req: unknown, res: unknown) => {
-  const exporter = metricsState.prometheusExporter
-  if (!exporter) return
-  // The Prometheus exporter expects Node HTTP req/res objects.
-  exporter.getMetricsRequestHandler(req as never, res as never)
-}
 
 export const renderPrometheusMetrics = async (): Promise<
   { ok: true; body: string } | { ok: false; message: string }
 > => {
-  const exporter = metricsState.prometheusExporter
-  if (!exporter) return { ok: false, message: 'prometheus metrics disabled' }
+  if (!metricsState.prometheusEnabled || !metricsState.meterProvider) {
+    return { ok: false, message: 'prometheus metrics disabled' }
+  }
 
   try {
-    // @opentelemetry/exporter-prometheus only exposes a Node req/res handler.
-    // In fetch runtimes (Nitro/h3 without event.node), we render via its internal serializer.
-    const anyExporter = exporter as unknown as {
-      collect: () => Promise<{ resourceMetrics: unknown; errors: unknown[] }>
-      _serializer?: { serialize: (resourceMetrics: unknown) => string }
-    }
-
-    const { resourceMetrics, errors } = await anyExporter.collect()
-    if (errors?.length) {
-      diag.error('PrometheusExporter: metrics collection errors', ...errors)
-    }
-
-    const serializer = anyExporter._serializer
-    if (!serializer) return { ok: false, message: 'prometheus exporter serializer unavailable' }
-    return { ok: true, body: serializer.serialize(resourceMetrics) }
+    const body = serializeResourceMetricsToPrometheus(metricsState.meterProvider.collect())
+    return { ok: true, body }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return { ok: true, body: `# failed to export metrics: ${message}\n` }
   }
+}
+
+export const __private = {
+  serializeResourceMetricsToPrometheus,
 }
