@@ -48,7 +48,7 @@ type MetricsState = {
   prometheusExporter?: PrometheusExporter
 }
 
-type SseStream = 'chat' | 'agent-events' | 'control-plane' | 'torghut-quant'
+type SseStream = 'chat' | 'agent-events' | 'control-plane' | 'torghut-quant' | 'torghut-decision'
 
 type AgentCommsErrorStage = 'fetch' | 'insert' | 'decode' | 'unknown'
 
