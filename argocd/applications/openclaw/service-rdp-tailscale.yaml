@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: openclaw-rdp-tailscale
+  annotations:
+    tailscale.com/hostname: openclaw-rdp
+    # Tailscale LB readiness is managed by the operator; do not block Argo health on it.
+    argocd.argoproj.io/ignore-healthcheck: 'true'
+  labels:
+    app.kubernetes.io/name: openclaw
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    kubevirt.io/domain: openclaw
+  ports:
+    - name: rdp
+      port: 3389
+      protocol: TCP
+      targetPort: 3389
