@@ -27,12 +27,9 @@
 }
 
 @layer base {
+  /* Preserve native option contrast across Chromium dark-theme dropdown renderers. */
   select {
     color-scheme: light;
-  }
-
-  .dark select {
-    color-scheme: dark;
   }
 }
 
