@@ -34,6 +34,12 @@ The v1 documents are written to stay consistent with:
 - `v2/` - research and profitability blueprint for a more autonomous system (not production-facing; may drift).
   - Entry point: `docs/torghut/design-system/v2/index.md`
 
+- `v3/` - production handoff for flexible quant strategy engine + full-loop autonomous operation.
+  - Entry point: `docs/torghut/design-system/v3/index.md`
+
+- `v4/` - fresh quant/LLM profitability expansion pack grounded in 2024-2025 papers and white papers.
+  - Entry point: `docs/torghut/design-system/v4/index.md`
+
 - `v1/` - first cohesive design-system pass aligned to production reality as of **2026-02-08**.
 
 ### v1 Index
