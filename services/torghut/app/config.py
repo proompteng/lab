@@ -256,6 +256,36 @@ class Settings(BaseSettings):
     trading_account_label: str = Field(default="paper", alias="TRADING_ACCOUNT_LABEL")
     trading_kill_switch_enabled: bool = Field(default=True, alias="TRADING_KILL_SWITCH_ENABLED")
     trading_jangar_symbols_url: Optional[str] = Field(default=None, alias="JANGAR_SYMBOLS_URL")
+    trading_market_context_url: Optional[str] = Field(
+        default=None,
+        alias="TRADING_MARKET_CONTEXT_URL",
+        description="Jangar market-context endpoint consumed by LLM review.",
+    )
+    trading_market_context_timeout_seconds: int = Field(
+        default=3,
+        alias="TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS",
+        description="Timeout for market-context fetches.",
+    )
+    trading_market_context_required: bool = Field(
+        default=False,
+        alias="TRADING_MARKET_CONTEXT_REQUIRED",
+        description="Require market context for LLM requests.",
+    )
+    trading_market_context_fail_mode: Literal["shadow_only", "fail_closed"] = Field(
+        default="shadow_only",
+        alias="TRADING_MARKET_CONTEXT_FAIL_MODE",
+        description="How to handle missing/low-quality market context.",
+    )
+    trading_market_context_min_quality: float = Field(
+        default=0.4,
+        alias="TRADING_MARKET_CONTEXT_MIN_QUALITY",
+        description="Minimum quality score for allowing LLM reviews.",
+    )
+    trading_market_context_max_staleness_seconds: int = Field(
+        default=300,
+        alias="TRADING_MARKET_CONTEXT_MAX_STALENESS_SECONDS",
+        description="Maximum accepted market-context staleness.",
+    )
     trading_clickhouse_url: Optional[str] = Field(default=None, alias="TA_CLICKHOUSE_URL")
     trading_clickhouse_username: Optional[str] = Field(default=None, alias="TA_CLICKHOUSE_USERNAME")
     trading_clickhouse_password: Optional[str] = Field(default=None, alias="TA_CLICKHOUSE_PASSWORD")
@@ -309,6 +339,8 @@ class Settings(BaseSettings):
             self.trading_account_label = self.trading_mode
         if self.jangar_base_url:
             self.jangar_base_url = self.jangar_base_url.strip().rstrip("/")
+        if self.trading_market_context_url:
+            self.trading_market_context_url = self.trading_market_context_url.strip().rstrip("/")
         if self.llm_self_hosted_base_url:
             self.llm_self_hosted_base_url = self.llm_self_hosted_base_url.strip().rstrip("/")
         if self.trading_lean_runner_url:

@@ -16,6 +16,7 @@ from app.trading.llm.review_engine import LLMReviewOutcome
 from app.trading.llm.schema import (
     LLMDecisionContext,
     LLMPolicyContext,
+    MarketContextBundle,
     MarketSnapshot,
     PortfolioSnapshot,
     RecentDecisionSummary,
@@ -174,6 +175,7 @@ class FakeLLMReviewEngine:
         positions: list[dict[str, Any]],
         portfolio: PortfolioSnapshot | None = None,
         market: MarketSnapshot | None = None,
+        market_context: MarketContextBundle | None = None,
         recent_decisions: list[RecentDecisionSummary] | None = None,
         adjustment_allowed: bool | None = None,
     ) -> LLMReviewRequest:
@@ -200,6 +202,7 @@ class FakeLLMReviewEngine:
             ),
             portfolio=portfolio_snapshot,
             market=market,
+            market_context=market_context,
             recent_decisions=recent_decisions or [],
             account=account,
             positions=positions,
@@ -221,6 +224,7 @@ class FakeLLMReviewEngine:
         request: LLMReviewRequest | None = None,
         portfolio: PortfolioSnapshot | None = None,
         market: MarketSnapshot | None = None,
+        market_context: MarketContextBundle | None = None,
         recent_decisions: list[RecentDecisionSummary] | None = None,
     ) -> LLMReviewOutcome:
         if self.error:
@@ -231,6 +235,7 @@ class FakeLLMReviewEngine:
             positions,
             portfolio=portfolio,
             market=market,
+            market_context=market_context,
             recent_decisions=recent_decisions,
         )
         response = LLMReviewResponse(
