@@ -26,6 +26,16 @@
     Consolas, monospace;
 }
 
+@layer base {
+  select {
+    color-scheme: light;
+  }
+
+  .dark select {
+    color-scheme: dark;
+  }
+}
+
 .xterm {
   width: 100%;
   height: 100%;
