@@ -343,6 +343,54 @@ CREATE INDEX trade_decisions_symbol_created_at_idx
 - **Trading decision lag:** <2x poll interval.
 - **Jangar API latency p95:** <200ms for cached TA queries.
 
+## Ingest Lag Findings (2026-02-19, Interim Merge)
+This section captures a point-in-time production check and merges current findings into one operational view.
+
+### Snapshot (2026-02-19 14:16 UTC)
+- Cluster context: `galactic`.
+- `flinkdeployment/torghut-ta` status: `RUNNING/STABLE`.
+- Latest observed `torghut.ta_signals` row at check time:
+  - `ingest_ts=2026-02-19 14:16:19.611 UTC`
+  - `event_ts=2026-02-19 14:11:47.000 UTC`
+  - `symbol=MSFT`
+- Freshness at read time was about `19s` (`now - ingest_ts`), but event-to-ingest delay was `272s` for the latest row.
+
+### Findings
+1) Data flow is active, but staleness is material.
+- Stream is not fully down; new rows continue to land in `ta_microbars`/`ta_signals`.
+- Recent sampled `ta_signals` rows showed `dateDiff(event_ts, ingest_ts)` in the `22s` to `494s` range.
+
+2) Continuity watchdog is firing repeatedly.
+- `torghut` service logs repeatedly emitted `Signal continuity alert` with `reason=cursor_tail_stable`.
+- Observed `lag_seconds` commonly around `180-233s`, with bursts above `280s`.
+
+3) WS symbol-source dependency had transient failures.
+- `torghut-ws` logged `desired symbols fetch failed` with `Connection refused` against
+  `http://jangar.jangar.svc.cluster.local/api/torghut/symbols` (observed around `2026-02-19 14:11 UTC`).
+- Forwarder behavior was fail-soft: it reused cached symbols and continued producing Kafka records.
+
+4) GitOps drift exists even while app health is green.
+- Argo CD app `torghut` reported `Healthy` and `OutOfSync`.
+- Out-of-sync resources observed:
+  - `ConfigMap/torghut-autonomy-config`
+  - `ConfigMap/torghut-autonomy-gate-policy`
+  - `Service/torghut` (Knative Service)
+
+### Interim Merged Diagnosis (For Now)
+- This is a degraded-latency condition, not a hard outage.
+- Primary user-facing issue is stale trading/indicator context (`event_ts` trails `ingest_ts` by minutes).
+- Most likely combined contributors are:
+  - intermittent symbol-universe fetch issues in WS dependency path,
+  - sparse/irregular symbol activity windows,
+  - continuity guard thresholds surfacing downstream lag bursts.
+- Next diagnostic step should trace end-to-end lag budget across `torghut-ws -> Kafka -> Flink TA -> ClickHouse -> torghut continuity checks`.
+
+### Immediate Follow-ups
+- Add first-class SLI for `dateDiff(event_ts, ingest_ts)` on `ta_signals` (`p50/p95/p99`).
+- Alert on continuity counters (`consecutive_no_signal`) alongside lag.
+- Add explicit metrics/log fields for symbol-poll fallback mode and cache age in `torghut-ws`.
+- Resolve Argo `OutOfSync` drift items to keep runtime and manifests aligned.
+
 ## Known Gaps / Future Work
 - Full disaster recovery runbook for Kafka + ClickHouse + Flink.
 - CI checks that validate schema compatibility rules for TA schemas.
