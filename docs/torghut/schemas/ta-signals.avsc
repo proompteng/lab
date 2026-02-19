@@ -7,7 +7,9 @@
     {"name": "event_ts", "type": "string"},
     {"name": "symbol", "type": "string"},
     {"name": "seq", "type": "long"},
+    {"name": "feature_schema_version", "type": ["null", "string"], "default": null},
     {"name": "is_final", "type": ["null", "boolean"], "default": null},
+    {"name": "signal_quality_flag", "type": ["null", "string"], "default": null},
     {"name": "source", "type": ["null", "string"], "default": null},
     {"name": "window", "type": ["null", {
       "type": "record",

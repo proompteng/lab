@@ -142,6 +142,26 @@ class Settings(BaseSettings):
         alias="TRADING_FEATURE_NORMALIZATION_VERSION",
         description="Feature normalization implementation version.",
     )
+    trading_feature_quality_enabled: bool = Field(
+        default=True,
+        alias="TRADING_FEATURE_QUALITY_ENABLED",
+        description="Fail closed on feature schema/freshness/data-quality violations.",
+    )
+    trading_feature_max_required_null_rate: float = Field(
+        default=0.01,
+        alias="TRADING_FEATURE_MAX_REQUIRED_NULL_RATE",
+        description="Maximum allowed null-rate for required canonical v3 feature fields.",
+    )
+    trading_feature_max_staleness_ms: int = Field(
+        default=120000,
+        alias="TRADING_FEATURE_MAX_STALENESS_MS",
+        description="Maximum allowed p95 feature staleness in milliseconds per batch.",
+    )
+    trading_feature_max_duplicate_ratio: float = Field(
+        default=0.02,
+        alias="TRADING_FEATURE_MAX_DUPLICATE_RATIO",
+        description="Maximum duplicate event ratio per ingest batch.",
+    )
     trading_autonomy_enabled: bool = Field(default=False, alias="TRADING_AUTONOMY_ENABLED")
     trading_autonomy_allow_live_promotion: bool = Field(
         default=False,

@@ -135,3 +135,17 @@ class TestTradingMetrics(TestCase):
         self.assertEqual(metrics.strategy_latency_ms.get("s1"), 9)
         self.assertEqual(metrics.intent_conflict_total, 1)
         self.assertEqual(metrics.strategy_runtime_isolated_failures_total, 1)
+
+    def test_feature_quality_metrics_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        metrics.feature_null_rate = {"price": 0.5}
+        metrics.feature_staleness_ms_p95 = 1234
+        metrics.feature_duplicate_ratio = 0.2
+        metrics.feature_schema_mismatch_total = 2
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn('torghut_trading_feature_null_rate{field="price"} 0.5', payload)
+        self.assertIn("torghut_trading_feature_staleness_ms_p95 1234", payload)
+        self.assertIn("torghut_trading_feature_duplicate_ratio 0.2", payload)
+        self.assertIn("torghut_trading_feature_schema_mismatch_total 2", payload)

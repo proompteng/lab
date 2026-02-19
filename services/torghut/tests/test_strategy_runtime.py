@@ -361,3 +361,39 @@ class TestStrategyRuntime(TestCase):
             evaluation.intents[0].source_strategy_ids,
             (str(buy_strategy.id),),
         )
+
+    def test_runtime_rejects_plugin_with_undeclared_contract_feature(self) -> None:
+        class InvalidPlugin:
+            plugin_id = "invalid_plugin"
+            version = "1.0.0"
+            required_features = ("price", "not_in_feature_contract")
+
+            def evaluate(self, context, features):  # type: ignore[no-untyped-def]
+                _ = context
+                _ = features
+                return None
+
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="invalid-plugin",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="invalid",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("0.02"),
+            max_notional_per_trade=Decimal("2500"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Min",
+            payload={"macd": {"macd": 1.2, "signal": 0.3}, "rsi14": 25, "price": 101.5},
+        )
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime(
+            registry=StrategyRegistry(plugins={"invalid": InvalidPlugin()})
+        )
+
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Min")
+        self.assertIsNone(decision)
