@@ -21,9 +21,13 @@ from ..db import SessionLocal
 from ..models import LLMDecisionReview, Strategy, TradeDecision, coerce_json_payload
 from ..snapshots import snapshot_account_and_positions
 from ..strategies import StrategyCatalog
-from .decisions import DecisionEngine
+from .decisions import DecisionEngine, DecisionRuntimeTelemetry
 from .execution import OrderExecutor
-from .execution_adapters import ExecutionAdapter, adapter_enabled_for_symbol, build_execution_adapter
+from .execution_adapters import (
+    ExecutionAdapter,
+    adapter_enabled_for_symbol,
+    build_execution_adapter,
+)
 from .execution_policy import ExecutionPolicy
 from .firewall import OrderFirewall, OrderFirewallBlocked
 from .ingest import ClickHouseSignalIngestor, SignalBatch
@@ -46,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 def _extract_json_error_payload(error: Exception) -> Optional[dict[str, Any]]:
     raw = str(error).strip()
-    if not raw.startswith('{'):
+    if not raw.startswith("{"):
         return None
     try:
         parsed = json.loads(raw)
@@ -60,18 +64,18 @@ def _extract_json_error_payload(error: Exception) -> Optional[dict[str, Any]]:
 def _format_order_submit_rejection(error: Exception) -> str:
     payload = _extract_json_error_payload(error)
     if payload:
-        code = payload.get('code')
-        reject_reason = payload.get('reject_reason')
-        existing_order_id = payload.get('existing_order_id')
-        parts: list[str] = ['alpaca_order_rejected']
+        code = payload.get("code")
+        reject_reason = payload.get("reject_reason")
+        existing_order_id = payload.get("existing_order_id")
+        parts: list[str] = ["alpaca_order_rejected"]
         if code is not None:
-            parts.append(f'code={code}')
+            parts.append(f"code={code}")
         if reject_reason:
-            parts.append(f'reason={reject_reason}')
+            parts.append(f"reason={reject_reason}")
         if existing_order_id:
-            parts.append(f'existing_order_id={existing_order_id}')
-        return ' '.join(parts)
-    return f'alpaca_order_submit_failed {type(error).__name__}: {error}'
+            parts.append(f"existing_order_id={existing_order_id}")
+        return " ".join(parts)
+    return f"alpaca_order_submit_failed {type(error).__name__}: {error}"
 
 
 @dataclass
@@ -93,15 +97,27 @@ class TradingMetrics:
     llm_guardrail_shadow_total: int = 0
     llm_tokens_prompt_total: int = 0
     llm_tokens_completion_total: int = 0
-    execution_requests_total: dict[str, int] = field(default_factory=lambda: cast(dict[str, int], {}))
-    execution_fallback_total: dict[str, int] = field(default_factory=lambda: cast(dict[str, int], {}))
-    execution_fallback_reason_total: dict[str, int] = field(default_factory=lambda: cast(dict[str, int], {}))
+    execution_requests_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    execution_fallback_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    execution_fallback_reason_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
     no_signal_windows_total: int = 0
-    no_signal_reason_total: dict[str, int] = field(default_factory=lambda: cast(dict[str, int], {}))
-    no_signal_reason_streak: dict[str, int] = field(default_factory=lambda: cast(dict[str, int], {}))
+    no_signal_reason_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    no_signal_reason_streak: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
     no_signal_streak: int = 0
     signal_lag_seconds: int | None = None
-    signal_staleness_alert_total: dict[str, int] = field(default_factory=lambda: cast(dict[str, int], {}))
+    signal_staleness_alert_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
     order_feed_messages_total: int = 0
     order_feed_events_persisted_total: int = 0
     order_feed_duplicates_total: int = 0
@@ -109,6 +125,22 @@ class TradingMetrics:
     order_feed_missing_fields_total: int = 0
     order_feed_apply_updates_total: int = 0
     order_feed_consumer_errors_total: int = 0
+    strategy_events_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    strategy_intents_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    strategy_errors_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    strategy_latency_ms: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    intent_conflict_total: int = 0
+    strategy_runtime_isolated_failures_total: int = 0
+    strategy_runtime_fallback_total: int = 0
+    strategy_runtime_legacy_path_total: int = 0
 
     def record_execution_request(self, adapter: str | None) -> None:
         adapter_name = coerce_route_text(adapter)
@@ -129,7 +161,9 @@ class TradingMetrics:
         current = self.execution_fallback_total.get(transition, 0)
         self.execution_fallback_total[transition] = current + 1
         if fallback_reason:
-            current_reason = self.execution_fallback_reason_total.get(fallback_reason, 0)
+            current_reason = self.execution_fallback_reason_total.get(
+                fallback_reason, 0
+            )
             self.execution_fallback_reason_total[fallback_reason] = current_reason + 1
 
     def record_no_signal(self, reason: str | None) -> None:
@@ -142,7 +176,9 @@ class TradingMetrics:
         for existing_reason in list(self.no_signal_reason_streak):
             if existing_reason != normalized:
                 del self.no_signal_reason_streak[existing_reason]
-        self.no_signal_reason_streak[normalized] = self.no_signal_reason_streak.get(normalized, 0) + 1
+        self.no_signal_reason_streak[normalized] = (
+            self.no_signal_reason_streak.get(normalized, 0) + 1
+        )
 
     def record_signal_staleness_alert(self, reason: str | None) -> None:
         normalized = reason.strip() if isinstance(reason, str) else ""
@@ -150,6 +186,34 @@ class TradingMetrics:
             normalized = "unknown"
         current = self.signal_staleness_alert_total.get(normalized, 0)
         self.signal_staleness_alert_total[normalized] = current + 1
+
+    def record_strategy_runtime(self, telemetry: DecisionRuntimeTelemetry) -> None:
+        if not telemetry.runtime_enabled:
+            self.strategy_runtime_legacy_path_total += 1
+            return
+        if telemetry.fallback_to_legacy:
+            self.strategy_runtime_fallback_total += 1
+        observation = telemetry.observation
+        if observation is None:
+            return
+        for strategy_id, count in observation.strategy_events_total.items():
+            self.strategy_events_total[strategy_id] = (
+                self.strategy_events_total.get(strategy_id, 0) + count
+            )
+        for strategy_id, count in observation.strategy_intents_total.items():
+            self.strategy_intents_total[strategy_id] = (
+                self.strategy_intents_total.get(strategy_id, 0) + count
+            )
+        for strategy_id, count in observation.strategy_errors_total.items():
+            self.strategy_errors_total[strategy_id] = (
+                self.strategy_errors_total.get(strategy_id, 0) + count
+            )
+        for strategy_id, latency_ms in observation.strategy_latency_ms.items():
+            self.strategy_latency_ms[strategy_id] = latency_ms
+        self.intent_conflict_total += observation.intent_conflicts_total
+        self.strategy_runtime_isolated_failures_total += (
+            observation.isolated_failures_total
+        )
 
 
 @dataclass
@@ -260,9 +324,18 @@ class TradingPipeline:
 
             for signal in batch.signals:
                 try:
-                    decisions = self.decision_engine.evaluate(signal, strategies, equity=account_snapshot.equity)
+                    decisions = self.decision_engine.evaluate(
+                        signal, strategies, equity=account_snapshot.equity
+                    )
+                    self.state.metrics.record_strategy_runtime(
+                        self.decision_engine.consume_runtime_telemetry()
+                    )
                 except Exception:
-                    logger.exception("Decision evaluation failed symbol=%s timeframe=%s", signal.symbol, signal.timeframe)
+                    logger.exception(
+                        "Decision evaluation failed symbol=%s timeframe=%s",
+                        signal.symbol,
+                        signal.timeframe,
+                    )
                     continue
 
                 if not decisions:
@@ -271,7 +344,14 @@ class TradingPipeline:
                 for decision in decisions:
                     self.state.metrics.decisions_total += 1
                     try:
-                        self._handle_decision(session, decision, strategies, account, positions, allowed_symbols)
+                        self._handle_decision(
+                            session,
+                            decision,
+                            strategies,
+                            account,
+                            positions,
+                            allowed_symbols,
+                        )
                     except Exception:
                         # Keep the loop alive and commit the cursor so we don't reprocess the same signals forever.
                         logger.exception(
@@ -286,13 +366,27 @@ class TradingPipeline:
 
     def _ingest_order_feed(self, session: Session) -> None:
         counters = self.order_feed_ingestor.ingest_once(session)
-        self.state.metrics.order_feed_messages_total += counters.get('messages_total', 0)
-        self.state.metrics.order_feed_events_persisted_total += counters.get('events_persisted_total', 0)
-        self.state.metrics.order_feed_duplicates_total += counters.get('duplicates_total', 0)
-        self.state.metrics.order_feed_out_of_order_total += counters.get('out_of_order_total', 0)
-        self.state.metrics.order_feed_missing_fields_total += counters.get('missing_fields_total', 0)
-        self.state.metrics.order_feed_apply_updates_total += counters.get('apply_updates_total', 0)
-        self.state.metrics.order_feed_consumer_errors_total += counters.get('consumer_errors_total', 0)
+        self.state.metrics.order_feed_messages_total += counters.get(
+            "messages_total", 0
+        )
+        self.state.metrics.order_feed_events_persisted_total += counters.get(
+            "events_persisted_total", 0
+        )
+        self.state.metrics.order_feed_duplicates_total += counters.get(
+            "duplicates_total", 0
+        )
+        self.state.metrics.order_feed_out_of_order_total += counters.get(
+            "out_of_order_total", 0
+        )
+        self.state.metrics.order_feed_missing_fields_total += counters.get(
+            "missing_fields_total", 0
+        )
+        self.state.metrics.order_feed_apply_updates_total += counters.get(
+            "apply_updates_total", 0
+        )
+        self.state.metrics.order_feed_consumer_errors_total += counters.get(
+            "consumer_errors_total", 0
+        )
 
     def record_no_signal_batch(self, batch: SignalBatch) -> None:
         self.state.last_ingest_signals_total = len(batch.signals)
@@ -306,12 +400,16 @@ class TradingPipeline:
             self.state.metrics.signal_lag_seconds = None
         self.state.metrics.record_no_signal(reason)
         streak = self.state.metrics.no_signal_reason_streak.get(reason or "unknown", 0)
-        if reason in {
-            "no_signals_in_window",
-            "cursor_tail_stable",
-            "cursor_ahead_of_stream",
-            "empty_batch_advanced",
-        } and streak >= settings.trading_signal_no_signal_streak_alert_threshold:
+        if (
+            reason
+            in {
+                "no_signals_in_window",
+                "cursor_tail_stable",
+                "cursor_ahead_of_stream",
+                "empty_batch_advanced",
+            }
+            and streak >= settings.trading_signal_no_signal_streak_alert_threshold
+        ):
             self.state.metrics.record_signal_staleness_alert(reason)
             logger.warning(
                 "Signal continuity alert: reason=%s consecutive_no_signal=%s lag_seconds=%s",
@@ -321,7 +419,8 @@ class TradingPipeline:
             )
         elif (
             batch.signal_lag_seconds is not None
-            and batch.signal_lag_seconds >= settings.trading_signal_stale_lag_alert_seconds
+            and batch.signal_lag_seconds
+            >= settings.trading_signal_stale_lag_alert_seconds
         ):
             self.state.metrics.record_signal_staleness_alert(reason)
             logger.warning(
@@ -348,7 +447,9 @@ class TradingPipeline:
     ) -> None:
         decision_row: Optional[TradeDecision] = None
         try:
-            strategy = next((s for s in strategies if str(s.id) == decision.strategy_id), None)
+            strategy = next(
+                (s for s in strategies if str(s.id) == decision.strategy_id), None
+            )
             if strategy is None:
                 return
 
@@ -361,23 +462,36 @@ class TradingPipeline:
             else:
                 symbol_allowlist = allowed_symbols
 
-            decision_row = self.executor.ensure_decision(session, decision, strategy, self.account_label)
+            decision_row = self.executor.ensure_decision(
+                session, decision, strategy, self.account_label
+            )
             if decision_row.status != "planned":
                 return
             if self.executor.execution_exists(session, decision_row):
                 return
 
-            decision, snapshot = self._ensure_decision_price(decision, signal_price=decision.params.get("price"))
+            decision, snapshot = self._ensure_decision_price(
+                decision, signal_price=decision.params.get("price")
+            )
             if snapshot is not None:
                 params_update = decision.model_dump(mode="json").get("params", {})
                 if isinstance(params_update, Mapping):
-                    self.executor.update_decision_params(session, decision_row, cast(Mapping[str, Any], params_update))
+                    self.executor.update_decision_params(
+                        session, decision_row, cast(Mapping[str, Any], params_update)
+                    )
 
-            sizing_result = self._apply_portfolio_sizing(decision, strategy, account, positions)
+            sizing_result = self._apply_portfolio_sizing(
+                decision, strategy, account, positions
+            )
             decision = sizing_result.decision
             sizing_params = decision.model_dump(mode="json").get("params", {})
-            if isinstance(sizing_params, Mapping) and "portfolio_sizing" in sizing_params:
-                self.executor.update_decision_params(session, decision_row, cast(Mapping[str, Any], sizing_params))
+            if (
+                isinstance(sizing_params, Mapping)
+                and "portfolio_sizing" in sizing_params
+            ):
+                self.executor.update_decision_params(
+                    session, decision_row, cast(Mapping[str, Any], sizing_params)
+                )
             if not sizing_result.approved:
                 self.state.metrics.orders_rejected_total += 1
                 for reason in sizing_result.reasons:
@@ -387,7 +501,9 @@ class TradingPipeline:
                         decision.symbol,
                         reason,
                     )
-                self.executor.mark_rejected(session, decision_row, ";".join(sizing_result.reasons))
+                self.executor.mark_rejected(
+                    session, decision_row, ";".join(sizing_result.reasons)
+                )
                 return
 
             decision, llm_reject_reason = self._apply_llm_review(
@@ -410,7 +526,9 @@ class TradingPipeline:
                 kill_switch_enabled=self.order_firewall.status().kill_switch_enabled,
             )
             decision = policy_outcome.decision
-            self.executor.update_decision_params(session, decision_row, policy_outcome.params_update())
+            self.executor.update_decision_params(
+                session, decision_row, policy_outcome.params_update()
+            )
             if not policy_outcome.approved:
                 self.state.metrics.orders_rejected_total += 1
                 for reason in policy_outcome.reasons:
@@ -420,10 +538,14 @@ class TradingPipeline:
                         decision.symbol,
                         reason,
                     )
-                self.executor.mark_rejected(session, decision_row, ";".join(policy_outcome.reasons))
+                self.executor.mark_rejected(
+                    session, decision_row, ";".join(policy_outcome.reasons)
+                )
                 return
 
-            verdict = self.risk_engine.evaluate(session, decision, strategy, account, positions, symbol_allowlist)
+            verdict = self.risk_engine.evaluate(
+                session, decision, strategy, account, positions, symbol_allowlist
+            )
             if not verdict.approved:
                 self.state.metrics.orders_rejected_total += 1
                 for reason in verdict.reasons:
@@ -433,7 +555,9 @@ class TradingPipeline:
                         decision.symbol,
                         reason,
                     )
-                self.executor.mark_rejected(session, decision_row, ";".join(verdict.reasons))
+                self.executor.mark_rejected(
+                    session, decision_row, ";".join(verdict.reasons)
+                )
                 return
 
             if not settings.trading_enabled:
@@ -507,7 +631,9 @@ class TradingPipeline:
                 self.state.metrics.orders_submitted_total += 1
                 return
 
-            actual_adapter_name = str(getattr(execution_client, "last_route", selected_adapter_name))
+            actual_adapter_name = str(
+                getattr(execution_client, "last_route", selected_adapter_name)
+            )
             if actual_adapter_name == "alpaca_fallback":
                 actual_adapter_name = "alpaca"
             if actual_adapter_name != selected_adapter_name:
@@ -547,7 +673,11 @@ class TradingPipeline:
             )
             if decision_row is not None and decision_row.status == "planned":
                 self.state.metrics.orders_rejected_total += 1
-                self.executor.mark_rejected(session, decision_row, f"decision_handler_error {type(exc).__name__}")
+                self.executor.mark_rejected(
+                    session,
+                    decision_row,
+                    f"decision_handler_error {type(exc).__name__}",
+                )
             return
 
     def _execution_client_for_symbol(self, symbol: str) -> Any:
@@ -662,7 +792,9 @@ class TradingPipeline:
             if outcome.tokens_prompt is not None:
                 self.state.metrics.llm_tokens_prompt_total += outcome.tokens_prompt
             if outcome.tokens_completion is not None:
-                self.state.metrics.llm_tokens_completion_total += outcome.tokens_completion
+                self.state.metrics.llm_tokens_completion_total += (
+                    outcome.tokens_completion
+                )
 
             adjusted_qty = None
             adjusted_order_type = None
@@ -670,7 +802,9 @@ class TradingPipeline:
                 self.state.metrics.llm_adjust_total += 1
                 adjusted_qty = Decimal(str(policy_outcome.decision.qty))
                 adjusted_order_type = policy_outcome.decision.order_type
-                self._persist_llm_adjusted_decision(session, decision_row, policy_outcome.decision)
+                self._persist_llm_adjusted_decision(
+                    session, decision_row, policy_outcome.decision
+                )
             elif policy_outcome.verdict == "approve":
                 self.state.metrics.llm_approve_total += 1
             elif policy_outcome.verdict == "veto":
@@ -679,7 +813,9 @@ class TradingPipeline:
             if outcome.tokens_prompt is not None:
                 self.state.metrics.llm_tokens_prompt_total += outcome.tokens_prompt
             if outcome.tokens_completion is not None:
-                self.state.metrics.llm_tokens_completion_total += outcome.tokens_completion
+                self.state.metrics.llm_tokens_completion_total += (
+                    outcome.tokens_completion
+                )
 
             self._persist_llm_review(
                 session=session,
@@ -749,9 +885,17 @@ class TradingPipeline:
                     self.state.metrics.llm_guardrail_shadow_total += 1
                 return decision, None
             if fallback == "veto":
-                logger.warning("LLM review failed; vetoing decision_id=%s error=%s", decision_row.id, exc)
+                logger.warning(
+                    "LLM review failed; vetoing decision_id=%s error=%s",
+                    decision_row.id,
+                    exc,
+                )
                 return decision, "llm_error"
-            logger.warning("LLM review failed; pass-through decision_id=%s error=%s", decision_row.id, exc)
+            logger.warning(
+                "LLM review failed; pass-through decision_id=%s error=%s",
+                decision_row.id,
+                exc,
+            )
             return decision, None
 
     def _handle_llm_unavailable(
@@ -789,7 +933,11 @@ class TradingPipeline:
             model=settings.llm_model,
             prompt_version=settings.llm_prompt_version,
             request_json=request_payload,
-            response_json={"error": reason, "fallback": fallback, "effective_verdict": effective_verdict},
+            response_json={
+                "error": reason,
+                "fallback": fallback,
+                "effective_verdict": effective_verdict,
+            },
             verdict="error",
             confidence=None,
             adjusted_qty=None,
@@ -808,7 +956,9 @@ class TradingPipeline:
             return decision, "llm_error"
         return decision, None
 
-    def _build_market_snapshot(self, decision: StrategyDecision) -> Optional[LLMMarketSnapshot]:
+    def _build_market_snapshot(
+        self, decision: StrategyDecision
+    ) -> Optional[LLMMarketSnapshot]:
         params = decision.params or {}
         price = params.get("price") or params.get("close")
         spread: Optional[Any] = None
@@ -890,7 +1040,9 @@ class TradingPipeline:
             if now - self._snapshot_cached_at < snapshot_ttl:
                 return self._snapshot_cache
         # Reuse snapshots within the reconcile interval to reduce Alpaca and DB churn.
-        snapshot = snapshot_account_and_positions(session, self.alpaca_client, self.account_label)
+        snapshot = snapshot_account_and_positions(
+            session, self.alpaca_client, self.account_label
+        )
         self._snapshot_cache = snapshot
         self._snapshot_cached_at = now
         return snapshot
@@ -940,7 +1092,9 @@ class TradingPipeline:
         decision: StrategyDecision,
     ) -> None:
         decision_json = _coerce_json(decision_row.decision_json)
-        decision_json["llm_adjusted_decision"] = coerce_json_payload(decision.model_dump(mode="json"))
+        decision_json["llm_adjusted_decision"] = coerce_json_payload(
+            decision.model_dump(mode="json")
+        )
         decision_row.decision_json = decision_json
         session.add(decision_row)
         session.commit()
@@ -971,7 +1125,9 @@ def _price_snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:
     }
 
 
-def _build_portfolio_snapshot(account: dict[str, str], positions: list[dict[str, Any]]) -> PortfolioSnapshot:
+def _build_portfolio_snapshot(
+    account: dict[str, str], positions: list[dict[str, Any]]
+) -> PortfolioSnapshot:
     equity = _optional_decimal(account.get("equity"))
     cash = _optional_decimal(account.get("cash"))
     buying_power = _optional_decimal(account.get("buying_power"))
@@ -984,7 +1140,9 @@ def _build_portfolio_snapshot(account: dict[str, str], positions: list[dict[str,
         market_value = _optional_decimal(position.get("market_value"))
         if market_value is None:
             continue
-        exposure_by_symbol[symbol] = exposure_by_symbol.get(symbol, Decimal("0")) + market_value
+        exposure_by_symbol[symbol] = (
+            exposure_by_symbol.get(symbol, Decimal("0")) + market_value
+        )
         total_exposure += abs(market_value)
     return PortfolioSnapshot(
         equity=equity,
@@ -1067,9 +1225,17 @@ def _resolve_autonomy_artifact_root(raw_root: Path) -> Path:
             return root
         except OSError as exc:
             if root == preferred_root:
-                logger.warning("Autonomy artifact root not writable at %s; trying fallback (%s)", preferred_root, exc)
+                logger.warning(
+                    "Autonomy artifact root not writable at %s; trying fallback (%s)",
+                    preferred_root,
+                    exc,
+                )
             elif root in fallback_roots:
-                logger.warning("Autonomy artifact fallback root not writable at %s; trying next fallback (%s)", root, exc)
+                logger.warning(
+                    "Autonomy artifact fallback root not writable at %s; trying next fallback (%s)",
+                    root,
+                    exc,
+                )
     raise RuntimeError("unable_to_resolve_autonomy_artifact_root")
 
 
@@ -1094,7 +1260,9 @@ class TradingScheduler:
     def llm_status(self) -> dict[str, object]:
         circuit_snapshot = None
         if self._pipeline and self._pipeline.llm_review_engine:
-            circuit_snapshot = self._pipeline.llm_review_engine.circuit_breaker.snapshot()
+            circuit_snapshot = (
+                self._pipeline.llm_review_engine.circuit_breaker.snapshot()
+            )
         guardrails = evaluate_llm_guardrails()
         return {
             "enabled": settings.llm_enabled,
@@ -1116,7 +1284,9 @@ class TradingScheduler:
         strategy_catalog = StrategyCatalog.from_settings()
         alpaca_client = TorghutAlpacaClient()
         order_firewall = OrderFirewall(alpaca_client)
-        execution_adapter = build_execution_adapter(alpaca_client=alpaca_client, order_firewall=order_firewall)
+        execution_adapter = build_execution_adapter(
+            alpaca_client=alpaca_client, order_firewall=order_firewall
+        )
         return TradingPipeline(
             alpaca_client=alpaca_client,
             order_firewall=order_firewall,
@@ -1190,7 +1360,9 @@ class TradingScheduler:
                     self.state.last_error = str(exc)
                 last_reconcile = now
 
-            if settings.trading_autonomy_enabled and now - last_autonomy >= timedelta(seconds=autonomy_interval):
+            if settings.trading_autonomy_enabled and now - last_autonomy >= timedelta(
+                seconds=autonomy_interval
+            ):
                 try:
                     if self._pipeline is None:
                         raise RuntimeError("trading_pipeline_not_initialized")
@@ -1216,12 +1388,18 @@ class TradingScheduler:
         if not gate_policy_path:
             raise RuntimeError("autonomy_gate_policy_path_missing")
 
-        artifact_root = _resolve_autonomy_artifact_root(Path(settings.trading_autonomy_artifact_dir))
+        artifact_root = _resolve_autonomy_artifact_root(
+            Path(settings.trading_autonomy_artifact_dir)
+        )
 
         now = datetime.now(timezone.utc)
-        lookback_minutes = max(1, int(settings.trading_autonomy_signal_lookback_minutes))
+        lookback_minutes = max(
+            1, int(settings.trading_autonomy_signal_lookback_minutes)
+        )
         start = now - timedelta(minutes=lookback_minutes)
-        autonomy_batch = self._pipeline.ingestor.fetch_signals_with_reason(start=start, end=now)
+        autonomy_batch = self._pipeline.ingestor.fetch_signals_with_reason(
+            start=start, end=now
+        )
         signals = autonomy_batch.signals
         self.state.last_ingest_signals_total = len(signals)
         self.state.last_ingest_window_start = autonomy_batch.query_start
@@ -1240,10 +1418,16 @@ class TradingScheduler:
             no_signal_reason_record = {
                 "status": "skipped",
                 "no_signal_reason": reason,
-                "query_start": autonomy_batch.query_start.isoformat() if autonomy_batch.query_start else None,
-                "query_end": autonomy_batch.query_end.isoformat() if autonomy_batch.query_end else None,
+                "query_start": autonomy_batch.query_start.isoformat()
+                if autonomy_batch.query_start
+                else None,
+                "query_end": autonomy_batch.query_end.isoformat()
+                if autonomy_batch.query_end
+                else None,
             }
-            no_signal_path.write_text(json.dumps(no_signal_reason_record, indent=2), encoding="utf-8")
+            no_signal_path.write_text(
+                json.dumps(no_signal_reason_record, indent=2), encoding="utf-8"
+            )
 
             self.state.last_autonomy_run_id = None
             self.state.last_autonomy_gates = str(no_signal_path)
@@ -1262,10 +1446,12 @@ class TradingScheduler:
                     gate_policy_path=Path(gate_policy_path),
                     no_signal_reason=reason,
                     now=now,
-                    code_version='live',
+                    code_version="live",
                 )
             except Exception as exc:
-                self.state.last_autonomy_reason = "autonomy_no_signal_persistence_failed"
+                self.state.last_autonomy_reason = (
+                    "autonomy_no_signal_persistence_failed"
+                )
                 self.state.last_autonomy_error = str(exc)
                 logger.exception(
                     "Autonomy no-signal persistence failed; ingest_reason=%s window_start=%s window_end=%s",
@@ -1296,11 +1482,19 @@ class TradingScheduler:
 
         promotion_target: Literal["paper", "live"]
         approval_token: str | None
-        if settings.trading_autonomy_allow_live_promotion and settings.trading_autonomy_approval_token:
+        if (
+            settings.trading_autonomy_allow_live_promotion
+            and settings.trading_autonomy_approval_token
+        ):
             promotion_target = "live"
             approval_token = settings.trading_autonomy_approval_token
-        elif settings.trading_autonomy_allow_live_promotion and not settings.trading_autonomy_approval_token:
-            logger.warning("Autonomy live promotion enabled but no approval token configured; fallback to paper target.")
+        elif (
+            settings.trading_autonomy_allow_live_promotion
+            and not settings.trading_autonomy_approval_token
+        ):
+            logger.warning(
+                "Autonomy live promotion enabled but no approval token configured; fallback to paper target."
+            )
             promotion_target = "paper"
             approval_token = None
         else:
@@ -1314,8 +1508,8 @@ class TradingScheduler:
                 gate_policy_path=Path(gate_policy_path),
                 output_dir=run_output_dir,
                 promotion_target=promotion_target,
-                strategy_configmap_path=Path('/etc/torghut/strategies.yaml'),
-                code_version='live',
+                strategy_configmap_path=Path("/etc/torghut/strategies.yaml"),
+                code_version="live",
                 approval_token=approval_token,
                 persist_results=True,
                 session_factory=self._pipeline.session_factory,
@@ -1331,8 +1525,10 @@ class TradingScheduler:
         self.state.last_autonomy_gates = str(result.gate_report_path)
         self.state.last_autonomy_reason = None
 
-        gate_report = json.loads(result.gate_report_path.read_text(encoding='utf-8'))
-        self.state.last_autonomy_recommendation = str(gate_report.get('recommended_mode'))
+        gate_report = json.loads(result.gate_report_path.read_text(encoding="utf-8"))
+        self.state.last_autonomy_recommendation = str(
+            gate_report.get("recommended_mode")
+        )
         self.state.last_autonomy_error = None
 
         if result.paper_patch_path is not None:

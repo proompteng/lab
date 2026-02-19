@@ -1,8 +1,10 @@
 """Trading decision engine based on TA signals."""
 
 from __future__ import annotations
+
 import logging
 import re
+from dataclasses import dataclass, field
 from decimal import ROUND_DOWN, Decimal
 from typing import Any, Iterable, Literal, Optional, cast
 
@@ -17,9 +19,23 @@ from .features import (
 )
 from .models import SignalEnvelope, StrategyDecision
 from .prices import MarketSnapshot, PriceFetcher
-from .strategy_runtime import StrategyRuntime
+from .strategy_runtime import (
+    RuntimeErrorRecord,
+    RuntimeObservation,
+    StrategyRegistry,
+    StrategyRuntime,
+)
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class DecisionRuntimeTelemetry:
+    mode: str
+    runtime_enabled: bool
+    fallback_to_legacy: bool
+    errors: tuple[RuntimeErrorRecord, ...] = field(default_factory=tuple)
+    observation: RuntimeObservation | None = None
 
 
 class DecisionEngine:
@@ -27,7 +43,17 @@ class DecisionEngine:
 
     def __init__(self, price_fetcher: Optional[PriceFetcher] = None) -> None:
         self.price_fetcher = price_fetcher
-        self.strategy_runtime = StrategyRuntime()
+        self.strategy_runtime = StrategyRuntime(
+            registry=StrategyRegistry(
+                circuit_error_threshold=settings.trading_strategy_runtime_circuit_errors,
+                cooldown_seconds=settings.trading_strategy_runtime_circuit_cooldown_seconds,
+            )
+        )
+        self._last_runtime_telemetry = DecisionRuntimeTelemetry(
+            mode="legacy",
+            runtime_enabled=False,
+            fallback_to_legacy=False,
+        )
 
     def evaluate(
         self,
@@ -36,34 +62,176 @@ class DecisionEngine:
         *,
         equity: Optional[Decimal] = None,
     ) -> list[StrategyDecision]:
-        decisions: list[StrategyDecision] = []
-        for strategy in strategies:
-            if not strategy.enabled:
-                continue
-            signal_timeframe = _resolve_signal_timeframe(signal)
-            if signal_timeframe is None:
-                logger.debug(
-                    "Skipping strategy %s because signal timeframe could not be resolved for symbol %s",
-                    strategy.id,
-                    signal.symbol,
+        filtered = [strategy for strategy in strategies if strategy.enabled]
+        timeframe = _resolve_signal_timeframe(signal)
+        if timeframe is None:
+            self._last_runtime_telemetry = DecisionRuntimeTelemetry(
+                mode="legacy",
+                runtime_enabled=False,
+                fallback_to_legacy=False,
+            )
+            return []
+        if signal.timeframe != timeframe:
+            signal = signal.model_copy(update={"timeframe": timeframe})
+
+        runtime_enabled = _runtime_enabled()
+        if runtime_enabled:
+            decisions = self._evaluate_with_runtime(signal, filtered, equity=equity)
+            if decisions:
+                return decisions
+            if settings.trading_strategy_runtime_fallback_legacy:
+                legacy_decisions = self._evaluate_legacy(
+                    signal, filtered, equity=equity
                 )
-                continue
-            if signal_timeframe != strategy.base_timeframe:
+                self._last_runtime_telemetry = DecisionRuntimeTelemetry(
+                    mode=settings.trading_strategy_runtime_mode,
+                    runtime_enabled=True,
+                    fallback_to_legacy=True,
+                    errors=self._last_runtime_telemetry.errors,
+                    observation=self._last_runtime_telemetry.observation,
+                )
+                return legacy_decisions
+            return []
+
+        return self._evaluate_legacy(signal, filtered, equity=equity)
+
+    def consume_runtime_telemetry(self) -> DecisionRuntimeTelemetry:
+        telemetry = self._last_runtime_telemetry
+        self._last_runtime_telemetry = DecisionRuntimeTelemetry(
+            mode="legacy",
+            runtime_enabled=False,
+            fallback_to_legacy=False,
+        )
+        return telemetry
+
+    def _evaluate_with_runtime(
+        self,
+        signal: SignalEnvelope,
+        strategies: list[Strategy],
+        *,
+        equity: Optional[Decimal],
+    ) -> list[StrategyDecision]:
+        timeframe = signal.timeframe
+        if timeframe is None:
+            return []
+        features = extract_signal_features(signal)
+
+        price = features.price
+        snapshot: Optional[MarketSnapshot] = None
+        if price is None and self.price_fetcher is not None:
+            snapshot = self.price_fetcher.fetch_market_snapshot(signal)
+            if snapshot is not None:
+                price = snapshot.price
+
+        normalized_payload = dict(signal.payload)
+        if price is not None and "price" not in normalized_payload:
+            normalized_payload["price"] = price
+        normalized_signal = signal.model_copy(update={"payload": normalized_payload})
+        try:
+            feature_vector = normalize_feature_vector_v3(normalized_signal)
+        except FeatureNormalizationError:
+            logger.debug("Feature normalization failed symbol=%s", signal.symbol)
+            self._last_runtime_telemetry = DecisionRuntimeTelemetry(
+                mode=settings.trading_strategy_runtime_mode,
+                runtime_enabled=True,
+                fallback_to_legacy=False,
+            )
+            return []
+
+        runtime_eval = self.strategy_runtime.evaluate_all(
+            strategies, feature_vector, timeframe=timeframe
+        )
+        self._last_runtime_telemetry = DecisionRuntimeTelemetry(
+            mode=settings.trading_strategy_runtime_mode,
+            runtime_enabled=True,
+            fallback_to_legacy=False,
+            errors=tuple(runtime_eval.errors),
+            observation=runtime_eval.observation,
+        )
+
+        decisions: list[StrategyDecision] = []
+        if not runtime_eval.intents:
+            return decisions
+
+        qty, sizing_meta = _resolve_qty_for_aggregated(
+            strategies, price=price, equity=equity
+        )
+        for intent in runtime_eval.intents:
+            decisions.append(
+                StrategyDecision(
+                    strategy_id=intent.source_strategy_ids[0],
+                    symbol=intent.symbol,
+                    event_ts=signal.event_ts,
+                    timeframe=timeframe,
+                    action=intent.direction,
+                    qty=qty,
+                    order_type="market",
+                    time_in_force="day",
+                    rationale=",".join(intent.explain),
+                    params=_build_params(
+                        macd=features.macd,
+                        macd_signal=features.macd_signal,
+                        rsi=features.rsi,
+                        price=price,
+                        volatility=features.volatility,
+                        snapshot=snapshot,
+                        runtime_metadata={
+                            "mode": settings.trading_strategy_runtime_mode,
+                            "aggregated": True,
+                            "source_strategy_ids": list(intent.source_strategy_ids),
+                            "feature_snapshot_hashes": list(
+                                intent.feature_snapshot_hashes
+                            ),
+                            "intent_conflicts_total": runtime_eval.observation.intent_conflicts_total,
+                            "strategy_errors": [
+                                {
+                                    "strategy_id": error.strategy_id,
+                                    "strategy_type": error.strategy_type,
+                                    "plugin_id": error.plugin_id,
+                                    "reason": error.reason,
+                                }
+                                for error in runtime_eval.errors
+                            ],
+                        },
+                    )
+                    | {"sizing": sizing_meta},
+                )
+            )
+        return decisions
+
+    def _evaluate_legacy(
+        self,
+        signal: SignalEnvelope,
+        strategies: list[Strategy],
+        *,
+        equity: Optional[Decimal],
+    ) -> list[StrategyDecision]:
+        decisions: list[StrategyDecision] = []
+        timeframe = signal.timeframe
+        if timeframe is None:
+            return decisions
+
+        for strategy in strategies:
+            if timeframe != strategy.base_timeframe:
                 logger.debug(
                     "Skipping strategy %s due to timeframe mismatch signal=%s strategy=%s",
                     strategy.id,
-                    signal_timeframe,
+                    timeframe,
                     strategy.base_timeframe,
                 )
                 continue
-            if signal.timeframe != signal_timeframe:
-                signal = signal.model_copy(update={"timeframe": signal_timeframe})
-            decision = self._evaluate_strategy(signal, strategy, equity=equity)
-            if decision:
+            decision = self._evaluate_legacy_strategy(signal, strategy, equity=equity)
+            if decision is not None:
                 decisions.append(decision)
+
+        self._last_runtime_telemetry = DecisionRuntimeTelemetry(
+            mode="legacy",
+            runtime_enabled=False,
+            fallback_to_legacy=False,
+        )
         return decisions
 
-    def _evaluate_strategy(
+    def _evaluate_legacy_strategy(
         self,
         signal: SignalEnvelope,
         strategy: Strategy,
@@ -82,46 +250,23 @@ class DecisionEngine:
             if snapshot is not None:
                 price = snapshot.price
 
+        if (
+            features.macd is None
+            or features.macd_signal is None
+            or features.rsi is None
+        ):
+            logger.debug("Signal missing indicators for strategy %s", strategy.id)
+            return None
+
         action: Literal["buy", "sell"]
         rationale_parts: list[str]
-        runtime_metadata: dict[str, Any]
-        if settings.trading_strategy_runtime_mode == "plugin_v3":
-            normalized_payload = dict(signal.payload)
-            if price is not None and "price" not in normalized_payload:
-                normalized_payload["price"] = price
-            normalized_signal = signal.model_copy(update={"payload": normalized_payload})
-            try:
-                feature_vector = normalize_feature_vector_v3(normalized_signal)
-            except FeatureNormalizationError:
-                logger.debug("Feature normalization failed strategy=%s symbol=%s", strategy.id, signal.symbol)
-                return None
-            runtime_decision = self.strategy_runtime.evaluate(strategy, feature_vector, timeframe=timeframe)
-            if runtime_decision is None:
-                return None
-            action = runtime_decision.intent.action
-            rationale_parts = list(runtime_decision.intent.rationale)
-            runtime_metadata = runtime_decision.metadata()
-        else:
-            if features.macd is None or features.macd_signal is None or features.rsi is None:
-                logger.debug("Signal missing indicators for strategy %s", strategy.id)
-                return None
+        if features.macd > features.macd_signal and features.rsi < 35:
             action = "buy"
-            rationale_parts = []
-            if features.macd > features.macd_signal and features.rsi < 35:
-                action = "buy"
-                rationale_parts.extend(["macd_cross_up", "rsi_oversold"])
-            elif features.macd < features.macd_signal and features.rsi > 65:
-                action = "sell"
-                rationale_parts.extend(["macd_cross_down", "rsi_overbought"])
-            else:
-                return None
-            runtime_metadata = {
-                "plugin_id": "legacy_builtin",
-                "plugin_version": "1.0.0",
-                "parameter_hash": "legacy",
-                "required_features": ["macd", "macd_signal", "rsi14", "price"],
-            }
-        if features.macd is None or features.macd_signal is None or features.rsi is None:
+            rationale_parts = ["macd_cross_up", "rsi_oversold"]
+        elif features.macd < features.macd_signal and features.rsi > 65:
+            action = "sell"
+            rationale_parts = ["macd_cross_down", "rsi_overbought"]
+        else:
             return None
 
         qty, sizing_meta = _resolve_qty(strategy, price=price, equity=equity)
@@ -135,7 +280,7 @@ class DecisionEngine:
             qty=qty,
             order_type="market",
             time_in_force="day",
-            rationale=",".join(rationale_parts) if rationale_parts else None,
+            rationale=",".join(rationale_parts),
             params=_build_params(
                 macd=features.macd,
                 macd_signal=features.macd_signal,
@@ -143,16 +288,21 @@ class DecisionEngine:
                 price=price,
                 volatility=features.volatility,
                 snapshot=snapshot,
-                runtime_metadata=runtime_metadata,
+                runtime_metadata={
+                    "plugin_id": "legacy_builtin",
+                    "plugin_version": "1.0.0",
+                    "parameter_hash": "legacy",
+                    "required_features": ["macd", "macd_signal", "rsi14", "price"],
+                },
             )
             | {"sizing": sizing_meta},
         )
 
 
 def _build_params(
-    macd: Decimal,
-    macd_signal: Decimal,
-    rsi: Decimal,
+    macd: Decimal | None,
+    macd_signal: Decimal | None,
+    rsi: Decimal | None,
     price: Optional[Decimal],
     volatility: Optional[Decimal],
     snapshot: Optional[MarketSnapshot],
@@ -236,7 +386,49 @@ def _resolve_qty(
     if qty < 1:
         qty = Decimal("1")
 
-    return qty, {"method": method, "notional_budget": str(notional_budget), "price": str(price)}
+    return qty, {
+        "method": method,
+        "notional_budget": str(notional_budget),
+        "price": str(price),
+    }
+
+
+def _resolve_qty_for_aggregated(
+    strategies: list[Strategy],
+    *,
+    price: Optional[Decimal],
+    equity: Optional[Decimal],
+) -> tuple[Decimal, dict[str, Any]]:
+    default_qty = Decimal(str(settings.trading_default_qty))
+    if price is None or price <= 0:
+        return default_qty, {"method": "default_qty", "reason": "missing_price"}
+    if not strategies:
+        return default_qty, {"method": "default_qty", "reason": "no_strategies"}
+
+    total_budget = Decimal("0")
+    for strategy in strategies:
+        budget = optional_decimal(strategy.max_notional_per_trade)
+        if budget is not None and budget > 0:
+            total_budget += budget
+    if total_budget <= 0:
+        global_budget = optional_decimal(settings.trading_max_notional_per_trade)
+        if global_budget is not None and global_budget > 0:
+            total_budget = global_budget
+    if total_budget <= 0 and equity is not None:
+        pct = optional_decimal(settings.trading_max_position_pct_equity)
+        if pct is not None and pct > 0:
+            total_budget = equity * pct
+    if total_budget <= 0:
+        return default_qty, {"method": "default_qty", "reason": "missing_budget"}
+
+    qty = (total_budget / price).quantize(Decimal("1"), rounding=ROUND_DOWN)
+    if qty < 1:
+        qty = Decimal("1")
+    return qty, {
+        "method": "aggregated_notional_budget",
+        "notional_budget": str(total_budget),
+        "price": str(price),
+    }
 
 
 def _resolve_signal_timeframe(signal: SignalEnvelope) -> Optional[str]:
@@ -294,4 +486,18 @@ def _coerce_timeframe(value: str) -> Optional[str]:
     return None
 
 
-__all__ = ["DecisionEngine", "SignalFeatures", "extract_signal_features"]
+def _runtime_enabled() -> bool:
+    mode = settings.trading_strategy_runtime_mode
+    if mode == "plugin_v3":
+        return True
+    if mode == "scheduler_v3":
+        return settings.trading_strategy_scheduler_enabled
+    return False
+
+
+__all__ = [
+    "DecisionEngine",
+    "DecisionRuntimeTelemetry",
+    "SignalFeatures",
+    "extract_signal_features",
+]

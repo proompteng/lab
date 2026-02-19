@@ -104,10 +104,33 @@ class Settings(BaseSettings):
         alias="TRADING_STRATEGY_RELOAD_SECONDS",
         description="Seconds between strategy catalog reload checks.",
     )
-    trading_strategy_runtime_mode: Literal["legacy", "plugin_v3"] = Field(
+    trading_strategy_runtime_mode: Literal["legacy", "plugin_v3", "scheduler_v3"] = Field(
         default="legacy",
         alias="TRADING_STRATEGY_RUNTIME_MODE",
-        description="Strategy runtime mode. legacy keeps current behavior; plugin_v3 enables plugin scaffolding.",
+        description=(
+            "Strategy runtime mode. legacy keeps current behavior; plugin_v3 enables plugin scaffolding; "
+            "scheduler_v3 enables scheduler integration behind migration flag."
+        ),
+    )
+    trading_strategy_scheduler_enabled: bool = Field(
+        default=False,
+        alias="TRADING_STRATEGY_SCHEDULER_ENABLED",
+        description="Migration flag for scheduler-integrated strategy runtime path.",
+    )
+    trading_strategy_runtime_fallback_legacy: bool = Field(
+        default=True,
+        alias="TRADING_STRATEGY_RUNTIME_FALLBACK_LEGACY",
+        description="Fallback to legacy decision path when scheduler runtime yields no intents or errors.",
+    )
+    trading_strategy_runtime_circuit_errors: int = Field(
+        default=3,
+        alias="TRADING_STRATEGY_RUNTIME_CIRCUIT_ERRORS",
+        description="Consecutive strategy plugin errors before temporary degradation.",
+    )
+    trading_strategy_runtime_circuit_cooldown_seconds: int = Field(
+        default=300,
+        alias="TRADING_STRATEGY_RUNTIME_CIRCUIT_COOLDOWN_SECONDS",
+        description="Cooldown duration for degraded plugins in scheduler runtime mode.",
     )
     trading_feature_schema_version: str = Field(
         default="v3",
