@@ -109,6 +109,7 @@ import { Route as ApiAtlasFileRouteImport } from './routes/api/atlas/file'
 import { Route as ApiAtlasAstRouteImport } from './routes/api/atlas/ast'
 import { Route as ApiAgentsEventsRouteImport } from './routes/api/agents/events'
 import { Route as ControlPlaneTorghutQuantIndexRouteImport } from './routes/control-plane/torghut/quant/index'
+import { Route as ApiTorghutMarketContextIndexRouteImport } from './routes/api/torghut/market-context/index'
 import { Route as OpenaiV1ChatCompletionsRouteImport } from './routes/openai/v1/chat/completions'
 import { Route as ApiTorghutTradingSummaryRouteImport } from './routes/api/torghut/trading/summary'
 import { Route as ApiTorghutTradingStrategiesRouteImport } from './routes/api/torghut/trading/strategies'
@@ -118,6 +119,7 @@ import { Route as ApiTorghutTaSignalsRouteImport } from './routes/api/torghut/ta
 import { Route as ApiTorghutTaLatestRouteImport } from './routes/api/torghut/ta/latest'
 import { Route as ApiTorghutTaBarsRouteImport } from './routes/api/torghut/ta/bars'
 import { Route as ApiTorghutSymbolsSymbolRouteImport } from './routes/api/torghut/symbols/$symbol'
+import { Route as ApiTorghutMarketContextHealthRouteImport } from './routes/api/torghut/market-context/health'
 import { Route as ApiTerminalsSessionIdWsRouteImport } from './routes/api/terminals/$sessionId/ws'
 import { Route as ApiTerminalsSessionIdTerminateRouteImport } from './routes/api/terminals/$sessionId/terminate'
 import { Route as ApiTerminalsSessionIdStreamRouteImport } from './routes/api/terminals/$sessionId/stream'
@@ -683,6 +685,12 @@ const ControlPlaneTorghutQuantIndexRoute =
     path: '/control-plane/torghut/quant/',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiTorghutMarketContextIndexRoute =
+  ApiTorghutMarketContextIndexRouteImport.update({
+    id: '/api/torghut/market-context/',
+    path: '/api/torghut/market-context/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const OpenaiV1ChatCompletionsRoute = OpenaiV1ChatCompletionsRouteImport.update({
   id: '/openai/v1/chat/completions',
   path: '/openai/v1/chat/completions',
@@ -732,6 +740,12 @@ const ApiTorghutSymbolsSymbolRoute = ApiTorghutSymbolsSymbolRouteImport.update({
   path: '/$symbol',
   getParentRoute: () => ApiTorghutSymbolsRoute,
 } as any)
+const ApiTorghutMarketContextHealthRoute =
+  ApiTorghutMarketContextHealthRouteImport.update({
+    id: '/api/torghut/market-context/health',
+    path: '/api/torghut/market-context/health',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiTerminalsSessionIdWsRoute = ApiTerminalsSessionIdWsRouteImport.update({
   id: '/ws',
   path: '/ws',
@@ -1031,6 +1045,7 @@ export interface FileRoutesByFullPath {
   '/api/terminals/$sessionId/stream': typeof ApiTerminalsSessionIdStreamRoute
   '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
   '/api/terminals/$sessionId/ws': typeof ApiTerminalsSessionIdWsRoute
+  '/api/torghut/market-context/health': typeof ApiTorghutMarketContextHealthRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
   '/api/torghut/ta/latest': typeof ApiTorghutTaLatestRoute
@@ -1040,6 +1055,7 @@ export interface FileRoutesByFullPath {
   '/api/torghut/trading/strategies': typeof ApiTorghutTradingStrategiesRoute
   '/api/torghut/trading/summary': typeof ApiTorghutTradingSummaryRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
+  '/api/torghut/market-context/': typeof ApiTorghutMarketContextIndexRoute
   '/control-plane/torghut/quant/': typeof ControlPlaneTorghutQuantIndexRoute
   '/api/agents/implementation-sources/webhooks/$provider': typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
   '/github/pulls/$owner/$repo/$number': typeof GithubPullsOwnerRepoNumberRoute
@@ -1171,6 +1187,7 @@ export interface FileRoutesByTo {
   '/api/terminals/$sessionId/stream': typeof ApiTerminalsSessionIdStreamRoute
   '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
   '/api/terminals/$sessionId/ws': typeof ApiTerminalsSessionIdWsRoute
+  '/api/torghut/market-context/health': typeof ApiTorghutMarketContextHealthRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
   '/api/torghut/ta/latest': typeof ApiTorghutTaLatestRoute
@@ -1180,6 +1197,7 @@ export interface FileRoutesByTo {
   '/api/torghut/trading/strategies': typeof ApiTorghutTradingStrategiesRoute
   '/api/torghut/trading/summary': typeof ApiTorghutTradingSummaryRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
+  '/api/torghut/market-context': typeof ApiTorghutMarketContextIndexRoute
   '/control-plane/torghut/quant': typeof ControlPlaneTorghutQuantIndexRoute
   '/api/agents/implementation-sources/webhooks/$provider': typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
   '/github/pulls/$owner/$repo/$number': typeof GithubPullsOwnerRepoNumberRoute
@@ -1314,6 +1332,7 @@ export interface FileRoutesById {
   '/api/terminals/$sessionId/stream': typeof ApiTerminalsSessionIdStreamRoute
   '/api/terminals/$sessionId/terminate': typeof ApiTerminalsSessionIdTerminateRoute
   '/api/terminals/$sessionId/ws': typeof ApiTerminalsSessionIdWsRoute
+  '/api/torghut/market-context/health': typeof ApiTorghutMarketContextHealthRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
   '/api/torghut/ta/latest': typeof ApiTorghutTaLatestRoute
@@ -1323,6 +1342,7 @@ export interface FileRoutesById {
   '/api/torghut/trading/strategies': typeof ApiTorghutTradingStrategiesRoute
   '/api/torghut/trading/summary': typeof ApiTorghutTradingSummaryRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
+  '/api/torghut/market-context/': typeof ApiTorghutMarketContextIndexRoute
   '/control-plane/torghut/quant/': typeof ControlPlaneTorghutQuantIndexRoute
   '/api/agents/implementation-sources/webhooks/$provider': typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
   '/github/pulls/$owner/$repo/$number': typeof GithubPullsOwnerRepoNumberRoute
@@ -1458,6 +1478,7 @@ export interface FileRouteTypes {
     | '/api/terminals/$sessionId/stream'
     | '/api/terminals/$sessionId/terminate'
     | '/api/terminals/$sessionId/ws'
+    | '/api/torghut/market-context/health'
     | '/api/torghut/symbols/$symbol'
     | '/api/torghut/ta/bars'
     | '/api/torghut/ta/latest'
@@ -1467,6 +1488,7 @@ export interface FileRouteTypes {
     | '/api/torghut/trading/strategies'
     | '/api/torghut/trading/summary'
     | '/openai/v1/chat/completions'
+    | '/api/torghut/market-context/'
     | '/control-plane/torghut/quant/'
     | '/api/agents/implementation-sources/webhooks/$provider'
     | '/github/pulls/$owner/$repo/$number'
@@ -1598,6 +1620,7 @@ export interface FileRouteTypes {
     | '/api/terminals/$sessionId/stream'
     | '/api/terminals/$sessionId/terminate'
     | '/api/terminals/$sessionId/ws'
+    | '/api/torghut/market-context/health'
     | '/api/torghut/symbols/$symbol'
     | '/api/torghut/ta/bars'
     | '/api/torghut/ta/latest'
@@ -1607,6 +1630,7 @@ export interface FileRouteTypes {
     | '/api/torghut/trading/strategies'
     | '/api/torghut/trading/summary'
     | '/openai/v1/chat/completions'
+    | '/api/torghut/market-context'
     | '/control-plane/torghut/quant'
     | '/api/agents/implementation-sources/webhooks/$provider'
     | '/github/pulls/$owner/$repo/$number'
@@ -1740,6 +1764,7 @@ export interface FileRouteTypes {
     | '/api/terminals/$sessionId/stream'
     | '/api/terminals/$sessionId/terminate'
     | '/api/terminals/$sessionId/ws'
+    | '/api/torghut/market-context/health'
     | '/api/torghut/symbols/$symbol'
     | '/api/torghut/ta/bars'
     | '/api/torghut/ta/latest'
@@ -1749,6 +1774,7 @@ export interface FileRouteTypes {
     | '/api/torghut/trading/strategies'
     | '/api/torghut/trading/summary'
     | '/openai/v1/chat/completions'
+    | '/api/torghut/market-context/'
     | '/control-plane/torghut/quant/'
     | '/api/agents/implementation-sources/webhooks/$provider'
     | '/github/pulls/$owner/$repo/$number'
@@ -1864,6 +1890,7 @@ export interface RootRouteChildren {
   ApiAgentsControlPlaneStatusRoute: typeof ApiAgentsControlPlaneStatusRoute
   ApiAgentsControlPlaneStreamRoute: typeof ApiAgentsControlPlaneStreamRoute
   ApiAgentsControlPlaneSummaryRoute: typeof ApiAgentsControlPlaneSummaryRoute
+  ApiTorghutMarketContextHealthRoute: typeof ApiTorghutMarketContextHealthRoute
   ApiTorghutTaBarsRoute: typeof ApiTorghutTaBarsRoute
   ApiTorghutTaLatestRoute: typeof ApiTorghutTaLatestRoute
   ApiTorghutTaSignalsRoute: typeof ApiTorghutTaSignalsRoute
@@ -1872,6 +1899,7 @@ export interface RootRouteChildren {
   ApiTorghutTradingStrategiesRoute: typeof ApiTorghutTradingStrategiesRoute
   ApiTorghutTradingSummaryRoute: typeof ApiTorghutTradingSummaryRoute
   OpenaiV1ChatCompletionsRoute: typeof OpenaiV1ChatCompletionsRoute
+  ApiTorghutMarketContextIndexRoute: typeof ApiTorghutMarketContextIndexRoute
   ControlPlaneTorghutQuantIndexRoute: typeof ControlPlaneTorghutQuantIndexRoute
   ApiAgentsImplementationSourcesWebhooksProviderRoute: typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
   ApiTorghutTradingControlPlaneQuantAlertsRoute: typeof ApiTorghutTradingControlPlaneQuantAlertsRoute
@@ -2583,6 +2611,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ControlPlaneTorghutQuantIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/torghut/market-context/': {
+      id: '/api/torghut/market-context/'
+      path: '/api/torghut/market-context'
+      fullPath: '/api/torghut/market-context/'
+      preLoaderRoute: typeof ApiTorghutMarketContextIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/openai/v1/chat/completions': {
       id: '/openai/v1/chat/completions'
       path: '/openai/v1/chat/completions'
@@ -2645,6 +2680,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/torghut/symbols/$symbol'
       preLoaderRoute: typeof ApiTorghutSymbolsSymbolRouteImport
       parentRoute: typeof ApiTorghutSymbolsRoute
+    }
+    '/api/torghut/market-context/health': {
+      id: '/api/torghut/market-context/health'
+      path: '/api/torghut/market-context/health'
+      fullPath: '/api/torghut/market-context/health'
+      preLoaderRoute: typeof ApiTorghutMarketContextHealthRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/terminals/$sessionId/ws': {
       id: '/api/terminals/$sessionId/ws'
@@ -3190,6 +3232,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAgentsControlPlaneStatusRoute: ApiAgentsControlPlaneStatusRoute,
   ApiAgentsControlPlaneStreamRoute: ApiAgentsControlPlaneStreamRoute,
   ApiAgentsControlPlaneSummaryRoute: ApiAgentsControlPlaneSummaryRoute,
+  ApiTorghutMarketContextHealthRoute: ApiTorghutMarketContextHealthRoute,
   ApiTorghutTaBarsRoute: ApiTorghutTaBarsRoute,
   ApiTorghutTaLatestRoute: ApiTorghutTaLatestRoute,
   ApiTorghutTaSignalsRoute: ApiTorghutTaSignalsRoute,
@@ -3198,6 +3241,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiTorghutTradingStrategiesRoute: ApiTorghutTradingStrategiesRoute,
   ApiTorghutTradingSummaryRoute: ApiTorghutTradingSummaryRoute,
   OpenaiV1ChatCompletionsRoute: OpenaiV1ChatCompletionsRoute,
+  ApiTorghutMarketContextIndexRoute: ApiTorghutMarketContextIndexRoute,
   ControlPlaneTorghutQuantIndexRoute: ControlPlaneTorghutQuantIndexRoute,
   ApiAgentsImplementationSourcesWebhooksProviderRoute:
     ApiAgentsImplementationSourcesWebhooksProviderRoute,

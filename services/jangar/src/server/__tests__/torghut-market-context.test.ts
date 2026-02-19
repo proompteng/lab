@@ -23,18 +23,19 @@ describe('torghut market context', () => {
     const context = await getTorghutMarketContext('nvda', {
       asOf: now,
       client: {
-        queryJson: async () => [
-          {
-            event_ts: '2026-02-19 11:59:30.000',
-            c: '142.51',
-            spread: '0.04',
-            rsi14: '57.2',
-            macd: '1.2',
-            macd_signal: '0.8',
-            v: '210000',
-            volatility: '0.14',
-          },
-        ],
+        queryJson: async <T>() =>
+          [
+            {
+              event_ts: '2026-02-19 11:59:30.000',
+              c: '142.51',
+              spread: '0.04',
+              rsi14: '57.2',
+              macd: '1.2',
+              macd_signal: '0.8',
+              v: '210000',
+              volatility: '0.14',
+            },
+          ] as T[],
       },
     })
 
@@ -54,12 +55,13 @@ describe('torghut market context', () => {
       asOf: now,
       maxStalenessSeconds: 10,
       client: {
-        queryJson: async () => [
-          {
-            event_ts: '2026-02-19 11:59:30.000',
-            c: '210.02',
-          },
-        ],
+        queryJson: async <T>() =>
+          [
+            {
+              event_ts: '2026-02-19 11:59:30.000',
+              c: '210.02',
+            },
+          ] as T[],
       },
     })
 
