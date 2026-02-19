@@ -231,14 +231,32 @@ spec:
             - name: JANGAR_DB_CA_CERT
               value: /etc/ssl/certs/jangar-db/ca.crt
             - name: JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED
-              value: "false"
+              value: "true"
             - name: JANGAR_TORGHUT_QUANT_COMPUTE_INTERVAL_MS
               value: "1000"
             - name: JANGAR_TORGHUT_QUANT_HEAVY_COMPUTE_INTERVAL_MS
               value: "30000"
+            - name: JANGAR_TORGHUT_QUANT_SERIES_SAMPLING_MS
+              value: "5000"
             - name: JANGAR_TORGHUT_QUANT_STREAM_HEARTBEAT_MS
               value: "15000"
             - name: JANGAR_TORGHUT_QUANT_MAX_STALENESS_SECONDS
+              value: "15"
+            - name: JANGAR_TORGHUT_QUANT_ALERTS_ENABLED
+              value: "true"
+            - name: JANGAR_TORGHUT_QUANT_POLICY_MAX_DRAWDOWN_1D
+              value: "0.05"
+            - name: JANGAR_TORGHUT_QUANT_POLICY_MIN_SHARPE_5D
+              value: "0"
+            - name: JANGAR_TORGHUT_QUANT_POLICY_MAX_SLIPPAGE_BPS_15M
+              value: "50"
+            - name: JANGAR_TORGHUT_QUANT_POLICY_MAX_REJECT_RATE_15M
+              value: "0.02"
+            - name: JANGAR_TORGHUT_QUANT_POLICY_MAX_PIPELINE_LAG_SECONDS
+              value: "15"
+            - name: JANGAR_TORGHUT_QUANT_POLICY_MAX_TA_FRESHNESS_SECONDS
+              value: "120"
+            - name: JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS
               value: "15"
             - name: JANGAR_MARKET_CONTEXT_ENABLED
               value: "true"

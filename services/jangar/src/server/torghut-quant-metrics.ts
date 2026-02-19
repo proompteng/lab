@@ -1,4 +1,5 @@
 import type { Pool } from 'pg'
+import { resolveClickHouseClient } from './clickhouse'
 import type { QuantMetric, QuantMetricQuality, QuantMetricStatus, QuantWindow } from './torghut-quant-contract'
 import { computeWindowBoundsUtc } from './torghut-quant-windows'
 import { listTorghutTradingFilledExecutions, type TorghutStrategyRow } from './torghut-trading'
@@ -92,6 +93,56 @@ export const listTorghutStrategyAccounts = async (params: {
   return result.rows
     .map((row) => (row.alpaca_account_label ? String(row.alpaca_account_label).trim() : ''))
     .filter(Boolean)
+}
+
+const getLatestTaSignalAsOf = async () => {
+  const clickhouse = resolveClickHouseClient()
+  if (!clickhouse.ok) return null
+
+  const rows = await clickhouse.client.queryJson<{ as_of: string | null }>(
+    `
+      SELECT max(event_ts) as as_of
+      FROM ta_signals
+    `,
+  )
+
+  const asOf = rows[0]?.as_of
+  if (!asOf) return null
+  return new Date(asOf).toISOString()
+}
+
+const getLatestContextFreshness = async (params: {
+  pool: Pool
+  strategyId: string
+  account: string
+  beforeUtc: string
+}) => {
+  const account = params.account.trim()
+  const result = await params.pool.query(
+    `
+      select
+        td.created_at as as_of,
+        coalesce(
+          nullif(td.decision_json #>> '{market_context,freshnessSeconds}', '')::int,
+          nullif(td.decision_json #>> '{marketContext,freshnessSeconds}', '')::int
+        ) as freshness_seconds
+      from trade_decisions td
+      where td.strategy_id = $1::uuid
+        and td.created_at <= $2
+        and ($3::text = '' or td.alpaca_account_label = $3::text)
+      order by td.created_at desc
+      limit 1
+    `,
+    [params.strategyId, params.beforeUtc, account],
+  )
+
+  const row = result.rows[0]
+  if (!row?.as_of) return null
+  const freshnessRaw = toNumber(row.freshness_seconds)
+  return {
+    asOf: new Date(row.as_of as string | Date).toISOString(),
+    freshnessSeconds: freshnessRaw === null ? null : Math.max(0, Math.floor(freshnessRaw)),
+  }
 }
 
 export const getTorghutLatestPositionSnapshot = async (params: {
@@ -361,6 +412,24 @@ export const computeTorghutQuantMetrics = async (params: {
   const latestSnapshot = account
     ? await getTorghutLatestPositionSnapshot({ pool: params.pool, account, beforeUtc: bounds.endUtc })
     : null
+  const [latestTaSignalAsOf, latestContext] = await Promise.all([
+    getLatestTaSignalAsOf(),
+    getLatestContextFreshness({
+      pool: params.pool,
+      strategyId: params.strategy.id,
+      account,
+      beforeUtc: bounds.endUtc,
+    }),
+  ])
+
+  const taFreshnessSeconds = latestTaSignalAsOf ? secondsBetween(nowMs, latestTaSignalAsOf) : null
+  const contextFreshnessSeconds =
+    latestContext?.freshnessSeconds ?? (latestContext?.asOf ? secondsBetween(nowMs, latestContext.asOf) : null)
+  const sourceLagCandidates = [taFreshnessSeconds, contextFreshnessSeconds, secondsBetween(nowMs, latestExecutionTs)]
+    .filter((value): value is number => value !== null)
+    .sort((a, b) => b - a)
+  const metricsPipelineLagSeconds = sourceLagCandidates[0] ?? null
+
   const exposure = latestSnapshot ? computeExposure(latestSnapshot.positions) : null
   const unrealized = latestSnapshot ? computeUnrealizedPnl(latestSnapshot.positions) : null
 
@@ -599,6 +668,50 @@ export const computeTorghutQuantMetrics = async (params: {
     }),
   )
 
+  metrics.push(
+    buildMetric({
+      metricName: 'ta_freshness_seconds',
+      window: params.window,
+      unit: 'seconds',
+      valueNumeric: taFreshnessSeconds,
+      asOf: latestTaSignalAsOf ?? now.toISOString(),
+      meta: latestTaSignalAsOf ? { source: 'ta_signals.event_ts' } : { source: 'ta_signals.event_ts_unavailable' },
+      nowMs,
+      maxStalenessSeconds: params.maxStalenessSeconds,
+    }),
+  )
+
+  metrics.push(
+    buildMetric({
+      metricName: 'context_freshness_seconds',
+      window: params.window,
+      unit: 'seconds',
+      valueNumeric: contextFreshnessSeconds,
+      asOf: latestContext?.asOf ?? now.toISOString(),
+      meta:
+        latestContext?.freshnessSeconds !== null ? { source: 'trade_decisions.market_context.freshnessSeconds' } : {},
+      nowMs,
+      maxStalenessSeconds: params.maxStalenessSeconds,
+    }),
+  )
+
+  metrics.push(
+    buildMetric({
+      metricName: 'metrics_pipeline_lag_seconds',
+      window: params.window,
+      unit: 'seconds',
+      valueNumeric: metricsPipelineLagSeconds,
+      asOf: now.toISOString(),
+      meta: {
+        taFreshnessSeconds,
+        contextFreshnessSeconds,
+        latestExecutionFreshnessSeconds: secondsBetween(nowMs, latestExecutionTs),
+      },
+      nowMs,
+      maxStalenessSeconds: params.maxStalenessSeconds,
+    }),
+  )
+
   // Placeholder metrics (contract-first) so UI can group and show "insufficient_data" explicitly.
   for (const { name, unit } of [
     { name: 'cost_bps', unit: 'bps' },
@@ -615,9 +728,6 @@ export const computeTorghutQuantMetrics = async (params: {
     { name: 'decision_to_submit_latency_ms_p95', unit: 'ms' },
     { name: 'submit_to_fill_latency_ms_p50', unit: 'ms' },
     { name: 'submit_to_fill_latency_ms_p95', unit: 'ms' },
-    { name: 'ta_freshness_seconds', unit: 'seconds' },
-    { name: 'context_freshness_seconds', unit: 'seconds' },
-    { name: 'metrics_pipeline_lag_seconds', unit: 'seconds' },
   ]) {
     metrics.push(
       buildMetric({

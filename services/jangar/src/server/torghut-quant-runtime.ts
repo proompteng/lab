@@ -2,7 +2,12 @@ import { EventEmitter } from 'node:events'
 import { recordTorghutQuantComputeDurationMs, recordTorghutQuantComputeError, recordTorghutQuantFrame } from './metrics'
 import type { QuantAlert, QuantSnapshotFrame, QuantWindow } from './torghut-quant-contract'
 import { computeTorghutQuantMetrics, listTorghutStrategyAccounts } from './torghut-quant-metrics'
-import { appendQuantSeriesMetrics, upsertQuantAlerts, upsertQuantLatestMetrics } from './torghut-quant-metrics-store'
+import {
+  appendQuantPipelineHealth,
+  appendQuantSeriesMetrics,
+  upsertQuantAlerts,
+  upsertQuantLatestMetrics,
+} from './torghut-quant-metrics-store'
 import { listTorghutTradingStrategies } from './torghut-trading'
 import { resolveTorghutDb } from './torghut-trading-db'
 
@@ -28,6 +33,12 @@ type QuantStreamAlertEvent = {
 type QuantStreamErrorEvent = {
   type: 'error'
   message: string
+}
+
+type AlertEvaluationCandidate = {
+  breachKey: string
+  minConsecutive: number
+  alert: QuantAlert
 }
 
 export type QuantStreamEvent =
@@ -64,6 +75,7 @@ const globalState = globalThis as typeof globalThis & {
     lastFrames: Map<FrameKey, QuantSnapshotFrame>
     lastSeriesAppendAtMs: Map<FrameKey, number>
     openAlertsByFrame: Map<FrameKey, Map<string, QuantAlert>>
+    alertBreachStreakByFrame: Map<FrameKey, Map<string, number>>
   }
 }
 
@@ -161,8 +173,8 @@ const evaluateAlerts = (params: {
   frame: QuantSnapshotFrame
   nowIso: string
   policy: RuntimeConfig['policy']
-}): QuantAlert[] => {
-  const alerts: QuantAlert[] = []
+}): AlertEvaluationCandidate[] => {
+  const alerts: AlertEvaluationCandidate[] = []
   const marketHours = isMarketHoursNy()
 
   const metricByName = new Map(params.frame.metrics.map((metric) => [metric.metricName, metric]))
@@ -170,17 +182,21 @@ const evaluateAlerts = (params: {
   if (maxDrawdown?.valueNumeric != null && params.frame.window === '1d') {
     if (Math.abs(maxDrawdown.valueNumeric) > params.policy.maxDrawdown1d) {
       alerts.push({
-        alertId: makeAlertId(params.frame.strategyId, params.frame.account, 'max_drawdown', params.frame.window),
-        strategyId: params.frame.strategyId,
-        account: params.frame.account,
-        severity: 'warning',
-        metricName: 'max_drawdown',
-        window: params.frame.window,
-        threshold: { max_drawdown_1d: params.policy.maxDrawdown1d },
-        observed: { value: maxDrawdown.valueNumeric, asOf: maxDrawdown.asOf },
-        openedAt: params.nowIso,
-        resolvedAt: null,
-        state: 'open',
+        breachKey: 'max_drawdown',
+        minConsecutive: 2,
+        alert: {
+          alertId: makeAlertId(params.frame.strategyId, params.frame.account, 'max_drawdown', params.frame.window),
+          strategyId: params.frame.strategyId,
+          account: params.frame.account,
+          severity: 'warning',
+          metricName: 'max_drawdown',
+          window: params.frame.window,
+          threshold: { max_drawdown_1d: params.policy.maxDrawdown1d, consecutive_frames: 2 },
+          observed: { value: maxDrawdown.valueNumeric, asOf: maxDrawdown.asOf },
+          openedAt: params.nowIso,
+          resolvedAt: null,
+          state: 'open',
+        },
       })
     }
   }
@@ -189,17 +205,72 @@ const evaluateAlerts = (params: {
   if (sharpe?.valueNumeric != null && params.frame.window === '5d') {
     if (sharpe.valueNumeric < params.policy.minSharpe5d) {
       alerts.push({
-        alertId: makeAlertId(params.frame.strategyId, params.frame.account, 'sharpe_annualized', params.frame.window),
-        strategyId: params.frame.strategyId,
-        account: params.frame.account,
-        severity: 'warning',
-        metricName: 'sharpe_annualized',
-        window: params.frame.window,
-        threshold: { min_sharpe_5d: params.policy.minSharpe5d },
-        observed: { value: sharpe.valueNumeric, asOf: sharpe.asOf },
-        openedAt: params.nowIso,
-        resolvedAt: null,
-        state: 'open',
+        breachKey: 'sharpe_annualized',
+        minConsecutive: 3,
+        alert: {
+          alertId: makeAlertId(params.frame.strategyId, params.frame.account, 'sharpe_annualized', params.frame.window),
+          strategyId: params.frame.strategyId,
+          account: params.frame.account,
+          severity: 'warning',
+          metricName: 'sharpe_annualized',
+          window: params.frame.window,
+          threshold: { min_sharpe_5d: params.policy.minSharpe5d, consecutive_frames: 3 },
+          observed: { value: sharpe.valueNumeric, asOf: sharpe.asOf },
+          openedAt: params.nowIso,
+          resolvedAt: null,
+          state: 'open',
+        },
+      })
+    }
+  }
+
+  const slippage = metricByName.get('slippage_bps_vs_mid')
+  if (slippage?.valueNumeric != null && params.frame.window === '15m') {
+    if (slippage.valueNumeric > params.policy.maxSlippageBps15m) {
+      alerts.push({
+        breachKey: 'slippage_bps_vs_mid',
+        minConsecutive: 1,
+        alert: {
+          alertId: makeAlertId(
+            params.frame.strategyId,
+            params.frame.account,
+            'slippage_bps_vs_mid',
+            params.frame.window,
+          ),
+          strategyId: params.frame.strategyId,
+          account: params.frame.account,
+          severity: 'warning',
+          metricName: 'slippage_bps_vs_mid',
+          window: params.frame.window,
+          threshold: { max_slippage_bps_15m: params.policy.maxSlippageBps15m },
+          observed: { value: slippage.valueNumeric, asOf: slippage.asOf },
+          openedAt: params.nowIso,
+          resolvedAt: null,
+          state: 'open',
+        },
+      })
+    }
+  }
+
+  const rejectRate = metricByName.get('reject_rate')
+  if (rejectRate?.valueNumeric != null && params.frame.window === '15m') {
+    if (rejectRate.valueNumeric > params.policy.maxRejectRate15m) {
+      alerts.push({
+        breachKey: 'reject_rate',
+        minConsecutive: 1,
+        alert: {
+          alertId: makeAlertId(params.frame.strategyId, params.frame.account, 'reject_rate', params.frame.window),
+          strategyId: params.frame.strategyId,
+          account: params.frame.account,
+          severity: 'warning',
+          metricName: 'reject_rate',
+          window: params.frame.window,
+          threshold: { max_reject_rate_15m: params.policy.maxRejectRate15m },
+          observed: { value: rejectRate.valueNumeric, asOf: rejectRate.asOf },
+          openedAt: params.nowIso,
+          resolvedAt: null,
+          state: 'open',
+        },
       })
     }
   }
@@ -209,43 +280,51 @@ const evaluateAlerts = (params: {
     const pipelineLag = metricByName.get('metrics_pipeline_lag_seconds')
     if (pipelineLag?.valueNumeric != null && pipelineLag.valueNumeric > params.policy.maxPipelineLagSeconds) {
       alerts.push({
-        alertId: makeAlertId(
-          params.frame.strategyId,
-          params.frame.account,
-          'metrics_pipeline_lag_seconds',
-          params.frame.window,
-        ),
-        strategyId: params.frame.strategyId,
-        account: params.frame.account,
-        severity: 'critical',
-        metricName: 'metrics_pipeline_lag_seconds',
-        window: params.frame.window,
-        threshold: { max: params.policy.maxPipelineLagSeconds },
-        observed: { value: pipelineLag.valueNumeric, asOf: pipelineLag.asOf },
-        openedAt: params.nowIso,
-        resolvedAt: null,
-        state: 'open',
+        breachKey: 'metrics_pipeline_lag_seconds',
+        minConsecutive: 1,
+        alert: {
+          alertId: makeAlertId(
+            params.frame.strategyId,
+            params.frame.account,
+            'metrics_pipeline_lag_seconds',
+            params.frame.window,
+          ),
+          strategyId: params.frame.strategyId,
+          account: params.frame.account,
+          severity: 'critical',
+          metricName: 'metrics_pipeline_lag_seconds',
+          window: params.frame.window,
+          threshold: { max: params.policy.maxPipelineLagSeconds },
+          observed: { value: pipelineLag.valueNumeric, asOf: pipelineLag.asOf },
+          openedAt: params.nowIso,
+          resolvedAt: null,
+          state: 'open',
+        },
       })
     }
     const taFreshness = metricByName.get('ta_freshness_seconds')
     if (taFreshness?.valueNumeric != null && taFreshness.valueNumeric > params.policy.maxTaFreshnessSeconds) {
       alerts.push({
-        alertId: makeAlertId(
-          params.frame.strategyId,
-          params.frame.account,
-          'ta_freshness_seconds',
-          params.frame.window,
-        ),
-        strategyId: params.frame.strategyId,
-        account: params.frame.account,
-        severity: 'warning',
-        metricName: 'ta_freshness_seconds',
-        window: params.frame.window,
-        threshold: { max: params.policy.maxTaFreshnessSeconds },
-        observed: { value: taFreshness.valueNumeric, asOf: taFreshness.asOf },
-        openedAt: params.nowIso,
-        resolvedAt: null,
-        state: 'open',
+        breachKey: 'ta_freshness_seconds',
+        minConsecutive: 1,
+        alert: {
+          alertId: makeAlertId(
+            params.frame.strategyId,
+            params.frame.account,
+            'ta_freshness_seconds',
+            params.frame.window,
+          ),
+          strategyId: params.frame.strategyId,
+          account: params.frame.account,
+          severity: 'warning',
+          metricName: 'ta_freshness_seconds',
+          window: params.frame.window,
+          threshold: { max: params.policy.maxTaFreshnessSeconds },
+          observed: { value: taFreshness.valueNumeric, asOf: taFreshness.asOf },
+          openedAt: params.nowIso,
+          resolvedAt: null,
+          state: 'open',
+        },
       })
     }
   }
@@ -305,6 +384,7 @@ const ensureGlobal = () => {
     lastFrames: new Map(),
     lastSeriesAppendAtMs: new Map(),
     openAlertsByFrame: new Map(),
+    alertBreachStreakByFrame: new Map(),
   }
   return globalState.__torghutQuantRuntime
 }
@@ -371,6 +451,8 @@ const runComputeCycle = async (windows: QuantWindow[]) => {
             : acc
         }, null)
         recordTorghutQuantFrame(window, newestMetric?.freshnessSeconds ?? 0, config.maxStalenessSeconds)
+        const metricsPipelineLag = frame.metrics.find((metric) => metric.metricName === 'metrics_pipeline_lag_seconds')
+        const pipelineLag = metricsPipelineLag?.valueNumeric ?? null
 
         await upsertQuantLatestMetrics({
           strategyId: frame.strategyId,
@@ -392,24 +474,73 @@ const runComputeCycle = async (windows: QuantWindow[]) => {
           state.lastSeriesAppendAtMs.set(fkey, Date.now())
         }
 
+        const healthAsOf = frame.frameAsOf
+        await appendQuantPipelineHealth({
+          rows: [
+            {
+              strategyId: frame.strategyId,
+              account: frame.account,
+              stage: 'ingestion',
+              ok: pipelineLag === null ? false : pipelineLag <= config.policy.maxPipelineLagSeconds,
+              lagSeconds: pipelineLag === null ? config.policy.maxPipelineLagSeconds + 1 : Math.max(0, pipelineLag),
+              asOf: healthAsOf,
+              details: { window: frame.window, source: 'torghut-db-and-upstream-signals' },
+            },
+            {
+              strategyId: frame.strategyId,
+              account: frame.account,
+              stage: 'compute',
+              ok: true,
+              lagSeconds: 0,
+              asOf: healthAsOf,
+              details: { window: frame.window, metricsCount: frame.metrics.length },
+            },
+            {
+              strategyId: frame.strategyId,
+              account: frame.account,
+              stage: 'materialization',
+              ok: true,
+              lagSeconds: 0,
+              asOf: healthAsOf,
+              details: { window: frame.window, seriesAppended: shouldAppendSeries },
+            },
+          ],
+        })
+
         if (config.alertsEnabled) {
           const evaluated = evaluateAlerts({ frame, nowIso, policy: config.policy })
           const previousOpen = state.openAlertsByFrame.get(fkey) ?? new Map<string, QuantAlert>()
+          const previousStreak = state.alertBreachStreakByFrame.get(fkey) ?? new Map<string, number>()
+          const nextStreak = new Map<string, number>()
           const nextOpen = new Map<string, QuantAlert>()
+          const breachedKeys = new Set<string>()
 
-          for (const alert of evaluated) {
-            nextOpen.set(alert.alertId, alert)
+          for (const candidate of evaluated) {
+            breachedKeys.add(candidate.breachKey)
+            const currentStreak = (previousStreak.get(candidate.breachKey) ?? 0) + 1
+            nextStreak.set(candidate.breachKey, currentStreak)
+            if (currentStreak >= candidate.minConsecutive) {
+              nextOpen.set(candidate.alert.alertId, candidate.alert)
+            }
+          }
+
+          for (const [key] of previousStreak) {
+            if (!breachedKeys.has(key)) nextStreak.set(key, 0)
           }
 
           const updates: QuantAlert[] = []
 
           for (const [alertId, alert] of nextOpen) {
             const prev = previousOpen.get(alertId)
+            const isNewlyOpened = !prev
             if (prev) {
               // Preserve original open timestamp.
               if (prev.openedAt) alert.openedAt = prev.openedAt
             }
             updates.push(alert)
+            if (isNewlyOpened) {
+              state.emitter.emit('event', { type: 'quant.alert.opened', alert } satisfies QuantStreamAlertEvent)
+            }
           }
 
           for (const [alertId, prev] of previousOpen) {
@@ -429,8 +560,9 @@ const runComputeCycle = async (windows: QuantWindow[]) => {
             await upsertQuantAlerts({ alerts: updates })
           }
 
-          frame.alerts = evaluated
+          frame.alerts = [...nextOpen.values()]
           state.openAlertsByFrame.set(fkey, nextOpen)
+          state.alertBreachStreakByFrame.set(fkey, nextStreak)
         }
 
         const previous = state.lastFrames.get(fkey) ?? null
@@ -439,10 +571,6 @@ const runComputeCycle = async (windows: QuantWindow[]) => {
         state.emitter.emit('event', { type: 'quant.metrics.snapshot', frame } satisfies QuantStreamSnapshotEvent)
         const delta = buildDelta(previous, frame)
         if (delta) state.emitter.emit('event', delta)
-
-        for (const alert of frame.alerts) {
-          state.emitter.emit('event', { type: 'quant.alert.opened', alert } satisfies QuantStreamAlertEvent)
-        }
       }
     }
   }
@@ -490,4 +618,6 @@ export const startTorghutQuantRuntime = () => {
 
 export const __private = {
   resolveStrategyAccountsForCompute,
+  evaluateAlerts,
+  buildDelta,
 }

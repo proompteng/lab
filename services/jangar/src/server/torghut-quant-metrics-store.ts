@@ -22,6 +22,23 @@ type QuantLatestRow = {
 
 const toDate = (value: string) => new Date(value)
 
+export type QuantPipelineHealthStage = 'ingestion' | 'compute' | 'materialization'
+
+export type QuantPipelineHealth = {
+  strategyId: string
+  account: string
+  stage: QuantPipelineHealthStage
+  ok: boolean
+  lagSeconds: number
+  asOf: string
+  details: Record<string, unknown>
+}
+
+export type QuantLatestStoreStatus = {
+  updatedAt: string | null
+  count: number
+}
+
 export const ensureQuantStoreReady = async () => {
   const db = getDb()
   if (!db) throw new Error('Jangar database is not configured (DATABASE_URL missing)')
@@ -275,4 +292,91 @@ export const listQuantAlerts = async (params: { strategyId?: string; state?: 'op
     resolvedAt: row.resolved_at ? new Date(row.resolved_at as unknown as string | Date).toISOString() : null,
     state: (row.state as QuantAlert['state']) ?? 'open',
   })) satisfies QuantAlert[]
+}
+
+export const getQuantLatestStoreStatus = async (): Promise<QuantLatestStoreStatus> => {
+  const db = await ensureQuantStoreReady()
+  const result = await sql<{ updated_at: Date | string | null; count: number | string | null }>`
+    select max(updated_at) as updated_at, count(*) as count
+    from torghut_control_plane.quant_metrics_latest
+  `.execute(db)
+
+  const row = result.rows[0]
+  return {
+    updatedAt: row?.updated_at ? new Date(row.updated_at as string | Date).toISOString() : null,
+    count: row?.count ? Number(row.count) : 0,
+  }
+}
+
+export const appendQuantPipelineHealth = async (params: { rows: QuantPipelineHealth[] }) => {
+  const db = await ensureQuantStoreReady()
+  if (params.rows.length === 0) return
+
+  await db
+    .insertInto('torghut_control_plane.quant_pipeline_health')
+    .values(
+      params.rows.map((row) => ({
+        strategy_id: row.strategyId,
+        account: row.account,
+        stage: row.stage,
+        ok: row.ok,
+        lag_seconds: row.lagSeconds,
+        as_of: toDate(row.asOf),
+        details: row.details,
+      })),
+    )
+    .execute()
+}
+
+export const listLatestQuantPipelineHealth = async (params: {
+  strategyId?: string
+  account?: string
+  window?: string
+}) => {
+  const db = await ensureQuantStoreReady()
+  const filters = []
+  if (params.strategyId) filters.push(sql`strategy_id = ${params.strategyId}::uuid`)
+  if (params.account) filters.push(sql`account = ${params.account}`)
+  if (params.window) filters.push(sql`details->>'window' = ${params.window}`)
+  const whereSql = filters.length > 0 ? sql`where ${sql.join(filters, sql` and `)}` : sql``
+  const result = await sql<{
+    strategy_id: string
+    account: string
+    stage: string
+    ok: boolean
+    lag_seconds: number
+    as_of: Date | string
+    details: Record<string, unknown> | null
+  }>`
+    with ranked as (
+      select
+        strategy_id,
+        account,
+        stage,
+        ok,
+        lag_seconds,
+        as_of,
+        details,
+        row_number() over (
+          partition by strategy_id, account, stage, coalesce(details->>'window', '')
+          order by as_of desc
+        ) as rn
+      from torghut_control_plane.quant_pipeline_health
+      ${whereSql}
+    )
+    select strategy_id, account, stage, ok, lag_seconds, as_of, details
+    from ranked
+    where rn = 1
+    order by stage asc, strategy_id asc, account asc
+  `.execute(db)
+
+  return result.rows.map((row) => ({
+    strategyId: row.strategy_id,
+    account: row.account,
+    stage: row.stage as QuantPipelineHealthStage,
+    ok: Boolean(row.ok),
+    lagSeconds: Number(row.lag_seconds ?? 0),
+    asOf: new Date(row.as_of as string | Date).toISOString(),
+    details: (row.details as Record<string, unknown>) ?? {},
+  })) satisfies QuantPipelineHealth[]
 }
