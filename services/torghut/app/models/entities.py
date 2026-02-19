@@ -330,6 +330,47 @@ class PositionSnapshot(Base, CreatedAtMixin):
     )
 
 
+class ExecutionTCAMetric(Base, TimestampMixin):
+    """Per-order transaction cost analytics metrics derived from execution outcomes."""
+
+    __tablename__ = "execution_tca_metrics"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    execution_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("executions.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    trade_decision_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("trade_decisions.id", ondelete="SET NULL"), nullable=True
+    )
+    strategy_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("strategies.id", ondelete="SET NULL"), nullable=True
+    )
+    alpaca_account_label: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(length=16), nullable=False)
+    side: Mapped[str] = mapped_column(String(length=8), nullable=False)
+    arrival_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    avg_fill_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    filled_qty: Mapped[Decimal] = mapped_column(
+        Numeric(20, 8), nullable=False, default=Decimal("0"), server_default=text("0")
+    )
+    signed_qty: Mapped[Decimal] = mapped_column(
+        Numeric(20, 8), nullable=False, default=Decimal("0"), server_default=text("0")
+    )
+    slippage_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    shortfall_notional: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    churn_qty: Mapped[Decimal] = mapped_column(
+        Numeric(20, 8), nullable=False, default=Decimal("0"), server_default=text("0")
+    )
+    churn_ratio: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_execution_tca_metrics_strategy_symbol", "strategy_id", "symbol"),
+        Index("ix_execution_tca_metrics_symbol", "symbol"),
+        Index("ix_execution_tca_metrics_computed_at", "computed_at"),
+    )
+
+
 class ToolRunLog(Base, CreatedAtMixin):
     """Trace of tool invocations made by the Codex agent."""
 

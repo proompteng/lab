@@ -78,3 +78,42 @@ class TestAutonomyGates(TestCase):
         self.assertEqual(policy.gate0_max_null_rate, Decimal('0'))
         self.assertEqual(policy.gate1_min_net_pnl, Decimal('0'))
         self.assertEqual(policy.gate3_max_llm_error_ratio, Decimal('0'))
+
+    def test_gate_matrix_fails_when_tca_degrades_beyond_thresholds(self) -> None:
+        policy = GatePolicyMatrix(
+            gate2_max_tca_slippage_bps=Decimal('10'),
+            gate2_max_tca_shortfall_notional=Decimal('5'),
+            gate2_max_tca_churn_ratio=Decimal('0.20'),
+        )
+        inputs = GateInputs(
+            feature_schema_version='3.0.0',
+            required_feature_null_rate=Decimal('0.00'),
+            staleness_ms_p95=0,
+            symbol_coverage=3,
+            metrics={
+                'decision_count': 20,
+                'trade_count': 10,
+                'net_pnl': '50',
+                'max_drawdown': '100',
+                'turnover_ratio': '1.5',
+                'cost_bps': '5',
+            },
+            robustness={
+                'fold_count': 4,
+                'negative_fold_count': 1,
+                'net_pnl_cv': '0.3',
+            },
+            tca_metrics={
+                'order_count': 12,
+                'avg_slippage_bps': '18',
+                'avg_shortfall_notional': '7',
+                'avg_churn_ratio': '0.45',
+            },
+        )
+
+        report = evaluate_gate_matrix(inputs, policy=policy, promotion_target='paper', code_version='test')
+
+        self.assertFalse(report.promotion_allowed)
+        self.assertIn('tca_slippage_exceeds_maximum', report.reasons)
+        self.assertIn('tca_shortfall_exceeds_maximum', report.reasons)
+        self.assertIn('tca_churn_ratio_exceeds_maximum', report.reasons)

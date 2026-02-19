@@ -3,6 +3,7 @@
 from .base import Base, GUID, JSONType, coerce_json_payload, metadata_obj
 from .entities import (
     CreatedAtMixin,
+    ExecutionTCAMetric,
     ResearchCandidate,
     ResearchFoldMetrics,
     ResearchPromotion,
@@ -28,6 +29,7 @@ __all__ = [
     "CreatedAtMixin",
     "Execution",
     "ExecutionOrderEvent",
+    "ExecutionTCAMetric",
     "LLMDecisionReview",
     "PositionSnapshot",
     "ResearchCandidate",

@@ -17,6 +17,7 @@ from ..snapshots import sync_order_to_db
 from .route_metadata import resolve_order_route_metadata
 from .execution_policy import should_retry_order_error
 from .models import ExecutionRequest, StrategyDecision, decision_hash
+from .tca import upsert_execution_tca_metric
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,7 @@ class OrderExecutor:
                 execution_fallback_reason=fallback_reason,
                 execution_fallback_count=fallback_count,
             )
+            upsert_execution_tca_metric(session, execution)
             _apply_execution_status(decision_row, execution, account_label)
             session.add(decision_row)
             session.commit()
@@ -160,6 +162,7 @@ class OrderExecutor:
             execution_fallback_reason=fallback_reason,
             execution_fallback_count=fallback_count,
         )
+        upsert_execution_tca_metric(session, execution)
         _apply_execution_status(
             decision_row,
             execution,

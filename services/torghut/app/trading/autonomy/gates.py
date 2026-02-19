@@ -50,6 +50,7 @@ class GateInputs:
     symbol_coverage: int
     metrics: dict[str, Any]
     robustness: dict[str, Any]
+    tca_metrics: dict[str, Any] = field(default_factory=_empty_dict)
     llm_metrics: dict[str, Any] = field(default_factory=_empty_dict)
     operational_ready: bool = True
     runbook_validated: bool = True
@@ -75,6 +76,9 @@ class GatePolicyMatrix:
     gate2_max_drawdown: Decimal = Decimal('250')
     gate2_max_turnover_ratio: Decimal = Decimal('8.0')
     gate2_max_cost_bps: Decimal = Decimal('35')
+    gate2_max_tca_slippage_bps: Decimal = Decimal('25')
+    gate2_max_tca_shortfall_notional: Decimal = Decimal('25')
+    gate2_max_tca_churn_ratio: Decimal = Decimal('0.75')
 
     gate3_max_llm_error_ratio: Decimal = Decimal('0.10')
 
@@ -101,6 +105,12 @@ class GatePolicyMatrix:
             gate2_max_drawdown=_decimal_or_default(payload.get('gate2_max_drawdown'), Decimal('250')),
             gate2_max_turnover_ratio=_decimal_or_default(payload.get('gate2_max_turnover_ratio'), Decimal('8.0')),
             gate2_max_cost_bps=_decimal_or_default(payload.get('gate2_max_cost_bps'), Decimal('35')),
+            gate2_max_tca_slippage_bps=_decimal_or_default(payload.get('gate2_max_tca_slippage_bps'), Decimal('25')),
+            gate2_max_tca_shortfall_notional=_decimal_or_default(
+                payload.get('gate2_max_tca_shortfall_notional'),
+                Decimal('25'),
+            ),
+            gate2_max_tca_churn_ratio=_decimal_or_default(payload.get('gate2_max_tca_churn_ratio'), Decimal('0.75')),
             gate3_max_llm_error_ratio=_decimal_or_default(payload.get('gate3_max_llm_error_ratio'), Decimal('0.10')),
             gate5_live_enabled=bool(payload.get('gate5_live_enabled', False)),
             gate5_require_approval_token=bool(payload.get('gate5_require_approval_token', True)),
@@ -121,6 +131,9 @@ class GatePolicyMatrix:
             'gate2_max_drawdown': str(self.gate2_max_drawdown),
             'gate2_max_turnover_ratio': str(self.gate2_max_turnover_ratio),
             'gate2_max_cost_bps': str(self.gate2_max_cost_bps),
+            'gate2_max_tca_slippage_bps': str(self.gate2_max_tca_slippage_bps),
+            'gate2_max_tca_shortfall_notional': str(self.gate2_max_tca_shortfall_notional),
+            'gate2_max_tca_churn_ratio': str(self.gate2_max_tca_churn_ratio),
             'gate3_max_llm_error_ratio': str(self.gate3_max_llm_error_ratio),
             'gate5_live_enabled': self.gate5_live_enabled,
             'gate5_require_approval_token': self.gate5_require_approval_token,
@@ -252,6 +265,17 @@ def _gate2_risk_and_capacity(inputs: GateInputs, policy: GatePolicyMatrix) -> Ga
         reasons.append('turnover_ratio_exceeds_maximum')
     if cost_bps > policy.gate2_max_cost_bps:
         reasons.append('cost_bps_exceeds_maximum')
+    tca_order_count = int(inputs.tca_metrics.get('order_count', 0))
+    if tca_order_count > 0:
+        avg_tca_slippage = _decimal(inputs.tca_metrics.get('avg_slippage_bps')) or Decimal('0')
+        avg_tca_shortfall = _decimal(inputs.tca_metrics.get('avg_shortfall_notional')) or Decimal('0')
+        avg_tca_churn_ratio = _decimal(inputs.tca_metrics.get('avg_churn_ratio')) or Decimal('0')
+        if avg_tca_slippage > policy.gate2_max_tca_slippage_bps:
+            reasons.append('tca_slippage_exceeds_maximum')
+        if avg_tca_shortfall > policy.gate2_max_tca_shortfall_notional:
+            reasons.append('tca_shortfall_exceeds_maximum')
+        if avg_tca_churn_ratio > policy.gate2_max_tca_churn_ratio:
+            reasons.append('tca_churn_ratio_exceeds_maximum')
 
     return GateResult(gate_id='gate2_risk_capacity', status='pass' if not reasons else 'fail', reasons=reasons)
 

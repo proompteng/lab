@@ -2,13 +2,15 @@
 
 import logging
 import os
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
 from datetime import datetime
+from decimal import Decimal
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from urllib.parse import urlencode
@@ -18,7 +20,7 @@ from .alpaca_client import TorghutAlpacaClient
 from .config import settings
 from .db import ensure_schema, get_session, ping
 from .metrics import render_trading_metrics
-from .models import Execution, TradeDecision
+from .models import Execution, ExecutionTCAMetric, TradeDecision
 from .trading import TradingScheduler
 from .trading.llm.evaluation import build_llm_evaluation_metrics
 
@@ -93,6 +95,7 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
         app.state.trading_scheduler = scheduler
     state = scheduler.state
     llm_evaluation = _load_llm_evaluation(session)
+    tca_summary = _load_tca_summary(session)
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -122,11 +125,12 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
         "metrics": state.metrics.__dict__,
         "llm": scheduler.llm_status(),
         "llm_evaluation": llm_evaluation,
+        "tca": tca_summary,
     }
 
 
 @app.get("/trading/metrics")
-def trading_metrics() -> dict[str, object]:
+def trading_metrics(session: Session = Depends(get_session)) -> dict[str, object]:
     """Expose trading metrics counters."""
 
     scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
@@ -134,7 +138,7 @@ def trading_metrics() -> dict[str, object]:
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
     metrics = scheduler.state.metrics
-    return {"metrics": metrics.__dict__}
+    return {"metrics": metrics.__dict__, "tca": _load_tca_summary(session)}
 
 
 @app.get("/trading/autonomy")
@@ -182,7 +186,7 @@ def trading_llm_evaluation(session: Session = Depends(get_session)) -> JSONRespo
 
 
 @app.get("/metrics")
-def prometheus_metrics() -> Response:
+def prometheus_metrics(session: Session = Depends(get_session)) -> Response:
     """Expose Prometheus-formatted trading metrics counters."""
 
     scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
@@ -190,7 +194,7 @@ def prometheus_metrics() -> Response:
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
     metrics = scheduler.state.metrics
-    payload = render_trading_metrics(metrics.__dict__)
+    payload = render_trading_metrics({**metrics.__dict__, "tca_summary": _load_tca_summary(session)})
     return Response(content=payload, media_type="text/plain; version=0.0.4")
 
 
@@ -244,6 +248,12 @@ def trading_executions(
         stmt = stmt.where(Execution.created_at >= since)
     stmt = stmt.limit(limit)
     executions = session.execute(stmt).scalars().all()
+    execution_ids = [execution.id for execution in executions]
+    tca_by_execution: dict[str, ExecutionTCAMetric] = {}
+    if execution_ids:
+        tca_stmt = select(ExecutionTCAMetric).where(ExecutionTCAMetric.execution_id.in_(execution_ids))
+        tca_rows = session.execute(tca_stmt).scalars().all()
+        tca_by_execution = {str(row.execution_id): row for row in tca_rows}
     payload = [
         {
             "id": str(execution.id),
@@ -265,10 +275,60 @@ def trading_executions(
             "created_at": execution.created_at,
             "last_update_at": execution.last_update_at,
             "alpaca_order_id": execution.alpaca_order_id,
+            "tca": _tca_row_payload(tca_by_execution.get(str(execution.id))),
         }
         for execution in executions
     ]
     return jsonable_encoder(payload)
+
+
+@app.get("/trading/tca")
+def trading_tca(
+    symbol: str | None = None,
+    strategy_id: str | None = None,
+    since: datetime | None = None,
+    limit: int = Query(default=200, ge=1, le=500),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Return per-order and aggregated transaction cost analytics metrics."""
+
+    stmt = select(ExecutionTCAMetric).order_by(ExecutionTCAMetric.computed_at.desc())
+    if symbol:
+        stmt = stmt.where(ExecutionTCAMetric.symbol == symbol)
+    if strategy_id:
+        stmt = stmt.where(ExecutionTCAMetric.strategy_id == strategy_id)
+    if since:
+        stmt = stmt.where(ExecutionTCAMetric.computed_at >= since)
+    rows = session.execute(stmt.limit(limit)).scalars().all()
+
+    grouped = _aggregate_tca_rows(rows)
+    payload_rows = [
+        {
+            "execution_id": str(row.execution_id),
+            "trade_decision_id": str(row.trade_decision_id) if row.trade_decision_id else None,
+            "strategy_id": str(row.strategy_id) if row.strategy_id else None,
+            "alpaca_account_label": row.alpaca_account_label,
+            "symbol": row.symbol,
+            "side": row.side,
+            "arrival_price": row.arrival_price,
+            "avg_fill_price": row.avg_fill_price,
+            "filled_qty": row.filled_qty,
+            "signed_qty": row.signed_qty,
+            "slippage_bps": row.slippage_bps,
+            "shortfall_notional": row.shortfall_notional,
+            "churn_qty": row.churn_qty,
+            "churn_ratio": row.churn_ratio,
+            "computed_at": row.computed_at,
+        }
+        for row in rows
+    ]
+    return jsonable_encoder(
+        {
+            "summary": _load_tca_summary(session),
+            "aggregates": grouped,
+            "rows": payload_rows,
+        }
+    )
 
 
 @app.get("/trading/health")
@@ -359,6 +419,127 @@ def _check_alpaca() -> dict[str, object]:
     except Exception as exc:  # pragma: no cover - depends on network
         return {"ok": False, "detail": f"alpaca error: {exc}"}
     return {"ok": True, "detail": "ok"}
+
+
+def _tca_row_payload(row: ExecutionTCAMetric | None) -> dict[str, object] | None:
+    if row is None:
+        return None
+    return {
+        "arrival_price": row.arrival_price,
+        "avg_fill_price": row.avg_fill_price,
+        "slippage_bps": row.slippage_bps,
+        "shortfall_notional": row.shortfall_notional,
+        "churn_qty": row.churn_qty,
+        "churn_ratio": row.churn_ratio,
+        "computed_at": row.computed_at,
+    }
+
+
+def _load_tca_summary(session: Session) -> dict[str, object]:
+    row = session.execute(
+        select(
+            func.count(ExecutionTCAMetric.id),
+            func.avg(ExecutionTCAMetric.slippage_bps),
+            func.avg(ExecutionTCAMetric.shortfall_notional),
+            func.avg(ExecutionTCAMetric.churn_ratio),
+            func.max(ExecutionTCAMetric.computed_at),
+        )
+    ).one()
+    order_count_raw = row[0]
+    order_count = int(order_count_raw) if isinstance(order_count_raw, (int, float, Decimal)) else 0
+    return {
+        "order_count": order_count,
+        "avg_slippage_bps": row[1],
+        "avg_shortfall_notional": row[2],
+        "avg_churn_ratio": row[3],
+        "last_computed_at": row[4],
+    }
+
+
+def _aggregate_tca_rows(rows: Sequence[ExecutionTCAMetric]) -> dict[str, list[dict[str, object]]]:
+    def _as_int(value: object) -> int:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        return 0
+
+    def _as_float(value: object) -> float:
+        if isinstance(value, bool):
+            return float(value)
+        if isinstance(value, (int, float)):
+            return float(value)
+        return 0.0
+
+    by_strategy: dict[tuple[str, str], dict[str, object]] = {}
+    by_symbol: dict[tuple[str, str, str], dict[str, object]] = {}
+    for row in rows:
+        strategy_key = str(row.strategy_id) if row.strategy_id else "unknown"
+        account_key = row.alpaca_account_label or "unknown"
+        symbol_key = row.symbol
+
+        strategy_agg = by_strategy.setdefault(
+            (strategy_key, account_key),
+            {
+                "strategy_id": strategy_key,
+                "alpaca_account_label": account_key,
+                "order_count": 0,
+                "_slippage_sum": 0.0,
+                "_slippage_count": 0,
+                "_shortfall_sum": 0.0,
+                "_shortfall_count": 0,
+                "_churn_sum": 0.0,
+                "_churn_count": 0,
+            },
+        )
+        symbol_agg = by_symbol.setdefault(
+            (strategy_key, account_key, symbol_key),
+            {
+                "strategy_id": strategy_key,
+                "alpaca_account_label": account_key,
+                "symbol": symbol_key,
+                "order_count": 0,
+                "_slippage_sum": 0.0,
+                "_slippage_count": 0,
+                "_shortfall_sum": 0.0,
+                "_shortfall_count": 0,
+                "_churn_sum": 0.0,
+                "_churn_count": 0,
+            },
+        )
+        for agg in (strategy_agg, symbol_agg):
+            agg["order_count"] = _as_int(agg["order_count"]) + 1
+            if row.slippage_bps is not None:
+                agg["_slippage_sum"] = _as_float(agg["_slippage_sum"]) + float(row.slippage_bps)
+                agg["_slippage_count"] = _as_int(agg["_slippage_count"]) + 1
+            if row.shortfall_notional is not None:
+                agg["_shortfall_sum"] = _as_float(agg["_shortfall_sum"]) + float(row.shortfall_notional)
+                agg["_shortfall_count"] = _as_int(agg["_shortfall_count"]) + 1
+            if row.churn_ratio is not None:
+                agg["_churn_sum"] = _as_float(agg["_churn_sum"]) + float(row.churn_ratio)
+                agg["_churn_count"] = _as_int(agg["_churn_count"]) + 1
+
+    def _finalize(aggregates: list[dict[str, object]]) -> list[dict[str, object]]:
+        payload: list[dict[str, object]] = []
+        for aggregate in aggregates:
+            slippage_count = _as_int(aggregate.pop("_slippage_count"))
+            slippage_sum = _as_float(aggregate.pop("_slippage_sum"))
+            shortfall_count = _as_int(aggregate.pop("_shortfall_count"))
+            shortfall_sum = _as_float(aggregate.pop("_shortfall_sum"))
+            churn_count = _as_int(aggregate.pop("_churn_count"))
+            churn_sum = _as_float(aggregate.pop("_churn_sum"))
+            aggregate["avg_slippage_bps"] = (slippage_sum / slippage_count) if slippage_count else None
+            aggregate["avg_shortfall_notional"] = (shortfall_sum / shortfall_count) if shortfall_count else None
+            aggregate["avg_churn_ratio"] = (churn_sum / churn_count) if churn_count else None
+            payload.append(aggregate)
+        return payload
+
+    return {
+        "strategy": _finalize(list(by_strategy.values())),
+        "symbol": _finalize(list(by_symbol.values())),
+    }
 
 
 def _load_llm_evaluation(session: Session) -> dict[str, object]:

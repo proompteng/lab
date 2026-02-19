@@ -36,6 +36,7 @@ from ..reporting import (
     generate_evaluation_report,
     write_evaluation_report,
 )
+from ..tca import build_tca_gate_inputs
 from .gates import GateEvaluationReport, GateInputs, GatePolicyMatrix, PromotionTarget, evaluate_gate_matrix
 from .runtime import StrategyRuntime, StrategyRuntimeConfig, default_runtime_registry
 
@@ -255,6 +256,7 @@ def run_autonomous_lane(
             symbol_coverage=len({signal.symbol for signal in signals}),
             metrics=report.metrics.to_payload(),
             robustness=report.robustness.to_payload(),
+            tca_metrics=_load_tca_gate_inputs(factory),
             llm_metrics={'error_ratio': '0'},
             operational_ready=True,
             runbook_validated=True,
@@ -789,6 +791,19 @@ def _required_feature_null_rate(signals: list[SignalEnvelope]) -> Decimal:
     if total == 0:
         return Decimal('1')
     return Decimal(missing) / Decimal(total)
+
+
+def _load_tca_gate_inputs(session_factory: Callable[[], Session]) -> dict[str, Decimal | int]:
+    try:
+        with session_factory() as session:
+            return build_tca_gate_inputs(session)
+    except Exception:
+        return {
+            "order_count": 0,
+            "avg_slippage_bps": Decimal("0"),
+            "avg_shortfall_notional": Decimal("0"),
+            "avg_churn_ratio": Decimal("0"),
+        }
 
 
 def _default_strategy_configmap_path() -> Path:
