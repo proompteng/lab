@@ -27,6 +27,7 @@ import { Route as V1AgentRunsRouteImport } from './routes/v1/agent-runs'
 import { Route as TorghutVisualsRouteImport } from './routes/torghut/visuals'
 import { Route as TorghutTradingRouteImport } from './routes/torghut/trading'
 import { Route as TorghutSymbolsRouteImport } from './routes/torghut/symbols'
+import { Route as TorghutChartsRouteImport } from './routes/torghut/charts'
 import { Route as TerminalsSessionIdRouteImport } from './routes/terminals/$sessionId'
 import { Route as GithubPullsRouteImport } from './routes/github/pulls'
 import { Route as CodexSearchRouteImport } from './routes/codex/search'
@@ -243,6 +244,11 @@ const TorghutTradingRoute = TorghutTradingRouteImport.update({
 const TorghutSymbolsRoute = TorghutSymbolsRouteImport.update({
   id: '/torghut/symbols',
   path: '/torghut/symbols',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TorghutChartsRoute = TorghutChartsRouteImport.update({
+  id: '/torghut/charts',
+  path: '/torghut/charts',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TerminalsSessionIdRoute = TerminalsSessionIdRouteImport.update({
@@ -973,6 +979,7 @@ export interface FileRoutesByFullPath {
   '/codex/search': typeof CodexSearchRoute
   '/github/pulls': typeof GithubPullsRouteWithChildren
   '/terminals/$sessionId': typeof TerminalsSessionIdRouteWithChildren
+  '/torghut/charts': typeof TorghutChartsRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
@@ -1118,6 +1125,7 @@ export interface FileRoutesByTo {
   '/atlas/search': typeof AtlasSearchRoute
   '/codex/runs': typeof CodexRunsRoute
   '/codex/search': typeof CodexSearchRoute
+  '/torghut/charts': typeof TorghutChartsRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
@@ -1266,6 +1274,7 @@ export interface FileRoutesById {
   '/codex/search': typeof CodexSearchRoute
   '/github/pulls': typeof GithubPullsRouteWithChildren
   '/terminals/$sessionId': typeof TerminalsSessionIdRouteWithChildren
+  '/torghut/charts': typeof TorghutChartsRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
@@ -1415,6 +1424,7 @@ export interface FileRouteTypes {
     | '/codex/search'
     | '/github/pulls'
     | '/terminals/$sessionId'
+    | '/torghut/charts'
     | '/torghut/symbols'
     | '/torghut/trading'
     | '/torghut/visuals'
@@ -1560,6 +1570,7 @@ export interface FileRouteTypes {
     | '/atlas/search'
     | '/codex/runs'
     | '/codex/search'
+    | '/torghut/charts'
     | '/torghut/symbols'
     | '/torghut/trading'
     | '/torghut/visuals'
@@ -1707,6 +1718,7 @@ export interface FileRouteTypes {
     | '/codex/search'
     | '/github/pulls'
     | '/terminals/$sessionId'
+    | '/torghut/charts'
     | '/torghut/symbols'
     | '/torghut/trading'
     | '/torghut/visuals'
@@ -1855,6 +1867,7 @@ export interface RootRouteChildren {
   CodexSearchRoute: typeof CodexSearchRoute
   GithubPullsRoute: typeof GithubPullsRouteWithChildren
   TerminalsSessionIdRoute: typeof TerminalsSessionIdRouteWithChildren
+  TorghutChartsRoute: typeof TorghutChartsRoute
   TorghutSymbolsRoute: typeof TorghutSymbolsRoute
   TorghutTradingRoute: typeof TorghutTradingRoute
   TorghutVisualsRoute: typeof TorghutVisualsRoute
@@ -2076,6 +2089,13 @@ declare module '@tanstack/react-router' {
       path: '/torghut/symbols'
       fullPath: '/torghut/symbols'
       preLoaderRoute: typeof TorghutSymbolsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/torghut/charts': {
+      id: '/torghut/charts'
+      path: '/torghut/charts'
+      fullPath: '/torghut/charts'
+      preLoaderRoute: typeof TorghutChartsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/terminals/$sessionId': {
@@ -3226,6 +3246,7 @@ const rootRouteChildren: RootRouteChildren = {
   CodexSearchRoute: CodexSearchRoute,
   GithubPullsRoute: GithubPullsRouteWithChildren,
   TerminalsSessionIdRoute: TerminalsSessionIdRouteWithChildren,
+  TorghutChartsRoute: TorghutChartsRoute,
   TorghutSymbolsRoute: TorghutSymbolsRoute,
   TorghutTradingRoute: TorghutTradingRoute,
   TorghutVisualsRoute: TorghutVisualsRoute,

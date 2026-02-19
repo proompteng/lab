@@ -35,9 +35,9 @@ test.describe('ui pages', () => {
     await expect(page.getByRole('heading', { name: 'Symbols', level: 1 })).toBeVisible()
   })
 
-  test('torghut visuals', async ({ page }) => {
-    await page.goto('/torghut/visuals')
-    await expect(page.getByRole('heading', { name: 'Visuals', level: 1 })).toBeVisible()
+  test('torghut charts', async ({ page }) => {
+    await page.goto('/torghut/charts')
+    await expect(page.getByRole('heading', { name: 'Charts', level: 1 })).toBeVisible()
     const symbolSelect = page.locator('#torghut-symbol')
     await expect(symbolSelect).toBeVisible()
     const colorScheme = await symbolSelect.evaluate((element) => getComputedStyle(element).colorScheme)

@@ -273,11 +273,11 @@ test.describe('deployed jangar e2e', () => {
     await expect(page.getByText('Disconnected')).toHaveCount(0)
   })
 
-  test('torghut visuals render overlays and signals', async ({ page, request }) => {
+  test('torghut charts render overlays and signals', async ({ page, request }) => {
     test.setTimeout(120_000)
 
-    await page.goto('/torghut/visuals')
-    await expect(page.getByRole('heading', { name: 'Visuals', level: 1 })).toBeVisible()
+    await page.goto('/torghut/charts')
+    await expect(page.getByRole('heading', { name: 'Charts', level: 1 })).toBeVisible()
     await waitForHydration(page)
 
     const symbolSelect = page.locator('#torghut-symbol')

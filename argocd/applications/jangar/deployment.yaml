@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2026-02-19T22:22:03.938Z"
+    deploy.knative.dev/rollout: "2026-02-19T22:43:57.885Z"
 spec:
   replicas: 1
   strategy:
@@ -263,17 +263,12 @@ spec:
             - name: CH_SECURE
               value: "false"
             - name: CH_USER
-              valueFrom:
-                secretKeyRef:
-                  name: jangar-clickhouse-auth
-                  key: username
-                  optional: true
+              value: torghut
             - name: CH_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: jangar-clickhouse-auth
-                  key: password
-                  optional: true
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
             - name: VSCODE_DATA_DIR
               value: /workspace/.ovscode
             - name: VSCODE_DEFAULT_FOLDER

@@ -11,7 +11,6 @@ resources:
   - discord-success-channel-sealedsecret.yaml
   - codex-run-complete-kafkasource.yaml
   - codex-github-events-kafkasource.yaml
-  - clickhouse-auth.yaml
   - app-tailscale-service.yaml
   - tailscale-service.yaml
   - postgres-cluster.yaml
@@ -57,4 +56,4 @@ helmCharts:
 images:
   - name: registry.ide-newton.ts.net/lab/jangar
     newTag: "da51a300"
-    digest: sha256:8a9229954d18959071c48a2596a83bfb9e95b5ae3910074937ff064515aadcbb
+    digest: sha256:3ec5b35e2949d24ccba6156d010c917b8ee53ef8a2c21fbd117de22e83111fea
