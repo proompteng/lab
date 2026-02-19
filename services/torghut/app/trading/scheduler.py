@@ -41,7 +41,7 @@ from .prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
 from .order_feed import OrderFeedIngestor
 from .reconcile import Reconciler
 from .risk import RiskEngine
-from .autonomy import run_autonomous_lane, upsert_autonomy_no_signal_run
+from .autonomy import evaluate_evidence_continuity, run_autonomous_lane, upsert_autonomy_no_signal_run
 from .universe import UniverseResolver
 from .llm.schema import MarketSnapshot as LLMMarketSnapshot
 from .llm.schema import MarketContextBundle
@@ -161,6 +161,11 @@ class TradingMetrics:
     feature_schema_mismatch_total: int = 0
     feature_quality_rejections_total: int = 0
     feature_parity_drift_total: int = 0
+    evidence_continuity_checks_total: int = 0
+    evidence_continuity_failures_total: int = 0
+    evidence_continuity_last_checked_ts_seconds: float = 0
+    evidence_continuity_last_success_ts_seconds: float = 0
+    evidence_continuity_last_failed_runs: int = 0
 
     def record_execution_request(self, adapter: str | None) -> None:
         adapter_name = coerce_route_text(adapter)
@@ -267,6 +272,7 @@ class TradingState:
     last_ingest_window_end: Optional[datetime] = None
     last_ingest_reason: Optional[str] = None
     autonomy_no_signal_streak: int = 0
+    last_evidence_continuity_report: Optional[dict[str, Any]] = None
     metrics: TradingMetrics = field(default_factory=TradingMetrics)
 
 
@@ -1427,8 +1433,10 @@ class TradingScheduler:
         poll_interval = settings.trading_poll_ms / 1000
         reconcile_interval = settings.trading_reconcile_ms / 1000
         autonomy_interval = max(30, settings.trading_autonomy_interval_seconds)
+        evidence_interval = max(300, settings.trading_evidence_continuity_interval_seconds)
         last_reconcile = datetime.now(timezone.utc)
         last_autonomy = datetime.now(timezone.utc)
+        last_evidence_check = datetime.now(timezone.utc)
 
         while not self._stop_event.is_set():
             try:
@@ -1471,7 +1479,46 @@ class TradingScheduler:
                 finally:
                     last_autonomy = now
 
+            if (
+                settings.trading_evidence_continuity_enabled
+                and now - last_evidence_check >= timedelta(seconds=evidence_interval)
+            ):
+                try:
+                    if self._pipeline is None:
+                        raise RuntimeError("trading_pipeline_not_initialized")
+                    await asyncio.to_thread(self._run_evidence_continuity_check)
+                except Exception as exc:  # pragma: no cover - loop guard
+                    logger.exception("Evidence continuity check failed: %s", exc)
+                    self.state.last_error = str(exc)
+                finally:
+                    last_evidence_check = now
+
             await asyncio.sleep(poll_interval)
+
+    def _run_evidence_continuity_check(self) -> None:
+        if self._pipeline is None:
+            raise RuntimeError("trading_pipeline_not_initialized")
+        with self._pipeline.session_factory() as session:
+            report = evaluate_evidence_continuity(
+                session,
+                run_limit=settings.trading_evidence_continuity_run_limit,
+            )
+        payload = report.to_payload()
+        self.state.last_evidence_continuity_report = payload
+        metrics = self.state.metrics
+        metrics.evidence_continuity_checks_total += 1
+        metrics.evidence_continuity_last_checked_ts_seconds = report.checked_at.timestamp()
+        metrics.evidence_continuity_last_failed_runs = report.failed_runs
+        if report.failed_runs > 0:
+            metrics.evidence_continuity_failures_total += report.failed_runs
+            logger.warning(
+                "Evidence continuity failures detected failed_runs=%s checked_runs=%s run_ids=%s",
+                report.failed_runs,
+                report.checked_runs,
+                ",".join(report.run_ids),
+            )
+            return
+        metrics.evidence_continuity_last_success_ts_seconds = report.checked_at.timestamp()
 
     def _run_autonomous_cycle(self) -> None:
         if self._pipeline is None:

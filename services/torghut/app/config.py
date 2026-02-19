@@ -189,6 +189,21 @@ class Settings(BaseSettings):
         alias="TRADING_AUTONOMY_ARTIFACT_DIR",
         description="Output directory for autonomous lane artifacts.",
     )
+    trading_evidence_continuity_enabled: bool = Field(
+        default=True,
+        alias="TRADING_EVIDENCE_CONTINUITY_ENABLED",
+        description="Enable periodic research evidence continuity reconciliation checks.",
+    )
+    trading_evidence_continuity_interval_seconds: int = Field(
+        default=86400,
+        alias="TRADING_EVIDENCE_CONTINUITY_INTERVAL_SECONDS",
+        description="Interval between evidence continuity checks.",
+    )
+    trading_evidence_continuity_run_limit: int = Field(
+        default=8,
+        alias="TRADING_EVIDENCE_CONTINUITY_RUN_LIMIT",
+        description="How many latest non-skipped research runs to check for continuity.",
+    )
     trading_universe_source: Literal["jangar", "static"] = Field(
         default="static", alias="TRADING_UNIVERSE_SOURCE"
     )
@@ -402,6 +417,11 @@ class Settings(BaseSettings):
             )
         if self.trading_autonomy_approval_token:
             self.trading_autonomy_approval_token = self.trading_autonomy_approval_token.strip() or None
+        if (
+            (self.trading_enabled or self.trading_autonomy_enabled or self.trading_live_enabled)
+            and self.trading_universe_source != "jangar"
+        ):
+            raise ValueError("TRADING_UNIVERSE_SOURCE must be 'jangar' when trading or autonomy is enabled")
         if "llm_provider" not in self.model_fields_set and self.jangar_base_url:
             self.llm_provider = "jangar"
         if self.llm_allowed_models_raw:

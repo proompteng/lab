@@ -22,6 +22,7 @@ from .db import ensure_schema, get_session, ping
 from .metrics import render_trading_metrics
 from .models import Execution, ExecutionTCAMetric, TradeDecision
 from .trading import TradingScheduler
+from .trading.autonomy import evaluate_evidence_continuity
 from .trading.llm.evaluation import build_llm_evaluation_metrics
 
 logger = logging.getLogger(__name__)
@@ -128,6 +129,7 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
         "llm_evaluation": llm_evaluation,
         "tca": tca_summary,
         "control_plane_contract": control_plane_contract,
+        "evidence_continuity": state.last_evidence_continuity_report,
     }
 
 
@@ -177,6 +179,42 @@ def trading_autonomy() -> dict[str, object]:
         "last_ingest_reason": state.last_ingest_reason,
         "last_ingest_window_start": state.last_ingest_window_start,
         "last_ingest_window_end": state.last_ingest_window_end,
+        "evidence_continuity": state.last_evidence_continuity_report,
+    }
+
+
+@app.get("/trading/autonomy/evidence-continuity")
+def trading_autonomy_evidence_continuity(
+    refresh: bool = Query(default=False),
+    run_limit: int | None = Query(default=None, ge=1, le=50),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Return latest evidence continuity check and optionally force a refresh."""
+
+    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    if scheduler is None:
+        scheduler = TradingScheduler()
+        app.state.trading_scheduler = scheduler
+
+    if refresh:
+        report = evaluate_evidence_continuity(
+            session,
+            run_limit=run_limit or settings.trading_evidence_continuity_run_limit,
+        )
+        payload = report.to_payload()
+        scheduler.state.last_evidence_continuity_report = payload
+        return {
+            "enabled": settings.trading_evidence_continuity_enabled,
+            "interval_seconds": settings.trading_evidence_continuity_interval_seconds,
+            "default_run_limit": settings.trading_evidence_continuity_run_limit,
+            "report": payload,
+        }
+
+    return {
+        "enabled": settings.trading_evidence_continuity_enabled,
+        "interval_seconds": settings.trading_evidence_continuity_interval_seconds,
+        "default_run_limit": settings.trading_evidence_continuity_run_limit,
+        "report": scheduler.state.last_evidence_continuity_report,
     }
 
 

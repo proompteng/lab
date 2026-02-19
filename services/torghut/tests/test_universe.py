@@ -13,11 +13,17 @@ class TestUniverseResolver(TestCase):
         self._original_source = config.settings.trading_universe_source
         self._original_symbols = config.settings.trading_static_symbols_raw
         self._original_url = config.settings.trading_jangar_symbols_url
+        self._original_enabled = config.settings.trading_enabled
+        self._original_autonomy = config.settings.trading_autonomy_enabled
+        self._original_live = config.settings.trading_live_enabled
 
     def tearDown(self) -> None:
         config.settings.trading_universe_source = self._original_source
         config.settings.trading_static_symbols_raw = self._original_symbols
         config.settings.trading_jangar_symbols_url = self._original_url
+        config.settings.trading_enabled = self._original_enabled
+        config.settings.trading_autonomy_enabled = self._original_autonomy
+        config.settings.trading_live_enabled = self._original_live
 
     def test_static_universe_fails_closed_on_empty(self) -> None:
         config.settings.trading_universe_source = "static"
@@ -37,6 +43,13 @@ class TestUniverseResolver(TestCase):
         resolver = UniverseResolver()
         with patch("app.trading.universe.urlopen", side_effect=RuntimeError("boom")):
             self.assertEqual(resolver.get_symbols(), set())
+
+    def test_active_trading_rejects_static_universe_source(self) -> None:
+        config.settings.trading_enabled = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL,MSFT"
+        resolver = UniverseResolver()
+        self.assertEqual(resolver.get_symbols(), set())
 
     def test_jangar_failure_uses_cached_symbols(self) -> None:
         config.settings.trading_universe_source = "jangar"

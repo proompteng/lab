@@ -13,6 +13,7 @@ from .policy_checks import (
     evaluate_promotion_prerequisites,
     evaluate_rollback_readiness,
 )
+from .evidence import EvidenceContinuityCheckReport, evaluate_evidence_continuity
 from .runtime import (
     LegacyMacdRsiPlugin,
     RuntimeEvaluationResult,
@@ -42,7 +43,9 @@ __all__ = [
     'StrategyRuntime',
     'StrategyRuntimeConfig',
     'default_runtime_registry',
+    'EvidenceContinuityCheckReport',
     'evaluate_gate_matrix',
+    'evaluate_evidence_continuity',
     'load_runtime_strategy_config',
     'evaluate_promotion_prerequisites',
     'evaluate_rollback_readiness',
