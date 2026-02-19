@@ -41,6 +41,6 @@ test.describe('ui pages', () => {
     const symbolSelect = page.locator('#torghut-symbol')
     await expect(symbolSelect).toBeVisible()
     const colorScheme = await symbolSelect.evaluate((element) => getComputedStyle(element).colorScheme)
-    expect(colorScheme).toContain('dark')
+    expect(colorScheme).toContain('light')
   })
 })
