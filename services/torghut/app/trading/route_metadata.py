@@ -51,7 +51,35 @@ def resolve_order_route_metadata(
     if fallback_count is not None and fallback_count <= 0 and fallback_reason is not None:
         fallback_count = 1
 
-    return expected, raw_actual, fallback_reason, fallback_count
+    normalized_expected, normalized_actual, normalized_reason, normalized_count = normalize_route_provenance(
+        expected_adapter=expected,
+        actual_adapter=raw_actual,
+        fallback_reason=fallback_reason,
+        fallback_count=fallback_count,
+    )
+    return normalized_expected, normalized_actual, normalized_reason, normalized_count
+
+
+def normalize_route_provenance(
+    *,
+    expected_adapter: str | None,
+    actual_adapter: str | None,
+    fallback_reason: str | None,
+    fallback_count: int | None,
+) -> tuple[str, str, str | None, int]:
+    """Normalize route provenance so execution rows are always materialized with deterministic metadata."""
+
+    expected = coerce_route_text(expected_adapter) or 'unknown'
+    actual = coerce_route_text(actual_adapter) or expected
+    count = 0 if fallback_count is None else max(0, int(fallback_count))
+    reason = coerce_route_text(fallback_reason)
+    if expected != actual and count <= 0:
+        count = 1
+    if count > 0 and reason is None:
+        reason = f'fallback_from_{expected}_to_{actual}'
+    if count == 0:
+        reason = None
+    return expected, actual, reason, count
 
 
 def coerce_route_text(value: Any) -> Optional[str]:
@@ -88,4 +116,3 @@ def _coerce_order_field(order_response: Mapping[str, Any] | None, key: str) -> A
     if order_response is None:
         return None
     return order_response.get(key)
-

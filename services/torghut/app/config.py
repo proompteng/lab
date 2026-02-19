@@ -207,6 +207,16 @@ class Settings(BaseSettings):
     trading_universe_source: Literal["jangar", "static"] = Field(
         default="static", alias="TRADING_UNIVERSE_SOURCE"
     )
+    trading_universe_require_non_empty_jangar: bool = Field(
+        default=True,
+        alias="TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR",
+        description="Fail closed when Jangar-backed universe cannot be resolved to a non-empty symbol set.",
+    )
+    trading_universe_max_stale_seconds: int = Field(
+        default=900,
+        alias="TRADING_UNIVERSE_MAX_STALE_SECONDS",
+        description="Maximum age for cached Jangar symbol universe before it is treated as stale.",
+    )
     trading_static_symbols_raw: Optional[str] = Field(default=None, alias="TRADING_STATIC_SYMBOLS")
     trading_universe_cache_seconds: int = Field(default=300, alias="TRADING_UNIVERSE_CACHE_SECONDS")
     trading_universe_timeout_seconds: int = Field(default=5, alias="TRADING_UNIVERSE_TIMEOUT_SECONDS")
@@ -313,6 +323,31 @@ class Settings(BaseSettings):
     trading_allow_shorts: bool = Field(default=False, alias="TRADING_ALLOW_SHORTS")
     trading_account_label: str = Field(default="paper", alias="TRADING_ACCOUNT_LABEL")
     trading_kill_switch_enabled: bool = Field(default=True, alias="TRADING_KILL_SWITCH_ENABLED")
+    trading_emergency_stop_enabled: bool = Field(
+        default=True,
+        alias="TRADING_EMERGENCY_STOP_ENABLED",
+        description="Enable autonomous emergency stop hooks that block order submission after critical safety breaches.",
+    )
+    trading_rollback_signal_lag_seconds_limit: int = Field(
+        default=600,
+        alias="TRADING_ROLLBACK_SIGNAL_LAG_SECONDS_LIMIT",
+        description="Signal lag threshold (seconds) that triggers autonomous emergency stop.",
+    )
+    trading_rollback_autonomy_failure_streak_limit: int = Field(
+        default=3,
+        alias="TRADING_ROLLBACK_AUTONOMY_FAILURE_STREAK_LIMIT",
+        description="Consecutive autonomous lane failures allowed before emergency stop.",
+    )
+    trading_rollback_fallback_ratio_limit: float = Field(
+        default=0.25,
+        alias="TRADING_ROLLBACK_FALLBACK_RATIO_LIMIT",
+        description="Execution fallback ratio threshold that triggers emergency stop.",
+    )
+    trading_rollback_max_drawdown_limit: float = Field(
+        default=0.08,
+        alias="TRADING_ROLLBACK_MAX_DRAWDOWN_LIMIT",
+        description="Absolute drawdown threshold from autonomous gate artifacts that triggers emergency stop.",
+    )
     trading_jangar_symbols_url: Optional[str] = Field(default=None, alias="JANGAR_SYMBOLS_URL")
     trading_market_context_url: Optional[str] = Field(
         default=None,

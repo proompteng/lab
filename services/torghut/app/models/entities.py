@@ -112,11 +112,11 @@ class Execution(Base, TimestampMixin):
     )
     avg_fill_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
     status: Mapped[str] = mapped_column(String(length=32), nullable=False)
-    execution_expected_adapter: Mapped[Optional[str]] = mapped_column(
-        String(length=32), nullable=True
+    execution_expected_adapter: Mapped[str] = mapped_column(
+        String(length=32), nullable=False, default='unknown', server_default=text("'unknown'")
     )
-    execution_actual_adapter: Mapped[Optional[str]] = mapped_column(
-        String(length=32), nullable=True
+    execution_actual_adapter: Mapped[str] = mapped_column(
+        String(length=32), nullable=False, default='unknown', server_default=text("'unknown'")
     )
     execution_fallback_reason: Mapped[Optional[str]] = mapped_column(
         String(length=128), nullable=True
@@ -213,10 +213,14 @@ class ResearchRun(Base, TimestampMixin):
     dataset_snapshot_ref: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
     runner_version: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
     runner_binary_hash: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    gate_report_trace_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    recommendation_trace_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
 
     __table_args__ = (
         Index("ix_research_runs_status", "status"),
         Index("ix_research_runs_created_at", "created_at"),
+        Index("ix_research_runs_gate_trace", "gate_report_trace_id"),
+        Index("ix_research_runs_recommendation_trace", "recommendation_trace_id"),
     )
 
 

@@ -110,6 +110,10 @@ spec:
               value: "10"
             - name: TRADING_UNIVERSE_SOURCE
               value: jangar
+            - name: TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR
+              value: "true"
+            - name: TRADING_UNIVERSE_MAX_STALE_SECONDS
+              value: "900"
             - name: JANGAR_SYMBOLS_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/symbols
             - name: JANGAR_BASE_URL
@@ -126,6 +130,16 @@ spec:
               value: "0.55"
             - name: TRADING_MARKET_CONTEXT_MAX_STALENESS_SECONDS
               value: "300"
+            - name: TRADING_EMERGENCY_STOP_ENABLED
+              value: "true"
+            - name: TRADING_ROLLBACK_SIGNAL_LAG_SECONDS_LIMIT
+              value: "600"
+            - name: TRADING_ROLLBACK_AUTONOMY_FAILURE_STREAK_LIMIT
+              value: "3"
+            - name: TRADING_ROLLBACK_FALLBACK_RATIO_LIMIT
+              value: "0.25"
+            - name: TRADING_ROLLBACK_MAX_DRAWDOWN_LIMIT
+              value: "0.08"
             - name: LLM_PROVIDER
               value: jangar
             - name: LLM_MODEL

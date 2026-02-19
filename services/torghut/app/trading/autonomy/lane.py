@@ -49,6 +49,8 @@ class AutonomousLaneResult:
     output_dir: Path
     gate_report_path: Path
     paper_patch_path: Path | None
+    gate_report_trace_id: str
+    recommendation_trace_id: str
 
 
 def upsert_autonomy_no_signal_run(
@@ -195,6 +197,8 @@ def run_autonomous_lane(
     walk_results: WalkForwardResults | None = None
     report: EvaluationReport | None = None
     gate_report: GateEvaluationReport | None = None
+    gate_report_trace_id: str | None = None
+    recommendation_trace_id: str | None = None
     gate_report_path = gates_dir / 'gate-evaluation.json'
     promotion_check_path = gates_dir / 'promotion-prerequisites.json'
     rollback_check_path = gates_dir / 'rollback-readiness.json'
@@ -276,6 +280,10 @@ def run_autonomous_lane(
         )
         gate_report_payload = gate_report.to_payload()
         gate_report_payload['run_id'] = run_id
+        gate_report_trace_id = _trace_id(gate_report_payload)
+        gate_report_payload['provenance'] = {
+            'gate_report_trace_id': gate_report_trace_id,
+        }
         gate_report_path.write_text(json.dumps(gate_report_payload, indent=2), encoding='utf-8')
 
         candidate_hash = _compute_candidate_hash(
@@ -359,6 +367,20 @@ def run_autonomous_lane(
 
         promotion_allowed = gate_report.promotion_allowed and promotion_check.allowed and rollback_check.ready
         promotion_reasons = sorted(set([*gate_report.reasons, *promotion_check.reasons, *rollback_check.reasons]))
+        recommendation_trace_id = _trace_id(
+            {
+                'run_id': run_id,
+                'candidate_id': candidate_id,
+                'recommended_mode': gate_report.recommended_mode,
+                'promotion_allowed': promotion_allowed,
+                'reasons': promotion_reasons,
+            }
+        )
+        gate_report_payload['provenance'] = {
+            'gate_report_trace_id': gate_report_trace_id,
+            'recommendation_trace_id': recommendation_trace_id,
+        }
+        gate_report_path.write_text(json.dumps(gate_report_payload, indent=2), encoding='utf-8')
         if not promotion_allowed:
             patch_path = None
 
@@ -381,10 +403,19 @@ def run_autonomous_lane(
                 promotion_target=promotion_target,
                 promotion_allowed=promotion_allowed,
                 promotion_reasons=promotion_reasons,
+                gate_report_trace_id=gate_report_trace_id,
+                recommendation_trace_id=recommendation_trace_id,
             )
 
         if persist_results:
-            _mark_run_passed(session_factory=factory, run_id=run_id, run_row=run_row, now=now)
+            _mark_run_passed(
+                session_factory=factory,
+                run_id=run_id,
+                run_row=run_row,
+                now=now,
+                gate_report_trace_id=gate_report_trace_id,
+                recommendation_trace_id=recommendation_trace_id,
+            )
 
         return AutonomousLaneResult(
             run_id=run_id,
@@ -392,6 +423,8 @@ def run_autonomous_lane(
             output_dir=output_dir,
             gate_report_path=gate_report_path,
             paper_patch_path=patch_path,
+            gate_report_trace_id=gate_report_trace_id,
+            recommendation_trace_id=recommendation_trace_id,
         )
     except Exception as exc:
         if persist_results:
@@ -446,6 +479,8 @@ def _upsert_research_run(
                 dataset_snapshot_ref=str(strategy_config_path),
                 runner_version='run_autonomous_lane',
                 runner_binary_hash=hashlib.sha256(run_id.encode('utf-8')).hexdigest(),
+                gate_report_trace_id=None,
+                recommendation_trace_id=None,
                 updated_at=now,
             )
             session.add(run)
@@ -473,6 +508,8 @@ def _upsert_research_run(
         existing_run.dataset_snapshot_ref = str(strategy_config_path)
         existing_run.runner_version = 'run_autonomous_lane'
         existing_run.runner_binary_hash = hashlib.sha256(run_id.encode('utf-8')).hexdigest()
+        existing_run.gate_report_trace_id = None
+        existing_run.recommendation_trace_id = None
         existing_run.updated_at = now
         session.add(existing_run)
         session.commit()
@@ -507,6 +544,8 @@ def _mark_run_passed(
     run_id: str,
     run_row: ResearchRun | None,
     now: datetime,
+    gate_report_trace_id: str | None,
+    recommendation_trace_id: str | None,
 ) -> None:
     if run_row is None:
         return
@@ -517,6 +556,8 @@ def _mark_run_passed(
         if existing_run is None:
             return
         existing_run.status = 'passed'
+        existing_run.gate_report_trace_id = gate_report_trace_id
+        existing_run.recommendation_trace_id = recommendation_trace_id
         existing_run.updated_at = now
         session.add(existing_run)
         session.commit()
@@ -541,6 +582,8 @@ def _persist_run_outputs(
     promotion_target: str,
     promotion_allowed: bool,
     promotion_reasons: list[str],
+    gate_report_trace_id: str,
+    recommendation_trace_id: str,
 ) -> None:
     robustness_by_fold = {fold.fold_name: fold for fold in report.robustness.folds}
 
@@ -619,6 +662,12 @@ def _persist_run_outputs(
                     effective_time=now if promotion_allowed else None,
                 )
             )
+            run = session.execute(select(ResearchRun).where(ResearchRun.run_id == run_id)).scalar_one_or_none()
+            if run is not None:
+                run.gate_report_trace_id = gate_report_trace_id
+                run.recommendation_trace_id = recommendation_trace_id
+                run.updated_at = now
+                session.add(run)
 
 
 def _compute_candidate_hash(
@@ -639,6 +688,11 @@ def _compute_candidate_hash(
     hasher.update(gate_report.recommended_mode.encode('utf-8'))
     hasher.update(str(sorted(gate_report.reasons)).encode('utf-8'))
     return hasher.hexdigest()[:32]
+
+
+def _trace_id(payload: object) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
+    return hashlib.sha256(encoded).hexdigest()[:24]
 
 
 def _compute_no_signal_feature_spec_hash(
