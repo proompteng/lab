@@ -148,17 +148,17 @@ spec:
             - name: ARGO_SERVER_URL
               value: http://argo-workflows-server.argo-workflows.svc.cluster.local:2746
             - name: MINIO_ENDPOINT
-              value: http://observability-minio.minio.svc.cluster.local:9000
+              value: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
             - name: MINIO_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: observability-minio-creds
+                  name: rook-ceph-rgw-jangar
                   key: accesskey
                   optional: true
             - name: MINIO_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: observability-minio-creds
+                  name: rook-ceph-rgw-jangar
                   key: secretkey
                   optional: true
             - name: MINIO_SECURE
