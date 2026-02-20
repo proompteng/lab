@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@proompteng/temporal-bun-sdk": "workspace:*",
-    "effect": "^3.2.0"
+    "effect": "^3.19.18"
   },
   "devDependencies": {
     "bun-types": "^1.1.20"

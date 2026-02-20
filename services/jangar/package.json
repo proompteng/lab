@@ -50,7 +50,7 @@
     "@tanstack/start-server-core": "^1.157.18",
     "clsx": "^2.1.1",
     "echarts": "^6.0.0",
-    "effect": "^3.19.15",
+    "effect": "^3.19.18",
     "h3": "2.0.1-rc.2",
     "kysely": "^0.28.11",
     "lucide-react": "^0.563.0",
