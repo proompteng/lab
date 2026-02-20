@@ -108,6 +108,7 @@ bun --cwd services/jangar run start:worker
 - Worker consume path: `JANGAR_WORKER_TEMPORAL_TASK_QUEUE` (falls back to `TEMPORAL_TASK_QUEUE`, then `jangar`).
 - Decoupled rollout: run API and `jangar-worker` as separate deployments and point both queue vars to the same queue (for example `jangar`).
 - Bumba starts now set workflow `versioningOverride=auto_upgrade`; keep worker deployment current versions configured or workflows can remain at history length `2` (`WORKFLOW_TASK_SCHEDULED` with no dispatch).
+- `jangar-worker` should use a stable `TEMPORAL_WORKER_BUILD_ID` (for example `jangar@dev`) unless you also automate `set-current-version` during every rollout.
 - Recovery/rollout command:
   `temporal worker deployment set-current-version --deployment-name <name> --build-id <build-id> -n default --address <temporal-address> -y`
 
