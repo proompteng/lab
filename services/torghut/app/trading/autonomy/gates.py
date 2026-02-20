@@ -7,11 +7,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 
-GateStatus = Literal['pass', 'fail']
-PromotionTarget = Literal['shadow', 'paper', 'live']
+GateStatus = Literal["pass", "fail"]
+PromotionTarget = Literal["shadow", "paper", "live"]
 
 
 def _empty_str_list() -> list[str]:
@@ -35,10 +35,10 @@ class GateResult:
 
     def to_payload(self) -> dict[str, object]:
         return {
-            'gate_id': self.gate_id,
-            'status': self.status,
-            'reasons': list(self.reasons),
-            'artifact_refs': list(self.artifact_refs),
+            "gate_id": self.gate_id,
+            "status": self.status,
+            "reasons": list(self.reasons),
+            "artifact_refs": list(self.artifact_refs),
         }
 
 
@@ -52,6 +52,7 @@ class GateInputs:
     robustness: dict[str, Any]
     tca_metrics: dict[str, Any] = field(default_factory=_empty_dict)
     llm_metrics: dict[str, Any] = field(default_factory=_empty_dict)
+    profitability_evidence: dict[str, Any] = field(default_factory=_empty_dict)
     operational_ready: bool = True
     runbook_validated: bool = True
     kill_switch_dry_run_passed: bool = True
@@ -61,82 +62,147 @@ class GateInputs:
 
 @dataclass(frozen=True)
 class GatePolicyMatrix:
-    policy_version: str = 'v3-gates-1'
-    required_feature_schema_version: str = '3.0.0'
-    gate0_max_null_rate: Decimal = Decimal('0.01')
+    policy_version: str = "v3-gates-1"
+    required_feature_schema_version: str = "3.0.0"
+    gate0_max_null_rate: Decimal = Decimal("0.01")
     gate0_max_staleness_ms: int = 120000
     gate0_min_symbol_coverage: int = 1
 
     gate1_min_decision_count: int = 1
     gate1_min_trade_count: int = 1
-    gate1_min_net_pnl: Decimal = Decimal('0')
-    gate1_max_negative_fold_ratio: Decimal = Decimal('0.5')
-    gate1_max_net_pnl_cv: Decimal = Decimal('2.0')
+    gate1_min_net_pnl: Decimal = Decimal("0")
+    gate1_max_negative_fold_ratio: Decimal = Decimal("0.5")
+    gate1_max_net_pnl_cv: Decimal = Decimal("2.0")
 
-    gate2_max_drawdown: Decimal = Decimal('250')
-    gate2_max_turnover_ratio: Decimal = Decimal('8.0')
-    gate2_max_cost_bps: Decimal = Decimal('35')
-    gate2_max_tca_slippage_bps: Decimal = Decimal('25')
-    gate2_max_tca_shortfall_notional: Decimal = Decimal('25')
-    gate2_max_tca_churn_ratio: Decimal = Decimal('0.75')
+    gate2_max_drawdown: Decimal = Decimal("250")
+    gate2_max_turnover_ratio: Decimal = Decimal("8.0")
+    gate2_max_cost_bps: Decimal = Decimal("35")
+    gate2_max_tca_slippage_bps: Decimal = Decimal("25")
+    gate2_max_tca_shortfall_notional: Decimal = Decimal("25")
+    gate2_max_tca_churn_ratio: Decimal = Decimal("0.75")
 
-    gate3_max_llm_error_ratio: Decimal = Decimal('0.10')
+    gate3_max_llm_error_ratio: Decimal = Decimal("0.10")
+    gate6_require_profitability_evidence: bool = True
+    gate6_min_market_net_pnl_delta: Decimal = Decimal("0")
+    gate6_min_regime_slice_pass_ratio: Decimal = Decimal("0.50")
+    gate6_min_return_over_drawdown: Decimal = Decimal("0")
+    gate6_max_cost_bps: Decimal = Decimal("35")
+    gate6_max_calibration_error: Decimal = Decimal("0.45")
+    gate6_min_reproducibility_hashes: int = 5
 
     gate5_live_enabled: bool = False
     gate5_require_approval_token: bool = True
 
     @classmethod
-    def from_path(cls, path: Path) -> 'GatePolicyMatrix':
-        payload = json.loads(path.read_text(encoding='utf-8'))
+    def from_path(cls, path: Path) -> "GatePolicyMatrix":
+        payload = json.loads(path.read_text(encoding="utf-8"))
         return cls(
-            policy_version=str(payload.get('policy_version', 'v3-gates-1')),
-            required_feature_schema_version=str(payload.get('required_feature_schema_version', '3.0.0')),
-            gate0_max_null_rate=_decimal_or_default(payload.get('gate0_max_null_rate'), Decimal('0.01')),
-            gate0_max_staleness_ms=int(payload.get('gate0_max_staleness_ms', 120000)),
-            gate0_min_symbol_coverage=int(payload.get('gate0_min_symbol_coverage', 1)),
-            gate1_min_decision_count=int(payload.get('gate1_min_decision_count', 1)),
-            gate1_min_trade_count=int(payload.get('gate1_min_trade_count', 1)),
-            gate1_min_net_pnl=_decimal_or_default(payload.get('gate1_min_net_pnl'), Decimal('0')),
+            policy_version=str(payload.get("policy_version", "v3-gates-1")),
+            required_feature_schema_version=str(
+                payload.get("required_feature_schema_version", "3.0.0")
+            ),
+            gate0_max_null_rate=_decimal_or_default(
+                payload.get("gate0_max_null_rate"), Decimal("0.01")
+            ),
+            gate0_max_staleness_ms=int(payload.get("gate0_max_staleness_ms", 120000)),
+            gate0_min_symbol_coverage=int(payload.get("gate0_min_symbol_coverage", 1)),
+            gate1_min_decision_count=int(payload.get("gate1_min_decision_count", 1)),
+            gate1_min_trade_count=int(payload.get("gate1_min_trade_count", 1)),
+            gate1_min_net_pnl=_decimal_or_default(
+                payload.get("gate1_min_net_pnl"), Decimal("0")
+            ),
             gate1_max_negative_fold_ratio=_decimal_or_default(
-                payload.get('gate1_max_negative_fold_ratio'),
-                Decimal('0.5'),
+                payload.get("gate1_max_negative_fold_ratio"),
+                Decimal("0.5"),
             ),
-            gate1_max_net_pnl_cv=_decimal_or_default(payload.get('gate1_max_net_pnl_cv'), Decimal('2.0')),
-            gate2_max_drawdown=_decimal_or_default(payload.get('gate2_max_drawdown'), Decimal('250')),
-            gate2_max_turnover_ratio=_decimal_or_default(payload.get('gate2_max_turnover_ratio'), Decimal('8.0')),
-            gate2_max_cost_bps=_decimal_or_default(payload.get('gate2_max_cost_bps'), Decimal('35')),
-            gate2_max_tca_slippage_bps=_decimal_or_default(payload.get('gate2_max_tca_slippage_bps'), Decimal('25')),
+            gate1_max_net_pnl_cv=_decimal_or_default(
+                payload.get("gate1_max_net_pnl_cv"), Decimal("2.0")
+            ),
+            gate2_max_drawdown=_decimal_or_default(
+                payload.get("gate2_max_drawdown"), Decimal("250")
+            ),
+            gate2_max_turnover_ratio=_decimal_or_default(
+                payload.get("gate2_max_turnover_ratio"), Decimal("8.0")
+            ),
+            gate2_max_cost_bps=_decimal_or_default(
+                payload.get("gate2_max_cost_bps"), Decimal("35")
+            ),
+            gate2_max_tca_slippage_bps=_decimal_or_default(
+                payload.get("gate2_max_tca_slippage_bps"), Decimal("25")
+            ),
             gate2_max_tca_shortfall_notional=_decimal_or_default(
-                payload.get('gate2_max_tca_shortfall_notional'),
-                Decimal('25'),
+                payload.get("gate2_max_tca_shortfall_notional"),
+                Decimal("25"),
             ),
-            gate2_max_tca_churn_ratio=_decimal_or_default(payload.get('gate2_max_tca_churn_ratio'), Decimal('0.75')),
-            gate3_max_llm_error_ratio=_decimal_or_default(payload.get('gate3_max_llm_error_ratio'), Decimal('0.10')),
-            gate5_live_enabled=bool(payload.get('gate5_live_enabled', False)),
-            gate5_require_approval_token=bool(payload.get('gate5_require_approval_token', True)),
+            gate2_max_tca_churn_ratio=_decimal_or_default(
+                payload.get("gate2_max_tca_churn_ratio"), Decimal("0.75")
+            ),
+            gate3_max_llm_error_ratio=_decimal_or_default(
+                payload.get("gate3_max_llm_error_ratio"), Decimal("0.10")
+            ),
+            gate6_require_profitability_evidence=bool(
+                payload.get("gate6_require_profitability_evidence", True)
+            ),
+            gate6_min_market_net_pnl_delta=_decimal_or_default(
+                payload.get("gate6_min_market_net_pnl_delta"),
+                Decimal("0"),
+            ),
+            gate6_min_regime_slice_pass_ratio=_decimal_or_default(
+                payload.get("gate6_min_regime_slice_pass_ratio"),
+                Decimal("0.50"),
+            ),
+            gate6_min_return_over_drawdown=_decimal_or_default(
+                payload.get("gate6_min_return_over_drawdown"),
+                Decimal("0"),
+            ),
+            gate6_max_cost_bps=_decimal_or_default(
+                payload.get("gate6_max_cost_bps"), Decimal("35")
+            ),
+            gate6_max_calibration_error=_decimal_or_default(
+                payload.get("gate6_max_calibration_error"),
+                Decimal("0.45"),
+            ),
+            gate6_min_reproducibility_hashes=int(
+                payload.get("gate6_min_reproducibility_hashes", 5)
+            ),
+            gate5_live_enabled=bool(payload.get("gate5_live_enabled", False)),
+            gate5_require_approval_token=bool(
+                payload.get("gate5_require_approval_token", True)
+            ),
         )
 
     def to_payload(self) -> dict[str, object]:
         return {
-            'policy_version': self.policy_version,
-            'required_feature_schema_version': self.required_feature_schema_version,
-            'gate0_max_null_rate': str(self.gate0_max_null_rate),
-            'gate0_max_staleness_ms': self.gate0_max_staleness_ms,
-            'gate0_min_symbol_coverage': self.gate0_min_symbol_coverage,
-            'gate1_min_decision_count': self.gate1_min_decision_count,
-            'gate1_min_trade_count': self.gate1_min_trade_count,
-            'gate1_min_net_pnl': str(self.gate1_min_net_pnl),
-            'gate1_max_negative_fold_ratio': str(self.gate1_max_negative_fold_ratio),
-            'gate1_max_net_pnl_cv': str(self.gate1_max_net_pnl_cv),
-            'gate2_max_drawdown': str(self.gate2_max_drawdown),
-            'gate2_max_turnover_ratio': str(self.gate2_max_turnover_ratio),
-            'gate2_max_cost_bps': str(self.gate2_max_cost_bps),
-            'gate2_max_tca_slippage_bps': str(self.gate2_max_tca_slippage_bps),
-            'gate2_max_tca_shortfall_notional': str(self.gate2_max_tca_shortfall_notional),
-            'gate2_max_tca_churn_ratio': str(self.gate2_max_tca_churn_ratio),
-            'gate3_max_llm_error_ratio': str(self.gate3_max_llm_error_ratio),
-            'gate5_live_enabled': self.gate5_live_enabled,
-            'gate5_require_approval_token': self.gate5_require_approval_token,
+            "policy_version": self.policy_version,
+            "required_feature_schema_version": self.required_feature_schema_version,
+            "gate0_max_null_rate": str(self.gate0_max_null_rate),
+            "gate0_max_staleness_ms": self.gate0_max_staleness_ms,
+            "gate0_min_symbol_coverage": self.gate0_min_symbol_coverage,
+            "gate1_min_decision_count": self.gate1_min_decision_count,
+            "gate1_min_trade_count": self.gate1_min_trade_count,
+            "gate1_min_net_pnl": str(self.gate1_min_net_pnl),
+            "gate1_max_negative_fold_ratio": str(self.gate1_max_negative_fold_ratio),
+            "gate1_max_net_pnl_cv": str(self.gate1_max_net_pnl_cv),
+            "gate2_max_drawdown": str(self.gate2_max_drawdown),
+            "gate2_max_turnover_ratio": str(self.gate2_max_turnover_ratio),
+            "gate2_max_cost_bps": str(self.gate2_max_cost_bps),
+            "gate2_max_tca_slippage_bps": str(self.gate2_max_tca_slippage_bps),
+            "gate2_max_tca_shortfall_notional": str(
+                self.gate2_max_tca_shortfall_notional
+            ),
+            "gate2_max_tca_churn_ratio": str(self.gate2_max_tca_churn_ratio),
+            "gate3_max_llm_error_ratio": str(self.gate3_max_llm_error_ratio),
+            "gate6_require_profitability_evidence": self.gate6_require_profitability_evidence,
+            "gate6_min_market_net_pnl_delta": str(self.gate6_min_market_net_pnl_delta),
+            "gate6_min_regime_slice_pass_ratio": str(
+                self.gate6_min_regime_slice_pass_ratio
+            ),
+            "gate6_min_return_over_drawdown": str(self.gate6_min_return_over_drawdown),
+            "gate6_max_cost_bps": str(self.gate6_max_cost_bps),
+            "gate6_max_calibration_error": str(self.gate6_max_calibration_error),
+            "gate6_min_reproducibility_hashes": self.gate6_min_reproducibility_hashes,
+            "gate5_live_enabled": self.gate5_live_enabled,
+            "gate5_require_approval_token": self.gate5_require_approval_token,
         }
 
 
@@ -153,14 +219,14 @@ class GateEvaluationReport:
 
     def to_payload(self) -> dict[str, object]:
         return {
-            'policy_version': self.policy_version,
-            'promotion_target': self.promotion_target,
-            'promotion_allowed': self.promotion_allowed,
-            'recommended_mode': self.recommended_mode,
-            'gates': [item.to_payload() for item in self.gates],
-            'reasons': list(self.reasons),
-            'evaluated_at': self.evaluated_at.isoformat(),
-            'code_version': self.code_version,
+            "policy_version": self.policy_version,
+            "promotion_target": self.promotion_target,
+            "promotion_allowed": self.promotion_allowed,
+            "recommended_mode": self.recommended_mode,
+            "gates": [item.to_payload() for item in self.gates],
+            "reasons": list(self.reasons),
+            "evaluated_at": self.evaluated_at.isoformat(),
+            "code_version": self.code_version,
         }
 
 
@@ -180,27 +246,28 @@ def evaluate_gate_matrix(
     gates.append(_gate2_risk_and_capacity(inputs, policy))
     gates.append(_gate3_shadow_paper_quality(inputs, policy))
     gates.append(_gate4_operational_readiness(inputs))
+    gates.append(_gate6_profitability_evidence(inputs, policy, promotion_target))
     gates.append(_gate5_live_ramp_readiness(inputs, policy, promotion_target))
 
-    all_required_pass = all(gate.status == 'pass' for gate in gates[:5])
-    gate5_pass = gates[5].status == 'pass'
+    all_required_pass = all(gate.status == "pass" for gate in gates[:6])
+    gate5_pass = gates[6].status == "pass"
 
     reasons = [reason for gate in gates for reason in gate.reasons]
-    recommended_mode: PromotionTarget = 'shadow'
+    recommended_mode: PromotionTarget = "shadow"
     promotion_allowed = False
 
-    if promotion_target == 'shadow':
+    if promotion_target == "shadow":
         promotion_allowed = all_required_pass
-        recommended_mode = 'shadow'
-    elif promotion_target == 'paper':
+        recommended_mode = "shadow"
+    elif promotion_target == "paper":
         promotion_allowed = all_required_pass
-        recommended_mode = 'paper' if all_required_pass else 'shadow'
-    elif promotion_target == 'live':
+        recommended_mode = "paper" if all_required_pass else "shadow"
+    elif promotion_target == "live":
         promotion_allowed = all_required_pass and gate5_pass
         if promotion_allowed:
-            recommended_mode = 'live'
+            recommended_mode = "live"
         elif all_required_pass:
-            recommended_mode = 'paper'
+            recommended_mode = "paper"
 
     return GateEvaluationReport(
         policy_version=policy.policy_version,
@@ -217,88 +284,120 @@ def evaluate_gate_matrix(
 def _gate0_data_integrity(inputs: GateInputs, policy: GatePolicyMatrix) -> GateResult:
     reasons: list[str] = []
     if inputs.feature_schema_version != policy.required_feature_schema_version:
-        reasons.append('schema_version_incompatible')
+        reasons.append("schema_version_incompatible")
     if inputs.required_feature_null_rate > policy.gate0_max_null_rate:
-        reasons.append('required_feature_null_rate_exceeds_threshold')
+        reasons.append("required_feature_null_rate_exceeds_threshold")
     if inputs.staleness_ms_p95 > policy.gate0_max_staleness_ms:
-        reasons.append('feature_staleness_exceeds_budget')
+        reasons.append("feature_staleness_exceeds_budget")
     if inputs.symbol_coverage < policy.gate0_min_symbol_coverage:
-        reasons.append('symbol_coverage_below_minimum')
-    return GateResult(gate_id='gate0_data_integrity', status='pass' if not reasons else 'fail', reasons=reasons)
+        reasons.append("symbol_coverage_below_minimum")
+    return GateResult(
+        gate_id="gate0_data_integrity",
+        status="pass" if not reasons else "fail",
+        reasons=reasons,
+    )
 
 
-def _gate1_statistical_robustness(inputs: GateInputs, policy: GatePolicyMatrix) -> GateResult:
+def _gate1_statistical_robustness(
+    inputs: GateInputs, policy: GatePolicyMatrix
+) -> GateResult:
     reasons: list[str] = []
-    decision_count = int(inputs.metrics.get('decision_count', 0))
-    trade_count = int(inputs.metrics.get('trade_count', 0))
-    net_pnl = _decimal(inputs.metrics.get('net_pnl')) or Decimal('0')
-    fold_count = int(inputs.robustness.get('fold_count', 0))
-    negative_fold_count = int(inputs.robustness.get('negative_fold_count', 0))
-    net_pnl_cv = _decimal(inputs.robustness.get('net_pnl_cv'))
+    decision_count = int(inputs.metrics.get("decision_count", 0))
+    trade_count = int(inputs.metrics.get("trade_count", 0))
+    net_pnl = _decimal(inputs.metrics.get("net_pnl")) or Decimal("0")
+    fold_count = int(inputs.robustness.get("fold_count", 0))
+    negative_fold_count = int(inputs.robustness.get("negative_fold_count", 0))
+    net_pnl_cv = _decimal(inputs.robustness.get("net_pnl_cv"))
 
     if decision_count < policy.gate1_min_decision_count:
-        reasons.append('decision_count_below_minimum')
+        reasons.append("decision_count_below_minimum")
     if trade_count < policy.gate1_min_trade_count:
-        reasons.append('trade_count_below_minimum')
+        reasons.append("trade_count_below_minimum")
     if net_pnl < policy.gate1_min_net_pnl:
-        reasons.append('net_pnl_below_minimum')
+        reasons.append("net_pnl_below_minimum")
 
     if fold_count > 0:
         negative_ratio = Decimal(negative_fold_count) / Decimal(fold_count)
         if negative_ratio > policy.gate1_max_negative_fold_ratio:
-            reasons.append('negative_fold_ratio_exceeds_threshold')
+            reasons.append("negative_fold_ratio_exceeds_threshold")
     if net_pnl_cv is not None and net_pnl_cv > policy.gate1_max_net_pnl_cv:
-        reasons.append('net_pnl_cv_exceeds_threshold')
+        reasons.append("net_pnl_cv_exceeds_threshold")
 
-    return GateResult(gate_id='gate1_statistical_robustness', status='pass' if not reasons else 'fail', reasons=reasons)
+    return GateResult(
+        gate_id="gate1_statistical_robustness",
+        status="pass" if not reasons else "fail",
+        reasons=reasons,
+    )
 
 
-def _gate2_risk_and_capacity(inputs: GateInputs, policy: GatePolicyMatrix) -> GateResult:
+def _gate2_risk_and_capacity(
+    inputs: GateInputs, policy: GatePolicyMatrix
+) -> GateResult:
     reasons: list[str] = []
-    max_drawdown = _decimal(inputs.metrics.get('max_drawdown')) or Decimal('0')
-    turnover_ratio = _decimal(inputs.metrics.get('turnover_ratio')) or Decimal('0')
-    cost_bps = _decimal(inputs.metrics.get('cost_bps')) or Decimal('0')
+    max_drawdown = _decimal(inputs.metrics.get("max_drawdown")) or Decimal("0")
+    turnover_ratio = _decimal(inputs.metrics.get("turnover_ratio")) or Decimal("0")
+    cost_bps = _decimal(inputs.metrics.get("cost_bps")) or Decimal("0")
 
     if max_drawdown > policy.gate2_max_drawdown:
-        reasons.append('drawdown_exceeds_maximum')
+        reasons.append("drawdown_exceeds_maximum")
     if turnover_ratio > policy.gate2_max_turnover_ratio:
-        reasons.append('turnover_ratio_exceeds_maximum')
+        reasons.append("turnover_ratio_exceeds_maximum")
     if cost_bps > policy.gate2_max_cost_bps:
-        reasons.append('cost_bps_exceeds_maximum')
-    tca_order_count = int(inputs.tca_metrics.get('order_count', 0))
+        reasons.append("cost_bps_exceeds_maximum")
+    tca_order_count = int(inputs.tca_metrics.get("order_count", 0))
     if tca_order_count > 0:
-        avg_tca_slippage = _decimal(inputs.tca_metrics.get('avg_slippage_bps')) or Decimal('0')
-        avg_tca_shortfall = _decimal(inputs.tca_metrics.get('avg_shortfall_notional')) or Decimal('0')
-        avg_tca_churn_ratio = _decimal(inputs.tca_metrics.get('avg_churn_ratio')) or Decimal('0')
+        avg_tca_slippage = _decimal(
+            inputs.tca_metrics.get("avg_slippage_bps")
+        ) or Decimal("0")
+        avg_tca_shortfall = _decimal(
+            inputs.tca_metrics.get("avg_shortfall_notional")
+        ) or Decimal("0")
+        avg_tca_churn_ratio = _decimal(
+            inputs.tca_metrics.get("avg_churn_ratio")
+        ) or Decimal("0")
         if avg_tca_slippage > policy.gate2_max_tca_slippage_bps:
-            reasons.append('tca_slippage_exceeds_maximum')
+            reasons.append("tca_slippage_exceeds_maximum")
         if avg_tca_shortfall > policy.gate2_max_tca_shortfall_notional:
-            reasons.append('tca_shortfall_exceeds_maximum')
+            reasons.append("tca_shortfall_exceeds_maximum")
         if avg_tca_churn_ratio > policy.gate2_max_tca_churn_ratio:
-            reasons.append('tca_churn_ratio_exceeds_maximum')
+            reasons.append("tca_churn_ratio_exceeds_maximum")
 
-    return GateResult(gate_id='gate2_risk_capacity', status='pass' if not reasons else 'fail', reasons=reasons)
+    return GateResult(
+        gate_id="gate2_risk_capacity",
+        status="pass" if not reasons else "fail",
+        reasons=reasons,
+    )
 
 
-def _gate3_shadow_paper_quality(inputs: GateInputs, policy: GatePolicyMatrix) -> GateResult:
+def _gate3_shadow_paper_quality(
+    inputs: GateInputs, policy: GatePolicyMatrix
+) -> GateResult:
     reasons: list[str] = []
-    llm_error_ratio = _decimal(inputs.llm_metrics.get('error_ratio')) or Decimal('0')
+    llm_error_ratio = _decimal(inputs.llm_metrics.get("error_ratio")) or Decimal("0")
     if llm_error_ratio > policy.gate3_max_llm_error_ratio:
-        reasons.append('llm_error_ratio_exceeds_threshold')
-    return GateResult(gate_id='gate3_shadow_paper_quality', status='pass' if not reasons else 'fail', reasons=reasons)
+        reasons.append("llm_error_ratio_exceeds_threshold")
+    return GateResult(
+        gate_id="gate3_shadow_paper_quality",
+        status="pass" if not reasons else "fail",
+        reasons=reasons,
+    )
 
 
 def _gate4_operational_readiness(inputs: GateInputs) -> GateResult:
     reasons: list[str] = []
     if not inputs.operational_ready:
-        reasons.append('operational_readiness_incomplete')
+        reasons.append("operational_readiness_incomplete")
     if not inputs.runbook_validated:
-        reasons.append('runbook_not_validated')
+        reasons.append("runbook_not_validated")
     if not inputs.kill_switch_dry_run_passed:
-        reasons.append('kill_switch_dry_run_failed')
+        reasons.append("kill_switch_dry_run_failed")
     if not inputs.rollback_dry_run_passed:
-        reasons.append('rollback_dry_run_failed')
-    return GateResult(gate_id='gate4_operational_readiness', status='pass' if not reasons else 'fail', reasons=reasons)
+        reasons.append("rollback_dry_run_failed")
+    return GateResult(
+        gate_id="gate4_operational_readiness",
+        status="pass" if not reasons else "fail",
+        reasons=reasons,
+    )
 
 
 def _gate5_live_ramp_readiness(
@@ -307,15 +406,97 @@ def _gate5_live_ramp_readiness(
     promotion_target: PromotionTarget,
 ) -> GateResult:
     reasons: list[str] = []
-    if promotion_target != 'live':
-        return GateResult(gate_id='gate5_live_ramp_readiness', status='pass', reasons=[])
+    if promotion_target != "live":
+        return GateResult(
+            gate_id="gate5_live_ramp_readiness", status="pass", reasons=[]
+        )
 
     if not policy.gate5_live_enabled:
-        reasons.append('live_rollout_disabled_by_policy')
+        reasons.append("live_rollout_disabled_by_policy")
     if policy.gate5_require_approval_token and not inputs.approval_token:
-        reasons.append('approval_token_missing')
+        reasons.append("approval_token_missing")
 
-    return GateResult(gate_id='gate5_live_ramp_readiness', status='pass' if not reasons else 'fail', reasons=reasons)
+    return GateResult(
+        gate_id="gate5_live_ramp_readiness",
+        status="pass" if not reasons else "fail",
+        reasons=reasons,
+    )
+
+
+def _gate6_profitability_evidence(
+    inputs: GateInputs,
+    policy: GatePolicyMatrix,
+    promotion_target: PromotionTarget,
+) -> GateResult:
+    reasons: list[str] = []
+    if promotion_target == "shadow":
+        return GateResult(
+            gate_id="gate6_profitability_evidence", status="pass", reasons=[]
+        )
+
+    evidence = inputs.profitability_evidence
+    if not policy.gate6_require_profitability_evidence:
+        return GateResult(
+            gate_id="gate6_profitability_evidence", status="pass", reasons=[]
+        )
+    if not evidence:
+        return GateResult(
+            gate_id="gate6_profitability_evidence",
+            status="fail",
+            reasons=["profitability_evidence_missing"],
+        )
+
+    schema_version = str(evidence.get("schema_version", "")).strip()
+    if schema_version != "profitability-evidence-v4":
+        reasons.append("profitability_evidence_schema_invalid")
+
+    benchmark = _dict_from_any(evidence.get("benchmark"))
+    if str(benchmark.get("schema_version", "")).strip() != "profitability-benchmark-v4":
+        reasons.append("profitability_benchmark_schema_invalid")
+
+    validation = _dict_from_any(evidence.get("validation"))
+    if not bool(validation.get("passed", False)):
+        reasons.append("profitability_evidence_validation_failed")
+
+    risk_adjusted = _dict_from_any(evidence.get("risk_adjusted_metrics"))
+    market_delta = _decimal(risk_adjusted.get("market_net_pnl_delta")) or Decimal("0")
+    if market_delta < policy.gate6_min_market_net_pnl_delta:
+        reasons.append("profitability_market_net_pnl_delta_below_threshold")
+    regime_ratio = _decimal(risk_adjusted.get("regime_slice_pass_ratio")) or Decimal(
+        "0"
+    )
+    if regime_ratio < policy.gate6_min_regime_slice_pass_ratio:
+        reasons.append("profitability_regime_slice_ratio_below_threshold")
+    return_over_drawdown = _decimal(
+        risk_adjusted.get("return_over_drawdown")
+    ) or Decimal("0")
+    if return_over_drawdown < policy.gate6_min_return_over_drawdown:
+        reasons.append("profitability_return_over_drawdown_below_threshold")
+
+    realism = _dict_from_any(evidence.get("cost_fill_realism"))
+    cost_bps = _decimal(realism.get("cost_bps")) or Decimal("0")
+    if cost_bps > policy.gate6_max_cost_bps:
+        reasons.append("profitability_cost_bps_exceeds_threshold")
+
+    confidence = _dict_from_any(evidence.get("confidence_calibration"))
+    calibration_error = _decimal(confidence.get("calibration_error")) or Decimal("1")
+    if calibration_error > policy.gate6_max_calibration_error:
+        reasons.append("profitability_calibration_error_exceeds_threshold")
+
+    reproducibility = _dict_from_any(evidence.get("reproducibility"))
+    artifact_hashes_raw = reproducibility.get("artifact_hashes")
+    hash_count = 0
+    if isinstance(artifact_hashes_raw, dict):
+        artifact_hashes = cast(dict[str, Any], artifact_hashes_raw)
+        hash_count = len(artifact_hashes)
+    if hash_count < policy.gate6_min_reproducibility_hashes:
+        reasons.append("profitability_reproducibility_hashes_below_threshold")
+
+    return GateResult(
+        gate_id="gate6_profitability_evidence",
+        status="pass" if not reasons else "fail",
+        reasons=reasons,
+    )
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -336,11 +517,17 @@ def _decimal_or_default(value: Any, default: Decimal) -> Decimal:
     return parsed
 
 
+def _dict_from_any(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return cast(dict[str, Any], value)
+
+
 __all__ = [
-    'GateEvaluationReport',
-    'GateInputs',
-    'GatePolicyMatrix',
-    'GateResult',
-    'PromotionTarget',
-    'evaluate_gate_matrix',
+    "GateEvaluationReport",
+    "GateInputs",
+    "GatePolicyMatrix",
+    "GateResult",
+    "PromotionTarget",
+    "evaluate_gate_matrix",
 ]
