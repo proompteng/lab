@@ -954,6 +954,28 @@ data:
                 LEAN to Alpaca fallback transitions exceeded 15% of LEAN execution requests for 15 minutes.
                 Route provenance continuity is degraded; keep fallback policy enabled and investigate LEAN runner stability.
               runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutRouteProvenanceCoverageDegraded
+            expr: |
+              torghut_trading_route_provenance_coverage_ratio{
+                job="torghut",
+                namespace="torghut",
+                service="torghut"
+              } < 0.98
+              and
+              torghut_trading_route_provenance_total{
+                job="torghut",
+                namespace="torghut",
+                service="torghut"
+              } >= 20
+            for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut route provenance continuity degraded
+              description: |
+                Route provenance coverage over recent executions dropped below 98% while traffic is active.
+                Expected/actual adapter fields are missing on recent rows, breaking route audit continuity.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
           - alert: TorghutEvidenceContinuityFailuresDetected
             expr: |
               increase(

@@ -170,6 +170,75 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                             )
                         )
                     continue
+                if key == "route_provenance":
+                    summary = cast(dict[str, object], value)
+                    total = int(summary.get("total", 0) or 0)
+                    missing = int(summary.get("missing", 0) or 0)
+                    unknown = int(summary.get("unknown", 0) or 0)
+                    mismatch = int(summary.get("mismatch", 0) or 0)
+
+                    ratio_metrics: list[tuple[str, str]] = [
+                        (
+                            "coverage_ratio",
+                            "torghut_trading_route_provenance_coverage_ratio",
+                        ),
+                        (
+                            "unknown_ratio",
+                            "torghut_trading_route_provenance_unknown_ratio",
+                        ),
+                        (
+                            "mismatch_ratio",
+                            "torghut_trading_route_provenance_mismatch_ratio",
+                        ),
+                    ]
+                    for source_key, metric_name in ratio_metrics:
+                        lines.append(
+                            f"# HELP {metric_name} Route provenance continuity ratio for recent executions."
+                        )
+                        lines.append(f"# TYPE {metric_name} gauge")
+                        ratio = summary.get(source_key)
+                        if isinstance(ratio, (int, float, Decimal)):
+                            lines.extend(
+                                _render_labeled_metric(
+                                    metric_name=metric_name,
+                                    labels={},
+                                    value=float(ratio),
+                                )
+                            )
+
+                    count_metrics: list[tuple[str, int, str]] = [
+                        (
+                            "torghut_trading_route_provenance_total",
+                            total,
+                            "Total recent executions considered for route provenance.",
+                        ),
+                        (
+                            "torghut_trading_route_provenance_missing_total",
+                            missing,
+                            "Recent executions missing expected/actual route metadata.",
+                        ),
+                        (
+                            "torghut_trading_route_provenance_unknown_total",
+                            unknown,
+                            "Recent executions with unknown expected/actual route metadata.",
+                        ),
+                        (
+                            "torghut_trading_route_provenance_mismatch_total",
+                            mismatch,
+                            "Recent executions where expected and actual routes diverged.",
+                        ),
+                    ]
+                    for metric_name, metric_value, help_text in count_metrics:
+                        lines.append(f"# HELP {metric_name} {help_text}")
+                        lines.append(f"# TYPE {metric_name} gauge")
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={},
+                                value=metric_value,
+                            )
+                        )
+                    continue
                 if key in {"llm_market_context_reason_total", "llm_market_context_shadow_total"}:
                     metric_name = (
                         "torghut_trading_llm_market_context_reason_total"

@@ -115,6 +115,28 @@ class TestTradingMetrics(TestCase):
         self.assertIn("torghut_trading_tca_avg_shortfall_notional 1.25", payload)
         self.assertIn("torghut_trading_tca_avg_churn_ratio 0.4", payload)
 
+    def test_route_provenance_metrics_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        payload = render_trading_metrics(
+            {
+                **metrics.__dict__,
+                "route_provenance": {
+                    "total": 25,
+                    "missing": 1,
+                    "unknown": 2,
+                    "mismatch": 3,
+                    "coverage_ratio": 0.96,
+                    "unknown_ratio": 0.08,
+                    "mismatch_ratio": 0.12,
+                },
+            }
+        )
+        self.assertIn("torghut_trading_route_provenance_total 25", payload)
+        self.assertIn("torghut_trading_route_provenance_missing_total 1", payload)
+        self.assertIn("torghut_trading_route_provenance_unknown_total 2", payload)
+        self.assertIn("torghut_trading_route_provenance_mismatch_total 3", payload)
+        self.assertIn("torghut_trading_route_provenance_coverage_ratio 0.96", payload)
+
     def test_strategy_runtime_metrics_are_exported(self) -> None:
         metrics = TradingMetrics()
         metrics.strategy_events_total["legacy-1"] = 5
