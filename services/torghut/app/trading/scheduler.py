@@ -148,6 +148,7 @@ class TradingMetrics:
     signal_staleness_alert_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
+    signal_continuity_breach_total: int = 0
     order_feed_messages_total: int = 0
     order_feed_events_persisted_total: int = 0
     order_feed_duplicates_total: int = 0
@@ -1736,6 +1737,22 @@ class TradingScheduler:
             and lag_seconds >= settings.trading_rollback_signal_lag_seconds_limit
         ):
             reasons.append(f"signal_lag_exceeded:{lag_seconds}")
+        critical_reasons = settings.trading_signal_staleness_alert_critical_reasons
+        critical_staleness_limit = max(
+            1, settings.trading_rollback_signal_staleness_alert_streak_limit
+        )
+        for reason in sorted(critical_reasons):
+            streak = self.state.metrics.no_signal_reason_streak.get(reason, 0)
+            if streak >= critical_staleness_limit:
+                reasons.append(f"signal_staleness_streak_exceeded:{reason}:{streak}")
+        if (
+            settings.trading_universe_source == "jangar"
+            and self.state.universe_source_status in {"unavailable", "error"}
+        ):
+            reason = self.state.universe_source_reason or "unknown"
+            reasons.append(
+                f"universe_source_unavailable:{self.state.universe_source_status}:{reason}"
+            )
 
         if (
             self.state.autonomy_failure_streak
@@ -1797,10 +1814,12 @@ class TradingScheduler:
         self.state.rollback_incidents_total += 1
         self.state.emergency_stop_triggered_at = now
         self.state.emergency_stop_reason = ";".join(reasons)
+        self.state.metrics.signal_continuity_breach_total += 1
         self.state.last_error = (
             f"emergency_stop_triggered reasons={self.state.emergency_stop_reason}"
         )
         self.state.metrics.orders_rejected_total += 1
+        firewall_status = self._pipeline.order_firewall.status()
         try:
             canceled = self._pipeline.order_firewall.cancel_all_orders()
             cancelled_count = len(canceled)
@@ -1808,6 +1827,7 @@ class TradingScheduler:
             logger.exception("Emergency stop failed to cancel open orders")
             cancelled_count = 0
 
+        gate_provenance = self._load_last_gate_provenance()
         artifact_root = _resolve_autonomy_artifact_root(
             Path(settings.trading_autonomy_artifact_dir)
         )
@@ -1817,6 +1837,11 @@ class TradingScheduler:
         incident_payload = {
             "triggered_at": now.isoformat(),
             "reasons": reasons,
+            "safety_snapshot": {
+                "no_signal_reason_streak": dict(self.state.metrics.no_signal_reason_streak),
+                "signal_staleness_alert_total": dict(self.state.metrics.signal_staleness_alert_total),
+                "execution_fallback_total": dict(self.state.metrics.execution_fallback_total),
+            },
             "signal_lag_seconds": self.state.metrics.signal_lag_seconds,
             "autonomy_failure_streak": self.state.autonomy_failure_streak,
             "fallback_ratio": round(fallback_ratio, 6),
@@ -1825,8 +1850,20 @@ class TradingScheduler:
             "max_drawdown": drawdown,
             "last_autonomy_run_id": self.state.last_autonomy_run_id,
             "last_autonomy_gates": self.state.last_autonomy_gates,
+            "rollback_hooks": {
+                "kill_switch_configured": firewall_status.kill_switch_enabled,
+                "kill_switch_reason": firewall_status.reason,
+                "emergency_stop_active": True,
+                "order_submission_blocked": True,
+                "cancel_open_orders_attempted": True,
+            },
+            "provenance": gate_provenance,
             "cancelled_open_orders": cancelled_count,
         }
+        incident_payload["verification"] = {"incident_evidence_complete": False}
+        incident_payload["verification"]["incident_evidence_complete"] = (
+            _incident_payload_complete(incident_payload)
+        )
         incident_path.write_text(
             json.dumps(incident_payload, indent=2), encoding="utf-8"
         )
@@ -1837,6 +1874,32 @@ class TradingScheduler:
             cancelled_count,
             incident_path,
         )
+
+    def _load_last_gate_provenance(self) -> dict[str, str | None]:
+        gate_path_raw = self.state.last_autonomy_gates
+        payload: dict[str, Any] = {}
+        if gate_path_raw:
+            try:
+                parsed = json.loads(Path(gate_path_raw).read_text(encoding="utf-8"))
+                if isinstance(parsed, dict):
+                    payload = cast(dict[str, Any], parsed)
+            except Exception:
+                payload = {}
+        provenance_raw = payload.get("provenance")
+        provenance: dict[str, Any] = (
+            cast(dict[str, Any], provenance_raw) if isinstance(provenance_raw, dict) else {}
+        )
+        return {
+            "run_id": str(payload.get("run_id")).strip() or None,
+            "gate_report_trace_id": str(
+                provenance.get("gate_report_trace_id")
+            ).strip()
+            or None,
+            "recommendation_trace_id": str(
+                provenance.get("recommendation_trace_id")
+            ).strip()
+            or None,
+        }
 
     async def start(self) -> None:
         if self._task:
@@ -2134,3 +2197,27 @@ class TradingScheduler:
 
 
 __all__ = ["TradingScheduler", "TradingState", "TradingMetrics"]
+
+
+def _incident_payload_complete(payload: Mapping[str, Any]) -> bool:
+    keys = (
+        "triggered_at",
+        "reasons",
+        "rollback_hooks",
+        "safety_snapshot",
+        "provenance",
+        "verification",
+    )
+    for key in keys:
+        if key not in payload:
+            return False
+    reasons = payload.get("reasons")
+    rollback_hooks = payload.get("rollback_hooks")
+    safety_snapshot = payload.get("safety_snapshot")
+    if not isinstance(reasons, list) or not reasons:
+        return False
+    if not isinstance(rollback_hooks, Mapping):
+        return False
+    if not isinstance(safety_snapshot, Mapping):
+        return False
+    return True

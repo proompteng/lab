@@ -27,6 +27,7 @@ class _PipelineStub:
 
     def __post_init__(self) -> None:
         self.ingestor = self
+        self.order_firewall = _OrderFirewallStub()
 
     def fetch_signals_between(self, start: datetime, end: datetime) -> list[SignalEnvelope]:
         return list(self.signals)
@@ -83,6 +84,14 @@ class _SchedulerDependencies:
         self.call_kwargs: dict[str, Any] = {}
 
 
+class _OrderFirewallStub:
+    def status(self) -> SimpleNamespace:
+        return SimpleNamespace(kill_switch_enabled=False, reason="ok")
+
+    def cancel_all_orders(self) -> list[dict[str, Any]]:
+        return []
+
+
 def _signal_batch() -> list[SignalEnvelope]:
     return [
         SignalEnvelope(
@@ -104,7 +113,16 @@ class TestTradingSchedulerAutonomy(TestCase):
             "trading_autonomy_artifact_dir": settings.trading_autonomy_artifact_dir,
             "trading_signal_no_signal_streak_alert_threshold": settings.trading_signal_no_signal_streak_alert_threshold,
             "trading_signal_stale_lag_alert_seconds": settings.trading_signal_stale_lag_alert_seconds,
+            "trading_signal_staleness_alert_critical_reasons_raw": (
+                settings.trading_signal_staleness_alert_critical_reasons_raw
+            ),
             "trading_evidence_continuity_run_limit": settings.trading_evidence_continuity_run_limit,
+            "trading_rollback_signal_staleness_alert_streak_limit": (
+                settings.trading_rollback_signal_staleness_alert_streak_limit
+            ),
+            "trading_universe_source": settings.trading_universe_source,
+            "trading_emergency_stop_enabled": settings.trading_emergency_stop_enabled,
+            "trading_autonomy_enabled": settings.trading_autonomy_enabled,
         }
 
     def tearDown(self) -> None:
@@ -121,9 +139,20 @@ class TestTradingSchedulerAutonomy(TestCase):
         settings.trading_signal_stale_lag_alert_seconds = self._settings_snapshot[
             "trading_signal_stale_lag_alert_seconds"
         ]
+        settings.trading_signal_staleness_alert_critical_reasons_raw = self._settings_snapshot[
+            "trading_signal_staleness_alert_critical_reasons_raw"
+        ]
         settings.trading_evidence_continuity_run_limit = self._settings_snapshot[
             "trading_evidence_continuity_run_limit"
         ]
+        settings.trading_rollback_signal_staleness_alert_streak_limit = self._settings_snapshot[
+            "trading_rollback_signal_staleness_alert_streak_limit"
+        ]
+        settings.trading_universe_source = self._settings_snapshot["trading_universe_source"]
+        settings.trading_emergency_stop_enabled = self._settings_snapshot[
+            "trading_emergency_stop_enabled"
+        ]
+        settings.trading_autonomy_enabled = self._settings_snapshot["trading_autonomy_enabled"]
 
     def test_run_autonomous_cycle_uses_live_promotion_when_token_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -347,6 +376,84 @@ class TestTradingSchedulerAutonomy(TestCase):
                 scheduler.state.last_evidence_continuity_report,
                 {"checked_runs": 2, "failed_runs": 1, "ok": False},
             )
+
+    def test_safety_controls_trigger_emergency_stop_on_critical_staleness_streak(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            settings.trading_emergency_stop_enabled = True
+            settings.trading_rollback_signal_staleness_alert_streak_limit = 2
+            settings.trading_signal_staleness_alert_critical_reasons_raw = "cursor_ahead_of_stream"
+            scheduler.state.metrics.no_signal_reason_streak = {"cursor_ahead_of_stream": 2}
+            scheduler._evaluate_safety_controls()
+
+            self.assertTrue(scheduler.state.emergency_stop_active)
+            self.assertIsNotNone(scheduler.state.rollback_incident_evidence_path)
+            self.assertIn(
+                "signal_staleness_streak_exceeded:cursor_ahead_of_stream:2",
+                scheduler.state.emergency_stop_reason or "",
+            )
+
+    def test_safety_controls_trigger_emergency_stop_when_universe_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            settings.trading_emergency_stop_enabled = True
+            settings.trading_universe_source = "jangar"
+            scheduler.state.universe_source_status = "unavailable"
+            scheduler.state.universe_source_reason = "jangar_symbols_fetch_failed"
+
+            scheduler._evaluate_safety_controls()
+
+            self.assertTrue(scheduler.state.emergency_stop_active)
+            self.assertIn(
+                "universe_source_unavailable:unavailable:jangar_symbols_fetch_failed",
+                scheduler.state.emergency_stop_reason or "",
+            )
+
+    def test_emergency_stop_incident_contains_hooks_and_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            gate_path = Path(tmpdir) / "gate-report.json"
+            gate_path.write_text(
+                json.dumps(
+                    {
+                        "run_id": "run-123",
+                        "provenance": {
+                            "gate_report_trace_id": "gate-trace-1",
+                            "recommendation_trace_id": "rec-trace-1",
+                        },
+                    },
+                ),
+                encoding="utf-8",
+            )
+            scheduler.state.last_autonomy_gates = str(gate_path)
+            scheduler.state.metrics.no_signal_reason_streak = {"cursor_ahead_of_stream": 3}
+            scheduler.state.metrics.signal_staleness_alert_total = {"cursor_ahead_of_stream": 2}
+
+            scheduler._trigger_emergency_stop(
+                reasons=["signal_staleness_streak_exceeded:cursor_ahead_of_stream:3"],
+                fallback_ratio=0.0,
+                drawdown=None,
+            )
+
+            incident_path = Path(scheduler.state.rollback_incident_evidence_path or "")
+            self.assertTrue(incident_path.exists())
+            payload = json.loads(incident_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["provenance"]["gate_report_trace_id"], "gate-trace-1")
+            self.assertEqual(payload["provenance"]["recommendation_trace_id"], "rec-trace-1")
+            self.assertTrue(payload["rollback_hooks"]["order_submission_blocked"])
+            self.assertTrue(payload["verification"]["incident_evidence_complete"])
 
     def _build_scheduler_with_fixtures(
         self,

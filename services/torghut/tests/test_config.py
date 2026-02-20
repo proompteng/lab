@@ -150,3 +150,13 @@ class TestConfig(TestCase):
             "vol=high|trend=flat|liq=liquid",
             settings.trading_allocator_regime_budget_multipliers,
         )
+
+    def test_parses_signal_staleness_critical_reasons(self) -> None:
+        settings = Settings(
+            TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS="cursor_ahead_of_stream, universe_source_unavailable",
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertEqual(
+            settings.trading_signal_staleness_alert_critical_reasons,
+            {"cursor_ahead_of_stream", "universe_source_unavailable"},
+        )

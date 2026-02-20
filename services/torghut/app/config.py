@@ -71,6 +71,11 @@ class Settings(BaseSettings):
         alias="TRADING_SIGNAL_STALE_LAG_ALERT_SECONDS",
         description="Signal lag threshold (seconds) that triggers a source continuity alert.",
     )
+    trading_signal_staleness_alert_critical_reasons_raw: Optional[str] = Field(
+        default="cursor_ahead_of_stream,no_signals_in_window,universe_source_unavailable",
+        alias="TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS",
+        description="Comma-separated no-signal/staleness reasons treated as critical continuity breaches.",
+    )
     trading_price_table: str = Field(
         default="torghut.ta_microbars", alias="TRADING_PRICE_TABLE"
     )
@@ -444,6 +449,11 @@ class Settings(BaseSettings):
         alias="TRADING_ROLLBACK_SIGNAL_LAG_SECONDS_LIMIT",
         description="Signal lag threshold (seconds) that triggers autonomous emergency stop.",
     )
+    trading_rollback_signal_staleness_alert_streak_limit: int = Field(
+        default=3,
+        alias="TRADING_ROLLBACK_SIGNAL_STALENESS_ALERT_STREAK_LIMIT",
+        description="Consecutive critical signal staleness reasons allowed before emergency stop.",
+    )
     trading_rollback_autonomy_failure_streak_limit: int = Field(
         default=3,
         alias="TRADING_ROLLBACK_AUTONOMY_FAILURE_STREAK_LIMIT",
@@ -648,6 +658,16 @@ class Settings(BaseSettings):
                     if item.strip()
                 ]
             )
+        if self.trading_signal_staleness_alert_critical_reasons_raw:
+            self.trading_signal_staleness_alert_critical_reasons_raw = ",".join(
+                [
+                    item.strip()
+                    for item in self.trading_signal_staleness_alert_critical_reasons_raw.split(
+                        ","
+                    )
+                    if item.strip()
+                ]
+            )
         if self.trading_autonomy_approval_token:
             self.trading_autonomy_approval_token = (
                 self.trading_autonomy_approval_token.strip() or None
@@ -761,6 +781,18 @@ class Settings(BaseSettings):
             symbol.strip()
             for symbol in self.trading_execution_adapter_symbols_raw.split(",")
             if symbol.strip()
+        }
+
+    @property
+    def trading_signal_staleness_alert_critical_reasons(self) -> set[str]:
+        if not self.trading_signal_staleness_alert_critical_reasons_raw:
+            return set()
+        return {
+            reason.strip()
+            for reason in self.trading_signal_staleness_alert_critical_reasons_raw.split(
+                ","
+            )
+            if reason.strip()
         }
 
     @property
