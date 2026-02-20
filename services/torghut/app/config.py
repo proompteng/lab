@@ -781,9 +781,15 @@ class Settings(BaseSettings):
 
     @property
     def llm_live_fail_open_requested(self) -> bool:
+        return self.llm_live_fail_open_requested_for_stage(self.llm_rollout_stage)
+
+    def llm_live_fail_open_requested_for_stage(self, rollout_stage: str) -> bool:
         if self.trading_mode != "live":
             return False
-        return self.llm_effective_fail_mode_for_current_rollout() == "pass_through"
+        normalized_stage = self._normalize_rollout_stage(rollout_stage)
+        if normalized_stage in {"stage1", "stage2"}:
+            return self.llm_effective_fail_mode(rollout_stage=normalized_stage) == "pass_through"
+        return self.llm_effective_fail_mode() == "pass_through"
 
     def llm_effective_fail_mode_for_current_rollout(
         self,

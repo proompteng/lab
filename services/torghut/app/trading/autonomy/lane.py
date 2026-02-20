@@ -422,6 +422,13 @@ def run_autonomous_lane(
         )
         gate_report_payload = gate_report.to_payload()
         gate_report_payload["run_id"] = run_id
+        gate_report_payload["throughput"] = {
+            "signal_count": len(signals),
+            "decision_count": report.metrics.decision_count,
+            "trade_count": report.metrics.trade_count,
+            "no_signal_window": False,
+            "no_signal_reason": None,
+        }
         gate_report_trace_id = _trace_id(gate_report_payload)
         gate_report_payload["provenance"] = {
             "gate_report_trace_id": gate_report_trace_id,
@@ -494,6 +501,8 @@ def run_autonomous_lane(
             "runId": run_id,
             "activeStage": "gate-evaluation",
             "paused": False,
+            "datasetSnapshotRef": "signals_window",
+            "noSignalReason": None,
             "rollbackReadiness": {
                 "killSwitchDryRunPassed": True,
                 "gitopsRevertDryRunPassed": True,

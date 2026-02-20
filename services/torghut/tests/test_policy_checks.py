@@ -120,6 +120,8 @@ class TestPolicyChecks(TestCase):
 
         self.assertTrue(promotion.allowed)
         self.assertTrue(rollback.ready)
+        self.assertEqual(promotion.observed_throughput["decision_count"], 12)
+        self.assertEqual(promotion.observed_throughput["trade_count"], 7)
 
     def test_promotion_prerequisites_fail_when_profitability_validation_fails(
         self,
@@ -255,6 +257,85 @@ class TestPolicyChecks(TestCase):
             promotion.required_artifacts,
         )
 
+    def test_promotion_prerequisites_fail_when_no_signal_window_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={"gate6_require_profitability_evidence": False},
+                gate_report_payload=_gate_report(),
+                candidate_state_payload={
+                    **_candidate_state(),
+                    "datasetSnapshotRef": "no_signal_window",
+                    "noSignalReason": "cursor_ahead_of_stream",
+                },
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("no_signal_window_detected", promotion.reasons)
+
+    def test_promotion_prerequisites_fail_when_throughput_below_minimums(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_min_signal_count": 5,
+                    "promotion_min_decision_count": 5,
+                    "promotion_min_trade_count": 3,
+                    "gate6_require_profitability_evidence": False,
+                },
+                gate_report_payload={
+                    **_gate_report(),
+                    "throughput": {
+                        "signal_count": 2,
+                        "decision_count": 1,
+                        "trade_count": 0,
+                    },
+                },
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertFalse(promotion.allowed)
+        self.assertIn("signal_count_below_minimum_for_progression", promotion.reasons)
+        self.assertIn(
+            "decision_count_below_minimum_for_progression",
+            promotion.reasons,
+        )
+        self.assertIn("trade_count_below_minimum_for_progression", promotion.reasons)
+
 
 def _candidate_state() -> dict[str, object]:
     return {
@@ -262,6 +343,8 @@ def _candidate_state() -> dict[str, object]:
         "runId": "run-test",
         "activeStage": "gate-evaluation",
         "paused": False,
+        "datasetSnapshotRef": "signals_window",
+        "noSignalReason": None,
         "rollbackReadiness": {
             "killSwitchDryRunPassed": True,
             "gitopsRevertDryRunPassed": True,
@@ -278,6 +361,13 @@ def _gate_report() -> dict[str, object]:
         "run_id": "run-test",
         "promotion_allowed": True,
         "recommended_mode": "paper",
+        "throughput": {
+            "signal_count": 16,
+            "decision_count": 12,
+            "trade_count": 7,
+            "no_signal_window": False,
+            "no_signal_reason": None,
+        },
         "gates": [
             {"gate_id": "gate0_data_integrity", "status": "pass"},
             {"gate_id": "gate1_statistical_robustness", "status": "pass"},

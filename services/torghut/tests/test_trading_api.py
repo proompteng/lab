@@ -343,6 +343,7 @@ class TestTradingApi(TestCase):
             self.assertEqual(llm["fail_mode_enforcement"], "configured")
             self.assertIn("mode_coupled_behavior_enabled", llm["policy_exceptions"])
             self.assertIn("policy_resolution", llm)
+            self.assertIn("policy_resolution_counters", llm)
             self.assertEqual(
                 llm["policy_resolution"]["classification"], "intentional_exception"
             )

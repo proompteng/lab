@@ -194,6 +194,30 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                             )
                         )
                     continue
+                if key == "llm_policy_resolution_total":
+                    metric_name = "torghut_trading_llm_policy_resolution_total"
+                    lines.append(
+                        f"# HELP {metric_name} Count of LLM policy-resolution classifications."
+                    )
+                    lines.append(f"# TYPE {metric_name} counter")
+                    sorted_items = sorted(
+                        [
+                            (str(classification), int(count))
+                            for classification, count in cast(
+                                dict[str, object], value
+                            ).items()
+                            if isinstance(count, int)
+                        ]
+                    )
+                    for classification, count in sorted_items:
+                        lines.extend(
+                            _render_labeled_metric(
+                                metric_name=metric_name,
+                                labels={"classification": classification},
+                                value=count,
+                            )
+                        )
+                    continue
                 if key in {
                     "strategy_events_total",
                     "strategy_intents_total",
