@@ -25,6 +25,18 @@ def _render_labeled_metric(
     return [f"{metric_name}{{{label_text}}} {value}"]
 
 
+def _coerce_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, Decimal):
+        return int(value)
+    return 0
+
+
 def render_trading_metrics(metrics: Mapping[str, object]) -> str:
     lines: list[str] = []
     for key, value in metrics.items():
@@ -172,10 +184,10 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
                     continue
                 if key == "route_provenance":
                     summary = cast(dict[str, object], value)
-                    total = int(summary.get("total", 0) or 0)
-                    missing = int(summary.get("missing", 0) or 0)
-                    unknown = int(summary.get("unknown", 0) or 0)
-                    mismatch = int(summary.get("mismatch", 0) or 0)
+                    total = _coerce_int(summary.get("total"))
+                    missing = _coerce_int(summary.get("missing"))
+                    unknown = _coerce_int(summary.get("unknown"))
+                    mismatch = _coerce_int(summary.get("mismatch"))
 
                     ratio_metrics: list[tuple[str, str]] = [
                         (
