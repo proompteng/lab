@@ -49,6 +49,29 @@ jobs:
           JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
         run: bun run packages/scripts/src/jangar/build-image.ts
 
+      - name: Resolve pushed image digest
+        id: digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="registry.ide-newton.ts.net/lab/jangar"
+          TAG="${{ steps.meta.outputs.tag }}"
+          DIGEST="$(docker buildx imagetools inspect "${IMAGE}:${TAG}" | awk '/^Digest:/ { print $2; exit }')"
+          if [ -z "${DIGEST}" ]; then
+            echo "Failed to resolve digest for ${IMAGE}:${TAG}"
+            exit 1
+          fi
+          echo "${DIGEST}" > jangar-image-digest.txt
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload image digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jangar-image-${{ steps.meta.outputs.tag }}
+          path: jangar-image-digest.txt
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Update latest tag
         run: |
           set -euo pipefail

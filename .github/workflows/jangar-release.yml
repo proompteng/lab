@@ -30,6 +30,7 @@ jobs:
       }}
     runs-on: arc-arm64
     permissions:
+      actions: read
       contents: write
       pull-requests: write
     steps:
@@ -71,6 +72,15 @@ jobs:
           echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+      - name: Download digest artifact from triggering build
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: jangar-image-${{ steps.meta.outputs.tag }}
+          path: .artifacts/jangar
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Resolve image digest
         id: digest
         shell: bash
@@ -79,8 +89,11 @@ jobs:
           DIGEST_INPUT: ${{ inputs.image_digest }}
         run: |
           set -euo pipefail
+          ARTIFACT_DIGEST_FILE=".artifacts/jangar/jangar-image-digest.txt"
           if [ -n "${DIGEST_INPUT}" ]; then
             DIGEST="${DIGEST_INPUT}"
+          elif [ -f "${ARTIFACT_DIGEST_FILE}" ]; then
+            DIGEST="$(cat "${ARTIFACT_DIGEST_FILE}")"
           else
             DIGEST="$(
               bun --eval "
@@ -94,6 +107,10 @@ jobs:
           fi
 
           DIGEST="${DIGEST#*@}"
+          if [ -z "${DIGEST}" ]; then
+            echo "Resolved digest is empty"
+            exit 1
+          fi
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Update Jangar manifests
