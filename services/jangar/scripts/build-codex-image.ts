@@ -35,7 +35,7 @@ export const runBuildCodexImage = async () => {
   const appDir = resolve(scriptDir, '..')
   const repoDir = resolve(appDir, '..', '..')
   const dockerfile = process.env.DOCKERFILE ?? resolve(appDir, 'Dockerfile.codex')
-  const imageTag = process.env.IMAGE_TAG ?? 'registry.ide-newton.ts.net/lab/codex-universal:latest'
+  const imageTag = process.env.IMAGE_TAG ?? 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl'
   const contextDir = process.env.CONTEXT_DIR ?? '.'
   const codexAuthPath = process.env.CODEX_AUTH ?? `${process.env.HOME ?? ''}/.codex/auth.json`
   const codexConfigPath = process.env.CODEX_CONFIG ?? `${process.env.HOME ?? ''}/.codex/config.toml`

@@ -51,7 +51,7 @@ controllers:
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/codex-universal
-    tag: latest
+    tag: 20260219-234214-2a44dd59-dl
     digest: ""
     pullPolicy: IfNotPresent
     pullSecrets: []

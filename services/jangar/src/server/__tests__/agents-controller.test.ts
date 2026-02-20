@@ -47,7 +47,7 @@ const buildAgentRun = (overrides: Record<string, unknown> = {}) => ({
     agentRef: { name: 'agent-1' },
     implementationSpecRef: { name: 'impl-1' },
     runtime: { type: 'job', config: {} },
-    workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+    workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
   } as Record<string, unknown>,
   status: {},
   ...overrides,
@@ -388,7 +388,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         parameters: {
           repository: 'proompteng/lab',
         },
@@ -463,7 +463,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         memoryRef: { name: 'default-memory' },
       },
     })
@@ -594,7 +594,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         parameters: {
           linearRepo: 'proompteng/lab',
           linearIssue: '1234',
@@ -706,7 +706,7 @@ describe('agents controller reconcileAgentRun', () => {
           agentRef: { name: 'agent-1' },
           implementationSpecRef: { name: 'impl-1' },
           runtime: { type: 'job', config: {} },
-          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
           ttlSecondsAfterFinished: 60,
         },
         status: { phase: 'Failed', finishedAt },
@@ -736,7 +736,7 @@ describe('agents controller reconcileAgentRun', () => {
           agentRef: { name: 'agent-1' },
           implementationSpecRef: { name: 'impl-1' },
           runtime: { type: 'job', config: {} },
-          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
           ttlSecondsAfterFinished: 0,
         },
         status: { phase: 'Succeeded', finishedAt },
@@ -927,7 +927,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: { backoffLimit: 2 } },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
       },
     })
 
@@ -976,7 +976,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         systemPrompt: 'from-run',
       },
     })
@@ -1040,7 +1040,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         systemPrompt: 'inline-ignored',
         systemPromptRef: {
           kind: 'ConfigMap',
@@ -1134,7 +1134,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         secrets: ['prompt-secret'],
         systemPromptRef: {
           kind: 'Secret',
@@ -1213,7 +1213,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         systemPromptRef: {
           kind: 'Secret',
           name: 'prompt-secret',
@@ -1262,7 +1262,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         secrets: ['prompt-secret'],
         systemPromptRef: {
           kind: 'Secret',
@@ -1481,7 +1481,7 @@ describe('agents controller reconcileAgentRun', () => {
             schedulerName: 'run-scheduler',
           },
         },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
       }
 
       lastJob = null
@@ -1612,7 +1612,7 @@ describe('agents controller reconcileAgentRun', () => {
           agentRef: { name: 'agent-1' },
           implementationSpecRef: { name: 'impl-1' },
           runtime: { type: 'job', config: {} },
-          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
           secrets: ['blocked-secret'],
         },
       })
@@ -1708,7 +1708,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         workflow: { steps: [{ name: 'step-one' }] },
         systemPromptRef: { kind: 'ConfigMap', name: 'prompt-config', key: 'prompt' },
       },
@@ -1787,7 +1787,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         workflow: {
           steps: [{ name: 'step-one' }, { name: 'step-two' }],
         },
@@ -1883,7 +1883,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         workflow: {
           steps: [{ name: 'step-one' }],
         },
@@ -1941,7 +1941,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         workflow: {
           steps: [{ name: 'step-one', retries: 1 }],
         },
@@ -2012,7 +2012,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         workflow: {
           steps: [{ name: 'retry-step', retries: 1, retryBackoffSeconds: 60 }],
         },
@@ -2110,7 +2110,7 @@ describe('agents controller reconcileAgentRun', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'workflow', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         workflow: {
           steps: [{ name: 'timeout-step', timeoutSeconds: 60 }],
         },
@@ -2336,7 +2336,7 @@ describe('agents controller resolveVcsContext', () => {
         agentRef: { name: 'agent-1' },
         implementationSpecRef: { name: 'impl-1' },
         runtime: { type: 'job', config: {} },
-        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:latest' },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
         vcsRef: { name: 'vcs-1' },
         parameters: {
           repository: 'proompteng/lab',

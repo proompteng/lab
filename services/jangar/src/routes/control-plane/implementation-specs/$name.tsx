@@ -40,7 +40,7 @@ type AgentOption = {
   provider: string | null
 }
 
-const DEFAULT_RUN_IMAGE = 'registry.ide-newton.ts.net/lab/codex-universal:latest'
+const DEFAULT_RUN_IMAGE = 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl'
 const DEFAULT_STEP_NAME = 'implement'
 const DEFAULT_BASE_BRANCH = 'main'
 const ISSUE_AUTOMATION_MARKER = '<!-- codex:skip-automation -->'

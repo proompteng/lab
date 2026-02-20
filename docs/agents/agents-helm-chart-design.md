@@ -453,7 +453,7 @@ spec:
   runtime:
     type: custom
   workload:
-    image: registry.ide-newton.ts.net/lab/codex-universal:latest
+    image: registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl
     resources:
       cpu: 2
       memory: 4Gi
