@@ -102,6 +102,12 @@ spec:
               value: http://torghut-lean-runner.torghut.svc.cluster.local:8088
             - name: TRADING_LEAN_RUNNER_TIMEOUT_SECONDS
               value: "5"
+            - name: TRADING_LEAN_RUNNER_HEALTHCHECK_ENABLED
+              value: "true"
+            - name: TRADING_LEAN_RUNNER_HEALTHCHECK_TIMEOUT_SECONDS
+              value: "2"
+            - name: TRADING_LEAN_RUNNER_REQUIRE_HEALTHY
+              value: "true"
             - name: TRADING_STRATEGY_CONFIG_PATH
               value: /etc/torghut/strategies.yaml
             - name: TRADING_STRATEGY_CONFIG_MODE

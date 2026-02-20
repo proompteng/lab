@@ -12,6 +12,7 @@
     "start:build": "bun run build",
     "preview": "bun --bun vite preview",
     "test": "bunx vitest run --config vitest.config.ts",
+    "test:market-context-integration": "bunx vitest run --config vitest.config.ts src/server/__tests__/torghut-market-context.test.ts src/routes/api/torghut/market-context/index.test.ts src/routes/api/torghut/market-context/health.test.ts",
     "test:e2e": "playwright test --config playwright.config.ts",
     "test:ui": "bunx playwright test",
     "test:ui:update": "bunx playwright test --update-snapshots",

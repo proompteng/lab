@@ -255,3 +255,74 @@ class TestMarketContextClient(TestCase):
         self.assertFalse(status.allow_llm)
         self.assertEqual(status.reason, 'market_context_domain_error')
         self.assertIn('news_error', status.risk_flags)
+
+    def test_evaluate_prioritizes_domain_error_reason_over_staleness(self) -> None:
+        config.settings.trading_market_context_required = True
+        config.settings.trading_market_context_min_quality = 0.2
+        config.settings.trading_market_context_max_staleness_seconds = 30
+
+        bundle = MarketContextBundle.model_validate(
+            {
+                'contextVersion': 'torghut.market-context.v1',
+                'symbol': 'MSFT',
+                'asOfUtc': '2026-02-19T12:00:00Z',
+                'freshnessSeconds': 120,
+                'qualityScore': 0.8,
+                'sourceCount': 2,
+                'riskFlags': ['technicals_source_error'],
+                'domains': {
+                    'technicals': {
+                        'domain': 'technicals',
+                        'state': 'error',
+                        'asOf': None,
+                        'freshnessSeconds': None,
+                        'maxFreshnessSeconds': 60,
+                        'sourceCount': 0,
+                        'qualityScore': 0,
+                        'payload': {},
+                        'citations': [],
+                        'riskFlags': ['technicals_source_error'],
+                    },
+                    'fundamentals': {
+                        'domain': 'fundamentals',
+                        'state': 'ok',
+                        'asOf': '2026-02-19T11:00:00Z',
+                        'freshnessSeconds': 3600,
+                        'maxFreshnessSeconds': 86400,
+                        'sourceCount': 1,
+                        'qualityScore': 1,
+                        'payload': {},
+                        'citations': [],
+                        'riskFlags': [],
+                    },
+                    'news': {
+                        'domain': 'news',
+                        'state': 'ok',
+                        'asOf': '2026-02-19T11:59:00Z',
+                        'freshnessSeconds': 60,
+                        'maxFreshnessSeconds': 300,
+                        'sourceCount': 1,
+                        'qualityScore': 1,
+                        'payload': {},
+                        'citations': [],
+                        'riskFlags': [],
+                    },
+                    'regime': {
+                        'domain': 'regime',
+                        'state': 'ok',
+                        'asOf': '2026-02-19T12:00:00Z',
+                        'freshnessSeconds': 0,
+                        'maxFreshnessSeconds': 120,
+                        'sourceCount': 1,
+                        'qualityScore': 1,
+                        'payload': {},
+                        'citations': [],
+                        'riskFlags': [],
+                    },
+                },
+            }
+        )
+        status = evaluate_market_context(bundle)
+        self.assertFalse(status.allow_llm)
+        self.assertEqual(status.reason, 'market_context_domain_error')
+        self.assertIn('market_context_stale', status.risk_flags)
