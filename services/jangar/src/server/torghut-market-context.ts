@@ -48,6 +48,15 @@ type ProviderHealthSignal = {
   latencyMs: number | null
 }
 
+type ClickHouseHealthSignal = {
+  configured: boolean
+  lastAttemptAt: string | null
+  lastSuccessAt: string | null
+  lastError: string | null
+  consecutiveFailures: number
+  latencyMs: number | null
+}
+
 export type TorghutMarketContextHealth = {
   enabled: boolean
   cacheSeconds: number
@@ -55,6 +64,9 @@ export type TorghutMarketContextHealth = {
   bundleFreshnessSeconds: number
   bundleQualityScore: number
   providerHealth: ProviderHealthSignal[]
+  ingestionHealth: {
+    clickhouse: ClickHouseHealthSignal
+  }
   domainHealth: Array<{
     domain: MarketContextDomain['domain']
     state: MarketContextDomainState
@@ -114,6 +126,7 @@ const resolveSettings = () => {
 
   return {
     enabled: toBoolean(process.env.JANGAR_MARKET_CONTEXT_ENABLED, true),
+    requireTechnicalsSourceHealth: toBoolean(process.env.JANGAR_MARKET_CONTEXT_REQUIRE_TECHNICALS_SOURCE_HEALTH, true),
     cacheSeconds: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_CACHE_SECONDS, 60),
     maxStalenessSeconds: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS, 300),
     providerTimeoutMs: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS, 2000),
@@ -159,6 +172,15 @@ const providerHealth = new Map<'fundamentals' | 'news', ProviderHealthSignal>([
     },
   ],
 ])
+
+let clickHouseHealth: ClickHouseHealthSignal = {
+  configured: false,
+  lastAttemptAt: null,
+  lastSuccessAt: null,
+  lastError: null,
+  consecutiveFailures: 0,
+  latencyMs: null,
+}
 
 const iso = (value: Date) => value.toISOString()
 
@@ -242,6 +264,23 @@ const recordProviderAttempt = (
   })
 }
 
+const recordClickHouseAttempt = (params: {
+  configured: boolean
+  success: boolean
+  error?: string
+  latencyMs: number
+}) => {
+  const nowIso = new Date().toISOString()
+  clickHouseHealth = {
+    configured: params.configured,
+    lastAttemptAt: nowIso,
+    lastSuccessAt: params.success ? nowIso : clickHouseHealth.lastSuccessAt,
+    lastError: params.success ? null : (params.error ?? 'clickhouse_unknown_error'),
+    consecutiveFailures: params.success ? 0 : clickHouseHealth.consecutiveFailures + 1,
+    latencyMs: params.latencyMs,
+  }
+}
+
 const resolveClickHouse = (client?: ClickHouseClient) => {
   if (client) return { ok: true as const, client }
   return resolveClickHouseClient()
@@ -280,13 +319,19 @@ const technicalDomain = (params: {
   now: Date
   row: Record<string, unknown> | null
   maxFreshnessSeconds: number
+  sourceError?: string | null
+  sourceLatencyMs?: number | null
 }): MarketContextDomain => {
   const asOf = parseTimestamp(params.row?.event_ts ?? params.row?.ts)
   const freshnessSeconds = resolveFreshnessSeconds(params.now, asOf)
   const maxFreshnessSeconds = params.maxFreshnessSeconds
-  const state = resolveState(freshnessSeconds, maxFreshnessSeconds)
+  let state = resolveState(freshnessSeconds, maxFreshnessSeconds)
   const sourceCount = params.row ? 1 : 0
   const riskFlags: string[] = []
+  if (params.sourceError) {
+    state = 'error'
+    riskFlags.push('technicals_source_error')
+  }
   if (state !== 'ok') riskFlags.push(`technicals_${state}`)
   return {
     domain: 'technicals',
@@ -303,6 +348,8 @@ const technicalDomain = (params: {
       macd: toNumber(params.row?.macd),
       macdSignal: toNumber(params.row?.macd_signal),
       volume: toNumber(params.row?.v),
+      sourceError: params.sourceError ?? null,
+      sourceLatencyMs: params.sourceLatencyMs ?? null,
     },
     citations: [],
     riskFlags,
@@ -313,12 +360,18 @@ const regimeDomain = (params: {
   now: Date
   row: Record<string, unknown> | null
   maxFreshnessSeconds: number
+  sourceError?: string | null
+  sourceLatencyMs?: number | null
 }): MarketContextDomain => {
   const asOf = parseTimestamp(params.row?.event_ts ?? params.row?.ts)
   const freshnessSeconds = resolveFreshnessSeconds(params.now, asOf)
   const maxFreshnessSeconds = params.maxFreshnessSeconds
-  const state = resolveState(freshnessSeconds, maxFreshnessSeconds)
+  let state = resolveState(freshnessSeconds, maxFreshnessSeconds)
   const riskFlags: string[] = []
+  if (params.sourceError) {
+    state = 'error'
+    riskFlags.push('regime_source_error')
+  }
   if (state !== 'ok') riskFlags.push(`regime_${state}`)
   return {
     domain: 'regime',
@@ -333,6 +386,8 @@ const regimeDomain = (params: {
       imbalance: toNumber(params.row?.imbalance),
       trend: toNumber(params.row?.trend_strength ?? params.row?.adx),
       liquidityScore: toNumber(params.row?.liquidity_score),
+      sourceError: params.sourceError ?? null,
+      sourceLatencyMs: params.sourceLatencyMs ?? null,
     },
     citations: [],
     riskFlags,
@@ -587,12 +642,38 @@ export const getTorghutMarketContext = async (
 
   const clientResult = resolveClickHouse(options.client)
   let signalRow: Record<string, unknown> | null = null
+  let signalSourceError: string | null = null
+  let signalSourceLatencyMs: number | null = null
   if (clientResult.ok) {
+    const start = Date.now()
     try {
       signalRow = await getLatestSignalRow(clientResult.client, symbol)
+      signalSourceLatencyMs = Date.now() - start
+      recordClickHouseAttempt({
+        configured: true,
+        success: true,
+        latencyMs: signalSourceLatencyMs,
+      })
     } catch {
       signalRow = null
+      signalSourceLatencyMs = Date.now() - start
+      signalSourceError = 'clickhouse_query_failed'
+      recordClickHouseAttempt({
+        configured: true,
+        success: false,
+        error: signalSourceError,
+        latencyMs: signalSourceLatencyMs,
+      })
     }
+  } else {
+    signalSourceError = clientResult.message
+    signalSourceLatencyMs = 0
+    recordClickHouseAttempt({
+      configured: false,
+      success: false,
+      error: clientResult.message,
+      latencyMs: 0,
+    })
   }
 
   const [fundamentalsResponse, newsResponse] = await Promise.all([
@@ -613,7 +694,13 @@ export const getTorghutMarketContext = async (
   ])
 
   const domains = {
-    technicals: technicalDomain({ now, row: signalRow, maxFreshnessSeconds: settings.technicalsMaxFreshnessSeconds }),
+    technicals: technicalDomain({
+      now,
+      row: signalRow,
+      maxFreshnessSeconds: settings.technicalsMaxFreshnessSeconds,
+      sourceError: settings.requireTechnicalsSourceHealth ? signalSourceError : null,
+      sourceLatencyMs: signalSourceLatencyMs,
+    }),
     fundamentals: externalDomain({
       now,
       domain: 'fundamentals',
@@ -626,7 +713,13 @@ export const getTorghutMarketContext = async (
       maxFreshnessSeconds: settings.newsMaxFreshnessSeconds,
       response: newsResponse,
     }),
-    regime: regimeDomain({ now, row: signalRow, maxFreshnessSeconds: settings.regimeMaxFreshnessSeconds }),
+    regime: regimeDomain({
+      now,
+      row: signalRow,
+      maxFreshnessSeconds: settings.regimeMaxFreshnessSeconds,
+      sourceError: settings.requireTechnicalsSourceHealth ? signalSourceError : null,
+      sourceLatencyMs: signalSourceLatencyMs,
+    }),
   }
   const bundle = buildBundleFromDomains({ symbol, now, domains })
   if (bundle.freshnessSeconds > maxStalenessSeconds) {
@@ -660,6 +753,9 @@ export const getTorghutMarketContextHealth = async (symbol = 'SPY', options: Mar
     bundleFreshnessSeconds: bundle.freshnessSeconds,
     bundleQualityScore: bundle.qualityScore,
     providerHealth: Array.from(providerHealth.values()),
+    ingestionHealth: {
+      clickhouse: clickHouseHealth,
+    },
     domainHealth,
     overallState,
   } satisfies TorghutMarketContextHealth

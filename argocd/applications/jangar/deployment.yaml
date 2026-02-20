@@ -268,6 +268,8 @@ spec:
               value: "300"
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS
               value: "2000"
+            - name: JANGAR_MARKET_CONTEXT_REQUIRE_TECHNICALS_SOURCE_HEALTH
+              value: "true"
             - name: JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS
               value: "60"
             - name: JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS

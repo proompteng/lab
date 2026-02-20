@@ -13,6 +13,7 @@ const restoreEnv = () => {
   delete process.env.JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS
   delete process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL
   delete process.env.JANGAR_MARKET_CONTEXT_NEWS_URL
+  delete process.env.JANGAR_MARKET_CONTEXT_REQUIRE_TECHNICALS_SOURCE_HEALTH
   delete process.env.JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS
   delete process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_MAX_FRESHNESS_SECONDS
   delete process.env.JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS
@@ -192,5 +193,37 @@ describe('torghut market context', () => {
     expect(health.domainHealth.find((d) => d.domain === 'news')?.state).toBe('error')
     expect(health.providerHealth.find((d) => d.provider === 'fundamentals')?.lastError).toBe('upstream timeout')
     expect(health.providerHealth.find((d) => d.provider === 'news')?.consecutiveFailures).toBe(1)
+  })
+
+  it('marks technical and regime domains as error when clickhouse is unavailable', async () => {
+    delete process.env.CH_HOST
+    delete process.env.CH_USER
+    delete process.env.CH_PASSWORD
+
+    const health = await getTorghutMarketContextHealth('AAPL', {
+      asOf: new Date('2026-02-19T12:00:00.000Z'),
+    })
+
+    expect(health.overallState).toBe('down')
+    expect(health.domainHealth.find((d) => d.domain === 'technicals')?.state).toBe('error')
+    expect(health.domainHealth.find((d) => d.domain === 'regime')?.state).toBe('error')
+    expect(health.ingestionHealth.clickhouse.configured).toBe(false)
+    expect(health.ingestionHealth.clickhouse.lastError).toBe('CH_HOST is not configured')
+  })
+
+  it('allows opt-out from strict technical source health enforcement', async () => {
+    process.env.JANGAR_MARKET_CONTEXT_REQUIRE_TECHNICALS_SOURCE_HEALTH = 'false'
+    delete process.env.CH_HOST
+    delete process.env.CH_USER
+    delete process.env.CH_PASSWORD
+
+    const context = await getTorghutMarketContext('AAPL', {
+      asOf: new Date('2026-02-19T12:00:00.000Z'),
+    })
+
+    expect(context.domains.technicals.state).toBe('missing')
+    expect(context.domains.regime.state).toBe('missing')
+    expect(context.riskFlags).not.toContain('technicals_source_error')
+    expect(context.riskFlags).not.toContain('regime_source_error')
   })
 })
