@@ -143,6 +143,7 @@ jobs:
         if: steps.changes.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           branch: codex/jangar-release-${{ steps.meta.outputs.tag }}
           base: main
           title: "chore(jangar): promote image ${{ steps.meta.outputs.tag }}"
