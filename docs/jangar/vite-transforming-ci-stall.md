@@ -34,12 +34,12 @@ Upstream reports match this pattern:
    - `apps/landing/src/app/globals.css`
    - `apps/docs/app/global.css`
 2. Added explicit scan exclusions (`@source not`) for heavy CI paths (`node_modules`, build output dirs, workspace package stores) in those same stylesheets.
-3. Kept shared Tailwind import syntax tooling-compatible:
+3. Disabled Tailwind auto-discovery at the shared import entrypoint:
    - `packages/design/src/styles/tailwind.css`
-   - `@import "tailwindcss";`
+   - `@import "tailwindcss" source(none);`
 4. Added CI guardrail:
    - `.github/workflows/jangar-build-push.yaml`
-   - `timeout-minutes: 45` on the `build-and-push` job
+   - `timeout-minutes: 20` on the `build-and-push` job
 
 ## Why this fix is preferred
 
