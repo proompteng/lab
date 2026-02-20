@@ -50,8 +50,42 @@ jobs:
 
           git remote add origin "https://x-access-token:${AGENTS_SPLIT_TOKEN}@github.com/proompteng/charts.git"
           git fetch origin main
+
+          cp charts/agents/README.md README.md
+          if ! git diff --quiet -- README.md; then
+            git add README.md
+            git commit -m "docs: mirror agents chart README at repository root"
+          fi
+
           git push --force-with-lease=main -u origin HEAD:main
 
-          helm package charts/agents --destination "${tmpdir}/chart-packages"
+          chart_version="$(awk '/^version:/ {print $2; exit}' charts/agents/Chart.yaml)"
+          package_dir="${tmpdir}/chart-packages"
+          existing_dir="${tmpdir}/existing-packages"
+          mkdir -p "${package_dir}" "${existing_dir}"
+
+          helm package charts/agents --destination "${package_dir}"
+          package_path="${package_dir}/agents-${chart_version}.tgz"
+          if [ ! -f "${package_path}" ]; then
+            echo "Expected packaged chart at ${package_path}" >&2
+            exit 1
+          fi
+
           echo "${AGENTS_SPLIT_TOKEN}" | helm registry login ghcr.io -u proompteng --password-stdin
-          helm push "${tmpdir}/chart-packages/"*.tgz oci://ghcr.io/proompteng/charts
+          if helm pull oci://ghcr.io/proompteng/charts/agents --version "${chart_version}" --destination "${existing_dir}" >/dev/null 2>&1; then
+            existing_path="${existing_dir}/agents-${chart_version}.tgz"
+            compare_new_dir="${tmpdir}/compare-new"
+            compare_existing_dir="${tmpdir}/compare-existing"
+            mkdir -p "${compare_new_dir}" "${compare_existing_dir}"
+            tar -xzf "${package_path}" -C "${compare_new_dir}"
+            tar -xzf "${existing_path}" -C "${compare_existing_dir}"
+
+            if diff -qr "${compare_new_dir}" "${compare_existing_dir}" >/dev/null; then
+              echo "Chart ${chart_version} already published and matches packaged contents; skipping helm push."
+            else
+              echo "Chart ${chart_version} already exists in OCI but differs from current contents. Bump charts/agents/Chart.yaml version." >&2
+              exit 1
+            fi
+          else
+            helm push "${package_path}" oci://ghcr.io/proompteng/charts
+          fi
