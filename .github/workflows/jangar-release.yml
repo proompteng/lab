@@ -1,0 +1,149 @@
+name: jangar-release
+
+on:
+  workflow_run:
+    workflows:
+      - jangar-build-push
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Commit SHA to promote (defaults to current HEAD)
+        required: false
+        type: string
+      image_tag:
+        description: Image tag to promote (defaults to short SHA)
+        required: false
+        type: string
+      image_digest:
+        description: Image digest override (sha256:...)
+        required: false
+        type: string
+
+jobs:
+  promote:
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+      }}
+    runs-on: arc-arm64
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            SOURCE_SHA="${{ github.event.workflow_run.head_sha }}"
+          elif [ -n "${{ inputs.commit_sha }}" ]; then
+            SOURCE_SHA="${{ inputs.commit_sha }}"
+          else
+            SOURCE_SHA="$(git rev-parse HEAD)"
+          fi
+
+          TAG_INPUT='${{ inputs.image_tag }}'
+          if [ -n "$TAG_INPUT" ]; then
+            TAG="$TAG_INPUT"
+          else
+            TAG="${SOURCE_SHA:0:8}"
+          fi
+
+          git checkout --force "$SOURCE_SHA"
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve image digest
+        id: digest
+        shell: bash
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+          DIGEST_INPUT: ${{ inputs.image_digest }}
+        run: |
+          set -euo pipefail
+          if [ -n "${DIGEST_INPUT}" ]; then
+            DIGEST="${DIGEST_INPUT}"
+          else
+            DIGEST="$(
+              bun --eval "
+                import { inspectImageDigest } from './packages/scripts/src/shared/docker.ts'
+                const image = \`registry.ide-newton.ts.net/lab/jangar:${process.env.IMAGE_TAG}\`
+                const repoDigest = inspectImageDigest(image)
+                const digest = repoDigest.includes('@') ? repoDigest.split('@')[1] : repoDigest
+                console.log(digest)
+              "
+            )"
+          fi
+
+          DIGEST="${DIGEST#*@}"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Update Jangar manifests
+        env:
+          JANGAR_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+          JANGAR_IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+          JANGAR_ROLLOUT_TIMESTAMP: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          bun run packages/scripts/src/jangar/update-manifests.ts \
+            --tag "${JANGAR_IMAGE_TAG}" \
+            --digest "${JANGAR_IMAGE_DIGEST}" \
+            --rollout-timestamp "${TIMESTAMP}"
+
+      - name: Check for manifest changes
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- \
+            argocd/applications/jangar/kustomization.yaml \
+            argocd/applications/jangar/deployment.yaml \
+            argocd/applications/jangar/jangar-worker-deployment.yaml; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create deploy pull request
+        if: steps.changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: codex/jangar-release-${{ steps.meta.outputs.tag }}
+          base: main
+          title: chore(jangar): promote image ${{ steps.meta.outputs.tag }}
+          commit-message: chore(jangar): promote image ${{ steps.meta.outputs.tag }}
+          delete-branch: true
+          add-paths: |
+            argocd/applications/jangar/kustomization.yaml
+            argocd/applications/jangar/deployment.yaml
+            argocd/applications/jangar/jangar-worker-deployment.yaml
+          body: |
+            ## Summary
+            Promote Jangar image into GitOps manifests.
+
+            - Source commit: `${{ steps.meta.outputs.source_sha }}`
+            - Image tag: `${{ steps.meta.outputs.tag }}`
+            - Image digest: `${{ steps.digest.outputs.digest }}`
+            - Updated API and worker rollout annotations
+
+      - name: No manifest changes detected
+        if: steps.changes.outputs.changed != 'true'
+        run: echo 'No Jangar manifest changes detected.'

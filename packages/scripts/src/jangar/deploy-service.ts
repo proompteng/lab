@@ -9,6 +9,7 @@ import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
 import { inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
 import { buildImage } from './build-image'
+import { updateJangarManifests } from './update-manifests'
 
 type DeployOptions = {
   registry?: string
@@ -16,9 +17,8 @@ type DeployOptions = {
   tag?: string
   kustomizePath?: string
   serviceManifest?: string
+  workerManifest?: string
 }
-
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const capture = async (cmd: string[], env?: Record<string, string | undefined>): Promise<string> => {
   const subprocess = Bun.spawn(cmd, {
@@ -126,50 +126,6 @@ exec ${helmBinary} "${'${'}args[@]}"
   return { helmDir, helmBinary: shimPath, cleanup }
 }
 
-const updateManifests = (
-  kustomizePath: string,
-  servicePath: string,
-  imageName: string,
-  tag: string,
-  digest: string | undefined,
-  rolloutTimestamp: string,
-) => {
-  const kustomization = readFileSync(kustomizePath, 'utf8')
-  const imagePattern = new RegExp(`(name:\\s+${escapeRegExp(imageName)}\\s*\\n\\s*newTag:\\s*)(.+)`, 'm')
-  const quotedTag = JSON.stringify(tag)
-  let updatedKustomization = kustomization.replace(imagePattern, (_, prefix) => `${prefix}${quotedTag}`)
-
-  if (digest) {
-    const digestPattern = new RegExp(
-      `(name:\\s+${escapeRegExp(imageName)}\\s*\\n\\s*newTag:\\s*[^\\n]+\\n\\s*digest:\\s*)(.+)`,
-      'm',
-    )
-    if (digestPattern.test(updatedKustomization)) {
-      updatedKustomization = updatedKustomization.replace(digestPattern, (_, prefix) => `${prefix}${digest}`)
-    } else {
-      updatedKustomization = updatedKustomization.replace(
-        new RegExp(`(name:\\s+${escapeRegExp(imageName)}\\s*\\n\\s*newTag:\\s*[^\\n]+)`),
-        `$1\n    digest: ${digest}`,
-      )
-    }
-  }
-  if (kustomization === updatedKustomization) {
-    console.warn('Warning: jangar kustomization was not updated; pattern may have changed.')
-  } else {
-    writeFileSync(kustomizePath, updatedKustomization)
-    console.log(`Updated ${kustomizePath} with tag ${tag}`)
-  }
-
-  const service = readFileSync(servicePath, 'utf8')
-  const updatedService = service.replace(/(deploy\.knative\.dev\/rollout:\s*")([^"\n]*)("?)/, `$1${rolloutTimestamp}$3`)
-  if (service === updatedService) {
-    console.warn('Warning: jangar service rollout annotation was not updated; pattern may have changed.')
-  } else {
-    writeFileSync(servicePath, updatedService)
-    console.log(`Updated ${servicePath} rollout annotation to ${rolloutTimestamp}`)
-  }
-}
-
 const buildEnv = (env?: Record<string, string | undefined>) =>
   Object.fromEntries(
     Object.entries(env ? { ...process.env, ...env } : process.env).filter(([, value]) => value !== undefined),
@@ -231,16 +187,23 @@ export const main = async (options: DeployOptions = {}) => {
     repoRoot,
     options.serviceManifest ?? process.env.JANGAR_SERVICE_MANIFEST ?? 'argocd/applications/jangar/deployment.yaml',
   )
+  const workerManifest = resolve(
+    repoRoot,
+    options.workerManifest ??
+      process.env.JANGAR_WORKER_MANIFEST ??
+      'argocd/applications/jangar/jangar-worker-deployment.yaml',
+  )
 
   // Persist image tag and rollout marker in Git before applying
-  updateManifests(
-    `${kustomizePath}/kustomization.yaml`,
-    serviceManifest,
+  updateJangarManifests({
     imageName,
     tag,
     digest,
-    new Date().toISOString(),
-  )
+    rolloutTimestamp: new Date().toISOString(),
+    kustomizationPath: `${kustomizePath}/kustomization.yaml`,
+    serviceManifestPath: serviceManifest,
+    workerManifestPath: workerManifest,
+  })
 
   const { helmDir, helmBinary, cleanup } = writeHelmShim()
   const kubectl = Bun.which('kubectl')
@@ -273,4 +236,4 @@ if (import.meta.main) {
   main().catch((error) => fatal('Failed to build and deploy jangar', error))
 }
 
-export const __private = { capture, execGit, updateManifests }
+export const __private = { capture, execGit }

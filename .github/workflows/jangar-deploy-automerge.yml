@@ -1,0 +1,38 @@
+name: jangar-deploy-automerge
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+jobs:
+  enable:
+    if: >-
+      ${{
+        startsWith(github.event.pull_request.head.ref, 'codex/jangar-release-') &&
+        github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.draft == false
+      }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Enable squash auto-merge
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          AUTO_MERGE_ENABLED="$(gh pr view "${PR_NUMBER}" -R "${REPO}" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+          if [ "${AUTO_MERGE_ENABLED}" = "true" ]; then
+            echo "Auto-merge already enabled for PR #${PR_NUMBER}"
+            exit 0
+          fi
+
+          gh pr merge "${PR_NUMBER}" -R "${REPO}" --auto --squash
