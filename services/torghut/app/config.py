@@ -217,9 +217,15 @@ class Settings(BaseSettings):
         alias="TRADING_UNIVERSE_MAX_STALE_SECONDS",
         description="Maximum age for cached Jangar symbol universe before it is treated as stale.",
     )
-    trading_static_symbols_raw: Optional[str] = Field(default=None, alias="TRADING_STATIC_SYMBOLS")
-    trading_universe_cache_seconds: int = Field(default=300, alias="TRADING_UNIVERSE_CACHE_SECONDS")
-    trading_universe_timeout_seconds: int = Field(default=5, alias="TRADING_UNIVERSE_TIMEOUT_SECONDS")
+    trading_static_symbols_raw: Optional[str] = Field(
+        default=None, alias="TRADING_STATIC_SYMBOLS"
+    )
+    trading_universe_cache_seconds: int = Field(
+        default=300, alias="TRADING_UNIVERSE_CACHE_SECONDS"
+    )
+    trading_universe_timeout_seconds: int = Field(
+        default=5, alias="TRADING_UNIVERSE_TIMEOUT_SECONDS"
+    )
     trading_default_qty: int = Field(default=1, alias="TRADING_DEFAULT_QTY")
     trading_max_notional_per_trade: Optional[float] = Field(
         default=None, alias="TRADING_MAX_NOTIONAL_PER_TRADE"
@@ -322,7 +328,9 @@ class Settings(BaseSettings):
     trading_cooldown_seconds: int = Field(default=0, alias="TRADING_COOLDOWN_SECONDS")
     trading_allow_shorts: bool = Field(default=False, alias="TRADING_ALLOW_SHORTS")
     trading_account_label: str = Field(default="paper", alias="TRADING_ACCOUNT_LABEL")
-    trading_kill_switch_enabled: bool = Field(default=True, alias="TRADING_KILL_SWITCH_ENABLED")
+    trading_kill_switch_enabled: bool = Field(
+        default=True, alias="TRADING_KILL_SWITCH_ENABLED"
+    )
     trading_emergency_stop_enabled: bool = Field(
         default=True,
         alias="TRADING_EMERGENCY_STOP_ENABLED",
@@ -348,7 +356,9 @@ class Settings(BaseSettings):
         alias="TRADING_ROLLBACK_MAX_DRAWDOWN_LIMIT",
         description="Absolute drawdown threshold from autonomous gate artifacts that triggers emergency stop.",
     )
-    trading_jangar_symbols_url: Optional[str] = Field(default=None, alias="JANGAR_SYMBOLS_URL")
+    trading_jangar_symbols_url: Optional[str] = Field(
+        default=None, alias="JANGAR_SYMBOLS_URL"
+    )
     trading_market_context_url: Optional[str] = Field(
         default=None,
         alias="TRADING_MARKET_CONTEXT_URL",
@@ -418,14 +428,27 @@ class Settings(BaseSettings):
     llm_max_qty_multiplier: float = Field(default=1.25, alias="LLM_MAX_QTY_MULTIPLIER")
     llm_min_qty_multiplier: float = Field(default=0.5, alias="LLM_MIN_QTY_MULTIPLIER")
     llm_shadow_mode: bool = Field(default=False, alias="LLM_SHADOW_MODE")
+    llm_rollout_stage: Literal[
+        "stage0",
+        "stage1",
+        "stage2",
+        "stage3",
+        "stage0_baseline",
+        "stage1_shadow_pilot",
+        "stage2_paper_advisory",
+        "stage3_controlled_live",
+    ] = Field(default="stage3", alias="LLM_ROLLOUT_STAGE")
     llm_recent_decisions: int = Field(default=5, alias="LLM_RECENT_DECISIONS")
     llm_circuit_max_errors: int = Field(default=3, alias="LLM_CIRCUIT_MAX_ERRORS")
     llm_circuit_window_seconds: int = Field(default=300, alias="LLM_CIRCUIT_WINDOW_SECONDS")
     llm_circuit_cooldown_seconds: int = Field(default=600, alias="LLM_CIRCUIT_COOLDOWN_SECONDS")
+    llm_token_budget_max: int = Field(default=1200, alias="LLM_TOKEN_BUDGET_MAX")
+    llm_allowed_prompt_versions_raw: Optional[str] = Field(default=None, alias="LLM_ALLOWED_PROMPT_VERSIONS")
     llm_allowed_models_raw: Optional[str] = Field(default=None, alias="LLM_ALLOWED_MODELS")
     llm_evaluation_report: Optional[str] = Field(default=None, alias="LLM_EVALUATION_REPORT")
     llm_effective_challenge_id: Optional[str] = Field(default=None, alias="LLM_EFFECTIVE_CHALLENGE_ID")
     llm_shadow_completed_at: Optional[str] = Field(default=None, alias="LLM_SHADOW_COMPLETED_AT")
+    llm_model_version_lock: Optional[str] = Field(default=None, alias="LLM_MODEL_VERSION_LOCK")
     llm_adjustment_approved: bool = Field(default=False, alias="LLM_ADJUSTMENT_APPROVED")
 
     model_config = SettingsConfigDict(
@@ -451,17 +474,29 @@ class Settings(BaseSettings):
                 [item.strip() for item in self.trading_execution_adapter_symbols_raw.split(",") if item.strip()]
             )
         if self.trading_autonomy_approval_token:
-            self.trading_autonomy_approval_token = self.trading_autonomy_approval_token.strip() or None
+            self.trading_autonomy_approval_token = (
+                self.trading_autonomy_approval_token.strip() or None
+            )
         if (
-            (self.trading_enabled or self.trading_autonomy_enabled or self.trading_live_enabled)
+            (
+                self.trading_enabled
+                or self.trading_autonomy_enabled
+                or self.trading_live_enabled
+            )
             and self.trading_universe_source != "jangar"
         ):
-            raise ValueError("TRADING_UNIVERSE_SOURCE must be 'jangar' when trading or autonomy is enabled")
+            raise ValueError(
+                "TRADING_UNIVERSE_SOURCE must be 'jangar' when trading or autonomy is enabled"
+            )
         if "llm_provider" not in self.model_fields_set and self.jangar_base_url:
             self.llm_provider = "jangar"
         if self.llm_allowed_models_raw:
             self.llm_allowed_models_raw = ",".join(
                 [item.strip() for item in self.llm_allowed_models_raw.split(",") if item.strip()]
+            )
+        if self.llm_allowed_prompt_versions_raw:
+            self.llm_allowed_prompt_versions_raw = ",".join(
+                [item.strip() for item in self.llm_allowed_prompt_versions_raw.split(",") if item.strip()]
             )
         if self.llm_evaluation_report:
             self.llm_evaluation_report = self.llm_evaluation_report.strip()
@@ -469,6 +504,10 @@ class Settings(BaseSettings):
             self.llm_effective_challenge_id = self.llm_effective_challenge_id.strip()
         if self.llm_shadow_completed_at:
             self.llm_shadow_completed_at = self.llm_shadow_completed_at.strip()
+        if self.llm_model_version_lock is not None:
+            normalized_model_version_lock = self.llm_model_version_lock.strip()
+            # Model lock evidence must be explicitly configured; never backfill from llm_model.
+            self.llm_model_version_lock = normalized_model_version_lock or None
 
     @property
     def sqlalchemy_dsn(self) -> str:
@@ -506,6 +545,12 @@ class Settings(BaseSettings):
         if not self.llm_allowed_models_raw:
             return set()
         return {model.strip() for model in self.llm_allowed_models_raw.split(",") if model.strip()}
+
+    @property
+    def llm_allowed_prompt_versions(self) -> set[str]:
+        if not self.llm_allowed_prompt_versions_raw:
+            return set()
+        return {version.strip() for version in self.llm_allowed_prompt_versions_raw.split(",") if version.strip()}
 
 
 @lru_cache(maxsize=1)

@@ -38,7 +38,9 @@ class FakeIngestor:
         self.committed_batches = 0
 
     def fetch_signals(self, session: Session) -> SignalBatch:
-        return SignalBatch(signals=self.signals, cursor_at=None, cursor_seq=None, cursor_symbol=None)
+        return SignalBatch(
+            signals=self.signals, cursor_at=None, cursor_seq=None, cursor_symbol=None
+        )
 
     def commit_cursor(self, session: Session, batch: SignalBatch) -> None:
         self.committed_batches += 1
@@ -71,7 +73,9 @@ class FakeAlpacaClient:
     ) -> dict[str, str]:
         order = {
             "id": f"order-{len(self.submitted) + 1}",
-            "client_order_id": extra_params.get("client_order_id") if extra_params else None,
+            "client_order_id": extra_params.get("client_order_id")
+            if extra_params
+            else None,
             "symbol": symbol,
             "side": side,
             "type": order_type,
@@ -83,18 +87,31 @@ class FakeAlpacaClient:
         self.submitted.append(order)
         return order
 
-    def cancel_order(self, alpaca_order_id: str, *, firewall_token: object | None = None) -> bool:
+    def cancel_order(
+        self, alpaca_order_id: str, *, firewall_token: object | None = None
+    ) -> bool:
         return True
 
-    def cancel_all_orders(self, *, firewall_token: object | None = None) -> list[dict[str, str]]:
+    def cancel_all_orders(
+        self, *, firewall_token: object | None = None
+    ) -> list[dict[str, str]]:
         self.cancel_all_calls += 1
         return [{"id": "order-1"}]
 
     def list_orders(self, status: str = "all") -> list[dict[str, str]]:
         return list(self.submitted)
 
-    def get_order_by_client_order_id(self, client_order_id: str) -> dict[str, str] | None:
-        return next((order for order in self.submitted if order.get("client_order_id") == client_order_id), None)
+    def get_order_by_client_order_id(
+        self, client_order_id: str
+    ) -> dict[str, str] | None:
+        return next(
+            (
+                order
+                for order in self.submitted
+                if order.get("client_order_id") == client_order_id
+            ),
+            None,
+        )
 
     def get_order(self, alpaca_order_id: str) -> dict[str, str]:
         return {
@@ -129,7 +146,9 @@ class RejectingAlpacaClient(FakeAlpacaClient):
             '{"code":40310000,"existing_order_id":"order-existing","message":"potential wash trade detected","reject_reason":"opposite side market/stop order exists"}'
         )
 
-    def cancel_order(self, alpaca_order_id: str, *, firewall_token: object | None = None) -> bool:
+    def cancel_order(
+        self, alpaca_order_id: str, *, firewall_token: object | None = None
+    ) -> bool:
         self.cancel_calls.append(alpaca_order_id)
         return True
 
@@ -207,7 +226,9 @@ class FakeLLMReviewEngine:
             account=account,
             positions=positions,
             policy=LLMPolicyContext(
-                adjustment_allowed=True if adjustment_allowed is None else adjustment_allowed,
+                adjustment_allowed=True
+                if adjustment_allowed is None
+                else adjustment_allowed,
                 min_qty_multiplier=Decimal("0.5"),
                 max_qty_multiplier=Decimal("1.25"),
                 allowed_order_types=["limit", "market"],
@@ -285,6 +306,7 @@ def _set_llm_guardrails(config, *, adjustment_approved: bool = False) -> None:
     config.settings.llm_evaluation_report = "eval-2026-02-08"
     config.settings.llm_effective_challenge_id = "mrm-review-2026-02-08"
     config.settings.llm_shadow_completed_at = "2026-02-08T00:00:00Z"
+    config.settings.llm_model_version_lock = config.settings.llm_model
     config.settings.llm_adjustment_approved = adjustment_approved
 
 
@@ -292,7 +314,9 @@ class TestTradingPipeline(TestCase):
     def setUp(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
         Base.metadata.create_all(engine)
-        self.session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        self.session_local = sessionmaker(
+            bind=engine, expire_on_commit=False, future=True
+        )
         from app import config
 
         self._original_kill_switch = config.settings.trading_kill_switch_enabled
@@ -355,8 +379,12 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
-            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
 
     def test_pipeline_rejects_batch_when_feature_quality_gate_fails(self) -> None:
         from app import config
@@ -434,10 +462,18 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
-            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
-            config.settings.trading_feature_quality_enabled = original["trading_feature_quality_enabled"]
-            config.settings.trading_feature_max_staleness_ms = original["trading_feature_max_staleness_ms"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.trading_feature_quality_enabled = original[
+                "trading_feature_quality_enabled"
+            ]
+            config.settings.trading_feature_max_staleness_ms = original[
+                "trading_feature_max_staleness_ms"
+            ]
 
     def test_decision_engine_macd_rsi(self) -> None:
         engine = DecisionEngine()
@@ -563,7 +599,11 @@ class TestTradingPipeline(TestCase):
             signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
-                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
                 timeframe="1Min",
             )
 
@@ -597,9 +637,15 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_kill_switch_enabled = original["trading_kill_switch_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
-            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
 
     def test_pipeline_kill_switch_cancels_and_blocks_submissions(self) -> None:
         from app import config
@@ -636,7 +682,11 @@ class TestTradingPipeline(TestCase):
             signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
-                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
                 timeframe="1Min",
             )
 
@@ -665,9 +715,15 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_kill_switch_enabled = original["trading_kill_switch_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
-            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
 
     def test_pipeline_reuses_account_snapshot_within_reconcile_interval(self) -> None:
         from app import config
@@ -704,7 +760,11 @@ class TestTradingPipeline(TestCase):
             signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
-                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
                 timeframe="1Min",
             )
 
@@ -733,8 +793,12 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
-            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
             config.settings.trading_reconcile_ms = original["trading_reconcile_ms"]
 
     def test_pipeline_persists_price_snapshot(self) -> None:
@@ -806,8 +870,12 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
-            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
 
     def test_pipeline_llm_approve(self) -> None:
         from app import config
@@ -852,7 +920,11 @@ class TestTradingPipeline(TestCase):
             signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
-                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
                 timeframe="1Min",
             )
 
@@ -885,15 +957,25 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
-            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             config.settings.llm_evaluation_report = original["llm_evaluation_report"]
-            config.settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
-            config.settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
-            config.settings.llm_adjustment_approved = original["llm_adjustment_approved"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
 
     def test_pipeline_order_submit_rejection_does_not_crash_or_retry(self) -> None:
         from app import config
@@ -930,7 +1012,11 @@ class TestTradingPipeline(TestCase):
             signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
-                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
                 timeframe="1Min",
             )
 
@@ -966,8 +1052,12 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
-            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
             config.settings.llm_enabled = original["llm_enabled"]
 
     def test_pipeline_llm_veto(self) -> None:
@@ -1013,7 +1103,11 @@ class TestTradingPipeline(TestCase):
             signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
-                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
                 timeframe="1Min",
             )
 
@@ -1048,15 +1142,25 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
-            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             config.settings.llm_evaluation_report = original["llm_evaluation_report"]
-            config.settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
-            config.settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
-            config.settings.llm_adjustment_approved = original["llm_adjustment_approved"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
 
     def test_pipeline_llm_adjust(self) -> None:
         from app import config
@@ -1103,7 +1207,11 @@ class TestTradingPipeline(TestCase):
             signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
-                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
                 timeframe="1Min",
             )
 
@@ -1146,16 +1254,26 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
-            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
             config.settings.llm_adjustment_allowed = original["llm_adjustment_allowed"]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             config.settings.llm_evaluation_report = original["llm_evaluation_report"]
-            config.settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
-            config.settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
-            config.settings.llm_adjustment_approved = original["llm_adjustment_approved"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
 
     def test_pipeline_llm_failure_fallbacks(self) -> None:
         from app import config
@@ -1200,7 +1318,11 @@ class TestTradingPipeline(TestCase):
             signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
-                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
                 timeframe="1Min",
             )
 
@@ -1229,15 +1351,23 @@ class TestTradingPipeline(TestCase):
                 reviews = session.execute(select(LLMDecisionReview)).scalars().all()
                 self.assertEqual(len(executions), 1)
                 self.assertEqual(reviews[0].verdict, "error")
-                self.assertEqual(reviews[0].response_json.get("fallback"), "pass_through")
-                self.assertEqual(reviews[0].response_json.get("effective_verdict"), "approve")
+                self.assertEqual(
+                    reviews[0].response_json.get("fallback"), "pass_through"
+                )
+                self.assertEqual(
+                    reviews[0].response_json.get("effective_verdict"), "approve"
+                )
 
             config.settings.trading_mode = "live"
             config.settings.trading_live_enabled = True
             live_signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
-                payload={"macd": {"macd": 1.2, "signal": 0.3}, "rsi14": 25, "price": 100},
+                payload={
+                    "macd": {"macd": 1.2, "signal": 0.3},
+                    "rsi14": 25,
+                    "price": 100,
+                },
                 timeframe="1Min",
             )
             live_alpaca = FakeAlpacaClient()
@@ -1267,16 +1397,26 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
-            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_fail_mode = original["llm_fail_mode"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             config.settings.llm_evaluation_report = original["llm_evaluation_report"]
-            config.settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
-            config.settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
-            config.settings.llm_adjustment_approved = original["llm_adjustment_approved"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
 
     def test_pipeline_llm_shadow_mode(self) -> None:
         from app import config
@@ -1317,7 +1457,11 @@ class TestTradingPipeline(TestCase):
             signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
-                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
                 timeframe="1Min",
             )
 
@@ -1352,8 +1496,12 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
-            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_shadow_mode = original["llm_shadow_mode"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
@@ -1407,7 +1555,11 @@ class TestTradingPipeline(TestCase):
             signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
-                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
                 timeframe="1Min",
             )
 
@@ -1443,16 +1595,26 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
-            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_shadow_mode = original["llm_shadow_mode"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             config.settings.llm_evaluation_report = original["llm_evaluation_report"]
-            config.settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
-            config.settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
-            config.settings.llm_adjustment_approved = original["llm_adjustment_approved"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
 
     def test_pipeline_llm_circuit_open(self) -> None:
         from app import config
@@ -1497,7 +1659,11 @@ class TestTradingPipeline(TestCase):
             signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
-                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
                 timeframe="1Min",
             )
 
@@ -1531,14 +1697,356 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
+
+    def test_pipeline_stage1_live_overrides_fail_mode(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = True
+        config.settings.llm_rollout_stage = "stage1_shadow_pilot"
+        config.settings.llm_shadow_mode = False
+        config.settings.llm_fail_mode = "pass_through"
+        _set_llm_guardrails(config)
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+                timeframe="1Min",
+            )
+
+            alpaca_client = FakeAlpacaClient()
+            pipeline = TradingPipeline(
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=alpaca_client,
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+                llm_review_engine=FakeLLMReviewEngine(circuit_open=True),
+            )
+
+            pipeline.run_once()
+
+            with self.session_local() as session:
+                decisions = session.execute(select(TradeDecision)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(decisions[0].status, "submitted")
+                self.assertEqual(len(executions), 1)
+                self.assertEqual(pipeline.state.metrics.llm_fail_mode_override_total, 1)
+                self.assertEqual(
+                    pipeline.state.metrics.llm_stage_policy_violation_total, 1
+                )
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
+
+    def test_pipeline_stage1_market_context_failure_keeps_shadow_mode(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "trading_market_context_fail_mode": config.settings.trading_market_context_fail_mode,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.trading_market_context_fail_mode = "fail_closed"
+        config.settings.llm_enabled = True
+        config.settings.llm_rollout_stage = "stage1_shadow_pilot"
+        config.settings.llm_shadow_mode = False
+        config.settings.llm_fail_mode = "pass_through"
+        _set_llm_guardrails(config)
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+                timeframe="1Min",
+            )
+
+            class _FailingMarketContextClient:
+                @staticmethod
+                def fetch(symbol: str) -> MarketContextBundle | None:
+                    raise RuntimeError(f"market-context unavailable for {symbol}")
+
+            alpaca_client = FakeAlpacaClient()
+            pipeline = TradingPipeline(
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=alpaca_client,
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+                llm_review_engine=FakeLLMReviewEngine(),
+            )
+            pipeline.market_context_client = _FailingMarketContextClient()
+
+            pipeline.run_once()
+
+            with self.session_local() as session:
+                reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                decisions = session.execute(select(TradeDecision)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(len(reviews), 1)
+                self.assertEqual(reviews[0].verdict, "error")
+                self.assertEqual(
+                    reviews[0].response_json.get("error"),
+                    "market_context_fetch_error",
+                )
+                # Stage1 rollout must stay shadow-only even when fail mode is configured as fail_closed.
+                self.assertEqual(decisions[0].status, "submitted")
+                self.assertEqual(len(executions), 1)
+                self.assertEqual(pipeline.state.metrics.llm_market_context_block_total, 1)
+                self.assertEqual(pipeline.state.metrics.llm_guardrail_shadow_total, 1)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.trading_market_context_fail_mode = original[
+                "trading_market_context_fail_mode"
+            ]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
+
+    def test_pipeline_stage2_fail_mode_forces_pass_through(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_model_version_lock": config.settings.llm_model_version_lock,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = True
+        config.settings.llm_rollout_stage = "stage2"
+        config.settings.llm_shadow_mode = False
+        config.settings.llm_fail_mode = "veto"
+        _set_llm_guardrails(config)
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                timeframe="1Min",
+            )
+
+            alpaca_client = FakeAlpacaClient()
+            pipeline = TradingPipeline(
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=alpaca_client,
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+                llm_review_engine=FakeLLMReviewEngine(circuit_open=True),
+            )
+
+            pipeline.run_once()
+
+            with self.session_local() as session:
+                reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                decisions = session.execute(select(TradeDecision)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+                self.assertEqual(len(reviews), 1)
+                self.assertEqual(reviews[0].verdict, "error")
+                self.assertEqual(reviews[0].response_json.get("fallback"), "pass_through")
+                self.assertEqual(decisions[0].status, "submitted")
+                self.assertEqual(len(executions), 1)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
             config.settings.trading_universe_source = original["trading_universe_source"]
             config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
             config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
             config.settings.llm_fail_mode = original["llm_fail_mode"]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             config.settings.llm_evaluation_report = original["llm_evaluation_report"]
             config.settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
             config.settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
+            config.settings.llm_model_version_lock = original["llm_model_version_lock"]
             config.settings.llm_adjustment_approved = original["llm_adjustment_approved"]
 
     def test_pipeline_llm_min_confidence(self) -> None:
@@ -1584,7 +2092,11 @@ class TestTradingPipeline(TestCase):
             signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
-                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
                 timeframe="1Min",
             )
 
@@ -1602,7 +2114,9 @@ class TestTradingPipeline(TestCase):
                 state=TradingState(),
                 account_label="paper",
                 session_factory=self.session_local,
-                llm_review_engine=FakeLLMReviewEngine(verdict="approve", confidence=0.1),
+                llm_review_engine=FakeLLMReviewEngine(
+                    verdict="approve", confidence=0.1
+                ),
             )
 
             pipeline.run_once()
@@ -1619,15 +2133,25 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
-            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             config.settings.llm_evaluation_report = original["llm_evaluation_report"]
-            config.settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
-            config.settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
-            config.settings.llm_adjustment_approved = original["llm_adjustment_approved"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
 
     def test_pipeline_llm_adjust_out_of_bounds(self) -> None:
         from app import config
@@ -1674,7 +2198,11 @@ class TestTradingPipeline(TestCase):
             signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
-                payload={"macd": {"macd": 1.1, "signal": 0.4}, "rsi14": 25, "price": 100},
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
                 timeframe="1Min",
             )
 
@@ -1714,13 +2242,23 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
-            config.settings.trading_universe_source = original["trading_universe_source"]
-            config.settings.trading_static_symbols_raw = original["trading_static_symbols_raw"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
             config.settings.llm_enabled = original["llm_enabled"]
             config.settings.llm_adjustment_allowed = original["llm_adjustment_allowed"]
             config.settings.llm_min_confidence = original["llm_min_confidence"]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             config.settings.llm_evaluation_report = original["llm_evaluation_report"]
-            config.settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
-            config.settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
-            config.settings.llm_adjustment_approved = original["llm_adjustment_approved"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]

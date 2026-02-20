@@ -517,6 +517,42 @@ data:
               summary: Torghut LLM circuit breaker opened recently
               description: Circuit breaker events indicate repeated LLM failures or timeouts in the last 10 minutes.
               runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
+          - alert: TorghutLLMCircuitOpenTooLong
+            expr: |
+              max(
+                torghut_llm_circuit_open_seconds{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              ) > 600
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut LLM circuit stuck open
+              description: |
+                The LLM circuit breaker has remained open for longer than 10 minutes.
+                Keep deterministic-only behavior and investigate upstream LLM failures.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
+          - alert: TorghutLLMFailModeOverridesSpike
+            expr: |
+              increase(
+                torghut_llm_fail_mode_override_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }[15m]
+              ) > 5
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM fail-mode overrides are frequent
+              description: |
+                Stage controls are repeatedly overriding configured fail mode.
+                Verify rollout stage and live/paper configuration consistency.
+              runbook_url: docs/torghut/design-system/v3/full-loop/15-llm-advisory-rollout-spec.md
           - alert: TorghutLLMTokenBudgetExceeded
             expr: |
               (

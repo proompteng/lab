@@ -37,6 +37,10 @@ spec:
               value: "0.4"
             - name: LLM_TOKENS_PER_REQUEST_BUDGET
               value: "800"
+            - name: LLM_ERROR_RATIO_ALERT_THRESHOLD
+              value: "0.15"
+            - name: LLM_CIRCUIT_COOLDOWN_SECONDS_ALERT_THRESHOLD
+              value: "120"
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
           ports:

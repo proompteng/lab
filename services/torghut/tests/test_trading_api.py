@@ -297,35 +297,45 @@ class TestTradingApi(TestCase):
         original = {
             "llm_shadow_mode": settings.llm_shadow_mode,
             "llm_enabled": settings.llm_enabled,
+            "llm_rollout_stage": settings.llm_rollout_stage,
             "llm_allowed_models_raw": settings.llm_allowed_models_raw,
             "llm_evaluation_report": settings.llm_evaluation_report,
             "llm_effective_challenge_id": settings.llm_effective_challenge_id,
             "llm_shadow_completed_at": settings.llm_shadow_completed_at,
+            "llm_model_version_lock": settings.llm_model_version_lock,
         }
         settings.llm_enabled = True
+        settings.llm_rollout_stage = "stage3"
         settings.llm_shadow_mode = False
         settings.llm_allowed_models_raw = None
         settings.llm_evaluation_report = None
         settings.llm_effective_challenge_id = None
         settings.llm_shadow_completed_at = None
+        settings.llm_model_version_lock = None
 
         try:
             response = self.client.get("/trading/status")
             self.assertEqual(response.status_code, 200)
             payload = response.json()
             llm = payload["llm"]
+            self.assertEqual(llm["rollout_stage"], "stage3")
             self.assertFalse(llm["shadow_mode"])
             self.assertTrue(llm["effective_shadow_mode"])
             self.assertIn("guardrails", llm)
             self.assertTrue(llm["guardrails"]["allow_requests"])
             self.assertIn("llm_evaluation_report_missing", llm["guardrails"]["reasons"])
+            self.assertIn(
+                "llm_model_version_lock_missing", llm["guardrails"]["reasons"]
+            )
         finally:
             settings.llm_shadow_mode = original["llm_shadow_mode"]
             settings.llm_enabled = original["llm_enabled"]
+            settings.llm_rollout_stage = original["llm_rollout_stage"]
             settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             settings.llm_evaluation_report = original["llm_evaluation_report"]
             settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]
             settings.llm_shadow_completed_at = original["llm_shadow_completed_at"]
+            settings.llm_model_version_lock = original["llm_model_version_lock"]
 
     def test_trading_llm_evaluation_endpoint(self) -> None:
         response = self.client.get("/trading/llm-evaluation")
