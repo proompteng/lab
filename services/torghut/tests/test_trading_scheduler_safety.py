@@ -13,6 +13,13 @@ class _OrderFirewallStub:
     def __init__(self) -> None:
         self.cancel_all_calls = 0
 
+    def status(self) -> object:
+        class _Status:
+            kill_switch_enabled = False
+            reason = 'ok'
+
+        return _Status()
+
     def cancel_all_orders(self) -> list[dict[str, object]]:
         self.cancel_all_calls += 1
         return [{'id': 'o-1'}]
