@@ -137,7 +137,7 @@ spec:
             - name: TRADING_MARKET_CONTEXT_MAX_STALENESS_SECONDS
               value: "300"
             - name: TRADING_EMERGENCY_STOP_ENABLED
-              value: "true"
+              value: "false"
             - name: TRADING_ROLLBACK_SIGNAL_LAG_SECONDS_LIMIT
               value: "600"
             - name: TRADING_ROLLBACK_AUTONOMY_FAILURE_STREAK_LIMIT

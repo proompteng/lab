@@ -440,7 +440,7 @@ class Settings(BaseSettings):
         default=True, alias="TRADING_KILL_SWITCH_ENABLED"
     )
     trading_emergency_stop_enabled: bool = Field(
-        default=True,
+        default=False,
         alias="TRADING_EMERGENCY_STOP_ENABLED",
         description="Enable autonomous emergency stop hooks that block order submission after critical safety breaches.",
     )
