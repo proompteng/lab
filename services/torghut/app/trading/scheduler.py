@@ -897,10 +897,13 @@ class TradingPipeline:
                 )
             if not market_context_status.allow_llm:
                 self.state.metrics.llm_market_context_block_total += 1
-                fail_mode_shadow = settings.trading_market_context_fail_mode == "shadow_only"
+                market_context_shadow_mode = (
+                    guardrails.shadow_mode
+                    or settings.trading_market_context_fail_mode == "shadow_only"
+                )
                 self.state.metrics.record_market_context_result(
                     market_context_status.reason,
-                    shadow_mode=fail_mode_shadow,
+                    shadow_mode=market_context_shadow_mode,
                 )
                 return self._handle_llm_unavailable(
                     session,
@@ -909,7 +912,7 @@ class TradingPipeline:
                     account,
                     positions,
                     reason=market_context_status.reason or "market_context_unavailable",
-                    shadow_mode=fail_mode_shadow,
+                    shadow_mode=market_context_shadow_mode,
                     effective_fail_mode=guardrails.effective_fail_mode,
                     risk_flags=market_context_status.risk_flags,
                     market_context=market_context,

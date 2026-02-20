@@ -86,6 +86,45 @@ class TestLlmGuardrails(TestCase):
             ]
             config.settings.llm_model_version_lock = original["llm_model_version_lock"]
 
+    def test_stage3_requires_explicit_model_version_lock(self) -> None:
+        original = {
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_model_version_lock": config.settings.llm_model_version_lock,
+        }
+        config.settings.llm_rollout_stage = "stage3"
+        config.settings.llm_shadow_mode = False
+        config.settings.llm_allowed_models_raw = config.settings.llm_model
+        config.settings.llm_evaluation_report = "eval-2026-02-12"
+        config.settings.llm_effective_challenge_id = "challenge-2026-02-12"
+        config.settings.llm_shadow_completed_at = "2026-02-12T06:45:00Z"
+        config.settings.llm_model_version_lock = None
+
+        try:
+            missing_lock = evaluate_llm_guardrails()
+            self.assertTrue(missing_lock.shadow_mode)
+            self.assertIn("llm_model_version_lock_missing", missing_lock.reasons)
+
+            config.settings.llm_model_version_lock = config.settings.llm_model
+            with_lock = evaluate_llm_guardrails()
+            self.assertNotIn("llm_model_version_lock_missing", with_lock.reasons)
+        finally:
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_model_version_lock = original["llm_model_version_lock"]
+
     def test_stage2_model_lock_mismatch_forces_shadow(self) -> None:
         original = {
             "llm_rollout_stage": config.settings.llm_rollout_stage,

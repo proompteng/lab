@@ -504,8 +504,10 @@ class Settings(BaseSettings):
             self.llm_effective_challenge_id = self.llm_effective_challenge_id.strip()
         if self.llm_shadow_completed_at:
             self.llm_shadow_completed_at = self.llm_shadow_completed_at.strip()
-        if self.llm_model_version_lock:
-            self.llm_model_version_lock = self.llm_model_version_lock.strip()
+        if self.llm_model_version_lock is not None:
+            normalized_model_version_lock = self.llm_model_version_lock.strip()
+            # Model lock evidence must be explicitly configured; never backfill from llm_model.
+            self.llm_model_version_lock = normalized_model_version_lock or None
 
     @property
     def sqlalchemy_dsn(self) -> str:
