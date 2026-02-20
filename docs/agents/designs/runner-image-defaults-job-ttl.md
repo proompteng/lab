@@ -22,7 +22,7 @@ cleanup.
   - `spec.runtime.config.ttlSecondsAfterFinished` overrides the env value.
   - TTL is clamped to `[30s, 7d]`.
 - Cluster (GitOps desired state): `JANGAR_AGENT_RUNNER_IMAGE` resolves to
-  `registry.ide-newton.ts.net/lab/codex-universal:5436c9d2@sha256:ff8e864d9ad6319fd46629f340c046370fd10cc9b2f31e7ddc100124a080e3f8`
+  `registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl`
   via `runner.image.*` in `argocd/applications/agents/values.yaml`. `JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS` is set
   to 600, matching chart defaults.
 

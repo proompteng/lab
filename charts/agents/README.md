@@ -342,7 +342,7 @@ agentctl run submit \
   --agent codex-agent \
   --impl codex-impl-sample \
   --runtime workflow \
-  --workload-image registry.ide-newton.ts.net/lab/codex-universal:latest
+  --workload-image registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl
 ```
 
 Replace the workload image with your own agent-runner build.

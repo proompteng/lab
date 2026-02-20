@@ -43,7 +43,7 @@ As of 2026-02-07 (repo `main`), the repo declares:
 - Images pinned by GitOps (from `argocd/applications/agents/values.yaml`):
   - Control plane (Deployment `agents`): `registry.ide-newton.ts.net/lab/jangar-control-plane:5436c9d2@sha256:b511d73a2622ea3a4f81f5507899bca1970a0e7b6a9742b42568362f1d682b9a`
   - Controllers (Deployment `agents-controllers`): `registry.ide-newton.ts.net/lab/jangar:5436c9d2@sha256:d673055eb54af663963dedfee69e63de46059254b830eca2a52e97e641f00349`
-  - Runtime runner (AgentRun pods): `registry.ide-newton.ts.net/lab/codex-universal:5436c9d2@sha256:ff8e864d9ad6319fd46629f340c046370fd10cc9b2f31e7ddc100124a080e3f8`
+  - Runtime runner (AgentRun pods): `registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl`
 - Controllers enabled: `controllers.enabled: true`. See `argocd/applications/agents/values.yaml`.
 - Namespaced reconciliation (not cluster-scoped): `controller.namespaces: [agents]` and `rbac.clusterScoped: false`.
   See `argocd/applications/agents/values.yaml`.

@@ -22,7 +22,7 @@ spec:
         parameters:
           stage: implement
   workload:
-    image: registry.ide-newton.ts.net/lab/codex-universal:latest
+    image: registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl
     resources:
       requests:
         cpu: 250m

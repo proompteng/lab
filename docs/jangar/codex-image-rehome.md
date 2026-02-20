@@ -134,4 +134,4 @@ Update references to the Dockerfile and build helper in:
 ## Assumptions
 
 - Jangar is the intended long-term owner of Codex workflow runtime assets.
-- The image tag and registry remain `registry.ide-newton.ts.net/lab/codex-universal:latest` for now.
+- The image tag and registry remain `registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl` for now.

@@ -4,7 +4,7 @@ metadata:
   name: codex-autonomous
   namespace: jangar
   annotations:
-    codex-universal-image-digest: latest
+    codex-universal-image-digest: sha256:5b8ea0386b7377ef9e910ca3a32fa392e5439a92f314aeac8885d4d2e35a1ea4
 spec:
   serviceAccountName: jangar-inspector
   parallelism: 1
@@ -122,7 +122,7 @@ spec:
           - name: iteration
           - name: iteration_cycle
       container:
-        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        image: registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl
         imagePullPolicy: Always
         env:
           - name: REPO_URL
@@ -311,7 +311,7 @@ spec:
           - name: rawEvent
           - name: eventBody
       container:
-        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        image: registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl
         imagePullPolicy: Always
         env:
           - name: CODEX_CWD
