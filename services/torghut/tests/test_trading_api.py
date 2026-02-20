@@ -14,7 +14,14 @@ from app.db import get_session
 from app.main import app
 from app.trading.scheduler import TradingScheduler
 from app.config import settings
-from app.models import Base, Execution, ExecutionTCAMetric, LLMDecisionReview, Strategy, TradeDecision
+from app.models import (
+    Base,
+    Execution,
+    ExecutionTCAMetric,
+    LLMDecisionReview,
+    Strategy,
+    TradeDecision,
+)
 
 
 class TestTradingApi(TestCase):
@@ -26,7 +33,9 @@ class TestTradingApi(TestCase):
             poolclass=StaticPool,
         )
         Base.metadata.create_all(engine)
-        self.session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        self.session_local = sessionmaker(
+            bind=engine, expire_on_commit=False, future=True
+        )
 
         def _override_session() -> Session:
             with self.session_local() as session:
@@ -148,7 +157,9 @@ class TestTradingApi(TestCase):
 
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
-    def test_trading_health_ok(self, _mock_clickhouse: object, _mock_alpaca: object) -> None:
+    def test_trading_health_ok(
+        self, _mock_clickhouse: object, _mock_alpaca: object
+    ) -> None:
         original = settings.trading_enabled
         settings.trading_enabled = True
         try:
@@ -168,7 +179,9 @@ class TestTradingApi(TestCase):
 
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": False, "detail": "down"})
-    def test_trading_health_dependency_failure(self, _mock_clickhouse: object, _mock_alpaca: object) -> None:
+    def test_trading_health_dependency_failure(
+        self, _mock_clickhouse: object, _mock_alpaca: object
+    ) -> None:
         original = settings.trading_enabled
         settings.trading_enabled = True
         try:
@@ -189,9 +202,25 @@ class TestTradingApi(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertIn("llm_evaluation", payload)
+        self.assertIn("control_plane_contract", payload)
         evaluation = payload["llm_evaluation"]
         self.assertTrue(evaluation["ok"])
         self.assertGreaterEqual(evaluation["metrics"]["total_reviews"], 1)
+        control_plane_contract = payload["control_plane_contract"]
+        self.assertEqual(
+            control_plane_contract["contract_version"], "torghut.quant-producer.v1"
+        )
+        self.assertIn("signal_lag_seconds", control_plane_contract)
+
+    def test_trading_metrics_includes_control_plane_contract(self) -> None:
+        response = self.client.get("/trading/metrics")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("control_plane_contract", payload)
+        self.assertEqual(
+            payload["control_plane_contract"]["contract_version"],
+            "torghut.quant-producer.v1",
+        )
 
     def test_trading_status_includes_signal_ingest_metadata(self) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)

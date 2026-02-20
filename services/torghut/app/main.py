@@ -96,6 +96,7 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
     state = scheduler.state
     llm_evaluation = _load_llm_evaluation(session)
     tca_summary = _load_tca_summary(session)
+    control_plane_contract = _build_control_plane_contract(state)
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -126,6 +127,7 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
         "llm": scheduler.llm_status(),
         "llm_evaluation": llm_evaluation,
         "tca": tca_summary,
+        "control_plane_contract": control_plane_contract,
     }
 
 
@@ -138,7 +140,11 @@ def trading_metrics(session: Session = Depends(get_session)) -> dict[str, object
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
     metrics = scheduler.state.metrics
-    return {"metrics": metrics.__dict__, "tca": _load_tca_summary(session)}
+    return {
+        "metrics": metrics.__dict__,
+        "tca": _load_tca_summary(session),
+        "control_plane_contract": _build_control_plane_contract(scheduler.state),
+    }
 
 
 @app.get("/trading/autonomy")
@@ -194,7 +200,9 @@ def prometheus_metrics(session: Session = Depends(get_session)) -> Response:
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
     metrics = scheduler.state.metrics
-    payload = render_trading_metrics({**metrics.__dict__, "tca_summary": _load_tca_summary(session)})
+    payload = render_trading_metrics(
+        {**metrics.__dict__, "tca_summary": _load_tca_summary(session)}
+    )
     return Response(content=payload, media_type="text/plain; version=0.0.4")
 
 
@@ -251,7 +259,9 @@ def trading_executions(
     execution_ids = [execution.id for execution in executions]
     tca_by_execution: dict[str, ExecutionTCAMetric] = {}
     if execution_ids:
-        tca_stmt = select(ExecutionTCAMetric).where(ExecutionTCAMetric.execution_id.in_(execution_ids))
+        tca_stmt = select(ExecutionTCAMetric).where(
+            ExecutionTCAMetric.execution_id.in_(execution_ids)
+        )
         tca_rows = session.execute(tca_stmt).scalars().all()
         tca_by_execution = {str(row.execution_id): row for row in tca_rows}
     payload = [
@@ -305,7 +315,9 @@ def trading_tca(
     payload_rows = [
         {
             "execution_id": str(row.execution_id),
-            "trade_decision_id": str(row.trade_decision_id) if row.trade_decision_id else None,
+            "trade_decision_id": str(row.trade_decision_id)
+            if row.trade_decision_id
+            else None,
             "strategy_id": str(row.strategy_id) if row.strategy_id else None,
             "alpaca_account_label": row.alpaca_account_label,
             "symbol": row.symbol,
@@ -383,6 +395,23 @@ def _check_postgres(session: Session) -> dict[str, object]:
     return {"ok": True, "detail": "ok"}
 
 
+def _build_control_plane_contract(state: object) -> dict[str, object]:
+    signal_lag_seconds = getattr(
+        getattr(state, "metrics", None), "signal_lag_seconds", None
+    )
+    last_run_at = getattr(state, "last_run_at", None)
+    last_reconcile_at = getattr(state, "last_reconcile_at", None)
+    return {
+        "contract_version": "torghut.quant-producer.v1",
+        "signal_lag_seconds": signal_lag_seconds,
+        "running": bool(getattr(state, "running", False)),
+        "last_run_at": last_run_at,
+        "last_reconcile_at": last_reconcile_at,
+        "market_context_required": settings.trading_market_context_required,
+        "market_context_max_staleness_seconds": settings.trading_market_context_max_staleness_seconds,
+    }
+
+
 def _check_clickhouse() -> dict[str, object]:
     if not settings.trading_clickhouse_url:
         return {"ok": False, "detail": "clickhouse url missing"}
@@ -397,7 +426,9 @@ def _check_clickhouse() -> dict[str, object]:
     if settings.trading_clickhouse_password:
         request.add_header("X-ClickHouse-Key", settings.trading_clickhouse_password)
     try:
-        with urlopen(request, timeout=settings.trading_clickhouse_timeout_seconds) as response:
+        with urlopen(
+            request, timeout=settings.trading_clickhouse_timeout_seconds
+        ) as response:
             payload = response.read().decode("utf-8")
     except Exception as exc:  # pragma: no cover - depends on network
         return {"ok": False, "detail": f"clickhouse error: {exc}"}
@@ -446,7 +477,11 @@ def _load_tca_summary(session: Session) -> dict[str, object]:
         )
     ).one()
     order_count_raw = row[0]
-    order_count = int(order_count_raw) if isinstance(order_count_raw, (int, float, Decimal)) else 0
+    order_count = (
+        int(order_count_raw)
+        if isinstance(order_count_raw, (int, float, Decimal))
+        else 0
+    )
     return {
         "order_count": order_count,
         "avg_slippage_bps": row[1],
@@ -456,7 +491,9 @@ def _load_tca_summary(session: Session) -> dict[str, object]:
     }
 
 
-def _aggregate_tca_rows(rows: Sequence[ExecutionTCAMetric]) -> dict[str, list[dict[str, object]]]:
+def _aggregate_tca_rows(
+    rows: Sequence[ExecutionTCAMetric],
+) -> dict[str, list[dict[str, object]]]:
     def _as_int(value: object) -> int:
         if isinstance(value, bool):
             return int(value)
@@ -512,13 +549,19 @@ def _aggregate_tca_rows(rows: Sequence[ExecutionTCAMetric]) -> dict[str, list[di
         for agg in (strategy_agg, symbol_agg):
             agg["order_count"] = _as_int(agg["order_count"]) + 1
             if row.slippage_bps is not None:
-                agg["_slippage_sum"] = _as_float(agg["_slippage_sum"]) + float(row.slippage_bps)
+                agg["_slippage_sum"] = _as_float(agg["_slippage_sum"]) + float(
+                    row.slippage_bps
+                )
                 agg["_slippage_count"] = _as_int(agg["_slippage_count"]) + 1
             if row.shortfall_notional is not None:
-                agg["_shortfall_sum"] = _as_float(agg["_shortfall_sum"]) + float(row.shortfall_notional)
+                agg["_shortfall_sum"] = _as_float(agg["_shortfall_sum"]) + float(
+                    row.shortfall_notional
+                )
                 agg["_shortfall_count"] = _as_int(agg["_shortfall_count"]) + 1
             if row.churn_ratio is not None:
-                agg["_churn_sum"] = _as_float(agg["_churn_sum"]) + float(row.churn_ratio)
+                agg["_churn_sum"] = _as_float(agg["_churn_sum"]) + float(
+                    row.churn_ratio
+                )
                 agg["_churn_count"] = _as_int(agg["_churn_count"]) + 1
 
     def _finalize(aggregates: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -530,9 +573,15 @@ def _aggregate_tca_rows(rows: Sequence[ExecutionTCAMetric]) -> dict[str, list[di
             shortfall_sum = _as_float(aggregate.pop("_shortfall_sum"))
             churn_count = _as_int(aggregate.pop("_churn_count"))
             churn_sum = _as_float(aggregate.pop("_churn_sum"))
-            aggregate["avg_slippage_bps"] = (slippage_sum / slippage_count) if slippage_count else None
-            aggregate["avg_shortfall_notional"] = (shortfall_sum / shortfall_count) if shortfall_count else None
-            aggregate["avg_churn_ratio"] = (churn_sum / churn_count) if churn_count else None
+            aggregate["avg_slippage_bps"] = (
+                (slippage_sum / slippage_count) if slippage_count else None
+            )
+            aggregate["avg_shortfall_notional"] = (
+                (shortfall_sum / shortfall_count) if shortfall_count else None
+            )
+            aggregate["avg_churn_ratio"] = (
+                (churn_sum / churn_count) if churn_count else None
+            )
             payload.append(aggregate)
         return payload
 
