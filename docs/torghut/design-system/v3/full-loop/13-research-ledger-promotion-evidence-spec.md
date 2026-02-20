@@ -2,7 +2,7 @@
 
 ## Status
 - Version: `v3-ledger-spec`
-- Last updated: `2026-02-12`
+- Last updated: `2026-02-20`
 - Maturity: `draft`
 
 ## Objective
@@ -62,12 +62,18 @@ Create an immutable promotion evidence contract so every candidate can be replay
   - policy checksum
   - gate pass/fail per gate
   - unresolved reasons with reproducible evidence refs
+- Gate `gate6_profitability_evidence` is mandatory for `paper` and `live` promotion targets.
+  - Requires `profitability-evidence-v4` + `profitability-benchmark-v4` schemas.
+  - Requires validator status `passed=true`.
+  - Enforces configured thresholds for market uplift, regime coverage, cost realism,
+    calibration error, and reproducibility hash count.
 - A promotion is valid only when:
   1. `run_id` exists and is immutable,
   2. required folds >= minimum,
   3. null-ratio and staleness gates pass,
-  4. reproducibility check passes,
-  5. selection-bias checks are within guardrail thresholds.
+  4. profitability evidence validator passes with complete artifacts,
+  5. reproducibility check passes,
+  6. selection-bias checks are within guardrail thresholds.
 
 ## Reproducibility Contract
 - Inputs for every run are addressable and versioned.
@@ -78,6 +84,10 @@ Create an immutable promotion evidence contract so every candidate can be replay
 - `research-report.json` (machine-readable)
 - `research-report.md` (human readable)
 - `gate-evaluation.json` reference hash
+- `profitability-benchmark-v4.json` (baseline vs candidate by market/regime slices)
+- `profitability-evidence-v4.json` (risk-adjusted + realism + calibration + reproducibility contract)
+- `profitability-evidence-validation.json` (machine-readable pass/fail + reason codes)
+- `promotion-evidence-gate.json` (final promotion gate aggregation + artifact pointers)
 - `paper-candidate/strategy-configmap-patch.yaml` when promotion_allowed
 
 ## Acceptance Criteria
@@ -85,3 +95,4 @@ Create an immutable promotion evidence contract so every candidate can be replay
 - Every deny has a reason code + evidence refs.
 - `run_autonomous_lane` fails fast when ledger write fails in strict mode.
 - Evidence export can be replayed by an operator to reproduce the lane outcome.
+- Promotion cannot proceed when profitability evidence artifacts are missing, non-reproducible, or below threshold.

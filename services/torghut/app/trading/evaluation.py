@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterable, Protocol, cast
 
@@ -134,7 +136,11 @@ def generate_walk_forward_folds(
         end = end.replace(tzinfo=timezone.utc)
     if end <= start:
         raise ValueError("end must be after start")
-    if train_window <= timedelta(0) or test_window <= timedelta(0) or step <= timedelta(0):
+    if (
+        train_window <= timedelta(0)
+        or test_window <= timedelta(0)
+        or step <= timedelta(0)
+    ):
         raise ValueError("train_window, test_window, and step must be positive")
 
     folds: list[WalkForwardFold] = []
@@ -174,7 +180,9 @@ def run_walk_forward(
         for signal in signals:
             features = extract_signal_features(signal)
             for decision in decision_engine.evaluate(signal, strategies):
-                fold_result.decisions.append(WalkForwardDecision(decision=decision, features=features))
+                fold_result.decisions.append(
+                    WalkForwardDecision(decision=decision, features=features)
+                )
         results.append(fold_result)
 
     return WalkForwardResults(generated_at=datetime.now(timezone.utc), folds=results)
@@ -207,14 +215,660 @@ def _fold_regime_payload(decisions: list[WalkForwardDecision]) -> dict[str, str]
     return classify_regime(decisions).to_payload()
 
 
+@dataclass(frozen=True)
+class ProfitabilityBenchmarkSliceV4:
+    slice_key: str
+    slice_type: str
+    candidate_metrics: dict[str, str]
+    baseline_metrics: dict[str, str]
+    deltas: dict[str, str]
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "slice_key": self.slice_key,
+            "slice_type": self.slice_type,
+            "candidate_metrics": dict(self.candidate_metrics),
+            "baseline_metrics": dict(self.baseline_metrics),
+            "deltas": dict(self.deltas),
+        }
+
+
+@dataclass(frozen=True)
+class ProfitabilityBenchmarkV4:
+    schema_version: str
+    executed_at: datetime
+    candidate_id: str
+    baseline_id: str
+    slices: list[ProfitabilityBenchmarkSliceV4]
+    required_slice_keys: list[str]
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "executed_at": self.executed_at.isoformat(),
+            "candidate_id": self.candidate_id,
+            "baseline_id": self.baseline_id,
+            "required_slice_keys": list(self.required_slice_keys),
+            "slices": [item.to_payload() for item in self.slices],
+        }
+
+
+@dataclass(frozen=True)
+class ProfitabilityEvidenceV4:
+    schema_version: str
+    generated_at: datetime
+    run_id: str
+    candidate_id: str
+    baseline_id: str
+    risk_adjusted_metrics: dict[str, str]
+    cost_fill_realism: dict[str, object]
+    confidence_calibration: dict[str, object]
+    reproducibility: dict[str, object]
+    benchmark: ProfitabilityBenchmarkV4
+    artifact_refs: list[str]
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "generated_at": self.generated_at.isoformat(),
+            "run_id": self.run_id,
+            "candidate_id": self.candidate_id,
+            "baseline_id": self.baseline_id,
+            "risk_adjusted_metrics": dict(self.risk_adjusted_metrics),
+            "cost_fill_realism": dict(self.cost_fill_realism),
+            "confidence_calibration": dict(self.confidence_calibration),
+            "reproducibility": dict(self.reproducibility),
+            "benchmark": self.benchmark.to_payload(),
+            "artifact_refs": list(self.artifact_refs),
+        }
+
+
+@dataclass(frozen=True)
+class ProfitabilityEvidenceThresholdsV4:
+    min_market_net_pnl_delta: Decimal = Decimal("0")
+    min_risk_adjusted_return_over_drawdown: Decimal = Decimal("0")
+    min_regime_slice_pass_ratio: Decimal = Decimal("0.5")
+    max_cost_bps: Decimal = Decimal("35")
+    min_confidence_samples: int = 1
+    max_calibration_error: Decimal = Decimal("0.45")
+    min_reproducibility_hashes: int = 5
+    required_hash_keys: tuple[str, ...] = (
+        "signals",
+        "strategy_config",
+        "gate_policy",
+        "candidate_report",
+        "baseline_report",
+    )
+
+    @classmethod
+    def from_payload(
+        cls, payload: dict[str, Any]
+    ) -> "ProfitabilityEvidenceThresholdsV4":
+        return cls(
+            min_market_net_pnl_delta=_decimal(payload.get("min_market_net_pnl_delta"))
+            or Decimal("0"),
+            min_risk_adjusted_return_over_drawdown=(
+                _decimal(payload.get("min_risk_adjusted_return_over_drawdown"))
+                or Decimal("0")
+            ),
+            min_regime_slice_pass_ratio=_decimal(
+                payload.get("min_regime_slice_pass_ratio")
+            )
+            or Decimal("0.5"),
+            max_cost_bps=_decimal(payload.get("max_cost_bps")) or Decimal("35"),
+            min_confidence_samples=int(payload.get("min_confidence_samples", 1)),
+            max_calibration_error=_decimal(payload.get("max_calibration_error"))
+            or Decimal("0.45"),
+            min_reproducibility_hashes=int(
+                payload.get("min_reproducibility_hashes", 5)
+            ),
+            required_hash_keys=tuple(
+                str(item)
+                for item in payload.get(
+                    "required_hash_keys",
+                    [
+                        "signals",
+                        "strategy_config",
+                        "gate_policy",
+                        "candidate_report",
+                        "baseline_report",
+                    ],
+                )
+                if isinstance(item, str)
+            ),
+        )
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "min_market_net_pnl_delta": str(self.min_market_net_pnl_delta),
+            "min_risk_adjusted_return_over_drawdown": str(
+                self.min_risk_adjusted_return_over_drawdown
+            ),
+            "min_regime_slice_pass_ratio": str(self.min_regime_slice_pass_ratio),
+            "max_cost_bps": str(self.max_cost_bps),
+            "min_confidence_samples": self.min_confidence_samples,
+            "max_calibration_error": str(self.max_calibration_error),
+            "min_reproducibility_hashes": self.min_reproducibility_hashes,
+            "required_hash_keys": list(self.required_hash_keys),
+        }
+
+
+@dataclass(frozen=True)
+class ProfitabilityEvidenceValidationResultV4:
+    passed: bool
+    reasons: list[str]
+    reason_details: list[dict[str, object]]
+    artifact_refs: list[str]
+    checked_at: datetime
+    thresholds: ProfitabilityEvidenceThresholdsV4
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "passed": self.passed,
+            "reasons": list(self.reasons),
+            "reason_details": [dict(item) for item in self.reason_details],
+            "artifact_refs": list(self.artifact_refs),
+            "checked_at": self.checked_at.isoformat(),
+            "thresholds": self.thresholds.to_payload(),
+        }
+
+
+def execute_profitability_benchmark_v4(
+    *,
+    candidate_id: str,
+    baseline_id: str,
+    candidate_report_payload: dict[str, Any],
+    baseline_report_payload: dict[str, Any],
+    required_slice_keys: list[str] | None = None,
+    executed_at: datetime | None = None,
+) -> ProfitabilityBenchmarkV4:
+    candidate_slices = _extract_report_slices(candidate_report_payload)
+    baseline_slices = _extract_report_slices(baseline_report_payload)
+    keys = sorted(
+        set(
+            [
+                *(required_slice_keys or ["market:all"]),
+                *candidate_slices.keys(),
+                *baseline_slices.keys(),
+            ]
+        )
+    )
+    slices: list[ProfitabilityBenchmarkSliceV4] = []
+    for key in keys:
+        candidate_metrics = candidate_slices.get(key, _empty_slice_metrics())
+        baseline_metrics = baseline_slices.get(key, _empty_slice_metrics())
+        deltas = _slice_deltas(candidate_metrics, baseline_metrics)
+        slice_type = "market" if key.startswith("market:") else "regime"
+        slices.append(
+            ProfitabilityBenchmarkSliceV4(
+                slice_key=key,
+                slice_type=slice_type,
+                candidate_metrics=candidate_metrics,
+                baseline_metrics=baseline_metrics,
+                deltas=deltas,
+            )
+        )
+
+    return ProfitabilityBenchmarkV4(
+        schema_version="profitability-benchmark-v4",
+        executed_at=executed_at or datetime.now(timezone.utc),
+        candidate_id=candidate_id,
+        baseline_id=baseline_id,
+        slices=slices,
+        required_slice_keys=keys,
+    )
+
+
+def build_profitability_evidence_v4(
+    *,
+    run_id: str,
+    candidate_id: str,
+    baseline_id: str,
+    candidate_report_payload: dict[str, Any],
+    benchmark: ProfitabilityBenchmarkV4,
+    confidence_values: list[Decimal],
+    reproducibility_hashes: dict[str, str],
+    artifact_refs: list[str],
+    generated_at: datetime | None = None,
+) -> ProfitabilityEvidenceV4:
+    metrics = _as_dict(candidate_report_payload.get("metrics"))
+    impact = _as_dict(candidate_report_payload.get("impact_assumptions"))
+    assumptions = _as_dict(impact.get("assumptions"))
+    decision_count = _as_int(metrics.get("decision_count")) or 0
+    trade_count = _as_int(metrics.get("trade_count")) or 0
+    cost_bps = _decimal(metrics.get("cost_bps")) or Decimal("0")
+    net_pnl = _decimal(metrics.get("net_pnl")) or Decimal("0")
+    max_drawdown = _decimal(metrics.get("max_drawdown")) or Decimal("0")
+    return_over_drawdown = Decimal("0")
+    if max_drawdown > 0:
+        return_over_drawdown = net_pnl / max_drawdown
+
+    fold_net_pnls = _report_fold_net_pnls(candidate_report_payload)
+    pnl_mean = _decimal_mean(fold_net_pnls)
+    pnl_std = _decimal_std(fold_net_pnls, pnl_mean)
+    sharpe_like = Decimal("0")
+    if pnl_std > 0:
+        sharpe_like = pnl_mean / pnl_std
+
+    benchmark_summary = _benchmark_summary(benchmark)
+    confidence_summary = _confidence_summary(confidence_values, net_pnl)
+    reproducibility_payload = _reproducibility_payload(reproducibility_hashes)
+
+    return ProfitabilityEvidenceV4(
+        schema_version="profitability-evidence-v4",
+        generated_at=generated_at or datetime.now(timezone.utc),
+        run_id=run_id,
+        candidate_id=candidate_id,
+        baseline_id=baseline_id,
+        risk_adjusted_metrics={
+            "net_pnl": str(net_pnl),
+            "max_drawdown": str(max_drawdown),
+            "return_over_drawdown": str(return_over_drawdown),
+            "sharpe_like": str(sharpe_like),
+            "regime_slice_pass_ratio": str(
+                benchmark_summary["regime_slice_pass_ratio"]
+            ),
+            "market_net_pnl_delta": str(benchmark_summary["market_net_pnl_delta"]),
+        },
+        cost_fill_realism={
+            "decision_count": decision_count,
+            "trade_count": trade_count,
+            "trade_to_decision_ratio": str(
+                _safe_ratio(Decimal(trade_count), Decimal(decision_count))
+            ),
+            "cost_bps": str(cost_bps),
+            "turnover_ratio": str(
+                _decimal(metrics.get("turnover_ratio")) or Decimal("0")
+            ),
+            "recorded_inputs_count": _as_int(assumptions.get("recorded_inputs_count"))
+            or 0,
+            "fallback_inputs_count": _as_int(assumptions.get("fallback_inputs_count"))
+            or 0,
+            "decisions_with_spread": _as_int(impact.get("decisions_with_spread")) or 0,
+            "decisions_with_volatility": _as_int(
+                impact.get("decisions_with_volatility")
+            )
+            or 0,
+            "decisions_with_adv": _as_int(impact.get("decisions_with_adv")) or 0,
+        },
+        confidence_calibration=confidence_summary,
+        reproducibility=reproducibility_payload,
+        benchmark=benchmark,
+        artifact_refs=sorted(set(artifact_refs)),
+    )
+
+
+def validate_profitability_evidence_v4(
+    evidence: ProfitabilityEvidenceV4,
+    *,
+    thresholds: ProfitabilityEvidenceThresholdsV4 | None = None,
+    checked_at: datetime | None = None,
+) -> ProfitabilityEvidenceValidationResultV4:
+    policy = thresholds or ProfitabilityEvidenceThresholdsV4()
+    reasons: list[str] = []
+    details: list[dict[str, object]] = []
+
+    if evidence.schema_version != "profitability-evidence-v4":
+        reasons.append("profitability_evidence_schema_invalid")
+        details.append(
+            {
+                "reason": "profitability_evidence_schema_invalid",
+                "expected": "profitability-evidence-v4",
+            }
+        )
+    if evidence.benchmark.schema_version != "profitability-benchmark-v4":
+        reasons.append("profitability_benchmark_schema_invalid")
+        details.append(
+            {
+                "reason": "profitability_benchmark_schema_invalid",
+                "expected": "profitability-benchmark-v4",
+            }
+        )
+
+    market_delta = _decimal(
+        evidence.risk_adjusted_metrics.get("market_net_pnl_delta")
+    ) or Decimal("0")
+    if market_delta < policy.min_market_net_pnl_delta:
+        reasons.append("market_net_pnl_delta_below_threshold")
+        details.append(
+            {
+                "reason": "market_net_pnl_delta_below_threshold",
+                "actual": str(market_delta),
+                "minimum": str(policy.min_market_net_pnl_delta),
+            }
+        )
+
+    return_over_drawdown = _decimal(
+        evidence.risk_adjusted_metrics.get("return_over_drawdown")
+    ) or Decimal("0")
+    if return_over_drawdown < policy.min_risk_adjusted_return_over_drawdown:
+        reasons.append("risk_adjusted_return_over_drawdown_below_threshold")
+        details.append(
+            {
+                "reason": "risk_adjusted_return_over_drawdown_below_threshold",
+                "actual": str(return_over_drawdown),
+                "minimum": str(policy.min_risk_adjusted_return_over_drawdown),
+            }
+        )
+
+    regime_ratio = _decimal(
+        evidence.risk_adjusted_metrics.get("regime_slice_pass_ratio")
+    ) or Decimal("0")
+    if regime_ratio < policy.min_regime_slice_pass_ratio:
+        reasons.append("regime_slice_pass_ratio_below_threshold")
+        details.append(
+            {
+                "reason": "regime_slice_pass_ratio_below_threshold",
+                "actual": str(regime_ratio),
+                "minimum": str(policy.min_regime_slice_pass_ratio),
+            }
+        )
+
+    cost_bps = _decimal(evidence.cost_fill_realism.get("cost_bps")) or Decimal("0")
+    if cost_bps > policy.max_cost_bps:
+        reasons.append("cost_bps_exceeds_threshold")
+        details.append(
+            {
+                "reason": "cost_bps_exceeds_threshold",
+                "actual": str(cost_bps),
+                "maximum": str(policy.max_cost_bps),
+            }
+        )
+
+    confidence_samples = (
+        _as_int(evidence.confidence_calibration.get("sample_count")) or 0
+    )
+    if confidence_samples < policy.min_confidence_samples:
+        reasons.append("confidence_samples_below_minimum")
+        details.append(
+            {
+                "reason": "confidence_samples_below_minimum",
+                "actual": confidence_samples,
+                "minimum": policy.min_confidence_samples,
+            }
+        )
+    calibration_error = _decimal(
+        evidence.confidence_calibration.get("calibration_error")
+    ) or Decimal("1")
+    if calibration_error > policy.max_calibration_error:
+        reasons.append("calibration_error_exceeds_threshold")
+        details.append(
+            {
+                "reason": "calibration_error_exceeds_threshold",
+                "actual": str(calibration_error),
+                "maximum": str(policy.max_calibration_error),
+            }
+        )
+
+    reproducibility = _as_dict(evidence.reproducibility)
+    hashes = {
+        str(key): str(value)
+        for key, value in _as_dict(reproducibility.get("artifact_hashes")).items()
+        if str(key).strip() and str(value).strip()
+    }
+    if len(hashes) < policy.min_reproducibility_hashes:
+        reasons.append("reproducibility_hash_count_below_minimum")
+        details.append(
+            {
+                "reason": "reproducibility_hash_count_below_minimum",
+                "actual": len(hashes),
+                "minimum": policy.min_reproducibility_hashes,
+            }
+        )
+    missing_hash_keys = sorted(
+        [key for key in policy.required_hash_keys if key not in hashes]
+    )
+    if missing_hash_keys:
+        reasons.append("reproducibility_hash_keys_missing")
+        details.append(
+            {
+                "reason": "reproducibility_hash_keys_missing",
+                "missing_keys": missing_hash_keys,
+            }
+        )
+
+    return ProfitabilityEvidenceValidationResultV4(
+        passed=not reasons,
+        reasons=sorted(set(reasons)),
+        reason_details=details,
+        artifact_refs=sorted(set(evidence.artifact_refs)),
+        checked_at=checked_at or datetime.now(timezone.utc),
+        thresholds=policy,
+    )
+
+
+def _extract_report_slices(report_payload: dict[str, Any]) -> dict[str, dict[str, str]]:
+    metrics = _as_dict(report_payload.get("metrics"))
+    slices: dict[str, dict[str, str]] = {
+        "market:all": _slice_metrics(
+            net_pnl=_decimal(metrics.get("net_pnl")),
+            max_drawdown=_decimal(metrics.get("max_drawdown")),
+            cost_bps=_decimal(metrics.get("cost_bps")),
+            turnover_ratio=_decimal(metrics.get("turnover_ratio")),
+            trade_count=_as_int(metrics.get("trade_count")),
+        )
+    }
+    robustness = _as_dict(report_payload.get("robustness"))
+    folds = robustness.get("folds")
+    if isinstance(folds, list):
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for raw in cast(list[object], folds):
+            if not isinstance(raw, dict):
+                continue
+            fold = cast(dict[str, Any], raw)
+            regime = str(fold.get("regime_label", "")).strip() or "unknown"
+            grouped.setdefault(regime, []).append(fold)
+        for regime, entries in grouped.items():
+            net_pnl = sum(
+                ((_decimal(item.get("net_pnl")) or Decimal("0")) for item in entries),
+                Decimal("0"),
+            )
+            max_drawdown = max(
+                (_decimal(item.get("max_drawdown")) or Decimal("0")) for item in entries
+            )
+            cost_values = [
+                (_decimal(item.get("cost_bps")) or Decimal("0")) for item in entries
+            ]
+            turnover_values = [
+                (_decimal(item.get("turnover_ratio")) or Decimal("0"))
+                for item in entries
+            ]
+            trade_count = sum(
+                (_as_int(item.get("trade_count")) or 0) for item in entries
+            )
+            slices[f"regime:{regime}"] = _slice_metrics(
+                net_pnl=net_pnl,
+                max_drawdown=max_drawdown,
+                cost_bps=_decimal_mean(cost_values),
+                turnover_ratio=_decimal_mean(turnover_values),
+                trade_count=trade_count,
+            )
+    return slices
+
+
+def _slice_metrics(
+    *,
+    net_pnl: Decimal | None,
+    max_drawdown: Decimal | None,
+    cost_bps: Decimal | None,
+    turnover_ratio: Decimal | None,
+    trade_count: int | None,
+) -> dict[str, str]:
+    return {
+        "net_pnl": str(net_pnl or Decimal("0")),
+        "max_drawdown": str(max_drawdown or Decimal("0")),
+        "cost_bps": str(cost_bps or Decimal("0")),
+        "turnover_ratio": str(turnover_ratio or Decimal("0")),
+        "trade_count": str(trade_count or 0),
+    }
+
+
+def _empty_slice_metrics() -> dict[str, str]:
+    return _slice_metrics(
+        net_pnl=Decimal("0"),
+        max_drawdown=Decimal("0"),
+        cost_bps=Decimal("0"),
+        turnover_ratio=Decimal("0"),
+        trade_count=0,
+    )
+
+
+def _slice_deltas(
+    candidate: dict[str, str], baseline: dict[str, str]
+) -> dict[str, str]:
+    candidate_net = _decimal(candidate.get("net_pnl")) or Decimal("0")
+    baseline_net = _decimal(baseline.get("net_pnl")) or Decimal("0")
+    candidate_dd = _decimal(candidate.get("max_drawdown")) or Decimal("0")
+    baseline_dd = _decimal(baseline.get("max_drawdown")) or Decimal("0")
+    candidate_cost = _decimal(candidate.get("cost_bps")) or Decimal("0")
+    baseline_cost = _decimal(baseline.get("cost_bps")) or Decimal("0")
+    candidate_trades = _as_int(candidate.get("trade_count")) or 0
+    baseline_trades = _as_int(baseline.get("trade_count")) or 0
+    return {
+        "net_pnl_delta": str(candidate_net - baseline_net),
+        "max_drawdown_delta": str(candidate_dd - baseline_dd),
+        "cost_bps_delta": str(candidate_cost - baseline_cost),
+        "trade_count_delta": str(candidate_trades - baseline_trades),
+    }
+
+
+def _benchmark_summary(benchmark: ProfitabilityBenchmarkV4) -> dict[str, Decimal]:
+    market_delta = Decimal("0")
+    regime_total = 0
+    regime_pass = 0
+    for slice_item in benchmark.slices:
+        net_delta = _decimal(slice_item.deltas.get("net_pnl_delta")) or Decimal("0")
+        if slice_item.slice_key == "market:all":
+            market_delta = net_delta
+        if slice_item.slice_type == "regime":
+            regime_total += 1
+            if net_delta >= 0:
+                regime_pass += 1
+    pass_ratio = _safe_ratio(Decimal(regime_pass), Decimal(regime_total))
+    return {
+        "market_net_pnl_delta": market_delta,
+        "regime_slice_pass_ratio": pass_ratio,
+    }
+
+
+def _confidence_summary(
+    confidence_values: list[Decimal], net_pnl: Decimal
+) -> dict[str, object]:
+    if not confidence_values:
+        return {
+            "sample_count": 0,
+            "mean_confidence": "0",
+            "std_confidence": "0",
+            "calibration_target": "0",
+            "calibration_error": "1",
+        }
+    mean_confidence = _decimal_mean(confidence_values)
+    std_confidence = _decimal_std(confidence_values, mean_confidence)
+    calibration_target = Decimal("1") if net_pnl > 0 else Decimal("0")
+    calibration_error = abs(mean_confidence - calibration_target)
+    return {
+        "sample_count": len(confidence_values),
+        "mean_confidence": str(mean_confidence),
+        "std_confidence": str(std_confidence),
+        "calibration_target": str(calibration_target),
+        "calibration_error": str(calibration_error),
+    }
+
+
+def _reproducibility_payload(hashes: dict[str, str]) -> dict[str, object]:
+    normalized = {
+        str(key): str(value)
+        for key, value in hashes.items()
+        if str(key).strip() and str(value).strip()
+    }
+    manifest = json.dumps(sorted(normalized.items()), separators=(",", ":")).encode(
+        "utf-8"
+    )
+    manifest_hash = hashlib.sha256(manifest).hexdigest()
+    return {
+        "hash_algorithm": "sha256",
+        "artifact_hashes": normalized,
+        "manifest_hash": manifest_hash,
+    }
+
+
+def _report_fold_net_pnls(report_payload: dict[str, Any]) -> list[Decimal]:
+    robustness = _as_dict(report_payload.get("robustness"))
+    folds = robustness.get("folds")
+    if not isinstance(folds, list):
+        return []
+    values: list[Decimal] = []
+    for raw in cast(list[object], folds):
+        if not isinstance(raw, dict):
+            continue
+        fold = cast(dict[str, Any], raw)
+        value = _decimal(fold.get("net_pnl"))
+        if value is not None:
+            values.append(value)
+    return values
+
+
+def _decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    try:
+        return Decimal(str(value))
+    except (ArithmeticError, TypeError, ValueError):
+        return None
+
+
+def _decimal_mean(values: list[Decimal]) -> Decimal:
+    if not values:
+        return Decimal("0")
+    return sum(values, Decimal("0")) / Decimal(len(values))
+
+
+def _decimal_std(values: list[Decimal], mean: Decimal) -> Decimal:
+    if len(values) <= 1:
+        return Decimal("0")
+    variance = sum((value - mean) ** 2 for value in values) / Decimal(len(values))
+    return variance.sqrt()
+
+
+def _safe_ratio(numerator: Decimal, denominator: Decimal) -> Decimal:
+    if denominator <= 0:
+        return Decimal("0")
+    return numerator / denominator
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return cast(dict[str, Any], value)
+
+
+def _as_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 __all__ = [
     "FixtureSignalSource",
     "FoldResult",
+    "ProfitabilityBenchmarkSliceV4",
+    "ProfitabilityBenchmarkV4",
+    "ProfitabilityEvidenceThresholdsV4",
+    "ProfitabilityEvidenceV4",
+    "ProfitabilityEvidenceValidationResultV4",
     "SignalSource",
     "WalkForwardDecision",
     "WalkForwardFold",
     "WalkForwardResults",
+    "build_profitability_evidence_v4",
+    "execute_profitability_benchmark_v4",
     "generate_walk_forward_folds",
     "run_walk_forward",
+    "validate_profitability_evidence_v4",
     "write_walk_forward_results",
 ]

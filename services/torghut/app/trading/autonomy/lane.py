@@ -26,7 +26,17 @@ from ...models import (
     ResearchStressMetrics,
     Strategy,
 )
-from ..evaluation import FoldResult, WalkForwardDecision, WalkForwardFold, WalkForwardResults, write_walk_forward_results
+from ..evaluation import (
+    FoldResult,
+    ProfitabilityEvidenceThresholdsV4,
+    WalkForwardDecision,
+    WalkForwardFold,
+    WalkForwardResults,
+    build_profitability_evidence_v4,
+    execute_profitability_benchmark_v4,
+    validate_profitability_evidence_v4,
+    write_walk_forward_results,
+)
 from ..features import extract_price, extract_rsi
 from ..features import extract_signal_features
 from ..models import SignalEnvelope
@@ -37,7 +47,13 @@ from ..reporting import (
     write_evaluation_report,
 )
 from ..tca import build_tca_gate_inputs
-from .gates import GateEvaluationReport, GateInputs, GatePolicyMatrix, PromotionTarget, evaluate_gate_matrix
+from .gates import (
+    GateEvaluationReport,
+    GateInputs,
+    GatePolicyMatrix,
+    PromotionTarget,
+    evaluate_gate_matrix,
+)
 from .policy_checks import evaluate_promotion_prerequisites, evaluate_rollback_readiness
 from .runtime import StrategyRuntime, StrategyRuntimeConfig, default_runtime_registry
 
@@ -62,7 +78,7 @@ def upsert_autonomy_no_signal_run(
     gate_policy_path: Path,
     no_signal_reason: str | None,
     now: datetime,
-    code_version: str = 'live',
+    code_version: str = "live",
 ) -> str:
     """Persist a zero-signal window as a skipped research run."""
 
@@ -111,7 +127,7 @@ def upsert_autonomy_no_signal_run(
         if existing_run is None:
             run = ResearchRun(
                 run_id=run_id,
-                status='skipped',
+                status="skipped",
                 strategy_id=strategy_id,
                 strategy_name=strategy_id,
                 strategy_type=strategy_type,
@@ -120,33 +136,39 @@ def upsert_autonomy_no_signal_run(
                 feature_version=settings.trading_feature_normalization_version,
                 feature_schema_version=settings.trading_feature_schema_version,
                 feature_spec_hash=feature_spec_hash,
-                signal_source='autonomy-signals',
+                signal_source="autonomy-signals",
                 dataset_version=dataset_version,
                 dataset_from=query_start_utc,
                 dataset_to=query_end_utc,
-                dataset_snapshot_ref='no_signal_window',
-                runner_version='run_autonomous_lane_no_signals',
-                runner_binary_hash=hashlib.sha256(run_id.encode('utf-8')).hexdigest(),
+                dataset_snapshot_ref="no_signal_window",
+                runner_version="run_autonomous_lane_no_signals",
+                runner_binary_hash=hashlib.sha256(run_id.encode("utf-8")).hexdigest(),
                 updated_at=now,
             )
             session.add(run)
         else:
-            existing_run.status = 'skipped'
+            existing_run.status = "skipped"
             existing_run.strategy_id = strategy_id
             existing_run.strategy_name = strategy_id
             existing_run.strategy_type = strategy_type
             existing_run.strategy_version = strategy_version
             existing_run.code_commit = code_version
-            existing_run.feature_version = settings.trading_feature_normalization_version
+            existing_run.feature_version = (
+                settings.trading_feature_normalization_version
+            )
             existing_run.feature_spec_hash = feature_spec_hash
-            existing_run.feature_schema_version = settings.trading_feature_schema_version
-            existing_run.signal_source = 'autonomy-signals'
+            existing_run.feature_schema_version = (
+                settings.trading_feature_schema_version
+            )
+            existing_run.signal_source = "autonomy-signals"
             existing_run.dataset_version = dataset_version
             existing_run.dataset_from = query_start_utc
             existing_run.dataset_to = query_end_utc
-            existing_run.dataset_snapshot_ref = 'no_signal_window'
-            existing_run.runner_version = 'run_autonomous_lane_no_signals'
-            existing_run.runner_binary_hash = hashlib.sha256(run_id.encode('utf-8')).hexdigest()
+            existing_run.dataset_snapshot_ref = "no_signal_window"
+            existing_run.runner_version = "run_autonomous_lane_no_signals"
+            existing_run.runner_binary_hash = hashlib.sha256(
+                run_id.encode("utf-8")
+            ).hexdigest()
             existing_run.updated_at = now
             session.add(existing_run)
         session.commit()
@@ -163,9 +185,9 @@ def run_autonomous_lane(
     strategy_config_path: Path,
     gate_policy_path: Path,
     output_dir: Path,
-    promotion_target: PromotionTarget = 'paper',
+    promotion_target: PromotionTarget = "paper",
     strategy_configmap_path: Path | None = None,
-    code_version: str = 'local',
+    code_version: str = "local",
     approval_token: str | None = None,
     evaluated_at: datetime | None = None,
     persist_results: bool = False,
@@ -176,32 +198,41 @@ def run_autonomous_lane(
     signals = _load_signals(signals_path)
     runtime_strategies = load_runtime_strategy_config(strategy_config_path)
     if not signals:
-        raise ValueError('signals fixture is empty')
+        raise ValueError("signals fixture is empty")
 
-    run_id = _deterministic_run_id(signals_path, strategy_config_path, gate_policy_path, promotion_target)
-    candidate_id = f'cand-{run_id[:12]}'
+    run_id = _deterministic_run_id(
+        signals_path, strategy_config_path, gate_policy_path, promotion_target
+    )
+    candidate_id = f"cand-{run_id[:12]}"
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    research_dir = output_dir / 'research'
-    backtest_dir = output_dir / 'backtest'
-    gates_dir = output_dir / 'gates'
-    paper_dir = output_dir / 'paper-candidate'
+    research_dir = output_dir / "research"
+    backtest_dir = output_dir / "backtest"
+    gates_dir = output_dir / "gates"
+    paper_dir = output_dir / "paper-candidate"
     for path in (research_dir, backtest_dir, gates_dir, paper_dir):
         path.mkdir(parents=True, exist_ok=True)
 
     now = evaluated_at or datetime.now(timezone.utc)
     runtime = StrategyRuntime(default_runtime_registry())
     walk_decisions: list[WalkForwardDecision] = []
+    baseline_walk_decisions: list[WalkForwardDecision] = []
     runtime_errors: list[str] = []
+    baseline_runtime_errors: list[str] = []
     patch_path: Path | None = None
     walk_results: WalkForwardResults | None = None
     report: EvaluationReport | None = None
     gate_report: GateEvaluationReport | None = None
     gate_report_trace_id: str | None = None
     recommendation_trace_id: str | None = None
-    gate_report_path = gates_dir / 'gate-evaluation.json'
-    promotion_check_path = gates_dir / 'promotion-prerequisites.json'
-    rollback_check_path = gates_dir / 'rollback-readiness.json'
+    gate_report_path = gates_dir / "gate-evaluation.json"
+    promotion_check_path = gates_dir / "promotion-prerequisites.json"
+    rollback_check_path = gates_dir / "rollback-readiness.json"
+    baseline_report_path = backtest_dir / "baseline-evaluation-report.json"
+    profitability_benchmark_path = gates_dir / "profitability-benchmark-v4.json"
+    profitability_evidence_path = gates_dir / "profitability-evidence-v4.json"
+    profitability_validation_path = gates_dir / "profitability-evidence-validation.json"
+    promotion_gate_path = gates_dir / "promotion-evidence-gate.json"
     run_row = None
 
     factory = session_factory or SessionLocal
@@ -219,15 +250,30 @@ def run_autonomous_lane(
         )
 
     try:
-        for signal in sorted(signals, key=lambda item: (item.event_ts, item.symbol, item.seq or 0)):
+        ordered_signals = sorted(
+            signals, key=lambda item: (item.event_ts, item.symbol, item.seq or 0)
+        )
+        for signal in ordered_signals:
             result = runtime.evaluate(signal, runtime_strategies)
             runtime_errors.extend(result.errors)
             features = extract_signal_features(signal)
             for decision in result.decisions:
-                walk_decisions.append(WalkForwardDecision(decision=decision, features=features))
+                walk_decisions.append(
+                    WalkForwardDecision(decision=decision, features=features)
+                )
+
+        baseline_runtime_strategies = _baseline_runtime_strategies()
+        for signal in ordered_signals:
+            result = runtime.evaluate(signal, baseline_runtime_strategies)
+            baseline_runtime_errors.extend(result.errors)
+            features = extract_signal_features(signal)
+            for decision in result.decisions:
+                baseline_walk_decisions.append(
+                    WalkForwardDecision(decision=decision, features=features)
+                )
 
         walk_fold = WalkForwardFold(
-            name='autonomous_lane',
+            name="autonomous_lane",
             train_start=signals[0].event_ts,
             train_end=signals[0].event_ts,
             test_start=signals[0].event_ts,
@@ -235,11 +281,26 @@ def run_autonomous_lane(
         )
         walk_results = WalkForwardResults(
             generated_at=now,
-            folds=[FoldResult(fold=walk_fold, decisions=walk_decisions, signals_count=len(signals))],
-            feature_spec='app.trading.features.normalize_feature_vector_v3',
+            folds=[
+                FoldResult(
+                    fold=walk_fold, decisions=walk_decisions, signals_count=len(signals)
+                )
+            ],
+            feature_spec="app.trading.features.normalize_feature_vector_v3",
+        )
+        baseline_walk_results = WalkForwardResults(
+            generated_at=now,
+            folds=[
+                FoldResult(
+                    fold=walk_fold,
+                    decisions=baseline_walk_decisions,
+                    signals_count=len(signals),
+                )
+            ],
+            feature_spec="app.trading.features.normalize_feature_vector_v3",
         )
 
-        walk_results_path = backtest_dir / 'walkforward-results.json'
+        walk_results_path = backtest_dir / "walkforward-results.json"
         write_walk_forward_results(walk_results, walk_results_path)
 
         report_config = EvaluationReportConfig(
@@ -251,20 +312,101 @@ def run_autonomous_lane(
             strategy_config_path=str(strategy_config_path),
             git_sha=code_version,
         )
-        report = generate_evaluation_report(walk_results, config=report_config, promotion_target=promotion_target)
-        evaluation_report_path = backtest_dir / 'evaluation-report.json'
+        report = generate_evaluation_report(
+            walk_results, config=report_config, promotion_target=promotion_target
+        )
+        evaluation_report_path = backtest_dir / "evaluation-report.json"
         write_evaluation_report(report, evaluation_report_path)
+        baseline_report = generate_evaluation_report(
+            baseline_walk_results,
+            config=EvaluationReportConfig(
+                evaluation_start=signals[0].event_ts,
+                evaluation_end=signals[-1].event_ts,
+                signal_source=str(signals_path),
+                strategies=_to_orm_strategies(baseline_runtime_strategies),
+                run_id=f"{run_id}-baseline",
+                strategy_config_path="baseline:legacy_macd_rsi@1.0.0",
+                git_sha=code_version,
+            ),
+            promotion_target="shadow",
+        )
+        write_evaluation_report(baseline_report, baseline_report_path)
+
+        benchmark = execute_profitability_benchmark_v4(
+            candidate_id=candidate_id,
+            baseline_id="baseline-legacy-macd-rsi",
+            candidate_report_payload=report.to_payload(),
+            baseline_report_payload=baseline_report.to_payload(),
+            required_slice_keys=[
+                "market:all",
+                f"regime:{walk_results.folds[0].fold_metrics()['regime_label']}",
+            ],
+            executed_at=now,
+        )
+        profitability_benchmark_path.write_text(
+            json.dumps(benchmark.to_payload(), indent=2), encoding="utf-8"
+        )
+
+        confidence_values = _collect_confidence_values(walk_decisions)
+        reproducibility_hashes = {
+            "signals": _sha256_path(signals_path),
+            "strategy_config": _sha256_path(strategy_config_path),
+            "gate_policy": _sha256_path(gate_policy_path),
+            "walkforward_results": _sha256_path(walk_results_path),
+            "candidate_report": _sha256_path(evaluation_report_path),
+            "baseline_report": _sha256_path(baseline_report_path),
+        }
+        profitability_evidence = build_profitability_evidence_v4(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            baseline_id="baseline-legacy-macd-rsi",
+            candidate_report_payload=report.to_payload(),
+            benchmark=benchmark,
+            confidence_values=confidence_values,
+            reproducibility_hashes=reproducibility_hashes,
+            artifact_refs=[
+                str(evaluation_report_path),
+                str(baseline_report_path),
+                str(walk_results_path),
+                str(signals_path),
+                str(strategy_config_path),
+                str(gate_policy_path),
+            ],
+            generated_at=now,
+        )
+        profitability_evidence_path.write_text(
+            json.dumps(profitability_evidence.to_payload(), indent=2), encoding="utf-8"
+        )
+
+        gate_policy_payload = json.loads(gate_policy_path.read_text(encoding="utf-8"))
+        profitability_thresholds = ProfitabilityEvidenceThresholdsV4.from_payload(
+            _profitability_threshold_payload(gate_policy_payload)
+        )
+        profitability_validation = validate_profitability_evidence_v4(
+            profitability_evidence,
+            thresholds=profitability_thresholds,
+            checked_at=now,
+        )
+        profitability_validation_path.write_text(
+            json.dumps(profitability_validation.to_payload(), indent=2),
+            encoding="utf-8",
+        )
 
         gate_policy = GatePolicyMatrix.from_path(gate_policy_path)
+        profitability_evidence_payload = profitability_evidence.to_payload()
+        profitability_evidence_payload["validation"] = (
+            profitability_validation.to_payload()
+        )
         gate_inputs = GateInputs(
-            feature_schema_version='3.0.0',
+            feature_schema_version="3.0.0",
             required_feature_null_rate=_required_feature_null_rate(signals),
             staleness_ms_p95=0,
             symbol_coverage=len({signal.symbol for signal in signals}),
             metrics=report.metrics.to_payload(),
             robustness=report.robustness.to_payload(),
             tca_metrics=_load_tca_gate_inputs(factory),
-            llm_metrics={'error_ratio': '0'},
+            llm_metrics={"error_ratio": "0"},
+            profitability_evidence=profitability_evidence_payload,
             operational_ready=True,
             runbook_validated=True,
             kill_switch_dry_run_passed=True,
@@ -279,12 +421,14 @@ def run_autonomous_lane(
             evaluated_at=now,
         )
         gate_report_payload = gate_report.to_payload()
-        gate_report_payload['run_id'] = run_id
+        gate_report_payload["run_id"] = run_id
         gate_report_trace_id = _trace_id(gate_report_payload)
-        gate_report_payload['provenance'] = {
-            'gate_report_trace_id': gate_report_trace_id,
+        gate_report_payload["provenance"] = {
+            "gate_report_trace_id": gate_report_trace_id,
         }
-        gate_report_path.write_text(json.dumps(gate_report_payload, indent=2), encoding='utf-8')
+        gate_report_path.write_text(
+            json.dumps(gate_report_payload, indent=2), encoding="utf-8"
+        )
 
         candidate_hash = _compute_candidate_hash(
             run_id=run_id,
@@ -295,59 +439,68 @@ def run_autonomous_lane(
             gate_policy_path=gate_policy_path,
         )
         research_spec = {
-            'run_id': run_id,
-            'candidate_id': candidate_id,
-            'candidate_hash': candidate_hash,
-            'promotion_target': promotion_target,
-            'bounded_llm': {
-                'enabled': False,
-                'actuation_allowed': False,
-                'notes': 'LLM path is advisory only. Deterministic risk/firewall are final authority.',
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "candidate_hash": candidate_hash,
+            "promotion_target": promotion_target,
+            "bounded_llm": {
+                "enabled": False,
+                "actuation_allowed": False,
+                "notes": "LLM path is advisory only. Deterministic risk/firewall are final authority.",
             },
-            'runtime_errors': sorted(runtime_errors),
-            'artifacts': {
-                'walkforward_results': str(walk_results_path),
-                'evaluation_report': str(evaluation_report_path),
-                'gate_report': str(gate_report_path),
+            "runtime_errors": sorted(runtime_errors),
+            "baseline_runtime_errors": sorted(baseline_runtime_errors),
+            "artifacts": {
+                "walkforward_results": str(walk_results_path),
+                "evaluation_report": str(evaluation_report_path),
+                "baseline_evaluation_report": str(baseline_report_path),
+                "gate_report": str(gate_report_path),
+                "profitability_benchmark": str(profitability_benchmark_path),
+                "profitability_evidence": str(profitability_evidence_path),
+                "profitability_validation": str(profitability_validation_path),
             },
-            'candidate_spec': {
-                'runtime_strategies': [
+            "candidate_spec": {
+                "runtime_strategies": [
                     {
-                        'strategy_id': strategy.strategy_id,
-                        'strategy_type': strategy.strategy_type,
-                        'version': strategy.version,
-                        'params': strategy.params,
-                        'enabled': strategy.enabled,
+                        "strategy_id": strategy.strategy_id,
+                        "strategy_type": strategy.strategy_type,
+                        "version": strategy.version,
+                        "params": strategy.params,
+                        "enabled": strategy.enabled,
                     }
                     for strategy in runtime_strategies
                 ],
             },
         }
-        candidate_spec_path = research_dir / 'candidate-spec.json'
-        candidate_spec_path.write_text(json.dumps(research_spec, indent=2), encoding='utf-8')
+        candidate_spec_path = research_dir / "candidate-spec.json"
+        candidate_spec_path.write_text(
+            json.dumps(research_spec, indent=2), encoding="utf-8"
+        )
 
-        if gate_report.promotion_allowed and gate_report.recommended_mode == 'paper':
-            resolved_configmap = strategy_configmap_path or _default_strategy_configmap_path()
+        if gate_report.promotion_allowed and gate_report.recommended_mode == "paper":
+            resolved_configmap = (
+                strategy_configmap_path or _default_strategy_configmap_path()
+            )
             patch_path = _write_paper_candidate_patch(
                 configmap_path=resolved_configmap,
                 runtime_strategies=runtime_strategies,
                 candidate_id=candidate_id,
-                output_path=paper_dir / 'strategy-configmap-patch.yaml',
+                output_path=paper_dir / "strategy-configmap-patch.yaml",
             )
 
-        raw_gate_policy = json.loads(gate_policy_path.read_text(encoding='utf-8'))
+        raw_gate_policy = gate_policy_payload
         candidate_state_payload = {
-            'candidateId': candidate_id,
-            'runId': run_id,
-            'activeStage': 'gate-evaluation',
-            'paused': False,
-            'rollbackReadiness': {
-                'killSwitchDryRunPassed': True,
-                'gitopsRevertDryRunPassed': True,
-                'strategyDisableDryRunPassed': True,
-                'dryRunCompletedAt': now.isoformat(),
-                'humanApproved': True,
-                'rollbackTarget': f'{code_version or "unknown"}',
+            "candidateId": candidate_id,
+            "runId": run_id,
+            "activeStage": "gate-evaluation",
+            "paused": False,
+            "rollbackReadiness": {
+                "killSwitchDryRunPassed": True,
+                "gitopsRevertDryRunPassed": True,
+                "strategyDisableDryRunPassed": True,
+                "dryRunCompletedAt": now.isoformat(),
+                "humanApproved": True,
+                "rollbackTarget": f"{code_version or 'unknown'}",
             },
         }
         promotion_check = evaluate_promotion_prerequisites(
@@ -362,25 +515,80 @@ def run_autonomous_lane(
             candidate_state_payload=candidate_state_payload,
             now=now,
         )
-        promotion_check_path.write_text(json.dumps(promotion_check.to_payload(), indent=2), encoding='utf-8')
-        rollback_check_path.write_text(json.dumps(rollback_check.to_payload(), indent=2), encoding='utf-8')
+        promotion_check_path.write_text(
+            json.dumps(promotion_check.to_payload(), indent=2), encoding="utf-8"
+        )
+        rollback_check_path.write_text(
+            json.dumps(rollback_check.to_payload(), indent=2), encoding="utf-8"
+        )
 
-        promotion_allowed = gate_report.promotion_allowed and promotion_check.allowed and rollback_check.ready
-        promotion_reasons = sorted(set([*gate_report.reasons, *promotion_check.reasons, *rollback_check.reasons]))
+        promotion_allowed = (
+            gate_report.promotion_allowed
+            and promotion_check.allowed
+            and rollback_check.ready
+        )
+        promotion_reasons = sorted(
+            set(
+                [
+                    *gate_report.reasons,
+                    *promotion_check.reasons,
+                    *rollback_check.reasons,
+                ]
+            )
+        )
+        promotion_gate_payload = {
+            "allowed": promotion_allowed,
+            "reasons": promotion_reasons,
+            "checks": {
+                "gate_matrix": {
+                    "allowed": gate_report.promotion_allowed,
+                    "reasons": gate_report.reasons,
+                    "artifact_refs": [
+                        str(gate_report_path),
+                        str(profitability_evidence_path),
+                        str(profitability_validation_path),
+                    ],
+                },
+                "promotion_prerequisites": promotion_check.to_payload(),
+                "rollback_readiness": rollback_check.to_payload(),
+                "profitability_validation": profitability_validation.to_payload(),
+            },
+            "artifact_refs": sorted(
+                set(
+                    [
+                        str(promotion_check_path),
+                        str(rollback_check_path),
+                        str(gate_report_path),
+                        str(profitability_benchmark_path),
+                        str(profitability_evidence_path),
+                        str(profitability_validation_path),
+                    ]
+                )
+            ),
+        }
+        promotion_gate_path.write_text(
+            json.dumps(promotion_gate_payload, indent=2), encoding="utf-8"
+        )
         recommendation_trace_id = _trace_id(
             {
-                'run_id': run_id,
-                'candidate_id': candidate_id,
-                'recommended_mode': gate_report.recommended_mode,
-                'promotion_allowed': promotion_allowed,
-                'reasons': promotion_reasons,
+                "run_id": run_id,
+                "candidate_id": candidate_id,
+                "recommended_mode": gate_report.recommended_mode,
+                "promotion_allowed": promotion_allowed,
+                "reasons": promotion_reasons,
             }
         )
-        gate_report_payload['provenance'] = {
-            'gate_report_trace_id': gate_report_trace_id,
-            'recommendation_trace_id': recommendation_trace_id,
+        gate_report_payload["provenance"] = {
+            "gate_report_trace_id": gate_report_trace_id,
+            "recommendation_trace_id": recommendation_trace_id,
+            "profitability_benchmark_artifact": str(profitability_benchmark_path),
+            "profitability_evidence_artifact": str(profitability_evidence_path),
+            "profitability_validation_artifact": str(profitability_validation_path),
+            "promotion_gate_artifact": str(promotion_gate_path),
         }
-        gate_report_path.write_text(json.dumps(gate_report_payload, indent=2), encoding='utf-8')
+        gate_report_path.write_text(
+            json.dumps(gate_report_payload, indent=2), encoding="utf-8"
+        )
         if not promotion_allowed:
             patch_path = None
 
@@ -428,7 +636,9 @@ def run_autonomous_lane(
         )
     except Exception as exc:
         if persist_results:
-            _mark_run_failed(session_factory=factory, run_id=run_id, run_row=run_row, now=now)
+            _mark_run_failed(
+                session_factory=factory, run_id=run_id, run_row=run_row, now=now
+            )
         raise RuntimeError(f"autonomous_lane_persistence_failed: {exc}") from exc
 
 
@@ -459,7 +669,7 @@ def _upsert_research_run(
         if existing_run is None:
             run = ResearchRun(
                 run_id=run_id,
-                status='running',
+                status="running",
                 strategy_id=strategy_id,
                 strategy_name=strategy_id,
                 strategy_type=strategy_type,
@@ -472,13 +682,15 @@ def _upsert_research_run(
                     gate_policy_path=gate_policy_path,
                     signals_path=signals_path,
                 ),
-                signal_source='autonomy-signals',
-                dataset_version=_compute_dataset_version_hash(signals_path=signals_path),
+                signal_source="autonomy-signals",
+                dataset_version=_compute_dataset_version_hash(
+                    signals_path=signals_path
+                ),
                 dataset_from=dataset_from,
                 dataset_to=dataset_to,
                 dataset_snapshot_ref=str(strategy_config_path),
-                runner_version='run_autonomous_lane',
-                runner_binary_hash=hashlib.sha256(run_id.encode('utf-8')).hexdigest(),
+                runner_version="run_autonomous_lane",
+                runner_binary_hash=hashlib.sha256(run_id.encode("utf-8")).hexdigest(),
                 gate_report_trace_id=None,
                 recommendation_trace_id=None,
                 updated_at=now,
@@ -488,7 +700,7 @@ def _upsert_research_run(
             session.refresh(run)
             return run
 
-        existing_run.status = 'running'
+        existing_run.status = "running"
         existing_run.strategy_id = strategy_id
         existing_run.strategy_name = strategy_id
         existing_run.strategy_type = strategy_type
@@ -501,13 +713,17 @@ def _upsert_research_run(
             gate_policy_path=gate_policy_path,
             signals_path=signals_path,
         )
-        existing_run.signal_source = 'autonomy-signals'
+        existing_run.signal_source = "autonomy-signals"
         existing_run.dataset_from = dataset_from
         existing_run.dataset_to = dataset_to
-        existing_run.dataset_version = _compute_dataset_version_hash(signals_path=signals_path)
+        existing_run.dataset_version = _compute_dataset_version_hash(
+            signals_path=signals_path
+        )
         existing_run.dataset_snapshot_ref = str(strategy_config_path)
-        existing_run.runner_version = 'run_autonomous_lane'
-        existing_run.runner_binary_hash = hashlib.sha256(run_id.encode('utf-8')).hexdigest()
+        existing_run.runner_version = "run_autonomous_lane"
+        existing_run.runner_binary_hash = hashlib.sha256(
+            run_id.encode("utf-8")
+        ).hexdigest()
         existing_run.gate_report_trace_id = None
         existing_run.recommendation_trace_id = None
         existing_run.updated_at = now
@@ -532,7 +748,7 @@ def _mark_run_failed(
         ).scalar_one_or_none()
         if existing_run is None:
             return
-        existing_run.status = 'failed'
+        existing_run.status = "failed"
         existing_run.updated_at = now
         session.add(existing_run)
         session.commit()
@@ -555,7 +771,7 @@ def _mark_run_passed(
         ).scalar_one_or_none()
         if existing_run is None:
             return
-        existing_run.status = 'passed'
+        existing_run.status = "passed"
         existing_run.gate_report_trace_id = gate_report_trace_id
         existing_run.recommendation_trace_id = recommendation_trace_id
         existing_run.updated_at = now
@@ -589,10 +805,26 @@ def _persist_run_outputs(
 
     with session_factory() as session:
         with session.begin():
-            session.execute(delete(ResearchFoldMetrics).where(ResearchFoldMetrics.candidate_id == candidate_id))
-            session.execute(delete(ResearchStressMetrics).where(ResearchStressMetrics.candidate_id == candidate_id))
-            session.execute(delete(ResearchPromotion).where(ResearchPromotion.candidate_id == candidate_id))
-            session.execute(delete(ResearchCandidate).where(ResearchCandidate.candidate_id == candidate_id))
+            session.execute(
+                delete(ResearchFoldMetrics).where(
+                    ResearchFoldMetrics.candidate_id == candidate_id
+                )
+            )
+            session.execute(
+                delete(ResearchStressMetrics).where(
+                    ResearchStressMetrics.candidate_id == candidate_id
+                )
+            )
+            session.execute(
+                delete(ResearchPromotion).where(
+                    ResearchPromotion.candidate_id == candidate_id
+                )
+            )
+            session.execute(
+                delete(ResearchCandidate).where(
+                    ResearchCandidate.candidate_id == candidate_id
+                )
+            )
 
             candidate = ResearchCandidate(
                 run_id=run_id,
@@ -610,12 +842,20 @@ def _persist_run_outputs(
             for fold_order, fold in enumerate(walk_results.folds, start=1):
                 fold_metrics = fold.fold_metrics()
                 robustness = robustness_by_fold.get(fold.fold.name)
-                decision_count = _metric_counter_int(fold_metrics.get("decision_count", 0))
-                trade_count = _metric_counter_int(fold_metrics.get("buy_count", 0)) + _metric_counter_int(
+                decision_count = _metric_counter_int(
+                    fold_metrics.get("decision_count", 0)
+                )
+                trade_count = _metric_counter_int(
+                    fold_metrics.get("buy_count", 0)
+                ) + _metric_counter_int(
                     fold_metrics.get("sell_count", 0),
                 )
-                regime_label = robustness.regime.label() if robustness is not None else str(
-                    fold_metrics.get("regime_label", "unknown"),
+                regime_label = (
+                    robustness.regime.label()
+                    if robustness is not None
+                    else str(
+                        fold_metrics.get("regime_label", "unknown"),
+                    )
                 )
 
                 session.add(
@@ -629,11 +869,21 @@ def _persist_run_outputs(
                         test_end=fold.fold.test_end,
                         decision_count=decision_count,
                         trade_count=trade_count,
-                        gross_pnl=robustness.net_pnl if robustness is not None else None,
-                        net_pnl=robustness.net_pnl if robustness is not None else report.metrics.net_pnl,
-                        max_drawdown=robustness.max_drawdown if robustness is not None else report.metrics.max_drawdown,
-                        turnover_ratio=robustness.turnover_ratio if robustness is not None else report.metrics.turnover_ratio,
-                        cost_bps=robustness.cost_bps if robustness is not None else report.metrics.cost_bps,
+                        gross_pnl=robustness.net_pnl
+                        if robustness is not None
+                        else None,
+                        net_pnl=robustness.net_pnl
+                        if robustness is not None
+                        else report.metrics.net_pnl,
+                        max_drawdown=robustness.max_drawdown
+                        if robustness is not None
+                        else report.metrics.max_drawdown,
+                        turnover_ratio=robustness.turnover_ratio
+                        if robustness is not None
+                        else report.metrics.turnover_ratio,
+                        cost_bps=robustness.cost_bps
+                        if robustness is not None
+                        else report.metrics.cost_bps,
                         cost_assumptions=report.impact_assumptions.assumptions,
                         regime_label=regime_label,
                     ),
@@ -653,16 +903,22 @@ def _persist_run_outputs(
                 ResearchPromotion(
                     candidate_id=candidate_id,
                     requested_mode=promotion_target,
-                    approved_mode=gate_report.recommended_mode if promotion_allowed else None,
+                    approved_mode=gate_report.recommended_mode
+                    if promotion_allowed
+                    else None,
                     approver="autonomous_scheduler",
                     approver_role="system",
                     approve_reason="promotion_allowed" if promotion_allowed else None,
-                    deny_reason=None if promotion_allowed else ";".join(promotion_reasons),
+                    deny_reason=None
+                    if promotion_allowed
+                    else ";".join(promotion_reasons),
                     paper_candidate_patch_ref=str(patch_path) if patch_path else None,
                     effective_time=now if promotion_allowed else None,
                 )
             )
-            run = session.execute(select(ResearchRun).where(ResearchRun.run_id == run_id)).scalar_one_or_none()
+            run = session.execute(
+                select(ResearchRun).where(ResearchRun.run_id == run_id)
+            ).scalar_one_or_none()
             if run is not None:
                 run.gate_report_trace_id = gate_report_trace_id
                 run.recommendation_trace_id = recommendation_trace_id
@@ -683,15 +939,15 @@ def _compute_candidate_hash(
     hasher.update(signals_path.read_bytes())
     hasher.update(strategy_config_path.read_bytes())
     hasher.update(gate_policy_path.read_bytes())
-    hasher.update(run_id.encode('utf-8'))
-    hasher.update(str(_strategy_parameter_set(runtime_strategies)).encode('utf-8'))
-    hasher.update(gate_report.recommended_mode.encode('utf-8'))
-    hasher.update(str(sorted(gate_report.reasons)).encode('utf-8'))
+    hasher.update(run_id.encode("utf-8"))
+    hasher.update(str(_strategy_parameter_set(runtime_strategies)).encode("utf-8"))
+    hasher.update(gate_report.recommended_mode.encode("utf-8"))
+    hasher.update(str(sorted(gate_report.reasons)).encode("utf-8"))
     return hasher.hexdigest()[:32]
 
 
 def _trace_id(payload: object) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:24]
 
 
@@ -704,11 +960,11 @@ def _compute_no_signal_feature_spec_hash(
     query_end: datetime,
 ) -> str:
     hasher = hashlib.sha256()
-    hasher.update(reason.encode('utf-8'))
+    hasher.update(reason.encode("utf-8"))
     hasher.update(strategy_config_path.read_bytes())
     hasher.update(gate_policy_path.read_bytes())
-    hasher.update(str(query_start).encode('utf-8'))
-    hasher.update(str(query_end).encode('utf-8'))
+    hasher.update(str(query_start).encode("utf-8"))
+    hasher.update(str(query_end).encode("utf-8"))
     return hasher.hexdigest()[:128]
 
 
@@ -719,9 +975,9 @@ def _compute_no_signal_dataset_version_hash(
     no_signal_reason: str,
 ) -> str:
     hasher = hashlib.sha256()
-    hasher.update(str(query_start).encode('utf-8'))
-    hasher.update(str(query_end).encode('utf-8'))
-    hasher.update(no_signal_reason.encode('utf-8'))
+    hasher.update(str(query_start).encode("utf-8"))
+    hasher.update(str(query_end).encode("utf-8"))
+    hasher.update(no_signal_reason.encode("utf-8"))
     return hasher.hexdigest()[:64]
 
 
@@ -741,42 +997,48 @@ def _compute_feature_spec_hash(
 def _compute_dataset_version_hash(*, signals_path: Path) -> str:
     hasher = hashlib.sha256()
     try:
-        payload = json.loads(signals_path.read_text(encoding='utf-8'))
+        payload = json.loads(signals_path.read_text(encoding="utf-8"))
     except Exception:
         payload = []
-    payload_json = json.dumps(payload, sort_keys=True, separators=(',', ':'))
-    hasher.update(payload_json.encode('utf-8'))
+    payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    hasher.update(payload_json.encode("utf-8"))
     return hasher.hexdigest()[:64]
 
 
-def _strategy_parameter_set(runtime_strategies: list[StrategyRuntimeConfig]) -> list[dict[str, Any]]:
+def _strategy_parameter_set(
+    runtime_strategies: list[StrategyRuntimeConfig],
+) -> list[dict[str, Any]]:
     return [
         {
-            'strategy_id': strategy.strategy_id,
-            'strategy_type': strategy.strategy_type,
-            'version': strategy.version,
-            'priority': strategy.priority,
-            'base_timeframe': strategy.base_timeframe,
-            'enabled': strategy.enabled,
-            'params': strategy.params,
+            "strategy_id": strategy.strategy_id,
+            "strategy_type": strategy.strategy_type,
+            "version": strategy.version,
+            "priority": strategy.priority,
+            "base_timeframe": strategy.base_timeframe,
+            "enabled": strategy.enabled,
+            "params": strategy.params,
         }
-        for strategy in sorted(runtime_strategies, key=lambda item: (item.priority, item.strategy_id))
+        for strategy in sorted(
+            runtime_strategies, key=lambda item: (item.priority, item.strategy_id)
+        )
     ]
 
 
-def _strategy_universe_definition(runtime_strategies: list[StrategyRuntimeConfig]) -> dict[str, Any]:
+def _strategy_universe_definition(
+    runtime_strategies: list[StrategyRuntimeConfig],
+) -> dict[str, Any]:
     if not runtime_strategies:
         return {}
     return {
-        'strategies': [
+        "strategies": [
             {
-                'strategy_id': item.strategy_id,
-                'strategy_type': item.strategy_type,
-                'universe_type': _strategy_universe_type(item.strategy_type),
+                "strategy_id": item.strategy_id,
+                "strategy_type": item.strategy_type,
+                "universe_type": _strategy_universe_type(item.strategy_type),
             }
             for item in runtime_strategies
         ],
-        'count': len(runtime_strategies),
+        "count": len(runtime_strategies),
     }
 
 
@@ -790,54 +1052,56 @@ def _metric_counter_int(value: object) -> int:
 
 def _build_stress_bundle(report: EvaluationReport, stress_case: str) -> dict[str, Any]:
     return {
-        'case': stress_case,
-        'max_drawdown': str(report.metrics.max_drawdown),
-        'cost_bps': str(report.metrics.cost_bps),
-        'turnover_ratio': str(report.metrics.turnover_ratio),
-        'net_pnl': str(report.metrics.net_pnl),
-        'gross_pnl': str(report.metrics.gross_pnl),
-        'decision_count': report.metrics.decision_count,
-        'trade_count': report.metrics.trade_count,
+        "case": stress_case,
+        "max_drawdown": str(report.metrics.max_drawdown),
+        "cost_bps": str(report.metrics.cost_bps),
+        "turnover_ratio": str(report.metrics.turnover_ratio),
+        "net_pnl": str(report.metrics.net_pnl),
+        "gross_pnl": str(report.metrics.gross_pnl),
+        "decision_count": report.metrics.decision_count,
+        "trade_count": report.metrics.trade_count,
     }
 
 
 def load_runtime_strategy_config(path: Path) -> list[StrategyRuntimeConfig]:
-    raw = path.read_text(encoding='utf-8')
-    if path.suffix.lower() in {'.yaml', '.yml'}:
+    raw = path.read_text(encoding="utf-8")
+    if path.suffix.lower() in {".yaml", ".yml"}:
         payload = yaml.safe_load(raw)
     else:
         payload = json.loads(raw)
 
     if isinstance(payload, dict):
-        payload = payload.get('strategies', payload)
+        payload = payload.get("strategies", payload)
     if not isinstance(payload, list):
-        raise ValueError('strategy config must be a list or include strategies key')
+        raise ValueError("strategy config must be a list or include strategies key")
 
     strategies: list[StrategyRuntimeConfig] = []
     for index, item in enumerate(payload):
         if not isinstance(item, dict):
-            raise ValueError(f'invalid strategy entry at index {index}')
-        strategy_id = str(item.get('strategy_id') or item.get('name') or f'strategy-{index + 1}')
-        strategy_type = str(item.get('strategy_type', 'legacy_macd_rsi'))
-        version = str(item.get('version', '1.0.0'))
-        params = item.get('params')
+            raise ValueError(f"invalid strategy entry at index {index}")
+        strategy_id = str(
+            item.get("strategy_id") or item.get("name") or f"strategy-{index + 1}"
+        )
+        strategy_type = str(item.get("strategy_type", "legacy_macd_rsi"))
+        version = str(item.get("version", "1.0.0"))
+        params = item.get("params")
         if params is None:
             params = {
-                'buy_rsi_threshold': item.get('buy_rsi_threshold', 35),
-                'sell_rsi_threshold': item.get('sell_rsi_threshold', 65),
-                'qty': item.get('qty', 1),
+                "buy_rsi_threshold": item.get("buy_rsi_threshold", 35),
+                "sell_rsi_threshold": item.get("sell_rsi_threshold", 65),
+                "qty": item.get("qty", 1),
             }
         if not isinstance(params, dict):
-            raise ValueError(f'params for strategy {strategy_id} must be an object')
+            raise ValueError(f"params for strategy {strategy_id} must be an object")
         strategies.append(
             StrategyRuntimeConfig(
                 strategy_id=strategy_id,
                 strategy_type=strategy_type,
                 version=version,
                 params=params,
-                base_timeframe=str(item.get('base_timeframe', '1Min')),
-                enabled=bool(item.get('enabled', True)),
-                priority=int(item.get('priority', 100)),
+                base_timeframe=str(item.get("base_timeframe", "1Min")),
+                enabled=bool(item.get("enabled", True)),
+                priority=int(item.get("priority", 100)),
             )
         )
 
@@ -845,9 +1109,9 @@ def load_runtime_strategy_config(path: Path) -> list[StrategyRuntimeConfig]:
 
 
 def _load_signals(path: Path) -> list[SignalEnvelope]:
-    payload = json.loads(path.read_text(encoding='utf-8'))
+    payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, list):
-        raise ValueError('signals payload must be a list')
+        raise ValueError("signals payload must be a list")
     signals = [SignalEnvelope.model_validate(item) for item in payload]
     return sorted(signals, key=lambda item: (item.event_ts, item.symbol, item.seq or 0))
 
@@ -862,36 +1126,42 @@ def _deterministic_run_id(
     hasher.update(signals_path.read_bytes())
     hasher.update(strategy_config_path.read_bytes())
     hasher.update(gate_policy_path.read_bytes())
-    hasher.update(promotion_target.encode('utf-8'))
+    hasher.update(promotion_target.encode("utf-8"))
     return hasher.hexdigest()[:24]
 
 
 def _required_feature_null_rate(signals: list[SignalEnvelope]) -> Decimal:
-    required_keys = ('macd', 'rsi', 'price')
+    required_keys = ("macd", "rsi", "price")
     missing = 0
     total = 0
     for signal in signals:
         payload = signal.payload or {}
         for key in required_keys:
             total += 1
-            if key == 'macd':
-                macd_block = payload.get('macd')
-                if not isinstance(macd_block, dict) or macd_block.get('macd') is None or macd_block.get('signal') is None:
+            if key == "macd":
+                macd_block = payload.get("macd")
+                if (
+                    not isinstance(macd_block, dict)
+                    or macd_block.get("macd") is None
+                    or macd_block.get("signal") is None
+                ):
                     missing += 1
-            elif key == 'rsi':
+            elif key == "rsi":
                 if extract_rsi(payload) is None:
                     missing += 1
-            elif key == 'price':
+            elif key == "price":
                 if extract_price(payload) is None:
                     missing += 1
             else:
                 missing += 1
     if total == 0:
-        return Decimal('1')
+        return Decimal("1")
     return Decimal(missing) / Decimal(total)
 
 
-def _load_tca_gate_inputs(session_factory: Callable[[], Session]) -> dict[str, Decimal | int]:
+def _load_tca_gate_inputs(
+    session_factory: Callable[[], Session],
+) -> dict[str, Decimal | int]:
     try:
         with session_factory() as session:
             return build_tca_gate_inputs(session)
@@ -904,17 +1174,86 @@ def _load_tca_gate_inputs(session_factory: Callable[[], Session]) -> dict[str, D
         }
 
 
+def _baseline_runtime_strategies() -> list[StrategyRuntimeConfig]:
+    return [
+        StrategyRuntimeConfig(
+            strategy_id="baseline-legacy-macd-rsi",
+            strategy_type="legacy_macd_rsi",
+            version="1.0.0",
+            params={"buy_rsi_threshold": 35, "sell_rsi_threshold": 65, "qty": 1},
+            base_timeframe="1Min",
+            enabled=True,
+            priority=0,
+        )
+    ]
+
+
+def _sha256_path(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _profitability_threshold_payload(
+    policy_payload: dict[str, Any],
+) -> dict[str, object]:
+    return {
+        "min_market_net_pnl_delta": str(
+            policy_payload.get("gate6_min_market_net_pnl_delta", "0")
+        ),
+        "min_risk_adjusted_return_over_drawdown": str(
+            policy_payload.get("gate6_min_return_over_drawdown", "0")
+        ),
+        "min_regime_slice_pass_ratio": str(
+            policy_payload.get("gate6_min_regime_slice_pass_ratio", "0.50")
+        ),
+        "max_cost_bps": str(policy_payload.get("gate6_max_cost_bps", "35")),
+        "max_calibration_error": str(
+            policy_payload.get("gate6_max_calibration_error", "0.45")
+        ),
+        "min_confidence_samples": int(
+            policy_payload.get("gate6_min_confidence_samples", 1)
+        ),
+        "min_reproducibility_hashes": int(
+            policy_payload.get("gate6_min_reproducibility_hashes", 5)
+        ),
+    }
+
+
+def _collect_confidence_values(decisions: list[WalkForwardDecision]) -> list[Decimal]:
+    values: list[Decimal] = []
+    for item in decisions:
+        raw_value = item.decision.params.get("confidence")
+        if raw_value is None:
+            runtime_payload = item.decision.params.get("runtime")
+            if isinstance(runtime_payload, dict):
+                raw_value = runtime_payload.get("confidence")
+        if raw_value is None:
+            continue
+        try:
+            values.append(Decimal(str(raw_value)))
+        except (ArithmeticError, TypeError, ValueError):
+            continue
+    return values
+
+
 def _default_strategy_configmap_path() -> Path:
-    return Path(__file__).resolve().parents[5] / 'argocd' / 'applications' / 'torghut' / 'strategy-configmap.yaml'
+    return (
+        Path(__file__).resolve().parents[5]
+        / "argocd"
+        / "applications"
+        / "torghut"
+        / "strategy-configmap.yaml"
+    )
 
 
-def _to_orm_strategies(runtime_strategies: list[StrategyRuntimeConfig]) -> list[Strategy]:
+def _to_orm_strategies(
+    runtime_strategies: list[StrategyRuntimeConfig],
+) -> list[Strategy]:
     strategies: list[Strategy] = []
     for item in runtime_strategies:
         strategies.append(
             Strategy(
                 name=item.strategy_id,
-                description=f'{item.strategy_type}@{item.version}',
+                description=f"{item.strategy_type}@{item.version}",
                 enabled=item.enabled,
                 base_timeframe=item.base_timeframe,
                 universe_type=_strategy_universe_type(item.strategy_type),
@@ -928,10 +1267,10 @@ def _to_orm_strategies(runtime_strategies: list[StrategyRuntimeConfig]) -> list[
 
 def _strategy_universe_type(strategy_type: str) -> str:
     normalized = strategy_type.strip().lower()
-    if normalized in {'static', 'legacy_macd_rsi'}:
-        return 'static'
-    if normalized in {'intraday_tsmom', 'intraday_tsmom_v1', 'tsmom_intraday'}:
-        return 'intraday_tsmom_v1'
+    if normalized in {"static", "legacy_macd_rsi"}:
+        return "static"
+    if normalized in {"intraday_tsmom", "intraday_tsmom_v1", "tsmom_intraday"}:
+        return "intraday_tsmom_v1"
     return strategy_type
 
 
@@ -942,9 +1281,9 @@ def _write_paper_candidate_patch(
     candidate_id: str,
     output_path: Path,
 ) -> Path:
-    configmap_payload = yaml.safe_load(configmap_path.read_text(encoding='utf-8'))
+    configmap_payload = yaml.safe_load(configmap_path.read_text(encoding="utf-8"))
     if not isinstance(configmap_payload, dict):
-        raise ValueError('invalid configmap payload')
+        raise ValueError("invalid configmap payload")
 
     candidate_strategies: list[dict[str, Any]] = []
     for strategy in runtime_strategies:
@@ -952,40 +1291,48 @@ def _write_paper_candidate_patch(
             continue
         candidate_strategies.append(
             {
-                'name': strategy.strategy_id,
-                'description': f'Autonomous candidate {candidate_id} ({strategy.strategy_type}@{strategy.version})',
-                'enabled': True,
-                'base_timeframe': strategy.base_timeframe,
-                'universe_type': _strategy_universe_type(strategy.strategy_type),
-                'max_notional_per_trade': 250,
-                'max_position_pct_equity': 0.025,
+                "name": strategy.strategy_id,
+                "description": f"Autonomous candidate {candidate_id} ({strategy.strategy_type}@{strategy.version})",
+                "enabled": True,
+                "base_timeframe": strategy.base_timeframe,
+                "universe_type": _strategy_universe_type(strategy.strategy_type),
+                "max_notional_per_trade": 250,
+                "max_position_pct_equity": 0.025,
             }
         )
 
-    candidate_strategies.sort(key=lambda item: str(item['name']))
+    candidate_strategies.sort(key=lambda item: str(item["name"]))
 
     patch_payload = {
-        'apiVersion': 'v1',
-        'kind': 'ConfigMap',
-        'metadata': {
-            'name': configmap_payload.get('metadata', {}).get('name', 'torghut-strategy-config'),
-            'namespace': configmap_payload.get('metadata', {}).get('namespace', 'torghut'),
-            'annotations': {
-                'torghut.proompteng.ai/candidate-id': candidate_id,
-                'torghut.proompteng.ai/recommended-mode': 'paper',
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": configmap_payload.get("metadata", {}).get(
+                "name", "torghut-strategy-config"
+            ),
+            "namespace": configmap_payload.get("metadata", {}).get(
+                "namespace", "torghut"
+            ),
+            "annotations": {
+                "torghut.proompteng.ai/candidate-id": candidate_id,
+                "torghut.proompteng.ai/recommended-mode": "paper",
             },
         },
-        'data': {
-            'strategies.yaml': yaml.safe_dump({'strategies': candidate_strategies}, sort_keys=False),
+        "data": {
+            "strategies.yaml": yaml.safe_dump(
+                {"strategies": candidate_strategies}, sort_keys=False
+            ),
         },
     }
-    output_path.write_text(yaml.safe_dump(patch_payload, sort_keys=False), encoding='utf-8')
+    output_path.write_text(
+        yaml.safe_dump(patch_payload, sort_keys=False), encoding="utf-8"
+    )
     return output_path
 
 
 __all__ = [
-    'AutonomousLaneResult',
-    'load_runtime_strategy_config',
-    'run_autonomous_lane',
-    'upsert_autonomy_no_signal_run',
+    "AutonomousLaneResult",
+    "load_runtime_strategy_config",
+    "run_autonomous_lane",
+    "upsert_autonomy_no_signal_run",
 ]
