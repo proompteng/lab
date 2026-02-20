@@ -62,10 +62,10 @@ export function TorghutVisualsChart({ bars, signals, indicators, className }: To
   }, [indicators, oscillators])
 
   return (
-    <div className={cn('space-y-4', className)}>
-      <div className="space-y-2">
+    <div className={cn('flex flex-col gap-4 min-h-0', className)}>
+      <div className="flex flex-col gap-2 flex-1 min-h-0">
         <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Price</div>
-        <div className="relative rounded-none border bg-background">
+        <div className="relative flex-1 min-h-0 rounded-none border bg-background">
           <PriceChart
             candles={candleData}
             overlays={overlays}
@@ -119,6 +119,8 @@ function PriceChart({
   const chartRef = React.useRef<EChartsInstance | null>(null)
   const resizeRef = React.useRef<ResizeObserver | null>(null)
   const option = React.useMemo(() => buildPriceOption(candles, overlays, indicators), [candles, overlays, indicators])
+  const optionRef = React.useRef(option)
+  optionRef.current = option
 
   React.useEffect(() => {
     let active = true
@@ -128,7 +130,7 @@ function PriceChart({
       if (!active || !containerRef.current) return
 
       const chart = echarts.init(containerRef.current, undefined, { renderer: 'canvas' })
-      chart.setOption(option, { notMerge: true, lazyUpdate: true })
+      chart.setOption(optionRef.current, { notMerge: true, lazyUpdate: true })
       chartRef.current = chart
 
       const observer = new ResizeObserver(() => chart.resize())
@@ -145,7 +147,7 @@ function PriceChart({
       chartRef.current?.dispose()
       chartRef.current = null
     }
-  }, [option])
+  }, [])
 
   React.useEffect(() => {
     if (!chartRef.current) return
@@ -155,7 +157,7 @@ function PriceChart({
   return (
     <div
       ref={containerRef}
-      className="min-h-[18rem] w-full"
+      className="w-full h-full min-h-[18rem]"
       role="img"
       aria-label="Candlestick chart with indicator overlays"
       data-overlay-count={overlayCount}
@@ -177,6 +179,8 @@ function SignalChart({
   const chartRef = React.useRef<EChartsInstance | null>(null)
   const resizeRef = React.useRef<ResizeObserver | null>(null)
   const option = React.useMemo(() => buildSignalOption(oscillators, indicators), [oscillators, indicators])
+  const optionRef = React.useRef(option)
+  optionRef.current = option
 
   React.useEffect(() => {
     let active = true
@@ -186,7 +190,7 @@ function SignalChart({
       if (!active || !containerRef.current) return
 
       const chart = echarts.init(containerRef.current, undefined, { renderer: 'canvas' })
-      chart.setOption(option, { notMerge: true, lazyUpdate: true })
+      chart.setOption(optionRef.current, { notMerge: true, lazyUpdate: true })
       chartRef.current = chart
 
       const observer = new ResizeObserver(() => chart.resize())
@@ -203,7 +207,7 @@ function SignalChart({
       chartRef.current?.dispose()
       chartRef.current = null
     }
-  }, [option])
+  }, [])
 
   React.useEffect(() => {
     if (!chartRef.current) return

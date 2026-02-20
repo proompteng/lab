@@ -31,12 +31,50 @@
   --font-mono:
     "JetBrains Mono Nerd Font", "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
     Consolas, monospace;
+  --jangar-grid-line: color-mix(in oklch, var(--border) 45%, transparent);
+  --jangar-glow: color-mix(in oklch, var(--accent) 16%, transparent);
 }
 
 @layer base {
+  body {
+    background-color: var(--background);
+    background-image:
+      radial-gradient(circle at 12% 12%, var(--jangar-glow) 0, transparent 36%),
+      radial-gradient(circle at 88% 18%, color-mix(in oklch, var(--accent) 10%, transparent) 0, transparent 40%),
+      linear-gradient(to right, var(--jangar-grid-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--jangar-grid-line) 1px, transparent 1px);
+    background-position: center;
+    background-size:
+      auto,
+      auto,
+      24px 24px,
+      24px 24px;
+  }
+
+  ::selection {
+    background: color-mix(in oklch, var(--accent) 40%, transparent);
+    color: var(--foreground);
+  }
+
+  :focus-visible {
+    outline: 1px solid color-mix(in oklch, var(--ring) 80%, transparent);
+    outline-offset: 2px;
+  }
+
   /* Preserve native option contrast across Chromium dark-theme dropdown renderers. */
   select {
     color-scheme: light;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+    scroll-behavior: auto;
+    transition-duration: 0.01ms;
   }
 }
 
