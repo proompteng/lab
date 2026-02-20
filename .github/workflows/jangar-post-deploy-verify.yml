@@ -72,24 +72,29 @@ jobs:
           set -euo pipefail
           kubectl config current-context
 
-      - name: Wait for Argo application to be Synced and Healthy
+      - name: Wait for Argo application health
         shell: bash
         run: |
           set -euo pipefail
           for attempt in $(seq 1 60); do
-            STATUS="$(kubectl -n argocd get application jangar -o jsonpath='{.status.sync.status} {.status.health.status}' || true)"
+            STATUS="$(kubectl -n argocd get application jangar -o jsonpath='{.status.sync.status} {.status.health.status}' 2>/dev/null || true)"
             SYNC_STATUS="$(echo "${STATUS}" | awk '{print $1}')"
             HEALTH_STATUS="$(echo "${STATUS}" | awk '{print $2}')"
             echo "Attempt ${attempt}: sync=${SYNC_STATUS:-unknown} health=${HEALTH_STATUS:-unknown}"
 
-            if [ "${SYNC_STATUS}" = "Synced" ] && [ "${HEALTH_STATUS}" = "Healthy" ]; then
+            # Health + rollout/digest checks are authoritative for deployed state.
+            # Sync can remain OutOfSync due unrelated drift, so do not block on it.
+            if [ "${HEALTH_STATUS}" = "Healthy" ]; then
+              if [ "${SYNC_STATUS}" != "Synced" ]; then
+                echo "Application is Healthy but sync=${SYNC_STATUS}; continuing with rollout/digest verification"
+              fi
               exit 0
             fi
 
             sleep 10
           done
 
-          echo "Jangar Argo application did not reach Synced/Healthy within timeout"
+          echo "Jangar Argo application did not reach Healthy within timeout"
           exit 1
 
       - name: Wait for deployment rollouts
