@@ -304,8 +304,12 @@ class TestTradingApi(TestCase):
             "llm_shadow_mode": settings.llm_shadow_mode,
             "llm_enabled": settings.llm_enabled,
             "llm_rollout_stage": settings.llm_rollout_stage,
+            "trading_mode": settings.trading_mode,
+            "trading_live_enabled": settings.trading_live_enabled,
             "trading_parity_policy": settings.trading_parity_policy,
+            "llm_fail_mode": settings.llm_fail_mode,
             "llm_fail_mode_enforcement": settings.llm_fail_mode_enforcement,
+            "llm_fail_open_live_approved": settings.llm_fail_open_live_approved,
             "llm_allowed_models_raw": settings.llm_allowed_models_raw,
             "llm_evaluation_report": settings.llm_evaluation_report,
             "llm_effective_challenge_id": settings.llm_effective_challenge_id,
@@ -315,8 +319,12 @@ class TestTradingApi(TestCase):
         settings.llm_enabled = True
         settings.llm_rollout_stage = "stage3"
         settings.llm_shadow_mode = False
+        settings.trading_mode = "live"
+        settings.trading_live_enabled = True
         settings.trading_parity_policy = "mode_coupled"
+        settings.llm_fail_mode = "pass_through"
         settings.llm_fail_mode_enforcement = "configured"
+        settings.llm_fail_open_live_approved = True
         settings.llm_allowed_models_raw = None
         settings.llm_evaluation_report = None
         settings.llm_effective_challenge_id = None
@@ -334,6 +342,12 @@ class TestTradingApi(TestCase):
             self.assertEqual(llm["parity_policy"], "mode_coupled")
             self.assertEqual(llm["fail_mode_enforcement"], "configured")
             self.assertIn("mode_coupled_behavior_enabled", llm["policy_exceptions"])
+            self.assertIn("policy_resolution", llm)
+            self.assertEqual(
+                llm["policy_resolution"]["classification"], "intentional_exception"
+            )
+            self.assertTrue(llm["policy_resolution"]["fail_mode_exception_active"])
+            self.assertFalse(llm["policy_resolution"]["fail_mode_violation_active"])
             self.assertIn("guardrails", llm)
             self.assertTrue(llm["guardrails"]["allow_requests"])
             self.assertIn("llm_evaluation_report_missing", llm["guardrails"]["reasons"])
@@ -344,8 +358,14 @@ class TestTradingApi(TestCase):
             settings.llm_shadow_mode = original["llm_shadow_mode"]
             settings.llm_enabled = original["llm_enabled"]
             settings.llm_rollout_stage = original["llm_rollout_stage"]
+            settings.trading_mode = original["trading_mode"]
+            settings.trading_live_enabled = original["trading_live_enabled"]
             settings.trading_parity_policy = original["trading_parity_policy"]
+            settings.llm_fail_mode = original["llm_fail_mode"]
             settings.llm_fail_mode_enforcement = original["llm_fail_mode_enforcement"]
+            settings.llm_fail_open_live_approved = original[
+                "llm_fail_open_live_approved"
+            ]
             settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
             settings.llm_evaluation_report = original["llm_evaluation_report"]
             settings.llm_effective_challenge_id = original["llm_effective_challenge_id"]

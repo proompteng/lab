@@ -491,6 +491,14 @@ class Settings(BaseSettings):
             "except where rollout-stage policy overrides apply."
         ),
     )
+    llm_fail_open_live_approved: bool = Field(
+        default=False,
+        alias="LLM_FAIL_OPEN_LIVE_APPROVED",
+        description=(
+            "Explicit approval gate required before enabling live pass-through fail-open behavior for the "
+            "effective rollout stage."
+        ),
+    )
     llm_min_confidence: float = Field(default=0.5, alias="LLM_MIN_CONFIDENCE")
     llm_adjustment_allowed: bool = Field(default=False, alias="LLM_ADJUSTMENT_ALLOWED")
     llm_max_qty_multiplier: float = Field(default=1.25, alias="LLM_MAX_QTY_MULTIPLIER")
@@ -622,6 +630,10 @@ class Settings(BaseSettings):
             raise ValueError(
                 "LLM_FAIL_MODE must be 'veto' when LLM_FAIL_MODE_ENFORCEMENT=strict_veto"
             )
+        if self.llm_live_fail_open_requested and not self.llm_fail_open_live_approved:
+            raise ValueError(
+                "LLM_FAIL_OPEN_LIVE_APPROVED must be true when live effective fail mode is pass_through"
+            )
 
     @property
     def sqlalchemy_dsn(self) -> str:
@@ -685,7 +697,23 @@ class Settings(BaseSettings):
             exceptions.append("mode_coupled_behavior_enabled")
         if self.llm_fail_mode_enforcement == "configured":
             exceptions.append("configured_fail_mode_enabled")
+        if self.llm_live_fail_open_requested and self.llm_fail_open_live_approved:
+            exceptions.append("live_fail_open_approved")
         return exceptions
+
+    @property
+    def llm_live_fail_open_requested(self) -> bool:
+        if self.trading_mode != "live":
+            return False
+        return self.llm_effective_fail_mode_for_current_rollout() == "pass_through"
+
+    def llm_effective_fail_mode_for_current_rollout(
+        self,
+    ) -> Literal["veto", "pass_through"]:
+        rollout_stage = self._normalize_rollout_stage(self.llm_rollout_stage)
+        if rollout_stage in {"stage1", "stage2"}:
+            return self.llm_effective_fail_mode(rollout_stage=rollout_stage)
+        return self.llm_effective_fail_mode()
 
     def llm_effective_fail_mode(
         self, *, rollout_stage: Optional[str] = None
@@ -708,6 +736,18 @@ class Settings(BaseSettings):
         if self.trading_parity_policy == "mode_coupled" and self.trading_mode == "live":
             return "veto"
         return self.llm_fail_mode
+
+    @staticmethod
+    def _normalize_rollout_stage(stage: str) -> str:
+        if stage.startswith("stage0"):
+            return "stage0"
+        if stage.startswith("stage1"):
+            return "stage1"
+        if stage.startswith("stage2"):
+            return "stage2"
+        if stage.startswith("stage3"):
+            return "stage3"
+        return "stage3"
 
 
 @lru_cache(maxsize=1)

@@ -104,6 +104,7 @@ class TradingMetrics:
     llm_validation_error_total: int = 0
     llm_circuit_open_total: int = 0
     llm_fail_mode_override_total: int = 0
+    llm_fail_mode_exception_total: int = 0
     llm_stage_policy_violation_total: int = 0
     llm_shadow_total: int = 0
     llm_guardrail_block_total: int = 0
@@ -853,9 +854,16 @@ class TradingPipeline:
             return decision, None
 
         guardrails = evaluate_llm_guardrails()
-        if _is_llm_stage_policy_violation(guardrails.rollout_stage):
+        policy_resolution = _build_llm_policy_resolution(
+            rollout_stage=guardrails.rollout_stage,
+            effective_fail_mode=guardrails.effective_fail_mode,
+            guardrail_reasons=guardrails.reasons,
+        )
+        if bool(policy_resolution["stage_policy_violation"]):
             self.state.metrics.llm_stage_policy_violation_total += 1
-        if guardrails.effective_fail_mode != settings.llm_fail_mode:
+        if bool(policy_resolution["fail_mode_exception_active"]):
+            self.state.metrics.llm_fail_mode_exception_total += 1
+        elif bool(policy_resolution["fail_mode_violation_active"]):
             self.state.metrics.llm_fail_mode_override_total += 1
         if not guardrails.allow_requests:
             self.state.metrics.llm_guardrail_block_total += 1
@@ -870,6 +878,7 @@ class TradingPipeline:
                 effective_fail_mode=guardrails.effective_fail_mode,
                 risk_flags=list(guardrails.reasons),
                 market_context=None,
+                policy_resolution=policy_resolution,
             )
 
         engine = self.llm_review_engine or LLMReviewEngine()
@@ -885,6 +894,7 @@ class TradingPipeline:
                 shadow_mode=guardrails.shadow_mode,
                 effective_fail_mode=guardrails.effective_fail_mode,
                 market_context=None,
+                policy_resolution=policy_resolution,
             )
         request_json: dict[str, Any] = {}
         market_context: Optional[MarketContextBundle] = None
@@ -930,6 +940,7 @@ class TradingPipeline:
                     effective_fail_mode=guardrails.effective_fail_mode,
                     risk_flags=market_context_status.risk_flags,
                     market_context=market_context,
+                    policy_resolution=policy_resolution,
                 )
             request = engine.build_request(
                 decision,
@@ -964,6 +975,7 @@ class TradingPipeline:
                 response_json["policy_verdict"] = policy_outcome.verdict
             if guardrails.reasons:
                 response_json["mrm_guardrails"] = list(guardrails.reasons)
+            response_json["policy_resolution"] = policy_resolution
 
             if outcome.tokens_prompt is not None:
                 self.state.metrics.llm_tokens_prompt_total += outcome.tokens_prompt
@@ -1034,6 +1046,7 @@ class TradingPipeline:
                 "error": str(exc),
                 "fallback": fallback,
                 "effective_verdict": effective_verdict,
+                "policy_resolution": policy_resolution,
             }
             if guardrails.reasons:
                 response_json["mrm_guardrails"] = list(guardrails.reasons)
@@ -1086,6 +1099,7 @@ class TradingPipeline:
         effective_fail_mode: Optional[str] = None,
         risk_flags: Optional[list[str]] = None,
         market_context: Optional[MarketContextBundle] = None,
+        policy_resolution: Optional[dict[str, Any]] = None,
     ) -> tuple[StrategyDecision, Optional[str]]:
         fallback = self._resolve_llm_fallback(effective_fail_mode)
         effective_verdict = "veto" if fallback == "veto" else "approve"
@@ -1116,6 +1130,12 @@ class TradingPipeline:
                 "error": reason,
                 "fallback": fallback,
                 "effective_verdict": effective_verdict,
+                "policy_resolution": policy_resolution
+                or _build_llm_policy_resolution(
+                    rollout_stage=_normalize_rollout_stage(settings.llm_rollout_stage),
+                    effective_fail_mode=fallback,
+                    guardrail_reasons=risk_flags or [],
+                ),
             },
             verdict="error",
             confidence=None,
@@ -1456,6 +1476,81 @@ def _is_llm_stage_policy_violation(rollout_stage: str) -> bool:
     return False
 
 
+def _normalize_rollout_stage(stage: str) -> str:
+    if stage.startswith("stage0"):
+        return "stage0"
+    if stage.startswith("stage1"):
+        return "stage1"
+    if stage.startswith("stage2"):
+        return "stage2"
+    if stage.startswith("stage3"):
+        return "stage3"
+    return "stage3"
+
+
+def _expected_fail_mode_for_stage(rollout_stage: str) -> str:
+    if rollout_stage == "stage1":
+        return settings.llm_effective_fail_mode(rollout_stage="stage1")
+    if rollout_stage == "stage2":
+        return settings.llm_effective_fail_mode(rollout_stage="stage2")
+    return settings.llm_effective_fail_mode()
+
+
+def _build_llm_policy_resolution(
+    *,
+    rollout_stage: str,
+    effective_fail_mode: str,
+    guardrail_reasons: tuple[str, ...] | list[str],
+) -> dict[str, Any]:
+    normalized_stage = _normalize_rollout_stage(rollout_stage)
+    expected_fail_mode = _expected_fail_mode_for_stage(normalized_stage)
+    configured_fail_mode = settings.llm_fail_mode
+    stage_policy_violation = _is_llm_stage_policy_violation(normalized_stage)
+    fail_mode_override = effective_fail_mode != configured_fail_mode
+    fail_mode_exception_active = (
+        fail_mode_override
+        and not stage_policy_violation
+        and bool(settings.llm_policy_exceptions)
+        and expected_fail_mode != configured_fail_mode
+    )
+    fail_mode_violation_active = fail_mode_override and not fail_mode_exception_active
+    if fail_mode_violation_active:
+        classification = "violation"
+    elif fail_mode_exception_active:
+        classification = "intentional_exception"
+    else:
+        classification = "compliant"
+    reasoning: list[str] = []
+    if stage_policy_violation:
+        reasoning.append("rollout_stage_policy_violation")
+    if fail_mode_exception_active:
+        reasoning.append("intentional_policy_exception")
+    if fail_mode_violation_active:
+        reasoning.append("unexpected_fail_mode_override")
+    if not reasoning:
+        reasoning.append("policy_compliant")
+
+    return {
+        "classification": classification,
+        "rollout_stage": normalized_stage,
+        "configured_fail_mode": configured_fail_mode,
+        "effective_fail_mode": effective_fail_mode,
+        "expected_fail_mode": expected_fail_mode,
+        "stage_policy_violation": stage_policy_violation,
+        "fail_mode_exception_active": fail_mode_exception_active,
+        "fail_mode_violation_active": fail_mode_violation_active,
+        "policy_exceptions": list(settings.llm_policy_exceptions),
+        "guardrail_reasons": list(guardrail_reasons),
+        "reasoning": reasoning,
+        "source_inputs": {
+            "trading_mode": settings.trading_mode,
+            "trading_parity_policy": settings.trading_parity_policy,
+            "llm_fail_mode_enforcement": settings.llm_fail_mode_enforcement,
+            "llm_fail_open_live_approved": settings.llm_fail_open_live_approved,
+        },
+    }
+
+
 class TradingScheduler:
     """Async background scheduler for trading pipeline."""
 
@@ -1472,6 +1567,11 @@ class TradingScheduler:
                 self._pipeline.llm_review_engine.circuit_breaker.snapshot()
             )
         guardrails = evaluate_llm_guardrails()
+        policy_resolution = _build_llm_policy_resolution(
+            rollout_stage=guardrails.rollout_stage,
+            effective_fail_mode=guardrails.effective_fail_mode,
+            guardrail_reasons=guardrails.reasons,
+        )
         return {
             "enabled": settings.llm_enabled,
             "rollout_stage": guardrails.rollout_stage,
@@ -1484,6 +1584,7 @@ class TradingScheduler:
             "fail_mode": settings.llm_fail_mode,
             "effective_fail_mode": guardrails.effective_fail_mode,
             "policy_exceptions": settings.llm_policy_exceptions,
+            "policy_resolution": policy_resolution,
             "circuit": circuit_snapshot,
             "guardrails": {
                 "allow_requests": guardrails.allow_requests,
