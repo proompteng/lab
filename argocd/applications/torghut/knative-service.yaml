@@ -144,12 +144,16 @@ spec:
               value: jangar
             - name: LLM_MODEL
               value: gpt-5.3-codex
+            - name: LLM_MODEL_VERSION_LOCK
+              value: gpt-5.3-codex
             - name: LLM_ALLOWED_MODELS
               value: gpt-5.3-codex
-            - name: LLM_ROLLOUT_STAGE
-              value: stage1_shadow_pilot
+            - name: LLM_ALLOWED_PROMPT_VERSIONS
+              value: v1
             - name: LLM_ENABLED
               value: "true"
+            - name: LLM_ROLLOUT_STAGE
+              value: stage1
             - name: LLM_SHADOW_MODE
               value: "true"
             - name: LLM_EVALUATION_REPORT
@@ -158,10 +162,10 @@ spec:
               value: torghut-llm-mrm-review-2026-02-12
             - name: LLM_SHADOW_COMPLETED_AT
               value: 2026-02-12T06:45:00Z
-            - name: LLM_MODEL_VERSION_LOCK
-              value: gpt-5.3-codex
             - name: LLM_FAIL_MODE
-              value: veto
+              value: pass_through
+            - name: LLM_TOKEN_BUDGET_MAX
+              value: "1200"
             - name: LLM_TIMEOUT_SECONDS
               value: "20"
             - name: LLM_JANGAR_BESPOKE_DECISION_ENABLED

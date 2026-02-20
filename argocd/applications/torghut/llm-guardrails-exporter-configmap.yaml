@@ -22,6 +22,10 @@ data:
     SCRAPE_INTERVAL_SECONDS = int(os.environ.get("SCRAPE_INTERVAL_SECONDS", "30"))
     LLM_VETO_RATE_BASELINE = float(os.environ.get("LLM_VETO_RATE_BASELINE", "0.4"))
     LLM_TOKENS_PER_REQUEST_BUDGET = float(os.environ.get("LLM_TOKENS_PER_REQUEST_BUDGET", "800"))
+    LLM_ERROR_RATIO_ALERT_THRESHOLD = float(os.environ.get("LLM_ERROR_RATIO_ALERT_THRESHOLD", "0.15"))
+    LLM_CIRCUIT_COOLDOWN_SECONDS_ALERT_THRESHOLD = float(
+        os.environ.get("LLM_CIRCUIT_COOLDOWN_SECONDS_ALERT_THRESHOLD", "120")
+    )
 
 
     def fetch_json(path: str) -> dict:
@@ -116,51 +120,37 @@ data:
         lines.append("# TYPE torghut_llm_shadow_mode gauge")
         lines.append(f"torghut_llm_shadow_mode {1.0 if llm.get('shadow_mode') else 0.0}")
 
-        lines.append("# HELP torghut_llm_effective_shadow_mode 1 if guardrails force shadow behavior.")
+        lines.append("# HELP torghut_llm_effective_shadow_mode 1 if runtime guardrails force shadow mode.")
         lines.append("# TYPE torghut_llm_effective_shadow_mode gauge")
         lines.append(f"torghut_llm_effective_shadow_mode {1.0 if llm.get('effective_shadow_mode') else 0.0}")
 
         rollout_stage = str(llm.get("rollout_stage") or "unknown")
-        lines.append("# HELP torghut_llm_rollout_stage_info LLM rollout stage info metric.")
+        lines.append("# HELP torghut_llm_rollout_stage_info Rollout stage label for Torghut LLM runtime.")
         lines.append("# TYPE torghut_llm_rollout_stage_info gauge")
         lines.append(f'torghut_llm_rollout_stage_info{{stage="{rollout_stage}"}} 1')
 
-        configured_fail_mode = str(llm.get("configured_fail_mode") or "unknown")
-        effective_fail_mode = str(llm.get("fail_mode") or "unknown")
-        lines.append("# HELP torghut_llm_fail_mode_configured Configured LLM fail mode.")
-        lines.append("# TYPE torghut_llm_fail_mode_configured gauge")
-        lines.append(f'torghut_llm_fail_mode_configured{{mode="{configured_fail_mode}"}} 1')
-        lines.append("# HELP torghut_llm_fail_mode_effective Effective LLM fail mode after guardrails/stage controls.")
-        lines.append("# TYPE torghut_llm_fail_mode_effective gauge")
-        lines.append(f'torghut_llm_fail_mode_effective{{mode="{effective_fail_mode}"}} 1')
+        effective_fail_mode = str(llm.get("effective_fail_mode") or llm.get("fail_mode") or "unknown")
+        lines.append("# HELP torghut_llm_effective_fail_mode_info Effective fail mode after stage and trading-mode rules.")
+        lines.append("# TYPE torghut_llm_effective_fail_mode_info gauge")
+        lines.append(f'torghut_llm_effective_fail_mode_info{{fail_mode="{effective_fail_mode}"}} 1')
 
-        circuit = llm.get("circuit", {})
-        if not isinstance(circuit, dict):
-            circuit = {}
-        lines.append("# HELP torghut_llm_circuit_open_now 1 when the LLM circuit breaker is currently open.")
-        lines.append("# TYPE torghut_llm_circuit_open_now gauge")
-        lines.append(f"torghut_llm_circuit_open_now {1.0 if circuit.get('open') else 0.0}")
-        lines.append("# HELP torghut_llm_circuit_open_seconds Duration in seconds that the circuit has been open.")
-        lines.append("# TYPE torghut_llm_circuit_open_seconds gauge")
-        lines.append(f"torghut_llm_circuit_open_seconds {float_or_nan(circuit.get('open_seconds', 0))}")
-        lines.append("# HELP torghut_llm_circuit_cooldown_remaining_seconds Remaining cooldown before the circuit can close.")
-        lines.append("# TYPE torghut_llm_circuit_cooldown_remaining_seconds gauge")
-        lines.append(
-            f"torghut_llm_circuit_cooldown_remaining_seconds {float_or_nan(circuit.get('cooldown_remaining_seconds', 0))}"
-        )
+        guardrails = llm.get("guardrails", {}) if isinstance(llm, dict) else {}
+        governance_complete = False
+        if isinstance(guardrails, dict):
+            governance_complete = bool(guardrails.get("governance_evidence_complete"))
+        lines.append("# HELP torghut_llm_governance_evidence_complete 1 when mandatory governance evidence is complete.")
+        lines.append("# TYPE torghut_llm_governance_evidence_complete gauge")
+        lines.append(f"torghut_llm_governance_evidence_complete {1.0 if governance_complete else 0.0}")
 
-        guardrails = llm.get("guardrails", {})
-        if not isinstance(guardrails, dict):
-            guardrails = {}
-        reasons = guardrails.get("reasons", [])
-        if isinstance(reasons, list):
-            lines.append("# HELP torghut_llm_guardrail_reason_active 1 when a specific guardrail reason is active.")
-            lines.append("# TYPE torghut_llm_guardrail_reason_active gauge")
-            for reason in reasons:
-                if not isinstance(reason, str):
-                    continue
-                escaped_reason = reason.replace("\\", "\\\\").replace('"', '\\"')
-                lines.append(f'torghut_llm_guardrail_reason_active{{reason="{escaped_reason}"}} 1')
+        circuit = llm.get("circuit", {}) if isinstance(llm, dict) else {}
+        circuit_open = bool(circuit.get("open")) if isinstance(circuit, dict) else False
+        circuit_cooldown_seconds = float_or_nan(circuit.get("cooldown_seconds", 0) if isinstance(circuit, dict) else 0)
+        lines.append("# HELP torghut_llm_circuit_open 1 when the LLM circuit breaker is currently open.")
+        lines.append("# TYPE torghut_llm_circuit_open gauge")
+        lines.append(f"torghut_llm_circuit_open {1.0 if circuit_open else 0.0}")
+        lines.append("# HELP torghut_llm_circuit_cooldown_seconds Configured circuit cooldown window in seconds.")
+        lines.append("# TYPE torghut_llm_circuit_cooldown_seconds gauge")
+        lines.append(f"torghut_llm_circuit_cooldown_seconds {circuit_cooldown_seconds}")
 
         lines.append("# HELP torghut_llm_veto_rate_baseline Baseline veto rate configured for guardrails alerts.")
         lines.append("# TYPE torghut_llm_veto_rate_baseline gauge")
@@ -179,8 +169,6 @@ data:
             "llm_parse_error_total",
             "llm_validation_error_total",
             "llm_circuit_open_total",
-            "llm_stage_policy_violation_total",
-            "llm_fail_mode_override_total",
             "llm_shadow_total",
             "llm_guardrail_block_total",
             "llm_guardrail_shadow_total",
@@ -194,6 +182,27 @@ data:
             lines.append(f"# TYPE {metric_name} counter")
             value = float_or_nan(metrics.get(key, 0))
             lines.append(f"{metric_name} {value}")
+
+        requests = max(float_or_nan(metrics.get("llm_requests_total", 0)), 0.0)
+        errors = max(float_or_nan(metrics.get("llm_error_total", 0)), 0.0)
+        circuit_open_total = max(float_or_nan(metrics.get("llm_circuit_open_total", 0)), 0.0)
+        error_ratio = errors / requests if requests > 0 else 0.0
+        circuit_open_ratio = circuit_open_total / requests if requests > 0 else 0.0
+        lines.append("# HELP torghut_llm_error_ratio Error-to-request ratio for LLM reviews.")
+        lines.append("# TYPE torghut_llm_error_ratio gauge")
+        lines.append(f"torghut_llm_error_ratio {error_ratio}")
+        lines.append("# HELP torghut_llm_circuit_open_ratio Circuit-open events divided by LLM requests.")
+        lines.append("# TYPE torghut_llm_circuit_open_ratio gauge")
+        lines.append(f"torghut_llm_circuit_open_ratio {circuit_open_ratio}")
+
+        error_ratio_alert = 1.0 if error_ratio >= LLM_ERROR_RATIO_ALERT_THRESHOLD else 0.0
+        circuit_alert = 1.0 if circuit_open and circuit_cooldown_seconds >= LLM_CIRCUIT_COOLDOWN_SECONDS_ALERT_THRESHOLD else 0.0
+        lines.append("# HELP torghut_llm_error_ratio_alert 1 when LLM error ratio breaches alert threshold.")
+        lines.append("# TYPE torghut_llm_error_ratio_alert gauge")
+        lines.append(f"torghut_llm_error_ratio_alert {error_ratio_alert}")
+        lines.append("# HELP torghut_llm_circuit_open_alert 1 when LLM circuit-open condition breaches alert threshold.")
+        lines.append("# TYPE torghut_llm_circuit_open_alert gauge")
+        lines.append(f"torghut_llm_circuit_open_alert {circuit_alert}")
 
         return "\n".join(lines) + "\n"
 

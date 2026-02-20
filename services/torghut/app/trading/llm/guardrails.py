@@ -4,27 +4,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
 from ...config import settings
-
-LLMFailMode = Literal["veto", "pass_through"]
-LLMRolloutStage = Literal[
-    "stage0_baseline",
-    "stage1_shadow_pilot",
-    "stage2_paper_advisory",
-    "stage3_controlled_live",
-]
 
 
 @dataclass(frozen=True)
 class LLMRiskGuardrails:
     allow_requests: bool
-    enabled: bool
-    rollout_stage: LLMRolloutStage
     shadow_mode: bool
-    fail_mode: LLMFailMode
     adjustment_allowed: bool
+    effective_fail_mode: str
+    rollout_stage: str
+    governance_evidence_complete: bool
     reasons: tuple[str, ...]
 
 
@@ -32,49 +23,43 @@ def evaluate_llm_guardrails() -> LLMRiskGuardrails:
     """Evaluate MRM guardrails and return the effective LLM policy surface."""
 
     reasons: list[str] = []
-    enabled = settings.llm_enabled
-    allow_requests = enabled
-    rollout_stage = settings.llm_rollout_stage
+    allow_requests = True
     shadow_mode = settings.llm_shadow_mode
-    fail_mode: LLMFailMode = settings.llm_fail_mode
     adjustment_allowed = settings.llm_adjustment_allowed
+    effective_fail_mode = (
+        "veto" if settings.trading_mode == "live" else settings.llm_fail_mode
+    )
+    rollout_stage = settings.llm_rollout_stage
 
-    stage_reasons: list[str] = []
-    if rollout_stage == "stage0_baseline":
-        if enabled:
-            stage_reasons.append("llm_stage0_requires_disabled")
-        enabled = False
+    if settings.llm_max_tokens > settings.llm_token_budget_max:
         allow_requests = False
         shadow_mode = True
         adjustment_allowed = False
-        fail_mode = "veto"
-    elif rollout_stage == "stage1_shadow_pilot":
-        if not enabled:
-            stage_reasons.append("llm_stage1_requires_enabled")
+        reasons.append("llm_token_budget_exceeded")
+
+    allowed_prompt_versions = settings.llm_allowed_prompt_versions
+    if (
+        allowed_prompt_versions
+        and settings.llm_prompt_version not in allowed_prompt_versions
+    ):
+        allow_requests = False
         shadow_mode = True
         adjustment_allowed = False
-        expected_fail_mode = (
-            "pass_through" if settings.trading_mode == "paper" else "veto"
-        )
-        if settings.llm_fail_mode != expected_fail_mode:
-            stage_reasons.append("llm_stage1_fail_mode_mismatch")
-        fail_mode = expected_fail_mode
-        allow_requests = enabled
-    elif rollout_stage == "stage2_paper_advisory":
-        expected_fail_mode: LLMFailMode = "pass_through"
-        if settings.llm_fail_mode != expected_fail_mode:
-            stage_reasons.append("llm_stage2_fail_mode_mismatch")
-        fail_mode = expected_fail_mode
-        if settings.trading_mode == "live":
-            stage_reasons.append("llm_stage2_live_requires_shadow")
-            shadow_mode = True
-    elif rollout_stage == "stage3_controlled_live" and settings.trading_mode == "live":
-        expected_fail_mode = "veto"
-        if settings.llm_fail_mode != expected_fail_mode:
-            stage_reasons.append("llm_stage3_fail_mode_mismatch")
-        fail_mode = expected_fail_mode
+        reasons.append("llm_prompt_version_not_allowlisted")
 
-    reasons.extend(stage_reasons)
+    if rollout_stage == "stage0":
+        shadow_mode = True
+        adjustment_allowed = False
+        if settings.llm_enabled:
+            reasons.append("llm_stage0_forces_shadow")
+    elif rollout_stage == "stage1":
+        shadow_mode = True
+        adjustment_allowed = False
+        effective_fail_mode = (
+            "veto" if settings.trading_mode == "live" else "pass_through"
+        )
+    elif rollout_stage == "stage2":
+        effective_fail_mode = "pass_through"
 
     if not _prompt_template_exists(settings.llm_prompt_version):
         allow_requests = False
@@ -82,28 +67,32 @@ def evaluate_llm_guardrails() -> LLMRiskGuardrails:
         adjustment_allowed = False
         reasons.append("llm_prompt_template_missing")
 
-    if not shadow_mode:
-        evidence_missing: list[str] = []
-        allowed_models = settings.llm_allowed_models
-        if not allowed_models:
-            evidence_missing.append("llm_model_inventory_missing")
-        elif settings.llm_model not in allowed_models:
-            evidence_missing.append("llm_model_not_in_inventory")
+    evidence_missing: list[str] = []
+    allowed_models = settings.llm_allowed_models
+    if not allowed_models:
+        evidence_missing.append("llm_model_inventory_missing")
+    elif settings.llm_model not in allowed_models:
+        evidence_missing.append("llm_model_not_in_inventory")
+
+    if rollout_stage in {"stage2", "stage3"}:
         if not settings.llm_evaluation_report:
             evidence_missing.append("llm_evaluation_report_missing")
         if not settings.llm_effective_challenge_id:
             evidence_missing.append("llm_effective_challenge_missing")
         if not settings.llm_shadow_completed_at:
             evidence_missing.append("llm_shadow_completion_missing")
-        model_lock = settings.llm_model_version_lock
-        if not model_lock:
+        if not settings.llm_model_version_lock:
             evidence_missing.append("llm_model_version_lock_missing")
-        elif model_lock != settings.llm_model:
+        elif not _matches_model_version_lock(
+            settings.llm_model, settings.llm_model_version_lock
+        ):
             evidence_missing.append("llm_model_version_lock_mismatch")
-        if evidence_missing:
-            shadow_mode = True
-            adjustment_allowed = False
-            reasons.extend(evidence_missing)
+
+    governance_evidence_complete = len(evidence_missing) == 0
+    if evidence_missing:
+        shadow_mode = True
+        adjustment_allowed = False
+        reasons.extend(evidence_missing)
 
     if adjustment_allowed and not settings.llm_adjustment_approved:
         adjustment_allowed = False
@@ -111,11 +100,11 @@ def evaluate_llm_guardrails() -> LLMRiskGuardrails:
 
     return LLMRiskGuardrails(
         allow_requests=allow_requests,
-        enabled=enabled,
-        rollout_stage=rollout_stage,
         shadow_mode=shadow_mode,
-        fail_mode=fail_mode,
         adjustment_allowed=adjustment_allowed,
+        effective_fail_mode=effective_fail_mode,
+        rollout_stage=rollout_stage,
+        governance_evidence_complete=governance_evidence_complete,
         reasons=tuple(reasons),
     )
 
@@ -124,6 +113,17 @@ def _prompt_template_exists(version: str) -> bool:
     templates_dir = Path(__file__).resolve().parent / "prompt_templates"
     candidate = templates_dir / f"system_{version}.txt"
     return candidate.exists()
+
+
+def _matches_model_version_lock(model: str, version_lock: str) -> bool:
+    if not version_lock:
+        return False
+    if model == version_lock:
+        return True
+    if "@" in version_lock:
+        locked_model = version_lock.split("@", 1)[0].strip()
+        return bool(locked_model) and model == locked_model
+    return False
 
 
 __all__ = ["LLMRiskGuardrails", "evaluate_llm_guardrails"]
