@@ -16,6 +16,9 @@ type CliOptions = {
   rolloutTimeout?: string
   healthAttempts?: number
   healthIntervalSeconds?: number
+  expectedRevision?: string
+  digestAttempts?: number
+  digestIntervalSeconds?: number
   requireSynced?: boolean
 }
 
@@ -23,6 +26,28 @@ type CommandResult = {
   stdout: string
   stderr: string
   exitCode: number
+}
+
+type ArgoStatus = {
+  syncStatus: string
+  healthStatus: string
+  revision: string
+}
+
+type ResolvedOptions = {
+  namespace: string
+  deployments: string[]
+  kustomizationPath: string
+  imageName: string
+  argoNamespace: string
+  argoApplication: string
+  rolloutTimeout: string
+  healthAttempts: number
+  healthIntervalSeconds: number
+  expectedRevision?: string
+  digestAttempts: number
+  digestIntervalSeconds: number
+  requireSynced: boolean
 }
 
 const defaultImageName = 'registry.ide-newton.ts.net/lab/jangar'
@@ -34,6 +59,9 @@ const defaultArgoApplication = 'jangar'
 const defaultRolloutTimeout = '10m'
 const defaultHealthAttempts = 60
 const defaultHealthIntervalSeconds = 10
+const defaultDigestAttempts = 30
+const defaultDigestIntervalSeconds = 10
+const shaPattern = /^[0-9a-f]{40}$/i
 
 const resolvePath = (path: string) => resolve(repoRoot, path)
 
@@ -85,6 +113,25 @@ const runCommand = async (command: string, args: string[], allowFailure = false)
   return { stdout, stderr, exitCode }
 }
 
+const parseArgoStatus = (output: string): ArgoStatus => {
+  const [syncStatus = 'unknown', healthStatus = 'unknown', revision = 'unknown'] = output.trim().split(/\s+/)
+  return { syncStatus, healthStatus, revision }
+}
+
+const getArgoWaitReason = (status: ArgoStatus, options: ResolvedOptions): string | undefined => {
+  if (status.healthStatus !== 'Healthy') {
+    return `health=${status.healthStatus}`
+  }
+  if (options.requireSynced && status.syncStatus !== 'Synced') {
+    return `sync=${status.syncStatus}`
+  }
+  if (options.expectedRevision && status.revision !== options.expectedRevision) {
+    return `revision=${status.revision} expected=${options.expectedRevision}`
+  }
+
+  return undefined
+}
+
 const parseArgs = (argv: string[]): CliOptions => {
   const options: CliOptions = {}
 
@@ -103,6 +150,9 @@ Options:
   --rollout-timeout <duration>       kubectl rollout timeout (default: 10m)
   --health-attempts <number>         Argo health polling attempts (default: 60)
   --health-interval-seconds <number> Argo health polling interval seconds (default: 10)
+  --expected-revision <sha>          Require Argo app to be synced to this commit SHA
+  --digest-attempts <number>         Digest polling attempts after rollout checks (default: 30)
+  --digest-interval-seconds <number> Digest polling interval seconds (default: 10)
   --require-synced                   Require Argo application sync status to be Synced`)
       process.exit(0)
     }
@@ -156,6 +206,15 @@ Options:
       case '--health-interval-seconds':
         options.healthIntervalSeconds = Number.parseInt(value, 10)
         break
+      case '--expected-revision':
+        options.expectedRevision = value
+        break
+      case '--digest-attempts':
+        options.digestAttempts = Number.parseInt(value, 10)
+        break
+      case '--digest-interval-seconds':
+        options.digestIntervalSeconds = Number.parseInt(value, 10)
+        break
       default:
         throw new Error(`Unknown option: ${flag}`)
     }
@@ -164,7 +223,7 @@ Options:
   return options
 }
 
-const waitForArgoHealth = async (options: Required<CliOptions>) => {
+const waitForArgoState = async (options: ResolvedOptions) => {
   for (let attempt = 1; attempt <= options.healthAttempts; attempt += 1) {
     const status = await runCommand(
       'kubectl',
@@ -175,38 +234,39 @@ const waitForArgoHealth = async (options: Required<CliOptions>) => {
         'application',
         options.argoApplication,
         '-o',
-        'jsonpath={.status.sync.status} {.status.health.status}',
+        'jsonpath={.status.sync.status} {.status.health.status} {.status.sync.revision}',
       ],
       true,
     )
 
     if (status.exitCode !== 0) {
       const message = (status.stderr || status.stdout || '').trim()
-      console.log(`Unable to query Argo application status (${message}); continuing with deployment verification`)
-      return
-    }
-
-    const [syncStatus = 'unknown', healthStatus = 'unknown'] = status.stdout.trim().split(/\s+/)
-    console.log(`Attempt ${attempt}: sync=${syncStatus} health=${healthStatus}`)
-
-    if (healthStatus !== 'Healthy') {
+      if (attempt === options.healthAttempts) {
+        throw new Error(`Unable to query Argo application status: ${message}`)
+      }
+      console.log(`Attempt ${attempt}: unable to query Argo application status (${message})`)
       await Bun.sleep(options.healthIntervalSeconds * 1000)
       continue
     }
 
-    if (options.requireSynced && syncStatus !== 'Synced') {
+    const argoStatus = parseArgoStatus(status.stdout)
+    const waitReason = getArgoWaitReason(argoStatus, options)
+    console.log(
+      `Attempt ${attempt}: sync=${argoStatus.syncStatus} health=${argoStatus.healthStatus} revision=${argoStatus.revision}`,
+    )
+
+    if (!waitReason) {
+      return
+    }
+    if (attempt === options.healthAttempts) {
       throw new Error(
-        `Argo application ${options.argoApplication} is Healthy but sync=${syncStatus} (require-synced is enabled)`,
+        `Argo application ${options.argoApplication} did not reach desired state within timeout (${waitReason})`,
       )
     }
 
-    if (syncStatus !== 'Synced') {
-      console.log(`Application is Healthy but sync=${syncStatus}; continuing with rollout/digest verification`)
-    }
-    return
+    console.log(`Waiting for Argo application ${options.argoApplication}: ${waitReason}`)
+    await Bun.sleep(options.healthIntervalSeconds * 1000)
   }
-
-  throw new Error(`Argo application ${options.argoApplication} did not become Healthy within timeout`)
 }
 
 const verifyRollouts = async (namespace: string, deployments: string[], rolloutTimeout: string) => {
@@ -222,23 +282,52 @@ const verifyRollouts = async (namespace: string, deployments: string[], rolloutT
   }
 }
 
-const verifyDeploymentDigests = async (namespace: string, deployments: string[], expectedDigest: string) => {
-  for (const deployment of deployments) {
-    const deploymentImages = await runCommand('kubectl', [
-      '-n',
-      namespace,
-      'get',
-      'deployment',
-      deployment,
-      '-o',
-      'jsonpath={..image}',
-    ])
-    const images = deploymentImages.stdout.trim()
-    console.log(`${deployment} images: ${images}`)
+const readDeploymentImages = async (namespace: string, deployment: string): Promise<string> => {
+  const deploymentImages = await runCommand('kubectl', [
+    '-n',
+    namespace,
+    'get',
+    'deployment',
+    deployment,
+    '-o',
+    'jsonpath={..image}',
+  ])
 
-    if (!images.includes(expectedDigest)) {
-      throw new Error(`Deployment ${deployment} image digest does not include expected digest ${expectedDigest}`)
+  return deploymentImages.stdout.trim()
+}
+
+const verifyDeploymentDigests = async (
+  namespace: string,
+  deployments: string[],
+  expectedDigest: string,
+  attempts: number,
+  intervalSeconds: number,
+) => {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const failedDeployments: string[] = []
+
+    for (const deployment of deployments) {
+      const images = await readDeploymentImages(namespace, deployment)
+      console.log(`${deployment} images: ${images}`)
+
+      if (!images.includes(expectedDigest)) {
+        failedDeployments.push(`${deployment}=${images}`)
+      }
     }
+
+    if (failedDeployments.length === 0) {
+      return
+    }
+    if (attempt === attempts) {
+      throw new Error(
+        `Deployment images do not include expected digest ${expectedDigest}: ${failedDeployments.join(' | ')}`,
+      )
+    }
+
+    console.log(
+      `Digest verification attempt ${attempt}/${attempts} failed; waiting ${intervalSeconds}s for deployment update`,
+    )
+    await Bun.sleep(intervalSeconds * 1000)
   }
 }
 
@@ -246,7 +335,8 @@ export const main = async (cliOptions?: CliOptions) => {
   ensureCli('kubectl')
 
   const parsed = cliOptions ?? parseArgs(process.argv.slice(2))
-  const resolvedOptions: Required<CliOptions> = {
+  const expectedRevision = parsed.expectedRevision?.trim() || undefined
+  const resolvedOptions: ResolvedOptions = {
     namespace: parsed.namespace ?? defaultNamespace,
     deployments: parsed.deployments?.length ? parsed.deployments : [...defaultDeployments],
     kustomizationPath: parsed.kustomizationPath ?? defaultKustomizationPath,
@@ -256,6 +346,9 @@ export const main = async (cliOptions?: CliOptions) => {
     rolloutTimeout: parsed.rolloutTimeout ?? defaultRolloutTimeout,
     healthAttempts: parsed.healthAttempts ?? defaultHealthAttempts,
     healthIntervalSeconds: parsed.healthIntervalSeconds ?? defaultHealthIntervalSeconds,
+    expectedRevision,
+    digestAttempts: parsed.digestAttempts ?? defaultDigestAttempts,
+    digestIntervalSeconds: parsed.digestIntervalSeconds ?? defaultDigestIntervalSeconds,
     requireSynced: parsed.requireSynced ?? false,
   }
 
@@ -267,15 +360,37 @@ export const main = async (cliOptions?: CliOptions) => {
       `healthIntervalSeconds must be a positive integer, received ${resolvedOptions.healthIntervalSeconds}`,
     )
   }
+  if (!Number.isInteger(resolvedOptions.digestAttempts) || resolvedOptions.digestAttempts <= 0) {
+    throw new Error(`digestAttempts must be a positive integer, received ${resolvedOptions.digestAttempts}`)
+  }
+  if (!Number.isInteger(resolvedOptions.digestIntervalSeconds) || resolvedOptions.digestIntervalSeconds <= 0) {
+    throw new Error(
+      `digestIntervalSeconds must be a positive integer, received ${resolvedOptions.digestIntervalSeconds}`,
+    )
+  }
+  if (resolvedOptions.expectedRevision && !shaPattern.test(resolvedOptions.expectedRevision)) {
+    throw new Error(
+      `expectedRevision must be a full 40-character commit SHA, received ${resolvedOptions.expectedRevision}`,
+    )
+  }
 
   const kustomizationPath = resolvePath(resolvedOptions.kustomizationPath)
   const kustomizationSource = readFileSync(kustomizationPath, 'utf8')
   const expectedDigest = extractExpectedDigest(kustomizationSource, resolvedOptions.imageName)
 
   console.log(`Expected digest: ${expectedDigest}`)
-  await waitForArgoHealth(resolvedOptions)
+  if (resolvedOptions.expectedRevision) {
+    console.log(`Expected revision: ${resolvedOptions.expectedRevision}`)
+  }
+  await waitForArgoState(resolvedOptions)
   await verifyRollouts(resolvedOptions.namespace, resolvedOptions.deployments, resolvedOptions.rolloutTimeout)
-  await verifyDeploymentDigests(resolvedOptions.namespace, resolvedOptions.deployments, expectedDigest)
+  await verifyDeploymentDigests(
+    resolvedOptions.namespace,
+    resolvedOptions.deployments,
+    expectedDigest,
+    resolvedOptions.digestAttempts,
+    resolvedOptions.digestIntervalSeconds,
+  )
 }
 
 if (import.meta.main) {
@@ -284,5 +399,7 @@ if (import.meta.main) {
 
 export const __private = {
   extractExpectedDigest,
+  getArgoWaitReason,
   parseArgs,
+  parseArgoStatus,
 }

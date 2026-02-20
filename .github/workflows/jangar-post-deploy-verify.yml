@@ -7,6 +7,11 @@ on:
     paths:
       - 'argocd/applications/jangar/**'
   workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Optional full commit SHA expected in Argo sync revision
+        required: false
+        type: string
 
 concurrency:
   group: jangar-post-deploy-verify-${{ github.ref }}
@@ -21,6 +26,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -84,9 +91,26 @@ jobs:
 
       - name: Verify deployment health and digest
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_REVISION_INPUT: ${{ inputs.expected_revision || '' }}
         run: |
           set -euo pipefail
-          bun run packages/scripts/src/jangar/verify-deployment.ts
+          ARGS=(
+            --require-synced
+            --health-attempts 90
+            --health-interval-seconds 10
+            --digest-attempts 30
+            --digest-interval-seconds 10
+          )
+
+          if [ "${EVENT_NAME}" = "push" ]; then
+            ARGS+=(--expected-revision "${GITHUB_SHA}")
+          elif [ -n "${EXPECTED_REVISION_INPUT}" ]; then
+            ARGS+=(--expected-revision "${EXPECTED_REVISION_INPUT}")
+          fi
+
+          bun run packages/scripts/src/jangar/verify-deployment.ts "${ARGS[@]}"
 
       - name: Prepare rollback manifests
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
