@@ -56,6 +56,9 @@ class TestTradingMetrics(TestCase):
         metrics.record_market_context_result(
             "market_context_domain_error", shadow_mode=True
         )
+        metrics.record_llm_policy_resolution("compliant")
+        metrics.record_llm_policy_resolution("intentional_exception")
+        metrics.record_llm_policy_resolution("violation")
         metrics.llm_fail_mode_exception_total = 2
 
         payload = render_trading_metrics(metrics.__dict__)
@@ -66,6 +69,18 @@ class TestTradingMetrics(TestCase):
         )
         self.assertIn(
             'torghut_trading_llm_market_context_shadow_total{reason="market_context_domain_error"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_llm_policy_resolution_total{classification="compliant"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_llm_policy_resolution_total{classification="intentional_exception"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_llm_policy_resolution_total{classification="violation"} 1',
             payload,
         )
         self.assertIn("torghut_trading_llm_fail_mode_exception_total 2", payload)

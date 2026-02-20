@@ -182,6 +182,10 @@ Controls (from `services/torghut/app/config.py`):
 - Live fail-open approval: `LLM_FAIL_OPEN_LIVE_APPROVED` must be true before any live effective fail mode can be
   `pass_through`
 - Adjustment allowed: `LLM_ADJUSTMENT_ALLOWED` (default false)
+- Policy resolution telemetry: `/trading/status` and `/metrics` expose explicit runtime classification
+  (`compliant`, `intentional_exception`, `violation`) for fail-mode posture auditability.
+- Stage progression throughput guard: promotion prerequisites require real signal/decision/trade throughput and reject
+  no-signal windows (`no_signal_window_detected`) so rollout cannot advance on empty evidence windows.
 
 ## Operations as design (automation-ready procedures)
 These are part of the production design because they define how the system is safely operated under failure.

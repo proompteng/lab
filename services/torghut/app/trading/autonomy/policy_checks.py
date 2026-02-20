@@ -17,6 +17,8 @@ class PromotionPrerequisiteResult:
     missing_artifacts: list[str]
     reason_details: list[dict[str, object]]
     artifact_refs: list[str]
+    required_throughput: dict[str, int]
+    observed_throughput: dict[str, int | bool | str | None]
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -26,6 +28,8 @@ class PromotionPrerequisiteResult:
             "missing_artifacts": list(self.missing_artifacts),
             "reason_details": [dict(item) for item in self.reason_details],
             "artifact_refs": list(self.artifact_refs),
+            "required_throughput": dict(self.required_throughput),
+            "observed_throughput": dict(self.observed_throughput),
         }
 
 
@@ -68,6 +72,11 @@ def evaluate_promotion_prerequisites(
         item for item in required_artifacts if not (artifact_root / item).exists()
     ]
     artifact_refs = [str(artifact_root / item) for item in required_artifacts]
+    throughput_requirements = _required_throughput(policy_payload)
+    throughput_observed = _observed_throughput(
+        gate_report_payload=gate_report_payload,
+        candidate_state_payload=candidate_state_payload,
+    )
 
     if missing_artifacts:
         reasons.append("required_artifacts_missing")
@@ -118,6 +127,58 @@ def evaluate_promotion_prerequisites(
                     "reason": f"{required_gate}_not_passed",
                     "gate_id": required_gate,
                     "status": status,
+                }
+            )
+
+    if bool(throughput_observed.get("no_signal_window", False)):
+        reasons.append("no_signal_window_detected")
+        reason_details.append(
+            {
+                "reason": "no_signal_window_detected",
+                "no_signal_reason": throughput_observed.get("no_signal_reason"),
+            }
+        )
+
+    has_explicit_throughput = bool(
+        throughput_observed.get("has_explicit_throughput", False)
+    )
+    if has_explicit_throughput:
+        signal_count = _int_or_default(throughput_observed.get("signal_count"), 0)
+        if signal_count < throughput_requirements["min_signal_count"]:
+            reasons.append("signal_count_below_minimum_for_progression")
+            reason_details.append(
+                {
+                    "reason": "signal_count_below_minimum_for_progression",
+                    "signal_count": signal_count,
+                    "minimum_signal_count": throughput_requirements[
+                        "min_signal_count"
+                    ],
+                }
+            )
+
+        decision_count = _int_or_default(throughput_observed.get("decision_count"), 0)
+        if decision_count < throughput_requirements["min_decision_count"]:
+            reasons.append("decision_count_below_minimum_for_progression")
+            reason_details.append(
+                {
+                    "reason": "decision_count_below_minimum_for_progression",
+                    "decision_count": decision_count,
+                    "minimum_decision_count": throughput_requirements[
+                        "min_decision_count"
+                    ],
+                }
+            )
+
+        trade_count = _int_or_default(throughput_observed.get("trade_count"), 0)
+        if trade_count < throughput_requirements["min_trade_count"]:
+            reasons.append("trade_count_below_minimum_for_progression")
+            reason_details.append(
+                {
+                    "reason": "trade_count_below_minimum_for_progression",
+                    "trade_count": trade_count,
+                    "minimum_trade_count": throughput_requirements[
+                        "min_trade_count"
+                    ],
                 }
             )
 
@@ -212,6 +273,8 @@ def evaluate_promotion_prerequisites(
         missing_artifacts=missing_artifacts,
         reason_details=reason_details,
         artifact_refs=sorted(set(artifact_refs)),
+        required_throughput=throughput_requirements,
+        observed_throughput=throughput_observed,
     )
 
 
@@ -334,6 +397,63 @@ def _required_rollback_checks(policy_payload: dict[str, Any]) -> list[str]:
     return [str(item) for item in checks if isinstance(item, str)]
 
 
+def _required_throughput(policy_payload: dict[str, Any]) -> dict[str, int]:
+    return {
+        "min_signal_count": max(
+            1, _int_or_default(policy_payload.get("promotion_min_signal_count"), 1)
+        ),
+        "min_decision_count": max(
+            1, _int_or_default(policy_payload.get("promotion_min_decision_count"), 1)
+        ),
+        "min_trade_count": max(
+            0, _int_or_default(policy_payload.get("promotion_min_trade_count"), 0)
+        ),
+    }
+
+
+def _observed_throughput(
+    *,
+    gate_report_payload: dict[str, Any],
+    candidate_state_payload: dict[str, Any],
+) -> dict[str, int | bool | str | None]:
+    throughput_raw = gate_report_payload.get("throughput")
+    throughput = cast(dict[str, Any], throughput_raw) if isinstance(throughput_raw, dict) else {}
+    metrics_raw = gate_report_payload.get("metrics")
+    metrics = cast(dict[str, Any], metrics_raw) if isinstance(metrics_raw, dict) else {}
+
+    signal_count = _int_or_default(throughput.get("signal_count"), 0)
+    decision_count = _int_or_default(
+        throughput.get("decision_count", metrics.get("decision_count")), 0
+    )
+    trade_count = _int_or_default(
+        throughput.get("trade_count", metrics.get("trade_count")), 0
+    )
+
+    no_signal_reason = str(
+        candidate_state_payload.get("noSignalReason")
+        or throughput.get("no_signal_reason")
+        or ""
+    ).strip()
+    no_signal_from_snapshot = (
+        str(candidate_state_payload.get("datasetSnapshotRef") or "").strip()
+        == "no_signal_window"
+    )
+    no_signal_window = no_signal_from_snapshot or bool(
+        throughput.get("no_signal_window", False)
+    )
+    if no_signal_reason:
+        no_signal_window = True
+
+    return {
+        "has_explicit_throughput": bool(throughput),
+        "signal_count": signal_count,
+        "decision_count": decision_count,
+        "trade_count": trade_count,
+        "no_signal_window": no_signal_window,
+        "no_signal_reason": no_signal_reason or None,
+    }
+
+
 def _gates(gate_report_payload: dict[str, Any]) -> list[dict[str, Any]]:
     gates_raw = gate_report_payload.get("gates")
     gates_list = _list_from_any(gates_raw)
@@ -365,6 +485,21 @@ def _load_json_if_exists(path: Path) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         return None
     return cast(dict[str, Any], payload)
+
+
+def _int_or_default(value: Any, default: int) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            try:
+                return int(stripped)
+            except ValueError:
+                return default
+    return default
 
 
 def _promotion_rank(target: str) -> int:

@@ -52,14 +52,30 @@ flowchart TD
 - Reconcile lag elevated but not yet impacting.
 - Intentional policy exception active (`torghut_llm_policy_exception_active=1`) with no violation.
 
+### Throughput interpretation (oncall runbook shortcut)
+- **Market-closed inactivity (expected):**
+  - `torghut_trading_no_signal_reason_total` rises with stable market-closed reason,
+  - no growth in failure counters, and
+  - autonomous progression checks report `no_signal_window_detected` without policy-violation signals.
+- **Pipeline failure (action required):**
+  - no-signal counters rise with infrastructure/data reasons (`cursor_ahead_of_stream`, fetch/ingest failures),
+  - freshness/lag alerts fire (`torghut_trading_signal_staleness_alert_total`), or
+  - WS/Flink/ClickHouse health checks degrade.
+- **Policy violation (urgent action required):**
+  - `torghut_llm_policy_violation_active=1` or `torghut_llm_stage_policy_violation_active=1`,
+  - rising `torghut_trading_llm_policy_resolution_total{classification="violation"}`,
+  - progression blocked even with signal throughput because policy posture is invalid.
+
 ### LLM policy/fail-mode alerts
 - Page on policy violations:
   - `torghut_llm_policy_violation_active=1`
   - `torghut_llm_stage_policy_violation_active=1`
   - sustained increases in `torghut_llm_fail_mode_override_total` or `torghut_llm_stage_policy_violation_total`
+  - sustained increases in `torghut_trading_llm_policy_resolution_total{classification="violation"}`
 - Ticket on approved exceptions:
   - `torghut_llm_policy_exception_active=1`
   - increases in `torghut_llm_fail_mode_exception_total`
+  - increases in `torghut_trading_llm_policy_resolution_total{classification="intentional_exception"}`
 - Do not page solely on approved exception counters; they are expected when explicitly configured and approved.
 
 ## Operations links

@@ -48,6 +48,8 @@ stateDiagram-v2
 ## Fallback policy (v1)
 - **Live mode (`TRADING_MODE=live`):** Fail-closed by default. Any configuration that would produce
   `effective_fail_mode=pass_through` in live now requires `LLM_FAIL_OPEN_LIVE_APPROVED=true` at boot.
+  Stage-specific rollout semantics are enforced for this check (for example `stage2` always evaluates effective
+  fail mode as `pass_through`, so live `stage2` requires explicit approval even when `LLM_FAIL_MODE=veto`).
 - **Paper mode (`TRADING_MODE=paper`):** Fallback behavior is controlled by `LLM_FAIL_MODE`:
   - `LLM_FAIL_MODE=veto` (current default in `services/torghut/app/config.py`) fails-closed.
   - `LLM_FAIL_MODE=pass_through` allows deterministic pass-through on AI errors.
@@ -68,6 +70,14 @@ Current deployed paper configuration (2026-02-09) sets `LLM_FAIL_MODE=pass_throu
 | --- | --- | --- | --- |
 | Provider outage | circuit opens | `/trading/status` shows circuit open | wait cooldown; disable AI; investigate provider |
 | Excessive costs | token spikes | cost counters/estimates | disable AI; cap tokens; tighten prompts |
+
+## Policy-resolution observability
+- Runtime status exposes `llm.policy_resolution.classification` and `llm.policy_resolution_counters`.
+- Runtime metrics export `torghut_trading_llm_policy_resolution_total{classification=...}` with:
+  - `classification="compliant"`
+  - `classification="intentional_exception"`
+  - `classification="violation"`
+- Approved fail-open operation should increment only `intentional_exception`; any `violation` increments are page-worthy.
 
 ## Security considerations
 - Circuit breakers protect against provider-induced DoS and runaway retries.

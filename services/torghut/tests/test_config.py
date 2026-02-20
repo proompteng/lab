@@ -92,6 +92,49 @@ class TestConfig(TestCase):
             settings.llm_effective_fail_mode_for_current_rollout(), "pass_through"
         )
 
+    def test_rejects_stage2_live_fail_open_without_explicit_approval(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(
+                TRADING_MODE="live",
+                TRADING_LIVE_ENABLED=True,
+                TRADING_UNIVERSE_SOURCE="jangar",
+                TRADING_PARITY_POLICY="mode_coupled",
+                LLM_ROLLOUT_STAGE="stage2",
+                LLM_FAIL_MODE="veto",
+                LLM_FAIL_MODE_ENFORCEMENT="configured",
+                LLM_FAIL_OPEN_LIVE_APPROVED=False,
+                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            )
+
+    def test_rejects_stage1_live_fail_open_without_explicit_approval(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(
+                TRADING_MODE="live",
+                TRADING_LIVE_ENABLED=True,
+                TRADING_UNIVERSE_SOURCE="jangar",
+                TRADING_PARITY_POLICY="live_equivalent",
+                LLM_ROLLOUT_STAGE="stage1",
+                LLM_FAIL_MODE="veto",
+                LLM_FAIL_MODE_ENFORCEMENT="configured",
+                LLM_FAIL_OPEN_LIVE_APPROVED=False,
+                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            )
+
+    def test_stage1_mode_coupled_live_does_not_require_fail_open_approval(self) -> None:
+        settings = Settings(
+            TRADING_MODE="live",
+            TRADING_LIVE_ENABLED=True,
+            TRADING_UNIVERSE_SOURCE="jangar",
+            TRADING_PARITY_POLICY="mode_coupled",
+            LLM_ROLLOUT_STAGE="stage1_shadow_pilot",
+            LLM_FAIL_MODE="veto",
+            LLM_FAIL_MODE_ENFORCEMENT="configured",
+            LLM_FAIL_OPEN_LIVE_APPROVED=False,
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+
+        self.assertEqual(settings.llm_effective_fail_mode_for_current_rollout(), "veto")
+
     def test_allocator_regime_maps_are_normalized(self) -> None:
         settings = Settings(
             TRADING_UNIVERSE_SOURCE="static",

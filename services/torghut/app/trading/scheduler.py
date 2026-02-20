@@ -111,6 +111,9 @@ class TradingMetrics:
     llm_fail_mode_override_total: int = 0
     llm_fail_mode_exception_total: int = 0
     llm_stage_policy_violation_total: int = 0
+    llm_policy_resolution_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
     llm_shadow_total: int = 0
     llm_guardrail_block_total: int = 0
     llm_guardrail_shadow_total: int = 0
@@ -249,6 +252,13 @@ class TradingMetrics:
         if shadow_mode:
             current_shadow = self.llm_market_context_shadow_total.get(normalized, 0)
             self.llm_market_context_shadow_total[normalized] = current_shadow + 1
+
+    def record_llm_policy_resolution(self, classification: str | None) -> None:
+        normalized = classification.strip() if isinstance(classification, str) else ""
+        if not normalized:
+            normalized = "unknown"
+        current = self.llm_policy_resolution_total.get(normalized, 0)
+        self.llm_policy_resolution_total[normalized] = current + 1
 
     def record_strategy_runtime(self, telemetry: DecisionRuntimeTelemetry) -> None:
         if not telemetry.runtime_enabled:
@@ -914,6 +924,9 @@ class TradingPipeline:
             rollout_stage=guardrails.rollout_stage,
             effective_fail_mode=guardrails.effective_fail_mode,
             guardrail_reasons=guardrails.reasons,
+        )
+        self.state.metrics.record_llm_policy_resolution(
+            cast(str | None, policy_resolution.get("classification"))
         )
         if bool(policy_resolution["stage_policy_violation"]):
             self.state.metrics.llm_stage_policy_violation_total += 1
@@ -1633,6 +1646,7 @@ def _build_llm_policy_resolution(
             "trading_mode": settings.trading_mode,
             "trading_parity_policy": settings.trading_parity_policy,
             "llm_fail_mode_enforcement": settings.llm_fail_mode_enforcement,
+            "llm_live_fail_open_requested": settings.llm_live_fail_open_requested_for_stage(normalized_stage),
             "llm_fail_open_live_approved": settings.llm_fail_open_live_approved,
         },
     }
@@ -1672,6 +1686,9 @@ class TradingScheduler:
             "effective_fail_mode": guardrails.effective_fail_mode,
             "policy_exceptions": settings.llm_policy_exceptions,
             "policy_resolution": policy_resolution,
+            "policy_resolution_counters": dict(
+                self.state.metrics.llm_policy_resolution_total
+            ),
             "circuit": circuit_snapshot,
             "guardrails": {
                 "allow_requests": guardrails.allow_requests,

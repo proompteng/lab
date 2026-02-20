@@ -1841,6 +1841,10 @@ class TestTradingPipeline(TestCase):
                     pipeline.state.metrics.llm_fail_mode_exception_total, 0
                 )
                 self.assertEqual(
+                    pipeline.state.metrics.llm_policy_resolution_total.get("violation"),
+                    1,
+                )
+                self.assertEqual(
                     pipeline.state.metrics.llm_stage_policy_violation_total, 1
                 )
         finally:
@@ -2101,6 +2105,10 @@ class TestTradingPipeline(TestCase):
                 self.assertIsInstance(policy_resolution, dict)
                 assert isinstance(policy_resolution, dict)
                 self.assertEqual(policy_resolution.get("rollout_stage"), "stage2")
+                self.assertEqual(
+                    pipeline.state.metrics.llm_policy_resolution_total.get("violation"),
+                    1,
+                )
                 self.assertEqual(decisions[0].status, "submitted")
                 self.assertEqual(len(executions), 1)
         finally:
