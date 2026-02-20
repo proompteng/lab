@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from unittest import TestCase
 from unittest.mock import patch
 
 from app import config
-from app.trading.universe import UniverseResolver
+from app.trading.universe import UniverseCache, UniverseResolver
 
 
 class TestUniverseResolver(TestCase):
@@ -16,6 +17,8 @@ class TestUniverseResolver(TestCase):
         self._original_enabled = config.settings.trading_enabled
         self._original_autonomy = config.settings.trading_autonomy_enabled
         self._original_live = config.settings.trading_live_enabled
+        self._original_max_stale_seconds = config.settings.trading_universe_max_stale_seconds
+        self._original_cache_seconds = config.settings.trading_universe_cache_seconds
 
     def tearDown(self) -> None:
         config.settings.trading_universe_source = self._original_source
@@ -24,6 +27,8 @@ class TestUniverseResolver(TestCase):
         config.settings.trading_enabled = self._original_enabled
         config.settings.trading_autonomy_enabled = self._original_autonomy
         config.settings.trading_live_enabled = self._original_live
+        config.settings.trading_universe_max_stale_seconds = self._original_max_stale_seconds
+        config.settings.trading_universe_cache_seconds = self._original_cache_seconds
 
     def test_static_universe_fails_closed_on_empty(self) -> None:
         config.settings.trading_universe_source = "static"
@@ -65,3 +70,17 @@ class TestUniverseResolver(TestCase):
 
         with patch("app.trading.universe.urlopen", side_effect=RuntimeError("boom")):
             self.assertEqual(resolver.get_symbols(), {"MSFT", "NVDA"})
+
+    def test_jangar_failure_rejects_expired_cache(self) -> None:
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_jangar_symbols_url = "http://example"
+        config.settings.trading_universe_max_stale_seconds = 5
+        config.settings.trading_universe_cache_seconds = 1
+        resolver = UniverseResolver()
+        resolver._cache = UniverseCache(
+            symbols={"MSFT"},
+            fetched_at=datetime.now(timezone.utc) - timedelta(seconds=60),
+        )
+
+        with patch("app.trading.universe.urlopen", side_effect=RuntimeError("boom")):
+            self.assertEqual(resolver.get_symbols(), set())

@@ -273,6 +273,16 @@ class TradingState:
     last_ingest_reason: Optional[str] = None
     autonomy_no_signal_streak: int = 0
     last_evidence_continuity_report: Optional[dict[str, Any]] = None
+    autonomy_failure_streak: int = 0
+    universe_source_status: Optional[str] = None
+    universe_source_reason: Optional[str] = None
+    universe_symbols_count: int = 0
+    universe_cache_age_seconds: Optional[int] = None
+    emergency_stop_active: bool = False
+    emergency_stop_reason: Optional[str] = None
+    emergency_stop_triggered_at: Optional[datetime] = None
+    rollback_incidents_total: int = 0
+    rollback_incident_evidence_path: Optional[str] = None
     metrics: TradingMetrics = field(default_factory=TradingMetrics)
 
 
@@ -380,7 +390,28 @@ class TradingPipeline:
             }
             positions = account_snapshot.positions
 
-            allowed_symbols = self.universe_resolver.get_symbols()
+            universe_resolution = self.universe_resolver.get_resolution()
+            self.state.universe_source_status = universe_resolution.status
+            self.state.universe_source_reason = universe_resolution.reason
+            self.state.universe_symbols_count = len(universe_resolution.symbols)
+            self.state.universe_cache_age_seconds = universe_resolution.cache_age_seconds
+            allowed_symbols = universe_resolution.symbols
+            if universe_resolution.status == "degraded":
+                self.state.metrics.record_signal_staleness_alert("universe_source_stale_cache")
+            if (
+                settings.trading_universe_source == "jangar"
+                and settings.trading_universe_require_non_empty_jangar
+                and not allowed_symbols
+            ):
+                self.state.metrics.record_signal_staleness_alert("universe_source_unavailable")
+                self.state.last_error = f"universe_source_unavailable reason={universe_resolution.reason}"
+                logger.error(
+                    "Blocking decision execution: authoritative Jangar universe unavailable reason=%s status=%s",
+                    universe_resolution.reason,
+                    universe_resolution.status,
+                )
+                self.ingestor.commit_cursor(session, batch)
+                return
 
             for signal in batch.signals:
                 try:
@@ -621,6 +652,18 @@ class TradingPipeline:
                 return
 
             if not settings.trading_enabled:
+                return
+            if self.state.emergency_stop_active:
+                self.state.metrics.orders_rejected_total += 1
+                reason = self.state.emergency_stop_reason or "emergency_stop_active"
+                self.executor.mark_rejected(session, decision_row, reason)
+                logger.error(
+                    "Decision blocked by emergency stop strategy_id=%s decision_id=%s symbol=%s reason=%s",
+                    decision.strategy_id,
+                    decision_row.id,
+                    decision.symbol,
+                    reason,
+                )
                 return
 
             execution_client = self._execution_client_for_symbol(decision.symbol)
@@ -1406,6 +1449,113 @@ class TradingScheduler:
             order_feed_ingestor=OrderFeedIngestor(),
         )
 
+    def _evaluate_safety_controls(self) -> None:
+        if self._pipeline is None or not settings.trading_emergency_stop_enabled:
+            return
+        if self.state.emergency_stop_active:
+            return
+
+        reasons: list[str] = []
+        lag_seconds = self.state.metrics.signal_lag_seconds
+        if (
+            isinstance(lag_seconds, int)
+            and lag_seconds >= settings.trading_rollback_signal_lag_seconds_limit
+        ):
+            reasons.append(f"signal_lag_exceeded:{lag_seconds}")
+
+        if (
+            self.state.autonomy_failure_streak
+            >= settings.trading_rollback_autonomy_failure_streak_limit
+        ):
+            reasons.append(
+                f"autonomy_failure_streak_exceeded:{self.state.autonomy_failure_streak}"
+            )
+
+        fallback_events = sum(self.state.metrics.execution_fallback_total.values())
+        submitted_total = max(1, self.state.metrics.orders_submitted_total)
+        fallback_ratio = fallback_events / submitted_total
+        if fallback_ratio >= settings.trading_rollback_fallback_ratio_limit:
+            reasons.append(f"execution_fallback_ratio_exceeded:{fallback_ratio:.3f}")
+
+        drawdown = self._load_latest_drawdown_from_gate()
+        if (
+            drawdown is not None
+            and drawdown >= settings.trading_rollback_max_drawdown_limit
+        ):
+            reasons.append(f"max_drawdown_exceeded:{drawdown:.4f}")
+
+        if reasons:
+            self._trigger_emergency_stop(reasons=reasons, fallback_ratio=fallback_ratio, drawdown=drawdown)
+
+    def _load_latest_drawdown_from_gate(self) -> float | None:
+        gate_path_raw = self.state.last_autonomy_gates
+        if not gate_path_raw:
+            return None
+        try:
+            payload = json.loads(Path(gate_path_raw).read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        metrics = payload.get("metrics")
+        if not isinstance(metrics, Mapping):
+            return None
+        metrics_payload = cast(Mapping[str, Any], metrics)
+        max_drawdown = metrics_payload.get("max_drawdown")
+        if max_drawdown is None:
+            return None
+        try:
+            return abs(float(max_drawdown))
+        except (TypeError, ValueError):
+            return None
+
+    def _trigger_emergency_stop(
+        self,
+        *,
+        reasons: list[str],
+        fallback_ratio: float,
+        drawdown: float | None,
+    ) -> None:
+        if self._pipeline is None:
+            return
+        now = datetime.now(timezone.utc)
+        self.state.emergency_stop_active = True
+        self.state.rollback_incidents_total += 1
+        self.state.emergency_stop_triggered_at = now
+        self.state.emergency_stop_reason = ";".join(reasons)
+        self.state.last_error = f"emergency_stop_triggered reasons={self.state.emergency_stop_reason}"
+        self.state.metrics.orders_rejected_total += 1
+        try:
+            canceled = self._pipeline.order_firewall.cancel_all_orders()
+            cancelled_count = len(canceled)
+        except Exception:
+            logger.exception("Emergency stop failed to cancel open orders")
+            cancelled_count = 0
+
+        artifact_root = _resolve_autonomy_artifact_root(Path(settings.trading_autonomy_artifact_dir))
+        incident_dir = artifact_root / "rollback-incidents"
+        incident_dir.mkdir(parents=True, exist_ok=True)
+        incident_path = incident_dir / f"incident-{now.strftime('%Y%m%dT%H%M%S')}.json"
+        incident_payload = {
+            "triggered_at": now.isoformat(),
+            "reasons": reasons,
+            "signal_lag_seconds": self.state.metrics.signal_lag_seconds,
+            "autonomy_failure_streak": self.state.autonomy_failure_streak,
+            "fallback_ratio": round(fallback_ratio, 6),
+            "fallback_total": sum(self.state.metrics.execution_fallback_total.values()),
+            "orders_submitted_total": self.state.metrics.orders_submitted_total,
+            "max_drawdown": drawdown,
+            "last_autonomy_run_id": self.state.last_autonomy_run_id,
+            "last_autonomy_gates": self.state.last_autonomy_gates,
+            "cancelled_open_orders": cancelled_count,
+        }
+        incident_path.write_text(json.dumps(incident_payload, indent=2), encoding="utf-8")
+        self.state.rollback_incident_evidence_path = str(incident_path)
+        logger.error(
+            "Emergency stop triggered reasons=%s canceled_open_orders=%s evidence=%s",
+            reasons,
+            cancelled_count,
+            incident_path,
+        )
+
     async def start(self) -> None:
         if self._task:
             return
@@ -1448,6 +1598,8 @@ class TradingScheduler:
             except Exception as exc:  # pragma: no cover - loop guard
                 logger.exception("Trading loop failed: %s", exc)
                 self.state.last_error = str(exc)
+            finally:
+                self._evaluate_safety_controls()
 
             now = datetime.now(timezone.utc)
             if now - last_reconcile >= timedelta(seconds=reconcile_interval):
@@ -1462,6 +1614,8 @@ class TradingScheduler:
                 except Exception as exc:  # pragma: no cover - loop guard
                     logger.exception("Reconcile loop failed: %s", exc)
                     self.state.last_error = str(exc)
+                finally:
+                    self._evaluate_safety_controls()
                 last_reconcile = now
 
             if settings.trading_autonomy_enabled and now - last_autonomy >= timedelta(
@@ -1476,7 +1630,9 @@ class TradingScheduler:
                     logger.exception("Autonomous loop failed: %s", exc)
                     self.state.last_error = str(exc)
                     self.state.last_autonomy_error = str(exc)
+                    self.state.autonomy_failure_streak += 1
                 finally:
+                    self._evaluate_safety_controls()
                     last_autonomy = now
 
             if (
@@ -1592,6 +1748,7 @@ class TradingScheduler:
                     code_version="live",
                 )
             except Exception as exc:
+                self.state.autonomy_failure_streak += 1
                 self.state.last_autonomy_reason = (
                     "autonomy_no_signal_persistence_failed"
                 )
@@ -1609,6 +1766,7 @@ class TradingScheduler:
                 autonomy_batch.query_start,
                 autonomy_batch.query_end,
             )
+            self._evaluate_safety_controls()
             return
 
         run_output_dir = artifact_root / now.strftime("%Y%m%dT%H%M%S")
@@ -1658,11 +1816,14 @@ class TradingScheduler:
                 session_factory=self._pipeline.session_factory,
             )
         except Exception as exc:
+            self.state.autonomy_failure_streak += 1
             self.state.last_autonomy_error = str(exc)
             self.state.last_autonomy_reason = "lane_execution_failed"
             logger.exception("Autonomous lane execution failed: %s", exc)
+            self._evaluate_safety_controls()
             return
 
+        self.state.autonomy_failure_streak = 0
         self.state.autonomy_runs_total += 1
         self.state.last_autonomy_run_id = result.run_id
         self.state.last_autonomy_gates = str(result.gate_report_path)
@@ -1677,9 +1838,11 @@ class TradingScheduler:
         if result.paper_patch_path is not None:
             self.state.last_autonomy_patch = str(result.paper_patch_path)
             self.state.autonomy_patches_total += 1
+            self._evaluate_safety_controls()
             return
 
         self.state.last_autonomy_patch = None
+        self._evaluate_safety_controls()
 
 
 __all__ = ["TradingScheduler", "TradingState", "TradingMetrics"]

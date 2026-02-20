@@ -123,6 +123,21 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
             "last_ingest_reason": state.last_ingest_reason,
             "last_ingest_window_start": state.last_ingest_window_start,
             "last_ingest_window_end": state.last_ingest_window_end,
+            "failure_streak": state.autonomy_failure_streak,
+        },
+        "signal_continuity": {
+            "universe_source": settings.trading_universe_source,
+            "universe_status": state.universe_source_status,
+            "universe_reason": state.universe_source_reason,
+            "universe_symbols_count": state.universe_symbols_count,
+            "universe_cache_age_seconds": state.universe_cache_age_seconds,
+        },
+        "rollback": {
+            "emergency_stop_active": state.emergency_stop_active,
+            "emergency_stop_reason": state.emergency_stop_reason,
+            "emergency_stop_triggered_at": state.emergency_stop_triggered_at,
+            "incidents_total": state.rollback_incidents_total,
+            "incident_evidence_path": state.rollback_incident_evidence_path,
         },
         "metrics": state.metrics.__dict__,
         "llm": scheduler.llm_status(),
@@ -179,6 +194,21 @@ def trading_autonomy() -> dict[str, object]:
         "last_ingest_reason": state.last_ingest_reason,
         "last_ingest_window_start": state.last_ingest_window_start,
         "last_ingest_window_end": state.last_ingest_window_end,
+        "failure_streak": state.autonomy_failure_streak,
+        "signal_continuity": {
+            "universe_source": settings.trading_universe_source,
+            "universe_status": state.universe_source_status,
+            "universe_reason": state.universe_source_reason,
+            "universe_symbols_count": state.universe_symbols_count,
+            "universe_cache_age_seconds": state.universe_cache_age_seconds,
+        },
+        "rollback": {
+            "emergency_stop_active": state.emergency_stop_active,
+            "emergency_stop_reason": state.emergency_stop_reason,
+            "emergency_stop_triggered_at": state.emergency_stop_triggered_at,
+            "incidents_total": state.rollback_incidents_total,
+            "incident_evidence_path": state.rollback_incident_evidence_path,
+        },
         "evidence_continuity": state.last_evidence_continuity_report,
     }
 

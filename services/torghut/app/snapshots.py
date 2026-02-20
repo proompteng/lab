@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from .alpaca_client import TorghutAlpacaClient
 from .models import Execution, PositionSnapshot, coerce_json_payload
-from .trading.route_metadata import coerce_route_text, coerce_route_int
+from .trading.route_metadata import coerce_route_text, coerce_route_int, normalize_route_provenance
 
 logger = logging.getLogger(__name__)
 
@@ -76,11 +76,18 @@ def sync_order_to_db(
         or _coerce_text(order_response.get("_execution_fallback_reason"))
         or _coerce_text(order_response.get("_fallback_reason"))
     )
-    resolved_fallback_count = (
+    raw_fallback_count = (
         execution_fallback_count
         if execution_fallback_count is not None
         else coerce_route_int(order_response.get("_execution_fallback_count"))
-        or 0
+    )
+    resolved_expected_adapter, resolved_actual_adapter, resolved_fallback_reason, resolved_fallback_count = (
+        normalize_route_provenance(
+            expected_adapter=resolved_expected_adapter,
+            actual_adapter=resolved_actual_adapter,
+            fallback_reason=resolved_fallback_reason,
+            fallback_count=raw_fallback_count,
+        )
     )
 
     stmt = select(Execution).where(Execution.alpaca_order_id == alpaca_order_id)
