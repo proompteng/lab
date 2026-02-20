@@ -2,6 +2,30 @@
 
 This workflow opens pull requests whenever Argo CD Image Updater commits to a `release/<app>` branch or when a maintainer triggers the `workflow_dispatch` input. The automation relies on standard GitHub Actions branching semantics and the release workflow documented in GitHub’s [manual dispatch guide](https://docs.github.com/actions/using-workflows/events-that-trigger-workflows#workflow_dispatch).
 
+## Release PR Automerge
+
+PRs created from release branches can be auto-merged by [`.github/workflows/release-pr-automerge.yml`](../.github/workflows/release-pr-automerge.yml) when they match strict safety gates:
+
+- Base branch is `main`.
+- Head branch starts with `release/`.
+- PR is not draft.
+- PR author is allowlisted GitHub Actions identity.
+- PR head repository matches the base repository.
+- Label `do-not-automerge` is not present.
+- All changed files are allowlisted release artifacts (currently:
+  - `argocd/applications/proompteng/kustomization.yaml`
+  ).
+
+The workflow enables squash auto-merge (`gh pr merge --auto --squash`) only after all eligibility checks pass. GitHub still enforces required checks and merge rules before the merge actually executes.
+
+### Operator Controls
+
+- To block automerge for a specific release PR, add label `do-not-automerge`.
+- To inspect automerge decisions:
+  - `gh pr view <num> -R proompteng/lab --json labels,author,baseRefName,headRefName,files`
+  - `gh run view <run-id> -R proompteng/lab`
+  - `gh pr checks <num> -R proompteng/lab`
+
 ## Enrolling a New Application
 
 1. Configure the application's Argo CD manifests with the Image Updater annotations that target a `release/<app>` branch.

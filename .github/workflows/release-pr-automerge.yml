@@ -1,0 +1,151 @@
+name: release-pr-automerge
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+      - labeled
+      - unlabeled
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-pr-automerge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  enable:
+    if: >-
+      ${{
+        github.event.pull_request.base.ref == 'main' &&
+        startsWith(github.event.pull_request.head.ref, 'release/') &&
+        github.event.pull_request.draft == false
+      }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Evaluate automerge eligibility
+        id: gates
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_IS_DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          set -euo pipefail
+
+          echo "eligible=false" >> "$GITHUB_OUTPUT"
+          echo "reason=not-evaluated" >> "$GITHUB_OUTPUT"
+
+          allowed_authors=("app/github-actions" "github-actions[bot]")
+          allowed_paths=("argocd/applications/proompteng/kustomization.yaml")
+
+          contains() {
+            local needle="$1"
+            shift
+            for item in "$@"; do
+              if [[ "$item" == "$needle" ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          if [[ "$PR_BASE_REF" != "main" ]]; then
+            echo "reason=base-not-main" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$PR_HEAD_REF" != release/* ]]; then
+            echo "reason=head-not-release-branch" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$PR_IS_DRAFT" == "true" ]]; then
+            echo "reason=pr-is-draft" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$PR_HEAD_REPO" != "$GH_REPO" ]]; then
+            echo "reason=head-not-from-same-repo" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! contains "$PR_AUTHOR" "${allowed_authors[@]}"; then
+            echo "reason=author-not-allowlisted" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          has_opt_out_label=$(
+            gh pr view "$PR_NUMBER" \
+              -R "$GH_REPO" \
+              --json labels \
+              --jq 'any(.labels[]?; .name == "do-not-automerge")'
+          )
+
+          if [[ "$has_opt_out_label" == "true" ]]; then
+            echo "reason=opt-out-label-present" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          mapfile -t changed_files < <(
+            gh api "repos/$GH_REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename'
+          )
+
+          if [[ "${#changed_files[@]}" -eq 0 ]]; then
+            echo "reason=no-files-changed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          for path in "${changed_files[@]}"; do
+            if ! contains "$path" "${allowed_paths[@]}"; then
+              echo "reason=changed-file-not-allowlisted:$path" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+
+          echo "eligible=true" >> "$GITHUB_OUTPUT"
+          echo "reason=eligible" >> "$GITHUB_OUTPUT"
+
+      - name: Eligibility summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "eligible=${{ steps.gates.outputs.eligible }}"
+          echo "reason=${{ steps.gates.outputs.reason }}"
+
+      - name: Enable squash auto-merge
+        if: steps.gates.outputs.eligible == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          auto_merge_enabled="$(
+            gh pr view "$PR_NUMBER" \
+              -R "$GH_REPO" \
+              --json autoMergeRequest \
+              --jq '.autoMergeRequest != null'
+          )"
+
+          if [[ "$auto_merge_enabled" == "true" ]]; then
+            echo "Auto-merge already enabled for PR #$PR_NUMBER"
+            exit 0
+          fi
+
+          gh pr merge "$PR_NUMBER" -R "$GH_REPO" --auto --squash
