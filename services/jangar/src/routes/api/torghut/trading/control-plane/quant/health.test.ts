@@ -73,4 +73,73 @@ describe('getQuantHealthHandler', () => {
     expect(body.missingUpdateAlarm).toBe(true)
     expect(body.stages).toHaveLength(1)
   })
+
+  it('suppresses missing-update alarm outside market hours', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-02-22T15:00:00.000Z')) // Sunday
+    process.env.JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS = '15'
+
+    const { getQuantHealthHandler } = await import('./health')
+
+    getQuantLatestStoreStatus.mockResolvedValueOnce({
+      updatedAt: '2026-02-22T14:58:00.000Z',
+      count: 7,
+    })
+    listLatestQuantPipelineHealth.mockResolvedValueOnce([
+      {
+        strategyId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        account: '',
+        stage: 'ingestion',
+        ok: true,
+        lagSeconds: 4,
+        asOf: '2026-02-22T14:59:58.000Z',
+        details: { window: '1d' },
+      },
+    ])
+
+    const response = await getQuantHealthHandler(
+      new Request('http://localhost/api/torghut/trading/control-plane/quant/health'),
+    )
+
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body.ok).toBe(true)
+    expect(body.status).toBe('ok')
+    expect(body.missingUpdateAlarm).toBe(false)
+  })
+
+  it('returns degraded status when any stage is not ok', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-02-18T15:00:00.000Z'))
+    process.env.JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS = '60'
+
+    const { getQuantHealthHandler } = await import('./health')
+
+    getQuantLatestStoreStatus.mockResolvedValueOnce({
+      updatedAt: '2026-02-18T14:59:50.000Z',
+      count: 42,
+    })
+    listLatestQuantPipelineHealth.mockResolvedValueOnce([
+      {
+        strategyId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        account: 'paper',
+        stage: 'compute',
+        ok: false,
+        lagSeconds: 9,
+        asOf: '2026-02-18T14:59:58.000Z',
+        details: { window: '1d' },
+      },
+    ])
+
+    const response = await getQuantHealthHandler(
+      new Request('http://localhost/api/torghut/trading/control-plane/quant/health'),
+    )
+
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body.ok).toBe(true)
+    expect(body.status).toBe('degraded')
+    expect(body.missingUpdateAlarm).toBe(false)
+    expect(body.maxStageLagSeconds).toBe(9)
+  })
 })

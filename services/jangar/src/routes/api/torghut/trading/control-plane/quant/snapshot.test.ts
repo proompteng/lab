@@ -40,6 +40,17 @@ describe('getQuantSnapshotHandler', () => {
         asOf: '2026-02-19T12:00:00.000Z',
         freshnessSeconds: 3,
       },
+      {
+        metricName: 'sharpe_annualized',
+        window: '1d',
+        status: 'ok',
+        quality: 'good',
+        unit: 'ratio',
+        valueNumeric: 1.1,
+        formulaVersion: 'v1',
+        asOf: '2026-02-19T12:00:05.000Z',
+        freshnessSeconds: 1,
+      },
     ])
     listQuantAlerts.mockResolvedValueOnce([
       { alertId: 'a-open', account: 'paper', window: '1d', state: 'open' },
@@ -63,7 +74,8 @@ describe('getQuantSnapshotHandler', () => {
     expect(body.frame.strategyId).toBe('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
     expect(body.frame.account).toBe('paper')
     expect(body.frame.window).toBe('1d')
-    expect(body.frame.metrics).toHaveLength(1)
+    expect(body.frame.frameAsOf).toBe('2026-02-19T12:00:05.000Z')
+    expect(body.frame.metrics).toHaveLength(2)
     expect(body.frame.alerts).toEqual([{ alertId: 'a-open', account: 'paper', window: '1d', state: 'open' }])
   })
 })
