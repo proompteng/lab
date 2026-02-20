@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.6
+# syntax=mirror.gcr.io/docker/dockerfile:1.6
 # Bun image for jangar worker + UI + Codex app-server
 #
 # NOTE: This Dockerfile is intended to be built from a Turbo-pruned context produced by:
@@ -10,6 +10,7 @@
 # - `tsconfig.base.json` is copied into the context root by the build script
 # - `skills/` is present at the context root for Codex CLI skills
 ARG BUN_VERSION=1.3.9
+ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 ARG OPENVSCODE_VERSION=1.106.3
 ARG GH_VERSION=2.83.2
 ARG ZOXIDE_VERSION=0.9.8
@@ -25,7 +26,7 @@ ARG TEMURIN25_JDK_VERSION=25.0.1_8
 ARG GRADLE_VERSION=9.2.1
 ARG CODEX_VERSION=latest
 
-FROM oven/bun:${BUN_VERSION} AS tools
+FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS tools
 ARG NODE24_VERSION=24.11.1
 ARG OPENVSCODE_VERSION
 ARG GH_VERSION
@@ -503,7 +504,7 @@ RUN --mount=type=cache,target=/root/.cache/bun \
 # - No Codex CLI / skills / dev tooling.
 # - Defaults to controllers + agent comms disabled; can be overridden via env vars.
 # - Still includes `kubectl` because the control plane uses it for list/watch/logs.
-FROM oven/bun:${BUN_VERSION} AS control-plane
+FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS control-plane
 
 COPY --from=tools /usr/local/bin/kubectl /usr/local/bin/kubectl
 
