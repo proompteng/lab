@@ -1,0 +1,195 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jangar-worker
+  namespace: jangar
+  labels:
+    app.kubernetes.io/name: jangar-worker
+    app.kubernetes.io/part-of: lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jangar-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jangar-worker
+        app.kubernetes.io/part-of: lab
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-02-19T19:10:00.000Z"
+    spec:
+      initContainers:
+        - name: bootstrap-workspace
+          image: registry.ide-newton.ts.net/lab/jangar
+          imagePullPolicy: IfNotPresent
+          command: ['sh', '-c']
+          args:
+            - |
+              set -eu
+              if [ ! -d /workspace/lab/.git ]; then
+                rm -rf /workspace/lab
+                git clone --depth 1 https://github.com/proompteng/lab.git /workspace/lab
+              fi
+              mkdir -p /workspace/lab/.worktrees /workspace/.bun-install-cache
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      containers:
+        - name: jangar-worker
+          image: registry.ide-newton.ts.net/lab/jangar:latest
+          imagePullPolicy: Always
+          command: ['bun', '/app/services/jangar/src/worker.ts']
+          ports:
+            - name: health
+              containerPort: 3002
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: TEMPORAL_ADDRESS
+              value: temporal-frontend.temporal.svc.cluster.local:7233
+            - name: TEMPORAL_NAMESPACE
+              value: default
+            - name: TEMPORAL_TASK_QUEUE
+              value: jangar
+            - name: JANGAR_WORKER_TEMPORAL_TASK_QUEUE
+              value: jangar
+            - name: TEMPORAL_WORKFLOW_CONCURRENCY
+              value: "64"
+            - name: TEMPORAL_ACTIVITY_CONCURRENCY
+              value: "32"
+            - name: TEMPORAL_STICKY_CACHE_SIZE
+              value: "1024"
+            - name: TEMPORAL_DETERMINISM_MARKER_MODE
+              value: delta
+            - name: TEMPORAL_DETERMINISM_MARKER_INTERVAL_TASKS
+              value: "10"
+            - name: TEMPORAL_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS
+              value: "10000"
+            - name: TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED
+              value: "1"
+            - name: TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES
+              value: "1800000"
+            - name: TEMPORAL_OTEL_ENABLED
+              value: "true"
+            - name: TEMPORAL_METRICS_EXPORTER
+              value: otlp
+            - name: TEMPORAL_METRICS_ENDPOINT
+              value: http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics
+            - name: OTEL_SERVICE_NAME
+              value: jangar-worker
+            - name: OTEL_SERVICE_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OTEL_SERVICE_INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: grpc
+            - name: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
+              value: grpc
+            - name: OTEL_EXPORTER_OTLP_METRICS_PROTOCOL
+              value: grpc
+            - name: OTEL_EXPORTER_OTLP_TRACES_COMPRESSION
+              value: gzip
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://observability-tempo-distributor.observability.svc.cluster.local:4317
+            - name: OTEL_EXPORTER_OTLP_TRACES_TIMEOUT
+              value: "20000"
+            - name: OTEL_METRICS_EXPORTER
+              value: none
+            - name: OTEL_LOGS_EXPORTER
+              value: none
+            - name: BUMBA_WORKSPACE_ROOT
+              value: /workspace/lab
+            - name: BUN_INSTALL_CACHE_DIR
+              value: /workspace/.bun-install-cache
+            - name: JANGAR_WORKER_HEALTH_PORT
+              value: "3002"
+            - name: REPOSITORY
+              value: proompteng/lab
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
+                  optional: true
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: jangar-db-app
+                  key: uri
+            - name: PGSSLMODE
+              value: require
+            - name: OPENAI_API_BASE_URL
+              value: http://saigak.saigak.svc.cluster.local:11434/v1
+            - name: OPENAI_COMPLETION_MODEL
+              value: qwen3-coder-saigak:30b-a3b-q4_K_M
+            - name: OPENAI_COMPLETION_MAX_ATTEMPTS
+              value: "1"
+            - name: OPENAI_COMPLETION_TIMEOUT_MS
+              value: "300000"
+            - name: OPENAI_COMPLETION_MAX_OUTPUT_TOKENS
+              value: "1024"
+            - name: BUMBA_MODEL_CONCURRENCY
+              value: "1"
+            - name: BUMBA_CHILD_WORKFLOW_CONCURRENCY
+              value: "16"
+            - name: BUMBA_EMBEDDING_CONCURRENCY
+              value: "4"
+            - name: BUMBA_ATLAS_CHUNK_INDEXING
+              value: "true"
+            - name: OPENAI_EMBEDDING_MODEL
+              value: qwen3-embedding-saigak:0.6b
+            - name: OPENAI_EMBEDDING_DIMENSION
+              value: "1024"
+            - name: OPENAI_EMBEDDING_API_BASE_URL
+              value: http://saigak.saigak.svc.cluster.local:11434/api
+            - name: OPENAI_EMBEDDING_BATCH_SIZE
+              value: "32"
+            - name: OPENAI_EMBEDDING_KEEP_ALIVE
+              value: 30m
+            - name: OPENAI_EMBEDDING_TRUNCATE
+              value: "false"
+            - name: OPENAI_EMBEDDING_TIMEOUT_MS
+              value: "120000"
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: jangar-workspace

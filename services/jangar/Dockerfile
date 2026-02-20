@@ -522,8 +522,12 @@ COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/node_modules/node-pty/prebui
 WORKDIR /app/services/jangar
 COPY --from=jangar-build /app/services/jangar/.output ./.output
 COPY --from=jangar-build /app/services/jangar/package.json ./package.json
+COPY --from=jangar-build /app/services/jangar/src/worker.ts ./src/worker.ts
 COPY --from=jangar-pty /tmp/node-pty/build /app/services/jangar/.output/server/node_modules/node-pty/build
 COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/server/node_modules/node-pty/prebuilds
+WORKDIR /app
+COPY --from=jangar-build /app/services/bumba ./services/bumba
+WORKDIR /app/services/jangar
 
 ENV JANGAR_AGENTS_CONTROLLER_ENABLED=0 \
   JANGAR_ORCHESTRATION_CONTROLLER_ENABLED=0 \
@@ -552,8 +556,12 @@ COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/node_modules/node-pty/prebui
 WORKDIR /app/services/jangar
 COPY --from=jangar-build /app/services/jangar/.output ./.output
 COPY --from=jangar-build /app/services/jangar/package.json ./package.json
+COPY --from=jangar-build /app/services/jangar/src/worker.ts ./src/worker.ts
 COPY --from=jangar-pty /tmp/node-pty/build /app/services/jangar/.output/server/node_modules/node-pty/build
 COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/server/node_modules/node-pty/prebuilds
+WORKDIR /app
+COPY --from=jangar-build /app/services/bumba ./services/bumba
+WORKDIR /app/services/jangar
 
 RUN mkdir -p /root/.codex
 RUN --mount=type=secret,id=codexauth,target=/tmp/codex_auth.json,required=false \

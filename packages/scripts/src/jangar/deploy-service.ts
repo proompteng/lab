@@ -175,6 +175,37 @@ const buildEnv = (env?: Record<string, string | undefined>) =>
     Object.entries(env ? { ...process.env, ...env } : process.env).filter(([, value]) => value !== undefined),
   ) as Record<string, string>
 
+const resolveKustomizeNamespace = (kustomizePath: string) => {
+  const envNamespace = process.env.JANGAR_K8S_NAMESPACE?.trim()
+  if (envNamespace) {
+    return envNamespace
+  }
+  try {
+    const kustomizationPath = resolve(kustomizePath, 'kustomization.yaml')
+    const kustomization = readFileSync(kustomizationPath, 'utf8')
+    const match = kustomization.match(/^namespace:\s*([^\s#]+)/m)
+    if (match?.[1]) {
+      return match[1]
+    }
+  } catch {
+    // fall back to default below
+  }
+  return 'jangar'
+}
+
+const resolveDeploymentNames = () => {
+  const raw = process.env.JANGAR_K8S_DEPLOYMENTS?.trim()
+  if (!raw) {
+    return ['jangar', 'jangar-worker']
+  }
+  const names = raw
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean)
+
+  return names.length > 0 ? names : ['jangar', 'jangar-worker']
+}
+
 export const main = async (options: DeployOptions = {}) => {
   ensureCli('kubectl')
   ensureCli('curl')
@@ -223,6 +254,10 @@ export const main = async (options: DeployOptions = {}) => {
   try {
     writeFileSync(tmpPath, rendered)
     await run('kubectl', ['apply', '-f', tmpPath])
+    const namespace = resolveKustomizeNamespace(kustomizePath)
+    for (const deploymentName of resolveDeploymentNames()) {
+      await run('kubectl', ['rollout', 'status', `deployment/${deploymentName}`, '-n', namespace])
+    }
   } finally {
     cleanup()
     try {

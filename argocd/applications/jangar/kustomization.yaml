@@ -5,6 +5,7 @@ resources:
   - torghut-db-ca-sealedsecret.yaml
   - rook-ceph-rgw-jangar-sealedsecret.yaml
   - deployment.yaml
+  - jangar-worker-deployment.yaml
   - service.yaml
   - github-token.yaml
   - discord-codex-bot-sealedsecret.yaml
@@ -56,4 +57,4 @@ helmCharts:
 images:
   - name: registry.ide-newton.ts.net/lab/jangar
     newTag: "da51a300"
-    digest: sha256:3ec5b35e2949d24ccba6156d010c917b8ee53ef8a2c21fbd117de22e83111fea
+    digest: sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e

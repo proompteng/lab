@@ -27,13 +27,17 @@ const commitAll = (cwd: string, message: string) => {
 }
 
 describe('bumba worktree refresh', () => {
-  const previousEnv: Partial<Record<'BUMBA_WORKSPACE_ROOT', string | undefined>> = {}
+  const previousEnv: Partial<
+    Record<'BUMBA_WORKSPACE_ROOT' | 'JANGAR_BUMBA_TASK_QUEUE' | 'TEMPORAL_TASK_QUEUE', string | undefined>
+  > = {}
   let hadBun = false
   let repoRoot: string | null = null
 
   beforeEach(async () => {
     hadBun = 'Bun' in globalThis
     previousEnv.BUMBA_WORKSPACE_ROOT = process.env.BUMBA_WORKSPACE_ROOT
+    previousEnv.JANGAR_BUMBA_TASK_QUEUE = process.env.JANGAR_BUMBA_TASK_QUEUE
+    previousEnv.TEMPORAL_TASK_QUEUE = process.env.TEMPORAL_TASK_QUEUE
     repoRoot = await mkdtemp(join(tmpdir(), 'bumba-worktree-'))
 
     runGit(['init'], repoRoot)
@@ -81,6 +85,16 @@ describe('bumba worktree refresh', () => {
       delete process.env.BUMBA_WORKSPACE_ROOT
     } else {
       process.env.BUMBA_WORKSPACE_ROOT = previousEnv.BUMBA_WORKSPACE_ROOT
+    }
+    if (previousEnv.JANGAR_BUMBA_TASK_QUEUE === undefined) {
+      delete process.env.JANGAR_BUMBA_TASK_QUEUE
+    } else {
+      process.env.JANGAR_BUMBA_TASK_QUEUE = previousEnv.JANGAR_BUMBA_TASK_QUEUE
+    }
+    if (previousEnv.TEMPORAL_TASK_QUEUE === undefined) {
+      delete process.env.TEMPORAL_TASK_QUEUE
+    } else {
+      process.env.TEMPORAL_TASK_QUEUE = previousEnv.TEMPORAL_TASK_QUEUE
     }
 
     if (!hadBun) {
@@ -140,4 +154,18 @@ describe('bumba worktree refresh', () => {
     expect(resolvedRoot).toBe(worktreePath)
     await expect(stat(join(worktreePath, filePath))).resolves.toBeDefined()
   }, 20_000)
+
+  it('prefers JANGAR_BUMBA_TASK_QUEUE over TEMPORAL_TASK_QUEUE', () => {
+    process.env.TEMPORAL_TASK_QUEUE = 'legacy-queue'
+    process.env.JANGAR_BUMBA_TASK_QUEUE = 'jangar-queue'
+
+    expect(__test__.resolveTaskQueue()).toBe('jangar-queue')
+  })
+
+  it('falls back to TEMPORAL_TASK_QUEUE when JANGAR_BUMBA_TASK_QUEUE is missing', () => {
+    delete process.env.JANGAR_BUMBA_TASK_QUEUE
+    process.env.TEMPORAL_TASK_QUEUE = 'legacy-queue'
+
+    expect(__test__.resolveTaskQueue()).toBe('legacy-queue')
+  })
 })
