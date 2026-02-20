@@ -712,6 +712,95 @@ data:
                 Autonomy ingest reports repeated cursor_ahead_of_stream for 10 minutes during market hours.
                 This indicates the TA pipeline is not advancing or ingestion is behind.
               runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutSignalStalenessAlertsSustainedDuringMarketHours
+            expr: |
+              (
+                increase(
+                  torghut_trading_signal_staleness_alert_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut"
+                  }[15m]
+                ) >= 3
+              )
+              * on() group_left()
+              (
+                (day_of_week(vector(time())) >= bool 1)
+                * (day_of_week(vector(time())) <= bool 5)
+                * (hour(vector(time())) >= bool 14)
+                * (hour(vector(time())) < bool 21)
+              )
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut signal staleness alerts sustained (market hours)
+              description: |
+                Torghut emitted at least 3 signal freshness/continuity alerts in the last 15 minutes during market hours.
+                Validate stream restart recovery and ta_signals cursor continuity before scaling execution.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutLeanFallbackRateElevated
+            expr: |
+              (
+                rate(
+                  torghut_trading_execution_fallback_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut",
+                    from="lean",
+                    to="alpaca"
+                  }[15m]
+                )
+                /
+                clamp_min(
+                  rate(
+                    torghut_trading_execution_requests_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut",
+                      adapter="lean"
+                    }[15m]
+                  ),
+                  0.001
+                )
+              ) > 0.15
+              and
+              rate(
+                torghut_trading_execution_requests_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut",
+                  adapter="lean"
+                }[15m]
+              ) > 0.01
+            for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut LEAN route fallback rate elevated
+              description: |
+                LEAN to Alpaca fallback transitions exceeded 15% of LEAN execution requests for 15 minutes.
+                Route provenance continuity is degraded; keep fallback policy enabled and investigate LEAN runner stability.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutEvidenceContinuityFailuresDetected
+            expr: |
+              increase(
+                torghut_trading_evidence_continuity_failures_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut"
+                }[2h]
+              ) > 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut evidence continuity check failed
+              description: |
+                Latest autonomy evidence reconciliation found missing research ledger rows
+                across research_candidates/fold_metrics/stress_metrics/promotions.
+                Halt promotions until artifact continuity is restored.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
           - alert: TorghutQuantOrderRejectionRateHigh
             expr: |
               (

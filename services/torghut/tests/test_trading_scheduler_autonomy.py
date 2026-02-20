@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 from dataclasses import dataclass
+from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -103,6 +104,7 @@ class TestTradingSchedulerAutonomy(TestCase):
             "trading_autonomy_artifact_dir": settings.trading_autonomy_artifact_dir,
             "trading_signal_no_signal_streak_alert_threshold": settings.trading_signal_no_signal_streak_alert_threshold,
             "trading_signal_stale_lag_alert_seconds": settings.trading_signal_stale_lag_alert_seconds,
+            "trading_evidence_continuity_run_limit": settings.trading_evidence_continuity_run_limit,
         }
 
     def tearDown(self) -> None:
@@ -118,6 +120,9 @@ class TestTradingSchedulerAutonomy(TestCase):
         ]
         settings.trading_signal_stale_lag_alert_seconds = self._settings_snapshot[
             "trading_signal_stale_lag_alert_seconds"
+        ]
+        settings.trading_evidence_continuity_run_limit = self._settings_snapshot[
+            "trading_evidence_continuity_run_limit"
         ]
 
     def test_run_autonomous_cycle_uses_live_promotion_when_token_present(self) -> None:
@@ -316,6 +321,33 @@ class TestTradingSchedulerAutonomy(TestCase):
             self.assertEqual(scheduler.state.last_autonomy_error, "lane_failed")
             self.assertIsNone(scheduler.state.last_autonomy_run_id)
 
+    def test_run_evidence_continuity_check_updates_scheduler_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            settings.trading_evidence_continuity_run_limit = 3
+            with patch("app.trading.scheduler.evaluate_evidence_continuity") as mock_check:
+                mock_check.return_value = SimpleNamespace(
+                    checked_at=datetime(2026, 2, 19, 1, 0, tzinfo=timezone.utc),
+                    checked_runs=2,
+                    failed_runs=1,
+                    run_ids=["run-1", "run-2"],
+                    to_payload=lambda: {"checked_runs": 2, "failed_runs": 1, "ok": False},
+                )
+                scheduler._run_evidence_continuity_check()
+
+            mock_check.assert_called_once()
+            self.assertEqual(scheduler.state.metrics.evidence_continuity_checks_total, 1)
+            self.assertEqual(scheduler.state.metrics.evidence_continuity_failures_total, 1)
+            self.assertEqual(scheduler.state.metrics.evidence_continuity_last_failed_runs, 1)
+            self.assertEqual(
+                scheduler.state.last_evidence_continuity_report,
+                {"checked_runs": 2, "failed_runs": 1, "ok": False},
+            )
+
     def _build_scheduler_with_fixtures(
         self,
         tmpdir: str,
@@ -374,9 +406,13 @@ class TestTradingSchedulerAutonomy(TestCase):
         settings.trading_autonomy_artifact_dir = str(Path(tmpdir) / "autonomy-artifacts")
 
         scheduler = TradingScheduler()
+        @contextmanager
+        def _session_factory():
+            yield None
+
         scheduler._pipeline = _PipelineStub(
             signals=[] if no_signals else _signal_batch(),
-            session_factory=lambda: None,
+            session_factory=_session_factory,
             no_signal_reason=no_signal_reason,
             no_signal_lag_seconds=no_signal_lag_seconds,
             state=scheduler.state,

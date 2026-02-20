@@ -164,3 +164,20 @@ class TestTradingMetrics(TestCase):
         self.assertIn("torghut_trading_feature_staleness_ms_p95 1234", payload)
         self.assertIn("torghut_trading_feature_duplicate_ratio 0.2", payload)
         self.assertIn("torghut_trading_feature_schema_mismatch_total 2", payload)
+
+    def test_evidence_continuity_metrics_use_gauge_and_counter_types(self) -> None:
+        metrics = TradingMetrics()
+        metrics.evidence_continuity_checks_total = 3
+        metrics.evidence_continuity_failures_total = 1
+        metrics.evidence_continuity_last_checked_ts_seconds = 1700000000
+        metrics.evidence_continuity_last_success_ts_seconds = 1700000100
+        metrics.evidence_continuity_last_failed_runs = 2
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn("torghut_trading_evidence_continuity_checks_total 3", payload)
+        self.assertIn("torghut_trading_evidence_continuity_failures_total 1", payload)
+        self.assertIn("torghut_trading_evidence_continuity_last_checked_ts_seconds 1700000000", payload)
+        self.assertIn("torghut_trading_evidence_continuity_last_success_ts_seconds 1700000100", payload)
+        self.assertIn("torghut_trading_evidence_continuity_last_failed_runs 2", payload)
+        self.assertIn("# TYPE torghut_trading_evidence_continuity_last_checked_ts_seconds gauge", payload)

@@ -263,6 +263,36 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
+    def test_trading_autonomy_evidence_continuity_endpoint_returns_state_report(self) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.last_evidence_continuity_report = {
+                "checked_runs": 2,
+                "failed_runs": 0,
+                "ok": True,
+            }
+            app.state.trading_scheduler = scheduler
+            response = self.client.get("/trading/autonomy/evidence-continuity")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertIn("report", payload)
+            self.assertEqual(payload["report"]["checked_runs"], 2)
+            self.assertEqual(payload["report"]["failed_runs"], 0)
+        finally:
+            if original_scheduler is None:
+                del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
+    def test_trading_autonomy_evidence_continuity_endpoint_supports_refresh(self) -> None:
+        response = self.client.get("/trading/autonomy/evidence-continuity?refresh=true&run_limit=5")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("report", payload)
+        self.assertEqual(payload["report"]["checked_runs"], 0)
+        self.assertEqual(payload["report"]["failed_runs"], 0)
+
     def test_trading_status_reports_effective_llm_guardrails(self) -> None:
         original = {
             "llm_shadow_mode": settings.llm_shadow_mode,

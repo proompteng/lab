@@ -28,6 +28,15 @@ class UniverseResolver:
         self._cache: Optional[UniverseCache] = None
 
     def get_symbols(self) -> set[str]:
+        if (
+            settings.trading_universe_source != "jangar"
+            and (settings.trading_enabled or settings.trading_autonomy_enabled or settings.trading_live_enabled)
+        ):
+            logger.error(
+                "Invalid universe source for active trading/autonomy: source=%s",
+                settings.trading_universe_source,
+            )
+            return set()
         if settings.trading_universe_source == "static":
             symbols = set(settings.trading_static_symbols)
             return _filter_symbols(symbols)

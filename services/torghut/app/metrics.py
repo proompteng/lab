@@ -308,6 +308,16 @@ def render_trading_metrics(metrics: Mapping[str, object]) -> str:
             lines.append(f"# TYPE {metric_name} gauge")
             lines.append(f"{metric_name} {value}")
             continue
+        if key in {
+            "evidence_continuity_last_checked_ts_seconds",
+            "evidence_continuity_last_success_ts_seconds",
+            "evidence_continuity_last_failed_runs",
+        }:
+            metric_name = f"torghut_trading_{key}"
+            lines.append(f"# HELP {metric_name} Torghut trading metric {key.replace('_', ' ')}.")
+            lines.append(f"# TYPE {metric_name} gauge")
+            lines.append(f"{metric_name} {value}")
+            continue
         metric_name = f"torghut_trading_{key}"
         help_text = f"Torghut trading metric {key.replace('_', ' ')}."
         lines.append(f"# HELP {metric_name} {help_text}")
