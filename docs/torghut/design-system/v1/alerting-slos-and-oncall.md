@@ -2,7 +2,7 @@
 
 ## Status
 - Version: `v1`
-- Last updated: **2026-02-08**
+- Last updated: **2026-02-20**
 - Source of truth (config): `argocd/applications/torghut/**`
 
 ## Purpose
@@ -50,6 +50,17 @@ flowchart TD
 - Watermark lag elevated but still progressing.
 - Increased dedup rate.
 - Reconcile lag elevated but not yet impacting.
+- Intentional policy exception active (`torghut_llm_policy_exception_active=1`) with no violation.
+
+### LLM policy/fail-mode alerts
+- Page on policy violations:
+  - `torghut_llm_policy_violation_active=1`
+  - `torghut_llm_stage_policy_violation_active=1`
+  - sustained increases in `torghut_llm_fail_mode_override_total` or `torghut_llm_stage_policy_violation_total`
+- Ticket on approved exceptions:
+  - `torghut_llm_policy_exception_active=1`
+  - increases in `torghut_llm_fail_mode_exception_total`
+- Do not page solely on approved exception counters; they are expected when explicitly configured and approved.
 
 ## Operations links
 - TA recovery: `v1/operations-ta-replay-and-recovery.md`
@@ -69,6 +80,8 @@ flowchart TD
 ## Security considerations
 - Alert routing must not leak secrets (avoid embedding DSNs or headers in alerts).
 - Live trading enablement should generate an audit event and alert.
+- Live fail-open posture in live mode requires explicit approval (`LLM_FAIL_OPEN_LIVE_APPROVED=true`) and should always
+  be accompanied by a change record and alert-routing acknowledgement.
 
 ## Decisions (ADRs)
 ### ADR-20-1: Freshness is the primary user-facing SLO

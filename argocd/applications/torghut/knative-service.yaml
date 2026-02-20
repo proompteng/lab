@@ -166,6 +166,8 @@ spec:
               value: pass_through
             - name: LLM_FAIL_MODE_ENFORCEMENT
               value: configured
+            - name: LLM_FAIL_OPEN_LIVE_APPROVED
+              value: "false"
             - name: TRADING_PARITY_POLICY
               value: mode_coupled
             - name: LLM_TOKEN_BUDGET_MAX

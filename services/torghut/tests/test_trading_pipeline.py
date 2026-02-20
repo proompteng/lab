@@ -1374,6 +1374,11 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(
                     reviews[0].response_json.get("effective_verdict"), "approve"
                 )
+                policy_resolution = reviews[0].response_json.get("policy_resolution")
+                self.assertIsInstance(policy_resolution, dict)
+                assert isinstance(policy_resolution, dict)
+                self.assertIn("effective_fail_mode", policy_resolution)
+                self.assertIn("reasoning", policy_resolution)
 
             config.settings.trading_mode = "live"
             config.settings.trading_live_enabled = True
@@ -1833,6 +1838,9 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(len(executions), 1)
                 self.assertEqual(pipeline.state.metrics.llm_fail_mode_override_total, 1)
                 self.assertEqual(
+                    pipeline.state.metrics.llm_fail_mode_exception_total, 0
+                )
+                self.assertEqual(
                     pipeline.state.metrics.llm_stage_policy_violation_total, 1
                 )
         finally:
@@ -1961,6 +1969,8 @@ class TestTradingPipeline(TestCase):
                     reviews[0].response_json.get("error"),
                     "market_context_fetch_error",
                 )
+                policy_resolution = reviews[0].response_json.get("policy_resolution")
+                self.assertIsInstance(policy_resolution, dict)
                 # Stage1 rollout must stay shadow-only even when fail mode is configured as fail_closed.
                 self.assertEqual(decisions[0].status, "submitted")
                 self.assertEqual(len(executions), 1)
@@ -2087,6 +2097,10 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(
                     reviews[0].response_json.get("fallback"), "pass_through"
                 )
+                policy_resolution = reviews[0].response_json.get("policy_resolution")
+                self.assertIsInstance(policy_resolution, dict)
+                assert isinstance(policy_resolution, dict)
+                self.assertEqual(policy_resolution.get("rollout_stage"), "stage2")
                 self.assertEqual(decisions[0].status, "submitted")
                 self.assertEqual(len(executions), 1)
         finally:

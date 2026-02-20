@@ -134,6 +134,29 @@ data:
         lines.append("# TYPE torghut_llm_effective_fail_mode_info gauge")
         lines.append(f'torghut_llm_effective_fail_mode_info{{fail_mode="{effective_fail_mode}"}} 1')
 
+        policy_resolution = llm.get("policy_resolution", {}) if isinstance(llm, dict) else {}
+        if not isinstance(policy_resolution, dict):
+            policy_resolution = {}
+        policy_classification = str(policy_resolution.get("classification") or "unknown")
+        lines.append("# HELP torghut_llm_policy_resolution_info Current policy-resolution classification.")
+        lines.append("# TYPE torghut_llm_policy_resolution_info gauge")
+        lines.append(f'torghut_llm_policy_resolution_info{{classification="{policy_classification}"}} 1')
+        lines.append("# HELP torghut_llm_policy_exception_active 1 when intentional policy exception is active.")
+        lines.append("# TYPE torghut_llm_policy_exception_active gauge")
+        lines.append(
+            f"torghut_llm_policy_exception_active {1.0 if policy_resolution.get('fail_mode_exception_active') else 0.0}"
+        )
+        lines.append("# HELP torghut_llm_policy_violation_active 1 when a live policy violation is active.")
+        lines.append("# TYPE torghut_llm_policy_violation_active gauge")
+        lines.append(
+            f"torghut_llm_policy_violation_active {1.0 if policy_resolution.get('fail_mode_violation_active') else 0.0}"
+        )
+        lines.append("# HELP torghut_llm_stage_policy_violation_active 1 when rollout stage policy is currently violated.")
+        lines.append("# TYPE torghut_llm_stage_policy_violation_active gauge")
+        lines.append(
+            f"torghut_llm_stage_policy_violation_active {1.0 if policy_resolution.get('stage_policy_violation') else 0.0}"
+        )
+
         guardrails = llm.get("guardrails", {}) if isinstance(llm, dict) else {}
         governance_complete = False
         if isinstance(guardrails, dict):
@@ -170,6 +193,7 @@ data:
             "llm_validation_error_total",
             "llm_circuit_open_total",
             "llm_fail_mode_override_total",
+            "llm_fail_mode_exception_total",
             "llm_stage_policy_violation_total",
             "llm_shadow_total",
             "llm_guardrail_block_total",

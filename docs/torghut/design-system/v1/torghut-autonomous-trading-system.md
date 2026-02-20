@@ -165,6 +165,7 @@ Critical env vars (current):
 - Universe: `TRADING_UNIVERSE_SOURCE`, `TRADING_STATIC_SYMBOLS`, `JANGAR_SYMBOLS_URL`
 - ClickHouse dependency checks: `TA_CLICKHOUSE_URL`, `TA_CLICKHOUSE_USERNAME`, `TA_CLICKHOUSE_PASSWORD`, `TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS`
 - AI controls: `LLM_ENABLED`, `LLM_SHADOW_MODE`, `LLM_FAIL_MODE`, `LLM_CIRCUIT_*`, `LLM_ADJUSTMENT_ALLOWED`
+  `LLM_FAIL_MODE_ENFORCEMENT`, `LLM_FAIL_OPEN_LIVE_APPROVED`
 
 Dependency checks in code:
 - `/trading/health` checks Postgres always, and checks ClickHouse + Alpaca only when `TRADING_ENABLED=true`.
@@ -178,6 +179,8 @@ Design intent:
 Controls (from `services/torghut/app/config.py`):
 - Circuit breaker: `LLM_CIRCUIT_MAX_ERRORS`, `LLM_CIRCUIT_WINDOW_SECONDS`, `LLM_CIRCUIT_COOLDOWN_SECONDS`
 - Failure mode: `LLM_FAIL_MODE` (`veto` vs `pass_through`)
+- Live fail-open approval: `LLM_FAIL_OPEN_LIVE_APPROVED` must be true before any live effective fail mode can be
+  `pass_through`
 - Adjustment allowed: `LLM_ADJUSTMENT_ALLOWED` (default false)
 
 ## Operations as design (automation-ready procedures)
