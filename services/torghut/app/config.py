@@ -315,6 +315,21 @@ class Settings(BaseSettings):
         alias="TRADING_LEAN_RUNNER_TIMEOUT_SECONDS",
         description="HTTP timeout for LEAN runner calls.",
     )
+    trading_lean_runner_healthcheck_enabled: bool = Field(
+        default=True,
+        alias="TRADING_LEAN_RUNNER_HEALTHCHECK_ENABLED",
+        description="Validate LEAN runner /healthz before enabling LEAN adapter routing.",
+    )
+    trading_lean_runner_healthcheck_timeout_seconds: int = Field(
+        default=2,
+        alias="TRADING_LEAN_RUNNER_HEALTHCHECK_TIMEOUT_SECONDS",
+        description="HTTP timeout for LEAN runner preflight health checks.",
+    )
+    trading_lean_runner_require_healthy: bool = Field(
+        default=True,
+        alias="TRADING_LEAN_RUNNER_REQUIRE_HEALTHY",
+        description="Fallback to Alpaca adapter when LEAN runner preflight health checks fail.",
+    )
     trading_max_position_pct_equity: Optional[float] = Field(
         default=None, alias="TRADING_MAX_POSITION_PCT_EQUITY"
     )

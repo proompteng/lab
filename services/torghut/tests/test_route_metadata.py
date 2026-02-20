@@ -5,9 +5,16 @@ from unittest import TestCase
 from app.trading.route_metadata import normalize_route_provenance, resolve_order_route_metadata
 
 
-class _Client:
+class _BasicClient:
     name = 'lean'
     last_route = 'alpaca'
+
+
+class _FallbackClient:
+    name = 'lean'
+    last_route = 'alpaca'
+    last_fallback_reason = 'lean_get_order_contract_violation'
+    last_fallback_count = 1
 
 
 class TestRouteMetadata(TestCase):
@@ -26,10 +33,21 @@ class TestRouteMetadata(TestCase):
     def test_resolve_route_sets_fallback_reason_when_route_changes(self) -> None:
         expected, actual, reason, count = resolve_order_route_metadata(
             expected_adapter='lean',
-            execution_client=_Client(),
+            execution_client=_BasicClient(),
             order_response={'_execution_route_actual': 'alpaca'},
         )
         self.assertEqual(expected, 'lean')
         self.assertEqual(actual, 'alpaca')
         self.assertEqual(reason, 'fallback_from_lean_to_alpaca')
+        self.assertEqual(count, 1)
+
+    def test_resolve_route_uses_client_fallback_reason_when_payload_omits_metadata(self) -> None:
+        expected, actual, reason, count = resolve_order_route_metadata(
+            expected_adapter='lean',
+            execution_client=_FallbackClient(),
+            order_response={'id': 'order-1', 'status': 'accepted'},
+        )
+        self.assertEqual(expected, 'lean')
+        self.assertEqual(actual, 'alpaca')
+        self.assertEqual(reason, 'lean_get_order_contract_violation')
         self.assertEqual(count, 1)

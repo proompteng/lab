@@ -20,7 +20,21 @@ _BLOCKING_RISK_FLAGS = {
     "market_context_disabled",
     "fundamentals_error",
     "news_error",
+    "technicals_error",
+    "regime_error",
+    "technicals_source_error",
+    "regime_source_error",
+    "market_context_domain_error",
 }
+
+_REASON_PRIORITY = [
+    "market_context_required_missing",
+    "market_context_fetch_error",
+    "market_context_disabled",
+    "market_context_domain_error",
+    "market_context_stale",
+    "market_context_quality_low",
+]
 
 
 @dataclass(frozen=True)
@@ -88,9 +102,13 @@ def evaluate_market_context(bundle: Optional[MarketContextBundle]) -> MarketCont
 
     if blocking_flags:
         unique_blocking_flags = sorted(set(blocking_flags))
+        reason = next(
+            (candidate for candidate in _REASON_PRIORITY if candidate in unique_blocking_flags),
+            unique_blocking_flags[0],
+        )
         return MarketContextStatus(
             allow_llm=False,
-            reason=unique_blocking_flags[0],
+            reason=reason,
             risk_flags=sorted(set(risk_flags)),
         )
     return MarketContextStatus(allow_llm=True, reason=None, risk_flags=sorted(set(risk_flags)))

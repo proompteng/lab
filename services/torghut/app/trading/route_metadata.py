@@ -40,8 +40,12 @@ def resolve_order_route_metadata(
     fallback_reason = coerce_route_text(_coerce_order_field(order_response, "_execution_fallback_reason"))
     if fallback_reason is None:
         fallback_reason = coerce_route_text(_coerce_order_field(order_response, "_fallback_reason"))
+    if fallback_reason is None and execution_client is not None:
+        fallback_reason = coerce_route_text(getattr(execution_client, "last_fallback_reason", None))
 
     fallback_count = coerce_route_int(_coerce_order_field(order_response, "_execution_fallback_count"))
+    if fallback_count is None and execution_client is not None:
+        fallback_count = coerce_route_int(getattr(execution_client, "last_fallback_count", None))
 
     if fallback_count is None and expected and raw_actual and expected != raw_actual:
         fallback_count = 1
