@@ -330,9 +330,24 @@ data:
           - alert: TorghutLLMErrorRateHigh
             expr: |
               (
-                rate(torghut_llm_errors_total{namespace="torghut", service="torghut"}[10m])
+                rate(
+                  torghut_llm_error_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-llm-guardrails-exporter"
+                  }[10m]
+                )
                 /
-                clamp_min(rate(torghut_llm_requests_total{namespace="torghut", service="torghut"}[10m]), 1)
+                clamp_min(
+                  rate(
+                    torghut_llm_requests_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-llm-guardrails-exporter"
+                    }[10m]
+                  ),
+                  1
+                )
               ) > 0.1
             for: 10m
             labels:
@@ -344,10 +359,44 @@ data:
           - alert: TorghutLLMTokensSpike
             expr: |
               (
-                rate(torghut_llm_tokens_total{namespace="torghut", service="torghut"}[5m])
+                (
+                  rate(
+                    torghut_llm_tokens_prompt_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-llm-guardrails-exporter"
+                    }[5m]
+                  )
+                  +
+                  rate(
+                    torghut_llm_tokens_completion_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-llm-guardrails-exporter"
+                    }[5m]
+                  )
+                )
                 /
                 clamp_min(
-                  avg_over_time(rate(torghut_llm_tokens_total{namespace="torghut", service="torghut"}[5m])[1h]),
+                  avg_over_time(
+                    (
+                      rate(
+                        torghut_llm_tokens_prompt_total{
+                          job="torghut",
+                          namespace="torghut",
+                          service="torghut-llm-guardrails-exporter"
+                        }[5m]
+                      )
+                      +
+                      rate(
+                        torghut_llm_tokens_completion_total{
+                          job="torghut",
+                          namespace="torghut",
+                          service="torghut-llm-guardrails-exporter"
+                        }[5m]
+                      )
+                    )[1h]
+                  ),
                   1
                 )
               ) > 3
@@ -360,7 +409,13 @@ data:
               runbook_url: docs/torghut/design-system/v1/cost-model-and-budgets.md
           - alert: TorghutLLMTelemetryMissing
             expr: |
-              absent(torghut_llm_requests_total{namespace="torghut", service="torghut"}) == 1
+              absent(
+                torghut_llm_requests_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              ) == 1
             for: 15m
             labels:
               severity: warning
@@ -420,6 +475,87 @@ data:
                 Model risk management guardrails are blocking LLM review requests.
                 Check the configured evaluation evidence, inventory, and prompt version.
               runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
+          - alert: TorghutLLMErrorRatioAlert
+            expr: |
+              max(
+                torghut_llm_error_ratio_alert{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              ) == 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM error ratio breached rollout threshold
+              description: |
+                LLM error ratio is above the configured rollout alert threshold.
+                Keep deterministic risk as final authority and investigate provider stability.
+              runbook_url: docs/torghut/design-system/v3/full-loop/15-llm-advisory-rollout-spec.md
+          - alert: TorghutLLMCircuitAlertActive
+            expr: |
+              max(
+                torghut_llm_circuit_open_alert{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              ) == 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM circuit alert threshold exceeded
+              description: |
+                LLM circuit is open with cooldown posture above threshold.
+                Keep advisory in shadow and validate upstream LLM health.
+              runbook_url: docs/torghut/design-system/v3/full-loop/15-llm-advisory-rollout-spec.md
+          - alert: TorghutLLMStagePolicyViolationActive
+            expr: |
+              max(
+                torghut_llm_stage_policy_violation_active{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              ) == 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut LLM rollout stage policy is violated
+              description: |
+                Runtime policy resolution reports rollout-stage policy violations.
+                Reconcile LLM_ROLLOUT_STAGE, fail mode, and shadow controls immediately.
+              runbook_url: docs/torghut/design-system/v3/full-loop/15-llm-advisory-rollout-spec.md
+          - alert: TorghutLLMGovernanceEvidenceMissing
+            expr: |
+              max by (job, namespace, service) (
+                torghut_llm_governance_evidence_complete{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              ) == 0
+              and
+              sum by (job, namespace, service) (
+                torghut_llm_rollout_stage_info{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter",
+                  stage=~"stage2|stage3"
+                }
+              ) >= 1
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut LLM governance evidence incomplete for advanced stage
+              description: |
+                Stage 2/3 rollout is active without complete governance evidence.
+                Revert to shadow-only posture until evaluation, challenge, shadow completion, and model lock are present.
+              runbook_url: docs/torghut/design-system/v3/full-loop/15-llm-advisory-rollout-spec.md
           - alert: TorghutLLMParseErrorRateHigh
             expr: |
               (
@@ -520,13 +656,13 @@ data:
           - alert: TorghutLLMCircuitOpenTooLong
             expr: |
               max(
-                torghut_llm_circuit_open_seconds{
+                torghut_llm_circuit_open_alert{
                   job="torghut",
                   namespace="torghut",
                   service="torghut-llm-guardrails-exporter"
                 }
-              ) > 600
-            for: 5m
+              ) == 1
+            for: 10m
             labels:
               severity: critical
             annotations:

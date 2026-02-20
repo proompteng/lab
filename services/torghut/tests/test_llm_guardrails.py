@@ -240,6 +240,84 @@ class TestLlmGuardrails(TestCase):
             ]
             config.settings.llm_model_version_lock = original["llm_model_version_lock"]
 
+    def test_stage_aliases_preserve_stage_gating_and_fail_mode_behavior(self) -> None:
+        original = {
+            "trading_mode": config.settings.trading_mode,
+            "trading_parity_policy": config.settings.trading_parity_policy,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_adjustment_allowed": config.settings.llm_adjustment_allowed,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_model_version_lock": config.settings.llm_model_version_lock,
+        }
+        config.settings.trading_parity_policy = "mode_coupled"
+        config.settings.llm_shadow_mode = False
+        config.settings.llm_adjustment_allowed = True
+        config.settings.llm_adjustment_approved = True
+        config.settings.llm_fail_mode = "pass_through"
+        config.settings.llm_fail_mode_enforcement = "configured"
+        config.settings.llm_allowed_models_raw = config.settings.llm_model
+
+        try:
+            config.settings.llm_rollout_stage = "stage1_shadow_pilot"
+            config.settings.trading_mode = "paper"
+            stage1_paper = evaluate_llm_guardrails()
+            self.assertTrue(stage1_paper.shadow_mode)
+            self.assertFalse(stage1_paper.adjustment_allowed)
+            self.assertEqual(stage1_paper.effective_fail_mode, "pass_through")
+
+            config.settings.trading_mode = "live"
+            stage1_live = evaluate_llm_guardrails()
+            self.assertTrue(stage1_live.shadow_mode)
+            self.assertFalse(stage1_live.adjustment_allowed)
+            self.assertEqual(stage1_live.effective_fail_mode, "veto")
+
+            config.settings.llm_rollout_stage = "stage2_paper_advisory"
+            config.settings.llm_evaluation_report = "eval-2026-02-12"
+            config.settings.llm_effective_challenge_id = "challenge-2026-02-12"
+            config.settings.llm_shadow_completed_at = "2026-02-12T06:45:00Z"
+            config.settings.llm_model_version_lock = config.settings.llm_model
+
+            config.settings.trading_mode = "paper"
+            stage2_paper = evaluate_llm_guardrails()
+            self.assertFalse(stage2_paper.shadow_mode)
+            self.assertEqual(stage2_paper.effective_fail_mode, "pass_through")
+            self.assertTrue(stage2_paper.governance_evidence_complete)
+
+            config.settings.trading_mode = "live"
+            stage2_live = evaluate_llm_guardrails()
+            self.assertFalse(stage2_live.shadow_mode)
+            self.assertEqual(stage2_live.effective_fail_mode, "pass_through")
+            self.assertTrue(stage2_live.governance_evidence_complete)
+        finally:
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_parity_policy = original["trading_parity_policy"]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_adjustment_allowed = original["llm_adjustment_allowed"]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_model_version_lock = original["llm_model_version_lock"]
+
     def test_prompt_allowlist_and_token_budget_block_requests(self) -> None:
         original = {
             "llm_rollout_stage": config.settings.llm_rollout_stage,
