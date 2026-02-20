@@ -2,7 +2,7 @@
 
 ## Status
 - Version: `v1`
-- Last updated: **2026-02-08**
+- Last updated: **2026-02-20**
 - Source of truth (config): `argocd/applications/torghut/**`
 
 ## Purpose
@@ -42,14 +42,19 @@ stateDiagram-v2
 | `LLM_CIRCUIT_WINDOW_SECONDS` | sliding window | `300` |
 | `LLM_CIRCUIT_COOLDOWN_SECONDS` | cooldown | `600` |
 | `LLM_FAIL_MODE` | on-error behavior | `veto` |
+| `LLM_FAIL_MODE_ENFORCEMENT` | strict vs configured fail-mode posture | `strict_veto` |
+| `LLM_FAIL_OPEN_LIVE_APPROVED` | explicit approval gate for any live pass-through effective fail mode | `false` |
 
 ## Fallback policy (v1)
-- **Live mode (`TRADING_MODE=live`):** Always fail-closed (veto) when AI is enabled but errors occur or the circuit is open.
+- **Live mode (`TRADING_MODE=live`):** Fail-closed by default. Any configuration that would produce
+  `effective_fail_mode=pass_through` in live now requires `LLM_FAIL_OPEN_LIVE_APPROVED=true` at boot.
 - **Paper mode (`TRADING_MODE=paper`):** Fallback behavior is controlled by `LLM_FAIL_MODE`:
   - `LLM_FAIL_MODE=veto` (current default in `services/torghut/app/config.py`) fails-closed.
   - `LLM_FAIL_MODE=pass_through` allows deterministic pass-through on AI errors.
 
 Note: Live mode is itself gated by `TRADING_LIVE_ENABLED=true`; this document assumes that is rare and carefully reviewed.
+The deployment contract test in `services/torghut/tests/test_live_config_manifest_contract.py` validates Argo live env wiring
+against `Settings` validation to fail CI for boot-invalid combinations.
 Current deployed paper configuration (2026-02-09) sets `LLM_FAIL_MODE=pass_through` (see `argocd/applications/torghut/knative-service.yaml`).
 
 ## Provider fallback chain (v1)
