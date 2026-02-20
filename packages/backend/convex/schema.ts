@@ -30,4 +30,15 @@ export default defineSchema({
   })
     .index('bySlug', ['slug'])
     .index('byStatus', ['status', 'updatedAt']),
+  liveSessions: defineTable({
+    site: v.string(),
+    sessionId: v.string(),
+    visitorIdHash: v.string(),
+    path: v.string(),
+    lastSeenAt: v.number(),
+    expiresAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('bySession', ['sessionId'])
+    .index('bySiteExpires', ['site', 'expiresAt']),
 })
