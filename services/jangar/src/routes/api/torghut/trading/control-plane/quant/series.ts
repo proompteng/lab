@@ -44,8 +44,22 @@ export const getQuantSeriesHandler = async (request: Request) => {
 
   const now = new Date()
   const defaultBounds = computeWindowBoundsUtc(windowResult.value, now)
-  const fromUtc = parseIsoUtc(url.searchParams.get('from')) ?? defaultBounds.startUtc
-  const toUtc = parseIsoUtc(url.searchParams.get('to')) ?? defaultBounds.endUtc
+
+  const fromParam = url.searchParams.get('from')
+  const toParam = url.searchParams.get('to')
+  const fromParsed = parseIsoUtc(fromParam)
+  const toParsed = parseIsoUtc(toParam)
+  if (fromParam && !fromParsed) {
+    return jsonResponse({ ok: false, message: 'from must be a valid ISO-8601 timestamp' }, 400)
+  }
+  if (toParam && !toParsed) {
+    return jsonResponse({ ok: false, message: 'to must be a valid ISO-8601 timestamp' }, 400)
+  }
+  const fromUtc = fromParsed ?? defaultBounds.startUtc
+  const toUtc = toParsed ?? defaultBounds.endUtc
+  if (Date.parse(fromUtc) > Date.parse(toUtc)) {
+    return jsonResponse({ ok: false, message: 'from must be less than or equal to to' }, 400)
+  }
 
   try {
     const rows = await listQuantSeriesMetrics({
