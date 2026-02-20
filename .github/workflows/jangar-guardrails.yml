@@ -44,7 +44,13 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash -s -- latest
 
       - name: Run actionlint
-        run: ./actionlint -color -ignore 'label "arc-arm64" is unknown'
+        run: |
+          ./actionlint -color -ignore 'label "arc-arm64" is unknown' \
+            .github/workflows/jangar-build-push.yaml \
+            .github/workflows/jangar-release.yml \
+            .github/workflows/jangar-deploy-automerge.yml \
+            .github/workflows/jangar-post-deploy-verify.yml \
+            .github/workflows/jangar-guardrails.yml
 
   automation-policy:
     runs-on: ubuntu-latest
