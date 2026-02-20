@@ -1798,8 +1798,12 @@ class TradingScheduler:
             )
 
     def _is_market_session_open(self, now: datetime | None = None) -> bool:
+        trading_client: Any | None = None
+        if self._pipeline is not None:
+            alpaca_client = cast(Any, self._pipeline.alpaca_client)
+            trading_client = getattr(alpaca_client, "trading", None)
         get_clock = cast(
-            Callable[[], Any] | None, getattr(self.alpaca_client.trading, "get_clock", None)
+            Callable[[], Any] | None, getattr(trading_client, "get_clock", None)
         )
         if callable(get_clock):
             try:
