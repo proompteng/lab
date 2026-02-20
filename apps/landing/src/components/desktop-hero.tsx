@@ -13,7 +13,7 @@ import {
   useRef,
   useState,
 } from 'react'
-
+import LivePresenceTracker from '@/components/live-presence-tracker'
 import TerminalWindow, { type TerminalWindowHandle } from '@/components/terminal-window'
 import { cn } from '@/lib/utils'
 
@@ -253,9 +253,7 @@ export default function DesktopHero() {
                           >
                             {(topMenus.find((menu) => menu.id === activeMenu)?.items ?? []).map((item) => {
                               if (item.separatorBefore) {
-                                return (
-                                  <div key={item.id} className="my-1 h-px bg-[rgb(84_92_126/0.38)]" role="separator" />
-                                )
+                                return <hr key={item.id} className="my-1 h-px border-0 bg-[rgb(84_92_126/0.38)]" />
                               }
 
                               return (
@@ -294,6 +292,7 @@ export default function DesktopHero() {
         </header>
 
         <div ref={desktopStageRef} className="relative z-10 flex-1 overflow-hidden">
+          <LivePresenceTracker />
           <TerminalWindow
             ref={terminalWindowRef}
             desktopBoundsRef={desktopStageRef}
@@ -465,7 +464,7 @@ function DockTooltip({ label }: { label: string }) {
     return () => {
       resizeObserver.disconnect()
     }
-  }, [label])
+  }, [])
 
   const bodyWidth = Math.max(DOCK_TOOLTIP_MIN_WIDTH_PX, labelWidth + DOCK_TOOLTIP_PADDING_X_PX * 2)
   const bodyHeight = Math.max(
