@@ -9,3 +9,4 @@ spec:
   featureFlagSource: platform-flags
   ingress:
     enabled: false
+    hosts: []
