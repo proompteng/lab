@@ -26,9 +26,7 @@ def evaluate_llm_guardrails() -> LLMRiskGuardrails:
     allow_requests = True
     shadow_mode = settings.llm_shadow_mode
     adjustment_allowed = settings.llm_adjustment_allowed
-    effective_fail_mode = (
-        "veto" if settings.trading_mode == "live" else settings.llm_fail_mode
-    )
+    effective_fail_mode = settings.llm_effective_fail_mode()
     rollout_stage = _normalize_rollout_stage(settings.llm_rollout_stage)
 
     if settings.llm_max_tokens > settings.llm_token_budget_max:
@@ -55,11 +53,9 @@ def evaluate_llm_guardrails() -> LLMRiskGuardrails:
     elif rollout_stage == "stage1":
         shadow_mode = True
         adjustment_allowed = False
-        effective_fail_mode = (
-            "veto" if settings.trading_mode == "live" else "pass_through"
-        )
+        effective_fail_mode = settings.llm_effective_fail_mode(rollout_stage="stage1")
     elif rollout_stage == "stage2":
-        effective_fail_mode = "pass_through"
+        effective_fail_mode = settings.llm_effective_fail_mode(rollout_stage="stage2")
 
     if not _prompt_template_exists(settings.llm_prompt_version):
         allow_requests = False

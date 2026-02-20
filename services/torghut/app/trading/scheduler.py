@@ -45,7 +45,11 @@ from .prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
 from .order_feed import OrderFeedIngestor
 from .reconcile import Reconciler
 from .risk import RiskEngine
-from .autonomy import evaluate_evidence_continuity, run_autonomous_lane, upsert_autonomy_no_signal_run
+from .autonomy import (
+    evaluate_evidence_continuity,
+    run_autonomous_lane,
+    upsert_autonomy_no_signal_run,
+)
 from .universe import UniverseResolver
 from .llm.schema import MarketSnapshot as LLMMarketSnapshot
 from .llm.schema import MarketContextBundle
@@ -218,7 +222,9 @@ class TradingMetrics:
         current = self.signal_staleness_alert_total.get(normalized, 0)
         self.signal_staleness_alert_total[normalized] = current + 1
 
-    def record_market_context_result(self, reason: str | None, *, shadow_mode: bool) -> None:
+    def record_market_context_result(
+        self, reason: str | None, *, shadow_mode: bool
+    ) -> None:
         normalized = reason.strip() if isinstance(reason, str) else ""
         if not normalized:
             normalized = "unknown"
@@ -408,17 +414,25 @@ class TradingPipeline:
             self.state.universe_source_status = universe_resolution.status
             self.state.universe_source_reason = universe_resolution.reason
             self.state.universe_symbols_count = len(universe_resolution.symbols)
-            self.state.universe_cache_age_seconds = universe_resolution.cache_age_seconds
+            self.state.universe_cache_age_seconds = (
+                universe_resolution.cache_age_seconds
+            )
             allowed_symbols = universe_resolution.symbols
             if universe_resolution.status == "degraded":
-                self.state.metrics.record_signal_staleness_alert("universe_source_stale_cache")
+                self.state.metrics.record_signal_staleness_alert(
+                    "universe_source_stale_cache"
+                )
             if (
                 settings.trading_universe_source == "jangar"
                 and settings.trading_universe_require_non_empty_jangar
                 and not allowed_symbols
             ):
-                self.state.metrics.record_signal_staleness_alert("universe_source_unavailable")
-                self.state.last_error = f"universe_source_unavailable reason={universe_resolution.reason}"
+                self.state.metrics.record_signal_staleness_alert(
+                    "universe_source_unavailable"
+                )
+                self.state.last_error = (
+                    f"universe_source_unavailable reason={universe_resolution.reason}"
+                )
                 logger.error(
                     "Blocking decision execution: authoritative Jangar universe unavailable reason=%s status=%s",
                     universe_resolution.reason,
@@ -1196,9 +1210,7 @@ class TradingPipeline:
     def _resolve_llm_fallback(effective_fail_mode: Optional[str] = None) -> str:
         if effective_fail_mode in {"veto", "pass_through"}:
             return effective_fail_mode
-        if settings.trading_mode == "live":
-            return "veto"
-        return settings.llm_fail_mode
+        return settings.llm_effective_fail_mode()
 
     def _fetch_market_context(
         self, symbol: str
@@ -1428,14 +1440,19 @@ def _optional_decimal(value: Any) -> Optional[Decimal]:
 
 def _is_llm_stage_policy_violation(rollout_stage: str) -> bool:
     if rollout_stage == "stage0":
-        return settings.llm_enabled or not settings.llm_shadow_mode or settings.llm_adjustment_allowed
+        return (
+            settings.llm_enabled
+            or not settings.llm_shadow_mode
+            or settings.llm_adjustment_allowed
+        )
     if rollout_stage == "stage1":
         if not settings.llm_shadow_mode or settings.llm_adjustment_allowed:
             return True
-        expected_fail_mode = "veto" if settings.trading_mode == "live" else "pass_through"
+        expected_fail_mode = settings.llm_effective_fail_mode(rollout_stage="stage1")
         return settings.llm_fail_mode != expected_fail_mode
     if rollout_stage == "stage2":
-        return settings.llm_fail_mode != "pass_through"
+        expected_fail_mode = settings.llm_effective_fail_mode(rollout_stage="stage2")
+        return settings.llm_fail_mode != expected_fail_mode
     return False
 
 
@@ -1458,12 +1475,15 @@ class TradingScheduler:
         return {
             "enabled": settings.llm_enabled,
             "rollout_stage": guardrails.rollout_stage,
+            "parity_policy": settings.trading_parity_policy,
+            "fail_mode_enforcement": settings.llm_fail_mode_enforcement,
             # Keep configured shadow_mode for backward compatibility.
             "shadow_mode": settings.llm_shadow_mode,
             # Effective runtime posture after model-risk guardrails.
             "effective_shadow_mode": guardrails.shadow_mode,
             "fail_mode": settings.llm_fail_mode,
             "effective_fail_mode": guardrails.effective_fail_mode,
+            "policy_exceptions": settings.llm_policy_exceptions,
             "circuit": circuit_snapshot,
             "guardrails": {
                 "allow_requests": guardrails.allow_requests,
@@ -1534,7 +1554,9 @@ class TradingScheduler:
             reasons.append(f"max_drawdown_exceeded:{drawdown:.4f}")
 
         if reasons:
-            self._trigger_emergency_stop(reasons=reasons, fallback_ratio=fallback_ratio, drawdown=drawdown)
+            self._trigger_emergency_stop(
+                reasons=reasons, fallback_ratio=fallback_ratio, drawdown=drawdown
+            )
 
     def _load_latest_drawdown_from_gate(self) -> float | None:
         gate_path_raw = self.state.last_autonomy_gates
@@ -1570,7 +1592,9 @@ class TradingScheduler:
         self.state.rollback_incidents_total += 1
         self.state.emergency_stop_triggered_at = now
         self.state.emergency_stop_reason = ";".join(reasons)
-        self.state.last_error = f"emergency_stop_triggered reasons={self.state.emergency_stop_reason}"
+        self.state.last_error = (
+            f"emergency_stop_triggered reasons={self.state.emergency_stop_reason}"
+        )
         self.state.metrics.orders_rejected_total += 1
         try:
             canceled = self._pipeline.order_firewall.cancel_all_orders()
@@ -1579,7 +1603,9 @@ class TradingScheduler:
             logger.exception("Emergency stop failed to cancel open orders")
             cancelled_count = 0
 
-        artifact_root = _resolve_autonomy_artifact_root(Path(settings.trading_autonomy_artifact_dir))
+        artifact_root = _resolve_autonomy_artifact_root(
+            Path(settings.trading_autonomy_artifact_dir)
+        )
         incident_dir = artifact_root / "rollback-incidents"
         incident_dir.mkdir(parents=True, exist_ok=True)
         incident_path = incident_dir / f"incident-{now.strftime('%Y%m%dT%H%M%S')}.json"
@@ -1596,7 +1622,9 @@ class TradingScheduler:
             "last_autonomy_gates": self.state.last_autonomy_gates,
             "cancelled_open_orders": cancelled_count,
         }
-        incident_path.write_text(json.dumps(incident_payload, indent=2), encoding="utf-8")
+        incident_path.write_text(
+            json.dumps(incident_payload, indent=2), encoding="utf-8"
+        )
         self.state.rollback_incident_evidence_path = str(incident_path)
         logger.error(
             "Emergency stop triggered reasons=%s canceled_open_orders=%s evidence=%s",
@@ -1632,7 +1660,9 @@ class TradingScheduler:
         poll_interval = settings.trading_poll_ms / 1000
         reconcile_interval = settings.trading_reconcile_ms / 1000
         autonomy_interval = max(30, settings.trading_autonomy_interval_seconds)
-        evidence_interval = max(300, settings.trading_evidence_continuity_interval_seconds)
+        evidence_interval = max(
+            300, settings.trading_evidence_continuity_interval_seconds
+        )
         last_reconcile = datetime.now(timezone.utc)
         last_autonomy = datetime.now(timezone.utc)
         last_evidence_check = datetime.now(timezone.utc)
@@ -1712,7 +1742,9 @@ class TradingScheduler:
         self.state.last_evidence_continuity_report = payload
         metrics = self.state.metrics
         metrics.evidence_continuity_checks_total += 1
-        metrics.evidence_continuity_last_checked_ts_seconds = report.checked_at.timestamp()
+        metrics.evidence_continuity_last_checked_ts_seconds = (
+            report.checked_at.timestamp()
+        )
         metrics.evidence_continuity_last_failed_runs = report.failed_runs
         if report.failed_runs > 0:
             metrics.evidence_continuity_failures_total += report.failed_runs
@@ -1723,7 +1755,9 @@ class TradingScheduler:
                 ",".join(report.run_ids),
             )
             return
-        metrics.evidence_continuity_last_success_ts_seconds = report.checked_at.timestamp()
+        metrics.evidence_continuity_last_success_ts_seconds = (
+            report.checked_at.timestamp()
+        )
 
     def _run_autonomous_cycle(self) -> None:
         if self._pipeline is None:
