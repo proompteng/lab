@@ -7,21 +7,96 @@ from app.trading.llm.guardrails import evaluate_llm_guardrails
 
 
 class TestLlmGuardrails(TestCase):
+    def test_live_equivalent_policy_keeps_paper_and_live_fail_mode_aligned(
+        self,
+    ) -> None:
+        original = {
+            "trading_mode": config.settings.trading_mode,
+            "trading_parity_policy": config.settings.trading_parity_policy,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+        }
+        config.settings.trading_parity_policy = "live_equivalent"
+        config.settings.llm_fail_mode_enforcement = "strict_veto"
+        config.settings.llm_fail_mode = "veto"
+        config.settings.llm_rollout_stage = "stage3"
+        config.settings.llm_allowed_models_raw = config.settings.llm_model
+
+        try:
+            config.settings.trading_mode = "paper"
+            paper_guardrails = evaluate_llm_guardrails()
+            config.settings.trading_mode = "live"
+            live_guardrails = evaluate_llm_guardrails()
+            self.assertEqual(paper_guardrails.effective_fail_mode, "veto")
+            self.assertEqual(live_guardrails.effective_fail_mode, "veto")
+        finally:
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_parity_policy = original["trading_parity_policy"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+
+    def test_mode_coupled_policy_keeps_live_only_override_as_explicit_exception(
+        self,
+    ) -> None:
+        original = {
+            "trading_mode": config.settings.trading_mode,
+            "trading_parity_policy": config.settings.trading_parity_policy,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+        }
+        config.settings.trading_parity_policy = "mode_coupled"
+        config.settings.llm_fail_mode_enforcement = "configured"
+        config.settings.llm_fail_mode = "pass_through"
+        config.settings.llm_rollout_stage = "stage3"
+        config.settings.llm_allowed_models_raw = config.settings.llm_model
+
+        try:
+            config.settings.trading_mode = "paper"
+            paper_guardrails = evaluate_llm_guardrails()
+            config.settings.trading_mode = "live"
+            live_guardrails = evaluate_llm_guardrails()
+            self.assertEqual(paper_guardrails.effective_fail_mode, "pass_through")
+            self.assertEqual(live_guardrails.effective_fail_mode, "veto")
+            self.assertIn(
+                "mode_coupled_behavior_enabled", config.settings.llm_policy_exceptions
+            )
+        finally:
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_parity_policy = original["trading_parity_policy"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+
     def test_stage1_shadow_pilot_forces_shadow_and_fail_mode(self) -> None:
         original = {
             "trading_mode": config.settings.trading_mode,
+            "trading_parity_policy": config.settings.trading_parity_policy,
             "llm_rollout_stage": config.settings.llm_rollout_stage,
             "llm_shadow_mode": config.settings.llm_shadow_mode,
             "llm_adjustment_allowed": config.settings.llm_adjustment_allowed,
             "llm_adjustment_approved": config.settings.llm_adjustment_approved,
             "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
             "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
         }
+        config.settings.trading_parity_policy = "mode_coupled"
         config.settings.llm_rollout_stage = "stage1"
         config.settings.llm_shadow_mode = False
         config.settings.llm_adjustment_allowed = True
         config.settings.llm_adjustment_approved = True
         config.settings.llm_fail_mode = "veto"
+        config.settings.llm_fail_mode_enforcement = "configured"
         config.settings.llm_allowed_models_raw = config.settings.llm_model
 
         try:
@@ -38,6 +113,7 @@ class TestLlmGuardrails(TestCase):
             self.assertEqual(live_guardrails.effective_fail_mode, "veto")
         finally:
             config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_parity_policy = original["trading_parity_policy"]
             config.settings.llm_rollout_stage = original["llm_rollout_stage"]
             config.settings.llm_shadow_mode = original["llm_shadow_mode"]
             config.settings.llm_adjustment_allowed = original["llm_adjustment_allowed"]
@@ -45,6 +121,9 @@ class TestLlmGuardrails(TestCase):
                 "llm_adjustment_approved"
             ]
             config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
             config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
 
     def test_stage2_requires_governance_evidence_and_model_lock(self) -> None:
