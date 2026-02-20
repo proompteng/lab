@@ -9,6 +9,16 @@ reproducibility, and compliance-aligned controls.
 - strategy/config diff,
 - dataset and feature version manifests,
 - gate pass/fail outputs,
+- profitability evidence contract (`profitability-evidence-v4.json`) with:
+  - risk-adjusted metrics (`return_over_drawdown`, `sharpe_like`, regime pass ratio),
+  - cost/fill realism (`cost_bps`, turnover, recorded-vs-fallback impact assumptions),
+  - confidence/calibration summary (sample count, mean/std confidence, calibration error),
+  - reproducibility hashes (artifact sha256 map + manifest hash),
+- benchmark comparison (`profitability-benchmark-v4.json`) baseline vs candidate across:
+  - `market:all`,
+  - one or more `regime:*` slices,
+- validator output (`profitability-evidence-validation.json`) with machine-readable pass/fail reasons,
+- promotion gate decision (`promotion-evidence-gate.json`) with reason codes and artifact pointers,
 - shadow/paper/live metrics,
 - risk and execution control logs,
 - approval records and reviewer identities.
@@ -30,6 +40,7 @@ reproducibility, and compliance-aligned controls.
 - role-scoped read access,
 - hash verification for artifact integrity,
 - no sensitive secret leakage in evidence payloads.
+- no promotion when profitability evidence artifacts or reproducibility hashes are missing.
 
 ## Compliance Mapping
 - pre-trade control evidence,
